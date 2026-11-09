@@ -268,3 +268,85 @@ def test_list_exercises_and_filters():
     assert services.list_exercises(category="legs")["error"] == "invalid_field"
     assert "squat" in services.list_exercises(category="legs")["fix"]
     assert services.list_exercises(kind="swim")["error"] == "invalid_field"
+
+
+# ---------------------------------------------------------------- texts name only functions Claude has
+
+# The functions Claude is offered in this stage. Stage 3 extends this list (for example with its
+# delete and edit functions); a text may then name those too.
+OFFERED = ("whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress")
+# Functions that exist but Claude cannot call yet: every other public service function, and the
+# names later stages are expected to add.
+NOT_OFFERED = sorted({name for name in services.__all__ if callable(getattr(services, name))} - set(OFFERED)
+                     | {"edit_entry", "update_settings"})
+
+
+def strings_in(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from strings_in(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from strings_in(item)
+
+
+def test_texts_from_the_offered_functions_name_no_other_function(user):
+    assert NOT_OFFERED and not set(NOT_OFFERED) & set(OFFERED)
+    lifts = lambda *rows, **data: services.log_lifts(user.id, {"sets": [  # noqa: E731
+        {"exercise": e, "weight_kg": w, "reps": n} for e, w, n in rows], **data}, "claude")
+    weigh = lambda kg, **data: services.log_bodyweight(user.id, {"kg": kg, **data}, "web")  # noqa: E731
+    goal = lambda **data: services.set_goal(user.id, data, "claude")  # noqa: E731
+    results = [services.whoami(user.id), services.list_exercises(), services.list_exercises(kind="swim"),
+               services.list_exercises(category="legs"), services.get_progress(user.id),
+               services.get_progress(user.id, "Deadlift"), services.get_progress(user.id, "Bak Squat")]
+
+    # Lifts: a first session, new bests, a duplicate, and each error cheap to cause.
+    results += [lifts(("Back Squat", 60, 5), date=day(user, -14)), lifts(("Back Squat", 70, 5), date=day(user, -7)),
+                lifts(("Back Squat", 80, 5)), lifts(("Back Squat", 80, 5)),
+                lifts(("Bak Squat", 60, 5)), lifts(("Back Squat", 501, 31)), lifts(("Back Squat", "x", 5.5)),
+                lifts(("Back Squat", 60, 5), date=day(user, 1)), lifts(("Back Squat", 60, 5), date="0001-01-01"),
+                lifts(("Back Squat", 60, 5), date="soon"), lifts(("Back Squat", 60, 5), notes="a\x00b"),
+                services.log_lifts(user.id, {"sets": []}, "claude"), services.log_lifts(user.id, [], "claude"),
+                services.log_lifts(user.id, {"sets": []}, "robot"), services.log_lifts(987654, {}, "web")]
+    # Weigh-ins: a first one, a duplicate, a replacement, and the errors.
+    results += [weigh(80), weigh(80), weigh(79.5), weigh(81, date=day(user, -3)), weigh(401), weigh(None),
+                weigh(70, date=day(user, 1)), weigh(70, date=day(user, -800)), weigh(70, date="soon")]
+    # Goals: created, warned, edited, closed, reopened, reached, and refused.
+    lift_goal = goal(kind="lift", exercise="Back Squat", target_value=120, target_date=day(user, 60), start_value=1)
+    body_goal = goal(kind="bodyweight", target_value=75, target_date=day(user, 60))
+    results += [lift_goal, body_goal,
+                goal(kind="lift", exercise="Back Squat", target_value=130, target_date=day(user, 60)),
+                goal(goal_id=lift_goal["id"], target_value=125), goal(goal_id=lift_goal["id"], status="hit"),
+                goal(goal_id=lift_goal["id"], status="open"), goal(goal_id=lift_goal["id"], target_value=90),
+                goal(goal_id=lift_goal["id"], target_value=50), goal(goal_id=lift_goal["id"]),
+                goal(goal_id=lift_goal["id"], kind="bodyweight"), goal(goal_id=987654, status="hit"),
+                goal(kind="bodyweight", target_value=80.25, target_date=day(user, 60)),  # the 7-day average
+                goal(kind="lift", exercise="Deadlift", target_value=100, target_date=day(user, 60)),
+                goal(kind="lift", exercise="Bak Squat", target_value=0, target_date=day(user, 0)),
+                goal(kind="calories"), goal(), goal(kind="bodyweight", status="hit", exercise="Deadlift"),
+                goal(kind="bodyweight", target_value=70, start_value=80, target_date=day(user, 9), text="a\x00b"),
+                goal(kind="lift", exercise="Deadlift", target_value=110, start_value=100, target_date=day(user, 30)),
+                lifts(("Deadlift", 100, 5)),  # an estimated max of 116.67: the Deadlift goal is reached
+                services.get_progress(user.id), services.get_progress(user.id, "Back Squat"),
+                services.get_progress(user.id, "Deadlift")]
+    with db.session_scope() as s:  # a reopened goal whose date has passed
+        from app.models import Goal
+        s.get(Goal, body_goal["id"]).status = "hit"
+        s.get(Goal, body_goal["id"]).target_date = users.today_for(user) - timedelta(days=2)
+    results.append(goal(goal_id=body_goal["id"], status="open"))
+
+    assert any(r.get("duplicate") for r in results) and any(r.get("replaced") for r in results)
+    assert any(g["status"] == "reached" for g in services.get_progress(user.id)["goals"])
+    codes = {r["error"] for r in results if "error" in r} | {e["error"] for r in results for e in r.get("errors", [])}
+    assert codes >= {
+        "invalid_field", "unknown_exercise", "date_in_future", "date_too_old", "invalid_date", "not_found",
+        "no_account", "invalid_by", "missing_field", "wrong_direction", "target_is_start", "cannot_change_kind",
+        "nothing_to_change", "date_not_in_future", "sets_count_out_of_range", "weight_out_of_range"}
+    texts = [t for r in results for t in strings_in(r)]
+    assert any("can be brought back later" in t for t in texts)
+    for name in NOT_OFFERED:
+        named = [t for t in texts if name in t]
+        assert not named, f"{name} is named, but Claude cannot call it: {named[:3]}"

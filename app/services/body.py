@@ -8,7 +8,7 @@ log_bodyweight(user_id, data, by)
       duplicate: that weigh-in comes back with duplicate true, and nothing is written.
     - Any other weigh-in on a date that already has a live one replaces it, whether the weight
       differs or the same weight comes again later (or with allow_repeat). The old row is
-      soft-deleted, so restore_entry can bring it back, and the result names it under "replaced".
+      soft-deleted, so it is kept and can be brought back, and the result names it under "replaced".
 
     The schema allows one live row per person and date (a partial unique index). The old row is
     soft-deleted and flushed on its own before the new one is added, so the order is explicit.
@@ -96,7 +96,7 @@ def log_bodyweight(user_id: int, data: dict | None, by: str) -> dict:
                 s.flush()
                 replaced = row_dict(live)
                 note = (f"Replaced the {on.isoformat()} weigh-in of {live.kg:g} kg (id {live.id}): one weigh-in a "
-                        "day. restore_entry with that id brings it back.")
+                        "day. The earlier weigh-in is kept, not erased, and can be brought back later.")
             row = Bodyweight(user_id=user.id, date=on, kg=kg, logged_by=by, dedupe_key=key)
             s.add(row)
             s.flush()

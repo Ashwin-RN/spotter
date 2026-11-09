@@ -49,7 +49,7 @@ def test_trend_recent_and_a_different_weight_the_same_day_replaces(user):
         weigh(user, kg, days_ago)
     r = weigh(user, 79.5, by="web")  # today again, a different weight: replaces 80
     assert r["replaced"]["id"] == first["id"] and r["replaced"]["kg"] == 80 and r["replaced"]["deleted_at"]
-    assert "Replaced" in r["note"] and str(first["id"]) in r["note"] and "restore_entry" in r["note"]
+    assert "Replaced" in r["note"] and str(first["id"]) in r["note"] and "kept, not erased" in r["note"]
     assert r["weigh_in"]["logged_by"] == "web"
     assert [w["kg"] for w in r["recent"]] == [79.5, 81, 83.6, 84]
     assert r["trend"]["method"] == "7-day average"
