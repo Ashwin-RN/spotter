@@ -85,8 +85,9 @@ def test_a_weigh_in_dated_after_today_is_still_shown(user):
     with db.session_scope() as s:
         s.add(Bodyweight(user_id=user.id, date=later, kg=60, logged_by="web", dedupe_key="f" * 64))
     r = weigh(user, 80)
-    assert r["recent"] == [{"date": later.isoformat(), "kg": 60}, {"date": users.today_for(user).isoformat(), "kg": 80}]
-    assert r["trend"]["weigh_ins"] == 2 and r["trend"]["latest"]["date"] == later.isoformat()
+    # Both count as today's; the one logged just now is the latest, and each shows its real date.
+    assert r["recent"] == [{"date": users.today_for(user).isoformat(), "kg": 80}, {"date": later.isoformat(), "kg": 60}]
+    assert r["trend"]["weigh_ins"] == 2 and r["trend"]["latest"] == {"date": users.today_for(user).isoformat(), "kg": 80}
 
 
 def test_dates_more_than_two_years_back_are_refused(user):

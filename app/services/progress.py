@@ -6,7 +6,7 @@ get_progress(user_id, exercise=None)
     Without: one line per lift the person has logged, and every open goal.
     Every number comes from app.metrics, through lifts.history and goals.goal_numbers.
 
-lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals)
+lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals, today)
     The data app.charts draws, from the same numbers.
 """
 
@@ -69,10 +69,10 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
             only, _ = rules.match_exercise(exercise, names)
             if only is None:
                 return rules.unknown_exercise(exercise, names)
-        history = lifts.history(s, user.id)
+        history = lifts.history(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                .order_by(Goal.id).options(selectinload(Goal.exercise))))
-        weighed = body.weigh_ins(s, user.id) if any(g.kind == "bodyweight" for g in goals) else []
+        weighed = body.weigh_ins(s, user.id, today) if any(g.kind == "bodyweight" for g in goals) else []
         numbers = goal_numbers(goals, history, weighed, today)
 
         if only is not None:
@@ -123,17 +123,21 @@ def lift_chart(lift_history: dict, numbers: list[dict], lift: str | None = None)
     }
 
 
-def bodyweight_chart(weigh_ins: list, goals: list[Goal]) -> dict | None:
+def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date) -> dict | None:
     """Data for bodyweight_svg: weigh-ins, the 7-day average at each, the open bodyweight goal.
-    None with fewer than 2 weigh-ins. Every weigh-in is drawn, whatever its date."""
-    pts = [(b.date, b.kg) for b in weigh_ins]
+    None with fewer than 2 weigh-ins. Every weigh-in is drawn, whatever its date, in the one order
+    and labelled with its real date. Each average is the 7 days ending on that weigh-in's effective
+    date, over effective dates, so the last one is bodyweight_now."""
+    pts = metrics.in_order([(b.date, b.kg) for b in weigh_ins], today)
+    aged = [(metrics.on_or_before(d, today), kg) for d, kg in pts]
     if len(pts) < 2:
         return None
     goal = next((g for g in goals if g.kind == "bodyweight" and g.status == "open" and g.target_value is not None),
                 None)
     return {
         "points": [{"date": d.isoformat(), "kg": kg} for d, kg in pts],
-        "average": [{"date": d.isoformat(), "kg": metrics.bodyweight_average(pts, d)} for d, _ in pts],
+        "average": [{"date": d.isoformat(), "kg": metrics.bodyweight_average(aged, metrics.on_or_before(d, today))}
+                    for d, _ in pts],
         "latest": {"date": pts[-1][0].isoformat(), "kg": pts[-1][1]},
         "goal": None if goal is None else {
             "target_kg": goal.target_value, "target_date": goal.target_date.isoformat() if goal.target_date else None},

@@ -5,13 +5,16 @@ log_lifts(user_id, data, by)
     sets [{exercise, weight_kg, reps}] (1 to 60), notes (optional, up to 2,000 characters),
     allow_repeat (optional).
     Sets are numbered per exercise in the order given. New bests are found against every earlier
-    set of each lift, on or before the session's date.
+    set of each lift: every session that comes before this one in the one order (see
+    metrics.on_or_before). For a session dated today that is every session, a later-dated one
+    included; for a back-dated session, the ones on or before its date.
     The duplicate guard: the same date, notes and sets as a live session logged in the last
     10 minutes returns that session with duplicate true, and nothing is written.
 
-history(s, user_id)
-    Every live session, whatever its date, worked through in date order: one point per session per lift
-    (that session's best estimated max), the best set, and the new bests with their dates.
+history(s, user_id, today)
+    Every live session, whatever its date, worked through in the one order (effective date, then
+    id; see metrics.on_or_before): one point per session per lift (that session's best estimated
+    max), the best set, and the new bests with their dates. today orders; it never drops a row.
 """
 
 from datetime import date
@@ -62,21 +65,22 @@ def _links(on: date, lifts: list[str]) -> dict:
             "progress": {lift: links.page("progress_lift", lift=lift) for lift in lifts}}
 
 
-def history(s: Session, user_id: int) -> dict:
-    """Per lift, from the person's live sessions, in (date, id) order. Every value from metrics.
-    No session is left out for its date: one after today (after a change of time zone) is the latest.
+def history(s: Session, user_id: int, today: date) -> dict:
+    """Per lift, from the person's live sessions, in the one order: (effective date, id). Every
+    value from metrics. No session is left out for its date: one after today (after a change of
+    time zone) counts as today's, and sits after the sessions logged before it today.
 
     sessions:  the sessions used, oldest first
     points:    {lift: [(date, session best)]}   one point per session with a set of 1 to 10 reps
     logged:    {lift: sessions that include the lift, at any reps}
-    last:      {lift: the latest date it was trained}
+    last:      {lift: the real date of the latest session (in the one order) that trained it}
     best_set:  {lift: {weight_kg, reps, date, estimated_max_kg}}
     bests:     {lift: [{date, exercise, kind, value, previous, session_id}]}
     """
-    sessions = list(s.scalars(
+    sessions = sorted(s.scalars(
         select(LiftSession).where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None))
-        .order_by(LiftSession.date, LiftSession.id)
-        .options(selectinload(LiftSession.sets).selectinload(LiftSet.exercise))))
+        .options(selectinload(LiftSession.sets).selectinload(LiftSet.exercise))),
+        key=lambda t: metrics.order_key(t.date, t.id, today))
     points: dict[str, list[tuple[date, float]]] = {}
     logged: dict[str, int] = {}
     last: dict[str, date] = {}
@@ -139,13 +143,17 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
                         "new_bests": [], "summary": f"Already logged: lift session {first.id}.",
                         "note": duplicate_note("session"), "links": _links(first.date, lifts)}
 
-        # New bests against every earlier set of these lifts, on or before this date.
+        # New bests against every set that comes before this session in the one order: every
+        # session whose effective date is on or before this one's (all logged before it). For a
+        # session dated today that is every session; a later-dated one counts as today's.
         name_of = {e.id: name for name, e in by_name.items()}
         prior: dict[str, list[tuple[float, int]]] = {}
-        for exercise_id, weight, reps in s.execute(
-                select(LiftSet.exercise_id, LiftSet.weight_kg, LiftSet.reps).join(LiftSession)
-                .where(LiftSession.user_id == user.id, LiftSession.deleted_at.is_(None), LiftSession.date <= on,
-                       LiftSet.exercise_id.in_({k[0] for k in keyed}))):
+        earlier = select(LiftSet.exercise_id, LiftSet.weight_kg, LiftSet.reps).join(LiftSession).where(
+            LiftSession.user_id == user.id, LiftSession.deleted_at.is_(None),
+            LiftSet.exercise_id.in_({k[0] for k in keyed}))
+        if on < today:
+            earlier = earlier.where(LiftSession.date <= on)
+        for exercise_id, weight, reps in s.execute(earlier):
             prior.setdefault(name_of[exercise_id], []).append((weight, reps))
         grouped: dict[str, list[tuple[float, int]]] = {}
         for x in sets:

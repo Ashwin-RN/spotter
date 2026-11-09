@@ -5,7 +5,7 @@
 Dates after today. A write never accepts one, but a change of time zone can leave an entry dated
 after the person's new today. Such an entry is their most recent one, so nothing here drops it:
 there is no upper bound on dates, and for any "how long ago" or any window ending today, a date
-after today counts as today (on_or_before). Real dates are kept for order and for display.
+after today counts as today (on_or_before). See on_or_before for the one ordering rule.
 
 Strength
   epley(weight_kg, reps) -> float | None
@@ -27,6 +27,7 @@ Trends
              current=None)
       -> {"slope_per_week", "projected", "status", "points_used", "latest", "weeks_left", "needed_per_week"} | None
       status: "reached", "on track" or "behind". current replaces the last point as "where the person is now".
+  projection_gap(points, today) -> str | None     why there is no line, in words
   reached(value, target, lower_is_better), weeks_left(goal_date, today),
   needed_per_week(current, target, goal_date, today, lower_is_better)
   bodyweight_average(weigh_ins: [(date, kg)], end, days=7) -> float | None
@@ -48,8 +49,33 @@ WEEKLY_CHART_WEEKS = 8
 
 
 def on_or_before(d: date, today: date) -> date:
-    """The date used for windows and ages: the entry's own date, or today when it is later."""
+    """An entry's effective date: its own date, or today when it is later. Windows and ages use it.
+
+    The ordering rule. Entries are ordered by effective date: the entry's own date, or today when
+    it is later. Within one effective date, by the order they were logged (id). "Latest",
+    "previous", "prior" and "newest first" all mean this order. Real dates are still what is shown.
+
+    The readers (app.services) put rows in this order; the functions here take (date, value)
+    points in the caller's order and re-sort them only by effective date, stably (in_order), so
+    the caller's order decides ties.
+
+    Known and accepted: the next day, a later-dated entry is back at its real date, so two entries
+    logged on the same evening can swap places. No value changes; only which session is credited
+    first with a new best.
+    """
     return min(d, today)
+
+
+def order_key(d: date, entry_id: int, today: date) -> tuple[date, int]:
+    """The sort key of the one order, for a stored entry: (effective date, id)."""
+    return on_or_before(d, today), entry_id
+
+
+def in_order(points: list[tuple[date, float]], today: date) -> list[tuple[date, float]]:
+    """The points in the one order: stably by effective date, so ties keep the caller's order.
+    Points with no date or value are left out. Each keeps its real date."""
+    return sorted(((d, v) for d, v in points if d is not None and v is not None),
+                  key=lambda p: on_or_before(p[0], today))
 
 
 # ---------------------------------------------------------------- strength
@@ -79,7 +105,7 @@ def recent_best(points: list[tuple[date, float]], today: date, days: int = RECEN
     value. None with no points. A point after today counts as today.
 
     One light session does not pull it down, and a best from months ago does not hold it up."""
-    pts = sorted((d, v) for d, v in points if d is not None and v is not None)
+    pts = in_order(points, today)
     if not pts:
         return None
     start = today - timedelta(days=days - 1)
@@ -215,9 +241,8 @@ def projection(points: list[tuple[date, float]], today: date, goal_target: float
     Without a goal: projected, status, weeks_left and needed_per_week are None.
     """
     start = today - timedelta(days=PROJECTION_DAYS)
-    # In date order (a point after today is the latest), placed on the line at on_or_before(today).
-    pts = [(on_or_before(d, today), v) for d, v in sorted(
-        (d, v) for d, v in points if d is not None and v is not None) if d >= start]
+    # In the one order (in_order), each placed on the line at its effective date.
+    pts = [(on_or_before(d, today), v) for d, v in in_order(points, today) if on_or_before(d, today) >= start]
     if len(pts) < PROJECTION_MIN_POINTS or len({d for d, _ in pts}) < 2:
         return None
     x0 = pts[0][0]
@@ -243,6 +268,17 @@ def projection(points: list[tuple[date, float]], today: date, goal_target: float
     return out
 
 
+def projection_gap(points: list[tuple[date, float]], today: date) -> str | None:
+    """Why projection() draws no line, in words; None when it draws one."""
+    start = today - timedelta(days=PROJECTION_DAYS)
+    days = [on_or_before(d, today) for d, _ in in_order(points, today) if on_or_before(d, today) >= start]
+    if len(days) < PROJECTION_MIN_POINTS:
+        return f"A projection needs {PROJECTION_MIN_POINTS} points in the last {PROJECTION_DAYS // 7} weeks."
+    if len(set(days)) < 2:
+        return "A projection needs points on at least 2 different days."
+    return None
+
+
 def bodyweight_average(weigh_ins: list[tuple[date, float]], end: date,
                        days: int = BODYWEIGHT_AVG_DAYS) -> float | None:
     """Mean of the weigh-ins dated end-6 .. end (7 calendar days ending on `end`), 2 dp.
@@ -264,13 +300,14 @@ def bodyweight_now(weigh_ins: list[tuple[date, float]], today: date) -> float | 
     average = bodyweight_average(_aged(weigh_ins, today), today)
     if average is not None:
         return average
-    pts = sorted((d, kg) for d, kg in weigh_ins if d is not None and kg is not None)
+    pts = in_order(weigh_ins, today)
     return pts[-1][1] if pts else None
 
 
 def bodyweight_trend(weigh_ins: list[tuple[date, float]], today: date) -> dict | None:
     """How body weight is moving. None with no weigh-ins. A weigh-in after today counts as today's
-    for the averages; first and latest keep their own dates.
+    for the averages. first and latest are first and last in the one order (in_order), shown with
+    their real dates.
 
     "7-day average": the 7-day average ending today against the one ending 28 days ago
     (today-34 .. today-28), when both windows have a weigh-in. Daily weight swings a lot; the
@@ -279,7 +316,7 @@ def bodyweight_trend(weigh_ins: list[tuple[date, float]], today: date) -> dict |
     "single weigh-in": only one so far; change_kg is None.
     Returns {method, change_kg, now_avg, then_avg, first {date, kg}, latest {date, kg}, weigh_ins}.
     """
-    pts = sorted((d, kg) for d, kg in weigh_ins if d is not None and kg is not None)
+    pts = in_order(weigh_ins, today)
     if not pts:
         return None
     aged = _aged(pts, today)

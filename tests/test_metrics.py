@@ -5,7 +5,8 @@ from datetime import date, timedelta
 import pytest
 
 from app.metrics import (
-    bodyweight_average, bodyweight_now, bodyweight_trend, days_since_last, epley, prs, projection, recent_best,
+    bodyweight_average, bodyweight_now, bodyweight_trend, days_since_last, epley, in_order, order_key, prs,
+    projection, projection_gap, recent_best,
     session_best, sessions_vs_target, weekly_sessions,
 )
 
@@ -281,3 +282,32 @@ def test_bodyweight_trend_averages_then_simple_change_then_single():
     assert t["method"] == "simple change" and t["change_kg"] == 1.5 and t["first"]["kg"] == 80.0
     assert bodyweight_trend(recent[:1], today)["method"] == "single weigh-in"
     assert bodyweight_trend([], today) is None
+
+
+# ---------------------------------------------------------------- the one order
+
+def test_in_order_sorts_by_effective_date_and_keeps_the_callers_order_for_ties():
+    later = TODAY + timedelta(days=1)
+    pts = [(ago(3), 82.0), (later, 80.0), (TODAY, 81.0)]   # the caller's order: 80 logged before 81
+    assert in_order(pts, TODAY) == [(ago(3), 82.0), (later, 80.0), (TODAY, 81.0)]
+    assert in_order([(later, 1.0), (ago(1), 2.0)], TODAY) == [(ago(1), 2.0), (later, 1.0)]
+    assert order_key(later, 7, TODAY) == (TODAY, 7)
+
+
+def test_latest_means_last_in_the_one_order():
+    later = TODAY + timedelta(days=1)
+    pts = [(ago(40), 90.0), (later, 80.0), (TODAY, 81.0)]
+    t = bodyweight_trend(pts, TODAY)
+    assert t["latest"] == {"date": TODAY.isoformat(), "kg": 81.0} and t["change_kg"] == -9.0
+    assert bodyweight_now([(ago(20), 70.0), (ago(10), 71.0)], TODAY) == 71.0
+    assert recent_best([(ago(60), 150.0), (ago(40), 120.0)], TODAY) == 120.0
+    line = projection([(ago(21), 100), (ago(14), 101), (later, 103), (TODAY, 102)], TODAY)
+    assert line["latest"] == 102
+
+
+def test_projection_gap_says_why_there_is_no_line():
+    assert projection_gap([(TODAY, 1)] * 3, TODAY) == "A projection needs 4 points in the last 6 weeks."
+    same_day = [(TODAY, 1), (TODAY, 2), (TODAY + timedelta(days=1), 3), (TODAY, 4)]
+    assert projection(same_day, TODAY) is None
+    assert projection_gap(same_day, TODAY) == "A projection needs points on at least 2 different days."
+    assert projection_gap(LIFT, TODAY) is None

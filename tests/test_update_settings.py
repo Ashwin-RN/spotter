@@ -9,7 +9,10 @@ from sqlalchemy.dialects import sqlite
 
 from app import db, services, users
 from app.models import Bodyweight, User
+from app.metrics import bodyweight_now, epley
+from app.services import body
 from app.services.common import lock_statement
+from app.services.progress import bodyweight_chart
 
 KEYS = {"time_zone", "today", "changed", "summary", "links"}
 
@@ -179,3 +182,115 @@ def test_without_the_alias_data_claude_stores_an_old_name_as_given(user, monkeyp
         assert zone(user, "Asia/Calcutta")["time_zone"] == "Asia/Calcutta"
     finally:
         users._zone_tables.cache_clear()
+
+
+# ---------------------------------------------------------------- after a change of zone: the one order
+
+NOON_9 = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+
+
+def clock(monkeypatch, when):
+    monkeypatch.setattr(db, "utcnow", lambda: when)
+
+
+def squat(user, kg, on=None):
+    data = {"sets": [{"exercise": "Back Squat", "weight_kg": kg, "reps": 5}]}
+    if on:
+        data["date"] = on
+    return services.log_lifts(user.id, data, "claude")
+
+
+def far_side_then_back(user, monkeypatch):
+    """The reviewer's steps: log on the far side of the date line, then move the zone back a day."""
+    clock(monkeypatch, NOON_9)
+    assert zone(user, "Pacific/Kiritimati")["today"] == "2026-11-10"
+    for on, kg in (("2026-10-20", 90), ("2026-10-27", 95), ("2026-11-03", 100)):
+        assert "error" not in squat(user, kg, on)
+    heavy = squat(user, 120)                                           # dated 11-10
+    services.log_bodyweight(user.id, {"kg": 82, "date": "2026-11-05"}, "web")
+    services.log_bodyweight(user.id, {"kg": 80}, "web")                # dated 11-10
+    assert heavy["session"]["date"] == "2026-11-10"
+    assert zone(user, "Pacific/Pago_Pago")["today"] == "2026-11-09"
+    return heavy
+
+
+def test_a_session_after_a_later_dated_one_is_compared_with_it(user, monkeypatch):
+    heavy = far_side_then_back(user, monkeypatch)
+    light = squat(user, 110)                                           # dated 11-09, logged after the 120
+    assert light["session"]["date"] == "2026-11-09"
+    assert light["new_bests"] == [] and "New best" not in light["summary"]
+    one = services.get_progress(user.id, "Back Squat")["lift"]
+    assert one["current_estimated_max_kg"] == epley(120, 5) and one["best_set"]["weight_kg"] == 120
+    assert all(b["previous"] < epley(120, 5) or b["kind"] == "weight" for b in one["bests"])
+    assert [b["value"] for b in one["bests"]][-2:] == [epley(120, 5), 120]  # the 120 was the last new best
+    assert one["last_trained"] == "2026-11-09"                         # the latest in the one order
+    nxt = squat(user, 125)                                             # the next best is measured from the 120
+    assert {(b["kind"], b["previous"]) for b in nxt["new_bests"]} == {("estimated_max", epley(120, 5)),
+                                                                       ("weight", 120)}
+    assert heavy["id"] < light["id"] < nxt["id"]
+
+
+def test_a_back_dated_session_leaves_later_dated_ones_out(user, monkeypatch):
+    far_side_then_back(user, monkeypatch)
+    back = squat(user, 105, "2026-11-05")
+    assert {(b["kind"], b["previous"]) for b in back["new_bests"]} == {("estimated_max", epley(100, 5)),
+                                                                        ("weight", 100)}
+
+
+def test_the_weigh_in_logged_just_now_is_the_latest(user, monkeypatch):
+    far_side_then_back(user, monkeypatch)
+    now = services.log_bodyweight(user.id, {"kg": 81}, "web")          # dated 11-09, logged after the 80
+    assert now["recent"][0] == {"date": "2026-11-09", "kg": 81}
+    assert now["recent"][1] == {"date": "2026-11-10", "kg": 80}
+    trend = now["trend"]
+    assert trend["latest"] == {"date": "2026-11-09", "kg": 81} and trend["method"] == "simple change"
+    assert trend["change_kg"] == -1.0                                  # 82 first, 81 latest
+    goal = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75, "target_date": "2026-12-31"}, "web")
+    assert goal["progress"]["latest"] == 81.0 == goal["goal"]["start_value"]
+
+
+def test_the_chart_shows_the_later_dated_weigh_in_and_its_average_agrees(user, monkeypatch):
+    far_side_then_back(user, monkeypatch)
+    services.log_bodyweight(user.id, {"kg": 81}, "web")
+    today = users.today_for(stored(user.id))
+    with db.new_session() as s:
+        weighed = body.weigh_ins(s, user.id, today)
+        chart = bodyweight_chart(weighed, [], today)
+    assert [p["date"] for p in chart["points"]] == ["2026-11-05", "2026-11-10", "2026-11-09"]
+    assert chart["latest"] == {"date": "2026-11-09", "kg": 81}
+    now = bodyweight_now([(b.date, b.kg) for b in weighed], today)
+    assert chart["average"][-1]["kg"] == now == 81.0
+
+
+def test_the_start_is_named_as_the_7_day_average_when_the_only_recent_weigh_in_is_later_dated(user, monkeypatch):
+    clock(monkeypatch, NOON_9)
+    zone(user, "Pacific/Kiritimati")
+    services.log_bodyweight(user.id, {"kg": 90, "date": "2026-10-20"}, "web")
+    services.log_bodyweight(user.id, {"kg": 80}, "web")                # dated 11-10
+    zone(user, "Pacific/Pago_Pago")                                    # today 11-09
+    r = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75, "start_value": 99,
+                                    "target_date": "2026-12-31"}, "web")
+    assert r["goal"]["start_value"] == 80.0
+    assert "(the 7-day average)" in r["warnings"][0]
+
+
+def test_order_free_numbers_do_not_move_as_the_days_pass(user, monkeypatch):
+    far_side_then_back(user, monkeypatch)
+    squat(user, 110)
+    services.log_bodyweight(user.id, {"kg": 81}, "web")
+
+    def numbers():
+        one = services.get_progress(user.id, "Back Squat")["lift"]
+        with db.new_session() as s:
+            today = users.today_for(s.get(User, user.id))
+            weighed = [(b.date, b.kg) for b in body.weigh_ins(s, user.id, today)]
+        return today.isoformat(), one["current_estimated_max_kg"], one["best_set"], bodyweight_now(weighed, today)
+
+    first = numbers()
+    clock(monkeypatch, datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc))   # Pago Pago is UTC-11: 11-10
+    second = numbers()
+    clock(monkeypatch, datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc))   # 11-11: every entry at its real date
+    third = numbers()
+    assert [n[0] for n in (first, second, third)] == ["2026-11-09", "2026-11-10", "2026-11-11"]
+    assert first[1:] == second[1:] == third[1:]
+    assert first[1] == epley(120, 5) and first[2]["weight_kg"] == 120 and first[3] == 81.0

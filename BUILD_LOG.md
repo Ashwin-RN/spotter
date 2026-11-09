@@ -174,6 +174,15 @@ The first live sign-in showed the mistake at once. The Settings page asked the p
 | Old zone names that browsers still report resolved to a neighbouring country's city: nine of the 100 old names, checked by hand | A table of the nine, and a test that fails when the zone data gains an old name nobody has checked |
 | Eight behaviours no test noticed, four of them the script's loop guards | A test each. Every new test was broken on purpose and went red |
 
+**The fixes were reviewed too, and one was half a fix.** The reviewer undid every fix and saw a test go red each time. But the first one had only fixed what is shown. Anything that depends on order still used the stored date, so after a zone change moved today back a day:
+
+| What went wrong | Example |
+|---|---|
+| A false new best | 120 kg already logged and dated tomorrow. Then 110 kg logged today was announced as a new best, while progress showed 120 |
+| A stale "latest" weigh-in | 80 kg dated tomorrow, then 81 kg today. The trend called 80 the latest, while the average used 81 |
+
+The fix is one ordering rule, written once and used by every reader: entries are ordered by effective date (the entry's own date, or today when it is later), and within a date by the order they were logged. "Latest", "previous" and "newest first" all mean that order. Stored dates are still what is shown.
+
 ### What this stage has taught so far
 
 - **The host did not read the repo's deploy file.** The first deploy of package A succeeded and the database stayed empty: the migration step had never run. The host has retired config files for new services, so the start command, the pre-deploy step and the health check now live in its dashboard. The check that caught it was looking at the database itself, not at the green deploy.
@@ -183,7 +192,7 @@ The first live sign-in showed the mistake at once. The Settings page asked the p
 - **SQLite accepts what Postgres refuses.** A NUL character in text, an id past 32 bits: the tests ran green and the host would have crashed. A fuzz run and reading the SQL as Postgres would see it found both; the test suite could not.
 - **A passing isolation test does not prove every query is scoped.** With the owner filter removed from two helper queries, the suite stayed green. Undoing each filter and watching for a red test is what found them.
 - **Walk the first-use path before fixing a stage's function list.** Every stage 2 test passed, every review came back sound, and the first thing a real person saw was a form asking for an IANA zone name. No test or reviewer was asked "what does a new person have to do by hand, and could the software do it?" That question now opens every stage contract.
-- **A safe filter stops being safe when the thing it compares against can move.** Every read kept only entries dated up to today. That hid nothing while today only went forward. Letting the time zone change let today go back a day, and yesterday's filter hid this morning's weigh-in.
+- **A safe filter stops being safe when the thing it compares against can move.** Every read kept only entries dated up to today. That hid nothing while today only went forward. Letting the time zone change let today go back a day, and yesterday's filter hid this morning's weigh-in. Removing the filter was half the fix: the same assumption sat in every sort, and it took a second review to find it there.
 - **A fix is new code, and it needs its own review.** The first review of the services found the crashes. The review of the fixes found a contradiction the fixes themselves had introduced.
 - **A library can log on your behalf.** The MCP library set up logging at INFO when the server was built, and one of its lines repeated a name chosen by the caller. Spotter's own "no content in the logs" rule did not cover lines it never wrote, until a reviewer read the real log.
 - **Matching a shell command with one pattern does not work.** The command arrives inside a JSON string, so quotes are escaped, and no single pattern told `bash -c "git commit"` from `--grep="git commit"`. Splitting into shell words did.

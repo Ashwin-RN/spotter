@@ -335,3 +335,11 @@ def test_set_goal_query_count(user):
     finally:
         event.remove(engine, "before_cursor_execute", counter)
     assert "error" not in r and count[0] <= 15, count[0]
+
+
+def test_points_on_one_day_get_a_note_that_says_so(user):
+    for kg in (60, 62.5, 65, 67.5):                                # four sessions, all today
+        squat(user, 0, kg)
+    r = goal(user, kind="lift", exercise="Back Squat", target_value=100, target_date=day(user, 30))
+    assert r["progress"]["projection"] is None
+    assert r["progress"]["note"] == "A projection needs points on at least 2 different days."

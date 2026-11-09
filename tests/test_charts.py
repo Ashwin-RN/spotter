@@ -87,8 +87,8 @@ def day(user, offset):
 def numbers_for(user):
     today = users.today_for(user)
     with db.new_session() as s:
-        history = lifts.history(s, user.id)
-        weighed = body.weigh_ins(s, user.id)
+        history = lifts.history(s, user.id, today)
+        weighed = body.weigh_ins(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                .options(selectinload(Goal.exercise))))
         return history, weighed, goals, goal_numbers(goals, history, weighed, today), today
@@ -122,7 +122,7 @@ def test_the_bodyweight_chart_for_a_weight_loss_goal(make_user):
         services.log_bodyweight(user.id, {"kg": kg, "date": day(user, -days_ago)}, "claude")
     services.set_goal(user.id, {"kind": "bodyweight", "target_value": 82, "target_date": day(user, 60)}, "claude")
     _, weighed, goals, _, today = numbers_for(user)
-    chart = bodyweight_chart(weighed, goals)
+    chart = bodyweight_chart(weighed, goals, today)
     assert len(chart["points"]) == 6 and len(chart["average"]) == 6
     assert chart["goal"]["target_kg"] == 82 and chart["latest"]["kg"] == 85.5
     assert chart["average"][-1]["kg"] == bodyweight_average(
@@ -137,5 +137,5 @@ def test_no_bodyweight_chart_under_two_weigh_ins(make_user):
     user = make_user()
     services.log_bodyweight(user.id, {"kg": 80}, "claude")
     _, weighed, goals, _, today = numbers_for(user)
-    assert bodyweight_chart(weighed, goals) is None
+    assert bodyweight_chart(weighed, goals, today) is None
     assert str(bodyweight_svg(None)) == ""

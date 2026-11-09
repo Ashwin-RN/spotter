@@ -99,9 +99,7 @@ def goal_numbers(goals: list[Goal], lift_history: dict, weigh_ins: list, today: 
             "needed_per_week": needed,
             "actual_per_week": p["slope_per_week"] if p else None,
             "projection": p,
-            "note": None if p or status == "reached" else (
-                f"A projection needs {metrics.PROJECTION_MIN_POINTS} points in the last "
-                f"{metrics.PROJECTION_DAYS // 7} weeks."),
+            "note": None if p or status == "reached" else metrics.projection_gap(points, today),
         })
     return out
 
@@ -125,8 +123,8 @@ def _target(value, kind: str) -> tuple[float | None, dict | None]:
 
 
 def _source(kind: str, points: list, today: date) -> str:
-    """Which measure _now_value used, in words, for messages."""
-    past = sorted(d for d, _ in points)
+    """Which measure _now_value used, in words, for messages. "Latest" is last in the one order."""
+    past = [d for d, _ in metrics.in_order(points, today)]
     aged = [metrics.on_or_before(d, today) for d in past]
     if kind == "lift":
         recent = [d for d in aged if d >= today - timedelta(days=metrics.RECENT_BEST_DAYS - 1)]
@@ -270,8 +268,8 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
         if errors:
             return rules.combine(errors)
 
-        lift_history = lifts.history(s, user.id)
-        weighed = body.weigh_ins(s, user.id)
+        lift_history = lifts.history(s, user.id, today)
+        weighed = body.weigh_ins(s, user.id, today)
         if goal is None:
             start, source, err = _start(kind, exercise, lift_history, weighed, data.get("start_value"), today,
                                         warnings)
