@@ -19,7 +19,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import InterfaceError, OperationalError
 from starlette.testclient import TestClient
 
-from app import db, links, users, web, web_auth
+from app import db, links, services, users, web, web_auth
 from app.config import Settings
 from app.main import create_app
 from app.models import User
@@ -430,14 +430,42 @@ def test_the_time_zone_form_sets_a_valid_zone(client):
     assert "Time zone saved." in page and "Asia/Kolkata" in page
 
 
-def test_the_time_zone_form_refuses_a_bad_zone_with_the_fix(client):
+def test_the_time_zone_form_refuses_a_bad_zone_in_its_own_words(client):
     sign_in(client)
     r = client.post("/settings", data={"time_zone": "Mars/Olympus<b>", "csrf_token": csrf_of(client)})
     assert r.status_code == 400
-    assert "is not a time zone name Spotter knows" in r.text
-    assert "Use an IANA name such as Asia/Kolkata" in r.text
-    assert "Mars/Olympus&lt;b&gt;" in r.text and "Olympus<b>" not in r.text
+    assert "That time zone was not recognised, so nothing was changed." in r.text
+    assert "Choose your time zone from the list." in r.text
+    assert "IANA" not in r.text and "worked out from the city" not in r.text  # the service's text is for Claude
+    assert "Olympus" not in r.text  # what was sent is not repeated
     assert only_user().time_zone is None
+
+
+@pytest.mark.parametrize("sent", ["Kolkata", "EST", "", "x" * 100, "Asia/Kolkata\u0000"])
+def test_every_refusal_reads_the_same_on_the_page(client, sent):
+    sign_in(client)
+    r = set_zone(client, sent)
+    assert r.status_code == 400 and "That time zone was not recognised" in r.text
+    assert "Closest zone" not in r.text and "Shorten" not in r.text
+
+
+def test_the_web_stores_a_zone_through_the_one_write_path(client, monkeypatch):
+    sign_in(client)
+    token = csrf_of(client)
+    calls = []
+    real = services.update_settings
+    monkeypatch.setattr(services, "update_settings", lambda *args: calls.append(args) or real(*args))
+    client.post("/settings", data={"time_zone": "Asia/Calcutta", "csrf_token": token})
+    assert calls == [(only_user().id, {"time_zone": "Asia/Calcutta"}, "web")]
+    assert only_user().time_zone == "Asia/Kolkata"
+
+
+def test_the_same_zone_again_is_a_success(client):
+    sign_in(client)
+    set_zone(client, "Europe/London")
+    r = set_zone(client, "europe/london")
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=time_zone"
+    assert only_user().time_zone == "Europe/London"
 
 
 # ---------------------------------------------------------------- failing closed
@@ -524,7 +552,7 @@ def test_any_other_error_is_a_500_not_the_database_page(web_client, monkeypatch)
     def bug(*args, **kwargs):
         raise AttributeError("a real bug")
 
-    monkeypatch.setattr(users, "set_time_zone", bug)
+    monkeypatch.setattr(services, "update_settings", bug)
     r = client.post("/settings", data={"time_zone": "UTC", "csrf_token": csrf_of(client)})
     assert r.status_code == 500 and "cannot reach its database" not in r.text
 
@@ -739,3 +767,242 @@ def test_placeholder_pages_say_not_built_yet_and_never_echo_the_address(client):
 
 def test_the_placeholder_list_names_only_pages_links_knows(client):
     assert set(web.PLACEHOLDERS) <= set(links.NAMES)
+
+
+# ---------------------------------------------------------------- the time zone finds itself
+
+AUTO_FORM = 'id="auto-time-zone"'
+SCRIPT_TAG = '<script src="/static/time-zone.js"></script>'
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
+       "base-uri 'none'; frame-ancestors 'none'")
+
+
+def options(page: str) -> list[tuple[str, bool]]:
+    """(value, selected) for every <option> in the page."""
+    return [(value, bool(selected)) for value, selected in
+            re.findall(r'<option value="([^"]*)"( selected)?>', page)]
+
+
+def set_zone(client: TestClient, zone: str):
+    return client.post("/settings", data={"time_zone": zone, "csrf_token": csrf_of(client)})
+
+
+def test_a_person_with_no_zone_gets_the_hidden_form_and_the_script_on_every_page(client):
+    sign_in(client)
+    token = session_of(client)["csrf"]
+    for path in ("/", "/settings", "/goals", "/day/2026-11-09"):
+        page = client.get(path).text
+        assert 'data-time-zone="missing"' in page and AUTO_FORM in page and SCRIPT_TAG in page, path
+        form = re.search(r'<form id="auto-time-zone" method="post" action="/settings" hidden>(.*?)</form>',
+                         page, re.S).group(1)
+        assert f'name="csrf_token" value="{token}"' in form
+        assert '<input type="hidden" name="time_zone" value="">' in form
+
+
+def test_a_person_with_a_zone_gets_neither(client):
+    sign_in(client)
+    set_zone(client, "Asia/Kolkata")
+    for path in ("/", "/settings", "/goals"):
+        page = client.get(path).text
+        assert "data-time-zone" not in page and AUTO_FORM not in page and "<script" not in page, path
+
+
+def test_signed_out_pages_carry_no_script(client):
+    for page in (client.get("/").text, client.get("/sign-in").text):
+        assert "<script" not in page and AUTO_FORM not in page
+
+
+def test_the_script_is_served_as_javascript_with_the_usual_headers(client):
+    r = client.get("/static/time-zone.js")
+    assert r.status_code == 200
+    assert r.headers["content-type"].split(";")[0] in ("text/javascript", "application/javascript")
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["strict-transport-security"] == "max-age=31536000"
+    assert "Intl.DateTimeFormat().resolvedOptions().timeZone" in r.text
+    assert "sessionStorage" in r.text and "form.submit()" in r.text
+
+
+def test_no_page_has_an_inline_script(client):
+    pages = [client.get("/").text]
+    sign_in(client)
+    pages += [client.get(p).text for p in ("/", "/settings", "/goals")]
+    pages.append(set_zone(client, "Not/AZone").text)
+    for page in pages:
+        for attributes, body in re.findall(r"<script([^>]*)>(.*?)</script>", page, re.S):
+            assert attributes == ' src="/static/time-zone.js"' and body == ""
+        assert re.search(r"<[^>]+\son[a-z]+\s*=", page, re.I) is None  # no inline event handlers
+
+
+def test_the_content_security_policy_is_exact(client):
+    responses = [client.get("/"), client.get("/sign-in")]
+    sign_in(client)
+    responses += [client.get("/settings"), client.get("/goals")]
+    for r in responses:
+        assert r.headers["content-security-policy"] == CSP
+
+
+@pytest.mark.parametrize("browser_zone, stored", [
+    ("Asia/Kolkata", "Asia/Kolkata"),
+    ("Asia/Calcutta", "Asia/Kolkata"),  # what some browsers still report for India: stored as its current name
+    ("Europe/Kiev", "Europe/Kyiv"),
+    ("Europe/Oslo", "Europe/Oslo"),  # a country's own zone is never rewritten to another city
+    ("America/Argentina/Buenos_Aires", "America/Argentina/Buenos_Aires"),
+])
+def test_the_browsers_zone_is_saved_like_any_other(client, browser_zone, stored):
+    sign_in(client)
+    r = set_zone(client, browser_zone)
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=time_zone"
+    assert only_user().time_zone == stored
+    page = client.get(r.headers["location"]).text
+    assert [value for value, selected in options(page) if selected] == [stored]
+    assert "Your time zone is set. If it is wrong, choose yours here." in page
+    assert "from your browser or from Claude" not in page
+
+
+@pytest.mark.parametrize("junk", ["", "Mars/Olympus", "EST", "GMT", "Etc/GMT+5", "Kolkata", "<b>x</b>"])
+def test_a_junk_zone_is_not_saved_and_the_list_is_shown(client, junk):
+    sign_in(client)
+    r = set_zone(client, junk)
+    assert r.status_code == 400 and only_user().time_zone is None
+    assert 'class="error"' in r.text and "<b>x</b>" not in r.text
+    assert '<select id="time-zone" name="time_zone" required>' in r.text
+    assert options(r.text)[0] == ("", True) and len(options(r.text)) > 400
+
+
+def test_a_refused_browser_value_is_not_retried_by_the_server(client):
+    sign_in(client)
+    set_zone(client, "Not/AZone")
+    assert only_user().time_zone is None  # the page still offers the script; its flag stops a second try
+
+
+def test_settings_offers_a_list_with_the_current_zone_selected_and_no_typing(client):
+    sign_in(client)
+    set_zone(client, "Europe/London")
+    page = client.get("/settings").text
+    assert '<select id="time-zone" name="time_zone" required>' in page
+    assert re.search(r'<input[^>]*name="time_zone"', page) is None  # no free-text field, no hidden one
+    assert "list=" not in page and "datalist" not in page and "as a name such as" not in page
+    assert [value for value, selected in options(page) if selected] == ["Europe/London"]
+    assert ("", False) not in options(page)
+    assert '<label for="time-zone">Time zone</label>' in page
+
+
+def test_with_no_zone_settings_says_utc_and_asks_for_a_choice(client):
+    sign_in(client)
+    page = client.get("/settings").text
+    assert "No time zone yet, so today is counted in UTC. Choose yours from the list." in page
+    assert '<option value="" selected>Choose your time zone</option>' in page
+    assert options(page)[0] == ("", True) and sum(selected for _, selected in options(page)) == 1
+
+
+def test_every_option_is_a_zone_the_server_accepts(client):
+    sign_in(client)
+    values = [value for value, _ in options(client.get("/settings").text) if value]
+    assert len(values) == len(set(values)) > 400
+    assert set(values) <= users._zone_names()  # every one is a name the zone database holds
+    assert {"Asia/Kolkata", "Europe/Oslo", "America/New_York", "UTC"} <= set(values)
+    assert "Asia/Calcutta" not in values and "US/Eastern" not in values  # obsolete aliases left out
+    for zone in (values[0], values[-1], "UTC"):
+        assert set_zone(client, zone).status_code == 303 and only_user().time_zone == zone
+
+
+def test_the_list_is_grouped_by_region_then_city(client):
+    sign_in(client)
+    page = client.get("/settings").text
+    regions = re.findall(r'<optgroup label="([^"]+)">', page)
+    assert regions[:2] == ["Africa", "America"] and regions[-1] == "Other"
+    assert regions[:-1] == sorted(regions[:-1])
+    europe = re.search(r'<optgroup label="Europe">(.*?)</optgroup>', page, re.S).group(1)
+    labels = re.findall(r">([^<]+)</option>", europe)
+    assert labels == sorted(labels) and "London" in labels
+
+
+def test_every_option_survives_the_one_zone_check_unchanged(client):
+    sign_in(client)
+    values = [value for value, _ in options(client.get("/settings").text) if value]
+    assert len(values) > 400 and all(users.canonical_zone(value) == value for value in values)
+
+
+def test_the_form_is_forgiven_on_the_web_too(client):
+    sign_in(client)
+    assert set_zone(client, "  america/new york ").status_code == 303
+    assert only_user().time_zone == "America/New_York"
+
+
+def test_without_the_zone_table_every_accepted_name_is_offered(monkeypatch):
+    monkeypatch.setattr(users, "_tz_file", lambda name: None)
+    users._zone_tables.cache_clear()
+    web.zone_groups.cache_clear()
+    try:
+        names = web.zone_names()
+        assert len(names) > 500 and "Asia/Calcutta" in names and "EST" not in names
+        assert all(users.canonical_zone(name) == name for name in names)
+    finally:
+        users._zone_tables.cache_clear()
+        web.zone_groups.cache_clear()
+
+
+def test_a_saved_name_the_list_lacks_is_still_shown_selected():
+    groups, selected = web.zone_choices("Etc/GMT+5")
+    assert selected == "Etc/GMT+5" and groups[0][0] == "Saved"
+
+
+def test_an_old_name_already_stored_selects_its_current_entry():
+    groups, selected = web.zone_choices("Asia/Calcutta")
+    assert selected == "Asia/Kolkata" and groups[0][0] != "Saved"
+
+
+
+# ---------------------------------------------------------------- the script's guards, held by reading it
+
+def script_source() -> str:
+    """time-zone.js without its comments, so a guard named in a comment does not count."""
+    text = (web.HERE / "static" / "time-zone.js").read_text(encoding="utf-8")
+    return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+
+
+def test_the_script_keeps_its_guards():
+    js = script_source()
+    send = js.index("form.submit()")
+    # exactly one way out to the server, and no other request of any kind
+    assert js.count("submit(") == 1 and js.count(".submit") == 1
+    for other in ("fetch", "XMLHttpRequest", "sendBeacon", "location", "requestSubmit", "setTimeout", "reload"):
+        assert other not in js, other
+    # it acts only on a page that says the zone is missing
+    marker = re.search(r'if \(!form \|\| document\.body\.getAttribute\("data-time-zone"\) !== "missing"\) return;', js)
+    assert marker and marker.start() < send
+    # no zone from the browser: nothing sent
+    no_zone = re.search(r'if \(typeof zone !== "string" \|\| zone === ""\) return;', js)
+    assert no_zone and no_zone.start() < send
+    # once per browser session: the flag is read, and returns, before anything is sent ...
+    tried = re.search(r'if \(window\.sessionStorage\.getItem\("spotter-time-zone-tried"\)\) return;', js)
+    assert tried and tried.start() < send
+    # ... and is set before the form is sent
+    flag = js.index('window.sessionStorage.setItem("spotter-time-zone-tried", "1");')
+    assert tried.start() < flag < send
+    # a storage call that fails returns without sending
+    guarded = re.search(r"try \{([^{}]*)\} catch \(e\) \{ return; \}", js[tried.start() - 20:send])
+    assert guarded and "getItem" in guarded.group(1) and "setItem" in guarded.group(1)
+
+
+def test_the_offered_list_has_no_old_names(client):
+    sign_in(client)
+    values = [value for value, _ in options(client.get("/settings").text) if value]
+    assert all(users.canonical_zone(value) == value for value in values)
+    assert not {"US/Eastern", "Asia/Calcutta", "Europe/Kiev", "Pacific/Truk"} & set(values)
+    assert "UTC" in values
+
+
+def test_with_no_zone_data_settings_still_offers_utc(client, monkeypatch):
+    sign_in(client)
+    monkeypatch.setattr(users, "_zone_names", lambda: frozenset())
+    monkeypatch.setattr(users, "_tz_file", lambda name: None)
+    users._zone_tables.cache_clear()
+    web.zone_groups.cache_clear()
+    try:
+        page = client.get("/settings").text
+        assert [value for value, _ in options(page)] == ["", "UTC"]
+        assert set_zone(client, "UTC").status_code == 303 and only_user().time_zone == "UTC"
+    finally:
+        users._zone_tables.cache_clear()
+        web.zone_groups.cache_clear()

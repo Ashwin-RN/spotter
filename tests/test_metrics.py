@@ -82,7 +82,9 @@ def test_recent_best_is_the_best_session_of_the_last_28_days():
     assert recent_best([(ago(27), heavy), (TODAY, light)], TODAY) == heavy   # 27 days back is inside
     assert recent_best([(ago(28), heavy), (TODAY, light)], TODAY) == light   # 28 days back is outside
     assert recent_best([(ago(40), heavy), (ago(35), light)], TODAY) == light  # none that recent: the latest
-    assert recent_best([(TODAY + timedelta(days=1), heavy), (ago(3), light)], TODAY) == light  # future ignored
+    # A point after today (left there by a change of time zone) is the most recent of all.
+    assert recent_best([(TODAY + timedelta(days=1), heavy), (ago(3), light)], TODAY) == heavy
+    assert recent_best([(TODAY + timedelta(days=1), light)], TODAY) == light
     assert recent_best([], TODAY) is None
 
 
@@ -92,7 +94,8 @@ def test_days_since_last():
     assert days_since_last([ago(9), ago(12)], TODAY) == 9
     assert days_since_last([TODAY], TODAY) == 0
     assert days_since_last([], TODAY) is None
-    assert days_since_last([TODAY + timedelta(days=2)], TODAY) is None
+    assert days_since_last([TODAY + timedelta(days=2)], TODAY) == 0      # after today counts as today, never negative
+    assert days_since_last([ago(5), TODAY + timedelta(days=1)], TODAY) == 0
 
 
 def test_sessions_vs_target_full_four_weeks():
@@ -122,15 +125,15 @@ def test_sessions_vs_target_none_cases():
     assert sessions_vs_target([TODAY], None, ago(30), TODAY) is None
 
 
-def test_sessions_vs_target_ignores_future_dates():
+def test_sessions_vs_target_counts_a_date_after_today_as_today():
     a = sessions_vs_target([TODAY + timedelta(days=1), ago(1)], 2, ago(7), TODAY)
-    assert a["logged"] == 1 and a["target"] == 2 and a["pct"] == 50
+    assert a["logged"] == 2 and a["target"] == 2 and a["pct"] == 100
 
 
 def test_weekly_sessions_whole_weeks_since():
     dates = [TODAY, ago(6), ago(7), ago(20), TODAY + timedelta(days=1)]
     weeks = weekly_sessions(dates, ago(22), TODAY)
-    assert [w["logged"] for w in weeks] == [1, 1, 2]           # oldest first; the future date is ignored
+    assert [w["logged"] for w in weeks] == [1, 1, 3]           # oldest first; the date after today is this week's
     assert weeks[-1]["end"] == TODAY and weeks[-1]["start"] == ago(6)
     assert weeks[0]["start"] >= ago(22)
     assert len(weekly_sessions(dates, ago(200), TODAY)) == 8
@@ -153,6 +156,13 @@ def test_projection_behind():
     p = projection(LIFT, TODAY, goal_target=100, goal_date=TODAY + timedelta(days=28))
     assert p["status"] == "behind"
     assert p["projected"] == pytest.approx(83.5)
+
+
+def test_a_point_after_today_is_the_latest_and_sits_at_today_on_the_line():
+    pts = [(ago(21), 100), (ago(14), 101), (ago(7), 102), (TODAY + timedelta(days=1), 103)]
+    p = projection(pts, TODAY)
+    assert p["points_used"] == 4 and p["latest"] == 103
+    assert p["slope_per_week"] == projection(pts[:3] + [(TODAY, 103)], TODAY)["slope_per_week"]
 
 
 def test_projection_uses_last_six_weeks_only():
@@ -251,7 +261,8 @@ def test_bodyweight_average_seven_days_ending_on_a_date():
 def test_bodyweight_now_is_the_7_day_average_else_the_latest():
     assert bodyweight_now([(ago(3), 81.08), (TODAY, 79.6)], TODAY) == 80.34
     assert bodyweight_now([(ago(20), 82.0), (ago(10), 81.0)], TODAY) == 81.0   # nothing in the last 7 days
-    assert bodyweight_now([(TODAY + timedelta(days=1), 70.0)], TODAY) is None
+    assert bodyweight_now([(TODAY + timedelta(days=1), 70.0)], TODAY) == 70.0     # after today: today's
+    assert bodyweight_now([(ago(2), 80.0), (TODAY + timedelta(days=1), 81.0)], TODAY) == 80.5
     assert bodyweight_now([], TODAY) is None
 
 
@@ -259,9 +270,12 @@ def test_bodyweight_trend_averages_then_simple_change_then_single():
     today = date(2026, 6, 30)
     four_weeks = [(today - timedelta(days=n), 90.0) for n in (28, 30, 33)] + \
                  [(today - timedelta(days=n), 88.0) for n in (0, 3)]
-    t = bodyweight_trend(four_weeks + [(today + timedelta(days=1), 10.0)], today)
+    t = bodyweight_trend(four_weeks, today)
     assert t["method"] == "7-day average" and t["now_avg"] == 88.0 and t["then_avg"] == 90.0
     assert t["change_kg"] == -2.0 and t["weigh_ins"] == 5
+    later = bodyweight_trend(four_weeks + [(today + timedelta(days=1), 85.0)], today)  # counts in today's average
+    assert later["now_avg"] == 87.0 and later["weigh_ins"] == 6
+    assert later["latest"] == {"date": (today + timedelta(days=1)).isoformat(), "kg": 85.0}  # keeps its own date
     recent = [(today - timedelta(days=10), 80.0), (today - timedelta(days=2), 81.5)]
     t = bodyweight_trend(recent, today)
     assert t["method"] == "simple change" and t["change_kg"] == 1.5 and t["first"]["kg"] == 80.0

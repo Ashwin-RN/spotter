@@ -2,7 +2,7 @@
 
 One module per area, so each later stage adds its own:
 
-  account   whoami, list_exercises
+  account   whoami, update_settings, list_exercises
   lifts     log_lifts
   body      log_bodyweight
   goals     set_goal
@@ -16,7 +16,7 @@ or {error, message, fix}, where the fix says what to send instead. Nothing here 
 site address: links come from app.links. Dates come from users.today_for, times from db.utcnow.
 """
 
-from app.services.account import list_exercises, whoami
+from app.services.account import list_exercises, update_settings, whoami
 from app.services.body import log_bodyweight
 from app.services.common import DUPLICATE_MINUTES
 from app.services.entries import delete_entry, entry_kinds, get_entry, restore_entry
@@ -26,5 +26,5 @@ from app.services.progress import get_progress
 
 __all__ = [
     "DUPLICATE_MINUTES", "delete_entry", "entry_kinds", "get_entry", "get_progress", "list_exercises",
-    "log_bodyweight", "log_lifts", "restore_entry", "set_goal", "whoami",
+    "log_bodyweight", "log_lifts", "restore_entry", "set_goal", "update_settings", "whoami",
 ]

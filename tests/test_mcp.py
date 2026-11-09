@@ -1,4 +1,4 @@
-"""The assembled app through its real endpoints: /health, /mcp, the metadata route, then the six
+"""The assembled app through its real endpoints: /health, /mcp, the metadata route, then the seven
 functions and two resources of stage 2 (stage 1 contract items 1 to 4, 6, 9 to 13, 15; stage 2's MCP surface)."""
 
 import asyncio
@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import func, select
 from starlette.testclient import TestClient
 
-from app import db, mcp_server, services, users
+from app import db, mcp_server, services
 from app.config import Settings
 from app.main import create_app
 from app.mcp_schemas import RESULTS
@@ -246,12 +246,14 @@ def test_spotter_logs_through_its_own_handler_added_once(provider):
     assert logger.level == logging.INFO and logger.propagate is False
 
 
-# ================================================================ stage 2: the six functions
+# ================================================================ stage 2: the seven functions
 
-SIX = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress"]
+FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings"]
 READS = {"whoami", "list_exercises", "get_progress"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
+SETTING_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+SETTINGS = {"update_settings"}
 
 
 def compact(value: Any) -> str:
@@ -299,7 +301,7 @@ def squat(weight: float, reps: int = 5, sets: int = 3) -> list[dict]:
 
 def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     """One of every result shape each function has, through MCP."""
-    seen: dict[str, list[dict]] = {name: [] for name in SIX}
+    seen: dict[str, list[dict]] = {name: [] for name in FUNCTIONS}
 
     def keep(name: str, arguments: dict | None = None) -> dict:
         result = call(client, token, name, arguments)
@@ -331,17 +333,19 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("get_progress", {"exercise": "Back Squat"})
     keep("get_progress")
     keep("set_goal", {"goal_id": lift_goal["id"], "status": "hit"})  # closed: note
-    users.set_time_zone(who["account_id"], "Asia/Kolkata")
+    keep("update_settings", {"time_zone": "Asia/Kolkata"})  # changed
+    keep("update_settings", {"time_zone": "Asia/Kolkata"})  # already set: nothing changed
     keep("whoami")  # a zone is set: no note
     return seen
 
 
-def test_the_function_list_is_exactly_the_six(http):
+def test_the_function_list_is_exactly_the_seven(http):
     tools = tool_list(http, sign())
-    assert [t["name"] for t in tools] == SIX
+    assert [t["name"] for t in tools] == FUNCTIONS
     for tool in tools:
         assert tool["title"] and tool["description"], tool["name"]
-        assert tool["annotations"] == (READ_HINTS if tool["name"] in READS else WRITE_HINTS), tool["name"]
+        hints = READ_HINTS if tool["name"] in READS else SETTING_HINTS if tool["name"] in SETTINGS else WRITE_HINTS
+        assert tool["annotations"] == hints, tool["name"]
         schema = tool["inputSchema"]
         for obj in [schema, *schema.get("$defs", {}).values()]:
             for prop, spec in obj.get("properties", {}).items():
@@ -367,6 +371,7 @@ def test_the_arguments_are_typed_parameters(http):
     assert set(schemas["set_goal"]["properties"]) == {"kind", "exercise", "target_value", "target_date", "text",
                                                       "start_value", "goal_id", "status"}
     assert list(schemas["get_progress"]["properties"]) == ["exercise"]
+    assert list(schemas["update_settings"]["properties"]) == ["time_zone"]
     assert list(schemas["list_exercises"]["properties"]) == ["kind", "category"]
     assert schemas["whoami"]["properties"] == {}
     one_set = schemas["log_lifts"]["$defs"]["SetIn"]
@@ -454,7 +459,7 @@ def test_whoami_notes_the_time_zone_until_one_is_set(http):
     token = sign()
     first = whoami(http, token)
     assert first["time_zone"] is None and "time zone" in first["time_zone_note"]
-    users.set_time_zone(first["account_id"], "Europe/London")
+    services.update_settings(first["account_id"], {"time_zone": "Europe/London"}, "web")
     after = whoami(http, token)
     assert after["time_zone"] == "Europe/London" and "time_zone_note" not in after
 
@@ -567,7 +572,8 @@ def test_no_database_session_is_opened_on_the_event_loop(http, monkeypatch):
     calls = [("whoami", {}), ("list_exercises", {}), ("log_lifts", {"sets": squat(100)}),
              ("log_bodyweight", {"kg": 80}), ("get_progress", {}),
              ("set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150,
-                           "target_date": (date.today() + timedelta(days=90)).isoformat()})]
+                           "target_date": (date.today() + timedelta(days=90)).isoformat()}),
+             ("update_settings", {"time_zone": "Europe/London"})]
     for name, arguments in calls:
         ok(http, token, name, arguments)
     assert len(loop_threads) >= 1
@@ -606,12 +612,12 @@ def test_resource_reads_are_not_in_the_call_log(http):
         assert session.scalar(select(func.count()).select_from(CallLog)) == 0
 
 
-def test_can_and_cant_names_exactly_the_six_functions():
+def test_can_and_cant_names_exactly_the_seven_functions():
     text = CAN_AND_CANT.read_text(encoding="utf-8")
     named = set(re.findall(r"`([a-z_]+)`", text))
     service_functions = {name for name in services.__all__ if callable(getattr(services, name))}
-    assert named & service_functions <= set(SIX)  # it names no function Claude does not have (restore_entry, say)
-    assert set(SIX) <= named  # and it names every function Claude has
+    assert named & service_functions <= set(FUNCTIONS)  # it names no function Claude does not have (restore_entry, say)
+    assert set(FUNCTIONS) <= named  # and it names every function Claude has
 
 
 def test_the_instructions_say_how_to_use_spotter(http):
@@ -619,8 +625,10 @@ def test_the_instructions_say_how_to_use_spotter(http):
                                     "clientInfo": {"name": "test", "version": "0"}}, token=sign())
     instructions = init.json()["result"]["instructions"]
     assert instructions == mcp_server.INSTRUCTIONS
-    for words in ("Call whoami first", "list_exercises", "time_zone_note", "fix", "allow_repeat", "links last"):
+    for words in ("Call whoami first", "list_exercises", "time_zone_note", "update_settings", "which city",
+                  "Never send the person to a page", "fix", "allow_repeat", "links last"):
         assert words in instructions
+    assert "Settings" not in instructions
 
 
 # ---------------------------------------------------------------- tools/mcp_call.py
@@ -675,20 +683,21 @@ OPTIONAL_ARGUMENTS = {
     "set_goal": {"kind": "lift", "exercise": "Back Squat", "target_value": 150.5, "target_date": "2099-01-01",
                  "text": "Text", "start_value": 100.5, "goal_id": 7, "status": "open"},
     "get_progress": {"exercise": "Back Squat"},
+    "update_settings": {"time_zone": "Asia/Kolkata"},
 }
 REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5}}
-WRITES = {"log_lifts", "log_bodyweight", "set_goal"}
+WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings"}
 
 
 def spy_on_services(monkeypatch) -> dict[str, tuple]:
     """Replace each service with one that records what it was given and answers with an error."""
     received: dict[str, tuple] = {}
-    for name in SIX:
+    for name in FUNCTIONS:
         def spy(*args, _name=name):
             received[_name] = args
             return {"error": "spy", "message": "Recorded.", "fix": "None."}
 
-        monkeypatch.setattr(services, name, spy)
+        monkeypatch.setattr(services, name, spy, raising=False)
     return received
 
 
@@ -711,7 +720,7 @@ def test_the_argument_table_lists_every_optional_argument(http):
         assert set(schema.get("required", [])) == set(REQUIRED.get(tool["name"], {})), tool["name"]
 
 
-@pytest.mark.parametrize("name", SIX)
+@pytest.mark.parametrize("name", FUNCTIONS)
 def test_every_argument_sent_reaches_the_service_and_no_other(http, monkeypatch, name):
     token = sign()
     whoami(http, token)
@@ -860,3 +869,121 @@ def test_mcp_call_never_prints_the_token_even_when_the_server_echoes_it(local_se
 
 def _sent_token_seen(server: _Server) -> str:
     return server.requests[0].get("Authorization", "").removeprefix("Bearer ")
+
+
+# ---------------------------------------------------------------- update_settings: Claude sets the time zone
+
+def _local_dates(zone: str) -> set[str]:
+    """Today in that zone. Read before and after a call, so a call that crosses midnight still matches."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return {datetime.now(ZoneInfo(zone)).date().isoformat()}
+
+
+def test_claude_sets_the_time_zone_and_the_note_goes(http):
+    token = sign()
+    first = whoami(http, token)
+    assert first["time_zone"] is None and "time_zone_note" in first
+    before = _local_dates("Asia/Kolkata")
+    result = ok(http, token, "update_settings", {"time_zone": "Asia/Kolkata"})
+    after = whoami(http, token)
+    assert result["time_zone"] == "Asia/Kolkata" and result["changed"] == ["time_zone"]
+    assert result["today"] in before | _local_dates("Asia/Kolkata")
+    assert after["time_zone"] == "Asia/Kolkata" and "time_zone_note" not in after
+    assert after["today"] == result["today"]
+    assert one_user().time_zone == "Asia/Kolkata"
+    again = ok(http, token, "update_settings", {"time_zone": "Asia/Kolkata"})
+    assert again["changed"] == []
+
+
+@pytest.mark.parametrize("zone", ["IST", "+05:30", "UTC+5:30", "Kolkata"])
+def test_an_abbreviation_or_an_offset_is_refused_with_a_fix(http, zone):
+    token = sign()
+    whoami(http, token)
+    result = call(http, token, "update_settings", {"time_zone": zone})
+    assert result["isError"] is True
+    error = result["structuredContent"]
+    assert error["error"] in ("unknown_time_zone", "invalid_field") and error["fix"]
+    assert result["content"][0]["text"] == compact(error)
+    assert one_user().time_zone is None
+
+
+def test_the_permission_switch_cannot_be_set_through_update_settings(http, monkeypatch):
+    # By the schema: the only argument is time_zone.
+    schema = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["update_settings"]
+    assert set(schema["properties"]) == {"time_zone"}
+    assert not any("claude_can" in t["inputSchema"].get("properties", {}) for t in tool_list(http, sign()))
+    # And in practice: an extra claude_can is dropped before the service; the stored switch is unchanged.
+    token = sign()
+    whoami(http, token)
+    ok(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log_delete"})
+    assert one_user().claude_can == "log" and whoami(http, token)["claude_can"] == "log"
+    received = spy_on_services(monkeypatch)
+    failed(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log_delete"})
+    assert received["update_settings"][1] == {"time_zone": "Europe/London"}
+
+
+def test_one_persons_time_zone_never_changes_anothers(http):
+    a, b = sign(claims(sub="user_01ZONE_A")), sign(claims(sub="user_01ZONE_B"))
+    whoami(http, a)
+    whoami(http, b)
+    ok(http, a, "update_settings", {"time_zone": "Asia/Kolkata"})
+    other = whoami(http, b)
+    assert other["time_zone"] is None and "time_zone_note" in other
+    ok(http, b, "update_settings", {"time_zone": "America/New_York"})
+    assert whoami(http, a)["time_zone"] == "Asia/Kolkata"
+    assert whoami(http, b)["time_zone"] == "America/New_York"
+
+
+# ---------------------------------------------------------------- the time zone is set by Claude, never on a page
+
+ZONE_WORDS = re.compile(r"time[ _]zone|\bzone\b", re.IGNORECASE)
+PAGE_WORDS = re.compile(r"settings page|settings link|links\.settings|/settings|\bpage\b|\bform\b", re.IGNORECASE)
+NEGATION = re.compile(r"\b(never|not|no)\b|n't\b", re.IGNORECASE)
+
+
+def model_texts(client: TestClient, token: str) -> dict[str, str]:
+    """Every text the calling model reads, by where it comes from."""
+    init = rpc(client, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                      "clientInfo": {"name": "test", "version": "0"}}, token=token)
+    texts = {"instructions": init.json()["result"]["instructions"]}
+    for tool in tool_list(client, token):
+        texts[f"{tool['name']} description"] = tool["description"]
+        for kind in ("inputSchema", "outputSchema"):
+            schema = tool[kind]
+            for owner, obj in [("", schema), *schema.get("$defs", {}).items()]:
+                for prop, spec in obj.get("properties", {}).items():
+                    texts[f"{tool['name']} {kind} {owner}.{prop}"] = spec.get("description", "")
+    for resource in rpc(client, "resources/list", token=token).json()["result"]["resources"]:
+        texts[f"{resource['uri']} description"] = resource.get("description", "")
+        texts[resource["uri"]] = read_resource(client, token, resource["uri"])["text"]
+    texts["whoami time_zone_note"] = whoami(client, token).get("time_zone_note", "")  # the service's own words
+    return texts
+
+
+def sentences(text: str) -> list[str]:
+    """Sentences, with markdown table cells and list items split apart and line breaks undone."""
+    flat = " ".join(text.replace("|", "\n").split())
+    return [s for s in re.split(r"(?<=[.!?:])\s+|\s-\s", flat) if s]
+
+
+def test_nothing_the_model_reads_sends_the_person_to_a_page_for_the_time_zone(http):
+    texts = model_texts(http, sign())
+    offending = [(where, s) for where, text in texts.items() for s in sentences(text)
+                 if ZONE_WORDS.search(s) and PAGE_WORDS.search(s) and not NEGATION.search(s)]
+    assert offending == []
+    for where in ("instructions", "spotter://can-and-cant"):
+        naming = [s for s in sentences(texts[where]) if "update_settings" in s and ZONE_WORDS.search(s)]
+        assert naming, f"{where} does not say that update_settings sets the time zone"
+
+
+def test_the_page_check_allows_settings_mentioned_for_other_reasons():
+    fine = ["The Settings page shows the same number.", "The Settings page: the person's account details.",
+            "Never send the person to a page for it.", "Set the time zone with update_settings."]
+    caught = ["Ask the person their time zone and send them to the Settings page to set it.",
+              "If whoami carries time_zone_note, point them to the Settings link.",
+              "Ask their time zone and point them to links.settings."]
+    for text in fine + caught:
+        hit = bool(ZONE_WORDS.search(text) and PAGE_WORDS.search(text) and not NEGATION.search(text))
+        assert hit is (text in caught), text

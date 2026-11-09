@@ -10,7 +10,7 @@
     <dt>Email</dt><dd>{{ user.email or "Not given" }}</dd>
     <dt>Sign-in id</dt><dd><code>{{ user.subject }}</code></dd>
     <dt>Account id</dt><dd><code>{{ user.id }}</code></dd>
-    <dt>Time zone</dt><dd>{{ user.time_zone or "Not set: dates are in UTC until you set one" }}</dd>
+    <dt>Time zone</dt><dd>{{ user.time_zone or "Not chosen yet: today is counted in UTC" }}</dd>
   </dl>
   <p class="muted small">Claude's <code>whoami</code> shows the same sign-in id and account id when it is
   connected to this account.</p>
@@ -25,12 +25,22 @@
     <p>{{ error.fix }}</p>
   </div>
   {% endif %}
+  {% if user.time_zone %}
+  <p>Your time zone is set. If it is wrong, choose yours here.</p>
+  {% else %}
+  <p>No time zone yet, so today is counted in UTC. Choose yours from the list.</p>
+  {% endif %}
   <form method="post" action="/settings">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Your time zone, as a name such as Asia/Kolkata or Europe/London
-      <input name="time_zone" list="zones" value="{{ user.time_zone or '' }}" required autocomplete="off">
-    </label>
-    <datalist id="zones">{% for zone in zones %}<option value="{{ zone }}">{% endfor %}</datalist>
+    <label for="time-zone">Time zone</label>
+    <select id="time-zone" name="time_zone" required>
+      {% if not selected_zone %}<option value="" selected>Choose your time zone</option>{% endif %}
+      {% for region, zones in zone_groups %}
+      <optgroup label="{{ region }}">
+        {% for name, label in zones %}<option value="{{ name }}"{% if name == selected_zone %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
     <button class="primary">Save time zone</button>
   </form>
 </div>

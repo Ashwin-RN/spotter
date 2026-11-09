@@ -1,7 +1,7 @@
 """What the person reads back: get_progress, whoami and the exercise list."""
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import event, select
@@ -101,16 +101,46 @@ def test_deleted_sessions_are_left_out(user):
     assert services.get_progress(user.id, "Deadlift")["lift"]["sessions"] == 2
 
 
-def test_a_session_dated_after_today_is_left_out(user):
-    """A row can sit after today when the person moves their time zone back. Reads ignore it."""
+def test_a_session_dated_after_today_is_still_shown(user):
+    """A row can sit after today when the person moves their time zone back. It is their latest."""
+    later = users.today_for(user) + timedelta(days=1)
     with db.session_scope() as s:
-        session = LiftSession(user_id=user.id, date=users.today_for(user) + timedelta(days=1), notes="",
-                              logged_by="web", dedupe_key="e" * 64)
+        session = LiftSession(user_id=user.id, date=later, notes="", logged_by="web", dedupe_key="e" * 64)
         session.sets = [LiftSet(exercise_id=s.scalar(select(Exercise.id).where(Exercise.name == "Deadlift")),
                                 set_number=1, weight_kg=200, reps=5)]
         s.add(session)
-    assert services.get_progress(user.id)["lifts"] == []
-    assert services.get_progress(user.id, "Deadlift")["lift"]["sessions"] == 0
+    row = services.get_progress(user.id)["lifts"][0]
+    assert row["exercise"] == "Deadlift" and row["last_trained"] == later.isoformat()
+    assert row["current_estimated_max_kg"] == epley(200, 5)
+    one = services.get_progress(user.id, "Deadlift")["lift"]
+    assert one["sessions"] == 1 and one["estimated_max_over_time"] == [
+        {"date": later.isoformat(), "estimated_max_kg": epley(200, 5)}]
+
+
+def test_a_change_of_time_zone_never_hides_what_was_logged(user, monkeypatch):
+    """The reviewer's steps: log on the far side of the date line, then move the zone back a day."""
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc))
+    assert services.update_settings(user.id, {"time_zone": "Pacific/Kiritimati"}, "claude")["today"] == "2026-11-10"
+    weighed = services.log_bodyweight(user.id, {"kg": 80}, "claude")
+    lifted = services.log_lifts(user.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 100, "reps": 5}]}, "claude")
+    assert weighed["weigh_in"]["date"] == lifted["session"]["date"] == "2026-11-10"
+    assert services.update_settings(user.id, {"time_zone": "Pacific/Pago_Pago"}, "claude")["today"] == "2026-11-09"
+
+    one = services.get_progress(user.id, "Deadlift")["lift"]
+    assert one["last_trained"] == "2026-11-10" and one["sessions"] == 1
+    assert one["current_estimated_max_kg"] == epley(100, 5) and len(one["estimated_max_over_time"]) == 1
+    assert services.get_progress(user.id)["lifts"][0]["last_trained"] == "2026-11-10"
+    again = services.log_bodyweight(user.id, {"kg": 79.5, "date": "2026-11-08"}, "claude")
+    assert again["recent"][0] == {"date": "2026-11-10", "kg": 80}
+    assert again["trend"]["latest"] == {"date": "2026-11-10", "kg": 80}
+    assert services.get_entry(user.id, "bodyweight", weighed["id"])["entry"]["date"] == "2026-11-10"
+    # A goal starts from those entries too.
+    goal = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75, "target_date": "2026-12-31"}, "web")
+    assert goal["goal"]["start_value"] == 79.75 and goal["progress"]["latest"] == 79.75
+    # A write for the date the new zone calls the future is still refused.
+    assert services.log_bodyweight(user.id, {"kg": 79, "date": "2026-11-10"}, "claude")["error"] == "date_in_future"
+    assert services.log_lifts(user.id, {"date": "2026-11-10", "sets": [
+        {"exercise": "Deadlift", "weight_kg": 90, "reps": 5}]}, "claude")["error"] == "date_in_future"
 
 
 def test_get_progress_query_count_stays_small(user):
@@ -189,6 +219,9 @@ def hostile_calls(user_id, goal_id, entry):
         yield "list_exercises kind", lambda: services.list_exercises(bad, None)
         yield "list_exercises category", lambda: services.list_exercises(None, bad)
         yield "get_progress exercise", lambda: services.get_progress(user_id, bad)
+        yield "update_settings time_zone", lambda: services.update_settings(user_id, {"time_zone": bad}, "claude")
+        yield "update_settings field name", lambda: services.update_settings(user_id, {bad: "UTC"}, "claude")
+        yield "update_settings by", lambda: services.update_settings(user_id, {"time_zone": "UTC"}, bad)
         for field in lifts:
             yield f"log_lifts {field}", lambda f=field: services.log_lifts(user_id, {**lifts, f: bad}, "web")
         for field in good_set:
@@ -233,7 +266,12 @@ def test_whoami_returns_the_account_and_asks_for_a_time_zone(user):
     r = services.whoami(user.id)
     assert r["account_id"] == user.id and r["user_id"] == "user_01PROGRESS"
     assert r["email"] == "sam@example.com" and r["name"] == "Sam Example"
-    assert r["time_zone"] is None and "Ask the person" in r["time_zone_note"] and r["today"] == day(user, 0)
+    assert r["time_zone"] is None and r["today"] == day(user, 0)
+    note = r["time_zone_note"]
+    # The rule, not the wording: Claude sets the zone itself, and is never told to send the person anywhere.
+    assert "update_settings" in note
+    rest = note.replace("update_settings", "").casefold()
+    assert "page" not in rest and "settings" not in rest and "/" not in rest, note
     assert r["targets"] == {"calorie_target_kcal": None, "target_sessions_per_week": None,
                             "target_cardio_minutes_per_week": None}
     assert r["claude_can"] == "log"
@@ -274,11 +312,11 @@ def test_list_exercises_and_filters():
 
 # The functions Claude is offered in this stage. Stage 3 extends this list (for example with its
 # delete and edit functions); a text may then name those too.
-OFFERED = ("whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress")
+OFFERED = ("whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings")
 # Functions that exist but Claude cannot call yet: every other public service function, and the
 # names later stages are expected to add.
 NOT_OFFERED = sorted({name for name in services.__all__ if callable(getattr(services, name))} - set(OFFERED)
-                     | {"edit_entry", "update_settings"})
+                     | {"edit_entry"})
 
 
 def strings_in(value):
@@ -345,7 +383,16 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
         "invalid_field", "unknown_exercise", "date_in_future", "date_too_old", "invalid_date", "not_found",
         "no_account", "invalid_by", "missing_field", "wrong_direction", "target_is_start", "cannot_change_kind",
         "nothing_to_change", "date_not_in_future", "sets_count_out_of_range", "weight_out_of_range"}
+    # Settings: refusals, a no-op, and a change (last, since it moves the person's today).
+    settings = lambda data: services.update_settings(user.id, data, "claude")  # noqa: E731
+    results += [settings({}), settings({"time_zone": "EST"}), settings({"time_zone": "Kolkata"}),
+                settings({"claude_can": "log_delete"}), settings({"colour": "blue"}),
+                settings({"time_zone": "UTC"}), settings({"time_zone": "UTC"}), settings({"time_zone": "Asia/Kolkata"})]
     texts = [t for r in results for t in strings_in(r)]
+    # Nothing sends the person to a page to set a time zone: Claude sets it with update_settings.
+    to_a_page = [t for t in texts if "time zone" in t.casefold()
+                 and any(where in t.casefold() for where in ("settings page", "in settings", "links.settings"))]
+    assert not to_a_page, to_a_page[:3]
     assert any("can be brought back later" in t for t in texts)
     for name in NOT_OFFERED:
         named = [t for t in texts if name in t]

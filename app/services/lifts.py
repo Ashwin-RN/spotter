@@ -9,8 +9,8 @@ log_lifts(user_id, data, by)
     The duplicate guard: the same date, notes and sets as a live session logged in the last
     10 minutes returns that session with duplicate true, and nothing is written.
 
-history(s, user_id, today)
-    Every live session up to today, worked through in date order: one point per session per lift
+history(s, user_id)
+    Every live session, whatever its date, worked through in date order: one point per session per lift
     (that session's best estimated max), the best set, and the new bests with their dates.
 """
 
@@ -62,8 +62,9 @@ def _links(on: date, lifts: list[str]) -> dict:
             "progress": {lift: links.page("progress_lift", lift=lift) for lift in lifts}}
 
 
-def history(s: Session, user_id: int, today: date) -> dict:
-    """Per lift, from the person's live sessions up to today, in (date, id) order. Every value from metrics.
+def history(s: Session, user_id: int) -> dict:
+    """Per lift, from the person's live sessions, in (date, id) order. Every value from metrics.
+    No session is left out for its date: one after today (after a change of time zone) is the latest.
 
     sessions:  the sessions used, oldest first
     points:    {lift: [(date, session best)]}   one point per session with a set of 1 to 10 reps
@@ -73,8 +74,7 @@ def history(s: Session, user_id: int, today: date) -> dict:
     bests:     {lift: [{date, exercise, kind, value, previous, session_id}]}
     """
     sessions = list(s.scalars(
-        select(LiftSession).where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None),
-                                  LiftSession.date <= today)
+        select(LiftSession).where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None))
         .order_by(LiftSession.date, LiftSession.id)
         .options(selectinload(LiftSession.sets).selectinload(LiftSet.exercise))))
     points: dict[str, list[tuple[date, float]]] = {}

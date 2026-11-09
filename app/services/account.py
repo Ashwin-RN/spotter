@@ -1,10 +1,23 @@
-"""The account and the shared exercise list.
+"""The account, its settings, and the shared exercise list.
 
 whoami(user_id)
     The signed-in person's account: account_id (the row id), user_id (the sign-in provider's subject,
     the same value the token's sub and the Settings page show), email, name, time zone, today's date
     for them, their targets, what Claude may do, and links. Until a time zone is set, today is the UTC
-    date and time_zone_note tells Claude to ask for it.
+    date and time_zone_note tells Claude to set it with update_settings.
+
+update_settings(user_id, data, by)
+    Change the person's own settings. In this stage that is only time_zone (SETTABLE lists what can
+    be set; later stages add the targets). claude_can, what Claude may do, is never set here, whoever
+    calls: only the person changes it, on the Settings page.
+
+    time_zone must be a real IANA zone name, such as Asia/Kolkata, or UTC. The form is forgiven
+    (surrounding spaces, letter case, spaces for underscores); the meaning is not. An abbreviation
+    (EST, CET), a UTC offset (+05:30, GMT+5) or a bare city or country is refused, because none of
+    them says when the clocks change. A bare city that is the last part of exactly one zone name
+    (Kolkata, London) is named as the closest zone in the error; nothing is guessed silently.
+
+    Changing the zone changes no stored entry: entries keep the dates they were logged with.
 
 list_exercises(kind=None, category=None)
     The names entries must use, filtered by kind (lift, cardio) and category.
@@ -12,13 +25,18 @@ list_exercises(kind=None, category=None)
 
 from zoneinfo import ZoneInfo
 
-from app import db, exercises as exercise_list, links, users
+from app import db, exercises as exercise_list, links, rules, users
 from app.models import EXERCISE_KINDS, User
 from app.rules import error, quote
-from app.services.common import exercises, no_account
+from app.services.common import check_by, check_data, exercises, lock_user, no_account
 
-TIME_ZONE_NOTE = ("No time zone is set, so today is the UTC date. Ask the person which time zone they are in, "
-                  "then ask them to set it on the Settings page (links.settings).")
+TIME_ZONE_NOTE = ("No time zone is set, so today is the UTC date. Set it now with update_settings: use the "
+                  "person's time zone if you know it, otherwise ask once which city they are in. Set it "
+                  "yourself; the person has nothing to do.")
+TIME_ZONE_MAX = 64  # the column's length
+TIME_ZONE_FIX = ("Use an IANA name such as Asia/Kolkata, worked out from the city the person is in. An "
+                 "abbreviation or an offset is not enough, because it does not say when the clocks change.")
+NEVER_SETTABLE = {"claude_can": "what Claude may do"}
 
 
 def whoami(user_id: int) -> dict:
@@ -47,6 +65,78 @@ def whoami(user_id: int) -> dict:
             out["time_zone_note"] = TIME_ZONE_NOTE
         return out
 
+
+# ---------------------------------------------------------------- settings
+
+def _time_zone(value) -> tuple[str | None, dict | None]:
+    """The stored zone name for what the caller sent, or an error. users.canonical_zone is the one
+    check, shared with the Settings page and the browser's own zone."""
+    text, err = rules.text(value, "time_zone", TIME_ZONE_MAX)
+    if err:
+        return None, err
+    name = users.canonical_zone(text) if text else None
+    if name is not None:
+        return name, None
+    candidates = users.closest_zones(text)
+    closest = candidates if len(candidates) == 1 else []
+    hint = f" Closest zone: {closest[0]}." if closest else ""
+    shown = f"'{quote(text)}' is" if text else "An empty value is"
+    return None, error("unknown_time_zone", f"{shown} not a time zone name.", TIME_ZONE_FIX + hint,
+                       closest=closest)
+
+
+# What update_settings can set: field -> its check, which returns (stored value, error).
+# Later stages add the calorie target and the weekly targets here.
+SETTABLE = {"time_zone": _time_zone}
+
+
+def update_settings(user_id: int, data: dict | None, by: str) -> dict:
+    """Returns {time_zone, today, changed, summary, links} or {error, message, fix}.
+
+    changed: the fields this call changed; [] when every value given was already stored.
+    Empty or missing data is nothing_to_change. Every refusal comes back at once; on any refusal
+    nothing is stored."""
+    data, err = check_data(data)
+    err = err or check_by(by)
+    if err:
+        return err
+    if not data:
+        return error("nothing_to_change", "No setting was given.",
+                     f"Give one of: {', '.join(SETTABLE)}, such as time_zone: Asia/Kolkata.")
+    errors, values = [], {}
+    for field, value in data.items():
+        if field in NEVER_SETTABLE:
+            errors.append(error("not_allowed", f"{field} ({NEVER_SETTABLE[field]}) cannot be changed here.",
+                                "Only the person can change what Claude may do, on the Settings page."))
+        elif field in SETTABLE:
+            values[field], err = SETTABLE[field](value)
+            errors += [err] if err else []
+        else:
+            errors.append(error("invalid_field", f"'{quote(field)}' is not a setting that can be changed.",
+                                f"Settings that can be changed: {', '.join(SETTABLE)}."))
+    if errors:
+        return rules.combine(errors)
+
+    with db.session_scope() as s:
+        user = lock_user(s, user_id)
+        if user is None:
+            return no_account()
+        changed = [field for field, value in values.items() if getattr(user, field) != value]
+        for field in changed:
+            setattr(user, field, values[field])
+        if changed:
+            user.updated_at = db.utcnow()
+        s.flush()
+        today = users.today_for(user).isoformat()
+        if changed:
+            summary = f"Time zone set to {user.time_zone}. Today is {today}."
+        else:
+            summary = f"Nothing changed: the time zone is already {user.time_zone}. Today is {today}."
+        return {"time_zone": user.time_zone, "today": today, "changed": changed, "summary": summary,
+                "links": {"settings": links.page("settings")}}
+
+
+# ---------------------------------------------------------------- exercises
 
 def _categories() -> list[str]:
     return list(dict.fromkeys(exercise_list.CATEGORIES + [row["category"] for row in exercise_list.rows()]))

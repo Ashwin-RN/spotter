@@ -6,7 +6,7 @@ get_progress(user_id, exercise=None)
     Without: one line per lift the person has logged, and every open goal.
     Every number comes from app.metrics, through lifts.history and goals.goal_numbers.
 
-lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals, today)
+lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals)
     The data app.charts draws, from the same numbers.
 """
 
@@ -69,10 +69,10 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
             only, _ = rules.match_exercise(exercise, names)
             if only is None:
                 return rules.unknown_exercise(exercise, names)
-        history = lifts.history(s, user.id, today)
+        history = lifts.history(s, user.id)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                .order_by(Goal.id).options(selectinload(Goal.exercise))))
-        weighed = body.weigh_ins(s, user.id, today) if any(g.kind == "bodyweight" for g in goals) else []
+        weighed = body.weigh_ins(s, user.id) if any(g.kind == "bodyweight" for g in goals) else []
         numbers = goal_numbers(goals, history, weighed, today)
 
         if only is not None:
@@ -123,10 +123,10 @@ def lift_chart(lift_history: dict, numbers: list[dict], lift: str | None = None)
     }
 
 
-def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date) -> dict | None:
+def bodyweight_chart(weigh_ins: list, goals: list[Goal]) -> dict | None:
     """Data for bodyweight_svg: weigh-ins, the 7-day average at each, the open bodyweight goal.
-    None with fewer than 2 weigh-ins up to today."""
-    pts = [(b.date, b.kg) for b in weigh_ins if b.date <= today]
+    None with fewer than 2 weigh-ins. Every weigh-in is drawn, whatever its date."""
+    pts = [(b.date, b.kg) for b in weigh_ins]
     if len(pts) < 2:
         return None
     goal = next((g for g in goals if g.kind == "bodyweight" and g.status == "open" and g.target_value is not None),

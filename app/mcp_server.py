@@ -1,4 +1,4 @@
-"""Spotter's MCP server: six functions and two resources.
+"""Spotter's MCP server: seven functions and two resources.
 
 The MCP library does the sign-in work: it serves the protected-resource metadata, answers 401 with
 `resource_metadata`, and runs every call through the token verifier. Functions read the verified token
@@ -45,7 +45,8 @@ from app import calllog, db, services, users
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings
 from app.mcp_schemas import (
-    ExercisesResult, GetProgressResult, LogBodyweightResult, LogLiftsResult, SetGoalResult, SetIn, WhoamiResult,
+    ExercisesResult, GetProgressResult, LogBodyweightResult, LogLiftsResult, SetGoalResult, SetIn,
+    UpdateSettingsResult, WhoamiResult,
 )
 from app.models import User
 
@@ -54,7 +55,9 @@ log = logging.getLogger("spotter.mcp")
 INSTRUCTIONS = (
     "Spotter is the person's own record of lifts, body weight and goals. "
     "Call whoami first: it says whose account this is and what today's date is for them. "
-    "If whoami carries time_zone_note, ask the person their time zone and point them to the Settings link. "
+    "If whoami carries time_zone_note, set the time zone with update_settings before logging anything: use the "
+    "person's time zone if you already know it, otherwise ask once which city they are in. Never send the person "
+    "to a page for it. "
     "Use exercise names exactly as list_exercises gives them. "
     "Leave the date out for something done today: today is the person's own date. "
     "Quote Spotter's numbers; never estimate your own. "
@@ -72,6 +75,8 @@ REQUIRED_SCOPES = ["openid"]
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 # Nothing is hard-deleted: a replaced weigh-in is kept and can be restored. So no write is destructive.
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
+# Setting the same value twice changes nothing the second time.
+SETTING = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 
 CAN_AND_CANT = ROOT / "docs" / "can-and-cant.md"
 CAN_AND_CANT_URI = "spotter://can-and-cant"
@@ -269,7 +274,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         description=(
             "Says whose Spotter account this is: the account id, the sign-in id, email, name, time zone, "
             "today's date for the person, their targets, what Claude may do, and the sign-in itself. "
-            "Call it first. If it carries time_zone_note, ask the person their time zone."
+            "Call it first. If it carries time_zone_note, set the time zone with update_settings before logging "
+            "anything: use the person's zone if you know it, otherwise ask once which city they are in."
         ),
         annotations=READ_ONLY,
     )
@@ -387,6 +393,25 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     ) -> Annotated[CallToolResult, GetProgressResult]:
         return await wrapper.call("get_progress", GetProgressResult,
                                   lambda account: services.get_progress(account, exercise))
+
+    @server.tool(
+        name="update_settings",
+        title="Update settings",
+        description=(
+            "Sets the person's time zone, which decides what today is for them. Give an IANA name such as "
+            "Asia/Kolkata or Europe/London, worked out from the city they are in. An abbreviation (IST) or an "
+            "offset (+05:30) is refused. It cannot change what Claude may do: only the person can."
+        ),
+        annotations=SETTING,
+    )
+    async def update_settings(
+        time_zone: Annotated[str | None, Field(
+            description="An IANA time zone name, such as Asia/Kolkata, from the city the person is in. "
+                        "Not an abbreviation or an offset.")] = None,
+    ) -> Annotated[CallToolResult, UpdateSettingsResult]:
+        data = _sent(time_zone=time_zone)
+        return await wrapper.call("update_settings", UpdateSettingsResult,
+                                  lambda account: services.update_settings(account, data, "claude"))
 
     @server.resource(
         CAN_AND_CANT_URI,

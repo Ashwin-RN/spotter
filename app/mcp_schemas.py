@@ -1,4 +1,4 @@
-"""The shapes of the six MCP functions' arguments and results.
+"""The shapes of the seven MCP functions' arguments and results.
 
 Each result model is published as that function's result schema, and the MCP library checks every
 successful result against it. The top-level fields match the service's keys exactly, and a top-level
@@ -76,7 +76,7 @@ class Targets(BaseModel):
 
 
 class WhoamiLinks(BaseModel):
-    settings: str = Field(description="The Settings page, where the person sets their time zone.")
+    settings: str = Field(description="The Settings page: the person's account details.")
     home: str = Field(description="Spotter's home page.")
 
 
@@ -102,8 +102,9 @@ class WhoamiResult(BaseModel):
     sign_in: SignIn = Field(description="The sign-in this call came with.")
     time_zone_note: str | None = Field(
         default=None,
-        description="Present only when no time zone is set: today is then the UTC date. Ask the person their "
-                    "time zone and point them to links.settings.")
+        description="Present only when no time zone is set: today is then the UTC date. Set it with "
+                    "update_settings before logging anything: use the person's zone if you know it, otherwise ask "
+                    "once which city they are in.")
 
 
 # ---------------------------------------------------------------- list_exercises
@@ -338,6 +339,24 @@ class GetProgressResult(BaseModel):
     note: str | None = Field(default=None, description="Present when nothing is logged yet.")
 
 
+# ---------------------------------------------------------------- update_settings
+
+class SettingsLinks(BaseModel):
+    settings: str = Field(description="The Settings page, where the person can see their settings.")
+
+
+class UpdateSettingsResult(BaseModel):
+    model_config = TOP
+
+    time_zone: str | None = Field(description="The person's time zone after this call (an IANA name), or null if "
+                                              "still unset.")
+    today: str = Field(description="Today's date for the person after this call, YYYY-MM-DD.")
+    changed: list[str] = Field(description="The settings this call changed, such as time_zone. Empty when the value "
+                                           "was already set.")
+    summary: str = Field(description="What changed, in one line, ready to quote.")
+    links: SettingsLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+
+
 RESULTS = {
     "whoami": WhoamiResult,
     "list_exercises": ExercisesResult,
@@ -345,4 +364,5 @@ RESULTS = {
     "log_bodyweight": LogBodyweightResult,
     "set_goal": SetGoalResult,
     "get_progress": GetProgressResult,
+    "update_settings": UpdateSettingsResult,
 }

@@ -43,13 +43,17 @@ Quote these numbers. Do not work out your own.
 
 - Today is the person's own date, in their time zone. Leave the date out to log something done today.
 - Until a time zone is set, today is the UTC date. For someone far from UTC, that can be the wrong day
-  in their morning or evening. When `whoami` carries `time_zone_note`, ask the person their time zone
-  and send them to the Settings page to set it.
+  in their morning or evening.
+- Claude sets the time zone with `update_settings`, the first time `whoami` carries `time_zone_note`,
+  before logging anything. It uses the person's zone if it knows it, and otherwise asks once which city
+  they are in. The zone is an IANA name such as Asia/Kolkata; an abbreviation or an offset is refused.
 - No entry can be dated after today, or more than 2 years back.
+- Changing the time zone changes no entry: each keeps the date it was logged with. One that is then
+  dated after today still shows, and counts as today's in every number above.
 
 ## What Claude may do
 
-Six functions, nothing else:
+Seven functions, nothing else:
 
 | Function | What it does |
 |---|---|
@@ -59,6 +63,8 @@ Six functions, nothing else:
 | `log_bodyweight` | Records one weigh-in. |
 | `set_goal` | Sets a lift or body weight goal, or changes or closes one. |
 | `get_progress` | Reads progress back: one lift over time, or every lift. |
+| `update_settings` | Sets the person's time zone. |
 
 `whoami` reports `claude_can`, the person's setting for what Claude may do. In this stage Claude can
-read and log, and cannot delete, whatever that setting says.
+read, log and set the time zone, and cannot delete, whatever that setting says. Claude cannot change
+that setting: only the person can.

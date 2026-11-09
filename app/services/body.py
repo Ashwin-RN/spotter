@@ -13,8 +13,9 @@ log_bodyweight(user_id, data, by)
     The schema allows one live row per person and date (a partial unique index). The old row is
     soft-deleted and flushed on its own before the new one is added, so the order is explicit.
 
-weigh_ins(s, user_id, today)
-    Every live weigh-in up to today, oldest first.
+weigh_ins(s, user_id)
+    Every live weigh-in, oldest first, whatever its date: a change of time zone can leave the
+    latest one dated after today, and it is still the latest.
 """
 
 from datetime import date
@@ -37,9 +38,9 @@ HOW = ("7-day average = mean of the weigh-ins in the 7 days ending on a date. Th
        "weigh-in to the latest. Quote these numbers; do not work out your own.")
 
 
-def weigh_ins(s: Session, user_id: int, today: date) -> list[Bodyweight]:
+def weigh_ins(s: Session, user_id: int) -> list[Bodyweight]:
     return list(s.scalars(select(Bodyweight).where(
-        Bodyweight.user_id == user_id, Bodyweight.deleted_at.is_(None), Bodyweight.date <= today,
+        Bodyweight.user_id == user_id, Bodyweight.deleted_at.is_(None),
     ).order_by(Bodyweight.date)))
 
 
@@ -101,7 +102,7 @@ def log_bodyweight(user_id: int, data: dict | None, by: str) -> dict:
             s.add(row)
             s.flush()
 
-        points = [(b.date, b.kg) for b in weigh_ins(s, user.id, today)]
+        points = [(b.date, b.kg) for b in weigh_ins(s, user.id)]
         out = {
             "kind": KIND, "id": row.id, "duplicate": first is not None, "weigh_in": row_dict(row),
             "replaced": replaced,

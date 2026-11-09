@@ -15,7 +15,7 @@ from app import calllog, db, services
 from app.models import CallLog
 
 from .conftest import HEADERS, rpc, sign
-from .test_mcp import SIX, call, compact, one_user, squat, tool_list
+from .test_mcp import FUNCTIONS, call, compact, one_user, squat, tool_list
 
 MARKER = "zq-marker-5b1e"
 
@@ -96,10 +96,10 @@ def test_an_identity_error_writes_a_row_with_no_user(make_client):
 
 def test_every_function_writes_its_own_row(http):
     token = sign()
-    for name in SIX:
+    for name in FUNCTIONS:
         call(http, token, name, {"sets": squat(100)} if name == "log_lifts" else
              {"kg": 80} if name == "log_bodyweight" else {})
-    assert [r.function for r in rows()] == SIX
+    assert [r.function for r in rows()] == FUNCTIONS
 
 
 # ---------------------------------------------------------------- the marker
@@ -118,6 +118,7 @@ MARKED_CALLS = [
     ("set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150, "text": MARKER,
                   "target_date": "2099-01-01"}),
     ("get_progress", {"exercise": MARKER}),
+    ("update_settings", {"time_zone": MARKER}),
 ]
 
 
@@ -158,7 +159,7 @@ def test_a_marker_in_every_argument_reaches_no_log_row_and_no_log_line(make_clie
     for name, arguments in MARKED_CALLS:
         result = call(client, token, name, arguments)
         errors += result["isError"]
-    assert errors == 5  # the five marked calls the services refuse; the other three succeed
+    assert errors == 6  # the six marked calls the services refuse; the other three succeed
     logged = rows()
     assert len(logged) == len(MARKED_CALLS)
     for row in logged:

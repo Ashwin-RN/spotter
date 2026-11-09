@@ -7,7 +7,7 @@
   <title>{% block title %}Spotter{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body{% if time_zone_missing %} data-time-zone="missing"{% endif %}>
   <header class="top">
     <a class="brand" href="/">Spotter</a>
     {% if signed_in %}
@@ -23,5 +23,12 @@
     {% endif %}
   </header>
   <main>{% block main %}{% endblock %}</main>
+  {% if time_zone_missing %}
+  <form id="auto-time-zone" method="post" action="/settings" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="time_zone" value="">
+  </form>
+  <script src="/static/time-zone.js"></script>
+  {% endif %}
 </body>
 </html>

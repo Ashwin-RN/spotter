@@ -150,6 +150,30 @@ Two mutants stay alive on purpose: the duplicate guard's date filter (the date i
 
 Accepted as it is: a call the MCP library refuses before Spotter's code runs (a wrong-typed argument, an unknown function) leaves no call-log row.
 
+### A design change after the first live use: nobody types a time zone
+
+The first live sign-in showed the mistake at once. The Settings page asked the person to type a zone name such as `Asia/Kolkata` and save it, and `whoami` told Claude to send the person to that page. The plan had always had Claude setting it, through `update_settings`; the stage contract had left that function for a later stage and kept only the web form. Staging the build had put a chore on the first thing a new person meets.
+
+| Where | Before | After |
+|---|---|---|
+| From Claude | `whoami` said: send the person to Settings | Claude sets it with `update_settings`: the person's zone if it knows it, otherwise one question, "which city are you in?" |
+| On the web | A text box for a zone name | The browser's own zone is saved at the first sign-in, with no click |
+| Settings | Type and save | The zone already set, and a list to correct it |
+
+- `update_settings` is the seventh function. In this stage it sets the time zone only. It can never change what Claude may do: that field is refused by the service and absent from the function's arguments.
+- One function owns zone names. Chrome reports India as `Asia/Calcutta`, an old alias; the web path and Claude's path both store `Asia/Kolkata`.
+- The page now runs one 17-line script, so the content security policy allows scripts from Spotter's own address and nowhere else.
+
+**The review.** Verdict: sound, no blocker. The reviewer could not make the script loop: not with a refused zone, no browser storage, the back button or two tabs. It sent 20,000 junk zone names: none crashed, and every accepted one was a real zone. It could not change what Claude may do through the new function, by any spelling or shape. A page on another site could not set someone's zone.
+
+| Finding | Fix |
+|---|---|
+| Changing zone hid entries. An entry dated "tomorrow" in the new zone vanished from progress until its date arrived, because every read kept only dates up to today | A read never leaves an entry out for its date. In any number worked out over a window ending today, such an entry counts as today's. Writes still refuse a date after today |
+| The website and Claude stored the zone through two code paths | One path for both, `update_settings`, which locks the person's row first |
+| The website's error for a bad zone still said "use an IANA name" | It says to choose from the list |
+| Old zone names that browsers still report resolved to a neighbouring country's city: nine of the 100 old names, checked by hand | A table of the nine, and a test that fails when the zone data gains an old name nobody has checked |
+| Eight behaviours no test noticed, four of them the script's loop guards | A test each. Every new test was broken on purpose and went red |
+
 ### What this stage has taught so far
 
 - **The host did not read the repo's deploy file.** The first deploy of package A succeeded and the database stayed empty: the migration step had never run. The host has retired config files for new services, so the start command, the pre-deploy step and the health check now live in its dashboard. The check that caught it was looking at the database itself, not at the green deploy.
@@ -158,6 +182,8 @@ Accepted as it is: a call the MCP library refuses before Spotter's code runs (a 
 - **A test can pass because its setup never reached the code.** The tampered-cookie test set its cookie with no domain, so the cookie was never sent. The page redirected for a different reason, and the test was green.
 - **SQLite accepts what Postgres refuses.** A NUL character in text, an id past 32 bits: the tests ran green and the host would have crashed. A fuzz run and reading the SQL as Postgres would see it found both; the test suite could not.
 - **A passing isolation test does not prove every query is scoped.** With the owner filter removed from two helper queries, the suite stayed green. Undoing each filter and watching for a red test is what found them.
+- **Walk the first-use path before fixing a stage's function list.** Every stage 2 test passed, every review came back sound, and the first thing a real person saw was a form asking for an IANA zone name. No test or reviewer was asked "what does a new person have to do by hand, and could the software do it?" That question now opens every stage contract.
+- **A safe filter stops being safe when the thing it compares against can move.** Every read kept only entries dated up to today. That hid nothing while today only went forward. Letting the time zone change let today go back a day, and yesterday's filter hid this morning's weigh-in.
 - **A fix is new code, and it needs its own review.** The first review of the services found the crashes. The review of the fixes found a contradiction the fixes themselves had introduced.
 - **A library can log on your behalf.** The MCP library set up logging at INFO when the server was built, and one of its lines repeated a name chosen by the caller. Spotter's own "no content in the logs" rule did not cover lines it never wrote, until a reviewer read the real log.
 - **Matching a shell command with one pattern does not work.** The command arrives inside a JSON string, so quotes are escaped, and no single pattern told `bash -c "git commit"` from `--grep="git commit"`. Splitting into shell words did.

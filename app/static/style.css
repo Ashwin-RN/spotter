@@ -18,9 +18,10 @@ a { color: var(--accent); }
 .error p { margin: .25rem 0; }
 .ok { color: var(--accent); background: var(--accent-soft); padding: .5rem .75rem; border-radius: 6px; }
 .notice { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: .5rem .75rem; border-radius: 6px; }
-input, button { font: inherit; padding: .4rem .5rem; border: 1px solid var(--line); border-radius: 6px; }
+input, select, button { font: inherit; padding: .4rem .5rem; border: 1px solid var(--line); border-radius: 6px; }
 label { display: block; margin: .5rem 0; }
 label input { display: block; width: 100%; max-width: 24rem; margin-top: .25rem; }
+select { display: block; width: 100%; max-width: 24rem; margin: .25rem 0 .75rem; background: #fff; }
 button.primary, a.button { background: var(--accent); color: #fff; border: none; padding: .5rem 1rem; border-radius: 6px; text-decoration: none; cursor: pointer; display: inline-block; }
 button.link { background: none; border: none; color: var(--accent); padding: 0; cursor: pointer; text-decoration: underline; }
 .inline { display: inline; }

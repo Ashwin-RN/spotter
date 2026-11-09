@@ -285,15 +285,23 @@ WRITES = {
                                                    "target_date": "2099-01-01"}, "claude"),
     "delete_entry": lambda u: services.delete_entry(u.id, "bodyweight", 1),
     "restore_entry": lambda u: services.restore_entry(u.id, "bodyweight", 1),
+    "update_settings": lambda u: services.update_settings(u.id, {"time_zone": "Asia/Kolkata"}, "claude"),
 }
 
 
 @pytest.mark.parametrize("name", list(WRITES))
 def test_every_write_locks_the_user_row_before_anything_else(user, name):
-    _, statements = count_queries(lambda: WRITES[name](user))
-    first = " ".join(statements[0].split()).lower().replace('"', "")
-    assert first.startswith("update user set claude_can"), statements[0]
-    assert first.endswith("where user.id = ?")
+    result, statements = count_queries(lambda: WRITES[name](user))
+    assert statements, f"{name} ran no SQL at all: {result}"
+    assert flat(statements[0]) == LOCK_SQL, statements[0]  # the lock itself, not merely some UPDATE of the user
+    assert sum(flat(s) == LOCK_SQL for s in statements) == 1
+
+
+def flat(statement: str) -> str:
+    return " ".join(statement.split())
+
+
+LOCK_SQL = flat(str(lock_statement("sqlite", 1).compile(dialect=sqlite.dialect())))
 
 
 def test_the_postgres_lock_is_select_for_update_on_the_user_row():

@@ -126,12 +126,13 @@ def _target(value, kind: str) -> tuple[float | None, dict | None]:
 
 def _source(kind: str, points: list, today: date) -> str:
     """Which measure _now_value used, in words, for messages."""
-    past = sorted(d for d, _ in points if d <= today)
+    past = sorted(d for d, _ in points)
+    aged = [metrics.on_or_before(d, today) for d in past]
     if kind == "lift":
-        recent = [d for d in past if d >= today - timedelta(days=metrics.RECENT_BEST_DAYS - 1)]
+        recent = [d for d in aged if d >= today - timedelta(days=metrics.RECENT_BEST_DAYS - 1)]
         return (f"the best session in the last {metrics.RECENT_BEST_DAYS} days" if recent
                 else f"the latest session, on {past[-1].isoformat()}")
-    if metrics.bodyweight_average(points, today) is not None:
+    if any(d >= today - timedelta(days=metrics.BODYWEIGHT_AVG_DAYS - 1) for d in aged):
         return "the 7-day average"
     return f"the latest weigh-in, on {past[-1].isoformat()}"
 
@@ -269,8 +270,8 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
         if errors:
             return rules.combine(errors)
 
-        lift_history = lifts.history(s, user.id, today)
-        weighed = body.weigh_ins(s, user.id, today)
+        lift_history = lifts.history(s, user.id)
+        weighed = body.weigh_ins(s, user.id)
         if goal is None:
             start, source, err = _start(kind, exercise, lift_history, weighed, data.get("start_value"), today,
                                         warnings)

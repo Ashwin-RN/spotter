@@ -79,14 +79,14 @@ def test_huge_numbers_and_datetimes(user):
         when.date().isoformat()
 
 
-def test_a_weigh_in_dated_after_today_is_left_out(user):
-    """A row can sit after today when the person moves their time zone back. Reads ignore it."""
+def test_a_weigh_in_dated_after_today_is_still_shown(user):
+    """A row can sit after today when the person moves their time zone back. It is their latest."""
+    later = users.today_for(user) + timedelta(days=1)
     with db.session_scope() as s:
-        s.add(Bodyweight(user_id=user.id, date=users.today_for(user) + timedelta(days=1), kg=60, logged_by="web",
-                         dedupe_key="f" * 64))
+        s.add(Bodyweight(user_id=user.id, date=later, kg=60, logged_by="web", dedupe_key="f" * 64))
     r = weigh(user, 80)
-    assert r["recent"] == [{"date": users.today_for(user).isoformat(), "kg": 80}]
-    assert r["trend"]["weigh_ins"] == 1
+    assert r["recent"] == [{"date": later.isoformat(), "kg": 60}, {"date": users.today_for(user).isoformat(), "kg": 80}]
+    assert r["trend"]["weigh_ins"] == 2 and r["trend"]["latest"]["date"] == later.isoformat()
 
 
 def test_dates_more_than_two_years_back_are_refused(user):

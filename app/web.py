@@ -23,7 +23,6 @@ import secrets
 import time
 from functools import lru_cache
 from pathlib import Path
-from zoneinfo import available_timezones
 
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.exc import InterfaceError, OperationalError
@@ -37,7 +36,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app import csrf, db, links, users, web_auth
+from app import csrf, db, links, services, users, web_auth
 from app.config import Settings, get_settings
 from app.models import User
 
@@ -71,11 +70,14 @@ PAGE_HEADERS = {
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
-    "Content-Security-Policy": "default-src 'none'; style-src 'self'; img-src 'self'; "
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
                                "base-uri 'none'; frame-ancestors 'none'",
     "Cache-Control": "no-store",
 }
 HSTS = {"Strict-Transport-Security": "max-age=31536000"}  # https sites only
+
+ZONE_REFUSED = {"message": "That time zone was not recognised, so nothing was changed.",
+                "fix": "Choose your time zone from the list."}
 
 
 # ---------------------------------------------------------------- set-up
@@ -182,6 +184,9 @@ def page(request: Request, name: str, status_code: int = 200, **context) -> Resp
         "web_ready": problem(settings) is None,
         "mcp_url": settings.mcp_resource_url if settings.configured else None,
         "csrf_token": csrf.token(request) if user is not None else "",
+        # Signed in with no zone yet: the page carries the hidden form and the script that saves the
+        # browser's own zone, once.
+        "time_zone_missing": user is not None and not user.time_zone,
         **context,
     }
     return templates.TemplateResponse(request, name, values, status_code=status_code)
@@ -210,9 +215,37 @@ def refuse(request: Request) -> Response:
                    "Go back, reload the page and try again.", status_code=403)
 
 
+# ---------------------------------------------------------------- the time-zone list
+
 @lru_cache(maxsize=1)
+def zone_groups() -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+    """The Settings list: (region, ((name, label), ...)), sorted by region then city, UTC last under
+    Other. The names are users.current_zone_names(), the same data that checks and stores a zone, so
+    the list, the browser's zone and Claude's can never disagree."""
+    regions: dict[str, list[tuple[str, str]]] = {}
+    for name in users.current_zone_names():
+        region, _, city = name.partition("/")
+        label = (city or region).replace("_", " ").replace("/", " / ")
+        regions.setdefault(region if city else "Other", []).append((name, label))
+    return tuple((region, tuple(sorted(regions[region], key=lambda item: item[1])))
+                 for region in sorted(regions, key=lambda r: (r == "Other", r)))
+
+
 def zone_names() -> tuple[str, ...]:
-    return tuple(sorted(available_timezones()))
+    """Every zone name the Settings list offers."""
+    return tuple(name for _, zones in zone_groups() for name, _ in zones)
+
+
+def zone_choices(current: str | None) -> tuple[tuple, str | None]:
+    """The grouped list and the name to show as selected: the stored zone in its canonical form. A
+    stored name the list lacks is offered on its own, selected."""
+    groups = zone_groups()
+    if not current:
+        return groups, None
+    selected = users.canonical_zone(current)
+    if selected in set(zone_names()):
+        return groups, selected
+    return (("Saved", ((current, current.replace("_", " ")),)), *groups), current
 
 
 def _db_safe(endpoint):
@@ -290,13 +323,16 @@ async def settings_page(request: Request) -> Response:
     error = None
     if request.method == "POST":
         form = await request.form()
-        result = await _db(users.set_time_zone, user.id, str(form.get("time_zone") or ""))
-        if not isinstance(result, dict):
+        # The one path that stores a zone, the same one Claude uses; it locks the user row first.
+        result = await _db(services.update_settings, user.id, {"time_zone": str(form.get("time_zone") or "")}, "web")
+        if "error" not in result and "errors" not in result:  # changed: [] (the same zone again) is a success
             return redirect(links.page("settings") + "?saved=time_zone")
-        error = result
+        # The service's own text is written for Claude; the page says it in its own words.
+        error = ZONE_REFUSED
+    groups, selected = zone_choices(user.time_zone)
     return page(request, "settings.html", status_code=400 if error else 200, user=user, error=error,
                 saved=request.query_params.get("saved") == "time_zone" and error is None,
-                zones=zone_names())
+                zone_groups=groups, selected_zone=selected)
 
 
 async def placeholder(request: Request) -> Response:

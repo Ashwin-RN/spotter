@@ -8,7 +8,7 @@ Spotter started from a trainer's notebook. This stage moves in the parts that fi
 
 - A database holding the whole v1 schema, created by one migration.
 - A `user` row per person, created on the first valid sign-in from either side.
-- Six MCP functions and two resources.
+- Seven MCP functions and two resources.
 - Five web pages with sign-in through the same provider.
 - A call log that never holds content.
 - A `.claude/` folder: builder and reviewer agents, a stage-check command, a hook that runs the tests before a commit.
@@ -22,7 +22,7 @@ Spotter started from a trainer's notebook. This stage moves in the parts that fi
 | 3 | A user is keyed on (`provider`, `subject`). `provider` comes from the settings, never from a token | Keying on the issuer could split one person into two accounts |
 | 4 | Bodyweight: the same weight again within 10 minutes is a duplicate. A different weight on the same day replaces the old one, which is soft-deleted and can be restored | One live weigh-in per day keeps the trend honest |
 | 5 | Web sign-in uses the provider's Python library (`workos`). The session is Spotter's own signed cookie, holding four things: the user id, a CSRF token, the provider's session id (an id, not a token; sign-out needs it) and the sign-in time. A session ends 14 days after sign-in, however often it is used | No provider token ever sits in a cookie, and a copied cookie cannot be kept alive for ever |
-| 6 | Until a time zone is set, "today" is UTC, and `whoami` tells Claude to ask. `/settings` can set it | Logging must work from the first message |
+| 6 | Nobody types a time zone into a form. Claude sets it in the first conversation with `update_settings`: it uses the person's zone when it knows it, and otherwise asks which city they are in, once. On the web, the browser's own zone is saved at the first sign-in. `/settings` shows it and can change it, from a list. Until one is set, "today" is UTC | The first version sent the person to a page to type a zone name. That is a chore the software can do itself |
 | 7 | The permission switch defaults to `log` | Logging works at once; delete stays off until the person turns it on |
 | 8 | CSRF is hand-written: a random token per session, checked on every non-GET web route | About 30 lines, no new package |
 | 9 | All tables for stages 2 to 5 go in the first migration | Later stages add functions and rows, never schema. Anything unforeseen gets a new migration; the first is never edited once deployed |
@@ -125,6 +125,7 @@ Every function has a title, a permission hint and a result schema.
 | `log_bodyweight` | Write | One weigh-in |
 | `set_goal` | Write | A lift or bodyweight goal. Stores the start value, start date and direction when created |
 | `get_progress` | Read | One lift over time: bests, estimated max, projection |
+| `update_settings` | Write | The time zone, in this stage. Later stages add the targets. Never the permission switch: only the person changes what Claude may do |
 
 - Resources: `spotter://can-and-cant` and `spotter://exercises`.
 - One wrapper runs every function: it resolves the user, times the call, writes the call-log row, and turns a crash into `{error, message, fix}`.
@@ -154,7 +155,7 @@ Every function has a title, a permission hint and a result schema.
 |---|---|---|---|---|
 | **Files** | `app/config.py`, `app/db.py`, `app/models.py`, `app/exercises.py`, `app/users.py`, `app/links.py`, `alembic.ini`, `migrations/`, `requirements*.txt`, `tests/conftest.py`, `tests/test_schema.py`, `tests/test_users.py`, `tests/test_links.py`, `tests/test_config.py` | `app/services/`, `app/metrics.py`, `app/rules.py`, `app/charts.py`, `tests/test_metrics.py`, `tests/test_rules.py`, `tests/test_lifts.py`, `tests/test_bodyweight.py`, `tests/test_goals.py`, `tests/test_progress.py`, `tests/test_charts.py`, `tests/test_entries.py`, `tests/test_isolation.py` | `app/web.py`, `app/web_auth.py`, `app/csrf.py`, `app/main.py`, `app/templates/`, `app/static/`, `tests/test_web.py`, `tests/test_csrf.py`, `.claude/` | `app/mcp_server.py`, `app/mcp_schemas.py`, `app/calllog.py`, `docs/can-and-cant.md`, `tools/mcp_call.py`, `tests/test_mcp.py`, `tests/test_isolation_mcp.py`, `tests/test_calllog.py`, `tests/test_same_account.py` |
 | **Waits for** | Stage 1 | A | A | B and D |
-| **Exit check** | The migration builds every table on an empty database; migration and models agree; the same identity twice gives one row; the exercise sync is idempotent; stage 1's tests still pass | Its tests pass; the isolation test passes; no trainer-shaped name is left in its files | Signed-out pages redirect; a POST without the CSRF token is 403; sign-in creates then finds the user; sign-out clears the session | The function list is exactly the six, each with title, hint and schema; a marker string passed as an argument never appears in the call log; isolation and same-account tests pass; **the full suite passes** |
+| **Exit check** | The migration builds every table on an empty database; migration and models agree; the same identity twice gives one row; the exercise sync is idempotent; stage 1's tests still pass | Its tests pass; the isolation test passes; no trainer-shaped name is left in its files | Signed-out pages redirect; a POST without the CSRF token is 403; sign-in creates then finds the user; sign-out clears the session | The function list is exactly the seven, each with title, hint and schema; a marker string passed as an argument never appears in the call log; isolation and same-account tests pass; **the full suite passes** |
 
 `app/auth.py` is not edited in this stage.
 

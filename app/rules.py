@@ -35,7 +35,7 @@ OLDEST_DAYS = 2 * 365 + 1  # entries go back two years at most, either side of a
 TEXT_MAX = 2000            # notes and goal text
 QUOTE_MAX = 80             # the most of a caller's value an error message repeats
 NAME_MAX = 80              # far longer than any exercise name: no closest-name search beyond it
-TODAY_NOTE = "Today follows the time zone in Settings, and is UTC until one is set."
+TODAY_NOTE = "Today is the person's own date: their time zone, or UTC until update_settings sets one."
 
 
 def kg(x) -> str:
