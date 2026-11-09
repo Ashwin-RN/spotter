@@ -2,8 +2,8 @@
 
 Usage: python tools/probe.py <base-url>      for example  python tools/probe.py https://spotter.example.app
 
-Checks /health, the 401 from /mcp and its WWW-Authenticate header, and the protected-resource metadata
-the header points at. Prints PASS or FAIL per check and exits non-zero if any check fails.
+Checks /health, the 401 from /mcp and its WWW-Authenticate header, and the protected-resource metadata,
+including its scopes_supported. Prints PASS or FAIL per check and exits non-zero if any check fails.
 Standard library only.
 """
 
@@ -98,6 +98,12 @@ def main(base: str) -> int:
     ok = (isinstance(servers, list) and len(servers) == 1 and isinstance(servers[0], str)
           and urlparse(servers[0]).scheme == "https" and urlparse(servers[0]).path in ("", "/"))
     probe.check("authorization_servers is one https issuer", ok, repr(servers))
+
+    # A client asks for what scopes_supported lists; without offline_access it gets no refresh token.
+    scopes = metadata.get("scopes_supported")
+    probe.check("scopes_supported includes offline_access",
+                isinstance(scopes, list) and "offline_access" in scopes, repr(scopes))
+    probe.check("WWW-Authenticate names no scope of its own", re.search(r'(?:^Bearer |, )scope=', challenge) is None)
 
     print(f"{'FAIL' if probe.failed else 'PASS'}: {probe.failed} check(s) failed")
     return 1 if probe.failed else 0

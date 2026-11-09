@@ -9,8 +9,11 @@ Outbound fetches never follow a redirect, so a token sent to the provider cannot
 Nothing here ever logs a token or an Authorization header.
 """
 
+import asyncio
+import functools
 import json
 import logging
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -29,11 +32,13 @@ log = logging.getLogger("spotter.auth")
 
 FetchJson = Callable[..., Awaitable[dict[str, Any]]]  # (url, headers=None) -> parsed JSON object
 
-KEY_SET_TTL = 3600.0  # seconds a fetched key set is trusted
+KEY_SET_TTL = 3600.0  # seconds a fetched key set is fresh; after this it is refreshed behind the request
+KEY_SET_MAX_AGE = 24 * 3600.0  # seconds after which an old key set is no longer trusted at all
 REFRESH_INTERVAL = 60.0  # after a successful fetch, the key set is fetched again at most this often
 RETRY_AFTER_FAILURE = 5.0  # after a failed fetch, the next attempt may come this soon
 USERINFO_ENDPOINT_TTL = 3600.0  # seconds the provider's userinfo address (or its absence) is remembered
 USERINFO_TIMEOUT = 6.0  # the whole userinfo lookup, both fetches together
+USERINFO_THREADS = 4  # userinfo and discovery fetch threads alive at once, abandoned ones included
 FETCH_TIMEOUT = 5.0  # per socket operation
 MAX_BODY = 64 * 1024  # bytes; the discovery documents and the key set are far smaller
 CLOCK_SKEW = 30  # seconds of tolerance on iat and nbf only; expiry gets none
@@ -69,10 +74,63 @@ def _get_json(url: str, headers: dict[str, str] | None) -> dict[str, Any]:
     return body
 
 
-async def fetch_json(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
+class Busy(Exception):
+    """Every slot is held by a fetch thread that has not finished yet."""
+
+
+class _Slot:
+    """One place in a pool, taken before the thread starts and given back when the thread itself ends
+    (or at once, if the thread never started)."""
+
+    def __init__(self, pool: threading.BoundedSemaphore):
+        self._pool = pool
+        self._guard = threading.Lock()
+        self._started = False
+        self._released = False
+
+    def start(self) -> bool:
+        with self._guard:
+            self._started = not self._released
+            return self._started
+
+    def release(self) -> None:
+        with self._guard:
+            if not self._released:
+                self._released = True
+                self._pool.release()
+
+    def release_if_never_started(self) -> None:
+        with self._guard:
+            started = self._started
+        if not started:
+            self.release()
+
+
+async def fetch_json(url: str, headers: dict[str, str] | None = None, *,
+                     slots: threading.BoundedSemaphore | None = None) -> dict[str, Any]:
     """GET a JSON object in a worker thread, so the event loop never waits on the network.
-    A cancelled caller does not wait for the thread: it is abandoned and finishes on its own."""
-    return await anyio.to_thread.run_sync(_get_json, url, headers, abandon_on_cancel=True)
+
+    A cancelled caller does not wait for the thread: it is abandoned and finishes on its own. With `slots`,
+    the thread holds one slot until it actually ends, and when none is free this raises Busy at once."""
+    if slots is None:
+        return await anyio.to_thread.run_sync(_get_json, url, headers, abandon_on_cancel=True)
+    if not slots.acquire(blocking=False):
+        raise Busy("too many provider fetches still running")
+    slot = _Slot(slots)
+
+    def work() -> dict[str, Any]:
+        if not slot.start():
+            raise Busy("cancelled before it started")
+        try:
+            return _get_json(url, headers)
+        finally:
+            slot.release()
+
+    try:
+        return await anyio.to_thread.run_sync(work, abandon_on_cancel=True)
+    except BaseException:
+        slot.release_if_never_started()
+        raise
 
 
 def _scopes(claims: dict[str, Any]) -> list[str]:
@@ -104,13 +162,23 @@ class JwksTokenVerifier:
         self._fetched_at: float | None = None  # last successful fetch
         self._last_attempt: float | None = None  # last fetch attempt, successful or not
         self._last_failed = False
-        self._lock = anyio.Lock()
+        self._inflight: asyncio.Task | None = None  # the one key set fetch in flight, if any
 
-    def _fresh(self, now: float) -> bool:
-        return self._fetched_at is not None and now - self._fetched_at < KEY_SET_TTL
+    def _age(self, now: float) -> float:
+        return float("inf") if self._fetched_at is None else now - self._fetched_at
+
+    def _start_refresh(self, now: float) -> asyncio.Task | None:
+        """The refresh in flight, or a new one if the rate limit allows it, or None."""
+        if self._inflight is not None and not self._inflight.done():
+            return self._inflight
+        interval = RETRY_AFTER_FAILURE if self._last_failed else REFRESH_INTERVAL
+        if self._last_attempt is not None and now - self._last_attempt < interval:
+            return None
+        self._last_attempt = now
+        self._inflight = asyncio.get_running_loop().create_task(self._refresh())
+        return self._inflight
 
     async def _refresh(self) -> None:
-        self._last_attempt = self._clock()
         try:
             body = await self._fetch(self.jwks_url)
         except Exception as exc:  # noqa: BLE001 - a failed fetch keeps the old keys and refuses unknown ones
@@ -132,19 +200,22 @@ class JwksTokenVerifier:
         self._last_failed = False
 
     async def _key_for(self, kid: str) -> Any | None:
-        """The key for `kid`. A cached key from a fresh key set is returned without waiting on anything.
-        Otherwise the key set is fetched, but not more than once a minute (once every few seconds after a
-        failure), so a stream of made-up key ids cannot flood the provider."""
-        if self._fresh(self._clock()) and kid in self._keys:
+        """The key for `kid`.
+
+        A known key is returned at once from a set under a day old; a set over an hour old is refreshed
+        behind the request. An unknown key id (or no usable set) waits for a refresh, joining the one in
+        flight if there is one. Fetches are at most once a minute (every few seconds after a failure),
+        so a stream of made-up key ids cannot flood the provider."""
+        now = self._clock()
+        age = self._age(now)
+        if kid in self._keys and age < KEY_SET_MAX_AGE:
+            if age >= KEY_SET_TTL:
+                self._start_refresh(now)  # stale-while-revalidate: this request does not wait for it
             return self._keys[kid]
-        async with self._lock:
-            now = self._clock()
-            if self._fresh(now) and kid in self._keys:  # another caller refreshed while this one waited
-                return self._keys[kid]
-            interval = RETRY_AFTER_FAILURE if self._last_failed else REFRESH_INTERVAL
-            if self._last_attempt is None or now - self._last_attempt >= interval:
-                await self._refresh()
-            return self._keys.get(kid)
+        task = self._start_refresh(now)
+        if task is not None:
+            await asyncio.shield(task)  # a cancelled caller leaves the refresh running for the others
+        return self._keys.get(kid) if self._age(self._clock()) < KEY_SET_MAX_AGE else None
 
     def _refused(self, reason: str, token: str) -> None:
         if not self.debug:
@@ -181,7 +252,10 @@ class JwksTokenVerifier:
             )
         except (jwt.PyJWTError, ValueError, TypeError) as exc:
             return self._refused(type(exc).__name__, token)
-        if claims["exp"] <= time.time():
+        exp = claims["exp"]
+        if isinstance(exp, bool) or not isinstance(exp, (int, float)):  # PyJWT accepts "1790000000"
+            return self._refused("exp is not a number", token)
+        if exp <= time.time():
             return self._refused("expired", token)
         if not isinstance(claims["sub"], str) or not claims["sub"]:
             return self._refused("empty sub", token)
@@ -215,7 +289,10 @@ class UserinfoClient:
                  timeout: float = USERINFO_TIMEOUT):
         self.domain = (settings.authkit_domain or "").lower()
         self.discovery_urls = [settings.openid_configuration_url, settings.provider_metadata_url]
-        self._fetch = fetch
+        self._slots = threading.BoundedSemaphore(USERINFO_THREADS)
+        # The real fetch runs in threads that outlive a timed-out lookup; count them, so abandoned ones
+        # cannot pile up. A fetch passed in by a test has no threads to count.
+        self._fetch = functools.partial(fetch_json, slots=self._slots) if fetch is fetch_json else fetch
         self._clock = clock
         self._timeout = timeout
         self._endpoint: str | None = None
@@ -233,23 +310,24 @@ class UserinfoClient:
         now = self._clock()
         if self._endpoint_at is not None and now - self._endpoint_at < USERINFO_ENDPOINT_TTL:
             return self._endpoint
-        endpoint, answered = None, False
-        for url in self.discovery_urls:
+        endpoint, openid_answered = None, False
+        for index, url in enumerate(self.discovery_urls):
             try:
                 document = await self._fetch(url)
             except Exception as exc:  # noqa: BLE001 - try the next document
                 log.warning("provider discovery fetch failed: %s", type(exc).__name__)
                 continue
-            answered = True
+            openid_answered = openid_answered or index == 0
             if isinstance(document.get("userinfo_endpoint"), str):
                 endpoint = document["userinfo_endpoint"]
                 break
-        if not answered:
-            return None  # nothing learned; ask again next time
         if endpoint is not None and not self._on_provider_host(endpoint):
             log.warning("userinfo_endpoint is not on the provider's host; not calling it")
             endpoint = None
-        self._endpoint, self._endpoint_at = endpoint, now
+        # Remember an address, or the OpenID document's own word that there is none. After a failed
+        # OpenID fetch, "none" is not remembered: the fallback document lists no address on this provider.
+        if endpoint is not None or openid_answered:
+            self._endpoint, self._endpoint_at = endpoint, now
         return endpoint
 
     async def lookup(self, token: str, subject: str) -> tuple[str | None, str | None]:

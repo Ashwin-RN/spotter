@@ -99,6 +99,12 @@ def test_a_valid_token_is_accepted(provider):
     assert access.claims["iss"] == ISSUER
 
 
+@pytest.mark.parametrize("scope", [None, "", 42], ids=["absent", "empty", "not a string"])
+def test_a_token_without_a_usable_scope_claim_has_no_scopes(provider, scope):
+    access = verify(verifier(provider), sign(claims(scope=scope)))
+    assert access is not None and access.scopes == []
+
+
 def test_aud_as_a_list_is_accepted_when_it_contains_the_resource(provider):
     token = sign(claims(aud=["https://other.example/api", RESOURCE]))
     assert verify(verifier(provider), token) is not None
@@ -142,6 +148,8 @@ REFUSED = {
                                                      algorithm="HS256", headers={"kid": SIGNING_KEY.kid}),
     "HS256 with the public key as secret": hs256_with_public_key,
     "no expiry": lambda: sign(claims(exp=None)),
+    "exp as a string": lambda: sign(claims(exp=str(int(time.time()) + 600))),
+    "exp as a boolean": lambda: sign(claims(exp=True)),
     "no subject": lambda: sign(claims(sub=None)),
     "empty subject": lambda: sign(claims(sub="")),
     "no key id": lambda: jwt.encode(claims(), SIGNING_KEY.private_pem, algorithm="RS256"),
@@ -172,16 +180,100 @@ def test_the_key_set_is_cached(provider):
     assert provider.count("/oauth2/jwks") == 1
 
 
-def test_the_key_set_is_refetched_after_an_hour(provider):
-    clock = Clock()
-    v = verifier(provider, clock)
-    verify(v, sign())
-    clock.now += 3599
-    verify(v, sign())
-    assert provider.count("/oauth2/jwks") == 1
-    clock.now += 2
-    verify(v, sign())
-    assert provider.count("/oauth2/jwks") == 2
+class SlowKeySet:
+    """A key set fetch that can be made to hang (or fail) until the test lets it go. Use inside one event loop."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.hang = False
+        self.fail = False
+        self.started: anyio.Event | None = None
+        self.release: anyio.Event | None = None
+        self.keys = [SIGNING_KEY]
+
+    def arm(self) -> None:
+        self.hang, self.started, self.release = True, anyio.Event(), anyio.Event()
+
+    async def fetch(self, url, headers=None):
+        self.calls += 1
+        if self.hang:
+            self.started.set()
+            await self.release.wait()
+        if self.fail:
+            raise OSError("provider down")
+        return {"keys": [k.jwk() for k in self.keys]}
+
+
+def test_a_known_key_is_served_from_a_stale_set_while_one_refresh_runs_behind():
+    clock, source = Clock(), SlowKeySet()
+
+    async def go():
+        v = JwksTokenVerifier(settings(), source.fetch, clock)
+        assert await v.verify_token(sign()) is not None
+        assert source.calls == 1
+        clock.now += 3599
+        assert await v.verify_token(sign()) is not None
+        assert source.calls == 1  # still fresh: no fetch
+        clock.now += 2  # over an hour old
+        source.arm()  # the provider hangs from now on
+        with anyio.fail_after(1):
+            for _ in range(5):
+                assert await v.verify_token(sign()) is not None  # served at once
+            await source.started.wait()
+        assert source.calls == 2  # one refresh in flight, not five
+        source.release.set()
+        await v._inflight
+        clock.now += 1
+        source.hang = False
+        assert await v.verify_token(sign()) is not None
+        assert source.calls == 2  # the refresh made the set fresh again
+
+    anyio.run(go)
+
+
+def test_an_unknown_key_id_joins_the_refresh_in_flight():
+    clock, source = Clock(), SlowKeySet()
+
+    async def go():
+        v = JwksTokenVerifier(settings(), source.fetch, clock)
+        assert await v.verify_token(sign()) is not None
+        clock.now += 3601
+        source.arm()
+        source.keys = [SIGNING_KEY, OTHER_KEY]  # the provider has rotated in a new key
+        assert await v.verify_token(sign()) is not None  # starts the refresh behind it
+        results = []
+
+        async def stranger():
+            results.append(await v.verify_token(sign(key=OTHER_KEY)))
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(stranger)
+            await source.started.wait()
+            await anyio.sleep(0.05)
+            assert results == []  # the unknown key id waits for the refresh
+            source.release.set()
+        assert results[0] is not None and source.calls == 2  # it joined the one refresh
+
+    anyio.run(go)
+
+
+def test_a_key_set_over_a_day_old_is_not_trusted():
+    clock, source = Clock(), SlowKeySet()
+
+    async def go():
+        v = JwksTokenVerifier(settings(), source.fetch, clock)
+        assert await v.verify_token(sign()) is not None
+        source.fail = True
+        clock.now += 3601
+        assert await v.verify_token(sign()) is not None  # stale, refresh fails behind it: still served
+        await v._inflight
+        clock.now += auth.KEY_SET_MAX_AGE
+        assert await v.verify_token(sign()) is None  # over a day old and no fresh set: refused
+        source.fail = False
+        clock.now += auth.RETRY_AFTER_FAILURE
+        assert await v.verify_token(sign()) is not None  # waits for the refresh, which works
+
+    anyio.run(go)
 
 
 def test_an_unknown_key_id_refreshes_once_a_minute_at_most_then_is_refused(provider):
@@ -343,6 +435,38 @@ def test_a_cancelled_real_fetch_does_not_wait_for_its_thread(monkeypatch):
         release.set()
 
 
+def test_abandoned_lookup_threads_are_counted_and_a_full_pool_answers_at_once(monkeypatch):
+    release = threading.Event()
+    opened = []
+
+    class Hanging:
+        def open(self, request, timeout):
+            opened.append(request.full_url)
+            release.wait(10)
+            raise OSError("released")
+
+    monkeypatch.setattr(auth, "_OPENER", Hanging())
+    client = UserinfoClient(settings(), auth.fetch_json, Clock(), timeout=0.2)
+    try:
+        for _ in range(auth.USERINFO_THREADS):  # each times out, leaving its thread running
+            assert anyio.run(client.lookup, "the-token", "user_01TEST") == (None, None)
+        assert len(opened) == auth.USERINFO_THREADS
+        started = time.monotonic()
+        assert anyio.run(client.lookup, "the-token", "user_01TEST") == (None, None)
+        assert time.monotonic() - started < 0.15  # at once, not after the timeout
+        assert len(opened) == auth.USERINFO_THREADS  # and no new thread
+    finally:
+        release.set()
+    deadline = time.monotonic() + 5
+    while client._slots._value < auth.USERINFO_THREADS and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert client._slots._value == auth.USERINFO_THREADS  # the slots came back when the threads ended
+    release.clear()
+    anyio.run(client.lookup, "the-token", "user_01TEST")
+    release.set()
+    assert len(opened) == auth.USERINFO_THREADS + 1  # and a new lookup gets a thread again
+
+
 # ---------------------------------------------------------------- items 13 and 14: logs
 
 def test_debug_logs_claim_names_and_four_public_claims_only(provider, logs):
@@ -447,6 +571,16 @@ def test_a_missing_userinfo_endpoint_is_remembered(provider):
     clock.now += auth.USERINFO_ENDPOINT_TTL + 1
     anyio.run(client.lookup, "the-token", "user_01TEST")
     assert provider.count("/openid-configuration") == 2
+
+
+def test_a_failed_openid_fetch_is_not_remembered_as_no_endpoint(provider):
+    clock = Clock()
+    client = UserinfoClient(settings(), provider.fetch, clock)
+    real = provider.openid
+    provider.openid = OSError("blip")
+    assert anyio.run(client.lookup, "the-token", "user_01TEST") == (None, None)  # fallback lists none
+    provider.openid = real
+    assert anyio.run(client.lookup, "the-token", "user_01TEST") == ("asha@example.com", "Asha Test")
 
 
 def test_a_userinfo_lookup_that_never_answers_gives_nulls_in_time():

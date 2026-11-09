@@ -11,11 +11,13 @@ from starlette.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from app.mcp_server import REQUIRED_SCOPES, SCOPES
 
 from .conftest import DOMAIN, HEADERS, ISSUER, OTHER_KEY, RESOURCE, SIGNING_KEY, claims, rpc, sign, whoami
 from .test_auth import hs256_with_public_key, unsigned
 
 METADATA_PATH = "/.well-known/oauth-protected-resource/mcp"
+SCOPE_PARAM = re.compile(r'(?:^Bearer |, )scope=')  # an RFC 6750 scope= parameter, not "insufficient_scope"
 
 
 # ---------------------------------------------------------------- item 1: health
@@ -46,12 +48,47 @@ def test_the_metadata_names_this_resource_and_the_provider(http):
     assert '"resource":"https://spotter.example.app/mcp"' in r.text
 
 
+def test_the_metadata_advertises_the_four_scopes(http):
+    assert SCOPES == ["openid", "profile", "email", "offline_access"]
+    assert http.get(METADATA_PATH).json()["scopes_supported"] == SCOPES
+
+
+def test_the_401_does_not_name_scopes_of_its_own(http):
+    header = rpc(http, "initialize").headers["www-authenticate"]
+    assert SCOPE_PARAM.search(header) is None  # so a client asks for scopes_supported: all four
+
+
 def test_a_trailing_slash_resource_is_published_as_written(make_client):
     client = make_client(mcp_resource_url=RESOURCE + "/")
     header = rpc(client, "initialize").headers["www-authenticate"]
     url = re.search(r'resource_metadata="([^"]+)"', header).group(1)
     assert url == "https://spotter.example.app" + METADATA_PATH + "/"
-    assert client.get(METADATA_PATH + "/").json()["resource"] == RESOURCE + "/"
+    body = client.get(METADATA_PATH + "/").json()
+    assert body["resource"] == RESOURCE + "/" and body["scopes_supported"] == SCOPES
+
+
+# ---------------------------------------------------------------- scopes
+
+@pytest.mark.parametrize("scope", ["profile email offline_access", "", None],
+                         ids=["no openid", "empty scope", "no scope claim"])
+def test_a_token_without_openid_gets_403_pointing_at_the_metadata(http, scope):
+    r = rpc(http, "tools/call", {"name": "whoami", "arguments": {}}, token=sign(claims(scope=scope)))
+    assert r.status_code == 403
+    header = r.headers["www-authenticate"]
+    assert 'error="insufficient_scope"' in header
+    assert f'resource_metadata="https://spotter.example.app{METADATA_PATH}"' in header
+    assert SCOPE_PARAM.search(header) is None
+    assert r.json()["error"] == "insufficient_scope"
+
+
+def test_a_token_with_the_four_scopes_gets_through(http):
+    who = whoami(http, sign(claims(scope="email offline_access openid profile")))
+    assert who["scopes"] == ["email", "offline_access", "openid", "profile"]
+
+
+def test_only_openid_is_required(http):
+    assert REQUIRED_SCOPES == ["openid"]
+    assert whoami(http, sign(claims(scope="openid")))["scopes"] == ["openid"]
 
 
 def test_forged_host_headers_do_not_change_the_resource(http):
@@ -75,9 +112,11 @@ def test_forged_host_headers_do_not_change_the_resource(http):
                headers={"kid": SIGNING_KEY.kid}),
     hs256_with_public_key(),
     sign(claims(sub="")),
+    sign(claims(exp=str(int(time.time()) + 600))),
     "not-a-jwt",
 ], ids=["another audience", "another issuer", "expired", "expired seconds ago", "bad signature", "alg none",
-        "HS256 with a shared secret", "HS256 with the public key as secret", "empty subject", "not a JWT"])
+        "HS256 with a shared secret", "HS256 with the public key as secret", "empty subject", "exp as a string",
+        "not a JWT"])
 def test_bad_tokens_get_401(http, token):
     r = rpc(http, "tools/call", {"name": "whoami", "arguments": {}}, token=token)
     assert r.status_code == 401
