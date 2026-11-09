@@ -25,7 +25,8 @@
 | What is in `scope`? | `email offline_access openid profile` | Server log |
 | Does Claude on the web register through its Client ID Metadata Document? | Yes. `client_id` is `https://claude.ai/oauth/mcp-oauth-client-metadata`. Claude's connector form detected both the sign-in and this method with no manual setup | Server log; the connector form |
 | Does Claude Code do the same? | Yes, with its own identity: `https://claude.ai/oauth/claude-code-client-metadata` | Server log |
-| Is `user_id` the same from the web and from Claude Code? | Yes. After both sign-ins the provider lists one user | The provider's user list |
+| Is `user_id` the same from the web and from Claude Code? | Yes | `whoami` returned the same id from both |
+| Does userinfo work without scopes? | No. From Claude Code, whose token had no scopes, `whoami` returned null for email and name. From the web, with scopes, it returned both | `whoami` live from both clients |
 | Do both clients ask for the same scopes? | No. Claude on the web asked for four. Claude Code asked for none, and its token has no `scope` claim at all | Server log |
 
 ### Exit test
