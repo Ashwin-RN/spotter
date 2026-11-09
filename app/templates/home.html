@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Spotter</h1>
+<p class="lead">A personal fitness record you keep by talking to Claude. Tell Claude what you lifted or what
+you weighed, and Spotter stores it, works out your bests and tracks your goals.</p>
+
+<div class="card accent-border">
+  <h2>Connect Spotter to Claude</h2>
+  {% if mcp_url %}
+  <p>Spotter's address:</p>
+  <code class="link-box">{{ mcp_url }}</code>
+  <ol>
+    <li>In Claude, open Settings, then Connectors, and add a custom connector.</li>
+    <li>Paste the address above.</li>
+    <li>Claude asks you to sign in. Use the same sign-in here and there, and both reach one account.</li>
+  </ol>
+  {% else %}
+  <p class="notice">This server's address is not set up yet, so it cannot be connected.</p>
+  {% endif %}
+</div>
+
+{% if signed_in %}
+<p><a class="button" href="/settings">Settings</a></p>
+{% elif web_ready %}
+<p><a class="button" href="/sign-in">Sign in</a> to see your account and set your time zone.</p>
+{% else %}
+<p class="notice">Sign-in on the web is not set up on this server yet.</p>
+{% endif %}
+{% endblock %}

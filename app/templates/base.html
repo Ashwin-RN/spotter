@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{% block title %}Spotter{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Spotter</a>
+    {% if signed_in %}
+    <nav>
+      <a href="/settings">Settings</a>
+      <form method="post" action="/sign-out" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="link">Sign out</button>
+      </form>
+    </nav>
+    {% elif web_ready %}
+    <nav><a href="/sign-in">Sign in</a></nav>
+    {% endif %}
+  </header>
+  <main>{% block main %}{% endblock %}</main>
+</body>
+</html>

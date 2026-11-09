@@ -21,21 +21,25 @@ Spotter started from a trainer's notebook. This stage moves in the parts that fi
 | 2 | Read, delete and restore by id exist at service level now, with no MCP function yet | The cross-user test needs them |
 | 3 | A user is keyed on (`provider`, `subject`). `provider` comes from the settings, never from a token | Keying on the issuer could split one person into two accounts |
 | 4 | Bodyweight: the same weight again within 10 minutes is a duplicate. A different weight on the same day replaces the old one, which is soft-deleted and can be restored | One live weigh-in per day keeps the trend honest |
-| 5 | Web sign-in uses the provider's Python library (`workos`). The session is Spotter's own signed cookie, holding the user id and a CSRF token, nothing else | No provider token ever sits in a cookie |
+| 5 | Web sign-in uses the provider's Python library (`workos`). The session is Spotter's own signed cookie, holding four things: the user id, a CSRF token, the provider's session id (an id, not a token; sign-out needs it) and the sign-in time. A session ends 14 days after sign-in, however often it is used | No provider token ever sits in a cookie, and a copied cookie cannot be kept alive for ever |
 | 6 | Until a time zone is set, "today" is UTC, and `whoami` tells Claude to ask. `/settings` can set it | Logging must work from the first message |
 | 7 | The permission switch defaults to `log` | Logging works at once; delete stays off until the person turns it on |
 | 8 | CSRF is hand-written: a random token per session, checked on every non-GET web route | About 30 lines, no new package |
 | 9 | All tables for stages 2 to 5 go in the first migration | Later stages add functions and rows, never schema. Anything unforeseen gets a new migration; the first is never edited once deployed |
+| 10 | A failed MCP call is flagged as an error (`isError`) and carries `{error, message, fix}` | The MCP spec asks for it, and Claude reads the fix and retries. A duplicate is a success, not an error |
+| 11 | Each MCP function takes named, typed arguments, not one blob. The service stays the judge of ranges and rules | The caller sees exactly what to send. A value of the wrong type is refused by the MCP library, naming the field |
+| 12 | No link Spotter hands out may 404. A page that is named in `app/links.py` and not built yet gets a signed-in placeholder, and a test walks every named page | Results already link to the day, progress and goals pages, which arrive in stage 3 |
+| 13 | The provider's userinfo is asked only while a user row lacks an email or a name, at most once per 10 minutes per person | The provider's tokens name nobody, and a network call on every function would be waste |
 
 ## Settings
 
 | Variable | Secret? | Meaning |
 |---|---|---|
 | `AUTHKIT_DOMAIN`, `MCP_RESOURCE_URL`, `AUTH_DEBUG` | No | As in stage 1 |
-| `DATABASE_URL` | Yes | Postgres on the host; a local SQLite file when unset |
+| `DATABASE_URL` | Yes | Postgres on the host. Unset on a local machine: a local SQLite file. Unset on a public https site: the database refuses to start |
 | `WORKOS_CLIENT_ID` | No | The provider's public id for this app |
 | `WORKOS_API_KEY` | Yes | Lets the server finish a web sign-in |
-| `SESSION_SECRET` | Yes | Optional. Signs the session cookie. When unset, the key is derived from `WORKOS_API_KEY` with HKDF and a fixed label |
+| `SESSION_SECRET` | Yes | Optional. Signs the session cookie. At least 32 characters. When unset, the key is derived from `WORKOS_API_KEY` with HKDF and a fixed label |
 | `AUTH_PROVIDER` | No | Default `workos`. Stored on each user row |
 | `SIGNUPS_PER_DAY` | No | Default 50. New accounts allowed per UTC day |
 
@@ -115,7 +119,7 @@ Every function has a title, a permission hint and a result schema.
 
 | Function | Kind | What it does |
 |---|---|---|
-| `whoami` | Read | The account: `user_id` (the token's `sub`), `account_id`, email, name, time zone or a note to ask for it, targets, what Claude may do |
+| `whoami` | Read | The account: `user_id` (the token's `sub`), `account_id`, email, name, time zone or a note to ask for it, targets, what Claude may do, and a `sign_in` block (client, scopes, issuer, expiry) from the token |
 | `list_exercises` | Read | The lift list, filtered by kind or category |
 | `log_lifts` | Write | One session: date, notes, sets. Returns the saved session, any new bests, and `duplicate` |
 | `log_bodyweight` | Write | One weigh-in |
@@ -124,6 +128,9 @@ Every function has a title, a permission hint and a result schema.
 
 - Resources: `spotter://can-and-cant` and `spotter://exercises`.
 - One wrapper runs every function: it resolves the user, times the call, writes the call-log row, and turns a crash into `{error, message, fix}`.
+- A result is the service's own dict, as structured content and as JSON text. An error result is flagged `isError`.
+- The services are synchronous. Every database call runs in a worker thread, never on the event loop.
+- A crash is logged by type and stack frames only, never by its message: a database error's message can carry a person's data.
 - The permission switch is stored in this stage and enforced from stage 3.
 
 ## The web
@@ -145,7 +152,7 @@ Every function has a title, a permission hint and a result schema.
 
 | | A: schema and identity | B: services | D: web and repo setup | C: MCP surface |
 |---|---|---|---|---|
-| **Files** | `app/config.py`, `app/db.py`, `app/models.py`, `app/exercises.py`, `app/users.py`, `app/links.py`, `alembic.ini`, `migrations/`, `requirements*.txt`, `railway.json`, `tests/conftest.py`, `tests/test_schema.py`, `tests/test_users.py`, `tests/test_links.py`, `tests/test_config.py` | `app/services/`, `app/metrics.py`, `app/rules.py`, `app/charts.py`, `tests/test_metrics.py`, `tests/test_rules.py`, `tests/test_lifts.py`, `tests/test_bodyweight.py`, `tests/test_goals.py`, `tests/test_progress.py`, `tests/test_charts.py`, `tests/test_entries.py`, `tests/test_isolation.py` | `app/web.py`, `app/web_auth.py`, `app/csrf.py`, `app/main.py`, `app/templates/`, `app/static/`, `tests/test_web.py`, `tests/test_csrf.py`, `.claude/` | `app/mcp_server.py`, `app/calllog.py`, `docs/can-and-cant.md`, `tools/mcp_call.py`, `tests/test_mcp.py`, `tests/test_isolation_mcp.py`, `tests/test_calllog.py`, `tests/test_same_account.py` |
+| **Files** | `app/config.py`, `app/db.py`, `app/models.py`, `app/exercises.py`, `app/users.py`, `app/links.py`, `alembic.ini`, `migrations/`, `requirements*.txt`, `tests/conftest.py`, `tests/test_schema.py`, `tests/test_users.py`, `tests/test_links.py`, `tests/test_config.py` | `app/services/`, `app/metrics.py`, `app/rules.py`, `app/charts.py`, `tests/test_metrics.py`, `tests/test_rules.py`, `tests/test_lifts.py`, `tests/test_bodyweight.py`, `tests/test_goals.py`, `tests/test_progress.py`, `tests/test_charts.py`, `tests/test_entries.py`, `tests/test_isolation.py` | `app/web.py`, `app/web_auth.py`, `app/csrf.py`, `app/main.py`, `app/templates/`, `app/static/`, `tests/test_web.py`, `tests/test_csrf.py`, `.claude/` | `app/mcp_server.py`, `app/mcp_schemas.py`, `app/calllog.py`, `docs/can-and-cant.md`, `tools/mcp_call.py`, `tests/test_mcp.py`, `tests/test_isolation_mcp.py`, `tests/test_calllog.py`, `tests/test_same_account.py` |
 | **Waits for** | Stage 1 | A | A | B and D |
 | **Exit check** | The migration builds every table on an empty database; migration and models agree; the same identity twice gives one row; the exercise sync is idempotent; stage 1's tests still pass | Its tests pass; the isolation test passes; no trainer-shaped name is left in its files | Signed-out pages redirect; a POST without the CSRF token is 403; sign-in creates then finds the user; sign-out clears the session | The function list is exactly the six, each with title, hint and schema; a marker string passed as an argument never appears in the call log; isolation and same-account tests pass; **the full suite passes** |
 

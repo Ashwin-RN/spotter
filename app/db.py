@@ -31,7 +31,7 @@ def utcnow() -> datetime:
 
 
 def make_engine(address: str) -> Engine:
-    engine = create_engine(address, pool_pre_ping=True)
+    engine = create_engine(address, pool_pre_ping=True, hide_parameters=True)  # no bound value in an error
     if engine.dialect.name == "sqlite":
         # Postgres always enforces foreign keys; make SQLite do the same, so cascades behave alike.
         @event.listens_for(engine, "connect")

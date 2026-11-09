@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Settings · Spotter{% endblock %}
+{% block main %}
+<h1>Settings</h1>
+
+<div class="card">
+  <h2>Your account</h2>
+  <dl class="facts">
+    <dt>Name</dt><dd>{{ user.name or "Not given" }}</dd>
+    <dt>Email</dt><dd>{{ user.email or "Not given" }}</dd>
+    <dt>Sign-in id</dt><dd><code>{{ user.subject }}</code></dd>
+    <dt>Account id</dt><dd><code>{{ user.id }}</code></dd>
+    <dt>Time zone</dt><dd>{{ user.time_zone or "Not set: dates are in UTC until you set one" }}</dd>
+  </dl>
+  <p class="muted small">Claude's <code>whoami</code> shows the same sign-in id and account id when it is
+  connected to this account.</p>
+</div>
+
+<div class="card">
+  <h2>Time zone</h2>
+  {% if saved %}<p class="ok">Time zone saved.</p>{% endif %}
+  {% if error %}
+  <div class="error">
+    <p>{{ error.message }}</p>
+    <p>{{ error.fix }}</p>
+  </div>
+  {% endif %}
+  <form method="post" action="/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Your time zone, as a name such as Asia/Kolkata or Europe/London
+      <input name="time_zone" list="zones" value="{{ user.time_zone or '' }}" required autocomplete="off">
+    </label>
+    <datalist id="zones">{% for zone in zones %}<option value="{{ zone }}">{% endfor %}</datalist>
+    <button class="primary">Save time zone</button>
+  </form>
+</div>
+{% endblock %}

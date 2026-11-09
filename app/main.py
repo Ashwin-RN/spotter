@@ -1,7 +1,12 @@
-"""The Spotter server: /health and the MCP endpoint at /mcp.
+"""The Spotter server: /health, the web pages and the MCP endpoint at /mcp.
 
-The app is built by create_app(settings). Without a usable AUTHKIT_DOMAIN and MCP_RESOURCE_URL it still
-starts and /health still answers, but /mcp returns 503 and no token is accepted: it fails closed.
+The app is built by create_app(settings), which first makes those settings the process-wide ones (the
+database, the user lookup and the link helper all read them). The two halves fail closed on their own:
+- Without a usable AUTHKIT_DOMAIN and MCP_RESOURCE_URL, /mcp returns 503 and no token is accepted,
+  and the web pages say sign-in is not set up. /health still answers.
+- Without the WorkOS values, the web pages say sign-in is not set up and MCP still works.
+
+The session cookie is attached only to the web routes, so /mcp and /.well-known/ never read or set it.
 """
 
 import contextlib
@@ -13,6 +18,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Mount, Route
 
+from app import config, web
 from app.auth import FetchJson, JwksTokenVerifier, UserinfoClient, fetch_json
 from app.config import Settings, load_settings
 from app.mcp_server import build_server
@@ -20,9 +26,23 @@ from app.mcp_server import build_server
 ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
 
+class _NoQueryStrings(logging.Filter):
+    """Cuts the query string off the server's access-log lines: the sign-in callback's carries a
+    one-time code and the state, and no log line may hold either."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str) and "?" in args[2]:
+            record.args = (*args[:2], args[2].split("?", 1)[0], *args[3:])
+        return True
+
+
 def _set_up_logging() -> None:
     """Spotter's own log lines go to stderr through their own handler, added once. INFO lines are only
-    ever written when AUTH_DEBUG is on; warnings always are."""
+    ever written when AUTH_DEBUG is on; warnings always are. The access log never shows a query string."""
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _NoQueryStrings) for f in access.filters):
+        access.addFilter(_NoQueryStrings())
     logger = logging.getLogger("spotter")
     if not logger.handlers:
         handler = logging.StreamHandler()
@@ -53,12 +73,18 @@ def _not_configured(problem: str):
 
 def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
     """Build the app. `fetch` is how the server reaches the provider; tests pass their own."""
+    config.use_settings(settings)
     _set_up_logging()
+    web_problem = web.problem(settings)
+    if web_problem is not None:
+        logging.getLogger("spotter").warning("Web sign-in disabled: %s", web_problem)
+
     problem = settings.problem
     if problem is not None:
         logging.getLogger("spotter").warning("MCP endpoint disabled: %s", problem)
         return Starlette(routes=[
             Route("/health", health),
+            *web.routes(settings),
             Route("/mcp", _not_configured(problem), methods=ALL_METHODS),
         ])
 
@@ -79,6 +105,7 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
     return Starlette(
         routes=[
             Route("/health", health),
+            *web.routes(settings),
             # Last: answers /mcp and the protected-resource metadata under /.well-known/.
             Mount("/", app=mcp_app),
         ],
