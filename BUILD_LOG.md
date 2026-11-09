@@ -87,7 +87,55 @@ The stage is split into four packages with separate files: A (schema and identit
 | Without time-zone data on the host, every time zone would be refused and "today" would stay UTC | `tzdata` is installed everywhere, not only on Windows |
 | A time with no zone was read as the machine's local time | Refused |
 
+### Package D: web sign-in
+
+- Sign-in through the provider's own library. The session is Spotter's signed cookie; no provider token is kept.
+- Five pages, a CSRF token on every form, and security headers on every page.
+- The cookie is attached to the web routes only. The MCP endpoint never reads or sets it.
+- A `.claude/` folder: builder and reviewer agents, a stage-check command, and a hook that runs the suite before a commit.
+
+**The review.** Verdict: sound, no blockers. The reviewer ran the real provider library against a fake provider server, read real access-log lines, and undid 28 behaviours one at a time; 24 turned a test red.
+
+| Finding | Fix |
+|---|---|
+| Any bug in a page showed the "cannot reach the database" message, with only the error's type in the log | Only a real database outage shows that page. A bug is a 500 with a traceback |
+| A logged database error could carry bound values, such as an email | The engine hides parameters in every error |
+| The commit hook missed `git -C <dir> commit`, `git --no-pager commit` and two more forms, and fired on `git commit-tree` | The hook now splits the command into shell words and looks for git's `commit` subcommand |
+| A copied cookie stayed valid after sign-out, and its 14 days slid forward on every visit | A session ends 14 days after sign-in, whatever the cookie says |
+| A one-character `SESSION_SECRET` was accepted | Under 32 characters, web sign-in stays off |
+| Four tests would not notice their behaviour being removed | Each now starts from a state where the behaviour matters |
+
+Left out on purpose: PKCE (the exchange authenticates with the server's secret, and `state` is checked) and `form-action` in the content security policy (it can block the sign-out redirect; it goes in after a live sign-out confirms the redirect chain).
+
+**A decision made on the way: no link may 404.** The services already return links to the day, progress and goals pages, which arrive in stage 3. Each page named in `app/links.py` that is not built yet gets a signed-in placeholder, and a test walks every named page. A new link name with no route fails the suite.
+
+### Package B: the services
+
+- Nine functions the web and the MCP surface both call: log lifts, log a weigh-in, set a goal, read progress, read the account, list exercises, and read, delete and restore an entry by id.
+- One helper does every by-id lookup. Someone else's id, a deleted row and a missing id give the same answer, word for word.
+- Every write locks the person's own row first, so two retries at once run one after the other.
+- The numbers (estimated max, bests, trend, goal projection, the 7-day bodyweight average) come from the older app and were checked against it.
+
+**The review.** Verdict: commit after fixes. A second reviewer, separate from the web package's, read every query for its owner filter, fuzzed the nine functions with 1,825 junk calls, recomputed the numbers by hand, and undid 60 behaviours one at a time; 44 turned a test red.
+
+| Finding | Fix |
+|---|---|
+| A NUL character in notes crashed on Postgres and passed on SQLite, so no test could see it | Free text keeps newlines and tabs; any other control character is refused |
+| Four more kinds of bad input raised: a list where a name belongs, a 400-digit number, an id like `²`, a datetime where a date belongs | Each returns `{error, message, fix}`. The fuzz now runs 1,825 calls with none raised |
+| An error repeated the caller's input word for word: 100,000 characters in, 600 kB out | A quoted value is cut to 80 characters; notes are capped at 2,000 |
+| A bodyweight goal started from one weigh-in, so a person already at target read as "behind" | It starts from the 7-day average |
+| A lift goal started from the latest session, so one light day lowered the start | "Current" now means the best session in the last 4 weeks, in the goal and in progress alike |
+| One error's fix asked for a target the rules refuse | The target range is derived from the weight and rep limits, so the two cannot disagree |
+| Two isolation checks and three rules had no test that would notice them gone | Each has one now |
+
+Two mutants stay alive on purpose: the duplicate guard's date filter (the date is already inside the key it compares) and its ordering.
+
 ### What this stage has taught so far
 
 - **The host did not read the repo's deploy file.** The first deploy of package A succeeded and the database stayed empty: the migration step had never run. The host has retired config files for new services, so the start command, the pre-deploy step and the health check now live in its dashboard. The check that caught it was looking at the database itself, not at the green deploy.
 - **"Deployment successful" does not mean the step you added ran.** Verify the effect, not the status.
+- **A wide `except` turns every bug into the wrong message.** The web pages caught every exception from a database call and showed "cannot reach the database". A typo would have looked like an outage.
+- **A test can pass because its setup never reached the code.** The tampered-cookie test set its cookie with no domain, so the cookie was never sent. The page redirected for a different reason, and the test was green.
+- **SQLite accepts what Postgres refuses.** A NUL character in text, an id past 32 bits: the tests ran green and the host would have crashed. A fuzz run and reading the SQL as Postgres would see it found both; the test suite could not.
+- **A passing isolation test does not prove every query is scoped.** With the owner filter removed from two helper queries, the suite stayed green. Undoing each filter and watching for a red test is what found them.
+- **Matching a shell command with one pattern does not work.** The command arrives inside a JSON string, so quotes are escaped, and no single pattern told `bash -c "git commit"` from `--grep="git commit"`. Splitting into shell words did.

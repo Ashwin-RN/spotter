@@ -1,0 +1,251 @@
+"""Every number Spotter works out. Pure functions on plain values: no database, no clock.
+
+"today" is always passed in by the caller (from users.today_for). Dates are datetime.date values,
+and dates after today are ignored everywhere.
+
+Strength
+  epley(weight_kg, reps) -> float | None
+      Estimated one-rep max: weight x (1 + reps / 30), 2 dp. None for reps outside 1 to 10 or weight <= 0.
+  session_best(sets: [(weight_kg, reps)]) -> float | None
+      The highest Epley estimate among one session's sets of one lift.
+  prs(prior_sets, session_sets) -> [{"kind": "estimated_max" | "weight", "value", "previous"}]
+      New bests for one lift against every earlier set of it. [] when there is no earlier set.
+  recent_best(points: [(date, value)], today, days=28) -> float | None
+      A lift's current estimated max: the best session in the last 28 days, else the latest session.
+
+Training days
+  days_since_last(session_dates, today) -> int | None
+  sessions_vs_target(session_dates, per_week, since, today) -> {"logged", "target", "pct", "weeks"} | None
+  weekly_sessions(session_dates, since, today, weeks=8) -> [{"start", "end", "logged"}], oldest first
+
+Trends
+  projection(points: [(date, value)], today, goal_target=None, goal_date=None, lower_is_better=False)
+      -> {"slope_per_week", "projected", "status", "points_used", "latest", "weeks_left", "needed_per_week"} | None
+  bodyweight_average(weigh_ins: [(date, kg)], end, days=7) -> float | None
+  bodyweight_now(weigh_ins: [(date, kg)], today) -> float | None
+      The 7-day average ending today, else the latest weigh-in.
+  bodyweight_trend(weigh_ins: [(date, kg)], today) -> dict | None
+"""
+
+from datetime import date, timedelta
+
+EPLEY_MAX_REPS = 10
+RECENT_BEST_DAYS = 28
+PROJECTION_DAYS = 42
+PROJECTION_MIN_POINTS = 4
+TARGET_MAX_WEEKS = 4
+BODYWEIGHT_AVG_DAYS = 7
+BODYWEIGHT_COMPARE_DAYS = 28
+WEEKLY_CHART_WEEKS = 8
+
+
+# ---------------------------------------------------------------- strength
+
+def epley(weight_kg: float, reps: int) -> float | None:
+    """Estimated one-rep max: weight x (1 + reps / 30), rounded to 2 dp.
+
+    None for reps outside 1 to 10 (Epley is unreliable above 10) or weight <= 0.
+    Rounded so that comparisons between sessions are exact.
+    """
+    if weight_kg is None or reps is None:
+        return None
+    if weight_kg <= 0 or reps < 1 or reps > EPLEY_MAX_REPS:
+        return None
+    return round(weight_kg * (1 + reps / 30), 2)
+
+
+def session_best(sets: list[tuple[float, int]]) -> float | None:
+    """Highest Epley estimate among one session's sets for one lift. None if no set qualifies."""
+    values = [e for e in (epley(w, r) for w, r in sets) if e is not None]
+    return max(values) if values else None
+
+
+def recent_best(points: list[tuple[date, float]], today: date, days: int = RECENT_BEST_DAYS) -> float | None:
+    """A lift's current estimated max: the best session estimated max in the `days` days ending
+    today (today-27 .. today by default). When no session is that recent, the latest session's
+    value. None with no points. Points after today are ignored.
+
+    One light session does not pull it down, and a best from months ago does not hold it up."""
+    pts = sorted((d, v) for d, v in points if d is not None and v is not None and d <= today)
+    if not pts:
+        return None
+    start = today - timedelta(days=days - 1)
+    recent = [v for d, v in pts if d >= start]
+    return max(recent) if recent else pts[-1][1]
+
+
+def max_weight(sets: list[tuple[float, int]]) -> float | None:
+    """The heaviest weight lifted for at least one rep. None if there is none above 0."""
+    weights = [w for w, r in sets if w is not None and w > 0 and r is not None and r >= 1]
+    return max(weights) if weights else None
+
+
+def prs(prior_sets: list[tuple[float, int]], session_sets: list[tuple[float, int]]) -> list[dict]:
+    """New bests set by this session for ONE lift, against every earlier set of that lift.
+
+    Two kinds, each strictly greater than the earlier best:
+      "estimated_max": the session's best Epley (1 to 10 rep sets only) above the best earlier Epley.
+      "weight": the heaviest weight this session (any reps) above the heaviest earlier weight.
+    Each kind needs a baseline, so a lift's first session never reports a new best.
+    Returns [{"kind", "value", "previous"}], [] if none.
+    """
+    if not prior_sets:
+        return []
+    out = []
+    prev_e, now_e = session_best(prior_sets), session_best(session_sets)
+    if now_e is not None and prev_e is not None and now_e > prev_e:
+        out.append({"kind": "estimated_max", "value": now_e, "previous": prev_e})
+    prev_w, now_w = max_weight(prior_sets), max_weight(session_sets)
+    if now_w is not None and prev_w is not None and now_w > prev_w:
+        out.append({"kind": "weight", "value": now_w, "previous": prev_w})
+    return out
+
+
+# ---------------------------------------------------------------- training days
+
+def _past(dates: list[date], today: date) -> list[date]:
+    return [d for d in dates if d is not None and d <= today]
+
+
+def days_since_last(session_dates: list[date], today: date) -> int | None:
+    """Days from the latest session (on or before today) to today. 0 = trained today. None if none."""
+    past = _past(session_dates, today)
+    return (today - max(past)).days if past else None
+
+
+def sessions_vs_target(session_dates: list[date], per_week: int | None, since: date | None,
+                       today: date) -> dict | None:
+    """Sessions logged against a weekly target, over the last 4 whole weeks at most.
+
+    weeks  = whole weeks since `since` (when the target started counting), capped at 4.
+    target = per_week x weeks.
+    logged = sessions dated in the same window: the last (weeks x 7) days ending today, and not
+             before `since`. Both numbers cover the same days, so two weeks in is never judged on four.
+    pct    = round(100 x logged / target); not capped, so it can exceed 100.
+    None without a target, without `since`, or before one whole week has passed.
+    """
+    if since is None or not per_week or per_week <= 0:
+        return None
+    weeks = min(TARGET_MAX_WEEKS, max(0, (today - since).days // 7))
+    target = per_week * weeks
+    if target == 0:
+        return None
+    start = max(today - timedelta(days=7 * weeks - 1), since)
+    logged = sum(1 for d in _past(session_dates, today) if d >= start)
+    return {"logged": logged, "target": target, "pct": round(100 * logged / target), "weeks": weeks}
+
+
+def weekly_sessions(session_dates: list[date], since: date | None, today: date,
+                    weeks: int = WEEKLY_CHART_WEEKS) -> list[dict]:
+    """Sessions logged per week, oldest week first, for a weekly chart.
+
+    Weeks are whole 7-day windows ending today (the windows sessions_vs_target uses), only those
+    wholly on or after `since`, at most `weeks` of them. Each: {"start": date, "end": date, "logged": int}.
+    [] without `since`, or before one whole week has passed.
+    """
+    if since is None:
+        return []
+    count = min(weeks, max(0, (today - since).days // 7))
+    past = _past(session_dates, today)
+    out = []
+    for n in range(count - 1, -1, -1):
+        end = today - timedelta(days=7 * n)
+        start = end - timedelta(days=6)
+        out.append({"start": start, "end": end, "logged": sum(1 for d in past if start <= d <= end)})
+    return out
+
+
+# ---------------------------------------------------------------- trends
+
+def projection(points: list[tuple[date, float]], today: date, goal_target: float | None = None,
+               goal_date: date | None = None, lower_is_better: bool = False) -> dict | None:
+    """A least-squares straight line through the points of the last 6 weeks.
+
+    Uses points dated (today - 42 days) .. today. Needs at least 4 such points on at least 2
+    different dates, else None. slope_per_week = the fitted change per 7 days.
+    With a goal: projected = the line's value on goal_date. status "on track" if projected meets
+    the target (>= when higher is better; <= when lower_is_better, such as losing weight), or the
+    latest point already meets it; otherwise "behind".
+    weeks_left = (goal_date - today) in weeks, 1 dp; 0 when goal_date is today or past.
+    needed_per_week = (target - latest) / exact weeks left, 2 dp: the steady change per week that
+    reaches the target by goal_date. Signed (a weight-loss goal gives a negative value); 0 when the
+    latest point already meets the target; None when weeks_left is 0. It says nothing about whether
+    that pace is realistic.
+    Without a goal: projected, status, weeks_left and needed_per_week are None.
+    """
+    start = today - timedelta(days=PROJECTION_DAYS)
+    pts = sorted((d, v) for d, v in points if d is not None and v is not None and start <= d <= today)
+    if len(pts) < PROJECTION_MIN_POINTS or len({d for d, _ in pts}) < 2:
+        return None
+    x0 = pts[0][0]
+    xs = [(d - x0).days for d, _ in pts]
+    ys = [v for _, v in pts]
+    n = len(pts)
+    mx, my = sum(xs) / n, sum(ys) / n
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
+    intercept = my - slope * mx
+    latest = ys[-1]
+    out = {"slope_per_week": round(slope * 7, 2), "projected": None, "status": None,
+           "points_used": n, "latest": latest, "weeks_left": None, "needed_per_week": None}
+    if goal_target is None or goal_date is None:
+        return out
+    projected = intercept + slope * (goal_date - x0).days
+    out["projected"] = round(projected, 2)
+    if lower_is_better:
+        met = projected <= goal_target or latest <= goal_target
+        reached = latest <= goal_target
+    else:
+        met = projected >= goal_target or latest >= goal_target
+        reached = latest >= goal_target
+    out["status"] = "on track" if met else "behind"
+    days_left = (goal_date - today).days
+    out["weeks_left"] = round(days_left / 7, 1) if days_left > 0 else 0.0
+    if days_left > 0:
+        out["needed_per_week"] = 0.0 if reached else round((goal_target - latest) / (days_left / 7), 2) + 0.0
+    return out
+
+
+def bodyweight_average(weigh_ins: list[tuple[date, float]], end: date,
+                       days: int = BODYWEIGHT_AVG_DAYS) -> float | None:
+    """Mean of the weigh-ins dated end-6 .. end (7 calendar days ending on `end`), 2 dp.
+
+    Every weigh-in in the window counts once, however many days are missing. None if the window has none.
+    """
+    start = end - timedelta(days=days - 1)
+    vals = [kg for d, kg in weigh_ins if d is not None and kg is not None and start <= d <= end]
+    return round(sum(vals) / len(vals), 2) if vals else None
+
+
+def bodyweight_now(weigh_ins: list[tuple[date, float]], today: date) -> float | None:
+    """Body weight now: the 7-day average ending today when that window has a weigh-in, otherwise
+    the latest weigh-in on or before today. None with none."""
+    average = bodyweight_average(weigh_ins, today)
+    if average is not None:
+        return average
+    pts = sorted((d, kg) for d, kg in weigh_ins if d is not None and kg is not None and d <= today)
+    return pts[-1][1] if pts else None
+
+
+def bodyweight_trend(weigh_ins: list[tuple[date, float]], today: date) -> dict | None:
+    """How body weight is moving. Weigh-ins after today are ignored. None with no weigh-ins.
+
+    "7-day average": the 7-day average ending today against the one ending 28 days ago
+    (today-34 .. today-28), when both windows have a weigh-in. Daily weight swings a lot; the
+    averages are what to read.
+    "simple change": otherwise, the latest weigh-in minus the first one (needs 2 weigh-ins).
+    "single weigh-in": only one so far; change_kg is None.
+    Returns {method, change_kg, now_avg, then_avg, first {date, kg}, latest {date, kg}, weigh_ins}.
+    """
+    pts = sorted((d, kg) for d, kg in weigh_ins if d is not None and kg is not None and d <= today)
+    if not pts:
+        return None
+    out = {"method": "single weigh-in", "change_kg": None, "now_avg": None, "then_avg": None,
+           "first": {"date": pts[0][0].isoformat(), "kg": pts[0][1]},
+           "latest": {"date": pts[-1][0].isoformat(), "kg": pts[-1][1]}, "weigh_ins": len(pts)}
+    now = bodyweight_average(pts, today)
+    then = bodyweight_average(pts, today - timedelta(days=BODYWEIGHT_COMPARE_DAYS))
+    if now is not None and then is not None:
+        out.update(method="7-day average", now_avg=now, then_avg=then, change_kg=round(now - then, 2))
+    elif len(pts) >= 2:
+        out.update(method="simple change", change_kg=round(pts[-1][1] - pts[0][1], 2))
+    return out
