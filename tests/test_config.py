@@ -4,8 +4,12 @@ kept out of every repr."""
 import dataclasses
 
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from app.config import DEFAULT_DATABASE_URL, ROOT, get_settings, load_settings, use_settings
+from app.config import (
+    DEFAULT_DATABASE_URL, NO_DATABASE, ROOT, SESSION_KEY_LABEL, get_settings, load_settings, use_settings,
+)
 
 from .conftest import RESOURCE
 
@@ -91,3 +95,40 @@ def test_get_settings_reads_once_and_use_settings_replaces(app_settings):
     other = dataclasses.replace(app_settings, signups_per_day=3)
     use_settings(other)
     assert get_settings() is other
+
+
+# ---------------------------------------------------------------- no silent SQLite on a real host
+
+@pytest.mark.parametrize("resource", ["https://spotter.example.app/mcp", "https://spotter.example.app:8443/mcp"])
+def test_a_public_https_site_without_database_url_is_a_configuration_error(resource):
+    s = load_settings({**BASE, "MCP_RESOURCE_URL": resource})
+    assert s.database_problem == NO_DATABASE
+    assert "DATABASE_URL is not set" in s.database_problem
+    assert s.configured  # the sign-in side is unaffected; only the database refuses
+
+
+@pytest.mark.parametrize("resource", [None, "http://spotter.example.app/mcp", "http://localhost:8000/mcp",
+                                      "https://localhost:8443/mcp", "https://127.0.0.1/mcp", "https://[::1]/mcp"])
+def test_local_development_keeps_the_sqlite_default(resource):
+    env = {"AUTHKIT_DOMAIN": "example.authkit.app"}
+    if resource:
+        env["MCP_RESOURCE_URL"] = resource
+    s = load_settings(env)
+    assert s.database_url == DEFAULT_DATABASE_URL and s.database_problem is None
+
+
+def test_a_set_database_url_is_never_a_problem():
+    s = load_settings({**BASE, "DATABASE_URL": "postgres://u:p@h/x"})
+    assert s.database_problem is None
+
+
+@pytest.mark.parametrize("given", ["POSTGRES://u:p@h/x", "PostgreSQL://u:p@h/x", "Postgres://u:p@h/x"])
+def test_the_scheme_is_matched_in_any_case(given):
+    assert load_settings({**BASE, "DATABASE_URL": given}).database_url == "postgresql+psycopg://u:p@h/x"
+
+
+def test_the_label_is_part_of_the_derived_key():
+    key = load_settings({**BASE, "WORKOS_API_KEY": "sk_test_a"}).session_key
+    unlabelled = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=None).derive(b"sk_test_a").hex()
+    labelled = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=SESSION_KEY_LABEL).derive(b"sk_test_a").hex()
+    assert key == labelled and key != unlabelled

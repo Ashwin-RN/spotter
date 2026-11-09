@@ -66,3 +66,28 @@ The reviewer then verified the fixes against the committed code, undoing each on
 - **Python's `urllib` forwards `Authorization` across a redirect to another host.** Anything that sends a token must refuse redirects.
 - **The provider's custom domain is not needed.** Its default address works as the issuer.
 - **A client asks for the scopes the server advertises, and this server advertised none.** Claude Code therefore got a token with no scopes, which means no refresh. The follow-up is to advertise `openid profile email offline_access` in the metadata.
+
+## Stage 2: one person, one account
+
+**Date:** 2026-11-09. **Contract:** `docs/contracts/stage-2.md`. **Status: in progress.**
+
+The stage is split into four packages with separate files: A (schema and identity), B (services), D (web), C (the MCP surface). A went first, B and D run side by side, C goes last.
+
+### Package A: schema and identity
+
+- One migration creates all 13 tables for stages 2 to 5. It ran on the live Postgres on 2026-11-09.
+- A user is keyed on (provider, subject). The same person from Claude and from the web lands on one row.
+- Tests build their database with the migration, and one test checks the migration and the models agree.
+
+**The review.** Verdict: run the migration, no blockers. The reviewer rendered the migration for Postgres offline and read the SQL, then undid 26 behaviours one at a time to see which tests noticed. Four did not, and those now have tests.
+
+| Finding | Fix |
+|---|---|
+| With no database address set, the host would quietly use a throwaway SQLite file, and every redeploy would wipe it | A public https site now refuses to start its database without `DATABASE_URL`; the deploy step fails with one clear line |
+| Without time-zone data on the host, every time zone would be refused and "today" would stay UTC | `tzdata` is installed everywhere, not only on Windows |
+| A time with no zone was read as the machine's local time | Refused |
+
+### What this stage has taught so far
+
+- **The host did not read the repo's deploy file.** The first deploy of package A succeeded and the database stayed empty: the migration step had never run. The host has retired config files for new services, so the start command, the pre-deploy step and the health check now live in its dashboard. The check that caught it was looking at the database itself, not at the green deploy.
+- **"Deployment successful" does not mean the step you added ran.** Verify the effect, not the status.

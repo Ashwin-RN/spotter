@@ -20,12 +20,16 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import AnyHttpUrl, ConfigDict, TypeAdapter, ValidationError
 
 ROOT = Path(__file__).resolve().parent.parent
-# Unset DATABASE_URL: a local SQLite file in the repo root (gitignored).
+# Unset DATABASE_URL: a local SQLite file in the repo root (gitignored). Only for a laptop or the tests:
+# on a public https site an unset DATABASE_URL is a configuration error (Settings.database_problem).
 DEFAULT_DATABASE_URL = f"sqlite:///{(ROOT / 'spotter.db').as_posix()}"
 DEFAULT_AUTH_PROVIDER = "workos"
 DEFAULT_SIGNUPS_PER_DAY = 50
 # The fixed label for deriving the session key from WORKOS_API_KEY. Changing it signs everyone out.
 SESSION_KEY_LABEL = b"spotter session cookie v1"
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+NO_DATABASE = ("DATABASE_URL is not set. A public https site never falls back to a local SQLite file: "
+               "set DATABASE_URL to the Postgres address.")
 
 # The same URL rules the MCP library applies to its auth settings, so the check below
 # predicts exactly what the library will publish.
@@ -55,6 +59,17 @@ class Settings:
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             return None
         return f"{parsed.scheme}://{parsed.netloc}"
+
+    @property
+    def database_problem(self) -> str | None:
+        """Why the database cannot be used, or None when it can. On a public https site (not localhost)
+        the local SQLite fallback would be a throwaway file on the host, so it is refused."""
+        if self.database_url != DEFAULT_DATABASE_URL:
+            return None
+        parsed = urlparse(self.site_origin or "")
+        if parsed.scheme == "https" and (parsed.hostname or "") not in LOCAL_HOSTS:
+            return NO_DATABASE
+        return None
 
     @property
     def web_sign_in_configured(self) -> bool:
@@ -117,13 +132,13 @@ class Settings:
 
 def database_address(url: str | None) -> str:
     """The SQLAlchemy address for DATABASE_URL. Unset gives the local SQLite file. The host's
-    postgres:// and postgresql:// forms are given the psycopg 3 driver."""
+    postgres:// and postgresql:// forms, in any case, are given the psycopg 3 driver."""
     url = (url or "").strip()
     if not url:
         return DEFAULT_DATABASE_URL
-    for prefix in ("postgres://", "postgresql://"):
-        if url.startswith(prefix):
-            return "postgresql+psycopg://" + url[len(prefix):]
+    scheme, separator, rest = url.partition("://")
+    if separator and scheme.lower() in ("postgres", "postgresql"):
+        return "postgresql+psycopg://" + rest
     return url
 
 

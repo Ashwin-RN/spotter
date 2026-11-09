@@ -173,3 +173,26 @@ def test_a_bad_time_zone_is_refused(make_user, name):
 
 def test_a_time_zone_for_an_unknown_user_is_not_found():
     assert set_time_zone(999, "Asia/Kolkata")["error"] == "not_found"
+
+
+def test_a_time_without_a_zone_is_refused(make_user):
+    user = make_user(time_zone="Asia/Kolkata")
+    with pytest.raises(ValueError):
+        today_for(user, datetime(2026, 11, 9, 20, 0))
+    with pytest.raises(ValueError):
+        now_for(user, datetime(2026, 11, 9, 20, 0))
+
+
+def test_an_over_long_subject_is_refused_before_the_database():
+    assert isinstance(user_for_identity("u" * 255, None, None), User)
+    result = user_for_identity("u" * 256, None, None)
+    assert result["error"] == "no_subject" and "255" in result["message"] and result["fix"]
+    assert _count() == 1
+
+
+def test_an_over_long_email_or_name_is_cut_to_fit_not_refused():
+    long_email, long_name = "a" * 400 + "@example.com", "N" * 300
+    user = user_for_identity("user_01A", long_email, long_name)
+    assert isinstance(user, User)
+    stored = _reload(user.id)
+    assert stored.email == long_email[:320] and stored.name == long_name[:128]

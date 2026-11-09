@@ -1,7 +1,11 @@
 """The schema: the migration builds every table, it agrees with the models, the one-live-weigh-in rule
 holds, it can be taken down and rebuilt, and the SQL it writes for Postgres is sound."""
 
+import dataclasses
 import io
+import os
+import subprocess
+import sys
 import tempfile
 from contextlib import redirect_stdout
 from datetime import date, datetime, timedelta, timezone
@@ -14,7 +18,8 @@ from alembic.migration import MigrationContext
 from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 
-from app import db, exercises
+from app import config, db, exercises
+from app.config import DEFAULT_DATABASE_URL, NO_DATABASE, ROOT
 from app.db import make_engine
 from app.models import (
     Base, Bodyweight, CallLog, Exercise, Goal, LiftSession, LiftSet, UtcDateTime, entry_models, user_tables,
@@ -200,3 +205,74 @@ def test_the_lift_list_has_unique_names_that_fit_the_columns():
     assert len(names) == len(set(names)) == 41
     assert all(len(n) <= 64 for n in names)
     assert all(row["category"] in exercises.CATEGORIES and len(row["category"]) <= 16 for row in exercises.rows())
+
+
+# ---------------------------------------------------------------- server defaults and sessions
+
+def test_the_migration_and_the_models_agree_on_server_defaults():
+    with db.get_engine().connect() as connection:
+        context = MigrationContext.configure(connection, opts={"compare_server_default": True})
+        assert compare_metadata(context, Base.metadata) == []
+
+
+def test_the_postgres_sql_carries_the_server_defaults():
+    cfg = alembic_config("postgresql+psycopg://spotter@db.invalid/spotter")
+    out = io.StringIO()
+    with redirect_stdout(out):
+        command.upgrade(cfg, "head", sql=True)
+    sql = out.getvalue()
+    assert "claude_can VARCHAR(16) DEFAULT 'log' NOT NULL" in sql
+    assert "add_back_exercise_kcal BOOLEAN DEFAULT false NOT NULL" in sql
+    sample_tables = [t.name for t in Base.metadata.sorted_tables if "is_sample" in t.c]
+    assert len(sample_tables) == 7
+    assert sql.count("is_sample BOOLEAN DEFAULT false NOT NULL") == len(sample_tables)
+
+
+def test_session_scope_rolls_back_on_an_error():
+    with pytest.raises(RuntimeError):
+        with db.session_scope() as session:
+            session.add(Exercise(name="Rolled Back Lift", kind="lift", category="push"))
+            session.flush()  # the row is written inside the transaction
+            raise RuntimeError("boom")
+    with db.session_scope() as session:
+        assert session.scalar(select(Exercise).where(Exercise.name == "Rolled Back Lift")) is None
+
+
+# ---------------------------------------------------------------- no silent SQLite on a real host
+
+def _host_environment() -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "MCP_RESOURCE_URL", "AUTHKIT_DOMAIN")}
+    env.update({"MCP_RESOURCE_URL": "https://spotter.example.app/mcp", "AUTHKIT_DOMAIN": "example.authkit.app"})
+    return env
+
+
+def test_get_engine_refuses_a_public_site_without_a_database(app_settings):
+    config.use_settings(dataclasses.replace(app_settings, database_url=DEFAULT_DATABASE_URL))
+    with pytest.raises(db.DatabaseNotConfigured, match="DATABASE_URL is not set"):
+        db.get_engine()
+    with pytest.raises(db.DatabaseNotConfigured):
+        db.new_session()
+
+
+def test_a_local_site_still_gets_the_sqlite_default(app_settings):
+    config.use_settings(dataclasses.replace(app_settings, database_url=DEFAULT_DATABASE_URL,
+                                            mcp_resource_url="http://localhost:8000/mcp"))
+    assert str(db.get_engine().url).endswith("/spotter.db")  # built, not connected: no file is made
+    db.dispose()
+    assert not (ROOT / "spotter.db").exists()
+
+
+@pytest.mark.parametrize("command_line", [["-m", "alembic", "upgrade", "head"], ["-m", "app.exercises"]])
+def test_the_deploy_steps_stop_with_one_clear_line(command_line):
+    done = subprocess.run([sys.executable, *command_line], cwd=ROOT, env=_host_environment(),
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 1
+    lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
+    assert lines == [f"FAILED: {NO_DATABASE}"]  # one line, the same from both steps
+    assert not (ROOT / "spotter.db").exists()
+
+
+def test_health_needs_no_database(make_client):
+    client = make_client(database_url=DEFAULT_DATABASE_URL)  # a public https site with no DATABASE_URL
+    r = client.get("/health")
+    assert r.status_code == 200 and r.text == "OK"

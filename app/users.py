@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.models import User
 
 LAST_SEEN_EVERY = timedelta(minutes=1)
-EMAIL_MAX, NAME_MAX, ISSUER_MAX = 320, 128, 255
+SUBJECT_MAX, EMAIL_MAX, NAME_MAX, ISSUER_MAX = 255, 320, 128, 255  # the column lengths
 
 
 def error(code: str, message: str, fix: str) -> dict:
@@ -29,7 +29,7 @@ def error(code: str, message: str, fix: str) -> dict:
 
 
 def _clean(value: object, limit: int, cut: bool) -> str | None:
-    """A usable new value, or None. Too long: cut to fit (names) or dropped (email, issuer)."""
+    """A usable new value, or None. Too long: cut to fit (email, name) or dropped (issuer)."""
     if not isinstance(value, str) or not value.strip():
         return None
     value = value.strip()
@@ -65,12 +65,21 @@ def _refresh(session: Session, user: User, email: str | None, name: str | None, 
 
 def user_for_identity(subject: str | None, email: str | None, name: str | None,
                       issuer: str | None = None) -> User | dict:
-    """The user row for this person, created on their first sign-in, or {error, message, fix}."""
+    """The user row for this person, created on their first sign-in, or {error, message, fix}.
+
+    The daily signup cap is a soft limit: it counts today's accounts, then inserts, without a lock.
+    Simultaneous first sign-ins can each see room under the cap, so it can be passed by at most the
+    number of first sign-ins in flight at that moment. That is acceptable for a rate limit.
+    """
     if not isinstance(subject, str) or not subject.strip():
         return error("no_subject", "The sign-in did not say who this is.",
                      "Sign in again. If it keeps happening, the sign-in provider is not sending a user id.")
     subject = subject.strip()
-    email, name = _clean(email, EMAIL_MAX, cut=False), _clean(name, NAME_MAX, cut=True)
+    if len(subject) > SUBJECT_MAX:
+        return error("no_subject", f"The sign-in's user id is longer than {SUBJECT_MAX} characters.",
+                     "Sign in again. If it keeps happening, the sign-in provider is sending an id Spotter "
+                     "cannot store.")
+    email, name = _clean(email, EMAIL_MAX, cut=True), _clean(name, NAME_MAX, cut=True)
     issuer = _clean(issuer, ISSUER_MAX, cut=False)
     settings = get_settings()
     provider = settings.auth_provider
@@ -124,8 +133,12 @@ def zone_for(name: str | None) -> ZoneInfo | timezone:
 
 
 def now_for(user: User, at: datetime | None = None) -> datetime:
-    """The time now (or at `at`) on the person's own clock."""
-    return (at or db.utcnow()).astimezone(zone_for(user.time_zone))
+    """The time now (or at `at`, which must carry a time zone) on the person's own clock."""
+    if at is None:
+        at = db.utcnow()
+    elif at.tzinfo is None or at.utcoffset() is None:
+        raise ValueError("A time without a time zone was given; use app.db.utcnow().")
+    return at.astimezone(zone_for(user.time_zone))
 
 
 def today_for(user: User, at: datetime | None = None) -> date:

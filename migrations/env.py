@@ -1,6 +1,7 @@
 """How Alembic reaches the database.
 
-The address comes from app.config, never from alembic.ini. A caller can pass its own address in
+The address comes from app.config, never from alembic.ini. On a public https site with no DATABASE_URL
+it stops with an error rather than migrating a local file. A caller can pass its own address in
 config.attributes["database_url"] (the tests do), or an open connection in config.attributes["connection"].
 """
 
@@ -28,7 +29,13 @@ OPTIONS = dict(target_metadata=target_metadata, compare_type=True, render_as_bat
 
 
 def _address() -> str:
-    return config.attributes.get("database_url") or get_settings().database_url
+    if config.attributes.get("database_url"):
+        return config.attributes["database_url"]
+    settings = get_settings()
+    if settings.database_problem:
+        # Never migrate a throwaway SQLite file on the host: one line on stderr, exit status 1.
+        sys.exit(f"FAILED: {settings.database_problem}")
+    return settings.database_url
 
 
 def run_offline() -> None:

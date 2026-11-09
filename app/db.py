@@ -21,6 +21,10 @@ _address: str | None = None  # the address the engine was built for, kept privat
 _lock = threading.Lock()
 
 
+class DatabaseNotConfigured(RuntimeError):
+    """The settings give no usable database (Settings.database_problem says why)."""
+
+
 def utcnow() -> datetime:
     """The one clock: the current time, timezone-aware, in UTC."""
     return datetime.now(timezone.utc)
@@ -39,9 +43,14 @@ def make_engine(address: str) -> Engine:
 
 
 def get_engine() -> Engine:
-    """The engine for the current settings' database. Rebuilt when the settings point elsewhere."""
+    """The engine for the current settings' database. Rebuilt when the settings point elsewhere.
+    Raises DatabaseNotConfigured when there is no usable database, so nothing silently writes to a
+    throwaway file."""
     global _engine, _factory, _address
-    address = get_settings().database_url
+    settings = get_settings()
+    if settings.database_problem:
+        raise DatabaseNotConfigured(settings.database_problem)
+    address = settings.database_url
     with _lock:
         if _engine is None or address != _address:
             _dispose()

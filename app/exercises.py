@@ -6,6 +6,8 @@ running it twice changes nothing. The deploy runs it after the migrations:
     python -m app.exercises
 """
 
+import sys
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -82,12 +84,14 @@ def sync(session: Session) -> int:
 
 
 def main() -> None:
-    from app.db import dispose, session_scope
+    from app.db import DatabaseNotConfigured, dispose, session_scope
 
     try:
         with session_scope() as session:
             added = sync(session)
             total = len(session.scalars(select(Exercise.id)).all())
+    except DatabaseNotConfigured as problem:
+        sys.exit(f"FAILED: {problem}")  # one line on stderr, exit status 1
     finally:
         dispose()
     print(f"Exercise list synced: {added} added, {total} in all.")
