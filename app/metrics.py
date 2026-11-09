@@ -19,8 +19,12 @@ Training days
   weekly_sessions(session_dates, since, today, weeks=8) -> [{"start", "end", "logged"}], oldest first
 
 Trends
-  projection(points: [(date, value)], today, goal_target=None, goal_date=None, lower_is_better=False)
+  projection(points: [(date, value)], today, goal_target=None, goal_date=None, lower_is_better=False,
+             current=None)
       -> {"slope_per_week", "projected", "status", "points_used", "latest", "weeks_left", "needed_per_week"} | None
+      status: "reached", "on track" or "behind". current replaces the last point as "where the person is now".
+  reached(value, target, lower_is_better), weeks_left(goal_date, today),
+  needed_per_week(current, target, goal_date, today, lower_is_better)
   bodyweight_average(weigh_ins: [(date, kg)], end, days=7) -> float | None
   bodyweight_now(weigh_ins: [(date, kg)], today) -> float | None
       The 7-day average ending today, else the latest weigh-in.
@@ -157,20 +161,47 @@ def weekly_sessions(session_dates: list[date], since: date | None, today: date,
 
 # ---------------------------------------------------------------- trends
 
+def reached(value: float | None, target: float, lower_is_better: bool = False) -> bool:
+    """True when `value` is at or past the target, in the goal's direction."""
+    if value is None:
+        return False
+    return value <= target if lower_is_better else value >= target
+
+
+def weeks_left(goal_date: date, today: date) -> float:
+    """Weeks from today to the goal date, 1 dp; 0 when the date is today or past."""
+    days = (goal_date - today).days
+    return round(days / 7, 1) if days > 0 else 0.0
+
+
+def needed_per_week(current: float, target: float, goal_date: date, today: date,
+                    lower_is_better: bool = False) -> float | None:
+    """The steady change per week from `current` that reaches the target by goal_date, 2 dp, signed
+    (a weight-loss goal gives a negative value). 0 when the target is already reached; None when
+    the date is today or past. It says nothing about whether that pace is realistic."""
+    if reached(current, target, lower_is_better):
+        return 0.0
+    days = (goal_date - today).days
+    if days <= 0:
+        return None
+    return round((target - current) / (days / 7), 2) + 0.0
+
+
 def projection(points: list[tuple[date, float]], today: date, goal_target: float | None = None,
-               goal_date: date | None = None, lower_is_better: bool = False) -> dict | None:
+               goal_date: date | None = None, lower_is_better: bool = False,
+               current: float | None = None) -> dict | None:
     """A least-squares straight line through the points of the last 6 weeks.
 
     Uses points dated (today - 42 days) .. today. Needs at least 4 such points on at least 2
     different dates, else None. slope_per_week = the fitted change per 7 days.
-    With a goal: projected = the line's value on goal_date. status "on track" if projected meets
-    the target (>= when higher is better; <= when lower_is_better, such as losing weight), or the
-    latest point already meets it; otherwise "behind".
+    latest = where the person is now: `current` when given (the caller's own measure, such as a
+    7-day average), else the last point. It is the one value the status and the pace below read.
+    With a goal: projected = the line's value on goal_date. status:
+      "reached"   latest is at or past the target (>= when higher is better; <= when lower_is_better)
+      "on track"  not yet, but projected meets the target by goal_date
+      "behind"    neither
     weeks_left = (goal_date - today) in weeks, 1 dp; 0 when goal_date is today or past.
-    needed_per_week = (target - latest) / exact weeks left, 2 dp: the steady change per week that
-    reaches the target by goal_date. Signed (a weight-loss goal gives a negative value); 0 when the
-    latest point already meets the target; None when weeks_left is 0. It says nothing about whether
-    that pace is realistic.
+    needed_per_week = needed_per_week(latest, ...): 0 once reached; None when weeks_left is 0.
     Without a goal: projected, status, weeks_left and needed_per_week are None.
     """
     start = today - timedelta(days=PROJECTION_DAYS)
@@ -184,24 +215,19 @@ def projection(points: list[tuple[date, float]], today: date, goal_target: float
     mx, my = sum(xs) / n, sum(ys) / n
     slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
     intercept = my - slope * mx
-    latest = ys[-1]
+    latest = current if current is not None else ys[-1]
     out = {"slope_per_week": round(slope * 7, 2), "projected": None, "status": None,
            "points_used": n, "latest": latest, "weeks_left": None, "needed_per_week": None}
     if goal_target is None or goal_date is None:
         return out
-    projected = intercept + slope * (goal_date - x0).days
-    out["projected"] = round(projected, 2)
-    if lower_is_better:
-        met = projected <= goal_target or latest <= goal_target
-        reached = latest <= goal_target
+    projected = round(intercept + slope * (goal_date - x0).days, 2)
+    out["projected"] = projected
+    if reached(latest, goal_target, lower_is_better):
+        out["status"] = "reached"
     else:
-        met = projected >= goal_target or latest >= goal_target
-        reached = latest >= goal_target
-    out["status"] = "on track" if met else "behind"
-    days_left = (goal_date - today).days
-    out["weeks_left"] = round(days_left / 7, 1) if days_left > 0 else 0.0
-    if days_left > 0:
-        out["needed_per_week"] = 0.0 if reached else round((goal_target - latest) / (days_left / 7), 2) + 0.0
+        out["status"] = "on track" if reached(projected, goal_target, lower_is_better) else "behind"
+    out["weeks_left"] = weeks_left(goal_date, today)
+    out["needed_per_week"] = needed_per_week(latest, goal_target, goal_date, today, lower_is_better)
     return out
 
 

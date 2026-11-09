@@ -185,9 +185,9 @@ def test_projection_lower_is_better():
     assert projection(pts, TODAY, 80, goal, lower_is_better=True)["status"] == "behind"
 
 
-def test_projection_goal_already_met_is_on_track():
+def test_a_goal_already_met_is_reached_even_while_the_line_falls():
     pts = [(ago(21), 120), (ago(14), 118), (ago(7), 117), (TODAY, 116)]
-    assert projection(pts, TODAY, goal_target=110, goal_date=TODAY + timedelta(days=60))["status"] == "on track"
+    assert projection(pts, TODAY, goal_target=110, goal_date=TODAY + timedelta(days=60))["status"] == "reached"
 
 
 def test_needed_per_week_for_a_lift_goal():
@@ -209,6 +209,18 @@ def test_needed_per_week_is_negative_for_a_weight_loss_goal():
     assert p["slope_per_week"] == -0.2 and p["status"] == "behind"
 
 
+def test_current_replaces_the_last_point_but_not_the_slope():
+    goal = TODAY + timedelta(days=28)
+    plain = projection(LIFT, TODAY, goal_target=100, goal_date=goal)
+    lifted = projection(LIFT, TODAY, goal_target=100, goal_date=goal, current=90)
+    assert lifted["slope_per_week"] == plain["slope_per_week"] and lifted["projected"] == plain["projected"]
+    assert lifted["latest"] == 90 and lifted["needed_per_week"] == round(10 / 4, 2)
+    assert projection(LIFT, TODAY, goal_target=85, goal_date=goal, current=90)["status"] == "reached"
+    # The last point (89.4) would say reached; at 90 now it is not yet, though the falling line gets there.
+    assert projection(CUT, TODAY, goal_target=89.5, goal_date=goal, lower_is_better=True,
+                      current=90)["status"] == "on track"
+
+
 def test_goal_date_today_or_past_gives_zero_weeks_and_no_needed():
     for goal_date in (TODAY, ago(3)):
         p = projection(LIFT, TODAY, goal_target=100, goal_date=goal_date)
@@ -218,9 +230,11 @@ def test_goal_date_today_or_past_gives_zero_weeks_and_no_needed():
 
 def test_target_already_reached_needs_nothing_more():
     p = projection(LIFT, TODAY, goal_target=81, goal_date=TODAY + timedelta(days=28))
-    assert p["status"] == "on track" and p["needed_per_week"] == 0
+    assert p["status"] == "reached" and p["needed_per_week"] == 0
     p = projection(CUT, TODAY, goal_target=90, goal_date=TODAY + timedelta(days=28), lower_is_better=True)
-    assert p["status"] == "on track" and p["needed_per_week"] == 0
+    assert p["status"] == "reached" and p["needed_per_week"] == 0
+    exactly = projection(LIFT, TODAY, goal_target=81.5, goal_date=TODAY + timedelta(days=28))
+    assert exactly["status"] == "reached" and exactly["needed_per_week"] == 0  # at the target counts
 
 
 # ---------------------------------------------------------------- bodyweight

@@ -44,12 +44,15 @@ def kg(x) -> str:
 
 
 def quote(value) -> str:
-    """A caller's value as an error message repeats it: cut to 80 characters, with an ellipsis."""
+    """A caller's value as an error message repeats it: cut to 80 characters, with an ellipsis, and
+    always valid UTF-8 (a lone surrogate is shown as its escape, such as \\ud83d), so the reply can
+    be encoded."""
     try:
         shown = value if isinstance(value, str) else repr(value)
     except ValueError:  # an int too long to print
         shown = "a number too long to show"
-    return shown if len(shown) <= QUOTE_MAX else shown[:QUOTE_MAX - 1] + "…"
+    shown = shown if len(shown) <= QUOTE_MAX else shown[:QUOTE_MAX - 1] + "…"
+    return shown.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def text(value, field: str, limit: int = TEXT_MAX) -> tuple[str | None, dict | None]:

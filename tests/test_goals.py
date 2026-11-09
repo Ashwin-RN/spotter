@@ -125,7 +125,7 @@ def test_direction_is_never_guessed_again(user):
     for days_ago, kg in ((28, 89), (21, 88), (14, 86.5), (7, 85.5), (1, 84)):
         weigh(user, days_ago, kg)
     progress = services.get_progress(user.id)["goals"][0]
-    assert progress["status"] == "on track" and progress["direction"] == "down"
+    assert progress["status"] == "reached" and progress["direction"] == "down"
     # An edit cannot turn it round: a target above the start is refused, the stored direction stays.
     turned = goal(user, goal_id=g["id"], target_value=95)
     assert turned["error"] == "wrong_direction" and "set a new one" in turned["fix"]
@@ -231,6 +231,94 @@ def test_bad_values_give_errors_not_crashes(user):
     assert edit["error"] == "invalid_field"
     assert goal(user, goal_id=made["id"], text="first line\nsecond")["goal"]["text"] == "first line\nsecond"
     assert goal(user, goal_id=made["id"], kind=["x"])["error"] == "cannot_change_kind"
+
+
+def agrees(numbers: dict) -> None:
+    """One meaning of "where the person is now" across a goal's numbers."""
+    lower = numbers["direction"] == "down"
+    latest, target = numbers["latest"], numbers["target_value"]
+    reached = latest <= target if lower else latest >= target
+    assert (numbers["status"] == "reached") is reached, numbers
+    if reached:
+        assert numbers["needed_per_week"] == 0, numbers
+    elif numbers["needed_per_week"] is not None:
+        assert (numbers["needed_per_week"] < 0) is lower, numbers  # the pace points at the target
+    if numbers["projection"]:
+        assert numbers["projection"]["latest"] == latest and numbers["projection"]["status"] == numbers["status"]
+        assert numbers["projection"]["needed_per_week"] == numbers["needed_per_week"]
+
+
+def test_a_lift_goal_reached_on_the_28_day_best_after_a_light_session(user):
+    deadlift = lambda days_ago, kg: services.log_lifts(user.id, {"date": day(user, -days_ago), "sets": [  # noqa: E731
+        {"exercise": "Deadlift", "weight_kg": kg, "reps": 5}]}, "web")
+    deadlift(30, 102.86)                                          # estimated max 120
+    goal(user, kind="lift", exercise="Deadlift", target_value=145, target_date=day(user, 60))
+    for days_ago in (20, 14, 7):
+        deadlift(days_ago, 128.57)                                # about 150
+    deadlift(1, 94.29)                                            # about 110: a light day
+    one = services.get_progress(user.id, "Deadlift")["lift"]
+    numbers = one["goal"]
+    assert numbers["latest"] == 150.0 and numbers["status"] == "reached" and numbers["needed_per_week"] == 0
+    agrees(numbers)
+    assert one["current_estimated_max_kg"] == numbers["latest"]
+    row = services.get_progress(user.id)["lifts"][0]
+    assert row["current_estimated_max_kg"] == numbers["latest"] and row["goal_status"] == "reached"
+
+
+def test_a_bodyweight_goal_reads_the_7_day_average_not_one_low_weigh_in(user):
+    weigh(user, 30, 85)
+    goal(user, kind="bodyweight", target_value=80, target_date=day(user, 60))
+    for days_ago, kg in ((20, 79.5), (14, 80), (6, 81), (4, 81.5), (2, 82), (0, 79.9)):
+        weigh(user, days_ago, kg)
+    numbers = services.get_progress(user.id)["goals"][0]
+    assert numbers["latest"] == 81.1 and numbers["status"] != "reached" and numbers["needed_per_week"] < 0
+    agrees(numbers)
+
+
+def test_a_bodyweight_goal_at_target_on_the_average_is_reached_despite_a_high_weigh_in(user):
+    weigh(user, 30, 85)
+    goal(user, kind="bodyweight", target_value=80, target_date=day(user, 60))
+    for days_ago, kg in ((20, 78), (14, 78.5), (6, 79), (3, 79.5), (1, 80.2), (0, 80.8)):
+        weigh(user, days_ago, kg)
+    numbers = services.get_progress(user.id)["goals"][0]
+    assert numbers["latest"] == 79.88 and numbers["status"] == "reached" and numbers["needed_per_week"] == 0
+    agrees(numbers)
+
+
+def test_at_or_past_the_target_is_reached_never_behind_even_without_a_line(user):
+    squat(user, 3, 100)                                           # one session: too few points for a line
+    r = goal(user, kind="lift", exercise="Back Squat", target_value=120, target_date=day(user, 30))
+    assert r["progress"]["status"] == "not enough data" and r["progress"]["needed_per_week"] > 0
+    squat(user, 1, 105)                                           # 122.5: past the target
+    numbers = services.get_progress(user.id, "Back Squat")["lift"]["goal"]
+    assert numbers["projection"] is None and numbers["status"] == "reached" and numbers["needed_per_week"] == 0
+    assert numbers["note"] is None
+    agrees(numbers)
+    for g in services.get_progress(user.id)["goals"]:
+        agrees(g)
+
+
+def test_an_edit_compares_with_the_stored_start_not_todays_numbers(user):
+    weigh(user, 0, 85)
+    g = goal(user, kind="bodyweight", target_value=80, target_date=day(user, 60))
+    assert g["goal"]["start_value"] == 85 and g["goal"]["direction"] == "down"
+    for days_ago in (3, 2, 1):
+        weigh(user, days_ago, 78)                                 # the 7-day average is now 79.75
+    assert goal(user, goal_id=g["id"], target_value=82)["progress"]["latest"] == 79.75  # below 85: accepted
+    assert goal(user, goal_id=g["id"], target_value=86)["error"] == "wrong_direction"   # above the stored start
+    same = goal(user, goal_id=g["id"], target_value=85)
+    assert same["error"] == "wrong_direction" and "below 85" in same["fix"]
+
+
+def test_the_equal_target_message_names_where_the_start_came_from(user):
+    given = goal(user, kind="bodyweight", target_value=80, start_value=80, target_date=day(user, 30))
+    assert given["error"] == "target_is_start" and "(the start_value given)" in given["message"]
+    weigh(user, 10, 81)                                           # nothing in the last 7 days
+    older = goal(user, kind="bodyweight", target_value=81, target_date=day(user, 30))
+    assert f"(the latest weigh-in, on {day(user, -10)})" in older["message"]
+    weigh(user, 2, 82)
+    average = goal(user, kind="bodyweight", target_value=82, target_date=day(user, 30))
+    assert "(the 7-day average)" in average["message"]
 
 
 def test_set_goal_query_count(user):

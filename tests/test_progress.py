@@ -152,7 +152,79 @@ def test_every_result_is_plain_json(user):
         services.get_entry(user.id, "bodyweight", MISSING_ID),
     ]
     for result in results:
+        sendable(result)
         assert json.loads(json.dumps(result)) == result  # no dates, Decimals or tuples left in
+
+
+def sendable(result) -> None:
+    """What the MCP layer needs of a result: valid JSON (no NaN), and every string in it, keys
+    included, encodable as UTF-8 as it stands. A lone surrogate anywhere makes the encode fail."""
+    json.dumps(result, allow_nan=False)
+
+    def walk(value):
+        if isinstance(value, str):
+            value.encode("utf-8")
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                walk(key)
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(result)
+
+
+HOSTILE = ["\ud83d", "a\udfffb", "\ud800" * 200, "Back Squat\ud83d", "2026-11-09\ud83d", "\x00\ud83d", "x" * 100_000]
+
+
+def hostile_calls(user_id, goal_id, entry):
+    """Every public function, with each string argument in turn replaced by a hostile value."""
+    good_set = {"exercise": "Deadlift", "weight_kg": 90, "reps": 5}
+    lifts = {"date": "", "notes": "n", "sets": [good_set], "allow_repeat": True}
+    weigh = {"kg": 80, "date": "", "allow_repeat": True}
+    new_goal = {"kind": "lift", "exercise": "Deadlift", "target_value": 150, "target_date": "2099-01-01",
+                "start_value": 90, "text": "t", "status": "open"}
+    for bad in HOSTILE:
+        yield "list_exercises kind", lambda: services.list_exercises(bad, None)
+        yield "list_exercises category", lambda: services.list_exercises(None, bad)
+        yield "get_progress exercise", lambda: services.get_progress(user_id, bad)
+        for field in lifts:
+            yield f"log_lifts {field}", lambda f=field: services.log_lifts(user_id, {**lifts, f: bad}, "web")
+        for field in good_set:
+            yield f"log_lifts set {field}", lambda f=field: services.log_lifts(
+                user_id, {**lifts, "sets": [{**good_set, f: bad}]}, "web")
+        yield "log_lifts by", lambda: services.log_lifts(user_id, lifts, bad)
+        for field in weigh:
+            yield f"log_bodyweight {field}", lambda f=field: services.log_bodyweight(user_id, {**weigh, f: bad}, "web")
+        yield "log_bodyweight by", lambda: services.log_bodyweight(user_id, weigh, bad)
+        for field in new_goal:
+            yield f"set_goal {field}", lambda f=field: services.set_goal(user_id, {**new_goal, f: bad}, "web")
+            yield f"set_goal edit {field}", lambda f=field: services.set_goal(
+                user_id, {"goal_id": goal_id, f: bad}, "web")
+        yield "set_goal goal_id", lambda: services.set_goal(user_id, {"goal_id": bad, "status": "hit"}, "web")
+        yield "set_goal by", lambda: services.set_goal(user_id, new_goal, bad)
+        for call in (services.get_entry, services.delete_entry, services.restore_entry):
+            yield f"{call.__name__} kind", lambda c=call: c(user_id, bad, entry)
+            yield f"{call.__name__} id", lambda c=call: c(user_id, "bodyweight", bad)
+
+
+def test_every_result_survives_utf8_whatever_the_input(user):
+    services.log_lifts(user.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 80, "reps": 5}]}, "web")
+    entry = services.log_bodyweight(user.id, {"kg": 80}, "web")["id"]
+    goal_id = services.set_goal(user.id, {"kind": "lift", "exercise": "Deadlift", "target_value": 150,
+                                          "target_date": day(user, 60)}, "web")["id"]
+    calls = 0
+    for label, call in hostile_calls(user.id, goal_id, entry):
+        result = call()
+        calls += 1
+        try:
+            sendable(result)
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise AssertionError(f"{label}: {exc}") from exc
+        if "error" in result:
+            assert result["fix"] and len(json.dumps(result)) < 20_000, label
+    assert calls > 250
 
 
 # ---------------------------------------------------------------- whoami

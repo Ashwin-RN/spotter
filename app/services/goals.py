@@ -21,10 +21,12 @@ set_goal(user_id, data, by)
     reopening clears it.
 
 goal_numbers(goals, lift_history, weigh_ins, today)
-    For each open goal with a target and a date: where it stands, from metrics.projection.
+    For each open goal with a target and a date: where it stands. latest is the measure above, and
+    status, needed_per_week and the projection all read that same value: "reached" once latest is
+    at or past the target, else "on track" or "behind" from the line, else "not enough data".
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import select
 
@@ -77,19 +79,29 @@ def goal_numbers(goals: list[Goal], lift_history: dict, weigh_ins: list, today: 
             points = lift_history["points"].get(g.exercise.name, [])
         else:
             points = [(b.date, b.kg) for b in weigh_ins]
-        p = metrics.projection(points, today, g.target_value, g.target_date, g.direction == "down")
+        # One meaning of "where the person is now" for latest, status, the pace and the projection.
+        lower = g.direction == "down"
+        now = _now_value(g.kind, points, today)
+        p = metrics.projection(points, today, g.target_value, g.target_date, lower, current=now)
+        if p is not None:
+            status, needed = p["status"], p["needed_per_week"]
+        else:  # too few points for a line: the target can still be reached, and the pace still worked out
+            status = "reached" if metrics.reached(now, g.target_value, lower) else "not enough data"
+            needed = (None if now is None else
+                      metrics.needed_per_week(now, g.target_value, g.target_date, today, lower))
         out.append({
             "goal_id": g.id, "label": _label(g), "kind": g.kind,
             "exercise": g.exercise.name if g.kind == "lift" else None, "unit": g.unit,
             "start_value": g.start_value, "start_date": g.start_date.isoformat(), "direction": g.direction,
             "target_value": g.target_value, "target_date": g.target_date.isoformat(),
-            "latest": _now_value(g.kind, points, today),
-            "status": p["status"] if p else "not enough data",
-            "needed_per_week": p["needed_per_week"] if p else None,
+            "latest": now,
+            "status": status,
+            "needed_per_week": needed,
             "actual_per_week": p["slope_per_week"] if p else None,
             "projection": p,
-            "note": None if p else (f"A projection needs {metrics.PROJECTION_MIN_POINTS} points in the last "
-                                    f"{metrics.PROJECTION_DAYS // 7} weeks."),
+            "note": None if p or status == "reached" else (
+                f"A projection needs {metrics.PROJECTION_MIN_POINTS} points in the last "
+                f"{metrics.PROJECTION_DAYS // 7} weeks."),
         })
     return out
 
@@ -112,9 +124,22 @@ def _target(value, kind: str) -> tuple[float | None, dict | None]:
                     low_open=kind == "lift")
 
 
+def _source(kind: str, points: list, today: date) -> str:
+    """Which measure _now_value used, in words, for messages."""
+    past = sorted(d for d, _ in points if d <= today)
+    if kind == "lift":
+        recent = [d for d in past if d >= today - timedelta(days=metrics.RECENT_BEST_DAYS - 1)]
+        return (f"the best session in the last {metrics.RECENT_BEST_DAYS} days" if recent
+                else f"the latest session, on {past[-1].isoformat()}")
+    if metrics.bodyweight_average(points, today) is not None:
+        return "the 7-day average"
+    return f"the latest weigh-in, on {past[-1].isoformat()}"
+
+
 def _start(kind: str, exercise, lift_history: dict, weigh_ins: list, given, today: date,
-           warnings: list) -> tuple[float | None, dict | None]:
-    """Where a new goal starts: the person's own numbers, or start_value when nothing is logged yet."""
+           warnings: list) -> tuple[float | None, str | None, dict | None]:
+    """Where a new goal starts, and where that number came from: the person's own numbers, or
+    start_value when nothing is logged yet."""
     if kind == "lift":
         points = lift_history["points"].get(exercise.name, [])
         what = f"logged {exercise.name}"
@@ -128,12 +153,14 @@ def _start(kind: str, exercise, lift_history: dict, weigh_ins: list, given, toda
         lo, hi = TARGETS["bodyweight"]
     current = _now_value(kind, points, today)
     if current is not None:
+        source = _source(kind, points, today)
         if given not in (None, ""):
-            warnings.append(f"start_value was ignored: the goal starts from the logged {current:g} kg.")
-        return current, None
+            warnings.append(f"start_value was ignored: the goal starts from the logged {current:g} kg ({source}).")
+        return current, source, None
     if given in (None, ""):
-        return None, rules.error("missing_field", f"There is no {what} to start this goal from.", fix)
-    return in_range(given, "start_value", lo, hi, fix)
+        return None, None, rules.error("missing_field", f"There is no {what} to start this goal from.", fix)
+    value, err = in_range(given, "start_value", lo, hi, fix)
+    return value, "the start_value given", err
 
 
 def _wrong_way(kind: str, direction: str, start: float, target: float) -> dict | None:
@@ -159,7 +186,7 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
     """Add a goal, or change one (goal_id). See the module notes.
 
     Returns {kind, id, goal, progress, warnings, links[, note]} or {error, message, fix}. progress is the
-    goal's entry from goal_numbers (status "on track", "behind" or "not enough data"), or None for a goal
+    goal's entry from goal_numbers (status "reached", "on track", "behind" or "not enough data"), or None for a goal
     that is not open. Every validation failure comes back at once.
     """
     data, err = check_data(data)
@@ -245,14 +272,15 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
         lift_history = lifts.history(s, user.id, today)
         weighed = body.weigh_ins(s, user.id, today)
         if goal is None:
-            start, err = _start(kind, exercise, lift_history, weighed, data.get("start_value"), today, warnings)
+            start, source, err = _start(kind, exercise, lift_history, weighed, data.get("start_value"), today,
+                                        warnings)
             if err:
                 return err
             if kind == "lift":
                 direction = "up"
             elif target == start:
                 return rules.error("target_is_start", f"target_value {target:g} kg is the start weight itself "
-                                   "(the 7-day average).", f"Give a target above or below {start:g} kg.")
+                                   f"({source}).", f"Give a target above or below {start:g} kg.")
             else:
                 direction = "down" if target < start else "up"
             err = _wrong_way(kind, direction, start, target)
