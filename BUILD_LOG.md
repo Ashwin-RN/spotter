@@ -130,6 +130,26 @@ Left out on purpose: PKCE (the exchange authenticates with the server's secret, 
 
 Two mutants stay alive on purpose: the duplicate guard's date filter (the date is already inside the key it compares) and its ordering.
 
+**The fixes were reviewed too.** The same reviewer re-ran its probes on the fixed commit: all 23 fixes held, and the fuzz went to 3,185 calls with none raised. It also found two problems in the logic the fixes had added. A goal could show a current value past its target and still read "behind", because the value used the new 4-week best and the status used the last session. And an error that quoted half an emoji back could not be sent over MCP at all. Both are fixed: one measure now feeds a goal's value, status and pace, and every result is tested by encoding it the way the wire does.
+
+### Package C: the MCP surface
+
+- Six functions: `whoami`, `list_exercises`, `log_lifts`, `log_bodyweight`, `set_goal`, `get_progress`. Two resources: what Spotter can and cannot tell you, and the exercise list.
+- Each function has a title, permission hints, named typed arguments with descriptions, and a published result schema.
+- One wrapper runs every function: it reads the verified token, finds the person's account, runs the service in a worker thread, and writes one call-log row that holds no argument and no result.
+- A failed call is flagged as an error and carries `{error, message, fix}`. A duplicate is a success that says nothing was written.
+
+**The review.** Verdict: sound, no blocker. The reviewer ran a real server: 20 simultaneous calls from two people with no result for the wrong person; 50 three-second calls at once with no deadlock, while `/health` answered in 16 ms; every success checked against the schema the server publishes; a marker sent in every argument and found in no call-log row and no log line. It undid 40 behaviours; 34 turned a test red.
+
+| Finding | Fix |
+|---|---|
+| Four behaviours no test noticed: writes marked as coming from Claude, one optional argument reaching the service, a not-a-number result refused, the command-line caller refusing redirects | Each has a test, and one table-driven test now checks every optional argument of every function reaches its service |
+| The command-line caller printed whatever the server sent back, which could include the token | The token is masked in everything it prints |
+| The MCP library logged a line on every call, and logged a caller-chosen tool name | The library's logging is turned down to warnings |
+| A database pool timeout read as an internal error | It reads as "database unavailable" |
+
+Accepted as it is: a call the MCP library refuses before Spotter's code runs (a wrong-typed argument, an unknown function) leaves no call-log row.
+
 ### What this stage has taught so far
 
 - **The host did not read the repo's deploy file.** The first deploy of package A succeeded and the database stayed empty: the migration step had never run. The host has retired config files for new services, so the start command, the pre-deploy step and the health check now live in its dashboard. The check that caught it was looking at the database itself, not at the green deploy.
@@ -138,4 +158,6 @@ Two mutants stay alive on purpose: the duplicate guard's date filter (the date i
 - **A test can pass because its setup never reached the code.** The tampered-cookie test set its cookie with no domain, so the cookie was never sent. The page redirected for a different reason, and the test was green.
 - **SQLite accepts what Postgres refuses.** A NUL character in text, an id past 32 bits: the tests ran green and the host would have crashed. A fuzz run and reading the SQL as Postgres would see it found both; the test suite could not.
 - **A passing isolation test does not prove every query is scoped.** With the owner filter removed from two helper queries, the suite stayed green. Undoing each filter and watching for a red test is what found them.
+- **A fix is new code, and it needs its own review.** The first review of the services found the crashes. The review of the fixes found a contradiction the fixes themselves had introduced.
+- **A library can log on your behalf.** The MCP library set up logging at INFO when the server was built, and one of its lines repeated a name chosen by the caller. Spotter's own "no content in the logs" rule did not cover lines it never wrote, until a reviewer read the real log.
 - **Matching a shell command with one pattern does not work.** The command arrives inside a JSON string, so quotes are escaped, and no single pattern told `bash -c "git commit"` from `--grep="git commit"`. Splitting into shell words did.
