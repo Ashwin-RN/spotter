@@ -5,13 +5,15 @@ import logging
 import re
 import time
 
+import jwt
 import pytest
 from starlette.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
 
-from .conftest import DOMAIN, HEADERS, ISSUER, RESOURCE, OTHER_KEY, claims, rpc, sign, whoami
+from .conftest import DOMAIN, HEADERS, ISSUER, OTHER_KEY, RESOURCE, SIGNING_KEY, claims, rpc, sign, whoami
+from .test_auth import hs256_with_public_key, unsigned
 
 METADATA_PATH = "/.well-known/oauth-protected-resource/mcp"
 
@@ -68,8 +70,14 @@ def test_forged_host_headers_do_not_change_the_resource(http):
     sign(claims(exp=int(time.time()) - 60, iat=int(time.time()) - 3600)),
     sign(claims(exp=int(time.time()) - 10, iat=int(time.time()) - 3600)),  # inside the iat skew, still refused
     sign(key=OTHER_KEY, kid="key-1"),
+    unsigned({"alg": "none", "typ": "JWT", "kid": SIGNING_KEY.kid}, claims()),
+    jwt.encode(claims(), "a-shared-secret-long-enough-for-hs256-32b", algorithm="HS256",
+               headers={"kid": SIGNING_KEY.kid}),
+    hs256_with_public_key(),
+    sign(claims(sub="")),
     "not-a-jwt",
-], ids=["another audience", "another issuer", "expired", "expired seconds ago", "bad signature", "not a JWT"])
+], ids=["another audience", "another issuer", "expired", "expired seconds ago", "bad signature", "alg none",
+        "HS256 with a shared secret", "HS256 with the public key as secret", "empty subject", "not a JWT"])
 def test_bad_tokens_get_401(http, token):
     r = rpc(http, "tools/call", {"name": "whoami", "arguments": {}}, token=token)
     assert r.status_code == 401
@@ -109,7 +117,7 @@ def test_whoami_gives_nulls_when_userinfo_fails(http, provider):
 
 
 def test_whoami_never_sends_the_token_to_another_host(http, provider):
-    provider.metadata["userinfo_endpoint"] = "https://evil.example/userinfo"
+    provider.openid["userinfo_endpoint"] = "https://evil.example/userinfo"
     who = whoami(http, sign())
     assert who["email"] is None and who["name"] is None
     assert all(not h for h in provider.sent_headers)
@@ -166,13 +174,12 @@ def test_the_module_app_builds_from_the_environment(monkeypatch):
 
 # ---------------------------------------------------------------- item 13: logs
 
-def test_a_verified_debug_call_never_logs_the_token(make_client, caplog):
-    caplog.set_level(logging.DEBUG)
+def test_a_verified_debug_call_never_logs_the_token(make_client, logs):
     client = make_client(auth_debug=True)
     token = sign()
     whoami(client, token)
     rpc(client, "tools/call", {"name": "whoami", "arguments": {}}, token=token + "x")  # a refused one too
-    text = caplog.text
+    text = logs.text
     assert "token verified" in text  # debug was on
     assert token not in text
     assert token.split(".")[2] not in text  # not even the signature
@@ -191,3 +198,12 @@ def test_calls_are_stateless_and_answered_in_json(http):
     assert init.json()["result"]["serverInfo"]["name"] == "Spotter"
     # A call with no initialize and no session id stands alone.
     assert whoami(http, token)["user_id"] == "user_01TEST"
+
+
+def test_spotter_logs_through_its_own_handler_added_once(provider):
+    create_app(Settings(None, None), fetch=provider.fetch)
+    create_app(Settings(None, None), fetch=provider.fetch)
+    logger = logging.getLogger("spotter")
+    own = [h for h in logger.handlers if type(h) is logging.StreamHandler]
+    assert len(own) == 1
+    assert logger.level == logging.INFO and logger.propagate is False

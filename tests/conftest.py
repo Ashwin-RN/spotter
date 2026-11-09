@@ -5,6 +5,7 @@ and FakeProvider fails the test if anything asks it for an address outside the f
 """
 
 import json
+import logging
 import time
 from typing import Any
 
@@ -60,7 +61,9 @@ class FakeProvider:
         self.keys = [SIGNING_KEY]
         self.calls: list[str] = []
         self.sent_headers: list[dict[str, str]] = []
-        self.metadata: dict[str, Any] = {"issuer": ISSUER, "userinfo_endpoint": f"{ISSUER}/oauth2/userinfo"}
+        # As the real provider has it: the userinfo address is only in the OpenID discovery document.
+        self.openid: dict[str, Any] | Exception = {"issuer": ISSUER, "userinfo_endpoint": f"{ISSUER}/oauth2/userinfo"}
+        self.metadata: dict[str, Any] = {"issuer": ISSUER, "userinfo_endpoint": None}
         self.userinfo: dict[str, Any] | Exception = {"sub": "user_01TEST", "email": "asha@example.com",
                                                      "name": "Asha Test"}
         self.fail_jwks = False
@@ -72,6 +75,10 @@ class FakeProvider:
             if self.fail_jwks:
                 raise OSError("provider down")
             return {"keys": [k.jwk() for k in self.keys]}
+        if url == f"{ISSUER}/.well-known/openid-configuration":
+            if isinstance(self.openid, Exception):
+                raise self.openid
+            return json.loads(json.dumps(self.openid))
         if url == f"{ISSUER}/.well-known/oauth-authorization-server":
             return json.loads(json.dumps(self.metadata))
         if url == f"{ISSUER}/oauth2/userinfo":
@@ -88,6 +95,19 @@ def settings(**overrides: Any) -> Settings:
     values = {"authkit_domain": DOMAIN, "mcp_resource_url": RESOURCE, "auth_debug": False}
     values.update(overrides)
     return Settings(**values)
+
+
+@pytest.fixture
+def logs(caplog):
+    """caplog that also sees Spotter's own logger, which writes through its own handler and does not
+    propagate. Captures every logger at DEBUG."""
+    caplog.set_level(logging.DEBUG)
+    spotter = logging.getLogger("spotter")
+    spotter.addHandler(caplog.handler)
+    try:
+        yield caplog
+    finally:
+        spotter.removeHandler(caplog.handler)
 
 
 @pytest.fixture

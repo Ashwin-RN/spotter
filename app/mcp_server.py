@@ -43,7 +43,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             issuer_url=settings.issuer,
             resource_server_url=settings.mcp_resource_url,
             required_scopes=None,  # stage 1 finds out what the provider puts in scope; it enforces none
-            validate_token_resource=True,  # the verifier also checks aud exactly; this is the library's own check
+            # The real audience check is the verifier's exact match on aud. The verifier reports the configured
+            # address as the token's resource, so this setting only compares that address with itself.
+            validate_token_resource=True,
         ),
     )
 
@@ -61,7 +63,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         email = claims.get("email") if isinstance(claims.get("email"), str) else None
         name = claims.get("name") if isinstance(claims.get("name"), str) else None
         if email is None or name is None:
-            found_email, found_name = await userinfo.lookup(token.token)
+            found_email, found_name = await userinfo.lookup(token.token, token.subject)
             email, name = email or found_email, name or found_name
         return WhoAmI(
             user_id=token.subject,

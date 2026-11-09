@@ -20,6 +20,18 @@ from app.mcp_server import build_server
 ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
 
+def _set_up_logging() -> None:
+    """Spotter's own log lines go to stderr through their own handler, added once. INFO lines are only
+    ever written when AUTH_DEBUG is on; warnings always are."""
+    logger = logging.getLogger("spotter")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False  # not printed twice when the root logger also has a handler
+
+
 async def health(request: Request) -> PlainTextResponse:
     return PlainTextResponse("OK")
 
@@ -41,9 +53,7 @@ def _not_configured(problem: str):
 
 def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
     """Build the app. `fetch` is how the server reaches the provider; tests pass their own."""
-    if settings.auth_debug:
-        logging.getLogger("spotter").setLevel(logging.INFO)
-
+    _set_up_logging()
     problem = settings.problem
     if problem is not None:
         logging.getLogger("spotter").warning("MCP endpoint disabled: %s", problem)
