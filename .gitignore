@@ -1,0 +1,15 @@
+# Private planning notes. Never in the repo.
+PLAN.md
+private/
+
+# Secrets and local state
+.env
+.env.*
+*.db
+*.sqlite3
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
