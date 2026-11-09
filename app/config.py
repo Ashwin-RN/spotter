@@ -1,16 +1,31 @@
 """Spotter's settings. This is the only module that reads the environment.
 
-Every setting in stage 1 is a public value. A missing or malformed setting never stops the app
-from starting: it leaves the app unconfigured, and /mcp then answers 503 with the reason.
+A missing or malformed setting never stops the app from starting. Without the sign-in settings the
+app is unconfigured and /mcp answers 503 with the reason. Without the WorkOS settings web sign-in is
+off and MCP still works.
+
+Secret values (DATABASE_URL, WORKOS_API_KEY, SESSION_SECRET) are never part of a repr and are never
+logged. get_settings() is how the rest of the app reads them; tests swap them with use_settings().
 """
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
+from pathlib import Path
 from urllib.parse import urlparse
 
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import AnyHttpUrl, ConfigDict, TypeAdapter, ValidationError
+
+ROOT = Path(__file__).resolve().parent.parent
+# Unset DATABASE_URL: a local SQLite file in the repo root (gitignored).
+DEFAULT_DATABASE_URL = f"sqlite:///{(ROOT / 'spotter.db').as_posix()}"
+DEFAULT_AUTH_PROVIDER = "workos"
+DEFAULT_SIGNUPS_PER_DAY = 50
+# The fixed label for deriving the session key from WORKOS_API_KEY. Changing it signs everyone out.
+SESSION_KEY_LABEL = b"spotter session cookie v1"
 
 # The same URL rules the MCP library applies to its auth settings, so the check below
 # predicts exactly what the library will publish.
@@ -26,6 +41,36 @@ class Settings:
     authkit_domain: str | None
     mcp_resource_url: str | None
     auth_debug: bool = False
+    database_url: str = field(default=DEFAULT_DATABASE_URL, repr=False)  # may carry a password
+    workos_client_id: str | None = None
+    workos_api_key: str | None = field(default=None, repr=False)
+    session_secret: str | None = field(default=None, repr=False)
+    auth_provider: str = DEFAULT_AUTH_PROVIDER
+    signups_per_day: int = DEFAULT_SIGNUPS_PER_DAY
+
+    @property
+    def site_origin(self) -> str | None:
+        """Scheme and host of MCP_RESOURCE_URL: the base of every web link. Never taken from a request."""
+        parsed = urlparse(self.mcp_resource_url or "")
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return None
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    @property
+    def web_sign_in_configured(self) -> bool:
+        """Web sign-in needs both WorkOS values. Without them the web pages say so and fail closed."""
+        return bool(self.workos_api_key and self.workos_client_id)
+
+    @property
+    def session_key(self) -> str | None:
+        """The key that signs the session cookie: SESSION_SECRET when set, else derived from
+        WORKOS_API_KEY with HKDF-SHA256 and a fixed label, else None (no web sessions)."""
+        if self.session_secret:
+            return self.session_secret
+        if not self.workos_api_key:
+            return None
+        derived = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=SESSION_KEY_LABEL)
+        return derived.derive(self.workos_api_key.encode()).hex()
 
     @property
     def issuer(self) -> str:
@@ -70,11 +115,59 @@ class Settings:
         return self.problem is None
 
 
+def database_address(url: str | None) -> str:
+    """The SQLAlchemy address for DATABASE_URL. Unset gives the local SQLite file. The host's
+    postgres:// and postgresql:// forms are given the psycopg 3 driver."""
+    url = (url or "").strip()
+    if not url:
+        return DEFAULT_DATABASE_URL
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
+def _signups_per_day(value: str | None) -> int:
+    try:
+        number = int((value or "").strip())
+    except ValueError:
+        return DEFAULT_SIGNUPS_PER_DAY
+    return number if number >= 0 else DEFAULT_SIGNUPS_PER_DAY
+
+
+def _text(env: Mapping[str, str], name: str) -> str | None:
+    return (env.get(name) or "").strip() or None
+
+
 def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if environ is None else environ
     return Settings(
         # Host names are case-insensitive; the library publishes the lowercase form, so compare with that.
         authkit_domain=(env.get("AUTHKIT_DOMAIN") or "").strip().lower() or None,
-        mcp_resource_url=(env.get("MCP_RESOURCE_URL") or "").strip() or None,
+        mcp_resource_url=_text(env, "MCP_RESOURCE_URL"),
         auth_debug=(env.get("AUTH_DEBUG") or "").strip() == "1",
+        database_url=database_address(env.get("DATABASE_URL")),
+        workos_client_id=_text(env, "WORKOS_CLIENT_ID"),
+        workos_api_key=_text(env, "WORKOS_API_KEY"),
+        session_secret=_text(env, "SESSION_SECRET"),
+        auth_provider=_text(env, "AUTH_PROVIDER") or DEFAULT_AUTH_PROVIDER,
+        signups_per_day=_signups_per_day(env.get("SIGNUPS_PER_DAY")),
     )
+
+
+_current: Settings | None = None
+
+
+def get_settings() -> Settings:
+    """The settings the running app uses, read from the environment once."""
+    global _current
+    if _current is None:
+        _current = load_settings()
+    return _current
+
+
+def use_settings(settings: Settings | None) -> None:
+    """Replace the running settings (tests, and the app factory). None reads the environment again
+    on the next get_settings()."""
+    global _current
+    _current = settings
