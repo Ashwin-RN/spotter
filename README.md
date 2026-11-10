@@ -39,3 +39,7 @@ Live: https://spotter-production-0c0f.up.railway.app. The landing page carries t
 | `docs/evals.md` | How the evals run and what they do not prove |
 
 Tests: Python 3.12, `pip install -r requirements.txt -r requirements-dev.txt`, then `python -m pytest tests -q`.
+
+## Licence
+
+MIT for the code: see `LICENSE`. The cardio MET values, codes and activity descriptions come from the 2024 Adult Compendium of Physical Activities and keep its own terms: see `NOTICE`.
