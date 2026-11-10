@@ -56,6 +56,11 @@ def child_env(environ: dict[str, str]) -> tuple[dict[str, str], list[str]]:
     return {k: v for k, v in environ.items() if k not in dropped}, dropped
 
 
+# The model every run uses unless --model says otherwise. Pinned on 2026-11-10 after the CLI's own default
+# changed within a day and one full run cost three times the estimate.
+DEFAULT_MODEL = "claude-opus-5-5"
+
+
 def cli_command(claude: str, say: str, config_path: str, model: str | None) -> list[str]:
     command = [claude, "-p", say, "--output-format", "json", "--mcp-config", config_path, "--strict-mcp-config",
                "--allowedTools", "mcp__spotter__*", "--no-session-persistence"]
@@ -311,7 +316,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=1.0,
                         help="the pass rate every case must reach, 0 to 1 (default 1.0: every run)")
     parser.add_argument("--case", action="append", default=[], metavar="ID", help="run only this case (repeatable)")
-    parser.add_argument("--model", help="passed through to the CLI as --model")
+    parser.add_argument("--model", default=DEFAULT_MODEL,
+                        help=f"passed through to the CLI as --model (default {DEFAULT_MODEL}: pinned, so a change "
+                             "in the CLI's own default never changes what a run costs; an empty value uses the "
+                             "CLI's default)")
     parser.add_argument("--keep", action="store_true",
                         help="keep the temporary directory with the database and each run's raw output")
     parser.add_argument("--time-zone", help="the person's IANA time zone (default: the machine's)")

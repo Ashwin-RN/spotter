@@ -410,13 +410,15 @@ Two edits after the re-checks were mine and not re-checked by a reviewer: the le
 
 | Check | Status |
 |---|---|
-| The full suite is green, plain and with warnings as errors, on a clean export | Pending |
-| Live, on an empty account: "Add sample data" fills Today, Progress and Goals; the three goals show the numbers the suite computed for that day | Pending |
-| "How am I doing?" from Claude → `get_trends` with the same numbers; "Am I on track?" → `get_goals` | Pending |
-| "Drop the squat goal" → dropped; "Remove sample data" → Today is empty again | Pending |
-| "Export my data" from Settings → a zip with every file | Pending |
+| The full suite is green, plain and with warnings as errors, on a clean export | Done: 1,598 tests, both ways, on the export of `9092aab` |
+| Live, on an empty account: "Add sample data" fills Today, Progress and Goals; the three goals show the numbers the suite computed for that day | Done: one press; Today showed four meals with all three tags, a walk with its estimate, a weigh-in and two measurements, every row tagged sample; Goals showed 79.9 → 79.01 needing −0.25 against −0.29 reached by 2026-12-26, 93.33 → 107.92 needing 1.01 against 4.41 by 2026-11-26, 31:00 → 29:30 needing −0.31 against −0.5 by 2026-12-12, all on track; Progress showed smoothed 79.22, −0.24 kg a week from 2026-10-27, 2,216 and 2,196 kcal a day, 41% estimates, 3 sessions, 84.5 minutes, maintenance about 2,513: every figure the suite asserts for that day |
+| "How am I doing?" from Claude → `get_trends` with the same numbers; "Am I on track?" → `get_goals` | Done: for the first question Claude called `whoami`, `get_progress`, `get_log` (14 days) and `get_trends`, and its reply quoted the trend, calorie, maintenance, session and cardio figures as the page had them, and said first that everything was sample data; for the second, one `get_goals`, three goals on track with the page's numbers |
+| "Drop the squat goal" → dropped; "Remove sample data" → Today is empty again | Done: one `set_goal` with the squat goal's id and status dropped, no lookup first; Goals showed it under closed goals, tagged sample, with Reopen. Remove sample data: Today empty, no banner, the button back; no goals, no foods |
+| "Export my data" from Settings → a zip with every file | Done: `spotter-export-2026-11-10.zip`, 7,122 bytes, downloaded |
 | Delete account: the person's own click; removes the account here and at the provider | The person's, when they choose |
-| The evals: every case passes at least 2 of 3 runs, the rate reported as it is | Pending |
+| The evals: every case passes at least 2 of 3 runs, the rate reported as it is | Done: sixteen cases, 48 of 48 runs. The CLI's default model had changed during the day to `claude-fable-5-2`, so the run cost $22.41 at list price against about $7 on the model the earlier runs used; the runner now pins `claude-opus-5-5` |
+
+Run live by a browser agent in the person's own signed-in browser, every tool call allowed by hand, with the day still 2026-11-10 for the account so the suite's fixed-day numbers applied. Things the run showed, for the next stages: "How am I doing?" cost four read calls where one would do, and the reply claimed "every lift set a new best in its last session", which no page shows; Pull-Up, logged at 0 kg in the sample set, shows no estimated max and no best set beside a last-trained date; the maintenance line names its days but not the intake and weight change it used; the account's deleted Roti made the sample roti "Roti (sample)", as designed; the first press of "Add sample data" showed an empty page for a moment before the full one.
 
 ### What this stage taught
 

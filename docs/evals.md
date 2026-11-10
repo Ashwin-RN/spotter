@@ -17,7 +17,7 @@ python -m evals.run --case yesterday --case saved_food --keep
 | `--n N` | Runs per case, each a fresh conversation. Default 3. |
 | `--threshold R` | The pass rate every case must reach, 0 to 1. Default 1.0. Exit code 1 when any case is under it. |
 | `--case ID` | Only this case. Repeatable. |
-| `--model M` | Passed through to the CLI as `--model`. Default: the CLI's own default. |
+| `--model M` | Passed through to the CLI as `--model`. Default: `claude-opus-5-5`, pinned, so a change in the CLI's own default never changes what a run costs. `--model ""` uses the CLI's default. |
 | `--keep` | Keeps the temporary directory: the database, each run's raw CLI output, `results.json`. |
 | `--time-zone Z` | The person's IANA time zone. Default: the machine's. |
 
@@ -28,13 +28,17 @@ python -m evals.run --case yesterday --case saved_food --keep
 
 ## What one run costs
 
-Measured on 2026-11-10, CLI 2.1.322, default model claude-opus-5-5:
+**It depends on the model.** The runner pins `claude-opus-5-5` since 2026-11-10, after the CLI's own default
+changed within a day and one full run cost three times the estimate. Both below are CLI 2.1.322, measured on
+2026-11-10, before the pin.
 
-- 12 to 35 seconds and 85,000 to 165,000 tokens per run. Most are cached reads of the CLI's own system
-  prompt and the eighteen tool schemas.
-- The CLI reports $0.12 to $0.18 a run at list price.
-- A full run, sixteen cases × 3, worked out from those per-run numbers and not yet measured, would be
-  about 15 minutes and about $7 at list price.
+| Default model | Seconds a run | Tokens a run | Cost a run (CLI, list price) | Full run, 16 × 3 |
+|---|---|---|---|---|
+| claude-opus-5-5 (earlier that day) | 8 to 35 | 67,000 to 165,000 | $0.10 to $0.18 | not measured |
+| claude-fable-5-2 (later that day) | 8 to 50 | 91,000 to 179,000 | $0.26 to $0.79 | measured: about 17 minutes of runs, $22.41 |
+
+- Most tokens are cached reads of the CLI's own system prompt and the eighteen tool schemas.
+- The model line under the table says which model ran. Pin one with `--model` to compare runs.
 - On a subscription that is usage against the plan's limits, not a bill.
 - The table prints tokens per run and the cost per case.
 
