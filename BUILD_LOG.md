@@ -194,7 +194,7 @@ The fix is one ordering rule, written once and used by every reader: entries are
 
 The live run found one wording problem. A lift's first session has nothing to beat, so it sets no best, and the summary said "No new bests." Claude read that as a bug and told the person so. The summary now says "First Back Squat session: estimated max 70 kg is the mark to beat."
 
-### What this stage has taught so far
+### What this stage taught
 
 - **The host did not read the repo's deploy file.** The first deploy of package A succeeded and the database stayed empty: the migration step had never run. The host has retired config files for new services, so the start command, the pre-deploy step and the health check now live in its dashboard. The check that caught it was looking at the database itself, not at the green deploy.
 - **"Deployment successful" does not mean the step you added ran.** Verify the effect, not the status.
@@ -208,3 +208,46 @@ The live run found one wording problem. A lift's first session has nothing to be
 - **A fix is new code, and it needs its own review.** The first review of the services found the crashes. The review of the fixes found a contradiction the fixes themselves had introduced.
 - **A library can log on your behalf.** The MCP library set up logging at INFO when the server was built, and one of its lines repeated a name chosen by the caller. Spotter's own "no content in the logs" rule did not cover lines it never wrote, until a reviewer read the real log.
 - **Matching a shell command with one pattern does not work.** The command arrives inside a JSON string, so quotes are escaped, and no single pattern told `bash -c "git commit"` from `--grep="git commit"`. Splitting into shell words did.
+
+## Stage 3: lifts, weight and measurements you can see
+
+**Goal: everything a person logs by talking shows on a web page the same minute, can be fixed or removed from either side, and Claude does only what the person has allowed.** Contract: `docs/contracts/stage-3.md`.
+
+The contract opened by walking the first-use path, as the stage 2 lesson demanded. A new person talks and signs in, nothing else: sign-in lands on Today; the zone saves silently; "log back squat 3×5 at 60" shows on Today; "it was 65" fixes it; "delete that" is refused until the person turns deleting on in Settings, which is their consent and the one page-send Spotter makes.
+
+### What was built
+
+Three packages on disjoint files, built at the same time in one working tree: services and schema, web, MCP.
+
+| Package | What |
+|---|---|
+| Services and schema | `log_measurement` (nine kinds, unit and range per kind, one live value per kind per day with replace and restore), `edit_entry` (in place, re-keyed, a moved weigh-in never silently replaces), `get_log` (one to fourteen days, every day in the range, bests per session from the one history), `set_claude_can` (web only), the write limit (120 in 10 minutes, counted from the call log, checked after the lock in all eight writes), migration `0002` (a partial unique index on live measurements, built after keeping one value per kind and day) |
+| Web | Sign-in lands on Today. Day page from `get_log` with weigh-in and measurement forms, Edit and Delete on every entry, Delete with Undo. Edit pages per kind. Progress with charts, one lift's page, the permission switch on Settings. Every web write leaves a call-log row under the MCP name, through one helper. The zone form carries `next`, followed only for a local path |
+| MCP | Twelve functions. `NEEDS` maps each to `read`, `log` or `log_delete`; the wrapper checks the person's switch before the service runs, and the server refuses to start if a function has no level. `delete_entry` carries the destructive hint. `not_allowed` is the one text in Spotter that sends a person to a page, and a test names it as the only exception |
+
+Each builder broke its own behaviours on purpose before reporting: 37, 10 and 8 breaks, each turning a test red. One wait-rounding case survived until a test was added for it. Suite: 945 tests, plain and with warnings as errors.
+
+### The review
+
+Two reviewers at once, one over the services, migration and MCP surface, one over the web. Both: sound, no blocker.
+
+**Services, migration and MCP.** The reviewer ran a real server with real tokens through all twelve functions at each of the three switch values: at `read` every write was refused and nothing changed; at `log` everything worked but delete; bad switch values counted as `read`; a `claude_can` argument smuggled into `update_settings` was dropped by the library and refused by the service. Every edit a log would refuse was refused by the edit too (fourteen cases, each with the stored row unchanged). Migration 0002 on a database with three live waists on one day kept the last-logged and soft-deleted the others, with every row still there. It undid 28 behaviours; 26 turned a test red.
+
+| Finding | Fix |
+|---|---|
+| The write limit could be overshot by calls arriving together: a call's call-log row was written after its transaction committed, so writers queued behind the user lock all passed the count. Six simultaneous calls with two writes left saved four and five | A call writes its call-log row before the service runs and completes it afterwards. The count includes the call's own row |
+| Refused writes count against the limit, so a loop of refused deletes could use up the web's budget | Accepted and documented: a loop of refusals should be throttled |
+| "Nothing is ever erased" sat next to edits, which overwrite values | The doc says an edit keeps no old values |
+| Two doc facts (the limit's number, the delete sentence) had no test | Asserted in the text test |
+| The person's own switch is a write with no limit | Exempt on purpose, now said in the contract: it is never Claude's call |
+
+**Web.** The reviewer tried fifteen `next` values, none left the site; every id and kind in a path gave a 404 that echoed nothing; HTML in a kind or value was refused; the switch stored only its three values against seven bad ones; forty-one lifts on Progress rendered in 0.11 s. It ran 33 mutants; 24 died outright, one crashed the server at start-up, and the survivors are the table below.
+
+| Finding | Fix |
+|---|---|
+| `/day/0001-01-01` was a 500: the previous day overflowed | A 404 page |
+| For an hour after a 25-hour zone change, a later day's "previous" link could 404 | Previous is the latest of today and the later days |
+| No test put HTML in notes: marking notes safe in two templates passed every test | A test with a script tag and an image handler |
+| No test read the CSRF token from the Undo form | The test posts the rendered form's own token |
+| The Today-in-your-zone test passed with the machine's date, since UTC+14 agrees most of the day | The clock is frozen at a moment where they differ |
+| Two `next` checks had no test | Added |

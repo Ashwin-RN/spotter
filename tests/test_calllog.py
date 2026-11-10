@@ -15,7 +15,7 @@ from app import calllog, db, services
 from app.models import CallLog
 
 from .conftest import HEADERS, rpc, sign
-from .test_mcp import FUNCTIONS, call, compact, one_user, squat, tool_list
+from .test_mcp import FUNCTIONS, REQUIRED, call, compact, one_user, squat, tool_list
 
 MARKER = "zq-marker-5b1e"
 
@@ -97,8 +97,7 @@ def test_an_identity_error_writes_a_row_with_no_user(make_client):
 def test_every_function_writes_its_own_row(http):
     token = sign()
     for name in FUNCTIONS:
-        call(http, token, name, {"sets": squat(100)} if name == "log_lifts" else
-             {"kg": 80} if name == "log_bodyweight" else {})
+        call(http, token, name, REQUIRED.get(name, {}))
     assert [r.function for r in rows()] == FUNCTIONS
 
 
@@ -119,6 +118,12 @@ MARKED_CALLS = [
                   "target_date": "2099-01-01"}),
     ("get_progress", {"exercise": MARKER}),
     ("update_settings", {"time_zone": MARKER}),
+    ("get_log", {"date": MARKER, "days": 3}),
+    ("log_measurement", {"kind": MARKER, "value": 84, "date": MARKER}),
+    ("edit_entry", {"kind": MARKER, "entry_id": 1, "date": MARKER, "notes": MARKER,
+                    "sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}]}),
+    ("restore_entry", {"kind": MARKER, "entry_id": 1}),
+    ("delete_entry", {"kind": MARKER, "entry_id": 1}),  # refused by the switch at log, before the service
 ]
 
 
@@ -131,7 +136,8 @@ def string_fields(schema: dict) -> set[str]:
     for prop, spec in schema["properties"].items():
         if is_string(spec):
             found.add(prop)
-        ref = (spec.get("items") or {}).get("$ref")
+        arrays = [spec, *spec.get("anyOf", [])]  # an optional list is anyOf [array, null]
+        ref = next((a["items"]["$ref"] for a in arrays if "$ref" in (a.get("items") or {})), None)
         if ref:
             nested = schema["$defs"][ref.rsplit("/", 1)[1]]
             found |= {f"{prop}.{p}" for p, s in nested["properties"].items() if is_string(s)}
@@ -159,7 +165,7 @@ def test_a_marker_in_every_argument_reaches_no_log_row_and_no_log_line(make_clie
     for name, arguments in MARKED_CALLS:
         result = call(client, token, name, arguments)
         errors += result["isError"]
-    assert errors == 6  # the six marked calls the services refuse; the other three succeed
+    assert errors == 11  # the eleven marked calls refused; the other three succeed
     logged = rows()
     assert len(logged) == len(MARKED_CALLS)
     for row in logged:
@@ -216,16 +222,127 @@ def test_crash_text_is_type_and_frames_only():
 
 # ---------------------------------------------------------------- a failing call-log write
 
-def test_a_failing_call_log_write_does_not_fail_the_call(http, monkeypatch, logs):
+@pytest.mark.parametrize("step", ["start", "finish"])
+def test_a_failing_call_log_write_does_not_fail_the_call(http, monkeypatch, logs, step):
     def broken(*args, **kwargs):
         raise OperationalError("INSERT", {}, Exception("disk full"))
 
-    monkeypatch.setattr(calllog, "write", broken)
+    monkeypatch.setattr(calllog, step, broken)
     result = call(http, sign(), "log_bodyweight", {"kg": 80})
     assert result["isError"] is False and result["structuredContent"]["weigh_in"]["kg"] == 80
     assert "call log could not be written: OperationalError" in logs.text
     assert "disk full" not in logs.text
-    assert rows() == []
+
+
+def test_start_and_finish_swallow_a_database_error(monkeypatch, logs):
+    def down():
+        raise OperationalError("INSERT", {}, Exception("disk full"))
+
+    monkeypatch.setattr(db, "session_scope", down)
+    assert calllog.start("log_lifts", db.utcnow(), None) is None
+    assert calllog.finish(7, 1, True, None, 10) is None
+    assert logs.text.count("call log could not be written: OperationalError") == 2 and "disk full" not in logs.text
+
+
+def test_finish_with_no_row_does_nothing(monkeypatch):
+    monkeypatch.setattr(db, "session_scope", lambda: (_ for _ in ()).throw(AssertionError("touched the database")))
+    calllog.finish(None, 1, True, None, 10)
+
+
+# ---------------------------------------------------------------- started before the service, completed after
+
+def test_the_row_is_started_before_the_service_runs_and_completed_after(http, monkeypatch):
+    seen = []
+
+    def stand_in(account, data, by):
+        with db.session_scope() as session:
+            seen.extend((r.function, r.ok, r.error_code, r.ms, r.result_bytes, r.user_id)
+                        for r in session.scalars(select(CallLog)))
+        return {"error": "stand_in", "message": "Ran.", "fix": "None."}
+
+    token = sign()
+    call(http, token, "whoami")
+    account = one_user().id
+    monkeypatch.setattr(services, "log_bodyweight", stand_in)
+    result = call(http, token, "log_bodyweight", {"kg": 80})
+    assert ("log_bodyweight", False, "in_progress", 0, 0, account) in seen  # the row was there first
+    row = rows()[-1]
+    assert (row.function, row.ok, row.error_code, row.user_id) == ("log_bodyweight", False, "stand_in", account)
+    assert row.result_bytes == len(result["content"][0]["text"].encode("utf-8"))
+    assert [r.function for r in rows()] == ["whoami", "log_bodyweight"]  # one row per call
+    assert not [r for r in rows() if r.error_code == "in_progress"]
+
+
+def test_a_refused_call_has_a_completed_row_too(http):
+    from .test_mcp import set_switch
+
+    token = sign()
+    call(http, token, "whoami")
+    set_switch(one_user().id, "read")
+    call(http, token, "log_lifts", {"sets": squat(100)})
+    assert [(r.function, r.error_code) for r in rows()] == [("whoami", None), ("log_lifts", "not_allowed")]
+
+
+# ---------------------------------------------------------------- the write limit under concurrent calls
+
+KINDS = ["waist", "hips", "chest", "arm", "thigh", "steps"]
+VALUES = {"waist": 84, "hips": 98, "chest": 101, "arm": 34, "thigh": 58, "steps": 9000}
+
+
+def seed_writes(account: int, how_many: int) -> None:
+    now = db.utcnow()
+    with db.session_scope() as session:
+        session.add_all(CallLog(function="log_bodyweight", started_at=now, ms=1, ok=True, error_code=None,
+                                result_bytes=10, user_id=account) for _ in range(how_many))
+
+
+def measurements_saved() -> int:
+    from app.models import Measurement
+
+    with db.session_scope() as session:
+        return len(session.scalars(select(Measurement)).all())
+
+
+def test_writes_one_after_another_stop_exactly_at_the_limit(http):
+    token = sign()
+    call(http, token, "whoami")
+    seed_writes(one_user().id, services.WRITE_LIMIT - 2)
+    answers = [call(http, token, "log_measurement", {"kind": kind, "value": VALUES[kind]}) for kind in KINDS]
+    assert [a["isError"] for a in answers] == [False, False, True, True, True, True]
+    assert {a["structuredContent"]["error"] for a in answers[2:]} == {"too_many_writes"}
+    assert measurements_saved() == 2
+
+
+def test_simultaneous_writes_never_pass_the_limit(http):
+    """Six calls at once, with room for two. Every call's row exists before its service counts, so no
+    count misses a call queued ahead of it: at most two are saved. A burst can save fewer: a refused
+    call's row counts too, so a service that counts after several rows have started may see the window
+    full. That errs on the safe side."""
+    import threading
+
+    token = sign()
+    call(http, token, "whoami")
+    seed_writes(one_user().id, services.WRITE_LIMIT - 2)
+    barrier = threading.Barrier(len(KINDS))
+    answers: dict[str, dict] = {}
+
+    def send(kind: str) -> None:
+        barrier.wait()
+        answers[kind] = call(http, token, "log_measurement", {"kind": kind, "value": VALUES[kind]})
+
+    threads = [threading.Thread(target=send, args=(kind,)) for kind in KINDS]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+    assert len(answers) == len(KINDS)
+    saved = measurements_saved()
+    refused = [a for a in answers.values() if a["isError"] and a["structuredContent"]["error"] == "too_many_writes"]
+    assert saved <= 2, saved  # the limit is never passed
+    assert saved + len(refused) == len(KINDS)  # every call that was not saved was refused by the limit
+    assert sum(not a["isError"] for a in answers.values()) == saved
+    assert all(a["structuredContent"]["wait_minutes"] >= 1 for a in refused)
+    assert not [r for r in rows() if r.error_code == "in_progress"]
 
 
 def test_started_at_is_utc_and_ms_is_whole(http):

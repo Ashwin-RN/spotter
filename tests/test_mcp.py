@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import func, select
 from starlette.testclient import TestClient
 
-from app import db, mcp_server, services
+from app import db, links, mcp_server, services
 from app.config import Settings
 from app.main import create_app
 from app.mcp_schemas import RESULTS
@@ -248,12 +248,20 @@ def test_spotter_logs_through_its_own_handler_added_once(provider):
 
 # ================================================================ stage 2: the seven functions
 
-FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings"]
-READS = {"whoami", "list_exercises", "get_progress"}
+FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings",
+             "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry"]
+READS = {"whoami", "list_exercises", "get_progress", "get_log"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 SETTING_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 SETTINGS = {"update_settings"}
+DELETE_HINTS = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
+DELETES = {"delete_entry"}
+
+
+def wire_fields(model) -> set[str]:
+    """A result model's top-level keys as they appear in a result (get_log's `from` is an alias)."""
+    return {field.alias or name for name, field in model.model_fields.items()}
 
 
 def compact(value: Any) -> str:
@@ -336,15 +344,28 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("update_settings", {"time_zone": "Asia/Kolkata"})  # changed
     keep("update_settings", {"time_zone": "Asia/Kolkata"})  # already set: nothing changed
     keep("whoami")  # a zone is set: no note
+    first = keep("log_measurement", {"kind": "waist", "value": 84})
+    keep("log_measurement", {"kind": "waist", "value": 84})  # duplicate: note
+    second = keep("log_measurement", {"kind": "Waist", "value": 83.5})  # replaces: replaced and note
+    keep("get_log")
+    log = keep("get_log", {"days": 14})
+    session_id = next(s["id"] for day in log["days"] for s in day["sessions"])
+    keep("edit_entry", {"kind": "lift_session", "entry_id": session_id, "notes": "Edited"})  # a session: note
+    keep("edit_entry", {"kind": "measurement", "entry_id": second["id"], "value": 83})
+    set_switch(who["account_id"], "log_delete")
+    keep("delete_entry", {"kind": "measurement", "entry_id": second["id"]})
+    keep("restore_entry", {"kind": "measurement", "entry_id": second["id"]})  # nothing in its place
+    keep("restore_entry", {"kind": "measurement", "entry_id": first["id"]})  # swaps: replaced and note
     return seen
 
 
-def test_the_function_list_is_exactly_the_seven(http):
+def test_the_function_list_is_exactly_the_twelve(http):
     tools = tool_list(http, sign())
     assert [t["name"] for t in tools] == FUNCTIONS
     for tool in tools:
         assert tool["title"] and tool["description"], tool["name"]
-        hints = READ_HINTS if tool["name"] in READS else SETTING_HINTS if tool["name"] in SETTINGS else WRITE_HINTS
+        hints = (READ_HINTS if tool["name"] in READS else SETTING_HINTS if tool["name"] in SETTINGS
+                 else DELETE_HINTS if tool["name"] in DELETES else WRITE_HINTS)
         assert tool["annotations"] == hints, tool["name"]
         schema = tool["inputSchema"]
         for obj in [schema, *schema.get("$defs", {}).values()]:
@@ -352,7 +373,7 @@ def test_the_function_list_is_exactly_the_seven(http):
                 assert spec.get("description"), f"{tool['name']}.{prop} has no description"
         out = tool["outputSchema"]
         assert out["type"] == "object" and out["properties"] and out["additionalProperties"] is False, tool["name"]
-        assert set(out["properties"]) == set(RESULTS[tool["name"]].model_fields)
+        assert set(out["properties"]) == wire_fields(RESULTS[tool["name"]])
 
 
 def test_every_result_field_is_described(http):
@@ -387,7 +408,7 @@ def test_every_real_result_validates_and_its_keys_are_the_models(http):
         for result in results:
             model.model_validate(result)
             keys |= set(result)
-        assert keys == set(model.model_fields), name  # every field is used, and no key lacks a field
+        assert keys == wire_fields(model), name  # every field is used, and no key lacks a field
 
 
 def test_a_service_field_with_no_schema_entry_fails_the_check():
@@ -573,7 +594,8 @@ def test_no_database_session_is_opened_on_the_event_loop(http, monkeypatch):
              ("log_bodyweight", {"kg": 80}), ("get_progress", {}),
              ("set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150,
                            "target_date": (date.today() + timedelta(days=90)).isoformat()}),
-             ("update_settings", {"time_zone": "Europe/London"})]
+             ("update_settings", {"time_zone": "Europe/London"}),
+             ("get_log", {"days": 3}), ("log_measurement", {"kind": "waist", "value": 84})]
     for name, arguments in calls:
         ok(http, token, name, arguments)
     assert len(loop_threads) >= 1
@@ -612,12 +634,20 @@ def test_resource_reads_are_not_in_the_call_log(http):
         assert session.scalar(select(func.count()).select_from(CallLog)) == 0
 
 
-def test_can_and_cant_names_exactly_the_seven_functions():
+def test_can_and_cant_names_exactly_the_twelve_functions():
     text = CAN_AND_CANT.read_text(encoding="utf-8")
     named = set(re.findall(r"`([a-z_]+)`", text))
     service_functions = {name for name in services.__all__ if callable(getattr(services, name))}
     assert named & service_functions <= set(FUNCTIONS)  # it names no function Claude does not have (restore_entry, say)
     assert set(FUNCTIONS) <= named  # and it names every function Claude has
+
+
+def test_can_and_cant_states_the_limit_the_delete_consent_and_that_edits_keep_nothing():
+    text = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
+    assert f"at most {services.WRITE_LIMIT} writes in any {services.WRITE_WINDOW_MINUTES} minutes" in text
+    assert "a refused one too" in text  # refused writes count against the limit
+    assert "Claude can delete only when the person has allowed it" in text
+    assert "An edit keeps no old values" in text
 
 
 def test_the_instructions_say_how_to_use_spotter(http):
@@ -684,17 +714,26 @@ OPTIONAL_ARGUMENTS = {
                  "text": "Text", "start_value": 100.5, "goal_id": 7, "status": "open"},
     "get_progress": {"exercise": "Back Squat"},
     "update_settings": {"time_zone": "Asia/Kolkata"},
+    "get_log": {"date": "2026-01-02", "days": 7},
+    "log_measurement": {"date": "2026-01-02", "allow_repeat": True},
+    "edit_entry": {"date": "2026-01-02", "notes": "Notes", "sets": squat(105), "kg": 80.5, "value": 84.5},
+    "restore_entry": {},
+    "delete_entry": {},
 }
-REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5}}
-WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings"}
+REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
+            "log_measurement": {"kind": "waist", "value": 84.5},
+            "edit_entry": {"kind": "lift_session", "entry_id": 7},
+            "restore_entry": {"kind": "measurement", "entry_id": 7},
+            "delete_entry": {"kind": "bodyweight", "entry_id": 7}}
+DATA_WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement"}
 
 
 def spy_on_services(monkeypatch) -> dict[str, tuple]:
     """Replace each service with one that records what it was given and answers with an error."""
     received: dict[str, tuple] = {}
     for name in FUNCTIONS:
-        def spy(*args, _name=name):
-            received[_name] = args
+        def spy(*args, _name=name, **kwargs):
+            received[_name] = (args, kwargs)
             return {"error": "spy", "message": "Recorded.", "fix": "None."}
 
         monkeypatch.setattr(services, name, spy, raising=False)
@@ -702,14 +741,21 @@ def spy_on_services(monkeypatch) -> dict[str, tuple]:
 
 
 def service_input(name: str, account: int, arguments: dict) -> tuple:
-    """What the service should receive for these arguments."""
-    if name in WRITES:
-        return (account, arguments, "claude")
+    """What the service should receive for these arguments: (positional, keyword)."""
+    if name in DATA_WRITES:
+        return (account, arguments, "claude"), {}
     if name == "list_exercises":
-        return (arguments.get("kind"), arguments.get("category"))
+        return (arguments.get("kind"), arguments.get("category")), {}
     if name == "get_progress":
-        return (account, arguments.get("exercise"))
-    return (account,)
+        return (account, arguments.get("exercise")), {}
+    if name == "get_log":
+        return (account,), {k: v for k, v in arguments.items() if k in ("date", "days")}
+    if name == "edit_entry":
+        changes = {k: v for k, v in arguments.items() if k not in ("kind", "entry_id")}
+        return (account, arguments["kind"], arguments["entry_id"], changes, "claude"), {}
+    if name in ("restore_entry", "delete_entry"):
+        return (account, arguments["kind"], arguments["entry_id"]), {}
+    return (account,), {}
 
 
 def test_the_argument_table_lists_every_optional_argument(http):
@@ -727,6 +773,7 @@ def test_every_argument_sent_reaches_the_service_and_no_other(http, monkeypatch,
     account = one_user().id
     received = spy_on_services(monkeypatch)
     every = {**REQUIRED.get(name, {}), **OPTIONAL_ARGUMENTS[name]}
+    set_switch(account, "log_delete")  # every function allowed, so every service is reached
     failed(http, token, name, every)
     assert received[name] == service_input(name, account, every)
     fewest = REQUIRED.get(name, {})
@@ -921,7 +968,7 @@ def test_the_permission_switch_cannot_be_set_through_update_settings(http, monke
     assert one_user().claude_can == "log" and whoami(http, token)["claude_can"] == "log"
     received = spy_on_services(monkeypatch)
     failed(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log_delete"})
-    assert received["update_settings"][1] == {"time_zone": "Europe/London"}
+    assert received["update_settings"][0][1] == {"time_zone": "Europe/London"}
 
 
 def test_one_persons_time_zone_never_changes_anothers(http):
@@ -941,6 +988,16 @@ def test_one_persons_time_zone_never_changes_anothers(http):
 ZONE_WORDS = re.compile(r"time[ _]zone|\bzone\b", re.IGNORECASE)
 PAGE_WORDS = re.compile(r"settings page|settings link|links\.settings|/settings|\bpage\b|\bform\b", re.IGNORECASE)
 NEGATION = re.compile(r"\b(never|not|no)\b|n't\b", re.IGNORECASE)
+# Words that tell someone to do something there: a sentence naming a page and one of these sends a person to it.
+ACTION_WORDS = re.compile(r"\b(set|sets|change|changes|turn|switch|type|enter|go|send|point|visit|open|ask)\b",
+                          re.IGNORECASE)
+# The one exception in Spotter: only the person can change what Claude may do, and only on the Settings page.
+PAGE_SEND_EXCEPTION = mcp_server.NOT_ALLOWED_FIX
+
+
+def sends_to_a_page(sentence: str) -> bool:
+    return bool(PAGE_WORDS.search(sentence) and (ZONE_WORDS.search(sentence) or ACTION_WORDS.search(sentence))
+                and not NEGATION.search(sentence))
 
 
 def model_texts(client: TestClient, token: str) -> dict[str, str]:
@@ -968,11 +1025,14 @@ def sentences(text: str) -> list[str]:
     return [s for s in re.split(r"(?<=[.!?:])\s+|\s-\s", flat) if s]
 
 
-def test_nothing_the_model_reads_sends_the_person_to_a_page_for_the_time_zone(http):
-    texts = model_texts(http, sign())
-    offending = [(where, s) for where, text in texts.items() for s in sentences(text)
-                 if ZONE_WORDS.search(s) and PAGE_WORDS.search(s) and not NEGATION.search(s)]
-    assert offending == []
+def test_nothing_the_model_reads_sends_the_person_to_a_page_but_the_permission_switch(http):
+    token = sign()
+    texts = model_texts(http, token)
+    set_switch(one_user().id, "read")
+    refused = failed(http, token, "log_bodyweight", {"kg": 80})  # the not_allowed answer is read too
+    texts["not_allowed message"], texts["not_allowed fix"] = refused["message"], refused["fix"]
+    sending = [(where, s) for where, text in texts.items() for s in sentences(text) if sends_to_a_page(s)]
+    assert sending == [("not_allowed fix", PAGE_SEND_EXCEPTION)]  # the permission switch, and nothing else
     for where in ("instructions", "spotter://can-and-cant"):
         naming = [s for s in sentences(texts[where]) if "update_settings" in s and ZONE_WORDS.search(s)]
         assert naming, f"{where} does not say that update_settings sets the time zone"
@@ -980,10 +1040,137 @@ def test_nothing_the_model_reads_sends_the_person_to_a_page_for_the_time_zone(ht
 
 def test_the_page_check_allows_settings_mentioned_for_other_reasons():
     fine = ["The Settings page shows the same number.", "The Settings page: the person's account details.",
-            "Never send the person to a page for it.", "Set the time zone with update_settings."]
+            "Never send the person to a page for it.", "Set the time zone with update_settings.",
+            "The page for the session's day.", "Claude can delete when the person has allowed it in Settings."]
     caught = ["Ask the person their time zone and send them to the Settings page to set it.",
               "If whoami carries time_zone_note, point them to the Settings link.",
-              "Ask their time zone and point them to links.settings."]
+              "Ask their time zone and point them to links.settings.",
+              "Ask the person to turn deleting on in the Settings page.",
+              PAGE_SEND_EXCEPTION]
     for text in fine + caught:
-        hit = bool(ZONE_WORDS.search(text) and PAGE_WORDS.search(text) and not NEGATION.search(text))
-        assert hit is (text in caught), text
+        assert sends_to_a_page(text) is (text in caught), text
+
+
+def set_switch(account: int, value: str) -> None:
+    """Set the permission switch on the row directly, as the Settings page would."""
+    with db.session_scope() as session:
+        session.get(User, account).claude_can = value
+
+
+# ---------------------------------------------------------------- the permission switch (stage 3)
+
+# The contract's table: what each function needs, written out here, not read from NEEDS.
+CONTRACT_NEEDS = {
+    "whoami": "read", "list_exercises": "read", "get_progress": "read", "get_log": "read",
+    "log_lifts": "log", "log_bodyweight": "log", "set_goal": "log", "update_settings": "log",
+    "log_measurement": "log", "edit_entry": "log", "restore_entry": "log", "delete_entry": "log_delete",
+}
+ALLOWS = {"read": {"read"}, "log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}
+
+
+def test_every_registered_function_has_a_level_and_every_level_a_function(http):
+    registered = {t["name"] for t in tool_list(http, sign())}
+    assert registered == set(mcp_server.NEEDS) == set(CONTRACT_NEEDS) == set(FUNCTIONS)
+    assert mcp_server.NEEDS == CONTRACT_NEEDS
+
+
+def test_a_function_without_a_level_stops_the_server_at_start(app_settings, monkeypatch):
+    from app.auth import JwksTokenVerifier, UserinfoClient
+
+    monkeypatch.delitem(mcp_server.NEEDS, "get_log")
+    with pytest.raises(RuntimeError, match="get_log"):
+        mcp_server.build_server(app_settings, JwksTokenVerifier(app_settings), UserinfoClient(app_settings))
+
+
+@pytest.mark.parametrize("level", ["read", "log", "log_delete"])
+def test_the_switch_gates_every_function_as_the_contract_says(http, monkeypatch, level):
+    token = sign()
+    whoami(http, token)
+    account = one_user().id
+    set_switch(account, level)
+    received = spy_on_services(monkeypatch)
+    for name in FUNCTIONS:
+        received.pop(name, None)
+        error = failed(http, token, name, REQUIRED.get(name, {}))
+        if CONTRACT_NEEDS[name] in ALLOWS[level]:
+            assert error["error"] == "spy" and name in received, (level, name)  # the service ran
+        else:
+            assert name not in received, (level, name)  # refused before the service
+            assert error == {"error": "not_allowed", "message": mcp_server.NOT_ALLOWED_MESSAGES[level],
+                             "fix": "The person can change what Claude may do on the Settings page.",
+                             "links": {"settings": links.page("settings")}}, (level, name)
+
+
+def test_a_refused_write_writes_nothing_and_leaves_a_call_log_row(http):
+    token = sign()
+    ok(http, token, "log_lifts", {"sets": squat(100)})
+    account = one_user().id
+    set_switch(account, "read")
+    result = call(http, token, "log_lifts", {"sets": squat(110)})
+    assert result["isError"] is True and result["structuredContent"]["error"] == "not_allowed"
+    assert result["content"][0]["text"] == compact(result["structuredContent"])
+    assert sessions_logged() == 1
+    with db.session_scope() as session:
+        row = session.scalars(select(CallLog).order_by(CallLog.id.desc())).first()
+        assert (row.function, row.ok, row.error_code, row.user_id) == ("log_lifts", False, "not_allowed", account)
+
+
+def test_delete_is_refused_at_log_and_the_entry_stays(http):
+    token = sign()
+    logged = ok(http, token, "log_bodyweight", {"kg": 80})
+    error = failed(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": logged["id"]})
+    assert error["error"] == "not_allowed" and error["message"] == "This account lets Claude read and log, not delete."
+    with db.session_scope() as session:
+        assert session.get(Bodyweight, logged["id"]).deleted_at is None
+    set_switch(one_user().id, "log_delete")
+    assert ok(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": logged["id"]})["deleted"] is True
+    assert ok(http, token, "restore_entry", {"kind": "bodyweight", "entry_id": logged["id"]})["restored"] is True
+
+
+def test_an_unknown_switch_value_counts_as_read_only():
+    assert mcp_server.level_of("everything") == "read" and mcp_server.level_of(None) == "read"
+    assert mcp_server.not_allowed("log_lifts", "everything")["error"] == "not_allowed"
+    assert mcp_server.not_allowed("whoami", "everything") is None
+
+
+def test_delete_carries_the_destructive_hint_and_no_other_function_does(http):
+    hints = {t["name"]: t["annotations"]["destructiveHint"] for t in tool_list(http, sign())}
+    assert {name for name, destructive in hints.items() if destructive} == {"delete_entry"}
+
+
+def test_whoami_explains_the_three_switch_values(http):
+    schema = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}["whoami"]
+    text = schema["properties"]["claude_can"]["description"]
+    for word in ("read", "log", "log_delete", "delete_entry"):
+        assert word in text
+
+
+def test_the_instructions_say_what_to_do_on_not_allowed_and_how_to_look_back():
+    text = mcp_server.INSTRUCTIONS
+    assert "not_allowed" in text and "do not retry" in text and "get_log" in text
+
+
+# ---------------------------------------------------------------- the write limit reaches Claude
+
+def test_too_many_writes_reaches_claude_as_an_error_with_the_wait(http, monkeypatch):
+    refusal = {"error": "too_many_writes", "message": "120 writes in the last 10 minutes.",
+               "fix": "Wait 4 minutes, then retry.", "wait_minutes": 4}
+    monkeypatch.setattr(services, "log_lifts", lambda *a: refusal)
+    result = call(http, sign(), "log_lifts", {"sets": squat(100)})
+    assert result["isError"] is True and result["structuredContent"] == refusal
+    with db.session_scope() as session:
+        row = session.scalars(select(CallLog)).one()
+        assert (row.ok, row.error_code) == (False, "too_many_writes")
+
+
+# ---------------------------------------------------------------- get_log's days are published with their range
+
+def test_get_log_publishes_the_days_range(http):
+    days = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["get_log"]["properties"]["days"]
+    assert (days["minimum"], days["maximum"]) == (1, 14)
+
+
+def test_the_write_limit_counts_the_same_names_the_switch_gates_as_writes():
+    # The services count call-log rows by function name; every write Claude can make must be among them.
+    writes = {name for name, level in mcp_server.NEEDS.items() if level != "read"}
+    assert set(services.WRITE_FUNCTIONS) == writes

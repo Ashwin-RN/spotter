@@ -24,6 +24,9 @@ goal_numbers(goals, lift_history, weigh_ins, today)
     For each open goal with a target and a date: where it stands. latest is the measure above, and
     status, needed_per_week and the projection all read that same value: "reached" once latest is
     at or past the target, else "on track" or "behind" from the line, else "not enough data".
+
+Every write here locks the user row first (common.lock_user), then checks the write limit
+(common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
 """
 
 from datetime import date, timedelta
@@ -34,7 +37,8 @@ from app import db, links, metrics, rules, users
 from app.models import GOAL_STATUSES, Goal
 from app.services import body, lifts
 from app.services.common import (
-    check_by, check_data, exercises, in_range, lock_user, no_account, not_found, owned, row_dict,
+    check_by, check_data, check_write_limit, exercises, in_range, lock_user, no_account, not_found, owned,
+    row_dict,
 )
 
 KIND = "goal"
@@ -196,6 +200,9 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
         user = lock_user(s, user_id)
         if user is None:
             return no_account()
+        limited = check_write_limit(s, user.id)
+        if limited:
+            return limited
         today = users.today_for(user)
         errors, warnings = [], []
         status = data.get("status") or None

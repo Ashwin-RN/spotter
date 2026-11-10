@@ -10,7 +10,7 @@ from sqlalchemy.dialects import sqlite
 from app import db, services, users
 from app.models import Bodyweight, User
 from app.metrics import bodyweight_now, epley
-from app.services import body
+from app.services import account, body
 from app.services.common import lock_statement
 from app.services.progress import bodyweight_chart
 
@@ -294,3 +294,47 @@ def test_order_free_numbers_do_not_move_as_the_days_pass(user, monkeypatch):
     assert [n[0] for n in (first, second, third)] == ["2026-11-09", "2026-11-10", "2026-11-11"]
     assert first[1:] == second[1:] == third[1:]
     assert first[1] == epley(120, 5) and first[2]["weight_kg"] == 120 and first[3] == 81.0
+
+
+
+# ---------------------------------------------------------------- set_claude_can: the Settings page's switch
+
+@pytest.mark.parametrize("value", ["read", "log", "log_delete"])
+def test_the_switch_takes_each_of_its_three_values(user, value):
+    r = services.set_claude_can(user.id, value)
+    assert r == {"claude_can": value, "changed": value != "log"}
+    assert stored(user.id).claude_can == value
+    assert services.set_claude_can(user.id, value) == {"claude_can": value, "changed": False}
+
+
+def test_the_switch_refuses_anything_else_and_changes_nothing(user):
+    for bad in ("delete", "LOG", "", None, ["log"], True, "x" * 10_000):
+        r = services.set_claude_can(user.id, bad)
+        assert r["error"] == "invalid_field" and "read, log, log_delete" in r["fix"] and len(str(r)) < 1_000
+    assert stored(user.id).claude_can == "log"
+    assert services.set_claude_can(987654, "read")["error"] == "no_account"
+
+
+def test_update_settings_still_never_sets_the_switch(user):
+    services.set_claude_can(user.id, "read")
+    for by in ("claude", "web"):
+        r = services.update_settings(user.id, {"claude_can": "log_delete"}, by)
+        assert r["error"] == "not_allowed"
+    assert stored(user.id).claude_can == "read"
+    assert "claude_can" not in account.SETTABLE
+
+
+def test_the_switch_locks_the_user_row_first(user):
+    statements = []
+
+    def record(_conn, _cursor, statement, *_):
+        statements.append(" ".join(statement.split()))
+
+    engine = db.get_engine()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        services.set_claude_can(user.id, "log_delete")
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    lock = " ".join(str(lock_statement("sqlite", user.id).compile(dialect=sqlite.dialect())).split())
+    assert statements[0] == lock

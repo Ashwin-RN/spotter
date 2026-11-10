@@ -1,4 +1,4 @@
-"""The shapes of the seven MCP functions' arguments and results.
+"""The shapes of the twelve MCP functions' arguments and results.
 
 Each result model is published as that function's result schema, and the MCP library checks every
 successful result against it. The top-level fields match the service's keys exactly, and a top-level
@@ -97,7 +97,10 @@ class WhoamiResult(BaseModel):
     time_zone: str | None = Field(description="Their time zone (an IANA name such as Asia/Kolkata), or null.")
     today: str = Field(description="Today's date for the person, YYYY-MM-DD. Dates you leave out mean this day.")
     targets: Targets = Field(description="The person's targets. Not used by any function yet.")
-    claude_can: str = Field(description="What the person allows Claude to do: read, log, or log_delete.")
+    claude_can: str = Field(
+        description="What the person allows Claude to do. read: read only. log (the default): read and every "
+                    "write except delete_entry. log_delete: everything, delete_entry too. Only the person "
+                    "can change it; Claude cannot.")
     links: WhoamiLinks = Field(description="Pages to offer the person. Put links last in a reply.")
     sign_in: SignIn = Field(description="The sign-in this call came with.")
     time_zone_note: str | None = Field(
@@ -358,6 +361,127 @@ class UpdateSettingsResult(BaseModel):
     links: SettingsLinks = Field(description="Pages to offer the person. Put links last in a reply.")
 
 
+# ---------------------------------------------------------------- log_measurement
+
+class MeasurementOut(BaseModel):
+    id: int = Field(description="The measurement's id.")
+    date: str = Field(description="The day, YYYY-MM-DD, on the person's own calendar.")
+    kind: str = Field(description="waist, hips, chest, arm, thigh, steps, sleep_hours, resting_hr or water_ml.")
+    value: float = Field(description="The value, in unit.")
+    unit: str = Field(description="cm, steps, h, bpm or ml: fixed by the kind.")
+    logged_by: str = Field(description="Who logged it: claude or web.")
+    created_at: str = Field(description="When it was logged, UTC.")
+    updated_at: str = Field(description="When it last changed, UTC.")
+    deleted_at: str | None = Field(description="When it was deleted or replaced, UTC, or null.")
+    is_sample: bool = Field(description="True only for sample data.")
+
+
+class DatedValue(BaseModel):
+    date: str = Field(description="YYYY-MM-DD.")
+    value: float = Field(description="The value, in the kind's unit.")
+
+
+class DayLink(BaseModel):
+    day: str = Field(description="The page for the entry's day.")
+
+
+class LogMeasurementResult(BaseModel):
+    model_config = TOP
+
+    kind: str = Field(description="What was logged: measurement.")
+    id: int = Field(description="The measurement's id.")
+    duplicate: bool = Field(
+        description="True when the same value of the same kind on the same day was logged in the last 10 minutes. "
+                    "Then nothing was written and this is the earlier one. Say so.")
+    measurement: MeasurementOut = Field(description="The measurement as saved.")
+    replaced: MeasurementOut | None = Field(
+        description="The earlier value of the same kind on the same day that this one replaced, or null. It is "
+                    "kept, not erased: restore_entry brings it back.")
+    recent: list[DatedValue] = Field(description="The latest values of this kind, newest first, up to 10.")
+    summary: str = Field(description="The measurement in one line, ready to quote.")
+    links: DayLink = Field(description="Pages to offer the person. Put links last in a reply.")
+    note: str | None = Field(default=None, description="Present on a duplicate or a replacement: what happened.")
+
+
+# ---------------------------------------------------------------- edit_entry
+
+class EditEntryResult(BaseModel):
+    model_config = TOP
+
+    kind: str = Field(description="The kind of entry edited: lift_session, bodyweight or measurement.")
+    id: int = Field(description="The entry's id. An edit never changes it.")
+    changed: list[str] = Field(description="The fields this edit changed.")
+    before: dict = Field(description="The entry as it was, with the fields of its kind.")
+    after: dict = Field(description="The entry as it is now.")
+    summary: str = Field(description="What changed, in one line, ready to quote.")
+    links: DayLink = Field(description="Pages to offer the person. Put links last in a reply.")
+    note: str | None = Field(
+        default=None,
+        description="For a lift session: bests are worked out again from the whole history; get_progress shows "
+                    "them.")
+
+
+# ---------------------------------------------------------------- delete_entry and restore_entry
+
+class DeleteEntryResult(BaseModel):
+    model_config = TOP
+
+    kind: str = Field(description="The kind of entry deleted.")
+    id: int = Field(description="The entry's id. restore_entry takes it, with the same kind.")
+    deleted: bool = Field(description="True: the entry is deleted. Nothing is erased.")
+    entry: dict = Field(description="The entry as it was, with the fields of its kind.")
+    note: str | None = Field(default=None, description="How to undo it.")
+
+
+class RestoreEntryResult(BaseModel):
+    model_config = TOP
+
+    kind: str = Field(description="The kind of entry restored.")
+    id: int = Field(description="The entry's id.")
+    restored: bool = Field(description="True: the entry is live again.")
+    entry: dict = Field(description="The entry as it is now.")
+    replaced: list[dict] = Field(
+        description="Live entries for the same day that this one took the place of. They are set aside, not "
+                    "erased: restore_entry with their id swaps them back. Empty when none.")
+    note: str | None = Field(default=None, description="Present when a live entry was set aside.")
+
+
+# ---------------------------------------------------------------- get_log
+
+class LogSession(Session):
+    new_bests: list[NewBest] = Field(
+        description="New bests this session set, against every earlier set of the lift.")
+
+
+class LogDay(BaseModel):
+    date: str = Field(description="The day, YYYY-MM-DD.")
+    sessions: list[LogSession] = Field(description="The lift sessions on this day, with their sets and new bests.")
+    weigh_in: WeighIn | None = Field(description="The day's weigh-in, or null.")
+    measurements: list[MeasurementOut] = Field(description="The day's measurements, one per kind at most.")
+
+
+class LogTotals(BaseModel):
+    sessions: int = Field(description="Lift sessions in the range.")
+    weigh_ins: int = Field(description="Weigh-ins in the range.")
+    measurements: int = Field(description="Measurements in the range.")
+
+
+class LogLinks(BaseModel):
+    day: str = Field(description="The page for the last day in the range.")
+    progress: str = Field(description="The progress page.")
+
+
+class GetLogResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    from_: str = Field(alias="from", description="The first day shown, YYYY-MM-DD.")
+    to: str = Field(description="The last day shown, YYYY-MM-DD.")
+    days: list[LogDay] = Field(description="Every day in the range, newest first, empty days included.")
+    totals: LogTotals = Field(description="How many entries of each kind the range holds.")
+    summary: str = Field(description="The range in a few lines, ready to quote.")
+    links: LogLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+
+
 RESULTS = {
     "whoami": WhoamiResult,
     "list_exercises": ExercisesResult,
@@ -366,4 +490,9 @@ RESULTS = {
     "set_goal": SetGoalResult,
     "get_progress": GetProgressResult,
     "update_settings": UpdateSettingsResult,
+    "get_log": GetLogResult,
+    "log_measurement": LogMeasurementResult,
+    "edit_entry": EditEntryResult,
+    "restore_entry": RestoreEntryResult,
+    "delete_entry": DeleteEntryResult,
 }

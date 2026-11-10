@@ -222,6 +222,24 @@ def hostile_calls(user_id, goal_id, entry):
         yield "update_settings time_zone", lambda: services.update_settings(user_id, {"time_zone": bad}, "claude")
         yield "update_settings field name", lambda: services.update_settings(user_id, {bad: "UTC"}, "claude")
         yield "update_settings by", lambda: services.update_settings(user_id, {"time_zone": "UTC"}, bad)
+        measure = {"kind": "waist", "value": 84, "date": "", "allow_repeat": True}
+        for field in measure:
+            yield f"log_measurement {field}", lambda f=field: services.log_measurement(
+                user_id, {**measure, f: bad}, "claude")
+        yield "log_measurement by", lambda: services.log_measurement(user_id, measure, bad)
+        for kind, changes in (("bodyweight", {"kg": 80, "date": ""}), ("measurement", {"value": 84}),
+                              ("lift_session", {"notes": "n", "date": "", "sets": [good_set]})):
+            for field in changes:
+                yield f"edit_entry {kind} {field}", lambda k=kind, c=changes, f=field: services.edit_entry(
+                    user_id, k, entry, {**c, f: bad}, "claude")
+            yield f"edit_entry {kind} field name", lambda k=kind: services.edit_entry(user_id, k, entry, {bad: 1},
+                                                                                     "claude")
+        yield "edit_entry kind", lambda: services.edit_entry(user_id, bad, entry, {"kg": 80}, "claude")
+        yield "edit_entry id", lambda: services.edit_entry(user_id, "bodyweight", bad, {"kg": 80}, "claude")
+        yield "edit_entry by", lambda: services.edit_entry(user_id, "bodyweight", entry, {"kg": 80}, bad)
+        yield "get_log date", lambda: services.get_log(user_id, bad)
+        yield "get_log days", lambda: services.get_log(user_id, None, bad)
+        yield "set_claude_can value", lambda: services.set_claude_can(user_id, bad)
         for field in lifts:
             yield f"log_lifts {field}", lambda f=field: services.log_lifts(user_id, {**lifts, f: bad}, "web")
         for field in good_set:
@@ -257,7 +275,7 @@ def test_every_result_survives_utf8_whatever_the_input(user):
             raise AssertionError(f"{label}: {exc}") from exc
         if "error" in result:
             assert result["fix"] and len(json.dumps(result)) < 20_000, label
-    assert calls > 250
+    assert calls > 400
 
 
 # ---------------------------------------------------------------- whoami
@@ -310,13 +328,12 @@ def test_list_exercises_and_filters():
 
 # ---------------------------------------------------------------- texts name only functions Claude has
 
-# The functions Claude is offered in this stage. Stage 3 extends this list (for example with its
-# delete and edit functions); a text may then name those too.
-OFFERED = ("whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings")
-# Functions that exist but Claude cannot call yet: every other public service function, and the
-# names later stages are expected to add.
-NOT_OFFERED = sorted({name for name in services.__all__ if callable(getattr(services, name))} - set(OFFERED)
-                     | {"edit_entry"})
+# The twelve functions Claude is offered in stage 3. A later stage extends this list.
+OFFERED = ("whoami", "list_exercises", "get_progress", "get_log", "log_lifts", "log_bodyweight", "set_goal",
+           "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry")
+# Functions that exist but Claude cannot call: every other public service function (get_entry,
+# set_claude_can, which is the Settings page's alone, and entry_kinds).
+NOT_OFFERED = sorted({name for name in services.__all__ if callable(getattr(services, name))} - set(OFFERED))
 
 
 def strings_in(value):
@@ -375,6 +392,26 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
         s.get(Goal, body_goal["id"]).status = "hit"
         s.get(Goal, body_goal["id"]).target_date = users.today_for(user) - timedelta(days=2)
     results.append(goal(goal_id=body_goal["id"], status="open"))
+    # Stage 3: measurements, edits, the log, delete and restore, through their main paths.
+    measure = lambda **data: services.log_measurement(user.id, data, "claude")  # noqa: E731
+    waist = measure(kind="waist", value=84)
+    results += [waist, measure(kind="waist", value=84), measure(kind="waist", value=83), measure(kind="wrist", value=1),
+                measure(kind="steps", value=1.5), measure(kind="waist", value=84, date=day(user, 1))]
+    other_day = services.log_bodyweight(user.id, {"kg": 79, "date": day(user, -5)}, "web")
+    results += [services.edit_entry(user.id, "bodyweight", other_day["id"], {"kg": 78}, "claude"),
+                services.edit_entry(user.id, "bodyweight", other_day["id"], {"kg": 78}, "claude"),
+                services.edit_entry(user.id, "bodyweight", other_day["id"], {"date": day(user, 0)}, "claude"),
+                services.edit_entry(user.id, "bodyweight", other_day["id"], {"notes": "x"}, "claude"),
+                services.edit_entry(user.id, "bodyweight", other_day["id"], {}, "claude"),
+                services.edit_entry(user.id, "goal", 1, {"kg": 1}, "claude"),
+                services.edit_entry(user.id, "lift_session", 987654, {"notes": "x"}, "claude"),
+                services.get_log(user.id, days=14), services.get_log(user.id, days=15),
+                services.get_log(user.id, date=day(user, 1)),
+                services.delete_entry(user.id, "bodyweight", other_day["id"]),
+                services.restore_entry(user.id, "bodyweight", other_day["id"]),
+                services.restore_entry(user.id, "bodyweight", other_day["id"]),
+                services.restore_entry(user.id, "measurement", waist["id"]),
+                services.delete_entry(user.id, "goal", 1)]
 
     assert any(r.get("duplicate") for r in results) and any(r.get("replaced") for r in results)
     assert any(g["status"] == "reached" for g in services.get_progress(user.id)["goals"])

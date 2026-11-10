@@ -9,7 +9,10 @@ whoami(user_id)
 update_settings(user_id, data, by)
     Change the person's own settings. In this stage that is only time_zone (SETTABLE lists what can
     be set; later stages add the targets). claude_can, what Claude may do, is never set here, whoever
-    calls: only the person changes it, on the Settings page.
+    calls: only the person changes it, on the Settings page, through set_claude_can.
+
+set_claude_can(user_id, value)
+    The Settings page's switch: read, log or log_delete. Nothing else calls it.
 
     time_zone must be a real IANA zone name, such as Asia/Kolkata, or UTC. The form is forgiven
     (surrounding spaces, letter case, spaces for underscores); the meaning is not. An abbreviation
@@ -21,14 +24,17 @@ update_settings(user_id, data, by)
 
 list_exercises(kind=None, category=None)
     The names entries must use, filtered by kind (lift, cardio) and category.
+
+Every write here locks the user row first (common.lock_user), then checks the write limit
+(common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
 """
 
 from zoneinfo import ZoneInfo
 
 from app import db, exercises as exercise_list, links, rules, users
-from app.models import EXERCISE_KINDS, User
+from app.models import CLAUDE_CAN, EXERCISE_KINDS, User
 from app.rules import error, quote
-from app.services.common import check_by, check_data, exercises, lock_user, no_account
+from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account
 
 TIME_ZONE_NOTE = ("No time zone is set, so today is the UTC date. Set it now with update_settings: use the "
                   "person's time zone if you know it, otherwise ask once which city they are in. Set it "
@@ -103,24 +109,26 @@ def update_settings(user_id: int, data: dict | None, by: str) -> dict:
     if not data:
         return error("nothing_to_change", "No setting was given.",
                      f"Give one of: {', '.join(SETTABLE)}, such as time_zone: Asia/Kolkata.")
-    errors, values = [], {}
-    for field, value in data.items():
-        if field in NEVER_SETTABLE:
-            errors.append(error("not_allowed", f"{field} ({NEVER_SETTABLE[field]}) cannot be changed here.",
-                                "Only the person can change what Claude may do, on the Settings page."))
-        elif field in SETTABLE:
-            values[field], err = SETTABLE[field](value)
-            errors += [err] if err else []
-        else:
-            errors.append(error("invalid_field", f"'{quote(field)}' is not a setting that can be changed.",
-                                f"Settings that can be changed: {', '.join(SETTABLE)}."))
-    if errors:
-        return rules.combine(errors)
-
     with db.session_scope() as s:
         user = lock_user(s, user_id)
         if user is None:
             return no_account()
+        limited = check_write_limit(s, user.id)
+        if limited:
+            return limited
+        errors, values = [], {}
+        for field, value in data.items():
+            if field in NEVER_SETTABLE:
+                errors.append(error("not_allowed", f"{field} ({NEVER_SETTABLE[field]}) cannot be changed here.",
+                                    "Only the person can change what Claude may do, on the Settings page."))
+            elif field in SETTABLE:
+                values[field], err = SETTABLE[field](value)
+                errors += [err] if err else []
+            else:
+                errors.append(error("invalid_field", f"'{quote(field)}' is not a setting that can be changed.",
+                                    f"Settings that can be changed: {', '.join(SETTABLE)}."))
+        if errors:
+            return rules.combine(errors)
         changed = [field for field, value in values.items() if getattr(user, field) != value]
         for field in changed:
             setattr(user, field, values[field])
@@ -134,6 +142,29 @@ def update_settings(user_id: int, data: dict | None, by: str) -> dict:
             summary = f"Nothing changed: the time zone is already {user.time_zone}. Today is {today}."
         return {"time_zone": user.time_zone, "today": today, "changed": changed, "summary": summary,
                 "links": {"settings": links.page("settings")}}
+
+
+def set_claude_can(user_id: int, value) -> dict:
+    """What Claude may do: read, log or log_delete. The Settings page calls this, and nothing else
+    does: update_settings refuses the field, and no MCP function reaches it.
+
+    It is the person's own switch, on the web only, and it is exempt from the write limit on purpose:
+    it is not in common.WRITE_FUNCTIONS, so it neither counts nor is refused. The person must always be
+    able to turn Claude down, however many writes have just been made.
+
+    Returns {claude_can, changed} or {error, message, fix}. A write: it locks the user row first."""
+    if not (isinstance(value, str) and value in CLAUDE_CAN):
+        return error("invalid_field", f"claude_can '{quote(value)}' is not one of {', '.join(CLAUDE_CAN)}.",
+                     f"Use one of: {', '.join(CLAUDE_CAN)}.")
+    with db.session_scope() as s:
+        user = lock_user(s, user_id)
+        if user is None:
+            return no_account()
+        changed = user.claude_can != value
+        if changed:
+            user.claude_can = value
+            user.updated_at = db.utcnow()
+        return {"claude_can": user.claude_can, "changed": changed}
 
 
 # ---------------------------------------------------------------- exercises

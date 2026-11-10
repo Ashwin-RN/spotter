@@ -14,6 +14,15 @@ same message run one after the other and the duplicate guard sees the first. It 
 any read in the transaction: a SQLite connection that has already read cannot wait for the write
 lock, and fails at once instead.
 
+The write limit. check_write_limit() runs in every write right after lock_user, before any other
+read or work. Every call through MCP or the web writes its call-log row before the service runs
+(error_code "in_progress", completed afterwards), so this call's own row is already counted. The
+rule: more than WRITE_LIMIT write rows started in the last WRITE_WINDOW_MINUTES, this call's own
+row among them, is refused (count > WRITE_LIMIT), web and Claude together. Nothing is saved and the
+error says how many minutes to wait. A call that reaches the services with no row of its own (a
+direct service call, as in the tests) therefore gets one more allowed write than a call through MCP
+or the web.
+
 The duplicate guard. dedupe_key() is a SHA-256 of an entry's defining values, normalised.
 find_duplicate() looks for a live entry of the same person with the same date and key, created in
 the last DUPLICATE_MINUTES. It reads the entry's own created_at, and runs for the web and for
@@ -22,23 +31,31 @@ Claude alike.
 
 import hashlib
 import json
+import math
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app import db
-from app.models import LOGGED_BY, Exercise, User
+from app.models import LOGGED_BY, CallLog, Exercise, User
 from app.rules import error, quote, to_float
 
 DUPLICATE_MINUTES = 10
 
 # How each kind is named in messages, and where Claude finds its ids.
 KIND_LABELS = {
-    "lift_session": ("lift session", "the id that log_lifts returned"),
-    "bodyweight": ("weigh-in", "the id that log_bodyweight returned"),
+    "lift_session": ("lift session", "the id that log_lifts returned, or one from get_log"),
+    "bodyweight": ("weigh-in", "the id that log_bodyweight returned, or one from get_log"),
+    "measurement": ("measurement", "the id that log_measurement returned, or one from get_log"),
     "goal": ("goal", "the id that set_goal returned, or a goal_id from get_progress"),
 }
+
+# Every write, by the name its call-log rows carry (the MCP name, which the web uses too).
+WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "set_goal", "update_settings",
+                   "edit_entry", "delete_entry", "restore_entry")
+WRITE_LIMIT = 120
+WRITE_WINDOW_MINUTES = 10
 
 
 def not_found(kind: str) -> dict:
@@ -131,6 +148,27 @@ def lock_user(s: Session, user_id: int) -> User | None:
     elif s.scalar(lock_statement(dialect, user_id)) is None:
         return None
     return s.get(User, user_id)
+
+
+def check_write_limit(s: Session, user_id: int) -> dict | None:
+    """too_many_writes when this person has more than WRITE_LIMIT write rows started in the last
+    WRITE_WINDOW_MINUTES, this call's own row among them (the MCP wrapper and the web write it,
+    as "in_progress", before the service runs); else None. wait_minutes: until the oldest counted
+    row leaves the window, at least 1. A direct service call has no own row, so it gets one more
+    allowed write than a call through MCP or the web. Call it right after lock_user."""
+    now = db.utcnow()
+    since = now - timedelta(minutes=WRITE_WINDOW_MINUTES)
+    count, oldest = s.execute(select(func.count(CallLog.id), func.min(CallLog.started_at)).where(
+        CallLog.user_id == user_id, CallLog.function.in_(WRITE_FUNCTIONS), CallLog.started_at >= since)).one()
+    if count <= WRITE_LIMIT:
+        return None
+    leaves = oldest + timedelta(minutes=WRITE_WINDOW_MINUTES) - now
+    wait = max(1, math.ceil(leaves.total_seconds() / 60))
+    return error("too_many_writes",
+                 f"{count} write calls in the last {WRITE_WINDOW_MINUTES} minutes, this one included; "
+                 f"the most is {WRITE_LIMIT}. "
+                 "Nothing was saved.",
+                 f"Wait {wait} minute{'s' if wait != 1 else ''}, then send it again.", wait_minutes=wait)
 
 
 def _plain(value):

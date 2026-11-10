@@ -1,4 +1,4 @@
-"""Spotter's MCP server: seven functions and two resources.
+"""Spotter's MCP server: twelve functions and two resources.
 
 The MCP library does the sign-in work: it serves the protected-resource metadata, answers 401 with
 `resource_metadata`, and runs every call through the token verifier. Functions read the verified token
@@ -7,12 +7,14 @@ the library stored for this request; nothing here reads the Authorization header
 Scopes: the metadata advertises SCOPES, and a client asks the provider for what is advertised there
 (the library's challenges carry no `scope=` of their own). The server requires only REQUIRED_SCOPES.
 
-One wrapper runs every function (Server.call below). In order: it notes the start time, reads the
+One wrapper runs every function (Wrapper.call below). In order: it notes the start time, reads the
 verified token, finds or creates the person's account (users.user_for_identity), asks the provider's
-userinfo for a missing email or name (at most once per LOOKUP_EVERY seconds per person), runs the
-service with the account id, turns a crash into {error: internal_error, ...}, and writes one call-log
-row. The services and the user lookup are synchronous and use the database, so each runs in a worker
-thread, never on the event loop.
+userinfo for a missing email or name (at most once per LOOKUP_EVERY seconds per person), starts the
+call's call-log row (calllog.start), checks the person's permission switch against NEEDS, runs the
+service with the account id, turns a crash into {error: internal_error, ...}, and completes the row
+(calllog.finish). The row exists before the service runs, so the write limit counts a call from its
+start. The services, the user lookup and the call log are synchronous and use the database, so each
+runs in a worker thread, never on the event loop.
 
 Every result is the service's own dict, as structured content and as compact JSON text. A service
 error ({error, message, fix}) is flagged is_error. A duplicate is a success.
@@ -41,12 +43,13 @@ from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.applications import Starlette
 from starlette.routing import Route
 
-from app import calllog, db, services, users
+from app import calllog, db, links, services, users
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings
 from app.mcp_schemas import (
-    ExercisesResult, GetProgressResult, LogBodyweightResult, LogLiftsResult, SetGoalResult, SetIn,
-    UpdateSettingsResult, WhoamiResult,
+    DeleteEntryResult, EditEntryResult, ExercisesResult, GetLogResult, GetProgressResult, LogBodyweightResult,
+    LogLiftsResult, LogMeasurementResult, RestoreEntryResult, SetGoalResult, SetIn, UpdateSettingsResult,
+    WhoamiResult,
 )
 from app.models import User
 
@@ -64,6 +67,9 @@ INSTRUCTIONS = (
     "If a call returns an error, read its fix and retry. "
     "duplicate: true means nothing was written: say so, and send allow_repeat: true only when the person "
     "confirms it was a separate entry. "
+    "To answer what the person did on a day or in a week, use get_log. "
+    "If a call returns not_allowed, tell the person what this account lets Claude do, and do not retry: "
+    "only the person can change it. "
     "Put links last."
 )
 
@@ -77,6 +83,26 @@ READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempot
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 # Setting the same value twice changes nothing the second time.
 SETTING = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+# A delete is undone by restore_entry, but the client should still ask the person first.
+DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False)
+
+# What each function needs the person's permission switch (claude_can) to be at least.
+LEVELS = ("read", "log", "log_delete")
+NEEDS = {
+    "whoami": "read", "list_exercises": "read", "get_progress": "read", "get_log": "read",
+    "log_lifts": "log", "log_bodyweight": "log", "set_goal": "log", "update_settings": "log",
+    "log_measurement": "log", "edit_entry": "log", "restore_entry": "log",
+    "delete_entry": "log_delete",
+}
+NOT_ALLOWED_MESSAGES = {"read": "This account lets Claude read only.",
+                        "log": "This account lets Claude read and log, not delete."}
+# The one text in Spotter that sends a person to a page: only they can change what Claude may do.
+NOT_ALLOWED_FIX = "The person can change what Claude may do on the Settings page."
+
+LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
+KIND_DESCRIPTION = "lift_session, bodyweight or measurement."
+ENTRY_ID_DESCRIPTION = ("The entry's id, from log_lifts, log_bodyweight, log_measurement or get_log, "
+                        "with the kind it came with.")
 
 CAN_AND_CANT = ROOT / "docs" / "can-and-cant.md"
 CAN_AND_CANT_URI = "spotter://can-and-cant"
@@ -118,6 +144,21 @@ def _json_text(result: dict) -> tuple[str, int]:
     UTF-8 (a lone surrogate, say), so the caller can answer internal_error instead."""
     text = json.dumps(result, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     return text, len(text.encode("utf-8"))
+
+
+def level_of(claude_can) -> str:
+    """The switch's level. Anything that is not one of LEVELS counts as the lowest, read."""
+    return claude_can if claude_can in LEVELS else "read"
+
+
+def not_allowed(function: str, claude_can) -> dict | None:
+    """None when the switch allows this function; else the not_allowed answer. A function missing
+    from NEEDS needs the most, so a new function is refused rather than let through."""
+    have = level_of(claude_can)
+    if LEVELS.index(have) >= LEVELS.index(NEEDS.get(function, LEVELS[-1])):
+        return None
+    return {**_error("not_allowed", NOT_ALLOWED_MESSAGES[have], NOT_ALLOWED_FIX),
+            "links": {"settings": links.page("settings")}}
 
 
 def _claim(claims: dict, key: str) -> str | None:
@@ -199,15 +240,20 @@ class Wrapper:
         """Run `work(account_id)` in a worker thread and return its dict as the call's result."""
         started_at = db.utcnow()
         start = time.monotonic()
-        account_id = None
+        account_id = row_id = None
+        started = False
         try:
             token = get_access_token()
             user = await self._account(token)
+            account_id = None if isinstance(user, dict) else user.id
+            # The row exists before the service runs, so the write limit counts this call from its start.
+            row_id = await _start_row(function, started_at, account_id)
+            started = True
             if isinstance(user, dict):
                 result = user
             else:
-                account_id = user.id
-                result = await anyio.to_thread.run_sync(work, account_id)
+                refused = not_allowed(function, user.claude_can)  # before the service: nothing is written
+                result = refused or await anyio.to_thread.run_sync(work, account_id)
                 if add is not None and "error" not in result:
                     result = add(result, token)
             is_error = "error" in result
@@ -226,13 +272,23 @@ class Wrapper:
 
         ms = int((time.monotonic() - start) * 1000)
         try:
+            if not started:  # the call failed before its row was written (finding the person, say)
+                row_id = await _start_row(function, started_at, account_id)
             await anyio.to_thread.run_sync(
-                calllog.write, function, started_at, ms, not is_error, result.get("error") if is_error else None,
-                size, account_id)
+                calllog.finish, row_id, ms, not is_error, result.get("error") if is_error else None, size)
         except Exception as exc:  # noqa: BLE001 - a lost log row never costs the person their answer
             log.warning("MCP %s: the call log could not be written: %s", function, type(exc).__name__)
         return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=result,
                               is_error=is_error)
+
+
+async def _start_row(function: str, started_at, account_id: int | None) -> int | None:
+    """The call's call-log row, started in a worker thread. Any failure is None: the call still runs."""
+    try:
+        return await anyio.to_thread.run_sync(calllog.start, function, started_at, account_id)
+    except Exception as exc:  # noqa: BLE001 - a lost log row never costs the person their answer
+        log.warning("MCP %s: the call log could not be written: %s", function, type(exc).__name__)
+        return None
 
 
 def _sign_in(result: dict, token: AccessToken) -> dict:
@@ -413,6 +469,111 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         return await wrapper.call("update_settings", UpdateSettingsResult,
                                   lambda account: services.update_settings(account, data, "claude"))
 
+    @server.tool(
+        name="get_log",
+        title="Get the log",
+        description=(
+            "What the person logged, day by day: each day's lift sessions with their sets and bests, the "
+            "weigh-in and the measurements. One day by default, up to 14, ending on the date given or today. "
+            "Use it to answer what the person did on a day or in a week. The ids it gives work in edit_entry, "
+            "delete_entry and restore_entry."
+        ),
+        annotations=READ_ONLY,
+    )
+    async def get_log(
+        date: Annotated[str | None, Field(
+            description="The last day to show, YYYY-MM-DD. Leave out for today.")] = None,
+        days: Annotated[int | None, Field(
+            description="How many days to show, ending on date: 1 to 14. Leave out for one day.",
+            json_schema_extra={"minimum": LOG_DAYS[0], "maximum": LOG_DAYS[1]})] = None,
+    ) -> Annotated[CallToolResult, GetLogResult]:
+        sent = _sent(date=date, days=days)
+        return await wrapper.call("get_log", GetLogResult, lambda account: services.get_log(account, **sent))
+
+    @server.tool(
+        name="log_measurement",
+        title="Log a measurement",
+        description=(
+            "Records one body measurement: waist, hips, chest, arm or thigh in cm, steps, sleep_hours, "
+            "resting_hr in bpm, or water_ml. One value per kind a day: a different value on the same day "
+            "replaces the earlier one, which is kept, not erased. The same value again within 10 minutes is a "
+            "duplicate: nothing is written."
+        ),
+        annotations=WRITE,
+    )
+    async def log_measurement(
+        kind: Annotated[str, Field(
+            description="waist, hips, chest, arm, thigh, steps, sleep_hours, resting_hr or water_ml.")],
+        value: Annotated[float, Field(
+            description="The value in the kind's unit: cm for the body sizes, steps, hours of sleep, bpm, ml.")],
+        date: Annotated[str | None, Field(
+            description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
+        allow_repeat: Annotated[bool, Field(
+            description="true logs it even when it matches a measurement from the last 10 minutes.")] = False,
+    ) -> Annotated[CallToolResult, LogMeasurementResult]:
+        data = _sent(kind=kind, value=value, date=date, allow_repeat=allow_repeat or None)
+        return await wrapper.call("log_measurement", LogMeasurementResult,
+                                  lambda account: services.log_measurement(account, data, "claude"))
+
+    @server.tool(
+        name="edit_entry",
+        title="Edit an entry",
+        description=(
+            "Changes one of the person's entries in place, keeping its id. A lift session: its date, notes or "
+            "whole set list. A weigh-in: its kg or date. A measurement: its value or date. Send only what "
+            "changes. Returns the entry before and after. Moving an entry onto a day that already has one is "
+            "refused, never silently replaced."
+        ),
+        annotations=WRITE,
+    )
+    async def edit_entry(
+        kind: Annotated[str, Field(description=KIND_DESCRIPTION)],
+        entry_id: Annotated[int, Field(description=ENTRY_ID_DESCRIPTION)],
+        date: Annotated[str | None, Field(description="The new date, YYYY-MM-DD.")] = None,
+        notes: Annotated[str | None, Field(
+            description="A lift session's new notes, up to 2,000 characters.")] = None,
+        sets: Annotated[list[SetIn] | None, Field(
+            description="A lift session's whole new set list, in order: 1 to 60 sets. It replaces every set.")] = None,
+        kg: Annotated[float | None, Field(description="A weigh-in's new weight in kg, 20 to 400.")] = None,
+        value: Annotated[float | None, Field(description="A measurement's new value, in its unit.")] = None,
+    ) -> Annotated[CallToolResult, EditEntryResult]:
+        changes = _sent(date=date, notes=notes, sets=None if sets is None else [x.model_dump() for x in sets],
+                        kg=kg, value=value)
+        return await wrapper.call("edit_entry", EditEntryResult,
+                                  lambda account: services.edit_entry(account, kind, entry_id, changes, "claude"))
+
+    @server.tool(
+        name="restore_entry",
+        title="Restore an entry",
+        description=(
+            "Brings back a deleted or replaced entry. If the day already has a live one of the same kind, the "
+            "two swap: the live one is set aside and can itself be restored."
+        ),
+        annotations=WRITE,
+    )
+    async def restore_entry(
+        kind: Annotated[str, Field(description=KIND_DESCRIPTION)],
+        entry_id: Annotated[int, Field(description=ENTRY_ID_DESCRIPTION)],
+    ) -> Annotated[CallToolResult, RestoreEntryResult]:
+        return await wrapper.call("restore_entry", RestoreEntryResult,
+                                  lambda account: services.restore_entry(account, kind, entry_id))
+
+    @server.tool(
+        name="delete_entry",
+        title="Delete an entry",
+        description=(
+            "Deletes one of the person's entries. Nothing is erased: restore_entry brings it back. Allowed only "
+            "when the person lets Claude delete; otherwise the answer is not_allowed."
+        ),
+        annotations=DELETE,
+    )
+    async def delete_entry(
+        kind: Annotated[str, Field(description=KIND_DESCRIPTION)],
+        entry_id: Annotated[int, Field(description=ENTRY_ID_DESCRIPTION)],
+    ) -> Annotated[CallToolResult, DeleteEntryResult]:
+        return await wrapper.call("delete_entry", DeleteEntryResult,
+                                  lambda account: services.delete_entry(account, kind, entry_id))
+
     @server.resource(
         CAN_AND_CANT_URI,
         name="can-and-cant",
@@ -433,6 +594,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     async def exercise_list() -> str:
         return await _resource(lambda: json.dumps(services.list_exercises(), separators=(",", ":")))
 
+    registered = {tool.name for tool in server._tool_manager.list_tools()}
+    if registered != set(NEEDS):  # a function without a level would be refused; fail at start, not per call
+        raise RuntimeError(f"NEEDS does not match the functions: {sorted(registered ^ set(NEEDS))}")
     return server
 
 

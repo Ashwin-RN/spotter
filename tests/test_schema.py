@@ -276,3 +276,85 @@ def test_health_needs_no_database(make_client):
     client = make_client(database_url=DEFAULT_DATABASE_URL)  # a public https site with no DATABASE_URL
     r = client.get("/health")
     assert r.status_code == 200 and r.text == "OK"
+
+
+# ---------------------------------------------------------------- migration 0002: one live measurement a day
+
+def _sqlite_at(name: str) -> str:
+    folder = Path(tempfile.mkdtemp(dir=TEST_DIR))
+    return f"sqlite:///{(folder / name).as_posix()}"
+
+
+def test_0002_applies_on_a_database_that_holds_rows():
+    address = _sqlite_at("with-rows.db")
+    cfg = alembic_config(address)
+    command.upgrade(cfg, "0001")
+    engine = make_engine(address)
+    now = "2026-11-10 08:00:00.000000"
+    try:
+        with engine.begin() as c:
+            c.exec_driver_sql("INSERT INTO user (id, provider, subject, claude_can, add_back_exercise_kcal, created_at, "
+                              "updated_at, last_seen_at) VALUES (1, 'workos', 's1', 'log', 0, ?, ?, ?)", (now, now, now))
+            c.exec_driver_sql("INSERT INTO bodyweight (user_id, date, kg, dedupe_key, logged_by, created_at, updated_at, "
+                              "is_sample) VALUES (1, '2026-11-09', 80, 'k', 'web', ?, ?, 0)", (now, now))
+            for value in (84, 85):  # two live waists on one day: the older one gives way
+                c.exec_driver_sql("INSERT INTO measurement (user_id, date, kind, value, unit, dedupe_key, logged_by, "
+                                  "created_at, updated_at, is_sample) VALUES (1, '2026-11-09', 'waist', ?, 'cm', 'k', "
+                                  "'web', ?, ?, 0)", (value, now, now))
+            c.exec_driver_sql("INSERT INTO measurement (user_id, date, kind, value, unit, dedupe_key, logged_by, "
+                              "created_at, updated_at, is_sample) VALUES (1, '2026-11-09', 'hips', 95, 'cm', 'k', "
+                              "'web', ?, ?, 0)", (now, now))
+        command.upgrade(cfg, "head")
+        with engine.connect() as c:
+            names = {i["name"] for i in inspect(c).get_indexes("measurement")}
+            rows = c.exec_driver_sql("SELECT kind, value, deleted_at IS NULL FROM measurement ORDER BY id").all()
+            kept = c.exec_driver_sql("SELECT count(*) FROM bodyweight WHERE deleted_at IS NULL").scalar()
+        assert "uq_measurement_user_id_kind_date_live" in names
+        assert [tuple(r) for r in rows] == [("waist", 84, 0), ("waist", 85, 1), ("hips", 95, 1)]
+        assert kept == 1
+        from sqlalchemy.orm import Session
+        from app.models import Measurement
+        with Session(engine) as s:  # the time 0002 wrote reads back through the model as UTC
+            gone = s.scalar(select(Measurement.deleted_at).where(Measurement.deleted_at.is_not(None)))
+            assert gone.tzinfo is not None and gone.utcoffset() == timedelta(0)
+        with pytest.raises(IntegrityError), engine.begin() as c:
+            c.exec_driver_sql("INSERT INTO measurement (user_id, date, kind, value, unit, dedupe_key, logged_by, "
+                              "created_at, updated_at, is_sample) VALUES (1, '2026-11-09', 'waist', 86, 'cm', 'k', "
+                              "'web', ?, ?, 0)", (now, now))
+        command.downgrade(cfg, "0001")
+        with engine.connect() as c:
+            left = {i["name"] for i in inspect(c).get_indexes("measurement")}
+            assert "uq_measurement_user_id_kind_date_live" not in left
+    finally:
+        engine.dispose()
+
+
+def test_0002_applies_on_an_empty_database_and_follows_0001():
+    address = _sqlite_at("empty.db")
+    cfg = alembic_config(address)
+    command.upgrade(cfg, "0001")
+    command.upgrade(cfg, "0002")
+    engine = make_engine(address)
+    try:
+        with engine.connect() as c:
+            assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0002"
+            assert "uq_measurement_user_id_kind_date_live" in {i["name"] for i in inspect(c).get_indexes("measurement")}
+    finally:
+        engine.dispose()
+
+
+def test_the_postgres_sql_builds_the_measurement_index():
+    cfg = alembic_config("postgresql+psycopg://spotter@db.invalid/spotter")
+    out = io.StringIO()
+    with redirect_stdout(out):
+        command.upgrade(cfg, "head", sql=True)
+    sql = out.getvalue()
+    assert "CREATE UNIQUE INDEX uq_measurement_user_id_kind_date_live ON measurement (user_id, kind, date) " \
+           "WHERE deleted_at IS NULL" in sql
+    assert "UPDATE measurement SET deleted_at = CURRENT_TIMESTAMP" in sql
+
+
+def test_the_first_migration_is_unchanged_in_what_it_builds():
+    """0001 never moves: the new index lives in 0002 only."""
+    text = (ROOT / "migrations" / "versions" / "0001_v1_schema.py").read_text(encoding="utf-8")
+    assert "uq_measurement_user_id_kind_date_live" not in text

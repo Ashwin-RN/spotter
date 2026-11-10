@@ -16,6 +16,9 @@ log_bodyweight(user_id, data, by)
 weigh_ins(s, user_id, today)
     Every live weigh-in, whatever its date, in the one order (effective date, then id; see
     metrics.on_or_before). today orders; it never drops a row.
+
+Every write here locks the user row first (common.lock_user), then checks the write limit
+(common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
 """
 
 from datetime import date
@@ -26,12 +29,11 @@ from sqlalchemy.orm import Session
 from app import db, links, metrics, rules, users
 from app.models import Bodyweight
 from app.services.common import (
-    check_by, check_data, dedupe_key, duplicate_note, find_duplicate, in_range, lock_user, no_account, row_dict,
-    truthy,
+    check_by, check_data, check_write_limit, dedupe_key, duplicate_note, find_duplicate, in_range, lock_user,
+    no_account, row_dict, truthy,
 )
 
 KIND = "bodyweight"
-BODYWEIGHT_KG = (20, 400)
 RECENT_WEIGH_INS = 5
 HOW = ("7-day average = mean of the weigh-ins in the 7 days ending on a date. The trend compares the average "
        "ending today with the one ending 4 weeks ago; without both, it is the simple change from the first "
@@ -43,20 +45,28 @@ def weigh_ins(s: Session, user_id: int, today: date) -> list[Bodyweight]:
     return sorted(rows, key=lambda b: metrics.order_key(b.date, b.id, today))
 
 
+def check_kg(value) -> tuple[float | None, dict | None]:
+    """A body weight in kg, BODYWEIGHT_KG, 2 dp. Logging and editing both use it."""
+    lo, hi = rules.BODYWEIGHT_KG
+    fix = f"Give the body weight in kg, {lo} to {hi}."
+    if value in (None, ""):
+        return None, rules.error("missing_field", "kg is missing.", fix)
+    return in_range(value, "kg", lo, hi, fix)
+
+
+def weigh_in_key(on: date, kg: float) -> str:
+    """What makes two weigh-ins the same: the date and the weight."""
+    return dedupe_key(on, kg)
+
+
 def _check(data: dict, today: date) -> tuple[date | None, float | None, dict | None]:
     errors = []
     on, err = rules.entry_date(data.get("date"), today, "weigh-ins")
     if err:
         errors.append(err)
-    lo, hi = BODYWEIGHT_KG
-    fix = f"Give the body weight in kg, {lo} to {hi}."
-    kg = None
-    if data.get("kg") in (None, ""):
-        errors.append(rules.error("missing_field", "kg is missing.", fix))
-    else:
-        kg, err = in_range(data["kg"], "kg", lo, hi, fix)
-        if err:
-            errors.append(err)
+    kg, err = check_kg(data.get("kg"))
+    if err:
+        errors.append(err)
     if errors:
         return None, None, rules.combine(errors)
     return on, kg, None
@@ -76,11 +86,14 @@ def log_bodyweight(user_id: int, data: dict | None, by: str) -> dict:
         user = lock_user(s, user_id)
         if user is None:
             return no_account()
+        limited = check_write_limit(s, user.id)
+        if limited:
+            return limited
         today = users.today_for(user)
         on, kg, err = _check(data, today)
         if err:
             return err
-        key = dedupe_key(on, kg)
+        key = weigh_in_key(on, kg)
 
         first = None if truthy(data.get("allow_repeat")) else find_duplicate(s, Bodyweight, user.id, on, key)
         if first is not None:

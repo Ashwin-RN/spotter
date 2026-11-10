@@ -242,6 +242,9 @@ class Measurement(EntryColumns, Base):
     __table_args__ = (
         *entry_indexes("measurement"),
         Index("ix_measurement_user_id_kind_date", "user_id", "kind", "date"),
+        # One live value per person, kind and day (migration 0002). A soft-deleted row does not count.
+        Index("uq_measurement_user_id_kind_date_live", "user_id", "kind", "date", unique=True,
+              sqlite_where=text("deleted_at IS NULL"), postgresql_where=text("deleted_at IS NULL")),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

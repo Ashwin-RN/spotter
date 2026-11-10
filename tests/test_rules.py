@@ -134,3 +134,30 @@ def test_combine_keeps_the_first_code_and_joins_the_rest():
     assert rules.combine([a]) == {**a, "errors": [a]}
     both = rules.combine([a, b])
     assert both["error"] == "a" and both["message"] == "2 problems. First. Second." and both["fix"] == "Fix one."
+
+
+
+# ---------------------------------------------------------------- measurement kinds and values
+
+def test_kinds_are_matched_like_exercise_names():
+    assert rules.match_kind("Waist") == ("waist", None)
+    assert rules.match_kind("  resting   HR ") == ("resting_hr", None)
+    assert rules.match_kind("sleep_hours") == ("sleep_hours", None)
+    kind, err = rules.match_kind("wrist")
+    assert kind is None and err["error"] == "invalid_kind" and err["closest"] == ["waist"]
+    assert all(k in err["fix"] for k in rules.MEASUREMENTS)
+    for odd in (None, 5, [], "", "x" * 100_000):
+        assert rules.match_kind(odd)[1]["error"] == "invalid_kind"
+
+
+def test_measurement_values_by_kind():
+    assert rules.measurement_value("waist", "84.567") == (84.57, None)
+    assert rules.measurement_value("steps", 8000.0) == (8000, None)
+    assert rules.measurement_value("steps", 8000.5)[1]["error"] == "invalid_field"
+    assert rules.measurement_value("resting_hr", 19)[1]["error"] == "invalid_field"
+    assert rules.measurement_value("water_ml", 0) == (0, None)
+    assert rules.measurement_value("sleep_hours", -0.0) == (0.0, None)
+    assert rules.measurement_value("waist", None)[1]["error"] == "missing_field"
+    for bad in (True, "x", float("nan"), 10 ** 400):
+        assert rules.measurement_value("waist", bad)[1]["error"] == "invalid_field"
+    assert "Give steps, 0 to 200,000, a whole number." == rules.measurement_value("steps", -1)[1]["fix"]

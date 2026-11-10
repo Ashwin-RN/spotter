@@ -22,16 +22,15 @@ from app.models import (
 MISSING = 10 ** 9
 
 # kind -> (model, the operations A tries with B's id).
-# read/delete/restore go through get_entry, delete_entry and restore_entry. A goal is read with
-# get_entry and changed only through set_goal: edit moves its target, delete marks it dropped,
-# restore reopens it. No entry has an edit-by-id function in this stage; when one arrives, its
-# operation joins these rows.
+# read/edit/delete/restore go through get_entry, edit_entry, delete_entry and restore_entry. A goal
+# is read with get_entry and changed only through set_goal: edit moves its target, delete marks it
+# dropped, restore reopens it.
 CASES = {
-    "lift_session": (LiftSession, ("read", "delete", "restore")),
-    "bodyweight": (Bodyweight, ("read", "delete", "restore")),
+    "lift_session": (LiftSession, ("read", "edit", "delete", "restore")),
+    "bodyweight": (Bodyweight, ("read", "edit", "delete", "restore")),
+    "measurement": (Measurement, ("read", "edit", "delete", "restore")),
     "goal": (Goal, ("read", "edit", "delete", "restore")),
     # No function logs these yet; the by-id functions are generic, so they are covered now.
-    "measurement": (Measurement, ("read", "delete", "restore")),
     "food_entry": (FoodEntry, ("read", "delete", "restore")),
     "cardio_entry": (CardioEntry, ("read", "delete", "restore")),
 }
@@ -68,13 +67,12 @@ def world(make_user):
         {"exercise": "Deadlift", "weight_kg": 140, "reps": 5},
         {"exercise": "Deadlift", "weight_kg": 140, "reps": 5}]}, "claude")["id"]
     ids["bodyweight"] = services.log_bodyweight(b.id, {"kg": 90}, "web")["id"]
+    ids["measurement"] = services.log_measurement(b.id, {"kind": "waist", "value": 90}, "web")["id"]
     ids["goal"] = services.set_goal(b.id, {"kind": "lift", "exercise": "Deadlift", "target_value": 200,
                                            "target_date": (today + timedelta(days=60)).isoformat()}, "claude")["id"]
     with db.session_scope() as s:
         lift = s.scalar(select(Exercise.id).where(Exercise.name == "Deadlift"))  # any exercise row will do
         rows = {
-            "measurement": Measurement(user_id=b.id, date=today, kind="waist", value=90, unit="cm",
-                                       logged_by="web", dedupe_key="1" * 64),
             "food_entry": FoodEntry(user_id=b.id, date=today, meal="lunch", description="B's lunch", kcal=650,
                                     source="you_said", estimated=False, logged_by="claude", dedupe_key="2" * 64),
             "cardio_entry": CardioEntry(user_id=b.id, date=today, exercise_id=lift, minutes=30, logged_by="web",
@@ -93,8 +91,18 @@ def attempt(op, kind, user_id, row_id):
         if data is None:
             return services.get_entry(user_id, "goal", row_id)
         return services.set_goal(user_id, {"goal_id": row_id, **data}, "claude")
+    if op == "edit":
+        return services.edit_entry(user_id, kind, row_id, EDITS[kind], "claude")
     call = {"read": services.get_entry, "delete": services.delete_entry, "restore": services.restore_entry}[op]
     return call(user_id, kind, row_id)
+
+
+# One change per kind, each one a log would accept, so only ownership can refuse it.
+EDITS = {
+    "lift_session": {"notes": "A was here", "sets": [{"exercise": "Deadlift", "weight_kg": 10, "reps": 1}]},
+    "bodyweight": {"kg": 60, "date": "2026-01-01"},
+    "measurement": {"value": 70},
+}
 
 
 def prepare(op, kind, b, row_id):
@@ -212,3 +220,33 @@ def test_every_table_owned_through_a_parent_is_named():
             assert OWNED_THROUGH.get(table.name) in parents, (
                 f"{table.name} hangs off {sorted(parents)} with no user_id of its own: add it to OWNED_THROUGH "
                 "and a check that A cannot reach B's rows through it")
+
+
+
+def test_a_edits_of_bs_entries_change_nothing_even_with_every_field(world):
+    a, b, ids = world
+    for kind in EDITS:
+        before = snapshot(CASES[kind][0], ids[kind])
+        r = services.edit_entry(a.id, kind, ids[kind], EDITS[kind], "web")
+        assert r == services.edit_entry(a.id, kind, MISSING, EDITS[kind], "web") and r["error"] == "not_found"
+        assert snapshot(CASES[kind][0], ids[kind]) == before
+        mine = services.edit_entry(b.id, kind, ids[kind], EDITS[kind], "web")  # the owner can
+        assert mine["changed"], mine
+
+
+def test_a_measurement_on_bs_day_leaves_bs_untouched(world):
+    a, b, ids = world
+    before = snapshot(Measurement, ids["measurement"])
+    r = services.log_measurement(a.id, {"kind": "waist", "value": 70}, "claude")
+    assert r["replaced"] is None and r["recent"] == [{"date": users.today_for(a).isoformat(), "value": 70}]
+    assert snapshot(Measurement, ids["measurement"]) == before
+    assert services.get_log(a.id)["totals"] == {"sessions": 0, "weigh_ins": 0, "measurements": 1}
+    assert services.get_log(b.id)["totals"]["measurements"] == 1
+
+
+def test_the_guard_sees_real_measurement_rows(world):
+    _, b, ids = world
+    with db.new_session() as s:
+        row = s.get(Measurement, ids["measurement"])
+        assert row.user_id == b.id and row.deleted_at is None
+    assert "measurement" in user_tables() and "edit" in CASES["measurement"][1]

@@ -300,6 +300,8 @@ WRITES = {
     "delete_entry": lambda u: services.delete_entry(u.id, "bodyweight", 1),
     "restore_entry": lambda u: services.restore_entry(u.id, "bodyweight", 1),
     "update_settings": lambda u: services.update_settings(u.id, {"time_zone": "Asia/Kolkata"}, "claude"),
+    "log_measurement": lambda u: services.log_measurement(u.id, {"kind": "waist", "value": 84}, "claude"),
+    "edit_entry": lambda u: services.edit_entry(u.id, "bodyweight", 1, {"kg": 70}, "claude"),
 }
 
 

@@ -12,6 +12,8 @@
     <a class="brand" href="/">Spotter</a>
     {% if signed_in %}
     <nav>
+      <a href="/today">Today</a>
+      <a href="/progress">Progress</a>
       <a href="/settings">Settings</a>
       <form method="post" action="/sign-out" class="inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -27,6 +29,7 @@
   <form id="auto-time-zone" method="post" action="/settings" hidden>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="time_zone" value="">
+    {% if next_path %}<input type="hidden" name="next" value="{{ next_path }}">{% endif %}
   </form>
   <script src="/static/time-zone.js"></script>
   {% endif %}

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ on.isoformat() }} · Spotter{% endblock %}
+{% block main %}
+<div class="day-head">
+  {% if prev_day %}<a href="/day/{{ prev_day.isoformat() }}" rel="prev">&larr; {{ prev_day.isoformat() }}</a>{% else %}<span></span>{% endif %}
+  <h1>{% if on == today %}Today, {% endif %}{{ on.isoformat() }}</h1>
+  {% if next_day %}<a href="/day/{{ next_day.isoformat() }}" rel="next">{{ next_day.isoformat() }} &rarr;</a>{% else %}<span></span>{% endif %}
+</div>
+
+{% if undo %}
+<div class="ok undo">
+  Deleted.
+  <form method="post" action="/entries/{{ undo[0] }}/{{ undo[1] }}/restore" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="link">Undo</button>
+  </form>
+</div>
+{% endif %}
+
+{% macro actions(kind, id) %}
+<span class="entry-actions">
+  <a href="/entries/{{ kind }}/{{ id }}/edit">Edit</a>
+  <form method="post" action="/entries/{{ kind }}/{{ id }}/delete" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="link">Delete</button>
+  </form>
+</span>
+{% endmacro %}
+
+<div class="card">
+  <h2>Lifts</h2>
+  {% for session in day.sessions %}
+  <div class="session">
+    <div class="entry-line">
+      <strong>Session</strong>{% if session.notes %} <span class="muted">{{ session.notes }}</span>{% endif %}
+      {{ actions("lift_session", session.id) }}
+    </div>
+    <table class="sets">
+      <thead><tr><th>Exercise</th><th>Set</th><th>Weight</th><th>Reps</th></tr></thead>
+      <tbody>
+      {% for s in session.sets %}
+      <tr><td>{{ s.exercise }}</td><td>{{ s.set_number }}</td><td>{{ kg(s.weight_kg) }} kg</td><td>{{ s.reps }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if session.new_bests %}
+    <ul class="bests">
+      {% for b in session.new_bests %}<li>New best: {{ b.text if b.text else b.exercise ~ " " ~ kg(b.value) ~ " kg" }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="muted">No lifts logged on this day. Tell Claude what you lifted and it shows here.</p>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Weigh-in</h2>
+  {% if day.weigh_in %}
+  <div class="entry-line">
+    <strong>{{ kg(day.weigh_in.kg) }} kg</strong>
+    {{ actions("bodyweight", day.weigh_in.id) }}
+  </div>
+  {% else %}
+  <p class="muted">No weigh-in on this day.</p>
+  {% endif %}
+  {% set errors = form_error.get("bodyweight", {}) %}
+  <form method="post" action="/day/{{ on.isoformat() }}/weigh-in" class="one-line">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="kg">Weight (kg)</label>
+    <input id="kg" name="kg" inputmode="decimal" required autocomplete="off">
+    <button class="primary">{{ "Replace weigh-in" if day.weigh_in else "Save weigh-in" }}</button>
+  </form>
+  {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
+</div>
+
+<div class="card">
+  <h2>Measurements</h2>
+  {% if day.measurements %}
+  <ul class="entries">
+    {% for m in day.measurements %}
+    <li class="entry-line">
+      <span>{{ labels.get(m.kind, m.kind.replace("_", " ").capitalize()) }}: <strong>{{ kg(m.value) }} {{ m.unit }}</strong></span>
+      {{ actions("measurement", m.id) }}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No measurements on this day.</p>
+  {% endif %}
+  {% set errors = form_error.get("measurement", {}) %}
+  <form method="post" action="/day/{{ on.isoformat() }}/measurement" class="one-line">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="measurement-kind">Kind</label>
+    <select id="measurement-kind" name="kind" required>
+      {% for kind, label, unit in kinds %}<option value="{{ kind }}">{{ label }} ({{ unit }})</option>{% endfor %}
+    </select>
+    <label for="measurement-value">Value</label>
+    <input id="measurement-value" name="value" inputmode="decimal" required autocomplete="off">
+    <button class="primary">Save measurement</button>
+  </form>
+  {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
+</div>
+{% endblock %}

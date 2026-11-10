@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Progress · Spotter{% endblock %}
+{% block main %}
+<h1>Progress</h1>
+
+<div class="card">
+  <h2>Lifts</h2>
+  {% if lifts %}
+  <table class="lifts">
+    <thead><tr><th>Lift</th><th>Estimated max</th><th>Best set</th><th>Last trained</th></tr></thead>
+    <tbody>
+    {% for row in lifts %}
+    {% set best = best_sets.get(row.exercise) %}
+    <tr>
+      <td><a href="/progress/{{ slug(row.exercise) }}">{{ row.exercise }}</a></td>
+      <td>{% if row.current_estimated_max_kg is not none %}{{ kg(row.current_estimated_max_kg) }} kg{% else %}<span class="muted">none yet</span>{% endif %}</td>
+      <td>{% if best %}{{ kg(best.weight_kg) }} kg × {{ best.reps }}{% else %}<span class="muted">none yet</span>{% endif %}</td>
+      <td>{% if row.last_trained %}<a href="/day/{{ row.last_trained }}">{{ row.last_trained }}</a>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No lifts logged yet. Tell Claude what you lifted and it shows here.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Body weight</h2>
+  {% if trend.latest_weigh_in %}
+  <p>Latest: <strong>{{ kg(trend.latest_weigh_in.kg) }} kg</strong> on
+    <a href="/day/{{ trend.latest_weigh_in.date }}">{{ trend.latest_weigh_in.date }}</a>.
+    {% if trend.bodyweight %}7-day average: <strong>{{ kg(trend.bodyweight.average[-1].kg) }} kg</strong>.{% endif %}</p>
+  {% if chart %}{{ chart }}{% else %}<p class="muted">The chart appears from the second weigh-in.</p>{% endif %}
+  {% else %}
+  <p class="muted">No weigh-ins yet. Add one on <a href="/today">Today</a>.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ kind_name }} · Spotter{% endblock %}
+{% block main %}
+<h1>Edit {{ kind_name }}</h1>
+<div class="card">
+  <form method="post" action="/entries/{{ kind }}/{{ entry_id }}/edit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if kind == "bodyweight" %}
+    <label for="edit-kg">Weight (kg)</label>
+    <input id="edit-kg" name="kg" value="{{ kg(entry.kg) if entry.kg is number else entry.kg }}" inputmode="decimal" required autocomplete="off">
+    {% if errors.kg %}<p class="error">{{ errors.kg }}</p>{% endif %}
+    {% elif kind == "measurement" %}
+    <p>{{ labels.get(entry.kind, entry.kind.replace("_", " ").capitalize()) }}{% if entry.unit %} ({{ entry.unit }}){% endif %}</p>
+    <label for="edit-value">Value</label>
+    <input id="edit-value" name="value" value="{{ kg(entry.value) if entry.value is number else entry.value }}" inputmode="decimal" required autocomplete="off">
+    {% if errors.value %}<p class="error">{{ errors.value }}</p>{% endif %}
+    {% else %}
+    <label for="edit-notes">Notes</label>
+    <textarea id="edit-notes" name="notes" rows="3">{{ entry.notes or "" }}</textarea>
+    {% if errors.notes %}<p class="error">{{ errors.notes }}</p>{% endif %}
+    {% endif %}
+    <label for="edit-date">Date</label>
+    <input id="edit-date" name="date" type="date" value="{{ entry.date }}" required>
+    {% if errors.date %}<p class="error">{{ errors.date }}</p>{% endif %}
+    <div class="actions">
+      <button class="primary">Save</button>
+      <a href="/day/{{ entry.date }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% if kind == "lift_session" %}
+<div class="card">
+  <h2>Sets</h2>
+  <table class="sets">
+    <thead><tr><th>Exercise</th><th>Set</th><th>Weight</th><th>Reps</th></tr></thead>
+    <tbody>
+    {% for s in entry.sets %}<tr><td>{{ s.exercise }}</td><td>{{ s.set_number }}</td><td>{{ kg(s.weight_kg) }} kg</td><td>{{ s.reps }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Sets are changed through Claude for now: tell it what to fix.</p>
+</div>
+{% endif %}
+{% endblock %}

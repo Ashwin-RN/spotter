@@ -15,6 +15,9 @@ history(s, user_id, today)
     Every live session, whatever its date, worked through in the one order (effective date, then
     id; see metrics.on_or_before): one point per session per lift (that session's best estimated
     max), the best set, and the new bests with their dates. today orders; it never drops a row.
+
+Every write here locks the user row first (common.lock_user), then checks the write limit
+(common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
 """
 
 from datetime import date
@@ -25,8 +28,8 @@ from sqlalchemy.orm import Session, selectinload
 from app import db, links, metrics, rules, users
 from app.models import LiftSession, LiftSet
 from app.services.common import (
-    check_by, check_data, dedupe_key, duplicate_note, exercises, find_duplicate, lock_user, no_account,
-    row_dict, truthy,
+    check_by, check_data, check_write_limit, dedupe_key, duplicate_note, exercises, find_duplicate, lock_user,
+    no_account, row_dict, truthy,
 )
 
 KIND = "lift_session"
@@ -69,6 +72,23 @@ def session_dict(t: LiftSession) -> dict:
     out["sets"] = [{"exercise": x.exercise.name, "set_number": x.set_number, "weight_kg": x.weight_kg,
                     "reps": x.reps} for x in sorted(t.sets, key=lambda x: x.id)]
     return out
+
+
+def number_sets(sets: list[dict], by_name: dict) -> list[tuple[int, int, float, int]]:
+    """(exercise_id, set_number, weight_kg, reps) for checked sets, numbered per exercise in the
+    order given. Logging and editing both use it."""
+    counts: dict[str, int] = {}
+    keyed = []
+    for x in sets:
+        counts[x["exercise"]] = counts.get(x["exercise"], 0) + 1
+        keyed.append((by_name[x["exercise"]].id, counts[x["exercise"]], x["weight_kg"], x["reps"]))
+    return keyed
+
+
+def session_key(on: date, notes: str, keyed: list[tuple]) -> str:
+    """What makes two sessions the same: the date, the notes and the set list (order across lifts
+    does not matter; the numbering within a lift does)."""
+    return dedupe_key(on, notes, sorted(keyed))
 
 
 def _links(on: date, lifts: list[str]) -> dict:
@@ -132,6 +152,9 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         user = lock_user(s, user_id)
         if user is None:
             return no_account()
+        limited = check_write_limit(s, user.id)
+        if limited:
+            return limited
         today = users.today_for(user)
         by_name = {e.name: e for e in exercises(s, "lift")}
         on, sets, err = rules.check_session(data.get("date"), data.get("sets"), list(by_name), today)
@@ -139,13 +162,9 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         if err or notes_err:
             return rules.combine((err["errors"] if err else []) + ([notes_err] if notes_err else []))
 
-        counts: dict[str, int] = {}
-        keyed = []  # (exercise_id, set_number, weight_kg, reps), in the order given
-        for x in sets:
-            counts[x["exercise"]] = counts.get(x["exercise"], 0) + 1
-            keyed.append((by_name[x["exercise"]].id, counts[x["exercise"]], x["weight_kg"], x["reps"]))
-        key = dedupe_key(on, notes, sorted(keyed))
-        lifts = list(counts)
+        keyed = number_sets(sets, by_name)
+        key = session_key(on, notes, keyed)
+        lifts = list(dict.fromkeys(x["exercise"] for x in sets))
 
         if not truthy(data.get("allow_repeat")):
             first = find_duplicate(s, LiftSession, user.id, on, key)

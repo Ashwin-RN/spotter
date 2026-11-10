@@ -31,6 +31,20 @@ HARD_RULES = {
     "weight_kg": (0, 500),
 }
 SESSION_SETS = (1, 60)
+BODYWEIGHT_KG = (20, 400)
+
+# Measurement kinds: unit, lowest, highest, whole number only. One table, read by logging and editing.
+MEASUREMENTS = {
+    "waist": ("cm", 30, 300, False),
+    "hips": ("cm", 30, 300, False),
+    "chest": ("cm", 30, 300, False),
+    "arm": ("cm", 10, 100, False),
+    "thigh": ("cm", 20, 150, False),
+    "steps": ("steps", 0, 200_000, True),
+    "sleep_hours": ("h", 0, 24, False),
+    "resting_hr": ("bpm", 20, 250, True),
+    "water_ml": ("ml", 0, 20_000, True),
+}
 OLDEST_DAYS = 2 * 365 + 1  # entries go back two years at most, either side of a leap day
 TEXT_MAX = 2000            # notes and goal text
 QUOTE_MAX = 80             # the most of a caller's value an error message repeats
@@ -160,6 +174,41 @@ def number(value, kind, field: str, where: str = "") -> tuple[float | int | None
                                f"Give {field}{at_f} as a whole number.")
         return int(parsed), None
     return round(parsed, 2) + 0.0, None
+
+
+def _kind_key(name: str) -> str:
+    return " ".join(name.replace("_", " ").split()).casefold()
+
+
+def match_kind(name) -> tuple[str | None, dict | None]:
+    """A measurement kind from what the caller sent: case, spaces and underscores forgiven
+    ("Waist", "resting hr"), meaning not. Otherwise invalid_kind, with the list and the closest."""
+    by_key = {_kind_key(k): k for k in MEASUREMENTS}
+    key = _kind_key(name) if isinstance(name, str) else ""
+    if key in by_key:
+        return by_key[key], None
+    close = difflib.get_close_matches(key, list(by_key), n=3, cutoff=0.6) if 0 < len(key) <= NAME_MAX else []
+    kinds = ", ".join(MEASUREMENTS)
+    hint = f" Closest: {', '.join(by_key[c] for c in close)}." if close else ""
+    return None, error("invalid_kind", f"'{quote(name)}' is not a kind of measurement.",
+                       f"Use one of: {kinds}.{hint}", closest=[by_key[c] for c in close])
+
+
+def measurement_value(kind: str, value) -> tuple[float | int | None, dict | None]:
+    """A value for this kind: in its range, a whole number where the kind counts, else 2 dp."""
+    unit, lo, hi, whole = MEASUREMENTS[kind]
+    in_unit = "" if unit == kind else f" in {unit}"
+    fix = f"Give {kind.replace('_', ' ')}{in_unit}, {lo:,} to {hi:,}" + (", a whole number." if whole else ".")
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, error("missing_field", "value is missing.", fix)
+    number = to_float(value)
+    if number is None:
+        return None, error("invalid_field", f"value '{quote(value)}' is not a number.", fix)
+    if whole and number != int(number):
+        return None, error("invalid_field", f"{kind} must be a whole number, not {number:g}.", fix)
+    if not lo <= number <= hi:
+        return None, error("invalid_field", f"{kind} {number:g} {unit} is outside {lo:,} to {hi:,}.", fix)
+    return (int(number) if whole else round(number, 2) + 0.0), None
 
 
 def entry_date(value, today: date, noun: str = "entries") -> tuple[date | None, dict | None]:

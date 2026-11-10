@@ -9,6 +9,7 @@ import base64
 import json
 import re
 import time
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -19,10 +20,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import InterfaceError, OperationalError
 from starlette.testclient import TestClient
 
-from app import db, links, services, users, web, web_auth
+from app import db, links, rules, services, users, web, web_auth
 from app.config import Settings
 from app.main import create_app
-from app.models import User
+from app.models import Bodyweight, CallLog, LiftSession, Measurement, User
 
 from .conftest import RESOURCE, TEST_DIR, rpc, settings
 
@@ -178,7 +179,7 @@ def test_sign_in_redirects_to_the_provider_and_stores_the_state(client, seam):
 
 def test_callback_creates_the_user_then_a_second_sign_in_finds_it(client, seam):
     r = sign_in(client)
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/today"  # decision 1: sign-in lands on Today
     first = only_user()
     assert (first.subject, first.email, first.name) == ("user_01WEB", "asha@example.com", "Asha Web")
     assert session_of(client)[web.USER] == first.id
@@ -192,10 +193,10 @@ def test_callback_creates_the_user_then_a_second_sign_in_finds_it(client, seam):
     assert seam.codes == [CODE, CODE]
 
 
-def test_signed_in_sign_in_goes_to_settings(client, seam):
+def test_signed_in_sign_in_goes_to_today(client, seam):
     sign_in(client)
     r = client.get("/sign-in")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/today"
     assert len(seam.states) == 1
 
 
@@ -395,9 +396,17 @@ def test_another_sessions_token_is_refused(web_client):
 def test_every_non_get_web_route_checks_the_token(client):
     sign_in(client)
     posting = [r for r in web.routes(settings(**WEB)) if getattr(r, "methods", None) and "POST" in r.methods]
-    assert {r.path for r in posting} == {"/sign-out", "/settings"}
+    assert {r.path for r in posting} == {
+        "/sign-out", "/settings", "/settings/claude-can", "/day/{date}/weigh-in", "/day/{date}/measurement",
+        "/entries/{kind}/{entry_id}/edit", "/entries/{kind}/{entry_id}/delete", "/entries/{kind}/{entry_id}/restore"}
+    filled = {"{date}": "2026-11-09", "{kind}": "bodyweight", "{entry_id}": "1"}
     for route in posting:
-        assert client.post(route.path).status_code == 403
+        path = route.path
+        for marker, value in filled.items():
+            path = path.replace(marker, value)
+        for data in ({}, {"csrf_token": "wrong"}):
+            assert client.post(route.path, data=data).status_code == 403, route.path
+            assert client.post(path, data=data).status_code == 403, path
 
 
 # ---------------------------------------------------------------- sign-out
@@ -751,6 +760,9 @@ def test_every_link_spotter_hands_out_has_a_page(client):
         r = client.get(path)
         if name == "sign_in":
             assert r.status_code == 303, name
+        elif name == "today":  # Today is the day page for today
+            assert r.status_code == 303 and r.headers["location"].startswith(SITE + "/day/"), name
+            assert client.get(r.headers["location"]).status_code == 200
         else:
             assert r.status_code == 200, name
 
@@ -797,6 +809,7 @@ def test_a_person_with_no_zone_gets_the_hidden_form_and_the_script_on_every_page
                          page, re.S).group(1)
         assert f'name="csrf_token" value="{token}"' in form
         assert '<input type="hidden" name="time_zone" value="">' in form
+        assert f'<input type="hidden" name="next" value="{path}">' in form  # the page to come back to
 
 
 def test_a_person_with_a_zone_gets_neither(client):
@@ -1006,3 +1019,566 @@ def test_with_no_zone_data_settings_still_offers_utc(client, monkeypatch):
     finally:
         users._zone_tables.cache_clear()
         web.zone_groups.cache_clear()
+
+
+
+# ================================================================ stage 3: the pages a person uses
+
+def me() -> User:
+    return only_user() if user_count() == 1 else None
+
+
+def today_of(user: User):
+    with db.session_scope() as session:
+        return users.today_for(session.get(User, user.id))
+
+
+def stock(user: User) -> dict:
+    """One of each, through the services Claude uses: two Back Squat sessions (the second sets new bests),
+    two weigh-ins (yesterday's and today's), three measurements today."""
+    today = today_of(user)
+    yesterday = (today - timedelta(days=1)).isoformat()
+    squat = lambda kg: [{"exercise": "Back Squat", "weight_kg": kg, "reps": 5}] * 3  # noqa: E731
+    first = services.log_lifts(user.id, {"date": yesterday, "sets": squat(60)}, "claude")
+    second = services.log_lifts(user.id, {"sets": squat(65), "notes": "felt strong"}, "claude")
+    old_weight = services.log_bodyweight(user.id, {"kg": "78.9", "date": yesterday}, "claude")
+    weight = services.log_bodyweight(user.id, {"kg": "78.4"}, "claude")
+    measured = [services.log_measurement(user.id, {"kind": kind, "value": value}, "claude")
+                for kind, value in (("waist", "84.5"), ("steps", "9500"), ("sleep_hours", "7.25"))]
+    for result in (first, second, old_weight, weight, *measured):
+        assert "error" not in result, result
+    return {"today": today, "yesterday": yesterday, "session": second["id"], "old_session": first["id"],
+            "weigh_in": weight["id"], "old_weigh_in": old_weight["id"],
+            "measurements": [m["id"] for m in measured]}
+
+
+@pytest.fixture
+def stocked(client):
+    sign_in(client)
+    return stock(only_user())
+
+
+def day_of(client, on) -> str:
+    r = client.get(f"/day/{on}")
+    assert r.status_code == 200, r.text
+    return r.text
+
+
+def rows(model, user_id: int) -> list:
+    with db.session_scope() as session:
+        return list(session.scalars(select(model).where(model.user_id == user_id).order_by(model.id)))
+
+
+def calls(user_id: int) -> list[tuple[str, bool, str | None]]:
+    with db.session_scope() as session:
+        return [(c.function, c.ok, c.error_code) for c in
+                session.scalars(select(CallLog).where(CallLog.user_id == user_id).order_by(CallLog.id))]
+
+
+def post(client, path: str, **data):
+    return client.post(path, data={**data, "csrf_token": session_of(client)["csrf"]})
+
+
+# ---------------------------------------------------------------- Today, and a person with no entries
+
+@pytest.mark.parametrize("utc, local_day", [
+    (datetime(2026, 11, 9, 18, 29, 59, tzinfo=timezone.utc), "2026-11-09"),  # 23:59:59 in Kolkata
+    (datetime(2026, 11, 9, 18, 30, 0, tzinfo=timezone.utc), "2026-11-10"),   # midnight in Kolkata
+])
+def test_today_goes_to_the_day_in_the_persons_own_zone(client, monkeypatch, utc, local_day):
+    sign_in(client)
+    services.update_settings(only_user().id, {"time_zone": "Asia/Kolkata"}, "web")
+    monkeypatch.setattr(db, "utcnow", lambda: utc)
+    r = client.get("/today")
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/day/" + local_day
+
+
+def test_signed_out_every_new_page_goes_to_sign_in(client):
+    for path in ("/today", "/day/2026-11-09", "/progress", "/progress/back-squat",
+                 "/entries/bodyweight/1/edit"):
+        r = client.get(path)
+        assert r.status_code == 303 and r.headers["location"] == SITE + "/sign-in", path
+
+
+def test_every_page_renders_for_a_person_with_no_entries(client):
+    sign_in(client)
+    today = today_of(only_user()).isoformat()
+    page = day_of(client, today)
+    assert f"Today, {today}" in page and "No lifts logged on this day" in page
+    assert "No weigh-in on this day" in page and "No measurements on this day" in page
+    assert f'action="/day/{today}/weigh-in"' in page and f'action="/day/{today}/measurement"' in page
+    assert re.findall(r'<option value="([a-z_]+)">', page) == list(web.MEASUREMENT_KINDS)
+    assert 'rel="next"' not in page  # nothing after today
+    progress = client.get("/progress")
+    assert progress.status_code == 200 and "No lifts logged yet" in progress.text and "No weigh-ins yet" in progress.text
+    lift = client.get("/progress/back-squat")
+    assert lift.status_code == 200 and "No sets of Back Squat logged yet" in lift.text
+    settings_page = client.get("/settings")
+    assert settings_page.status_code == 200 and 'name="claude_can" value="log" checked' in settings_page.text
+
+
+def test_the_measurement_kinds_carry_the_services_units(client):
+    sign_in(client)
+    page = day_of(client, today_of(only_user()).isoformat())
+    for kind, (unit, _, _, _) in rules.MEASUREMENTS.items():
+        assert re.search(rf'<option value="{kind}">[^<]+\({re.escape(unit)}\)</option>', page), kind
+
+
+# ---------------------------------------------------------------- a day with one of each
+
+def test_the_day_shows_sessions_sets_bests_weigh_in_and_measurements(client, stocked):
+    page = day_of(client, stocked["today"].isoformat())
+    assert page.count("<td>Back Squat</td>") == 3 and page.count("<td>65 kg</td>") == 3
+    assert "felt strong" in page
+    assert "New best: Back Squat estimated max" in page and "(was 70 kg)" in page
+    assert "<strong>78.4 kg</strong>" in page
+    assert "Waist: <strong>84.5 cm</strong>" in page and "Steps: <strong>9500 steps</strong>" in page
+    assert "Sleep: <strong>7.25 h</strong>" in page
+    entries = [("lift_session", stocked["session"]), ("bodyweight", stocked["weigh_in"])] + \
+              [("measurement", i) for i in stocked["measurements"]]
+    for kind, entry_id in entries:
+        assert f'href="/entries/{kind}/{entry_id}/edit"' in page, (kind, entry_id)
+        assert f'action="/entries/{kind}/{entry_id}/delete"' in page, (kind, entry_id)
+    assert page.count('action="/entries/') == 5
+    assert f'href="/day/{stocked["yesterday"]}" rel="prev"' in page
+
+
+def test_yesterday_links_on_to_today(client, stocked):
+    page = day_of(client, stocked["yesterday"])
+    assert f'href="/day/{stocked["today"].isoformat()}" rel="next"' in page
+    assert "<td>60 kg</td>" in page and "78.9 kg" in page and "New best" not in page
+
+
+def test_the_edit_page_renders_for_each_kind(client, stocked):
+    weigh_in = client.get(f"/entries/bodyweight/{stocked['weigh_in']}/edit")
+    assert weigh_in.status_code == 200 and 'name="kg" value="78.4"' in weigh_in.text
+    measured = client.get(f"/entries/measurement/{stocked['measurements'][0]}/edit")
+    assert measured.status_code == 200 and 'name="value" value="84.5"' in measured.text and "(cm)" in measured.text
+    session = client.get(f"/entries/lift_session/{stocked['session']}/edit")
+    assert session.status_code == 200 and ">felt strong</textarea>" in session.text
+    assert "Sets are changed through Claude" in session.text and session.text.count("<td>Back Squat</td>") == 3
+    for r in (weigh_in, measured, session):
+        assert f'name="date" type="date" value="{stocked["today"].isoformat()}"' in r.text
+
+
+def test_progress_shows_each_lift_and_the_body_weight_trend(client, stocked):
+    page = client.get("/progress").text
+    row = re.search(r'<tr>\s*<td><a href="/progress/back-squat">Back Squat</a></td>(.*?)</tr>', page, re.S).group(1)
+    current = services.get_progress(only_user().id)["lifts"][0]["current_estimated_max_kg"]
+    assert f"{rules.kg(current)} kg" in row and "65 kg × 5" in row
+    assert f'<a href="/day/{stocked["today"].isoformat()}">' in row
+    assert "Latest: <strong>78.4 kg</strong>" in page
+    assert '<svg class="chart" id="bodyweight-chart"' in page and "<title" in page
+
+
+def test_one_lifts_progress_shows_its_chart_bests_and_sessions(client, stocked):
+    r = client.get("/progress/back-squat")
+    assert r.status_code == 200
+    assert '<svg class="chart" id="progress-chart"' in r.text and "Estimated max over time: Back Squat" in r.text
+    assert "65 kg × 5" in r.text and "estimated max" in r.text and "(was 70 kg)" in r.text
+    assert r.text.count("estimated max 70 kg") == 1 and "estimated max 75.83 kg" in r.text
+
+
+def test_an_unknown_lift_a_bad_date_and_an_unknown_kind_are_404_pages(client, stocked):
+    for path in ("/progress/not-a-lift", "/progress/back-squat-x", "/day/2026-02-30", "/day/20261109",
+                 "/day/abc", "/day/2026-11-9", "/entries/goal/1/edit", "/entries/bodyweight/abc/edit",
+                 "/entries/bodyweight/99999/edit", "/entries/call_log/1/edit"):
+        r = client.get(path)
+        assert r.status_code == 404 and "There is nothing here." in r.text, path
+        assert "not-a-lift" not in r.text and "abc" not in r.text.split("<main>")[1], path
+    for path in ("/entries/goal/1/delete", "/entries/bodyweight/99999/delete", "/entries/bodyweight/1x/restore"):
+        assert post(client, path).status_code == 404, path
+
+
+def test_someone_elses_entry_is_a_404_that_leaks_nothing(client, stocked, make_user):
+    other = make_user()
+    theirs = services.log_bodyweight(other.id, {"kg": "123.45"}, "claude")
+    their_measure = services.log_measurement(other.id, {"kind": "chest", "value": "111.11"}, "claude")
+    for kind, entry_id in (("bodyweight", theirs["id"]), ("measurement", their_measure["id"])):
+        for r in (client.get(f"/entries/{kind}/{entry_id}/edit"),
+                  post(client, f"/entries/{kind}/{entry_id}/edit", date="2026-01-01"),
+                  post(client, f"/entries/{kind}/{entry_id}/delete"),
+                  post(client, f"/entries/{kind}/{entry_id}/restore")):
+            assert r.status_code == 404 and "There is nothing here." in r.text
+            assert "123.45" not in r.text and "111.11" not in r.text
+    assert [b.deleted_at for b in rows(Bodyweight, other.id)] == [None]
+    assert [(m.value, m.deleted_at) for m in rows(Measurement, other.id)] == [(111.11, None)]
+    assert "123.45" not in day_of(client, stocked["today"].isoformat())
+
+
+# ---------------------------------------------------------------- logging from the day page
+
+def test_the_weigh_in_form_logs_for_that_day(client, stocked):
+    on = stocked["yesterday"]
+    r = post(client, f"/day/{on}/weigh-in", kg="79.2")
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}"
+    live = [b for b in rows(Bodyweight, only_user().id) if b.deleted_at is None and b.date.isoformat() == on]
+    assert [(b.kg, b.logged_by) for b in live] == [(79.2, "web")]
+    assert "79.2 kg" in day_of(client, on)
+
+
+def test_the_measurement_form_logs_for_that_day(client):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    r = post(client, f"/day/{on}/measurement", kind="resting_hr", value="58")
+    assert r.status_code == 303
+    [m] = rows(Measurement, only_user().id)
+    assert (m.kind, m.value, m.unit, m.logged_by) == ("resting_hr", 58, "bpm", "web")
+    assert "Resting heart rate: <strong>58 bpm</strong>" in day_of(client, on)
+
+
+@pytest.mark.parametrize("data, near, says", [
+    ({"kind": "waist", "value": "500"}, "measurement", "give waist in cm, from 30 to 300."),
+    ({"kind": "steps", "value": "12.5"}, "measurement", "give steps, from 0 to 200,000, as a whole number."),
+    ({"kind": "wrist", "value": "17"}, "measurement", "Choose a kind from the list."),
+    ({"kind": "waist", "value": "abc"}, "measurement", "That value was not saved"),
+])
+def test_a_refused_measurement_shows_the_pages_own_words(client, data, near, says):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    r = post(client, f"/day/{on}/measurement", **data)
+    assert r.status_code == 400 and says in r.text
+    assert "is outside" not in r.text and "Give " not in r.text  # the service's text is for Claude
+    assert rows(Measurement, only_user().id) == []
+
+
+@pytest.mark.parametrize("kg", ["500", "abc", "", "19.99"])
+def test_a_refused_weigh_in_shows_the_pages_own_words(client, kg):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    r = post(client, f"/day/{on}/weigh-in", kg=kg)
+    assert r.status_code == 400 and "That weight was not saved: give it in kg, from 20 to 400." in r.text
+    assert rows(Bodyweight, only_user().id) == []
+
+
+def test_a_weigh_in_after_today_is_refused_by_date(client):
+    sign_in(client)
+    tomorrow = (today_of(only_user()) + timedelta(days=1)).isoformat()
+    r = post(client, f"/day/{tomorrow}/weigh-in", kg="80")
+    assert r.status_code == 400 and "That date cannot be used" in r.text
+    assert rows(Bodyweight, only_user().id) == []
+
+
+# ---------------------------------------------------------------- edit, delete, undo through the pages
+
+def test_editing_a_weigh_in_moves_it_and_returns_to_its_new_day(client, stocked):
+    two_days_ago = (stocked["today"] - timedelta(days=2)).isoformat()
+    r = post(client, f"/entries/bodyweight/{stocked['weigh_in']}/edit", kg="77.95", date=two_days_ago)
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}"
+    row = next(b for b in rows(Bodyweight, only_user().id) if b.id == stocked["weigh_in"])
+    assert (row.kg, row.date.isoformat(), row.deleted_at) == (77.95, two_days_ago, None)
+    assert "77.95 kg" in day_of(client, two_days_ago) and "78.4" not in day_of(client, stocked["today"].isoformat())
+
+
+def test_editing_a_measurement_changes_its_value(client, stocked):
+    waist = stocked["measurements"][0]
+    r = post(client, f"/entries/measurement/{waist}/edit", value="83", date=stocked["today"].isoformat())
+    assert r.status_code == 303
+    assert next(m.value for m in rows(Measurement, only_user().id) if m.id == waist) == 83
+    assert "Waist: <strong>83 cm</strong>" in day_of(client, stocked["today"].isoformat())
+
+
+def test_editing_a_session_changes_its_notes_and_date_and_keeps_its_sets(client, stocked):
+    two_days_ago = (stocked["today"] - timedelta(days=2)).isoformat()
+    r = post(client, f"/entries/lift_session/{stocked['session']}/edit", notes="heavy day", date=two_days_ago)
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}"
+    page = day_of(client, two_days_ago)
+    assert "heavy day" in page and page.count("<td>65 kg</td>") == 3
+
+
+def test_an_edit_with_nothing_changed_writes_nothing(client, stocked):
+    before = calls(only_user().id)
+    r = post(client, f"/entries/bodyweight/{stocked['weigh_in']}/edit", kg="78.40",
+             date=stocked["today"].isoformat())
+    assert r.status_code == 303 and calls(only_user().id) == before
+
+
+def test_a_refused_edit_says_why_beside_the_field(client, stocked):
+    r = post(client, f"/entries/bodyweight/{stocked['weigh_in']}/edit", kg="900", date=stocked["today"].isoformat())
+    assert r.status_code == 400 and "That weight was not saved" in r.text and 'value="900"' in r.text
+    taken = post(client, f"/entries/bodyweight/{stocked['weigh_in']}/edit", kg="78.4", date=stocked["yesterday"])
+    assert taken.status_code == 400 and "That date cannot be used" in taken.text
+    assert "day_taken" not in taken.text and "entry_id" not in taken.text
+    assert next(b.kg for b in rows(Bodyweight, only_user().id) if b.id == stocked["weigh_in"]) == 78.4
+
+
+@pytest.mark.parametrize("which", ["lift_session", "bodyweight", "measurement"])
+def test_delete_then_undo_through_the_pages(client, stocked, which):
+    entry_id = {"lift_session": stocked["session"], "bodyweight": stocked["weigh_in"],
+                "measurement": stocked["measurements"][0]}[which]
+    on = stocked["today"].isoformat()
+    r = post(client, f"/entries/{which}/{entry_id}/delete")
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}?deleted={which}:{entry_id}"
+    page = client.get(r.headers["location"]).text
+    assert "Deleted." in page and f'action="/entries/{which}/{entry_id}/restore"' in page
+    assert f'href="/entries/{which}/{entry_id}/edit"' not in page
+    model = {"lift_session": LiftSession, "bodyweight": Bodyweight, "measurement": Measurement}[which]
+    assert next(e.deleted_at for e in rows(model, only_user().id) if e.id == entry_id) is not None
+
+    undo_form = re.search(rf'<form method="post" action="/entries/{which}/{entry_id}/restore" class="inline">(.*?)</form>',
+                          page, re.S).group(1)
+    token = re.search(r'name="csrf_token" value="([^"]+)"', undo_form).group(1)
+    back = client.post(f"/entries/{which}/{entry_id}/restore", data={"csrf_token": token})
+    assert back.status_code == 303 and back.headers["location"] == SITE + f"/day/{on}"
+    assert f'href="/entries/{which}/{entry_id}/edit"' in day_of(client, on)
+    assert next(e.deleted_at for e in rows(model, only_user().id) if e.id == entry_id) is None
+
+
+def test_undo_twice_says_there_is_nothing_to_undo(client, stocked):
+    post(client, f"/entries/bodyweight/{stocked['weigh_in']}/delete")
+    post(client, f"/entries/bodyweight/{stocked['weigh_in']}/restore")
+    r = post(client, f"/entries/bodyweight/{stocked['weigh_in']}/restore")
+    assert r.status_code == 409 and "nothing to undo" in r.text
+
+
+@pytest.mark.parametrize("query", ["goal:1", "bodyweight:abc", "bodyweight", "<b>:1", "bodyweight:1;x"])
+def test_a_forged_undo_link_shows_no_undo(client, stocked, query):
+    page = client.get(f"/day/{stocked['today'].isoformat()}", params={"deleted": query}).text
+    assert "Deleted." not in page and "/restore" not in page
+
+
+def test_a_day_after_today_left_by_a_zone_change_still_has_a_page(client):
+    sign_in(client)
+    user = only_user()
+    services.update_settings(user.id, {"time_zone": "Pacific/Kiritimati"}, "web")  # UTC+14
+    services.log_bodyweight(user.id, {"kg": "70"}, "claude")
+    later = today_of(user).isoformat()
+    services.update_settings(user.id, {"time_zone": "Pacific/Pago_Pago"}, "web")  # UTC-11: a day or two behind
+    today = today_of(user).isoformat()
+    assert later > today
+    page = day_of(client, later)
+    assert "70 kg" in page
+    assert f'href="/day/{later}" rel="next"' in day_of(client, today)
+    assert client.get("/day/" + (date.fromisoformat(later) + timedelta(days=1)).isoformat()).status_code == 404
+
+
+# ---------------------------------------------------------------- the switch
+
+@pytest.mark.parametrize("value", ["read", "log_delete", "log"])
+def test_the_switch_changes_claude_can_and_nothing_else(client, value):
+    sign_in(client)
+    services.update_settings(only_user().id, {"time_zone": "Asia/Kolkata"}, "web")
+    before = {c.name: getattr(only_user(), c.key) for c in User.__table__.columns}
+    r = post(client, "/settings/claude-can", claude_can=value)
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=claude_can"
+    after = {c.name: getattr(only_user(), c.key) for c in User.__table__.columns}
+    assert after["claude_can"] == value
+    differ = {k for k in after if after[k] != before[k]}
+    assert differ <= {"claude_can", "updated_at"}
+    page = client.get(r.headers["location"]).text
+    assert f'name="claude_can" value="{value}" checked' in page and "Saved." in page
+
+
+@pytest.mark.parametrize("value", [None, "", "LOG", "admin", "log_delete ", "everything", "delete"])
+def test_every_other_switch_value_is_refused(client, value):
+    sign_in(client)
+    data = {} if value is None else {"claude_can": value}
+    r = post(client, "/settings/claude-can", **data)
+    assert r.status_code == 400 and "Choose one of the three settings below." in r.text
+    assert only_user().claude_can == "log"
+
+
+def test_settings_says_what_each_setting_allows_and_that_claude_never_gets_the_switch(client):
+    sign_in(client)
+    page = client.get("/settings").text
+    assert "Only you can change this, here: Claude is never offered this switch." in page
+    for value in ("read", "log", "log_delete"):
+        assert f'value="{value}"' in page and web.CLAUDE_CAN_LINES[value] in page
+    assert page.count('type="radio" name="claude_can"') == 3
+
+
+# ---------------------------------------------------------------- the zone save comes back to `next`
+
+def test_the_zone_save_returns_to_the_page_it_came_from(client):
+    sign_in(client)
+    r = post(client, "/settings", time_zone="Asia/Kolkata", next="/day/2026-11-09")
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/day/2026-11-09"
+    assert only_user().time_zone == "Asia/Kolkata"
+
+
+@pytest.mark.parametrize("next_", ["//evil.example", "https://evil.example", "///evil.example", "//evil.example/day",
+                                   "https://evil.example/", "http:/evil", "/\\evil.example",
+                                   "javascript:alert(1)", "evil", "", "/day/\r\nSet-Cookie:x", "/" + "a" * 600])
+def test_a_next_that_is_not_a_local_path_returns_to_settings(client, next_):
+    sign_in(client)
+    r = post(client, "/settings", time_zone="Asia/Kolkata", next=next_)
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=time_zone"
+
+
+def test_a_next_of_settings_shows_the_saved_line(client):
+    sign_in(client)
+    r = post(client, "/settings", time_zone="Asia/Kolkata", next="/settings")
+    assert r.headers["location"] == SITE + "/settings?saved=time_zone"
+
+
+# ---------------------------------------------------------------- every web write leaves a call-log row
+
+def test_every_web_write_leaves_a_call_log_row_under_the_mcp_name(client, stocked):
+    uid = only_user().id
+    start = len(calls(uid))
+    on = stocked["today"].isoformat()
+    post(client, f"/day/{stocked['yesterday']}/weigh-in", kg="79")
+    post(client, f"/day/{on}/measurement", kind="hips", value="99")
+    post(client, f"/entries/measurement/{stocked['measurements'][0]}/edit", value="84", date=on)
+    post(client, f"/entries/bodyweight/{stocked['weigh_in']}/delete")
+    post(client, f"/entries/bodyweight/{stocked['weigh_in']}/restore")
+    post(client, "/settings", time_zone="Europe/London")
+    post(client, "/settings/claude-can", claude_can="read")
+    post(client, f"/day/{on}/weigh-in", kg="999")  # refused: still a row
+    assert calls(uid)[start:] == [
+        ("log_bodyweight", True, None), ("log_measurement", True, None), ("edit_entry", True, None),
+        ("delete_entry", True, None), ("restore_entry", True, None), ("update_settings", True, None),
+        ("set_claude_can", True, None), ("log_bodyweight", False, "invalid_field")]
+    assert {name for name, _, _ in calls(uid)[start:]} - {"set_claude_can"} <= set(services.WRITE_FUNCTIONS)
+
+
+def test_a_crashing_write_still_leaves_a_row(web_client, monkeypatch):
+    client = web_client(raise_server_exceptions=False)
+    sign_in(client)
+
+    def boom(*args):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(services, "log_bodyweight", boom)
+    assert post(client, f"/day/{today_of(only_user()).isoformat()}/weigh-in", kg="80").status_code == 500
+    assert calls(only_user().id) == [("log_bodyweight", False, "internal_error")]
+
+
+# ---------------------------------------------------------------- the write limit
+
+TOO_MANY = {"error": "too_many_writes", "message": "120 writes in the last 10 minutes; the most is 120.",
+            "fix": "Wait 3 minutes, then send it again.", "wait_minutes": 3}
+
+
+@pytest.mark.parametrize("name, path, data", [
+    ("log_bodyweight", "/day/{today}/weigh-in", {"kg": "80"}),
+    ("log_measurement", "/day/{today}/measurement", {"kind": "waist", "value": "80"}),
+    ("edit_entry", "/entries/bodyweight/{weigh_in}/edit", {"kg": "70", "date": "{today}"}),
+    ("delete_entry", "/entries/bodyweight/{weigh_in}/delete", {}),
+    ("restore_entry", "/entries/bodyweight/{weigh_in}/restore", {}),
+    ("update_settings", "/settings", {"time_zone": "Asia/Kolkata"}),
+    ("set_claude_can", "/settings/claude-can", {"claude_can": "read"}),
+])
+def test_a_limit_refusal_is_a_429_with_the_wait(client, stocked, monkeypatch, name, path, data):
+    monkeypatch.setattr(services, name, lambda *args: dict(TOO_MANY))
+    fill = {"today": stocked["today"].isoformat(), "weigh_in": stocked["weigh_in"]}
+    r = post(client, path.format(**fill), **{k: v.format(**fill) for k, v in data.items()})
+    assert r.status_code == 429 and "Try again in 3 minutes." in r.text and "nothing was saved" in r.text
+    assert calls(only_user().id)[-1] == (name, False, "too_many_writes")
+
+
+def test_the_real_limit_reaches_the_page(client, stocked):
+    uid = only_user().id
+    now = db.utcnow()
+    with db.session_scope() as session:
+        session.add_all(CallLog(function="log_bodyweight", started_at=now, ms=1, ok=True, error_code=None,
+                                result_bytes=1, user_id=uid) for _ in range(services.WRITE_LIMIT))
+    r = post(client, f"/day/{stocked['today'].isoformat()}/weigh-in", kg="80")
+    assert r.status_code == 429 and re.search(r"Try again in \d+ minutes?\.", r.text)
+    assert [b.kg for b in rows(Bodyweight, uid) if b.deleted_at is None and b.date == stocked["today"]] == [78.4]
+
+
+
+# ---------------------------------------------------------------- review fixes
+
+def test_the_first_day_there_is_has_no_page_and_the_next_one_no_prev_link(client):
+    sign_in(client)
+    assert client.get("/day/0001-01-01").status_code == 404
+    page = day_of(client, "0001-01-02")
+    assert 'rel="prev"' not in page and "/day/0001-01-01" not in page
+
+
+def test_a_later_days_prev_link_goes_to_a_day_that_has_a_page(client, monkeypatch):
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2026, 11, 10, 10, 45, tzinfo=timezone.utc))
+    sign_in(client)
+    user = only_user()
+    services.update_settings(user.id, {"time_zone": "Pacific/Kiritimati"}, "web")  # today 2026-11-11
+    assert "error" not in services.log_bodyweight(user.id, {"kg": "70"}, "claude")
+    services.update_settings(user.id, {"time_zone": "Pacific/Pago_Pago"}, "web")   # today 2026-11-09
+    assert today_of(user).isoformat() == "2026-11-09"
+    today = day_of(client, "2026-11-09")
+    assert 'href="/day/2026-11-11" rel="next"' in today
+    later = day_of(client, "2026-11-11")
+    assert "70 kg" in later and 'href="/day/2026-11-09" rel="prev"' in later and 'rel="next"' not in later
+    assert client.get("/day/2026-11-10").status_code == 404  # after today and empty: no page, and no link to it
+
+
+HOSTILE_NOTES = '<script>alert(1)</script><img src=x onerror=alert(2)>'
+
+
+def test_notes_are_shown_escaped_everywhere(client):
+    sign_in(client)
+    user = only_user()
+    on = today_of(user).isoformat()
+    made = services.log_lifts(user.id, {"sets": [{"exercise": "Back Squat", "weight_kg": 60, "reps": 5}],
+                                        "notes": HOSTILE_NOTES}, "claude")
+    refused = post(client, f"/entries/lift_session/{made['id']}/edit", notes=HOSTILE_NOTES + "!", date="2099-01-01")
+    assert refused.status_code == 400
+    pages = [day_of(client, on), client.get(f"/entries/lift_session/{made['id']}/edit").text, refused.text]
+    for page in pages:
+        assert "<script>alert(1)" not in page and "<img src=x" not in page
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src=x onerror=alert(2)&gt;" in page
+
+
+# ---------------------------------------------------------------- the call-log row comes first
+
+def test_the_call_log_row_exists_while_the_write_runs_and_is_completed_after(client, monkeypatch):
+    sign_in(client)
+    uid = only_user().id
+    seen = []
+
+    def stand_in(user_id, data, by):
+        seen.append(calls(uid))
+        return {"kind": "bodyweight", "id": 1, "duplicate": False}
+
+    monkeypatch.setattr(services, "log_bodyweight", stand_in)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/weigh-in", kg="80")
+    assert r.status_code == 303
+    assert seen == [[("log_bodyweight", False, "in_progress")]]  # stored before the service ran
+    assert calls(uid) == [("log_bodyweight", True, None)]  # the same row, completed
+
+
+def test_a_refused_write_completes_its_row_with_the_code(client, monkeypatch):
+    sign_in(client)
+    uid = only_user().id
+    seen = []
+
+    def stand_in(user_id, value):
+        seen.append(calls(uid))
+        return {"error": "invalid_field", "message": "no", "fix": "no"}
+
+    monkeypatch.setattr(services, "set_claude_can", stand_in)
+    assert post(client, "/settings/claude-can", claude_can="read").status_code == 400
+    assert seen == [[("set_claude_can", False, "in_progress")]]
+    assert calls(uid) == [("set_claude_can", False, "invalid_field")]
+
+
+def test_a_crash_completes_the_row_as_internal_error(web_client, monkeypatch):
+    client = web_client(raise_server_exceptions=False)
+    sign_in(client)
+    uid = only_user().id
+    seen = []
+
+    def boom(*args):
+        seen.append(calls(uid))
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(services, "delete_entry", boom)
+    assert post(client, "/entries/bodyweight/1/delete").status_code == 500
+    assert seen == [[("delete_entry", False, "in_progress")]]
+    assert calls(uid) == [("delete_entry", False, "internal_error")]
+    with db.session_scope() as session:
+        row = session.scalar(select(CallLog).where(CallLog.user_id == uid))
+        assert row.result_bytes == 0 and row.ms >= 0
+
+
+def test_a_lost_call_log_never_costs_the_write(client, monkeypatch):
+    sign_in(client)
+
+    def down(*args):
+        raise OperationalError("INSERT", {}, Exception("log table gone"))
+
+    monkeypatch.setattr(web.calllog, "start", down)
+    monkeypatch.setattr(web.calllog, "finish", down)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/weigh-in", kg="80.5")
+    assert r.status_code == 303 and [b.kg for b in rows(Bodyweight, only_user().id)] == [80.5]
