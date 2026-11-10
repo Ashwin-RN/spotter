@@ -23,12 +23,15 @@ expect, every key optional, all of them must hold:
   no_call           functions that were never called, refused or not.
   refused           true: every call of `function` was answered isError.
   reply_asks        true: the final reply asks the person something (it contains a question mark).
+  reply_has         phrases the final reply must contain, every one (ignoring case).
   reply_lacks       phrases the final reply must not contain (ignoring case).
   any_of            a list of expects of this same shape; at least one must hold.
 
-seed, rows created for the person before the run, through Spotter's own services:
+seed, rows created for the person before the run, through Spotter's own services, in order:
 
-  {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement", "data": {...}}
+  {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "set_goal", "data": {...}}
+  {"service": "add_sample_data"}    a service that takes no data: four weeks of everything, three goals.
+                                    No "as": it returns no one id.
 
 db, checks on the person's rows after the run:
 
@@ -37,8 +40,9 @@ db, checks on the person's rows after the run:
   count: exactly this many such rows; all: every one matches; rows: each matcher matches some row.
 
 Placeholders, as a whole string: "{{today}}" and "{{yesterday}}" (the person's own dates, YYYY-MM-DD),
-anywhere in seed, expect and db; "{{seed.<as>}}" (the id of the seeded row) in expect and db.
-resolve() replaces them before seeding and before judging.
+and "{{next_month_end:N}}" (N from 1 to 12: the last day of month N, the next one strictly after today
+in the person's zone), anywhere in seed, expect and db; "{{seed.<as>}}" (the id of the seeded row) in
+expect and db. resolve() replaces them before seeding and before judging.
 """
 
 import json
@@ -50,14 +54,15 @@ CASES_FILE = Path(__file__).resolve().parent / "cases.json"
 HIDDEN = "[token hidden]"
 
 EXPECT_KEYS = {"function", "inputs_include", "inputs_exclude", "inputs_forbid", "ok_calls", "no_call",
-               "refused", "reply_asks", "reply_lacks", "any_of"}
+               "refused", "reply_asks", "reply_has", "reply_lacks", "any_of"}
 CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db"}
 DB_KEYS = {"table", "state", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
 SWITCHES = ("read", "log", "log_delete")
-SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement"}
-DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session"}
-_PLACEHOLDER = re.compile(r"^\{\{\s*([a-z_]+(?:\.[A-Za-z0-9_]+)?)\s*\}\}$")
+SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "set_goal"}
+NO_DATA_SERVICES = {"add_sample_data"}  # called as service(user_id, by)
+DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal"}
+_PLACEHOLDER = re.compile(r"^\{\{\s*([a-z_]+(?:\.[A-Za-z0-9_]+|:[0-9]+)?)\s*\}\}$")
 
 
 # ---------------------------------------------------------------- the token mask
@@ -86,9 +91,13 @@ def case_problems(case: Any) -> list[str]:
     if "switch" in case and case["switch"] not in SWITCHES:
         problems.append(f"switch must be one of {', '.join(SWITCHES)}")
     for i, seed in enumerate(case.get("seed") or []):
-        if not isinstance(seed, dict) or seed.get("service") not in SEED_SERVICES or not isinstance(
+        if isinstance(seed, dict) and seed.get("service") in NO_DATA_SERVICES:
+            if set(seed) - {"service"}:
+                problems.append(f"seed[{i}]: {seed['service']} takes no data and no as")
+        elif not isinstance(seed, dict) or seed.get("service") not in SEED_SERVICES or not isinstance(
                 seed.get("data"), dict):
-            problems.append(f"seed[{i}] needs a service ({', '.join(sorted(SEED_SERVICES))}) and a data object")
+            problems.append(f"seed[{i}] needs a service ({', '.join(sorted(SEED_SERVICES))}) and a data object, "
+                            f"or a service that takes none ({', '.join(sorted(NO_DATA_SERVICES))})")
     for i, check in enumerate(case.get("db") or []):
         if not isinstance(check, dict) or check.get("table") not in DB_TABLES:
             problems.append(f"db[{i}] needs a table ({', '.join(sorted(DB_TABLES))})")
@@ -220,6 +229,9 @@ def judge_calls(expect: dict, calls: list[dict], reply: str) -> list[str]:
     text = reply or ""
     if expect.get("reply_asks") and "?" not in text:
         reasons.append("the reply asks nothing")
+    for phrase in expect.get("reply_has") or []:
+        if phrase.casefold() not in text.casefold():
+            reasons.append(f"the reply does not say {phrase!r}")
     for phrase in expect.get("reply_lacks") or []:
         if phrase.casefold() in text.casefold():
             reasons.append(f"the reply says {phrase!r}")
@@ -251,7 +263,7 @@ def judge_db(checks: list[dict], rows: dict[str, list[dict]]) -> list[str]:
 
 def _rows_text(rows: list[dict]) -> str:
     keep = ("date", "kind", "value", "kg", "meal", "description", "kcal", "source", "estimated", "saved_food_id",
-            "servings", "minutes", "exercise_id", "estimated_kcal")
+            "servings", "minutes", "exercise_id", "estimated_kcal", "id", "status", "target_value", "target_date")
     return "; ".join(json.dumps({k: r[k] for k in keep if k in r}) for r in rows)
 
 

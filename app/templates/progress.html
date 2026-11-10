@@ -2,6 +2,35 @@
 {% block title %}Progress · Spotter{% endblock %}
 {% block main %}
 <h1>Progress</h1>
+{% include "sample_banner.html" %}
+
+{% if trends %}
+{% set bw, cal, ses, car = trends.bodyweight, trends.calories, trends.sessions, trends.cardio %}
+<div class="card trends">
+  <h2>Trends</h2>
+  <dl class="facts">
+    <dt>Body weight</dt>
+    <dd>{% if bw %}Smoothed trend <strong>{{ kg(bw.smoothed) }} kg</strong>{% if bw.now is not none %}, {{ weight_now_label(trends) }} {{ kg(bw.now) }} kg{% endif %}.
+      {% if bw.rate_per_week is not none %}<strong>{{ signed(bw.rate_per_week) }} kg a week</strong>{% if bw.rate_window %}, from {{ bw.rate_window.from }} to {{ bw.rate_window.to }}{% endif %}.
+      {% else %}<span class="muted">{{ rate_note(trends) }}</span>{% endif %}
+      {% else %}<span class="muted">No weigh-ins yet.</span>{% endif %}</dd>
+    <dt>Calories a day</dt>
+    <dd>{% if cal %}{% if cal.avg_7d is not none %}<strong>{{ kg(cal.avg_7d) }} kcal</strong> over the {{ cal.days_logged_7d }} logged {{ "day" if cal.days_logged_7d == 1 else "days" }} of the last 7{% else %}<span class="muted">None logged in the last 7 days</span>{% endif %};
+      {{ kg(cal.avg_28d) }} kcal over the {{ cal.days_logged_28d }} logged {{ "day" if cal.days_logged_28d == 1 else "days" }} of the last 28.
+      {% if cal.target_kcal is not none %}Target {{ kg(cal.target_kcal) }} kcal.{% endif %}
+      {% if cal.estimated_share_pct_28d %}<span class="muted">{{ kg(cal.estimated_share_pct_28d) }}% of it is estimates.</span>{% endif %}
+      {% else %}<span class="muted">No food logged in the last 28 days.</span>{% endif %}</dd>
+    <dt>Sessions</dt>
+    <dd><strong>{{ ses.this_week }}</strong> in the last 7 days{% if ses.target_per_week is not none %}, target {{ ses.target_per_week }}{% endif %}; {{ kg(ses.per_week_4w) }} a week over the last 4 weeks.</dd>
+    <dt>Cardio</dt>
+    <dd><strong>{{ kg(car.minutes_this_week) }} minutes</strong> in the last 7 days{% if car.target_minutes is not none %}, target {{ kg(car.target_minutes) }}{% endif %}; {{ kg(car.minutes_per_week_4w) }} a week over the last 4 weeks.</dd>
+    <dt>Maintenance</dt>
+    <dd>{% if trends.maintenance %}{% set m = trends.maintenance %}About <strong>{{ kg(m.kcal) }} kcal a day</strong>, from {{ m.days_logged }} days with food logged between {{ m.from }} and {{ m.to }}.
+      <span class="muted">An estimate from your intake and weight change. Your calorie target stays yours to set.</span>
+      {% else %}<span class="muted">{{ trends.maintenance_note or "Not enough logged yet for an estimate." }}</span>{% endif %}</dd>
+  </dl>
+</div>
+{% endif %}
 
 <div class="card">
   <h2>Lifts</h2>
@@ -31,7 +60,9 @@
   <p>Latest: <strong>{{ kg(trend.latest_weigh_in.kg) }} kg</strong> on
     <a href="/day/{{ trend.latest_weigh_in.date }}">{{ trend.latest_weigh_in.date }}</a>.
     {% if trend.bodyweight %}7-day average: <strong>{{ kg(trend.bodyweight.average[-1].kg) }} kg</strong>.{% endif %}</p>
-  {% if chart %}{{ chart }}{% else %}<p class="muted">The chart appears from the second weigh-in.</p>{% endif %}
+  {% if chart %}{{ chart }}
+  <p class="muted small">Dots are weigh-ins. The line is the smoothed trend, which steadies day-to-day swings.</p>
+  {% else %}<p class="muted">The chart appears from the second weigh-in.</p>{% endif %}
   {% else %}
   <p class="muted">No weigh-ins yet. Add one on <a href="/today">Today</a>.</p>
   {% endif %}

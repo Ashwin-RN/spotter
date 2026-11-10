@@ -7,6 +7,8 @@ get_log(user_id, date=None, days=1)
     Each day: its sessions (with sets, and that session's new bests), its weigh-in or null, its
     measurements, its food (by meal, with the day's numbers from food.day_numbers, the same helper
     log_food uses) and its cardio (each entry with its activity, pace, estimate and machine number).
+    A food entry logged from a saved food also carries saved_food_name and serving_label (null
+    otherwise), so a page can show it as the name, the servings and the serving (decision 14).
     A session's new bests come from lifts.history, the one computation that also
     feeds get_progress, so the two never disagree.
 
@@ -14,10 +16,12 @@ get_log(user_id, date=None, days=1)
     hidden: its day gets a block of its own above today (the one ordering rule, metrics.on_or_before).
     Within a day, entries are in the order they were logged.
 
+    includes_sample is true when any entry shown is sample data; the note then says so and names the
+    Settings button that removes it (common.SAMPLE_NOTE, rule 16).
+
     Returns {from, to, days [{date, sessions, weigh_in, measurements, food, cardio}], totals {sessions,
-    weigh_ins, measurements, food_entries, cardio_entries}, summary, links {day: <to>, progress}} or
-    {error, message, fix}. A read: no lock,
-    no write limit.
+    weigh_ins, measurements, food_entries, cardio_entries}, includes_sample, summary, links {day: <to>,
+    progress}[, note]} or {error, message, fix}. A read: no lock, no write limit.
 """
 
 from datetime import timedelta
@@ -28,7 +32,7 @@ from sqlalchemy.orm import selectinload
 from app import db, links, rules, users
 from app.models import MEALS, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Measurement, User
 from app.services import cardio, food, lifts
-from app.services.common import no_account, row_dict
+from app.services.common import SAMPLE_NOTE, no_account, row_dict
 
 DAYS = (1, 14)
 
@@ -91,7 +95,7 @@ def get_log(user_id: int, date=None, days=1) -> dict:
 
         eaten = [f for f in s.scalars(select(FoodEntry).where(
             FoodEntry.user_id == user.id, FoodEntry.deleted_at.is_(None), FoodEntry.date >= start)
-            .order_by(FoodEntry.id)) if shown(f.date)]
+            .order_by(FoodEntry.id).options(selectinload(FoodEntry.saved_food))) if shown(f.date)]
         moved = [c for c in s.scalars(select(CardioEntry).where(
             CardioEntry.user_id == user.id, CardioEntry.deleted_at.is_(None), CardioEntry.date >= start)
             .order_by(CardioEntry.id).options(selectinload(CardioEntry.exercise))) if shown(c.date)]
@@ -104,7 +108,8 @@ def get_log(user_id: int, date=None, days=1) -> dict:
             weighed = [b for b in weigh_ins if b.date == day]
             food_rows = [f for f in eaten if f.date == day]
             cardio_rows = [c for c in moved if c.date == day]
-            meals = {meal: [food.entry_dict(f) for f in food_rows if f.meal == meal] for meal in MEALS}
+            meals = {meal: [{**food.entry_dict(f), **food.saved_parts(f)} for f in food_rows if f.meal == meal]
+                     for meal in MEALS}
             out_days.append({
                 "date": day.isoformat(),
                 "sessions": [{**lifts.session_dict(t), "new_bests": bests.get(t.id, [])}
@@ -120,5 +125,10 @@ def get_log(user_id: int, date=None, days=1) -> dict:
                    f"{_plural(totals['weigh_ins'], 'weigh-in')}, {_plural(totals['measurements'], 'measurement')}, "
                    f"{_plural(totals['food_entries'], 'food entry', 'food entries')}, "
                    f"{_plural(totals['cardio_entries'], 'cardio session')}.")
-        return {"from": start.isoformat(), "to": end.isoformat(), "days": out_days, "totals": totals,
-                "summary": summary, "links": {"day": links.page("day", date=end), "progress": links.page("progress")}}
+        sample = any(e.is_sample for e in (*sessions, *weigh_ins, *measured, *eaten, *moved))
+        out = {"from": start.isoformat(), "to": end.isoformat(), "days": out_days, "totals": totals,
+               "includes_sample": sample, "summary": summary,
+               "links": {"day": links.page("day", date=end), "progress": links.page("progress")}}
+        if sample:
+            out["note"] = SAMPLE_NOTE
+        return out

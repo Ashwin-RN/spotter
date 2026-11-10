@@ -112,8 +112,13 @@ MARKED_CALLS = [
     ("log_lifts", {"sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}], "date": MARKER, "notes": MARKER}),
     ("log_lifts", {"sets": squat(100), "notes": MARKER}),
     ("log_bodyweight", {"kg": 80, "date": MARKER}),
-    ("set_goal", {"kind": MARKER, "exercise": MARKER, "target_value": 150, "target_date": MARKER, "text": MARKER,
-                  "start_value": 100, "status": MARKER}),
+    ("set_goal", {"kind": MARKER, "exercise": MARKER, "measurement_kind": MARKER, "target_value": 150,
+                  "target_date": MARKER, "text": MARKER, "start_value": 100, "status": MARKER}),
+    # Each new kind, with its own string arguments marked: refused (not a measurement kind, not an activity).
+    ("set_goal", {"kind": "measurement", "measurement_kind": MARKER, "target_value": 80, "target_date": "2099-01-01",
+                  "text": MARKER, "start_value": 88}),
+    ("set_goal", {"kind": "cardio_best", "exercise": MARKER, "distance_km": 5, "target_value": 28,
+                  "target_date": "2099-01-01", "text": MARKER, "start_value": 31}),
     ("set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150, "text": MARKER,
                   "target_date": "2099-01-01"}),
     ("get_progress", {"exercise": MARKER}),
@@ -130,7 +135,10 @@ MARKED_CALLS = [
     ("log_food", {"entries": [{"description": MARKER, "kcal": 100}]}),  # succeeds: the marker is the person's text
     ("save_food", {"name": MARKER, "serving_label": MARKER, "kcal_per_serving": 100}),  # succeeds
     ("log_cardio", {"exercise": MARKER, "minutes": 30, "date": MARKER, "notes": MARKER}),
+    ("get_trends", {}),  # no string arguments: in the table so their rows are checked too
+    ("get_goals", {"include_closed": True}),
 ]
+REFUSED = 15  # the marked calls the services refuse
 
 
 def string_fields(schema: dict) -> set[str]:
@@ -171,7 +179,7 @@ def test_a_marker_in_every_argument_reaches_no_log_row_and_no_log_line(make_clie
     for name, arguments in MARKED_CALLS:
         result = call(client, token, name, arguments)
         errors += result["isError"]
-    assert errors == 13  # the thirteen marked calls refused; the other six succeed
+    assert errors == REFUSED  # the marked calls refused; the other eight succeed
     logged = rows()
     assert len(logged) == len(MARKED_CALLS)
     for row in logged:
@@ -406,7 +414,7 @@ def test_a_lone_surrogate_in_every_string_argument_always_gets_an_answer(make_cl
 
 
 @pytest.mark.parametrize("answer", [
-    {"exercises": [{"name": SURROGATE, "kind": "lift", "category": "push"}]},
+    {"exercises": [{"name": SURROGATE, "kind": "lift", "category": "push", "met": None, "compendium_code": None}]},
     {"error": "invalid_field", "message": f"kind '{SURROGATE}' is not one of lift, cardio.", "fix": "Use lift."},
 ], ids=["in a result", "in an error"])
 def test_a_result_that_cannot_be_sent_is_an_internal_error(http, monkeypatch, logs, answer):
@@ -421,7 +429,8 @@ def test_a_result_that_cannot_be_sent_is_an_internal_error(http, monkeypatch, lo
 # ---------------------------------------------------------------- values JSON cannot carry, a busy database
 
 def test_a_result_holding_nan_is_an_internal_error(http, monkeypatch, logs):
-    summary = {"today": "2026-11-09", "goals": [], "how": "How.", "links": {"progress": "https://x.example/progress"},
+    summary = {"today": "2026-11-09", "goals": [], "includes_sample": False, "how": "How.",
+               "links": {"progress": "https://x.example/progress"},
                "lifts": [{"exercise": "Back Squat", "sessions": 1, "last_trained": None,
                           "current_estimated_max_kg": float("nan"), "best_estimated_max_kg": None,
                           "slope_per_week": None, "goal_status": None}]}

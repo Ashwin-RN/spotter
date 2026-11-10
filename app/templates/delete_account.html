@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Delete my account · Spotter{% endblock %}
+{% block main %}
+<h1>Delete my account</h1>
+<div class="card narrow">
+  <p><strong>This cannot be undone.</strong> Everything below is deleted, deleted entries included.</p>
+  <ul class="entries delete-counts">
+    {% for label, count in counts %}
+    <li class="entry-line"><span>{{ label }}</span><strong>{{ count }}</strong></li>
+    {% endfor %}
+  </ul>
+  <p>Your settings go too, and so does your sign-in: signing in again starts a new, empty account.</p>
+  <p class="muted small">To keep a copy, use Export my data on Settings first.</p>
+  <form method="post" action="/settings/delete">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="actions">
+      <button class="primary danger">Delete my account</button>
+      <a href="/settings">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

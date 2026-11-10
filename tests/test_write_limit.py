@@ -72,7 +72,22 @@ WRITES = {
     "edit_entry": lambda u, ids: services.edit_entry(u.id, "bodyweight", ids[0], {"kg": 77}, "claude"),
     "delete_entry": lambda u, ids: services.delete_entry(u.id, "bodyweight", ids[0]),
     "restore_entry": lambda u, ids: services.restore_entry(u.id, "bodyweight", ids[1]),
+    "add_sample_data": lambda u, ids: services.add_sample_data(u.id, "web"),
+    "remove_sample_data": lambda u, ids: services.remove_sample_data(u.id, "web"),
 }
+
+
+def setup_sample(user):
+    """Sample rows, so a remove that ran would change the counts."""
+    assert "error" not in services.add_sample_data(user.id, "web")
+
+
+# What each write needs first. Sample data goes only into an empty account.
+SETUPS = {"add_sample_data": lambda user: None, "remove_sample_data": setup_sample}
+
+
+def prepare(user, name):
+    return SETUPS.get(name, setup_entry)(user)
 
 
 def test_every_write_function_is_in_the_table():
@@ -81,7 +96,7 @@ def test_every_write_function_is_in_the_table():
 
 @pytest.mark.parametrize("name", list(WRITES))
 def test_more_than_the_limit_is_refused_and_nothing_is_saved(user, name):
-    ids = setup_entry(user)
+    ids = prepare(user, name)
     calls(user.id, WRITE_LIMIT + 1, minutes_ago=3)
     before = counts(user.id)
     r = WRITES[name](user, ids)
@@ -92,7 +107,7 @@ def test_more_than_the_limit_is_refused_and_nothing_is_saved(user, name):
 
 @pytest.mark.parametrize("name", list(WRITES))
 def test_the_limit_itself_is_allowed_for_a_call_with_no_row_of_its_own(user, name):
-    ids = setup_entry(user)
+    ids = prepare(user, name)
     calls(user.id, WRITE_LIMIT, minutes_ago=3)
     r = WRITES[name](user, ids)
     assert "error" not in r, r
@@ -100,7 +115,7 @@ def test_the_limit_itself_is_allowed_for_a_call_with_no_row_of_its_own(user, nam
 
 @pytest.mark.parametrize("name", list(WRITES))
 def test_rows_outside_the_window_do_not_count(user, name):
-    ids = setup_entry(user)
+    ids = prepare(user, name)
     calls(user.id, WRITE_LIMIT + 1, minutes_ago=WRITE_WINDOW_MINUTES + 0.5)
     calls(user.id, WRITE_LIMIT, minutes_ago=1)
     assert "error" not in WRITES[name](user, ids)
@@ -108,7 +123,7 @@ def test_rows_outside_the_window_do_not_count(user, name):
 
 @pytest.mark.parametrize("name", list(WRITES))
 def test_another_persons_rows_do_not_count(user, make_user, name):
-    ids = setup_entry(user)
+    ids = prepare(user, name)
     calls(make_user().id, WRITE_LIMIT * 2)
     assert "error" not in WRITES[name](user, ids)
 
@@ -153,7 +168,7 @@ def test_the_wait_is_until_the_oldest_counted_row_leaves_and_at_least_a_minute(u
 @pytest.mark.parametrize("name", list(WRITES))
 def test_the_limit_with_this_calls_own_in_progress_row_is_refused(user, name):
     """As through MCP or the web: WRITE_LIMIT earlier rows, plus this call's own row written first."""
-    ids = setup_entry(user)
+    ids = prepare(user, name)
     calls(user.id, WRITE_LIMIT, minutes_ago=3)
     calls(user.id, 1, function=name, in_progress=True)
     before = counts(user.id)
@@ -164,7 +179,7 @@ def test_the_limit_with_this_calls_own_in_progress_row_is_refused(user, name):
 
 @pytest.mark.parametrize("name", list(WRITES))
 def test_one_under_the_limit_with_its_own_row_is_allowed(user, name):
-    ids = setup_entry(user)
+    ids = prepare(user, name)
     calls(user.id, WRITE_LIMIT - 1, minutes_ago=3)
     calls(user.id, 1, function=name, in_progress=True)
     assert "error" not in WRITES[name](user, ids)
@@ -174,3 +189,22 @@ def test_the_web_side_the_switch_is_not_a_limited_write(user):
     """set_claude_can belongs to the Settings page; it is not in WRITE_FUNCTIONS and is not limited."""
     calls(user.id, WRITE_LIMIT * 2)
     assert services.set_claude_can(user.id, "log_delete") == {"claude_can": "log_delete", "changed": True}
+
+
+def test_deleting_the_account_is_never_limited(user):
+    """The person can always leave: the web deletes the sign-in first, so a refusal here would strand them.
+    delete_account is not in WRITE_FUNCTIONS, its own in-progress row does not count, and it is never refused."""
+    assert "delete_account" not in WRITE_FUNCTIONS
+    setup_entry(user)
+    calls(user.id, WRITE_LIMIT * 2, minutes_ago=1)
+    calls(user.id, 1, function="delete_account", in_progress=True)
+    r = services.delete_account(user.id)
+    assert r["deleted"] is True and r["rows"]["bodyweight"] == 2
+    with db.new_session() as s:
+        assert s.get(User, user.id) is None
+
+
+def test_delete_account_rows_do_not_count_toward_the_limit(user):
+    calls(user.id, WRITE_LIMIT, minutes_ago=1)
+    calls(user.id, 50, function="delete_account")
+    assert "error" not in WRITES["log_bodyweight"](user, None)

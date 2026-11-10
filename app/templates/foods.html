@@ -3,6 +3,7 @@
 {% block main %}
 <h1>Foods</h1>
 <p class="muted">Foods you save are logged by name and amount: Spotter works out the kcal. Saving one by talking to Claude works too.</p>
+{% include "sample_banner.html" %}
 {% if saved %}<p class="ok">Saved.</p>{% endif %}
 {% if undo %}
 <div class="ok undo">
@@ -22,7 +23,7 @@
     <tbody>
     {% for f in foods %}
     <tr>
-      <td>{{ f.name }}</td>
+      <td>{{ f.name }}{% if f.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}</td>
       <td>{{ f.serving_label }}{% if f.grams_per_serving %} <span class="muted">({{ kg(f.grams_per_serving) }} g)</span>{% endif %}</td>
       <td>{{ kg(f.kcal_per_serving) }}</td>
       <td>{{ f.times_logged }}</td>

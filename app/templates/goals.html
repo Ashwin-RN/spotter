@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Goals · Spotter{% endblock %}
+{% block main %}
+<h1>Goals</h1>
+{% include "sample_banner.html" %}
+{% if saved %}<p class="ok">{{ saved }}</p>{% endif %}
+{% for note in notes %}<p class="notice goal-note">{{ note }}</p>{% endfor %}
+{% macro sample_tag(g) %}{% if g.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}{% endmacro %}
+
+{% macro status_form(goal_id, status, label) %}
+<form method="post" action="/goals/{{ goal_id }}/status" class="inline">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="status" value="{{ status }}">
+  <button class="link">{{ label }}</button>
+</form>
+{% endmacro %}
+
+<div class="card">
+  <h2>Open goals</h2>
+  {% if goals %}
+  <ul class="entries goals">
+    {% for g in goals %}
+    <li class="goal" id="goal-{{ g.goal_id }}">
+      <div class="entry-line">
+        <span><strong>{{ g.label }}</strong>{{ sample_tag(g) }} by {{ g.target_date }}
+          <span class="tag tag-status {{ status_class(g.status) }}">{{ g.status }}</span></span>
+        <span class="entry-actions">
+          {{ status_form(g.goal_id, "hit", "Hit") }}
+          {{ status_form(g.goal_id, "dropped", "Drop") }}
+        </span>
+      </div>
+      <dl class="facts">
+        <dt>Started</dt><dd>{{ amount(g.start_value, g.unit) }} on {{ g.start_date }}</dd>
+        <dt>Now</dt><dd>{% if g.latest is not none %}{{ amount(g.latest, g.unit) }}{% else %}<span class="muted">nothing logged yet</span>{% endif %}</dd>
+        <dt>Needed</dt><dd>{% if g.needed_per_week is not none %}{{ per_week(g.needed_per_week, g.unit) }}{% else %}<span class="muted">not worked out</span>{% endif %}</dd>
+        <dt>So far</dt><dd>{% if g.actual_per_week is not none %}{{ per_week(g.actual_per_week, g.unit) }}{% else %}<span class="muted">not enough data yet</span>{% endif %}</dd>
+        <dt>At this pace</dt><dd>{% if g.projected_date %}reached on {{ g.projected_date }}{% else %}<span class="muted">no date</span>{% endif %}</dd>
+      </dl>
+      {% if g.note %}<p class="muted small">{{ g.note }}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No open goals. Set one below, or tell Claude what you are aiming for.</p>
+  {% endif %}
+</div>
+
+{% if closed %}
+<div class="card">
+  <h2>Closed goals</h2>
+  <ul class="entries">
+    {% for g in closed %}
+    <li class="entry-line" id="goal-{{ g.goal_id }}">
+      <span>{{ g.label }}{{ sample_tag(g) }} <span class="tag">{{ closed_words.get(g.status, g.status) }}</span>
+        {% if g.closed_at %}<span class="muted small">on {{ g.closed_at[:10] }}</span>{% endif %}</span>
+      <span class="entry-actions">{{ status_form(g.goal_id, "open", "Reopen") }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Set a goal</h2>
+  <p class="muted small">Fill in what your kind of goal needs and leave the rest empty. Spotter checks it and says what is missing.</p>
+  {% if errors.form %}{% for e in errors.form %}<div class="error"><p>{{ e.message }}</p>{% if e.fix %}<p>{{ e.fix }}</p>{% endif %}</div>{% endfor %}{% endif %}
+  {% macro field_error(field) %}{% for e in errors.get(field, []) %}<div class="error"><p>{{ e.message }}</p>{% if e.fix %}<p>{{ e.fix }}</p>{% endif %}</div>{% endfor %}{% endmacro %}
+  <form method="post" action="/goals">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="goal-kind">Kind</label>
+    <select id="goal-kind" name="kind" required>
+      {% for value, label in kinds %}<option value="{{ value }}"{% if typed.get("kind") == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    {{ field_error("kind") }}
+    <label for="goal-exercise">Lift or activity (a lift goal or a cardio time)</label>
+    <select id="goal-exercise" name="exercise">
+      <option value="">None</option>
+      <optgroup label="Lifts">
+        {% for name in lifts %}<option value="{{ name }}"{% if typed.get("exercise") == name %} selected{% endif %}>{{ name }}</option>{% endfor %}
+      </optgroup>
+      <optgroup label="Cardio">
+        {% for name in activities %}<option value="{{ name }}"{% if typed.get("exercise") == name %} selected{% endif %}>{{ name }}</option>{% endfor %}
+      </optgroup>
+    </select>
+    {{ field_error("exercise") }}
+    <label for="goal-measurement">Measurement (a measurement goal)</label>
+    <select id="goal-measurement" name="measurement_kind">
+      <option value="">None</option>
+      {% for value, label, unit in measurement_choices %}<option value="{{ value }}"{% if typed.get("measurement_kind") == value %} selected{% endif %}>{{ label }} ({{ unit }})</option>{% endfor %}
+    </select>
+    {{ field_error("measurement_kind") }}
+    <label for="goal-distance">Distance in km (a cardio time)</label>
+    <input id="goal-distance" name="distance_km" value="{{ typed.get('distance_km', '') }}" inputmode="decimal" autocomplete="off">
+    {{ field_error("distance_km") }}
+    <label for="goal-target">Target: kg for a lift or body weight, the measurement's unit, or minutes for a cardio time</label>
+    <input id="goal-target" name="target_value" value="{{ typed.get('target_value', '') }}" inputmode="decimal" autocomplete="off">
+    {{ field_error("target_value") }}
+    <label for="goal-date">By</label>
+    <input id="goal-date" name="target_date" type="date" value="{{ typed.get('target_date', '') }}">
+    {{ field_error("target_date") }}
+    <label for="goal-start">Where you are now, only when nothing is logged yet</label>
+    <input id="goal-start" name="start_value" value="{{ typed.get('start_value', '') }}" inputmode="decimal" autocomplete="off">
+    {{ field_error("start_value") }}
+    <label for="goal-text">Notes</label>
+    <textarea id="goal-text" name="text" rows="2">{{ typed.get("text", "") }}</textarea>
+    {{ field_error("text") }}
+    <button class="primary">Set goal</button>
+  </form>
+</div>
+{% endblock %}

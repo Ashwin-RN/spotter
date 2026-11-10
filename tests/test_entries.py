@@ -413,3 +413,30 @@ def test_a_speed_worked_out_in_an_edit_is_summarised_as_stored(user):
     assert gone["after"]["speed_kmh"] is None and gone["after"]["pace"] is None
     assert "distance_km 3 -> none, cleared; speed_kmh 4 -> none, cleared with the distance" in gone["summary"]
     assert "worked out" not in gone["summary"] and "None" not in gone["summary"]
+
+
+# ---------------------------------------------------------------- stage 5: sample rows stay sample
+
+def test_edits_deletes_and_restores_keep_is_sample(user):
+    from app.models import Bodyweight, CardioEntry, FoodEntry
+    assert "error" not in services.add_sample_data(user.id, "web")
+    with db.new_session() as s:
+        ids = {kind: s.scalar(select(model.id).where(model.user_id == user.id).order_by(model.id))
+               for kind, model in (("lift_session", LiftSession), ("bodyweight", Bodyweight),
+                                   ("measurement", Measurement), ("food_entry", FoodEntry),
+                                   ("cardio_entry", CardioEntry))}
+    changes = {"lift_session": {"notes": "edited", "sets": [{"exercise": "Deadlift", "weight_kg": 120, "reps": 3}]},
+               "bodyweight": {"kg": 77.7}, "measurement": {"value": 85}, "food_entry": {"kcal": 123},
+               "cardio_entry": {"minutes": 33}}
+    for kind, entry in ids.items():
+        r = services.edit_entry(user.id, kind, entry, changes[kind], "claude")
+        assert r["changed"] and r["after"].get("is_sample", True) is True, (kind, r)
+        assert services.delete_entry(user.id, kind, entry)["deleted"] is True
+        assert services.restore_entry(user.id, kind, entry)["restored"] is True
+    with db.new_session() as s:
+        for kind, entry in ids.items():
+            assert s.get(entry_kinds()[kind], entry).is_sample is True, kind
+    # And removal still takes them, edited or not.
+    services.remove_sample_data(user.id, "web")
+    for kind, entry in ids.items():
+        assert services.get_entry(user.id, kind, entry)["error"] == "not_found"

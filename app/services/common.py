@@ -19,9 +19,15 @@ read or work. Every call through MCP or the web writes its call-log row before t
 (error_code "in_progress", completed afterwards), so this call's own row is already counted. The
 rule: more than WRITE_LIMIT write rows started in the last WRITE_WINDOW_MINUTES, this call's own
 row among them, is refused (count > WRITE_LIMIT), web and Claude together. Nothing is saved and the
-error says how many minutes to wait. A call that reaches the services with no row of its own (a
+error says how many minutes to wait. delete_account and set_claude_can are exempt: the person must
+always be able to leave, and to turn Claude down. A call that reaches the services with no row of its own (a
 direct service call, as in the tests) therefore gets one more allowed write than a call through MCP
 or the web.
+
+The read throttle. check_read_limit() counts one read function's rows the same way (find_food: more
+than READ_LIMIT in WRITE_WINDOW_MINUTES is too_many_reads). It takes no lock: a read writes nothing.
+
+Sample rows. SAMPLE_NOTE is what every read says when sample rows are in its numbers (rule 16).
 
 The duplicate guard. dedupe_key() is a SHA-256 of an entry's defining values, normalised.
 find_duplicate() looks for a live entry of the same person with the same date and key, created in
@@ -54,11 +60,20 @@ KIND_LABELS = {
     "goal": ("goal", "the id that set_goal returned, or a goal_id from get_progress"),
 }
 
-# Every write, by the name its call-log rows carry (the MCP name, which the web uses too).
+# Every write, by the name its call-log rows carry (the MCP name, which the web uses too). The last
+# two are the web's own (an empty Today, Settings); they count and are limited like the rest.
+# Two writes are exempt on purpose, the person's own way out and their own switch: delete_account
+# and set_claude_can. Their call-log rows are written but do not count, and they are never refused.
 WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
-                   "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry")
+                   "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
+                   "add_sample_data", "remove_sample_data")
 WRITE_LIMIT = 120
 WRITE_WINDOW_MINUTES = 10
+READ_LIMIT = 120  # a throttled read (find_food): its own rows in the same 10 minutes
+
+# Rule 16: what a read says when sample rows are in its numbers. It names the button, not a function.
+SAMPLE_NOTE = ("Some of these numbers come from sample data, not the person's own logs. The person can clear it "
+               "with the Remove sample data button on Settings.")
 
 
 def not_found(kind: str) -> dict:
@@ -159,19 +174,42 @@ def check_write_limit(s: Session, user_id: int) -> dict | None:
     as "in_progress", before the service runs); else None. wait_minutes: until the oldest counted
     row leaves the window, at least 1. A direct service call has no own row, so it gets one more
     allowed write than a call through MCP or the web. Call it right after lock_user."""
-    now = db.utcnow()
-    since = now - timedelta(minutes=WRITE_WINDOW_MINUTES)
-    count, oldest = s.execute(select(func.count(CallLog.id), func.min(CallLog.started_at)).where(
-        CallLog.user_id == user_id, CallLog.function.in_(WRITE_FUNCTIONS), CallLog.started_at >= since)).one()
+    count, wait = _counted(s, user_id, WRITE_FUNCTIONS)
     if count <= WRITE_LIMIT:
         return None
-    leaves = oldest + timedelta(minutes=WRITE_WINDOW_MINUTES) - now
-    wait = max(1, math.ceil(leaves.total_seconds() / 60))
     return error("too_many_writes",
                  f"{count} write calls in the last {WRITE_WINDOW_MINUTES} minutes, this one included; "
                  f"the most is {WRITE_LIMIT}. "
                  "Nothing was saved.",
                  f"Wait {wait} minute{'s' if wait != 1 else ''}, then send it again.", wait_minutes=wait)
+
+
+def _counted(s: Session, user_id: int, functions) -> tuple[int, int]:
+    """(rows, minutes to wait): this person's call-log rows of these functions started in the last
+    WRITE_WINDOW_MINUTES, and the minutes until the oldest of them leaves the window, at least 1.
+    The write limit and the read throttle count the same way, here."""
+    now = db.utcnow()
+    since = now - timedelta(minutes=WRITE_WINDOW_MINUTES)
+    count, oldest = s.execute(select(func.count(CallLog.id), func.min(CallLog.started_at)).where(
+        CallLog.user_id == user_id, CallLog.function.in_(functions), CallLog.started_at >= since)).one()
+    if not count:
+        return 0, 0
+    leaves = oldest + timedelta(minutes=WRITE_WINDOW_MINUTES) - now
+    return count, max(1, math.ceil(leaves.total_seconds() / 60))
+
+
+def check_read_limit(s: Session, user_id: int, function: str, limit: int = READ_LIMIT) -> dict | None:
+    """too_many_reads when this person has more than `limit` call-log rows of `function` started in the
+    last WRITE_WINDOW_MINUTES, this call's own row among them (as the write limit counts); else None.
+    wait_minutes as the write limit's. A read takes no lock: this is a count, and nothing is written."""
+    count, wait = _counted(s, user_id, (function,))
+    if count <= limit:
+        return None
+    return error("too_many_reads",
+                 f"{count} {function} calls in the last {WRITE_WINDOW_MINUTES} minutes, this one included; "
+                 f"the most is {limit}.",
+                 f"Wait {wait} minute{'s' if wait != 1 else ''}, then look it up again. A food already found can be "
+                 "logged by its id meanwhile.", wait_minutes=wait)
 
 
 def _plain(value):

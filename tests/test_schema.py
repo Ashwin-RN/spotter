@@ -362,6 +362,110 @@ def test_the_postgres_sql_builds_the_measurement_index():
 
 
 def test_the_first_migration_is_unchanged_in_what_it_builds():
-    """0001 never moves: the new index lives in 0002 only."""
+    """0001 never moves: the new index lives in 0002 only, the new column in 0003 only."""
     text = (ROOT / "migrations" / "versions" / "0001_v1_schema.py").read_text(encoding="utf-8")
     assert "uq_measurement_user_id_kind_date_live" not in text
+    assert "measurement_kind" not in text
+    assert "measurement_kind" not in (ROOT / "migrations" / "versions" /
+                                      "0002_one_live_measurement_a_day.py").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- migration 0003: goal.measurement_kind
+
+# What SQLite reports back for each model type.
+SQLITE_TYPES = {"Integer": "INTEGER", "String": "VARCHAR", "Text": "TEXT", "Float": "FLOAT", "Boolean": "BOOLEAN",
+                "Date": "DATE", "UtcDateTime": "DATETIME"}
+
+
+def _goal_columns(engine) -> list[str]:
+    with engine.connect() as c:
+        return [col["name"] for col in inspect(c).get_columns("goal")]
+
+
+def test_0003_applies_on_a_database_that_holds_rows_and_comes_down_again():
+    address = _sqlite_at("goal-rows.db")
+    cfg = alembic_config(address)
+    command.upgrade(cfg, "0002")
+    engine = make_engine(address)
+    now = "2026-11-10 08:00:00.000000"
+    try:
+        with engine.begin() as c:
+            c.exec_driver_sql("INSERT INTO user (id, provider, subject, claude_can, add_back_exercise_kcal, created_at, "
+                              "updated_at, last_seen_at) VALUES (1, 'workos', 's1', 'log', 0, ?, ?, ?)", (now, now, now))
+            for kind, target in (("bodyweight", 75), ("lift", 120)):
+                c.exec_driver_sql("INSERT INTO goal (user_id, kind, unit, start_value, start_date, direction, "
+                                  "target_value, target_date, status, text, created_at, updated_at, is_sample) "
+                                  "VALUES (1, ?, 'kg', 80, '2026-11-01', 'down', ?, '2027-01-01', 'open', 't', ?, ?, 0)",
+                                  (kind, target, now, now))
+        assert "measurement_kind" not in _goal_columns(engine)
+        command.upgrade(cfg, "head")
+        with engine.connect() as c:
+            assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0003"
+            rows = c.exec_driver_sql("SELECT kind, target_value, measurement_kind FROM goal ORDER BY id").all()
+        assert [tuple(r) for r in rows] == [("bodyweight", 75, None), ("lift", 120, None)]
+        with engine.begin() as c:  # the new column takes a value
+            c.exec_driver_sql("INSERT INTO goal (user_id, kind, measurement_kind, unit, start_value, start_date, "
+                              "direction, target_value, target_date, status, text, created_at, updated_at, is_sample) "
+                              "VALUES (1, 'measurement', 'waist', 'cm', 88, '2026-11-01', 'down', 84, '2027-01-01', "
+                              "'open', '', ?, ?, 0)", (now, now))
+        command.downgrade(cfg, "0002")
+        assert "measurement_kind" not in _goal_columns(engine)
+        with engine.connect() as c:  # every row is kept, and the rebuilt table keeps its index and keys
+            kept = c.exec_driver_sql("SELECT kind, target_value FROM goal ORDER BY id").all()
+            indexes = {i["name"] for i in inspect(c).get_indexes("goal")}
+            keys = {fk["referred_table"] for fk in inspect(c).get_foreign_keys("goal")}
+        assert [tuple(r) for r in kept] == [("bodyweight", 75), ("lift", 120), ("measurement", 84)]
+        assert "ix_goal_user_id_status" in indexes and keys == {"user", "exercise"}
+        command.upgrade(cfg, "head")
+        assert "measurement_kind" in _goal_columns(engine)
+    finally:
+        engine.dispose()
+
+
+def test_0003_applies_on_an_empty_database_and_follows_0002():
+    address = _sqlite_at("empty-0003.db")
+    cfg = alembic_config(address)
+    command.upgrade(cfg, "0002")
+    command.upgrade(cfg, "0003")
+    engine = make_engine(address)
+    try:
+        with engine.connect() as c:
+            assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0003"
+        assert "measurement_kind" in _goal_columns(engine)
+    finally:
+        engine.dispose()
+    from alembic.script import ScriptDirectory
+    script = ScriptDirectory.from_config(cfg)
+    assert script.get_revision("0003").down_revision == "0002" and script.get_current_head() == "0003"
+
+
+def test_the_postgres_sql_adds_the_goal_column():
+    cfg = alembic_config("postgresql+psycopg://spotter@db.invalid/spotter")
+    out = io.StringIO()
+    with redirect_stdout(out):
+        command.upgrade(cfg, "head", sql=True)
+    sql = out.getvalue()
+    assert "ALTER TABLE goal ADD COLUMN measurement_kind VARCHAR(16)" in sql
+    assert "measurement_kind VARCHAR(16) NOT NULL" not in sql
+    down = io.StringIO()
+    with redirect_stdout(down):
+        command.downgrade(cfg, "0003:0002", sql=True)
+    assert "ALTER TABLE goal DROP COLUMN measurement_kind" in down.getvalue()
+
+
+def test_the_models_and_the_migrations_agree_column_by_column():
+    """0001 to 0003 against the models: every table, every column, its type, length and nullability."""
+    with db.get_engine().connect() as c:
+        found = inspect(c)
+        for table in Base.metadata.sorted_tables:
+            built = {col["name"]: col for col in found.get_columns(table.name)}
+            assert set(built) == set(table.c.keys()), table.name
+            for column in table.c:
+                got = built[column.name]
+                assert got["nullable"] == column.nullable, (table.name, column.name)
+                model_type = type(column.type).__name__
+                assert type(got["type"]).__name__.upper() == SQLITE_TYPES[model_type], (table.name, column.name)
+                if getattr(column.type, "length", None):
+                    assert got["type"].length == column.type.length, (table.name, column.name)
+    goal = Base.metadata.tables["goal"].c.measurement_kind
+    assert goal.nullable and goal.type.length == 16

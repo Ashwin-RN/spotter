@@ -1,6 +1,7 @@
 """The eval runner's own parts: the cases file, the judging, the CLI output parser, the token mask and
 the call recorder. Nothing here calls the model or starts the Claude CLI."""
 
+import datetime as dt
 import json
 import tempfile
 from pathlib import Path
@@ -13,11 +14,16 @@ from app.models import User
 from app.main import create_app
 from evals import judge
 from evals.recorder import CallRecorder, parse_body, token_key
-from evals.run import LocalServer, child_env, cli_command, dates_for, local_time_zone, mcp_config, person_rows
+from evals.run import (
+    LocalServer, child_env, cli_command, dates_for, local_time_zone, mcp_config, next_month_end, person_rows,
+)
 from tests.conftest import HEADERS, settings
 
 CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_asked", "yesterday", "treadmill_once",
-                  "repeat_sent", "delete_ambiguous", "delete_explicit", "unknown_exercise"}
+                  "repeat_sent", "delete_ambiguous", "delete_explicit", "unknown_exercise",
+                  "goal_date", "how_am_i_doing", "on_track", "export_is_a_click", "delete_is_a_click", "drop_goal"}
+WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+          "update_settings", "edit_entry", "restore_entry", "delete_entry"}
 
 
 def call(name, arguments=None, is_error=False):
@@ -28,7 +34,7 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert CONTRACT_CASES <= {c["id"] for c in cases}
+    assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)
         assert judge.case_problems(case) == []
@@ -52,6 +58,12 @@ def test_case_problems_names_what_is_wrong():
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"}, "switch": "log_delete"}) == []
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"},
                                 "db": [{"table": "bodyweight", "state": "gone"}]})
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"},
+                                "seed": [{"service": "add_sample_data"}], "db": [{"table": "goal"}]}) == []
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"},
+                                "seed": [{"as": "s", "service": "add_sample_data"}]}) == [
+        "seed[0]: add_sample_data takes no data and no as"]
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"reply_has": ["Settings"]}}) == []
 
 
 def test_load_cases_refuses_duplicates_and_bad_cases():
@@ -78,6 +90,40 @@ def test_dates_for_gives_yesterday_in_the_zone():
     dates = dates_for("Asia/Kolkata")
     assert dates["today"] > dates["yesterday"]
     assert local_time_zone("Europe/London") == "Europe/London"
+    ends = [dates[f"next_month_end:{m}"] for m in range(1, 13)]
+    assert all(end > dates["today"] for end in ends) and len(set(ends)) == 12
+    assert "next_month_end:0" not in dates and "next_month_end:13" not in dates
+
+
+@pytest.mark.parametrize("today, month, end", [
+    ("2026-11-10", 3, "2027-03-31"),   # "by the end of March", said in November
+    ("2026-11-10", 12, "2026-12-31"),  # later this year
+    ("2026-11-10", 11, "2026-11-30"),  # this month, its last day still to come
+    ("2026-11-30", 11, "2027-11-30"),  # today is that last day: strictly after, so next year's
+    ("2026-03-15", 3, "2026-03-31"),
+    ("2027-11-10", 2, "2028-02-29"),   # a leap year
+    ("2026-11-10", 2, "2027-02-28"),
+    ("2026-12-31", 12, "2027-12-31"),
+    ("2026-01-31", 1, "2027-01-31"),
+    ("2026-04-30", 4, "2027-04-30"),
+])
+def test_next_month_end(today, month, end):
+    assert next_month_end(dt.date.fromisoformat(today), month) == dt.date.fromisoformat(end)
+
+
+@pytest.mark.parametrize("month", [0, 13, -1])
+def test_next_month_end_refuses_a_month_out_of_range(month):
+    with pytest.raises(ValueError):
+        next_month_end(dt.date(2026, 11, 10), month)
+
+
+def test_resolve_takes_the_month_end_placeholder():
+    variables = {"next_month_end:3": "2027-03-31"}
+    assert judge.resolve({"target_date": "{{next_month_end:3}}", "d": "{{ next_month_end:3 }}"}, variables) == {
+        "target_date": "2027-03-31", "d": "2027-03-31"}
+    with pytest.raises(KeyError):
+        judge.resolve("{{next_month_end:13}}", variables)
+    assert judge.resolve("{{next_month_end:march}}", variables) == "{{next_month_end:march}}"  # not a placeholder
 
 
 # ---------------------------------------------------------------- matching
@@ -176,6 +222,16 @@ def test_reply_checks():
         "the reply says 'which meal'"]
 
 
+def test_reply_has_needs_every_phrase_ignoring_case():
+    expect = {"reply_has": ["Settings", "export"]}
+    assert judge.judge_calls(expect, [], "Export is a button on your settings page.") == []
+    assert judge.judge_calls(expect, [], "Open Settings.") == ["the reply does not say 'export'"]
+    assert judge.judge_calls(expect, [], "") == ["the reply does not say 'Settings'",
+                                                  "the reply does not say 'export'"]
+    both = {"reply_has": ["Settings"], "reply_lacks": ["I deleted"]}
+    assert judge.judge_calls(both, [], "I deleted it. See Settings.") == ["the reply says 'I deleted'"]
+
+
 def test_any_of():
     expect = {"any_of": [{"no_call": ["delete_entry"], "reply_asks": True},
                          {"function": "delete_entry", "refused": True}]}
@@ -206,6 +262,53 @@ def test_the_real_cases_judge_as_designed():
     assert judge.judge_calls(unknown, [call("list_exercises")], "There is no zorbinator.") == []
     assert judge.judge_calls(unknown, [], "Which machine is that?") == []
     assert judge.judge_calls(unknown, [call("list_exercises"), call("log_lifts", is_error=True)], "Sorry?")
+
+
+def test_the_stage_5_cases_judge_as_designed():
+    cases = {c["id"]: c for c in judge.load_cases()}
+    for case_id in ("how_am_i_doing", "on_track", "export_is_a_click"):
+        assert set(cases[case_id]["expect"]["no_call"]) == WRITES, case_id
+
+    variables = {**dates_for("Asia/Kolkata"), "seed.earlier": 1, "seed.latest": 2}
+    goal = judge.resolve(cases["goal_date"], variables)
+    end = variables["next_month_end:3"]
+    sent = {"kind": "bodyweight", "target_value": 72.0, "target_date": end, "text": "72 kg by the end of March"}
+    assert judge.judge_calls(goal["expect"], [call("whoami"), call("set_goal", sent)], "Set.") == []
+    wrong_year = {**sent, "target_date": str(int(end[:4]) - 1) + end[4:]}
+    assert judge.judge_calls(goal["expect"], [call("set_goal", wrong_year)], "Set.")
+    assert judge.judge_db(goal["db"], {"goal": [{"id": 9, "kind": "bodyweight", "target_value": 72.0,
+                                                  "target_date": end, "direction": "down", "status": "open"}]}) == []
+    assert judge.judge_db(goal["db"], {"goal": []})
+
+    doing = cases["how_am_i_doing"]["expect"]
+    assert judge.judge_calls(doing, [call("whoami"), call("get_trends"), call("get_goals")], "Down 0.3 kg a week.") == []
+    assert judge.judge_calls(doing, [call("get_progress")], "Fine.")
+    assert judge.judge_calls(doing, [call("get_trends"), call("log_bodyweight")], "Logged.")
+    on_track = cases["on_track"]["expect"]
+    assert judge.judge_calls(on_track, [call("get_goals")], "Two of three on track.") == []
+    assert judge.judge_calls(on_track, [call("get_trends")], "Looks good.")
+
+    export = cases["export_is_a_click"]["expect"]
+    assert judge.judge_calls(export, [], "Export is a button on Settings.") == []
+    assert judge.judge_calls(export, [call("get_log")], "Use Export my data on the settings page.") == []
+    assert judge.judge_calls(export, [], "Here is your data as a table.")
+    delete = cases["delete_is_a_click"]
+    assert delete["switch"] == "log_delete"
+    assert judge.judge_calls(delete["expect"], [], "Delete my account is on Settings, with a confirm page.") == []
+    assert judge.judge_calls(delete["expect"], [call("delete_entry", {"kind": "bodyweight", "entry_id": 1})],
+                             "Deleted. Settings has the rest.")
+
+    drop = judge.resolve(cases["drop_goal"], {**variables, "seed.squat": 4, "seed.bench": 5})
+    assert judge.judge_calls(drop["expect"], [call("get_goals"), call("set_goal", {"goal_id": 4,
+                                                                                    "status": "dropped"})], "") == []
+    assert judge.judge_calls(drop["expect"], [call("set_goal", {"goal_id": 5, "status": "dropped"})], "")
+    assert judge.judge_calls(drop["expect"], [call("set_goal", {"goal_id": 4, "status": "dropped"}),
+                                              call("set_goal", {"goal_id": 5, "status": "dropped"})], "")
+    rows = {"goal": [{"id": 4, "status": "dropped", "target_value": 120.0},
+                     {"id": 5, "status": "open", "target_value": 90.0}]}
+    assert judge.judge_db(drop["db"], rows) == []
+    rows["goal"][1]["status"] = "dropped"
+    assert judge.judge_db(drop["db"], rows)
 
 
 # ---------------------------------------------------------------- the database checks
@@ -270,6 +373,31 @@ def test_new_person_sets_the_switch_and_dates_the_seeds(app_settings):
     assert token.count(".") == 2
     _, _, plain = server.new_person(zone, [])
     assert plain == {}
+
+
+def test_new_person_seeds_goals_and_sample_data(app_settings):
+    server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
+    server.settings = app_settings
+    zone = "Asia/Kolkata"
+    cases = {c["id"]: c for c in judge.load_cases()}
+    dates = dates_for(zone)
+
+    user_id, _, seeded = server.new_person(zone, cases["drop_goal"]["seed"])
+    goals = {r["id"]: r for r in person_rows(user_id)["goal"]}
+    assert set(goals) == {seeded["squat"], seeded["bench"]}
+    assert goals[seeded["squat"]]["target_date"] == dates["next_month_end:6"]
+    assert (goals[seeded["squat"]]["status"], goals[seeded["bench"]]["target_value"]) == ("open", 90)
+
+    sample_id, _, none = server.new_person(zone, cases["how_am_i_doing"]["seed"])
+    assert none == {}
+    rows = person_rows(sample_id)
+    assert len(rows["bodyweight"]) == 28 and len(rows["goal"]) == 3
+    assert all(r["is_sample"] for r in rows["bodyweight"] + rows["goal"])
+    assert services.get_trends(sample_id)["bodyweight"]["rate_per_week"] is not None
+    assert len(services.get_goals(sample_id)["goals"]) == 3
+
+    goal_id, _, _ = server.new_person(zone, cases["goal_date"]["seed"])
+    assert len(person_rows(goal_id)["bodyweight"]) == 2 and person_rows(goal_id)["goal"] == []
 
 
 # ---------------------------------------------------------------- the CLI's output

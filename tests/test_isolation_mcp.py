@@ -170,3 +170,54 @@ def test_a_new_goal_for_a_starts_from_as_numbers_not_bs(http, bob):
                                         "target_date": "2099-01-01"})
     assert result["isError"] is True and result["structuredContent"]["error"] == "missing_field"
     assert "start_value" in result["structuredContent"]["fix"]  # A has no squat to start from; B's is not used
+
+
+# ---------------------------------------------------------------- stage 5: goals of every kind, and the trends
+
+@pytest.fixture
+def bobs_goals(http, bob) -> dict:
+    """B adds a goal of each other kind to his lift goal, and drops a second lift goal. Returns the ids by kind."""
+    t = token(B)
+    today = date.fromisoformat(ok(http, t, "whoami")["today"])
+    by = (today + timedelta(days=90)).isoformat()
+    ok(http, t, "log_cardio", {"exercise": "Outdoor Run", "minutes": 31.5, "distance_km": 5})
+    ids = {"lift": bob["goal"]}
+    for kind, arguments in (("bodyweight", {"target_value": 85.5}),
+                            ("measurement", {"measurement_kind": "waist", "target_value": 90.5}),
+                            ("cardio_best", {"exercise": "Outdoor Run", "distance_km": 5, "target_value": 27.5})):
+        ids[kind] = ok(http, t, "set_goal", {"kind": kind, "target_date": by, "text": f"Bob's {kind}",
+                                             **arguments})["id"]
+    dropped = ok(http, t, "set_goal", {"kind": "lift", "exercise": "Bench Press", "target_value": 140,
+                                       "target_date": by, "start_value": 110})["id"]
+    ok(http, t, "set_goal", {"goal_id": dropped, "status": "dropped"})
+    return {**ids, "dropped": dropped}
+
+
+def test_a_sees_none_of_bs_goals_or_trends(http, bob, bobs_goals):
+    t = token(A)
+    goals = ok(http, t, "get_goals", {"include_closed": True})
+    assert goals["goals"] == [] and goals["closed"] == []
+    trends = ok(http, t, "get_trends")
+    assert trends["bodyweight"] is None and trends["calories"] is None and trends["maintenance"] is None
+    assert trends["sessions"]["this_week"] == 0 and trends["cardio"]["minutes_this_week"] == 0
+    assert ok(http, t, "get_progress")["goals"] == []
+    for text in (str(goals), str(trends)):
+        assert "Bob" not in text and "91.5" not in text and "97.25" not in text and "85.5" not in text
+        assert "90.5" not in text and "27.5" not in text and "31.5" not in text
+    # And B still sees all of his.
+    mine = ok(http, token(B), "get_goals", {"include_closed": True})
+    assert sorted(g["kind"] for g in mine["goals"]) == ["bodyweight", "cardio_best", "lift", "measurement"]
+    assert [g["goal_id"] for g in mine["closed"]] == [bobs_goals["dropped"]]
+    assert ok(http, token(B), "get_trends")["bodyweight"]["now"] == 91.5
+
+
+@pytest.mark.parametrize("kind", ["bodyweight", "measurement", "cardio_best", "dropped"])
+def test_bs_goal_of_any_kind_gets_a_the_same_not_found(http, bob, bobs_goals, kind):
+    allow_everything(http, A)
+    t = token(A)
+    before = snapshot(bob["account"], "goal", bobs_goals[kind])
+    changes = {"status": "open"} if kind == "dropped" else {"status": "dropped", "target_value": 80, "text": "A's edit"}
+    theirs = failed(http, t, "set_goal", {"goal_id": bobs_goals[kind], **changes})
+    missing = failed(http, t, "set_goal", {"goal_id": MISSING_ID, **changes})
+    assert theirs["error"] == "not_found" and theirs == missing
+    assert snapshot(bob["account"], "goal", bobs_goals[kind]) == before

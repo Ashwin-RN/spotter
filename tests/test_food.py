@@ -42,7 +42,8 @@ def test_a_stated_number_is_you_said_and_a_guess_is_claude_estimate(user):
     assert r["kind"] == "food_entry" and r["ids"] == [e["id"] for e in r["entries"]] and r["duplicate"] is False
     assert set(r) == {"kind", "ids", "duplicate", "entries", "day", "summary", "links", "note"}
     assert set(r["entries"][0]) == {"id", "date", "meal", "description", "kcal", "source", "estimated",
-                                    "saved_food_id", "servings", "usda_fdc_id", "grams"}
+                                    "saved_food_id", "servings", "usda_fdc_id", "grams", "is_sample"}
+    assert r["entries"][0]["is_sample"] is False
     assert r["note"].startswith("1 entry is Claude's estimate:")
     two = eat(user, {"description": "a", "kcal": 1, "estimated": True}, {"description": "b", "kcal": 2, "estimated": True})
     assert two["note"].startswith("2 entries are Claude's estimates: the person can confirm or correct them")
@@ -344,6 +345,96 @@ def test_food_writes_lock_the_user_row_first(user, call):
     finally:
         event.remove(engine, "before_cursor_execute", record)
     assert statements[0] == " ".join(str(lock_statement("sqlite", user.id).compile(dialect=sqlite.dialect())).split())
+
+
+# ---------------------------------------------------------------- stage 5: the description default (decision 14)
+
+def test_a_saved_food_needs_no_description_and_defaults_to_its_name(user):
+    saved = roti(user)
+    r = eat(user, {"saved_food_id": saved["id"], "servings": 2})
+    assert r["entries"][0]["description"] == "Roti" and r["entries"][0]["servings"] == 2
+    named = eat(user, {"saved_food_id": saved["id"], "servings": 1, "description": "  roti at lunch "}, allow_repeat=True)
+    assert named["entries"][0]["description"] == "roti at lunch"   # given, it is kept
+    blank = eat(user, {"saved_food_id": saved["id"], "description": ""}, allow_repeat=True)
+    assert blank["entries"][0]["description"] == "Roti" and blank["entries"][0]["servings"] == 1
+    no_id = eat(user, {"kcal": 100})
+    assert no_id["error"] == "missing_field" and "description" in no_id["message"]
+
+
+def test_get_log_shows_a_saved_food_by_name_servings_and_serving(user):
+    saved = roti(user)
+    eat(user, {"saved_food_id": saved["id"], "servings": 2, "meal": "lunch"},
+        {"description": "dal", "kcal": 180, "meal": "lunch"})
+    lunch = services.get_log(user.id)["days"][0]["food"]["meals"]["lunch"]
+    assert [(e["description"], e["servings"], e["saved_food_name"], e["serving_label"]) for e in lunch] == [
+        ("Roti", 2.0, "Roti", "1 roti"), ("dal", None, None, None)]
+
+
+# ---------------------------------------------------------------- stage 5: list_saved_foods (decision 15)
+
+def test_list_saved_foods_agrees_with_find_food(user):
+    r = roti(user)
+    dal = services.save_food(user.id, {"name": "dal bowl", "serving_label": "1 bowl", "kcal_per_serving": 180,
+                                       "grams_per_serving": 250}, "web")["id"]
+    oats = services.save_food(user.id, {"name": "Oats", "serving_label": "1 bowl", "kcal_per_serving": 300}, "web")["id"]
+    eat(user, {"saved_food_id": r["id"], "servings": 2}, date=(users.today_for(user) - timedelta(days=3)).isoformat())
+    eat(user, {"saved_food_id": r["id"], "servings": 1})
+    gone = eat(user, {"saved_food_id": dal, "servings": 1})["ids"][0]
+    services.delete_entry(user.id, "food_entry", gone)          # a deleted entry is not counted
+    services.delete_entry(user.id, "saved_food", oats)
+    listed = services.list_saved_foods(user.id)
+    assert [f["name"] for f in listed["foods"]] == ["dal bowl", "Roti", "Oats"]   # live by name, then deleted
+    by_name = {f["name"]: f for f in listed["foods"]}
+    assert by_name["Roti"] == {"id": r["id"], "name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                               "grams_per_serving": None, "times_logged": 2,
+                               "last_logged": users.today_for(user).isoformat(), "is_sample": False,
+                               "deleted_at": None}
+    assert by_name["dal bowl"]["times_logged"] == 0 and by_name["dal bowl"]["last_logged"] is None
+    assert by_name["Oats"]["deleted_at"] is not None
+    found = {f["name"]: f for f in services.find_food(user.id, "o")["saved"]}
+    for name in ("Roti", "dal bowl"):
+        assert {k: found[name][k] for k in ("times_logged", "last_logged")} == \
+            {k: by_name[name][k] for k in ("times_logged", "last_logged")}
+    assert listed["summary"] == "2 saved foods, 1 deleted."
+    assert services.list_saved_foods(987654)["error"] == "no_account"
+
+
+def test_list_saved_foods_marks_sample_foods(user):
+    services.add_sample_data(user.id, "web")
+    foods = services.list_saved_foods(user.id)["foods"]
+    assert len(foods) == 4 and all(f["is_sample"] for f in foods) and foods[0]["times_logged"] > 0
+
+
+# ---------------------------------------------------------------- stage 5: the read throttle (decision 13)
+
+def _lookups(user_id, n, function="find_food", minutes_ago=0.0):
+    with db.session_scope() as s:
+        s.add_all(CallLog(user_id=user_id, function=function, started_at=db.utcnow() - timedelta(minutes=minutes_ago),
+                          ms=1, ok=True, result_bytes=1) for _ in range(n))
+
+
+def test_more_than_120_lookups_in_10_minutes_is_too_many_reads(user, monkeypatch):
+    monkeypatch.setattr(db, "utcnow", lambda: NOON)
+    asked = []
+    monkeypatch.setattr(usda, "search", lambda q: asked.append(q) or (None, usda.unavailable()))
+    _lookups(user.id, services.READ_LIMIT + 1, minutes_ago=4)
+    r = services.find_food(user.id, "banana")
+    assert r["error"] == "too_many_reads" and r["wait_minutes"] == 6 and "Wait 6 minutes" in r["fix"]
+    assert "121 find_food calls" in r["message"] and asked == []   # refused before any lookup
+
+
+def test_the_limit_itself_and_rows_that_do_not_count_are_allowed(user, make_user, monkeypatch):
+    monkeypatch.setattr(db, "utcnow", lambda: NOON)
+    _lookups(user.id, services.READ_LIMIT, minutes_ago=1)               # a direct call has no row of its own
+    assert "error" not in services.find_food(user.id, "dal")
+    _lookups(user.id, 50, minutes_ago=10.5)                             # outside the window
+    _lookups(user.id, 300, function="log_food")                         # writes are the write limit's
+    _lookups(make_user().id, 300)                                       # another person's
+    assert "error" not in services.find_food(user.id, "dal")
+    _lookups(user.id, 1, minutes_ago=0)
+    assert services.find_food(user.id, "dal")["error"] == "too_many_reads"
+    # The throttle is about find_food alone: other reads go on.
+    assert "error" not in services.get_log(user.id) and "error" not in services.list_saved_foods(user.id)
 
 
 def test_no_account(user):

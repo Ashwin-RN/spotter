@@ -166,6 +166,26 @@ def test_no_account():
     assert services.get_progress(987654)["error"] == "no_account"
 
 
+def test_real_rows_are_not_sample_and_say_nothing_of_it(user):
+    build_squat_history(user)
+    for r in (services.get_progress(user.id), services.get_progress(user.id, "Back Squat"),
+              services.get_progress(user.id, "Elliptical")):
+        assert r["includes_sample"] is False and "sample" not in r.get("note", "")
+
+
+def test_the_body_weight_chart_draws_the_smoothed_line(user):
+    from app.services import body
+    from app.services.progress import bodyweight_chart
+    for days_ago, kg in ((2, 80), (1, 81), (0, 79)):
+        services.log_bodyweight(user.id, {"kg": kg, "date": day(user, -days_ago)}, "web")
+    with db.new_session() as s:
+        chart = bodyweight_chart(body.weigh_ins(s, user.id, users.today_for(user)), [], users.today_for(user))
+    # The same line get_trends reports: 80, 80.1, 79.99.
+    assert [(p["kg"], p["smoothed"]) for p in chart["points"]] == [(80, 80.0), (81, 80.1), (79, 79.99)]
+    assert [p["smoothed"] for p in chart["points"]] == [p["smoothed"] for p in
+                                                       services.get_trends(user.id)["bodyweight"]["series"]]
+
+
 def test_every_result_is_plain_json(user):
     build_squat_history(user)
     weigh = services.log_bodyweight(user.id, {"kg": 80}, "web")
@@ -180,6 +200,8 @@ def test_every_result_is_plain_json(user):
         services.delete_entry(user.id, "bodyweight", replace["id"]),
         services.restore_entry(user.id, "bodyweight", weigh["id"]),
         services.get_entry(user.id, "bodyweight", MISSING_ID),
+        services.get_goals(user.id, include_closed=True), services.get_trends(user.id),
+        services.export_data(user.id), services.list_saved_foods(user.id), services.sample_state(user.id),
     ]
     for result in results:
         sendable(result)
@@ -274,6 +296,20 @@ def hostile_calls(user_id, goal_id, entry):
             yield f"set_goal {field}", lambda f=field: services.set_goal(user_id, {**new_goal, f: bad}, "web")
             yield f"set_goal edit {field}", lambda f=field: services.set_goal(
                 user_id, {"goal_id": goal_id, f: bad}, "web")
+        for new in ({"kind": "measurement", "measurement_kind": "waist", "target_value": 80, "start_value": 90,
+                     "target_date": "2099-01-01"},
+                    {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 27,
+                     "start_value": 30, "target_date": "2099-01-01"}):
+            for field in new:
+                yield f"set_goal {new['kind']} {field}", lambda n=new, f=field: services.set_goal(
+                    user_id, {**n, f: bad}, "web")
+        yield "set_goal edit measurement_kind", lambda: services.set_goal(
+            user_id, {"goal_id": goal_id, "measurement_kind": bad, "target_value": 160}, "web")
+        yield "set_goal edit distance_km", lambda: services.set_goal(
+            user_id, {"goal_id": goal_id, "distance_km": bad, "target_value": 160}, "web")
+        yield "get_goals include_closed", lambda: services.get_goals(user_id, bad)
+        yield "sample by", lambda: services.add_sample_data(user_id, bad)
+        yield "remove sample by", lambda: services.remove_sample_data(user_id, bad)
         yield "set_goal goal_id", lambda: services.set_goal(user_id, {"goal_id": bad, "status": "hit"}, "web")
         yield "set_goal by", lambda: services.set_goal(user_id, new_goal, bad)
         for call in (services.get_entry, services.delete_entry, services.restore_entry):
@@ -351,12 +387,13 @@ def test_list_exercises_and_filters():
 
 # ---------------------------------------------------------------- texts name only functions Claude has
 
-# The sixteen functions Claude is offered in stage 4. A later stage extends this list.
+# The eighteen functions Claude is offered in stage 5. A later stage extends this list.
 OFFERED = ("whoami", "list_exercises", "get_progress", "get_log", "log_lifts", "log_bodyweight", "set_goal",
            "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
-           "find_food", "log_food", "save_food", "log_cardio")
+           "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals")
 # Functions that exist but Claude cannot call: every other public service function (get_entry,
-# set_claude_can, which is the Settings page's alone, and entry_kinds).
+# set_claude_can, which is the Settings page's alone, entry_kinds, and stage 5's web-only ones:
+# sample data, export, delete account, the Foods page's list).
 NOT_OFFERED = sorted({name for name in services.__all__ if callable(getattr(services, name))} - set(OFFERED))
 
 
@@ -457,6 +494,36 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
                                          "claude"),
                 services.delete_entry(user.id, "saved_food", roti["id"]),
                 services.get_log(user.id)]
+    # Stage 5: goals of every kind, their refusals, and the two new reads, with and without sample rows.
+    services.log_measurement(user.id, {"kind": "resting_hr", "value": 60}, "claude")
+    services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5}, "claude")
+    results += [goal(kind="measurement", measurement_kind="waist", target_value=80, target_date=day(user, 60)),
+                goal(kind="measurement", measurement_kind="resting_hr", target_value=55, target_date=day(user, 60)),
+                goal(kind="measurement", measurement_kind="steps", target_value=10000, target_date=day(user, 60)),
+                goal(kind="measurement", measurement_kind="hips", target_value=90, target_date=day(user, 60)),
+                goal(kind="measurement", target_value=80, target_date=day(user, 60)),
+                goal(kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=27,
+                     target_date=day(user, 60)),
+                goal(kind="cardio_best", exercise="Outdoor Run", distance_km=10, target_value=55,
+                     target_date=day(user, 60)),
+                goal(kind="cardio_best", exercise="Outdoor Run", target_value=27, target_date=day(user, 60)),
+                goal(kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=35,
+                     target_date=day(user, 60)),
+                goal(kind="sessions", target_value=4, target_date=day(user, 60)),
+                services.get_goals(user.id), services.get_goals(user.id, include_closed=True),
+                services.get_trends(user.id)]
+    with db.session_scope() as s:  # sample data needs an empty account: a second person's reads
+        from app.models import User
+        fresh = User(provider="workos", subject="user_texts_sample", created_at=db.utcnow(), updated_at=db.utcnow(),
+                     last_seen_at=db.utcnow())
+        s.add(fresh)
+        s.flush()
+        fresh_id = fresh.id
+    services.add_sample_data(fresh_id, "web")
+    results += [services.get_trends(fresh_id), services.get_goals(fresh_id), services.get_log(fresh_id),
+                services.get_progress(fresh_id), services.get_progress(fresh_id, "Outdoor Run"),
+                services.find_food(fresh_id, "roti")]
+    assert any(r.get("includes_sample") for r in results)
 
     assert any(r.get("duplicate") for r in results) and any(r.get("replaced") for r in results)
     assert any(g["status"] == "reached" for g in services.get_progress(user.id)["goals"])

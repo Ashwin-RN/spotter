@@ -6,6 +6,21 @@
   <h1>{% if on == today %}Today, {% endif %}{{ on.isoformat() }}</h1>
   {% if next_day %}<a href="/day/{{ next_day.isoformat() }}" rel="next">{{ next_day.isoformat() }} &rarr;</a>{% else %}<span></span>{% endif %}
 </div>
+{% include "sample_banner.html" %}
+
+{% if offer_sample %}
+<div class="card accent-border">
+  <h2>Nothing logged yet</h2>
+  <p>To see Spotter full before you log anything, add sample data: four weeks of lifts, weigh-ins, meals,
+    cardio, measurements and three goals. Every sample row is marked, and one button on Settings removes it all.</p>
+  <form method="post" action="/settings/sample">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="primary">Add sample data</button>
+  </form>
+</div>
+{% endif %}
+
+{% macro sample_tag(row) %}{% if row.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}{% endmacro %}
 
 {% if undo %}
 <div class="ok undo">
@@ -38,9 +53,10 @@
     <ul class="entries">
       {% for f in entries %}
       <li class="entry-line">
-        <span>{{ f.description }}{% if f.servings %} <span class="muted">× {{ kg(f.servings) }}</span>{% endif %}:
+        {# a saved food: its name, the servings, the serving in its own words (get_log's saved_food_name, serving_label) #}
+        <span>{% if f.saved_food_name %}{{ f.saved_food_name }}{% if f.servings %} × {{ kg(f.servings) }} <span class="muted">({{ serving_text(f.servings, f.serving_label) }})</span>{% endif %}{% if not same_name(f.description, f.saved_food_name) %} <span class="muted">{{ f.description }}</span>{% endif %}{% else %}{{ f.description }}{% if f.servings %} <span class="muted">× {{ kg(f.servings) }}</span>{% endif %}{% endif %}:
           <strong>{{ kg(f.kcal) }} kcal</strong>
-          <span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span></span>
+          <span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span>{{ sample_tag(f) }}</span>
         <span class="entry-actions">
           {% if f.source == "claude_estimate" %}
           <form method="post" action="/entries/food_entry/{{ f.id }}/confirm" class="inline">
@@ -93,7 +109,7 @@
   {% for session in day.sessions %}
   <div class="session">
     <div class="entry-line">
-      <strong>Session</strong>{% if session.notes %} <span class="muted">{{ session.notes }}</span>{% endif %}
+      <strong>Session</strong>{{ sample_tag(session) }}{% if session.notes %} <span class="muted">{{ session.notes }}</span>{% endif %}
       {{ actions("lift_session", session.id) }}
     </div>
     <table class="sets">
@@ -123,7 +139,7 @@
     <tbody>
     {% for c in cardio %}
     <tr>
-      <td>{{ c.exercise }}</td>
+      <td>{{ c.exercise }}{{ sample_tag(c) }}</td>
       <td>{{ kg(c.minutes) }}</td>
       <td>{% if c.distance_km is not none %}{{ kg(c.distance_km) }} km{% endif %}</td>
       <td>{% if c.pace %}{{ c.pace.min_per_km }} /km{% endif %}</td>
@@ -160,7 +176,7 @@
   <h2>Weigh-in</h2>
   {% if day.weigh_in %}
   <div class="entry-line">
-    <strong>{{ kg(day.weigh_in.kg) }} kg</strong>
+    <span><strong>{{ kg(day.weigh_in.kg) }} kg</strong>{{ sample_tag(day.weigh_in) }}</span>
     {{ actions("bodyweight", day.weigh_in.id) }}
   </div>
   {% else %}
@@ -182,7 +198,7 @@
   <ul class="entries">
     {% for m in day.measurements %}
     <li class="entry-line">
-      <span>{{ labels.get(m.kind, m.kind.replace("_", " ").capitalize()) }}: <strong>{{ kg(m.value) }} {{ m.unit }}</strong></span>
+      <span>{{ labels.get(m.kind, m.kind.replace("_", " ").capitalize()) }}: <strong>{{ kg(m.value) }} {{ m.unit }}</strong>{{ sample_tag(m) }}</span>
       {{ actions("measurement", m.id) }}
     </li>
     {% endfor %}

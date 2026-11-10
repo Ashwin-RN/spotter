@@ -169,6 +169,55 @@ def test_home_signed_in_links_to_settings(client):
     assert 'href="/settings"' in r.text and RESOURCE in r.text
 
 
+def home_steps(page: str) -> list[str]:
+    """The landing page's numbered steps, as plain text."""
+    steps = re.search(r'<ol class="steps">(.*?)</ol>', page, re.S).group(1)
+    items = re.split(r"\n    <li>", steps)[1:]
+    return [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", item)).strip() for item in items]
+
+
+COMMAND = f'<code class="link-box" id="claude-code-command">claude mcp add --transport http --scope user spotter {RESOURCE}</code>'
+
+
+def test_home_walks_a_newcomer_through_setup_in_six_steps(client):
+    page = client.get("/").text
+    steps = home_steps(page)
+    assert len(steps) == 6
+    starts = ["Sign in here.", "Connect Claude.", "Talk to it.", "What you get.", "Want to see it full first?",
+              "You decide what Claude may do."]
+    assert all(step.startswith(start) for step, start in zip(steps, starts)), steps
+    assert "The first sign-in creates your account." in steps[0] and 'href="/sign-in"' in page
+    assert "Customize, then Connectors, then \"+ Add\", then Add custom connector." in steps[1]
+    assert "Enter a name, such as Spotter" in steps[1] and "Continue" in steps[1] and "--scope user" in steps[1] and RESOURCE in steps[1]
+    assert COMMAND in page and "/mcp" in steps[1]
+    assert 'press "+" in the message box, then Connectors' in steps[2] and '"whoami"' in steps[2] and "Logged back squat, 3 sets of 5 at 60 kg" in steps[2]
+    assert "allow each call" in steps[2]
+    for name in ("Today", "Progress", "Goals", "Foods", "Settings"):
+        assert name in steps[3]
+    assert '"Add sample data" on Today' in steps[4]
+    assert "read only, log, or log and delete" in steps[5] and "It starts at log." in steps[5]
+    assert "<script" not in page
+
+
+def test_home_signed_in_keeps_the_connect_steps_and_the_pages(client):
+    sign_in(client)
+    page = client.get("/").text
+    steps = home_steps(page)
+    assert [s.split(".")[0] for s in steps] == ["Connect Claude", "Talk to it", "What you get"]
+    assert COMMAND in page and "Sign in here" not in page and "Add sample data" not in page
+    for path in ("/today", "/progress", "/goals", "/foods", "/settings"):
+        assert f'<dt><a href="{path}">' in page, path
+
+
+def test_home_shows_no_address_and_no_command_when_the_address_is_unset(provider, seam):
+    unconfigured = Settings(None, None, database_url=settings().database_url, **WEB)
+    with TestClient(create_app(unconfigured, fetch=provider.fetch), base_url=SITE, follow_redirects=False) as client:
+        page = client.get("/").text
+    assert "address is not set up" in page
+    assert "claude mcp add" not in page and "claude-code-command" not in page and "link-box" not in page
+    assert "/mcp" not in page and RESOURCE not in page
+
+
 # ---------------------------------------------------------------- sign-in
 
 def test_sign_in_redirects_to_the_provider_and_stores_the_state(client, seam):
@@ -400,8 +449,10 @@ def test_every_non_get_web_route_checks_the_token(client):
         "/sign-out", "/settings", "/settings/claude-can", "/day/{date}/weigh-in", "/day/{date}/measurement",
         "/entries/{kind}/{entry_id}/edit", "/entries/{kind}/{entry_id}/delete", "/entries/{kind}/{entry_id}/restore",
         "/day/{date}/food", "/day/{date}/cardio", "/foods", "/foods/{food_id}/edit", "/foods/{food_id}/delete",
-        "/foods/{food_id}/restore", "/settings/targets", "/entries/food_entry/{entry_id}/confirm"}
-    filled = {"{date}": "2026-11-09", "{kind}": "bodyweight", "{entry_id}": "1", "{food_id}": "1"}
+        "/foods/{food_id}/restore", "/settings/targets", "/entries/food_entry/{entry_id}/confirm",
+        "/goals", "/goals/{goal_id}/status", "/settings/sample", "/settings/sample/remove", "/settings/export",
+        "/settings/delete"}
+    filled = {"{date}": "2026-11-09", "{kind}": "bodyweight", "{entry_id}": "1", "{food_id}": "1", "{goal_id}": "1"}
     for route in posting:
         path = route.path
         for marker, value in filled.items():
@@ -1656,7 +1707,9 @@ def test_the_day_shows_food_by_meal_with_each_tag_and_the_numbers(client, fed):
     page = day_of(client, fed["today"])
     food = section(page, "Food")
     lunch = re.search(r'<h3>Lunch</h3>(.*?)</ul>', food, re.S).group(1)
-    assert re.search(r'Roti <span class="muted">× 2</span>:\s*<strong>240 kcal</strong>\s*'
+    # decision 14: the saved food's name, the servings, the serving in its own words; the description
+    # ("Roti", the name) is not shown twice
+    assert re.search(r'Roti × 2 <span class="muted">\(2 rotis\)</span>:\s*<strong>240 kcal</strong>\s*'
                      r'<span class="tag tag-saved_food">saved food</span>', lunch)
     assert re.search(r'Dal:\s*<strong>180 kcal</strong>\s*<span class="tag tag-claude_estimate">estimate</span>', lunch)
     breakfast = re.search(r'<h3>Breakfast</h3>(.*?)</ul>', food, re.S).group(1)

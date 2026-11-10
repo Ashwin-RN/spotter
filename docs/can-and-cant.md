@@ -13,7 +13,9 @@ from it. It knows nothing else.
 - **Saved foods:** foods the person eats often, with a serving and its calories.
 - **Cardio:** the activity, minutes, and distance, incline, speed, heart rate and the machine's
   calories when given.
-- **Goals:** a lift to reach (an estimated one-rep max) or a body weight to reach, by a date.
+- **Goals:** a target to reach by a date, of four kinds (below).
+- **Targets:** calories a day, lift sessions a week and cardio minutes a week. A weekly amount is a
+  target set with `update_settings`, not a goal: it has no start and no date.
 
 Exercise and cardio activity names come from one shared list. Use them exactly as `list_exercises`
 gives them.
@@ -28,10 +30,56 @@ gives them.
 - **A new best** beats every earlier set of that lift. A lift's first session has nothing to beat, so
   it sets the mark and is never a new best; `log_lifts` says so in its summary.
 - **Body weight now** is the 7-day average, or the latest weigh-in when the last 7 days have none.
+  Goals and calorie estimates use it.
 - **Trends and projections** are a straight line through the last 6 weeks. They need 4 points. They
   say where the line goes, not whether that pace is realistic.
 
 Quote these numbers. Do not work out your own.
+
+## Goals: four kinds
+
+Every goal has a start, a target, a date and a direction, and comes back in the same shape from
+`set_goal`, `get_goals` and `get_progress`.
+
+| Kind | Target | Unit | "Now" | Direction |
+|---|---|---|---|---|
+| `lift` | An estimated one-rep max | kg | The best session in the last 28 days, else the latest session's | Up |
+| `bodyweight` | A body weight | kg | Body weight now: the 7-day average, else the latest weigh-in | From the target against the start |
+| `measurement` | waist, hips, chest, arm, thigh or resting_hr | cm or bpm | The latest value of that kind | From the target against the start |
+| `cardio_best` | A time for a distance in one cardio activity | minutes | The best time for the distance in the last 28 days, else the latest | Down: faster |
+
+- **A goal starts from "now"** on the day it is set. With nothing logged, the person's own start value
+  is needed, in the goal's unit. A target equal to the start is refused.
+- **A measurement goal** is a size or a resting heart rate to reach once. Steps, sleep hours and water
+  are a day's amount, met every day, so they cannot be goals.
+- **A cardio_best time** counts a session at or over the goal's distance. Its time for the goal
+  distance is the session's pace times that distance: a 10 km run says something about a 5 km time;
+  a 3 km run does not.
+- **By the end of a month** means the last day of that month, the next one after today.
+- **Each open goal** shows the pace it needs per week against the pace so far, and one status:
+  reached, on track, behind, or not enough data.
+- **The projected date** is the day the trend line reaches the target, at the pace so far. It is null
+  when the line points away from the target, is flat, or reaches it more than 2 years from today.
+
+## Trends: how the person is doing
+
+`get_trends` answers "how am I doing?". `get_goals` answers "am I on track?".
+
+- **The smoothed weight trend** is an exponentially weighted moving average of the weigh-ins, with
+  alpha 0.1 (α 0.1): each weigh-in moves the line a tenth of the way from where it was. The chart on
+  Progress draws this line. "Body weight now" stays the 7-day average.
+- **The rate per week** comes from the smoothed line between two weigh-ins: the latest, dated in the
+  last 7 days, and the last one dated 14 to 42 days before today. Without both ends the rate is null,
+  and a note says which is missing.
+- **Calories a day** are averaged over the days with food logged, in the last 7 and the last 28 days,
+  with how much of it is Claude's estimates.
+- **Sessions and cardio** are the last 7 days against the weekly targets, and the weekly average over
+  the last 28 days.
+- **The maintenance estimate** needs food logged on at least 14 of the last 21 days, and weigh-ins in
+  the last 7 days and around 21 days ago. It is the average intake on the logged days, less the
+  weight change at 7,700 kcal a kg spread over the 21 days. Until then a note says what it still
+  needs. It is an estimate and it never sets the calorie target: what to do with it is the person's
+  call.
 
 ## Food: who supplied each number
 
@@ -45,6 +93,8 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 | `usda` | The USDA table | the USDA id and `grams`, no number |
 
 - A number never travels with an id: `kcal` with a saved or USDA food is refused with `invalid_field`.
+- **The count is an amount.** For a saved or USDA food the count goes in `servings` or `grams`, never
+  in the description. The description can be left out: it is then the food's name.
 - When `find_food` finds no match and the person gave no number, Claude may estimate, and must say so.
 - An estimate stays an estimate until the person states a number. Then Claude edits the entry's `kcal`
   and the tag becomes `you_said`.
@@ -95,6 +145,26 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
   together. Every write call counts, a refused one too (`not_allowed`, `too_many_writes` or any other
   error). Past the limit, a write is refused with `too_many_writes` and the minutes to wait. The
   person's own permission switch is not limited.
+- **The lookup limit.** `find_food` takes at most 120 lookups in any 10 minutes. Past it, a lookup is
+  refused with `too_many_reads` and the minutes to wait.
+
+## Sample data
+
+- An empty account can fill itself with four weeks of sample lifts, weigh-ins, meals, cardio,
+  measurements and three goals, from a button on Today. Every sample row is marked sample.
+- Sample rows never mix with the person's own. Every read whose numbers hold sample rows says so:
+  `includes_sample` is true and a note says they are sample data. Say so when quoting them.
+- The Remove sample data button on Settings removes every sample row at once.
+
+## Export and delete: the person's own clicks
+
+- Exporting the data (a zip of CSV files) and deleting the account are the person's own clicks on
+  Settings. No function does either. Claude never offers to do them, and says they are on Settings.
+- Deleting the account removes the sign-in and every row of the person's. It cannot be undone. The
+  call log keeps its counts, with no person on them.
+- A sign-in already given to Claude stays valid until it expires, an hour at most. A call in that
+  hour recreates an empty account for the deleted sign-in. It holds nothing, and no later sign-in
+  reaches it.
 
 ## What "today" means
 
@@ -110,7 +180,7 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 
 ## What Claude may do
 
-Sixteen functions, nothing else:
+Eighteen functions, nothing else:
 
 | Function | What it does |
 |---|---|
@@ -118,7 +188,7 @@ Sixteen functions, nothing else:
 | `list_exercises` | The exercise names to use. |
 | `log_lifts` | Records one lift session. |
 | `log_bodyweight` | Records one weigh-in. |
-| `set_goal` | Sets a lift or body weight goal, or changes or closes one. |
+| `set_goal` | Sets a goal of any of the four kinds, or changes or closes one. |
 | `get_progress` | Reads progress back: one lift over time, or every lift. |
 | `update_settings` | Sets the person's time zone and targets. |
 | `get_log` | What the person logged, day by day, for 1 to 14 days. |
@@ -130,12 +200,14 @@ Sixteen functions, nothing else:
 | `log_food` | Records what the person ate, every food in one call. |
 | `save_food` | Saves a food with its serving and calories, or updates one. |
 | `log_cardio` | Records one cardio session, with a calorie estimate. |
+| `get_trends` | How the person is doing: the weight trend and its rate, calories, sessions, cardio, maintenance. |
+| `get_goals` | Whether the person is on track: every open goal, its pace and its projected date. |
 
 `whoami` reports `claude_can`, the person's setting for what Claude may do:
 
 | Setting | Claude may |
 |---|---|
-| `read` | Read only: `whoami`, `list_exercises`, `get_progress`, `get_log`, `find_food`. |
+| `read` | Read only: `whoami`, `list_exercises`, `get_progress`, `get_log`, `find_food`, `get_trends`, `get_goals`. |
 | `log` (the default) | Read, and every write except `delete_entry`. |
 | `log_delete` | Everything, `delete_entry` too. |
 

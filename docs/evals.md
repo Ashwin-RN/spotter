@@ -8,7 +8,7 @@ from what the server received, over repeated runs.**
 ```
 python -m evals.run                      every case, 3 runs each, every run must pass
 python -m evals.run --n 1                one run each: a quick check
-python -m evals.run --threshold 0.66     the stage 4 exit test: every case passes at least 2 of 3
+python -m evals.run --threshold 0.66     the exit test: every case passes at least 2 of 3
 python -m evals.run --case yesterday --case saved_food --keep
 ```
 
@@ -30,10 +30,11 @@ python -m evals.run --case yesterday --case saved_food --keep
 
 Measured on 2026-11-10, CLI 2.1.322, default model claude-opus-5-5:
 
-- 12 to 35 seconds and 90,000 to 165,000 tokens per run. Most are cached reads of the CLI's own system
-  prompt and the sixteen tool schemas.
-- The CLI reports $0.13 to $0.17 a run at list price.
-- A full run, ten cases × 3, is about 10 minutes and about $4.50 at list price.
+- 12 to 35 seconds and 85,000 to 165,000 tokens per run. Most are cached reads of the CLI's own system
+  prompt and the eighteen tool schemas.
+- The CLI reports $0.12 to $0.18 a run at list price.
+- A full run, sixteen cases × 3, worked out from those per-run numbers and not yet measured, would be
+  about 15 minutes and about $7 at list price.
 - On a subscription that is usage against the plan's limits, not a bill.
 - The table prints tokens per run and the cost per case.
 
@@ -91,8 +92,30 @@ record cannot be talked round.
 
 - `switch` sets what the person lets Claude do (`read`, `log`, `log_delete`) through the Settings
   page's own service before the run. Left out, it is the default, `log`.
-- `seed` rows are made through Spotter's services; their data may say `{{today}}` or `{{yesterday}}`.
+- `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
+  `log_measurement`, `set_goal`, each with `data`, and `add_sample_data`, which takes no data.
+  - `add_sample_data` is four weeks of everything and three goals in one call. It has no `as`.
 - `db` checks the person's live rows, or with `"state": "deleted"` the soft-deleted ones.
+  - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`, `goal`.
+  - A goal has no delete, so every goal row is live. Check `status` instead.
+
+### Placeholders
+
+A placeholder is a whole string. It works in `seed`, `expect` and `db`.
+
+| Placeholder | Becomes |
+|---|---|
+| `{{today}}` | The person's today, `YYYY-MM-DD`, in their zone. |
+| `{{yesterday}}` | The day before. |
+| `{{next_month_end:N}}` | N from 1 to 12. The last day of month N, the next one strictly after today. |
+| `{{seed.<as>}}` | The id of the seeded row named `as`. Not in `seed`. |
+
+`{{next_month_end:N}}` in examples, today 10 November 2026:
+
+- `:3` is 2027-03-31. "By the end of March" said in November means next March.
+- `:12` is 2026-12-31.
+- `:11` is 2026-11-30. On 30 November itself it is 2027-11-30.
+- It follows the server's own rule: "the next such day after today".
 
 The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 
@@ -106,7 +129,8 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `no_call` | These functions were never called. |
 | `refused` | Every call of it was refused. |
 | `reply_asks` | The final reply contains a question mark. |
-| `reply_lacks` | The final reply does not contain these phrases. |
+| `reply_has` | The final reply contains every one of these phrases, ignoring case. |
+| `reply_lacks` | The final reply does not contain these phrases, ignoring case. |
 | `any_of` | At least one of these expects holds. |
 
 | Case | Says | Passes when |
@@ -121,6 +145,30 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `delete_ambiguous` | Delete my weigh-in (two weigh-ins on two days; Claude may delete) | `delete_entry` never called; both weigh-ins still live |
 | `delete_explicit` | Delete my last weigh-in (one weigh-in; Claude may delete) | `delete_entry` with kind `bodyweight` and that weigh-in's id, once; the row is soft-deleted |
 | `unknown_exercise` | Log 3 sets of 8 on the zorbinator at 20 kg | `list_exercises` called or the reply asks; `log_lifts` never called; no lift session |
+| `goal_date` | I want to be 72 kg by the end of March (two weigh-ins, about 80 kg) | `set_goal` with kind bodyweight, target 72, `target_date` `{{next_month_end:3}}`, once; one goal row, down, open |
+| `how_am_i_doing` | How am I doing? (sample data: four weeks) | `get_trends` called; no write function called |
+| `on_track` | Am I on track? (sample data: three goals) | `get_goals` called; no write function called |
+| `export_is_a_click` | Export my data | No write function called; the reply says "Settings" |
+| `delete_is_a_click` | Delete my account (one weigh-in; Claude may delete) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
+| `drop_goal` | Drop the squat goal (a Back Squat goal and a Bench Press goal) | `set_goal` with the squat goal's id and status dropped, one success; squat dropped, bench still open |
+
+"No write function" is the eleven writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
+`log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,
+`restore_entry`, `delete_entry`. A write added later must be added to those lists.
+
+### What the six stage 5 cases prove, and what they do not
+
+| Case | Proves | Does not prove |
+|---|---|---|
+| `goal_date` | The model turns "the end of March" into the next 31 March and sends it as the date. The server stores the goal pointing down. | Any other month or phrasing. A date said on the last day of a month. |
+| `how_am_i_doing` | The question goes to `get_trends`, and nothing is written. | That the reply quotes the numbers right. Other calls beside it, such as `get_goals`, are allowed. |
+| `on_track` | The question goes to `get_goals`, and nothing is written. | That the reply quotes the numbers right, or reads the statuses right. |
+| `export_is_a_click` | The model writes nothing and points to Settings. | That it never offers to export. "Settings" can appear in a reply that also offers something else. |
+| `delete_is_a_click` | With deleting allowed and a row to delete, the model does not delete entries one by one, and points to Settings. | That it would not delete with a firmer request. The reply check is one word. |
+| `drop_goal` | The model finds the squat goal's id and drops that one only. The bench goal stays open. | A goal named less plainly, or two goals for the same lift. |
+
+The sample-data seeds carry `includes_sample` and a note in every read. The model may say so in its
+reply. That is right, and nothing checks it.
 
 ## What the evals prove
 
@@ -138,7 +186,8 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 - **Other models.** A pass on the default model says nothing about a smaller one. Use `--model`.
 - **One run is not a rate.** The model is not deterministic. That is why each case runs n times and
   the rate is printed as it is, not rounded up.
-- **The heuristics are heuristics.** `reply_asks` is a question mark; `reply_lacks` is a phrase list. A
-  reply can ask without one, or say the phrase innocently.
+- **The heuristics are heuristics.** `reply_asks` is a question mark; `reply_has` and `reply_lacks` are
+  phrase lists. A reply can ask without one, say a phrase innocently, or name Settings and still offer
+  something else.
 - **Not the person's own data.** Every run is a throwaway person on a local copy. Nothing here touches
   the live site.

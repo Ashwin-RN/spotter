@@ -71,4 +71,14 @@ svg.chart .projection { stroke: var(--accent); stroke-width: 2; opacity: .8; }
 .tag { display: inline-block; font-size: .78rem; border-radius: 999px; padding: 0 .45rem; border: 1px solid var(--line); color: var(--muted); }
 .tag-claude_estimate { border-color: #d97706; color: #92400e; background: #fffbeb; font-weight: 600; }
 dl.totals { margin-top: .75rem; }
+.tag-sample { border-color: #a5b4fc; color: #3730a3; background: #eef2ff; }
+.tag-good { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.tag-behind { border-color: #d97706; color: #92400e; background: #fffbeb; }
+.sample-banner { margin: 0 0 1rem; }
+ul.goals li { padding: .5rem 0; }
+button.danger { background: var(--err); }
+form + form, form + p { margin-top: 1rem; }
+ol.steps { padding-left: 1.25rem; margin: 0; }
+ol.steps > li { margin-bottom: 1rem; }
+ol.steps > li p { margin: .25rem 0; }
 .attribution { max-width: 960px; margin: 0 auto; padding: 0 1rem 1.5rem; color: var(--muted); font-size: .8rem; }

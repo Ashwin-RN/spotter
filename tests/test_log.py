@@ -31,7 +31,8 @@ def test_one_day_by_default_with_the_contracts_shape(user):
     w = services.log_bodyweight(user.id, {"kg": 80}, "web")
     m = services.log_measurement(user.id, {"kind": "waist", "value": 84}, "web")
     r = services.get_log(user.id)
-    assert set(r) == {"from", "to", "days", "totals", "summary", "links"}
+    assert set(r) == {"from", "to", "days", "totals", "includes_sample", "summary", "links"}
+    assert r["includes_sample"] is False
     assert r["from"] == r["to"] == day(user, 0) and len(r["days"]) == 1
     only = r["days"][0]
     assert set(only) == {"date", "sessions", "weigh_in", "measurements", "food", "cardio"}
@@ -146,3 +147,20 @@ def test_each_day_has_its_food_by_meal_and_its_cardio(make_user):
     assert r["totals"]["food_entries"] == 3 and r["totals"]["cardio_entries"] == 1
     assert "3 food entries, 1 cardio session." in r["summary"]
     assert r["days"][0]["food"]["total_kcal"] == 0
+
+
+# ---------------------------------------------------------------- stage 5: sample rows say so (rule 16)
+
+def test_get_log_says_when_sample_rows_are_shown_and_only_then(user, monkeypatch):
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc))
+    assert "error" not in services.add_sample_data(user.id, "web")
+    r = services.get_log(user.id, days=3)
+    assert r["includes_sample"] is True and "Remove sample data button on Settings" in r["note"]
+    # Days before the sample window show none of it.
+    earlier = services.get_log(user.id, date="2026-10-13", days=14)
+    assert earlier["includes_sample"] is False and "note" not in earlier
+    # A deleted sample row is not shown, so it does not count.
+    services.remove_sample_data(user.id, "web")
+    services.log_bodyweight(user.id, {"kg": 80}, "web")
+    plain = services.get_log(user.id)
+    assert plain["includes_sample"] is False and "note" not in plain

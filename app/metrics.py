@@ -14,8 +14,9 @@ Strength
       The highest Epley estimate among one session's sets of one lift.
   prs(prior_sets, session_sets) -> [{"kind": "estimated_max" | "weight", "value", "previous"}]
       New bests for one lift against every earlier set of it. [] when there is no earlier set.
-  recent_best(points: [(date, value)], today, days=28) -> float | None
+  recent_best(points: [(date, value)], today, days=28, lower_is_better=False) -> float | None
       A lift's current estimated max: the best session in the last 28 days, else the latest session.
+      lower_is_better: the lowest instead (a cardio time for a distance).
 
 Cardio
   cardio_kcal(met, weight_kg, minutes) -> int      MET x 3.5 x kg / 200 x minutes, whole kcal
@@ -30,8 +31,11 @@ Training days
 Trends
   projection(points: [(date, value)], today, goal_target=None, goal_date=None, lower_is_better=False,
              current=None)
-      -> {"slope_per_week", "projected", "status", "points_used", "latest", "weeks_left", "needed_per_week"} | None
+      -> {"slope_per_week", "projected", "projected_date", "status", "points_used", "latest", "weeks_left",
+          "needed_per_week"} | None
       status: "reached", "on track" or "behind". current replaces the last point as "where the person is now".
+      projected_date: the day the line reaches the target (ISO), or None.
+  projected_date(...) -> date | None              the day a fitted line reaches a target
   projection_gap(points, today) -> str | None     why there is no line, in words
   reached(value, target, lower_is_better), weeks_left(goal_date, today),
   needed_per_week(current, target, goal_date, today, lower_is_better)
@@ -39,8 +43,18 @@ Trends
   bodyweight_now(weigh_ins: [(date, kg)], today) -> float | None
       The 7-day average ending today, else the latest weigh-in.
   bodyweight_trend(weigh_ins: [(date, kg)], today) -> dict | None
+
+Smoothed weight and what it says
+  ewma(points: [(date, kg)], today, alpha=0.1) -> [(date, smoothed)]
+      The exponentially weighted moving average over the weigh-ins in the one order, 2 dp.
+  trend_rate(smoothed: [(date, smoothed)], today) -> {"per_week", "from", "to", "days"} | None
+  trend_rate_gap(smoothed, today) -> str | None   why there is no rate, in words
+  maintenance(intake_by_day: [(date, kcal)], weigh_ins: [(date, kg)], today) -> dict | None
+      Intake average less the weight change in kcal, over the 21 days ending today.
+  maintenance_gap(intake_by_day, weigh_ins, today) -> str | None   why there is no estimate, in words
 """
 
+import math
 from datetime import date, timedelta
 
 EPLEY_MAX_REPS = 10
@@ -51,6 +65,13 @@ TARGET_MAX_WEEKS = 4
 BODYWEIGHT_AVG_DAYS = 7
 BODYWEIGHT_COMPARE_DAYS = 28
 WEEKLY_CHART_WEEKS = 8
+EWMA_ALPHA = 0.1
+RATE_LATEST_DAYS = 7            # the rate's latest weigh-in: dated in the 7 days ending today
+RATE_REFERENCE_DAYS = (14, 42)  # its reference: the last weigh-in dated 14 to 42 days before today
+MAINTENANCE_DAYS = 21
+MAINTENANCE_MIN_LOGGED = 14
+KCAL_PER_KG = 7700
+PROJECTED_MAX_DAYS = 2 * 365    # a projected date further out than this is not information
 
 
 def on_or_before(d: date, today: date) -> date:
@@ -104,10 +125,12 @@ def session_best(sets: list[tuple[float, int]]) -> float | None:
     return max(values) if values else None
 
 
-def recent_best(points: list[tuple[date, float]], today: date, days: int = RECENT_BEST_DAYS) -> float | None:
+def recent_best(points: list[tuple[date, float]], today: date, days: int = RECENT_BEST_DAYS,
+                lower_is_better: bool = False) -> float | None:
     """A lift's current estimated max: the best session estimated max in the `days` days ending
     today (today-27 .. today by default). When no session is that recent, the latest session's
     value. None with no points. A point after today counts as today.
+    lower_is_better: the best is the lowest (a cardio time for a distance).
 
     One light session does not pull it down, and a best from months ago does not hold it up."""
     pts = in_order(points, today)
@@ -115,7 +138,9 @@ def recent_best(points: list[tuple[date, float]], today: date, days: int = RECEN
         return None
     start = today - timedelta(days=days - 1)
     recent = [v for d, v in pts if on_or_before(d, today) >= start]
-    return max(recent) if recent else pts[-1][1]
+    if not recent:
+        return pts[-1][1]
+    return min(recent) if lower_is_better else max(recent)
 
 
 def max_weight(sets: list[tuple[float, int]]) -> float | None:
@@ -266,7 +291,8 @@ def projection(points: list[tuple[date, float]], today: date, goal_target: float
       "behind"    neither
     weeks_left = (goal_date - today) in weeks, 1 dp; 0 when goal_date is today or past.
     needed_per_week = needed_per_week(latest, ...): 0 once reached; None when weeks_left is 0.
-    Without a goal: projected, status, weeks_left and needed_per_week are None.
+    projected_date = projected_date(...) from the same line, as an ISO date or None.
+    Without a goal: projected, projected_date, status, weeks_left and needed_per_week are None.
     """
     start = today - timedelta(days=PROJECTION_DAYS)
     # In the one order (in_order), each placed on the line at its effective date.
@@ -281,12 +307,14 @@ def projection(points: list[tuple[date, float]], today: date, goal_target: float
     slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
     intercept = my - slope * mx
     latest = current if current is not None else ys[-1]
-    out = {"slope_per_week": round(slope * 7, 2), "projected": None, "status": None,
+    out = {"slope_per_week": round(slope * 7, 2), "projected": None, "projected_date": None, "status": None,
            "points_used": n, "latest": latest, "weeks_left": None, "needed_per_week": None}
     if goal_target is None or goal_date is None:
         return out
     projected = round(intercept + slope * (goal_date - x0).days, 2)
     out["projected"] = projected
+    when = projected_date(slope, intercept, x0, goal_target, today, lower_is_better)
+    out["projected_date"] = when.isoformat() if when else None
     if reached(latest, goal_target, lower_is_better):
         out["status"] = "reached"
     else:
@@ -294,6 +322,28 @@ def projection(points: list[tuple[date, float]], today: date, goal_target: float
     out["weeks_left"] = weeks_left(goal_date, today)
     out["needed_per_week"] = needed_per_week(latest, goal_target, goal_date, today, lower_is_better)
     return out
+
+
+def projected_date(slope_per_day: float, intercept: float, x0: date, target: float, today: date,
+                   lower_is_better: bool = False) -> date | None:
+    """The day a fitted line (value = intercept + slope_per_day x days since x0) reaches the target.
+
+    None in three cases:
+      flat      the slope rounds to 0.00 a week, the figure the person is shown
+      away      the line moves the wrong way for the goal (up when lower is better, down otherwise)
+      too far   the day is more than 2 years (730 days) after today
+    The day is the first whole day on which the line is at or past the target. A line already at or
+    past it today gives today, not a day in the past: it is a projection, never a history.
+    """
+    if round(slope_per_day * 7, 2) == 0:
+        return None
+    if (slope_per_day > 0) == lower_is_better:
+        return None
+    now = intercept + slope_per_day * (today - x0).days
+    if reached(now, target, lower_is_better):
+        return today
+    days = math.ceil(round((target - now) / slope_per_day, 6))
+    return today + timedelta(days=days) if days <= PROJECTED_MAX_DAYS else None
 
 
 def projection_gap(points: list[tuple[date, float]], today: date) -> str | None:
@@ -358,3 +408,109 @@ def bodyweight_trend(weigh_ins: list[tuple[date, float]], today: date) -> dict |
     elif len(pts) >= 2:
         out.update(method="simple change", change_kg=round(pts[-1][1] - pts[0][1], 2))
     return out
+
+
+# ---------------------------------------------------------------- smoothed weight, rate, maintenance
+
+def ewma(points: list[tuple[date, float]], today: date, alpha: float = EWMA_ALPHA) -> list[tuple[date, float]]:
+    """The smoothed weight: an exponentially weighted moving average over the weigh-ins in the one
+    order (in_order). s0 = w0; si = s(i-1) + alpha x (wi - s(i-1)).
+
+    Each step carries the unrounded value forward; each value returned is rounded to 2 dp. So 80, 81,
+    79 gives 80.0, 80.1 (80 + 0.1 x 1), 79.99 (80.1 + 0.1 x -1.1). One point per weigh-in, each with
+    its real date. [] with none."""
+    out, smoothed = [], None
+    for d, kg in in_order(points, today):
+        smoothed = kg if smoothed is None else smoothed + alpha * (kg - smoothed)
+        out.append((d, round(smoothed, 2)))
+    return out
+
+
+def _rate_ends(smoothed: list[tuple[date, float]], today: date):
+    """(latest, reference) for trend_rate, each (date, smoothed) or None."""
+    pts = in_order(smoothed, today)
+    latest = pts[-1] if pts and on_or_before(pts[-1][0], today) >= today - timedelta(days=RATE_LATEST_DAYS - 1) \
+        else None
+    near, far = RATE_REFERENCE_DAYS
+    window = [p for p in pts if today - timedelta(days=far) <= on_or_before(p[0], today) <= today - timedelta(days=near)]
+    return latest, (window[-1] if window else None)
+
+
+def trend_rate(smoothed: list[tuple[date, float]], today: date) -> dict | None:
+    """How fast the smoothed weight moves, in kg a week, 2 dp, signed.
+
+    Two ends, both read from the smoothed line (ewma's output):
+      to    the latest weigh-in (last in the one order), which must be dated in the 7 days ending today
+      from  the last weigh-in dated 14 to 42 days before today
+    per_week = (smoothed at "to" - smoothed at "from") / days between x 7. A date after today counts as
+    today. Returns {per_week, from, to, days} with real ISO dates, or None without both ends."""
+    latest, reference = _rate_ends(smoothed, today)
+    if latest is None or reference is None:
+        return None
+    days = (on_or_before(latest[0], today) - on_or_before(reference[0], today)).days
+    return {"per_week": round((latest[1] - reference[1]) / days * 7, 2) + 0.0,
+            "from": reference[0].isoformat(), "to": latest[0].isoformat(), "days": days}
+
+
+def trend_rate_gap(smoothed: list[tuple[date, float]], today: date) -> str | None:
+    """Why trend_rate gives no rate, in words; None when it gives one."""
+    latest, reference = _rate_ends(smoothed, today)
+    near, far = RATE_REFERENCE_DAYS
+    if latest is None and reference is None:
+        return (f"The weekly rate needs a weigh-in in the last {RATE_LATEST_DAYS} days and one from {near} to "
+                f"{far} days ago.")
+    if latest is None:
+        return f"The weekly rate needs a weigh-in in the last {RATE_LATEST_DAYS} days."
+    if reference is None:
+        return f"The weekly rate needs a weigh-in from {near} to {far} days ago."
+    return None
+
+
+def _days_logged(intake_by_day: list[tuple[date, float]], today: date) -> dict[date, float]:
+    """Each logged day in the 21 days ending today, with its total. A day after today counts as today."""
+    start = today - timedelta(days=MAINTENANCE_DAYS - 1)
+    days: dict[date, float] = {}
+    for d, kcal in _aged(intake_by_day, today):
+        if d >= start:
+            days[d] = days.get(d, 0) + kcal
+    return days
+
+
+def _weight_change(weigh_ins: list[tuple[date, float]], today: date) -> float | None:
+    aged = _aged(weigh_ins, today)
+    now = bodyweight_average(aged, today)
+    then = bodyweight_average(aged, today - timedelta(days=MAINTENANCE_DAYS))
+    return None if now is None or then is None else round(now - then, 2) + 0.0
+
+
+def maintenance(intake_by_day: list[tuple[date, float]], weigh_ins: list[tuple[date, float]],
+                today: date) -> dict | None:
+    """What the person eats to stay the same weight, estimated from their own logs.
+
+    Over the 21 days ending today (today-20 .. today), with food logged on at least 14 of them:
+      kcal = intake average over the logged days - (weight change x 7,700 / 21), whole kcal
+    weight change = the 7-day average ending today - the 7-day average ending 21 days ago
+    (today-27 .. today-21), both needed. intake_by_day: (date, kcal) for each day with at least one live
+    food entry; several on one date are added up. It never sets the calorie target: the person decides.
+    Returns {kcal, intake_avg_kcal, weight_change_kg, days_logged, window_days, from, to} or None."""
+    days = _days_logged(intake_by_day, today)
+    change = _weight_change(weigh_ins, today)
+    if len(days) < MAINTENANCE_MIN_LOGGED or change is None:
+        return None
+    intake = sum(days.values()) / len(days)
+    return {"kcal": int(round(intake - change * KCAL_PER_KG / MAINTENANCE_DAYS)),
+            "intake_avg_kcal": int(round(intake)), "weight_change_kg": change, "days_logged": len(days),
+            "window_days": MAINTENANCE_DAYS,
+            "from": (today - timedelta(days=MAINTENANCE_DAYS - 1)).isoformat(), "to": today.isoformat()}
+
+
+def maintenance_gap(intake_by_day: list[tuple[date, float]], weigh_ins: list[tuple[date, float]],
+                    today: date) -> str | None:
+    """Why maintenance gives no estimate, in words; None when it gives one. Food first: it is the
+    longer wait."""
+    logged = len(_days_logged(intake_by_day, today))
+    if logged < MAINTENANCE_MIN_LOGGED:
+        return f"Needs food logged on {MAINTENANCE_MIN_LOGGED - logged} more of the last {MAINTENANCE_DAYS} days."
+    if _weight_change(weigh_ins, today) is None:
+        return f"Needs weigh-ins in the last 7 days and around {MAINTENANCE_DAYS} days ago."
+    return None

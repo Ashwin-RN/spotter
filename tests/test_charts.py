@@ -3,15 +3,16 @@
 import xml.etree.ElementTree as ET
 from datetime import timedelta
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app import db, services, users
+from app import db, metrics, services, users
 from app.charts import bodyweight_svg, chart_svg
 from app.metrics import bodyweight_average
 from app.models import Goal
 from app.services import body, lifts
-from app.services.goals import goal_numbers
+from app.services.goals import goal_numbers, load_numbers
 from app.services.progress import bodyweight_chart, lift_chart
 
 SVG = "{http://www.w3.org/2000/svg}"
@@ -78,6 +79,52 @@ def test_the_element_id_and_the_description_are_escaped():
     assert "behind" not in desc and "a < b & c" in desc
 
 
+WEIGHED = {"points": [{"date": "2026-10-01", "kg": 80.0, "smoothed": 80.0},
+                      {"date": "2026-10-02", "kg": 81.0, "smoothed": 80.1},
+                      {"date": "2026-10-03", "kg": 79.0, "smoothed": 79.99}],
+           "average": [{"date": "2026-10-01", "kg": 80.0}, {"date": "2026-10-02", "kg": 80.5},
+                       {"date": "2026-10-03", "kg": 80.0}],
+           "latest": {"date": "2026-10-03", "kg": 79.0}, "goal": None}
+
+
+def polyline_values(root, chart) -> list[float]:
+    """The kg each point of the chart's one line stands for, read back from its y positions."""
+    [line] = list(root.iter(f"{SVG}polyline"))
+    ys = [float(pair.split(",")[1]) for pair in line.get("points").split()]
+    dots = {float(c.get("cy")): float(c.find(f"{SVG}title").text.split(": ")[1].split()[0])
+            for c in root.iter(f"{SVG}circle")}
+    (y1, v1), (y2, v2) = sorted(dots.items())[:2]  # two dots fix the scale
+    return [round(v1 + (y - y1) * (v2 - v1) / (y2 - y1), 2) for y in ys]
+
+
+def test_the_bodyweight_line_is_the_smoothed_trend_not_the_average():
+    root = ET.fromstring(str(bodyweight_svg(WEIGHED)))
+    [line] = list(root.iter(f"{SVG}polyline"))
+    assert line.get("class") == "series smoothed"
+    assert polyline_values(root, WEIGHED) == [80.0, 80.1, 79.99]  # the smoothed values, not 80, 80.5, 80
+    desc = root.find(f"{SVG}desc").text
+    assert "The line is the smoothed trend, now 79.99 kg." in desc and "7-day average" not in desc
+    assert len(list(root.iter(f"{SVG}circle"))) == 3  # every weigh-in is still a dot
+
+
+def test_no_line_without_two_smoothed_points():
+    bare = {**WEIGHED, "points": [{k: v for k, v in p.items() if k != "smoothed"} for p in WEIGHED["points"]]}
+    one = {**WEIGHED, "points": [WEIGHED["points"][0], *bare["points"][1:]]}
+    nulls = {**WEIGHED, "points": [{**p, "smoothed": None} for p in WEIGHED["points"]]}
+    for chart in (bare, one, nulls):
+        root = ET.fromstring(str(bodyweight_svg(chart)))
+        assert root.find(f"{SVG}polyline") is None and len(list(root.iter(f"{SVG}circle"))) == 3
+        assert "smoothed" not in root.find(f"{SVG}desc").text
+
+
+def test_the_smoothed_line_stays_inside_the_plot():
+    far = {**WEIGHED, "points": [{**p, "smoothed": s} for p, s in zip(WEIGHED["points"], (70.0, 90.0, 80.0))]}
+    root = ET.fromstring(str(bodyweight_svg(far)))
+    ys = [float(pair.split(",")[1]) for pair in root.find(f"{SVG}polyline").get("points").split()]
+    grid = [float(el.get("y1")) for el in root.iter(f"{SVG}line") if el.get("class") == "grid"]
+    assert all(min(grid) <= y <= max(grid) for y in ys)
+
+
 # ---------------------------------------------------------------- the data, from the services
 
 def day(user, offset):
@@ -91,7 +138,8 @@ def numbers_for(user):
         weighed = body.weigh_ins(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                .options(selectinload(Goal.exercise))))
-        return history, weighed, goals, goal_numbers(goals, history, weighed, today), today
+        loaded = load_numbers(s, user.id, today, goals, lift_history=history)
+        return history, weighed, goals, goal_numbers(goals, loaded, today), today
 
 
 def test_the_lift_chart_follows_the_goal_lift_and_draws(make_user):
@@ -131,6 +179,18 @@ def test_the_bodyweight_chart_for_a_weight_loss_goal(make_user):
     root = ET.fromstring(svg)
     assert root.get("id") == "bodyweight-chart" and root.find(f"{SVG}title").text == "Body weight over time"
     assert "Goal 82 kg" in svg and len(list(root.iter(f"{SVG}circle"))) == 6
+
+
+def test_the_real_chart_data_carries_the_smoothed_line(make_user):
+    user = make_user()
+    for days_ago, kg in ((20, 88), (15, 87.2), (10, 86.5), (5, 86), (0, 85.5)):
+        services.log_bodyweight(user.id, {"kg": kg, "date": day(user, -days_ago)}, "claude")
+    _, weighed, goals, _, today = numbers_for(user)
+    chart = bodyweight_chart(weighed, goals, today)
+    assert [p["smoothed"] for p in chart["points"]] == [s for _, s in metrics.ewma(
+        [(b.date, b.kg) for b in weighed], today)]
+    root = ET.fromstring(str(bodyweight_svg(chart)))
+    assert polyline_values(root, chart) == [p["smoothed"] for p in chart["points"]]
 
 
 def test_no_bodyweight_chart_under_two_weigh_ins(make_user):

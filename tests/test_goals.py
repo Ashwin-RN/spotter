@@ -337,6 +337,291 @@ def test_set_goal_query_count(user):
     assert "error" not in r and count[0] <= 15, count[0]
 
 
+# ---------------------------------------------------------------- stage 5: four kinds, one shape
+
+SHAPE = {"goal_id", "label", "kind", "exercise", "measurement_kind", "distance_km", "unit", "start_value",
+         "start_date", "direction", "target_value", "target_date", "latest", "status", "needed_per_week",
+         "actual_per_week", "projected_date", "projection", "note", "is_sample"}
+
+
+def measure(user, days_ago, kind, value):
+    r = services.log_measurement(user.id, {"kind": kind, "value": value, "date": day(user, -days_ago)}, "claude")
+    assert "error" not in r, r
+
+
+def run(user, days_ago, km, minutes, activity="Outdoor Run"):
+    r = services.log_cardio(user.id, {"exercise": activity, "minutes": minutes, "distance_km": km,
+                                      "date": day(user, -days_ago)}, "claude")
+    assert "error" not in r, r
+
+
+def test_a_measurement_goal_by_hand(user):
+    # Waist 90, 89, 88, 87 a week apart: the latest is 87, the line falls 1 cm a week.
+    for days_ago, cm in ((21, 90), (14, 89), (7, 88), (0, 87)):
+        measure(user, days_ago, "waist", cm)
+    r = goal(user, kind="measurement", measurement_kind="Waist", target_value=80, target_date=day(user, 56))
+    assert "error" not in r, r
+    g, p = r["goal"], r["progress"]
+    assert g["measurement_kind"] == "waist" and g["unit"] == "cm" and g["start_value"] == 87
+    assert g["direction"] == "down" and g["exercise"] is None
+    assert set(p) == SHAPE and p["label"] == "Waist 80 cm" and p["measurement_kind"] == "waist"
+    # needed: (80 - 87) / 8 weeks = -0.875 -> -0.88. Actual: -1 a week. 7 cm at 1 a week: 49 days.
+    assert p["latest"] == 87 and p["needed_per_week"] == -0.88 and p["actual_per_week"] == -1.0
+    assert p["status"] == "on track" and p["projected_date"] == day(user, 49)
+    assert p["projection"]["projected_date"] == p["projected_date"]
+    assert services.get_goals(user.id)["goals"] == [p]
+    assert services.get_progress(user.id)["goals"] == [p]
+
+
+def test_resting_heart_rate_is_a_whole_number_goal_in_bpm(user):
+    measure(user, 3, "resting_hr", 64)
+    r = goal(user, kind="measurement", measurement_kind="resting hr", target_value=58, target_date=day(user, 60))
+    assert r["goal"]["unit"] == "bpm" and r["progress"]["label"] == "Resting heart rate 58 bpm"
+    assert r["progress"]["status"] == "not enough data" and r["progress"]["needed_per_week"] < 0
+    half = goal(user, kind="measurement", measurement_kind="resting_hr", target_value=58.5, target_date=day(user, 60))
+    assert half["error"] == "invalid_field" and "whole number" in half["message"]
+    low = goal(user, kind="measurement", measurement_kind="resting_hr", target_value=10, target_date=day(user, 60))
+    assert low["error"] == "invalid_field" and "20 to 250" in low["fix"] and "bpm" in low["fix"]
+
+
+def test_a_measurement_goal_points_either_way_and_equal_is_refused(user):
+    measure(user, 2, "arm", 35)
+    assert goal(user, kind="measurement", measurement_kind="arm", target_value=38,
+                target_date=day(user, 60))["goal"]["direction"] == "up"
+    same = goal(user, kind="measurement", measurement_kind="arm", target_value=35, target_date=day(user, 60))
+    assert same["error"] == "target_is_start" and "(the latest arm, on" in same["message"] and "cm" in same["fix"]
+    # The latest in the one order, not the lowest or the first.
+    measure(user, 1, "arm", 36)
+    assert goal(user, kind="measurement", measurement_kind="arm", target_value=40,
+                target_date=day(user, 60))["goal"]["start_value"] == 36
+
+
+@pytest.mark.parametrize("daily", ["steps", "sleep_hours", "water ml"])
+def test_a_days_amount_is_not_a_goal(user, daily):
+    r = goal(user, kind="measurement", measurement_kind=daily, target_value=10, target_date=day(user, 30))
+    assert r["error"] == "invalid_field" and "day's amount" in r["message"]
+    assert "waist, hips, chest, arm, thigh, resting_hr" in r["fix"]
+
+
+def test_a_measurement_goal_needs_its_kind_and_a_start(user):
+    missing = goal(user, kind="measurement", target_value=80, target_date=day(user, 30))
+    assert missing["error"] == "missing_field" and "measurement_kind" in missing["message"]
+    wrong = goal(user, kind="measurement", measurement_kind="wrist", target_value=80, target_date=day(user, 30))
+    assert wrong["error"] == "invalid_kind" and "waist" in wrong["fix"]
+    none_yet = goal(user, kind="measurement", measurement_kind="hips", target_value=95, target_date=day(user, 30))
+    assert none_yet["error"] == "missing_field" and "log_measurement" in none_yet["fix"] and "cm" in none_yet["fix"]
+    given = goal(user, kind="measurement", measurement_kind="hips", target_value=95, start_value=100,
+                 target_date=day(user, 30))
+    assert given["goal"]["start_value"] == 100 and given["goal"]["direction"] == "down"
+    out_of_range = goal(user, kind="measurement", measurement_kind="hips", target_value=500, target_date=day(user, 30))
+    assert out_of_range["error"] == "invalid_field" and "30 to 300" in out_of_range["fix"]
+
+
+def test_a_cardio_best_goal_by_hand(user):
+    # 5 km runs a week apart: 31, 30.5, 30, then a 10 km in 58 (5:48 a km, so 29 for 5 km). A 3 km run says
+    # nothing about a 5 km time and is left out. Times for 5 km: 31, 30.5, 30, 29 -> best in 28 days: 29.
+    run(user, 21, 5, 31)
+    run(user, 14, 5, 30.5)
+    run(user, 7, 5, 30)
+    run(user, 2, 3, 15)
+    run(user, 0, 10, 58)
+    r = goal(user, kind="cardio_best", exercise="outdoor run", distance_km=5, target_value=27, target_date=day(user, 56))
+    assert "error" not in r, r
+    g, p = r["goal"], r["progress"]
+    assert g["unit"] == "min" and g["distance_km"] == 5 and g["direction"] == "down" and g["start_value"] == 29
+    assert set(p) == SHAPE and p["label"] == "Outdoor Run 5 km in 27:00" and p["exercise"] == "Outdoor Run"
+    assert p["latest"] == 29 and p["projection"]["points_used"] == 4
+    # needed: (27 - 29) / 8 = -0.25 a week. The line through (0, 31) (7, 30.5) (14, 30) (21, 29): x mean 10.5,
+    # y mean 30.125; sum of products -22.75, sum of squares 245; -22.75 / 245 x 7 = -0.65 a week.
+    assert p["needed_per_week"] == -0.25 and p["actual_per_week"] == -0.65 and p["status"] == "on track"
+    assert services.get_goals(user.id)["goals"] == [p]
+
+
+def test_a_cardio_best_now_is_the_best_of_28_days_else_the_latest(user):
+    run(user, 40, 5, 25)
+    run(user, 35, 5, 33)
+    r = goal(user, kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=30, target_date=day(user, 30))
+    assert r["goal"]["start_value"] == 33   # nothing in 28 days: the latest
+    run(user, 3, 5, 32)
+    run(user, 1, 5, 34)                    # a slow day does not pull it back
+    assert services.get_goals(user.id)["goals"][0]["latest"] == 32
+    run(user, 0, 5, 29.5)
+    numbers = services.get_goals(user.id)["goals"][0]
+    assert numbers["latest"] == 29.5 and numbers["status"] == "reached" and numbers["needed_per_week"] == 0
+    agrees(numbers)
+
+
+def test_deleted_measurements_and_sessions_stay_out_of_now(user):
+    measure(user, 3, "waist", 86)
+    lower = services.log_measurement(user.id, {"kind": "waist", "value": 84, "date": day(user, -1)}, "claude")["id"]
+    services.delete_entry(user.id, "measurement", lower)
+    waist = goal(user, kind="measurement", measurement_kind="waist", target_value=80, target_date=day(user, 30))
+    assert waist["goal"]["start_value"] == 86 and waist["progress"]["latest"] == 86
+    run(user, 5, 5, 30)
+    faster = services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 25, "distance_km": 5,
+                                           "date": day(user, -1)}, "claude")["id"]
+    services.delete_entry(user.id, "cardio_entry", faster)
+    best = goal(user, kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=27,
+                target_date=day(user, 30))
+    assert best["goal"]["start_value"] == 30 and best["progress"]["latest"] == 30
+    assert [g["latest"] for g in services.get_goals(user.id)["goals"]] == [86, 30]
+    services.restore_entry(user.id, "measurement", lower)
+    services.restore_entry(user.id, "cardio_entry", faster)
+    assert [g["latest"] for g in services.get_goals(user.id)["goals"]] == [84, 25]
+
+
+def test_a_cardio_best_goal_refusals(user):
+    run(user, 2, 5, 30)
+    base = {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_date": day(user, 30)}
+    assert goal(user, **{**base, "target_value": 31})["error"] == "wrong_direction"   # slower than now
+    slower = goal(user, **{**base, "target_value": 30})
+    assert slower["error"] == "wrong_direction" and "below 30 and at least 1 min" in slower["fix"]
+    assert goal(user, **{**base, "target_value": 0.5})["error"] == "invalid_field"
+    assert goal(user, **{**base, "target_value": 700})["error"] == "invalid_field"
+    assert goal(user, **{**base, "distance_km": 0.05, "target_value": 20})["error"] == "invalid_field"
+    no_distance = goal(user, **{**base, "distance_km": None, "target_value": 25})
+    assert no_distance["error"] == "missing_field" and "distance_km" in no_distance["message"]
+    no_activity = goal(user, **{**base, "exercise": None, "target_value": 25})
+    assert no_activity["error"] == "missing_field" and "Outdoor Run" in no_activity["fix"]
+    a_lift = goal(user, **{**base, "exercise": "back squat", "target_value": 25})
+    assert a_lift["error"] == "invalid_field"
+    assert a_lift["message"] == "Back Squat is a lift; a cardio_best goal needs a cardio activity."
+    assert "list_exercises with kind cardio" in a_lift["fix"] and "kind lift" in a_lift["fix"]
+    assert goal(user, **{**base, "exercise": "Bak Squat", "target_value": 25})["error"] == "unknown_exercise"
+    longer = goal(user, **{**base, "distance_km": 10, "target_value": 55})
+    assert longer["error"] == "missing_field" and "10 km or more" in longer["message"] and "log_cardio" in longer["fix"]
+    one_dp = goal(user, **{**base, "target_value": 27.26})
+    assert one_dp["goal"]["target_value"] == 27.3
+
+
+def test_a_lift_goal_takes_no_cardio_activity_and_fields_that_do_not_apply_are_warned(user):
+    wrong = goal(user, kind="lift", exercise="outdoor run", target_value=100, start_value=80,
+                 target_date=day(user, 30))
+    assert wrong["error"] == "invalid_field"
+    assert wrong["message"] == "Outdoor Run is a cardio activity; a lift goal needs a lift."
+    assert "list_exercises with kind lift" in wrong["fix"] and "cardio_best" in wrong["fix"]
+    unknown = goal(user, kind="lift", exercise="Outdor Rnu", target_value=100, start_value=80, target_date=day(user, 30))
+    assert unknown["error"] == "unknown_exercise"
+    r = goal(user, kind="bodyweight", target_value=70, start_value=80, target_date=day(user, 30),
+             measurement_kind="waist", distance_km=5)
+    assert r["goal"]["measurement_kind"] is None and r["goal"]["distance_km"] is None
+    assert any("measurement_kind 'waist' was ignored" in w for w in r["warnings"])
+    assert any("distance_km '5' was ignored" in w for w in r["warnings"])
+
+
+def test_a_weekly_amount_is_a_setting_not_a_goal(user):
+    for kind in ("sessions", "cardio_weekly", "calories"):
+        r = goal(user, kind=kind, target_value=4, target_date=day(user, 30))
+        assert r["error"] == "invalid_field" and "update_settings" in r["fix"]
+        assert "lift, bodyweight, measurement, cardio_best" in r["fix"]
+    assert "update_settings" not in goal(user, kind="vibes")["fix"]
+
+
+def test_identity_cannot_change_on_an_edit(user):
+    measure(user, 1, "waist", 90)
+    run(user, 1, 5, 30)
+    waist = goal(user, kind="measurement", measurement_kind="waist", target_value=85, target_date=day(user, 30))["id"]
+    best = goal(user, kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=28,
+                target_date=day(user, 30))["id"]
+    assert goal(user, goal_id=waist, measurement_kind="hips", target_value=84)["error"] == "cannot_change_kind"
+    # Only the identity sent: one refusal, cannot_change_kind, not "nothing to change" beside it.
+    alone = goal(user, goal_id=best, distance_km=10)
+    assert [e["error"] for e in alone["errors"]] == ["cannot_change_kind"]
+    assert goal(user, goal_id=best, distance_km=5)["error"] == "nothing_to_change"   # the same distance
+    assert goal(user, goal_id=best, distance_km=10, target_value=27)["error"] == "cannot_change_kind"
+    assert goal(user, goal_id=best, exercise="Treadmill Run", target_value=27)["error"] == "cannot_change_kind"
+    # Naming the same ones again is fine.
+    assert goal(user, goal_id=waist, measurement_kind="Waist", target_value=84)["goal"]["target_value"] == 84
+    assert goal(user, goal_id=best, distance_km=5, target_value=27.5)["goal"]["target_value"] == 27.5
+    assert goal(user, goal_id=best, target_value=31)["error"] == "wrong_direction"   # still down from 30
+    assert goal(user, goal_id=waist, target_value=500)["error"] == "invalid_field"   # the waist's own range
+
+
+def test_a_second_open_goal_for_the_same_thing_is_warned(user):
+    run(user, 1, 5, 30)
+    measure(user, 1, "waist", 90)
+    first = goal(user, kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=28,
+                 target_date=day(user, 30))
+    same = goal(user, kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=27,
+                target_date=day(user, 60))
+    assert f"(id {first['id']})" in same["warnings"][0] and "Outdoor Run 5 km in 28:00" in same["warnings"][0]
+    # Another distance is another goal. The 5 km run counts for 3 km too: 30 / 5 x 3 = 18 minutes.
+    other_distance = goal(user, kind="cardio_best", exercise="Outdoor Run", distance_km=3, start_value=20,
+                          target_value=16, target_date=day(user, 30))
+    assert other_distance["goal"]["start_value"] == 18
+    assert other_distance["warnings"] == ["start_value was ignored: the goal starts from the logged 18 min (the best "
+                                          "time in the last 28 days)."]
+    goal(user, kind="measurement", measurement_kind="waist", target_value=85, target_date=day(user, 30))
+    hips = goal(user, kind="measurement", measurement_kind="hips", start_value=100, target_value=95,
+                target_date=day(user, 30))
+    assert hips["warnings"] == []
+    again = goal(user, kind="measurement", measurement_kind="waist", target_value=84, target_date=day(user, 30))
+    assert "Waist 85 cm" in again["warnings"][0]
+
+
+def test_get_goals_lists_open_goals_and_on_request_closed_ones(user):
+    empty = services.get_goals(user.id)
+    assert empty["goals"] == [] and empty["closed"] == [] and empty["summary"] == "No open goals."
+    assert empty["includes_sample"] is False and "note" not in empty and set(empty["links"]) == {"goals"}
+    weigh(user, 1, 80)
+    a = goal(user, kind="bodyweight", target_value=75, target_date=day(user, 60))["id"]
+    b = goal(user, kind="lift", exercise="Deadlift", start_value=100, target_value=150, target_date=day(user, 60))["id"]
+    goal(user, goal_id=b, status="hit")
+    r = services.get_goals(user.id)
+    assert [g["goal_id"] for g in r["goals"]] == [a] and r["closed"] == []
+    assert r["summary"] == f"1 open goal: Bodyweight 75 kg by {day(user, 60)}, not enough data."
+    full = services.get_goals(user.id, include_closed=True)
+    assert full["closed"] == [{"goal_id": b, "label": "Deadlift 150 kg", "kind": "lift", "status": "hit",
+                               "closed_at": full["closed"][0]["closed_at"], "target_value": 150,
+                               "target_date": day(user, 60), "is_sample": False}]
+    assert full["closed"][0]["closed_at"] and full["summary"].endswith(" 1 closed.")
+    assert "Epley" in r["how"] and "projected_date" in r["how"] and "2 years" in r["how"]
+    assert services.get_goals(987654)["error"] == "no_account"
+
+
+def test_goals_of_every_kind_agree_across_set_goal_get_goals_and_get_progress(user):
+    squat(user, 14, 100)
+    squat(user, 7, 102.5)
+    weigh(user, 3, 82)
+    measure(user, 2, "chest", 100)
+    run(user, 1, 5, 30)
+    made = [goal(user, kind="lift", exercise="Back Squat", target_value=140, target_date=day(user, 60)),
+            goal(user, kind="bodyweight", target_value=78, target_date=day(user, 60)),
+            goal(user, kind="measurement", measurement_kind="chest", target_value=104, target_date=day(user, 60)),
+            goal(user, kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=28,
+                 target_date=day(user, 60))]
+    listed = services.get_goals(user.id)["goals"]
+    assert [m["progress"] for m in made] == listed == services.get_progress(user.id)["goals"]
+    assert [g["kind"] for g in listed] == ["lift", "bodyweight", "measurement", "cardio_best"]
+    for numbers in listed:
+        assert set(numbers) == SHAPE
+        agrees(numbers)
+
+
+def test_get_goals_query_count_stays_small(user):
+    squat(user, 1, 60)
+    run(user, 1, 5, 30)
+    measure(user, 1, "waist", 90)
+    weigh(user, 1, 80)
+    for data in ({"kind": "lift", "exercise": "Back Squat", "target_value": 90},
+                 {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 28},
+                 {"kind": "measurement", "measurement_kind": "waist", "target_value": 85},
+                 {"kind": "bodyweight", "target_value": 75}):
+        assert "error" not in goal(user, target_date=day(user, 60), **data)
+    count = [0]
+
+    def counter(*_):
+        count[0] += 1
+
+    engine = db.get_engine()
+    event.listen(engine, "before_cursor_execute", counter)
+    try:
+        r = services.get_goals(user.id, include_closed=True)
+    finally:
+        event.remove(engine, "before_cursor_execute", counter)
+    assert len(r["goals"]) == 4 and count[0] <= 12, count[0]
+
+
 def test_points_on_one_day_get_a_note_that_says_so(user):
     for kg in (60, 62.5, 65, 67.5):                                # four sessions, all today
         squat(user, 0, kg)

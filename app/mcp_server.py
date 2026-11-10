@@ -1,4 +1,4 @@
-"""Spotter's MCP server: sixteen functions and two resources.
+"""Spotter's MCP server: eighteen functions and two resources.
 
 The MCP library does the sign-in work: it serves the protected-resource metadata, answers 401 with
 `resource_metadata`, and runs every call through the token verifier. Functions read the verified token
@@ -47,9 +47,10 @@ from app import calllog, db, links, services, users
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings
 from app.mcp_schemas import (
-    DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn, GetLogResult,
-    GetProgressResult, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult,
-    RestoreEntryResult, SaveFoodResult, SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
+    FOOD_NAME_RULE, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn, GetGoalsResult,
+    GetLogResult, GetProgressResult, GetTrendsResult, LogBodyweightResult, LogCardioResult, LogFoodResult,
+    LogLiftsResult, LogMeasurementResult, RestoreEntryResult, SaveFoodResult, SetGoalResult, SetIn,
+    UpdateSettingsResult, WhoamiResult,
 )
 from app.models import User
 
@@ -77,6 +78,22 @@ FOOD_RULE = (
     "has no match and the person gave no number, you may estimate, and must say so."
 )
 
+# Which read answers which question. get_trends and get_goals carry the same text.
+TRENDS_RULE = "To answer how the person is doing, call get_trends."
+GOALS_RULE = "To answer whether the person is on track, call get_goals."
+
+# A goal "by the end of March" names a month, not a day. set_goal's target_date carries the same text.
+MONTH_END_RULE = (
+    "A goal by the end of a month, such as by the end of March, takes the last day of that month as target_date: "
+    "the next such day after today, worked out from today's date."
+)
+
+# The two acts that stay the person's own. No function does either, so Claude never offers one.
+SETTINGS_ONLY_RULE = (
+    "Exporting the person's data and deleting their account are the person's own clicks on Settings: no function "
+    "does either. Never offer to do them; say they are on Settings."
+)
+
 INSTRUCTIONS = (
     "Spotter is the person's own record of lifts, body weight, measurements, food, cardio and goals. "
     "Call whoami first: it says whose account this is and what today's date is for them. "
@@ -90,10 +107,13 @@ INSTRUCTIONS = (
     "duplicate: true means nothing was written: say so, and send allow_repeat: true only when the person "
     "confirms it was a separate entry. "
     "To answer what the person did on a day or in a week, use get_log. "
-    "Food: " + FOOD_RULE + " "
+    + TRENDS_RULE + " " + GOALS_RULE + " "
+    "Goals: " + MONTH_END_RULE + " "
+    "Food: " + FOOD_RULE + " " + FOOD_NAME_RULE + " "
     "Leave the meal out unless the person named it: Spotter picks it from their clock. Never ask which meal. "
     "Cardio: " + CARDIO_RULE + " "
     "Deleting: " + DELETE_RULE + " "
+    + SETTINGS_ONLY_RULE + " "
     "If a call returns not_allowed, tell the person what this account lets Claude do, and do not retry: "
     "only the person can change it. "
     "Put links last."
@@ -120,6 +140,7 @@ NEEDS = {
     "log_measurement": "log", "edit_entry": "log", "restore_entry": "log",
     "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
     "delete_entry": "log_delete",
+    "get_trends": "read", "get_goals": "read",
 }
 NOT_ALLOWED_MESSAGES = {"read": "This account lets Claude read only.",
                         "log": "This account lets Claude read and log, not delete."}
@@ -455,33 +476,47 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="set_goal",
         title="Set or change a goal",
         description=(
-            "Sets a lift goal (an estimated one-rep max to reach) or a body weight goal, with a target and a "
-            "date. Spotter stores where it starts and which way it points. With goal_id, changes one of the "
-            "person's goals instead: its target, date, text, or status (hit, dropped, open)."
+            "Sets a goal with a target and a date, of one of four kinds: lift (an estimated one-rep max to reach), "
+            "bodyweight, measurement (a body size or resting heart rate to reach) or cardio_best (a time for a "
+            "distance in one cardio activity). Spotter stores where it starts and which way it points, and returns "
+            "where it stands. With goal_id, changes one of the person's goals instead: its target, date, text, or "
+            "status (hit, dropped, open). A weekly amount, such as sessions or cardio minutes a week, is a target "
+            "for update_settings, not a goal. " + MONTH_END_RULE
         ),
         annotations=WRITE,
     )
     async def set_goal(
         kind: Annotated[str | None, Field(
-            description="lift or bodyweight. Needed for a new goal; leave out with goal_id.")] = None,
+            description="lift, bodyweight, measurement or cardio_best. Needed for a new goal; leave out with "
+                        "goal_id.")] = None,
         exercise: Annotated[str | None, Field(
-            description="For a lift goal: the exercise name as list_exercises gives it.")] = None,
+            description="A lift goal: the lift. A cardio_best goal: the cardio activity. Each exactly as "
+                        "list_exercises gives it.")] = None,
+        measurement_kind: Annotated[str | None, Field(
+            description="A measurement goal: waist, hips, chest, arm, thigh or resting_hr. Not steps, sleep_hours "
+                        "or water_ml: those are a day's amount, not a goal.")] = None,
+        distance_km: Annotated[float | None, Field(
+            description="A cardio_best goal: the distance in km, 0.1 to 300. A session at or over it counts.")] = None,
         target_value: Annotated[float | None, Field(
-            description="The target in kg. A lift: an estimated one-rep max, above 0 to 666.67. "
-                        "Body weight: 20 to 400.")] = None,
+            description="The target, in the kind's unit. A lift: kg, an estimated one-rep max, above 0 to 666.67. "
+                        "Body weight: kg, 20 to 400. A measurement: its own unit, cm for a body size, bpm for "
+                        "resting_hr. A cardio_best: minutes for the distance, 1 to 600.")] = None,
         target_date: Annotated[str | None, Field(
-            description="The date to reach it by, YYYY-MM-DD, after today.")] = None,
+            description="The date to reach it by, YYYY-MM-DD, after today. " + MONTH_END_RULE)] = None,
         text: Annotated[str | None, Field(
             description="The goal in the person's words. Up to 2,000 characters.")] = None,
         start_value: Annotated[float | None, Field(
-            description="Where the person is now, in kg. Used only when nothing is logged yet to start from.")] = None,
+            description="Where the person is now, in the kind's unit. Used only when nothing is logged yet to start "
+                        "from.")] = None,
         goal_id: Annotated[int | None, Field(
-            description="To change a goal: its id, from set_goal or get_progress. Leave out for a new goal.")] = None,
+            description="To change a goal: its id, from set_goal, get_goals or get_progress. Leave out for a new "
+                        "goal.")] = None,
         status: Annotated[str | None, Field(
             description="With goal_id: hit (reached), dropped, or open (reopen).")] = None,
     ) -> Annotated[CallToolResult, SetGoalResult]:
-        data = _sent(kind=kind, exercise=exercise, target_value=target_value, target_date=target_date, text=text,
-                     start_value=start_value, goal_id=goal_id, status=status)
+        data = _sent(kind=kind, exercise=exercise, measurement_kind=measurement_kind, distance_km=distance_km,
+                     target_value=target_value, target_date=target_date, text=text, start_value=start_value,
+                     goal_id=goal_id, status=status)
         return await wrapper.call("set_goal", SetGoalResult,
                                   lambda account: services.set_goal(account, data, "claude"))
 
@@ -692,7 +727,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         title="Log food",
         description=(
             "Records what the person ate, one entry per food, in one call for the whole message. Spotter tags "
-            "each number with who supplied it; you never name the tag. " + FOOD_RULE + " "
+            "each number with who supplied it; you never name the tag. " + FOOD_RULE + " " + FOOD_NAME_RULE + " "
             "Returns the entries, their tags and the day's total. The same set again within 10 minutes is a "
             "duplicate: nothing is written."
         ),
@@ -765,6 +800,37 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
                      allow_repeat=allow_repeat or None)
         return await wrapper.call("log_cardio", LogCardioResult,
                                   lambda account: services.log_cardio(account, data, "claude"))
+
+    @server.tool(
+        name="get_trends",
+        title="Get trends",
+        description=(
+            "How the person is doing, from their own logs: the smoothed body weight trend and its rate per week, "
+            "calories a day over the last 7 and 28 days, lift sessions and cardio minutes this week against their "
+            "targets, and an estimate of their maintenance calories once enough food and weigh-ins are logged, "
+            "else what it still needs. " + TRENDS_RULE + " Quote these numbers."
+        ),
+        annotations=READ_ONLY,
+    )
+    async def get_trends() -> Annotated[CallToolResult, GetTrendsResult]:
+        return await wrapper.call("get_trends", GetTrendsResult, lambda account: services.get_trends(account))
+
+    @server.tool(
+        name="get_goals",
+        title="Get goals",
+        description=(
+            "Every open goal of the person's: where it started, where it is now, the target and its date, the pace "
+            "it needs per week against the pace so far, the date it is reached at that pace, and its status "
+            "(reached, on track, behind or not enough data). " + GOALS_RULE + " Quote these numbers."
+        ),
+        annotations=READ_ONLY,
+    )
+    async def get_goals(
+        include_closed: Annotated[bool, Field(
+            description="true also lists the goals marked hit or dropped. Leave out for open goals only.")] = False,
+    ) -> Annotated[CallToolResult, GetGoalsResult]:
+        sent = _sent(include_closed=include_closed or None)
+        return await wrapper.call("get_goals", GetGoalsResult, lambda account: services.get_goals(account, **sent))
 
     @server.resource(
         CAN_AND_CANT_URI,

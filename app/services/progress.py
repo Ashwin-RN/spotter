@@ -3,11 +3,15 @@
 get_progress(user_id, exercise=None)
     With an exercise: its estimated max per session, the best set, every new best with its date,
     the trend over the last 6 weeks, and its open goals with the pace each needs against the pace so far.
-    Without: one line per lift the person has logged, and every open goal.
-    Every number comes from app.metrics, through lifts.history and goals.goal_numbers.
+    Without: one line per lift the person has logged, and every open goal of every kind.
+    Every number comes from app.metrics, through lifts.history and goals.load_numbers and
+    goals.goal_numbers, the same path get_goals and set_goal take.
+    Every result carries includes_sample; when sample rows are in its numbers, the note says so
+    (common.SAMPLE_NOTE) after any other note.
 
 lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals, today)
-    The data app.charts draws, from the same numbers.
+    The data app.charts draws, from the same numbers. Each body weight point carries its smoothed
+    value (metrics.ewma), the line the chart draws.
 """
 
 from datetime import date
@@ -17,9 +21,9 @@ from sqlalchemy.orm import selectinload
 
 from app import db, links, metrics, rules, users
 from app.models import CardioEntry, Goal, User
-from app.services import body, cardio, lifts
-from app.services.common import exercises, no_account
-from app.services.goals import goal_numbers
+from app.services import cardio, lifts
+from app.services.common import SAMPLE_NOTE, exercises, no_account
+from app.services.goals import goal_numbers, load_numbers
 
 HOW = ("estimated max = Epley, from sets of 1 to 10 reps; one point per session (the session's best). "
        f"The current estimated max is the best session in the last {metrics.RECENT_BEST_DAYS} days, or the latest "
@@ -66,6 +70,7 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
     machine_kcal}] (newest first, in the one order), week {minutes, target_minutes}}, how, links[, note]}.
     week counts all cardio in the 7 days ending today, as the weekly cardio target does.
     An exercise not on the list (lifts and cardio) gives unknown_exercise with the closest names.
+    Each shape also carries includes_sample (bool); note says so when it is true.
     """
     with db.new_session() as s:
         user = s.get(User, user_id)
@@ -85,15 +90,17 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
         history = lifts.history(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                .order_by(Goal.id).options(selectinload(Goal.exercise))))
-        weighed = body.weigh_ins(s, user.id, today) if any(g.kind == "bodyweight" for g in goals) else []
-        numbers = goal_numbers(goals, history, weighed, today)
+        loaded = load_numbers(s, user.id, today, goals, lift_history=history)
+        numbers = goal_numbers(goals, loaded, today)
+        shown = {n["goal_id"] for n in numbers}
 
         if only is not None:
-            out = {"today": today.isoformat(), "lift": _one(only, history, numbers, today), "how": HOW,
+            one = _one(only, history, numbers, today)
+            sample = (any(t.is_sample for t in history["sessions"] if any(x.exercise.name == only for x in t.sets))
+                      or any(g.is_sample for g in goals if g.id in {n["goal_id"] for n in one["goals"]}))
+            out = {"today": today.isoformat(), "lift": one, "how": HOW,
                    "links": {"progress_lift": links.page("progress_lift", lift=only)}}
-            if not out["lift"]["sessions"]:
-                out["note"] = f"No sets of {only} logged yet."
-            return out
+            return _with_sample(out, sample, None if one["sessions"] else f"No sets of {only} logged yet.")
 
         rows = []
         for name in sorted(history["logged"]):
@@ -103,11 +110,20 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
                          "best_estimated_max_kg": (one["best_set"] or {}).get("estimated_max_kg"),
                          "slope_per_week": one["trend"]["slope_per_week"] if one["trend"] else None,
                          "goal_status": one["goal"]["status"] if one["goal"] else None})
+        sample = (any(t.is_sample for t in history["sessions"]) or loaded["sample"]
+                  or any(g.is_sample for g in goals if g.id in shown))
         out = {"today": today.isoformat(), "lifts": rows, "goals": numbers, "how": HOW,
                "links": {"progress": links.page("progress")}}
-        if not rows:
-            out["note"] = "No lift sessions logged yet."
-        return out
+        return _with_sample(out, sample, None if rows else "No lift sessions logged yet.")
+
+
+def _with_sample(out: dict, sample: bool, note: str | None) -> dict:
+    """includes_sample, and the note: the result's own first, then the sample sentence (rule 16)."""
+    out["includes_sample"] = sample
+    text = " ".join(t for t in (note, SAMPLE_NOTE if sample else None) if t)
+    if text:
+        out["note"] = text
+    return out
 
 
 def _cardio(s, user, activity, today) -> dict:
@@ -120,9 +136,7 @@ def _cardio(s, user, activity, today) -> dict:
     out = {"today": today.isoformat(),
            "cardio": {"exercise": activity.name, "sessions": sessions, "week": cardio.week_minutes(s, user, today)},
            "how": CARDIO_HOW, "links": {"progress": links.page("progress")}}
-    if not sessions:
-        out["note"] = f"No {activity.name} logged yet."
-    return out
+    return _with_sample(out, any(c.is_sample for c in rows), None if sessions else f"No {activity.name} logged yet.")
 
 
 # ---------------------------------------------------------------- chart data
@@ -152,18 +166,20 @@ def lift_chart(lift_history: dict, numbers: list[dict], lift: str | None = None)
 
 
 def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date) -> dict | None:
-    """Data for bodyweight_svg: weigh-ins, the 7-day average at each, the open bodyweight goal.
-    None with fewer than 2 weigh-ins. Every weigh-in is drawn, whatever its date, in the one order
-    and labelled with its real date. Each average is the 7 days ending on that weigh-in's effective
+    """Data for bodyweight_svg: weigh-ins with their smoothed value, the 7-day average at each, the
+    open bodyweight goal. None with fewer than 2 weigh-ins. Every weigh-in is drawn, whatever its
+    date, in the one order and labelled with its real date. smoothed is metrics.ewma over all of them
+    (the line get_trends reports). Each average is the 7 days ending on that weigh-in's effective
     date, over effective dates, so the last one is bodyweight_now."""
     pts = metrics.in_order([(b.date, b.kg) for b in weigh_ins], today)
     aged = [(metrics.on_or_before(d, today), kg) for d, kg in pts]
     if len(pts) < 2:
         return None
+    smoothed = [v for _, v in metrics.ewma(pts, today)]
     goal = next((g for g in goals if g.kind == "bodyweight" and g.status == "open" and g.target_value is not None),
                 None)
     return {
-        "points": [{"date": d.isoformat(), "kg": kg} for d, kg in pts],
+        "points": [{"date": d.isoformat(), "kg": kg, "smoothed": sm} for (d, kg), sm in zip(pts, smoothed)],
         "average": [{"date": d.isoformat(), "kg": metrics.bodyweight_average(aged, metrics.on_or_before(d, today))}
                     for d, _ in pts],
         "latest": {"date": pts[-1][0].isoformat(), "kg": pts[-1][1]},

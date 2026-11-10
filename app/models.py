@@ -1,4 +1,5 @@
-"""The v1 schema: every table for stages 2 to 5, as the stage 2 contract lists them.
+"""The v1 schema: every table for stages 2 to 5, as the stage 2 contract lists them, and the one
+column stage 5 added (goal.measurement_kind, migration 0003).
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -27,7 +28,7 @@ from app import db
 LOGGED_BY = ("web", "claude")
 CLAUDE_CAN = ("read", "log", "log_delete")
 EXERCISE_KINDS = ("lift", "cardio")
-GOAL_KINDS = ("bodyweight", "lift", "cardio_best", "cardio_weekly", "calories", "sessions")
+GOAL_KINDS = ("bodyweight", "lift", "measurement", "cardio_best", "cardio_weekly", "calories", "sessions")
 GOAL_DIRECTIONS = ("up", "down")
 GOAL_STATUSES = ("open", "hit", "dropped")
 MEASUREMENT_KINDS = ("waist", "hips", "chest", "arm", "thigh", "steps", "sleep_hours", "resting_hr", "water_ml")
@@ -200,6 +201,8 @@ class Goal(Base):
     kind: Mapped[str] = mapped_column(String(16))  # one of GOAL_KINDS
     exercise_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("exercise.id"), nullable=True)
     distance_km: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # A measurement goal's kind (one of MEASUREMENT_KINDS); null for every other kind. Migration 0003.
+    measurement_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
     unit: Mapped[str] = mapped_column(String(8))
     start_value: Mapped[float] = mapped_column(Float)
     start_date: Mapped[dt.date] = mapped_column(Date)

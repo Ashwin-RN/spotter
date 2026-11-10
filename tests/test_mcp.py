@@ -250,8 +250,8 @@ def test_spotter_logs_through_its_own_handler_added_once(provider):
 
 FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings",
              "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
-             "find_food", "log_food", "save_food", "log_cardio"]
-READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food"}
+             "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals"]
+READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 SETTING_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
@@ -312,8 +312,8 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     """One of every result shape each function has, through MCP."""
     seen: dict[str, list[dict]] = {name: [] for name in FUNCTIONS}
 
-    def keep(name: str, arguments: dict | None = None) -> dict:
-        result = call(client, token, name, arguments)
+    def keep(name: str, arguments: dict | None = None, as_token: str = token) -> dict:
+        result = call(client, as_token, name, arguments)
         assert result["isError"] is False, result
         assert [c["type"] for c in result["content"]] == ["text"]
         assert result["content"][0]["text"] == compact(result["structuredContent"])  # the same dict, as JSON
@@ -322,6 +322,8 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
 
     who = keep("whoami")  # no time zone yet: carries time_zone_note
     today = date.fromisoformat(who["today"])
+    keep("get_trends")  # nothing logged: every block that can be null is null
+    keep("get_goals")  # no goals
     keep("list_exercises")
     keep("list_exercises", {"kind": "lift", "category": "push"})
     keep("get_progress")  # nothing logged: note
@@ -376,6 +378,20 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("edit_entry", {"kind": "cardio_entry", "entry_id": cardio["id"], "minutes": 30})  # re-estimated
     keep("get_log", {"days": 14})
     keep("get_progress", {"exercise": "Treadmill Run"})  # a cardio activity
+    keep("get_trends")  # weigh-ins 30 days apart and food: a rate and calories, no maintenance yet
+    keep("get_goals")
+    keep("get_goals", {"include_closed": True})  # the squat goal marked hit
+    # A second person with sample data: every read carries includes_sample and its note.
+    sample_token = sign(claims(sub="user_01SAMPLE", email="sample@example.com", name="Sample"))
+    sample_account = whoami(client, sample_token)["account_id"]
+    added = services.add_sample_data(sample_account, "web")
+    assert "error" not in added, added
+    for name in ("get_log", "get_progress", "get_trends", "get_goals"):
+        keep(name, as_token=sample_token)
+    # A sample goal dropped: the closed list then holds a sample goal too.
+    sample_goal = seen["get_goals"][-1]["goals"][0]["goal_id"]
+    keep("set_goal", {"goal_id": sample_goal, "status": "dropped"}, as_token=sample_token)
+    keep("get_goals", {"include_closed": True}, as_token=sample_token)
     return seen
 
 
@@ -409,8 +425,13 @@ def test_the_arguments_are_typed_parameters(http):
     assert list(schemas["log_lifts"]["properties"]) == ["sets", "date", "notes", "allow_repeat"]
     assert schemas["log_lifts"]["required"] == ["sets"]
     assert list(schemas["log_bodyweight"]["properties"]) == ["kg", "date", "allow_repeat"]
-    assert set(schemas["set_goal"]["properties"]) == {"kind", "exercise", "target_value", "target_date", "text",
-                                                      "start_value", "goal_id", "status"}
+    assert list(schemas["set_goal"]["properties"]) == ["kind", "exercise", "measurement_kind", "distance_km",
+                                                       "target_value", "target_date", "text", "start_value", "goal_id",
+                                                       "status"]
+    assert not schemas["set_goal"].get("required")
+    assert schemas["get_trends"]["properties"] == {}
+    assert list(schemas["get_goals"]["properties"]) == ["include_closed"]
+    assert schemas["get_goals"]["properties"]["include_closed"]["type"] == "boolean"
     assert list(schemas["get_progress"]["properties"]) == ["exercise"]
     assert list(schemas["update_settings"]["properties"]) == [
         "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
@@ -438,7 +459,42 @@ def test_every_real_result_validates_and_its_keys_are_the_models(http):
         for result in results:
             model.model_validate(result)
             keys |= set(result)
-        assert keys == wire_fields(model), name  # every field is used, and no key lacks a field
+        assert keys == wire_fields(model), (name, keys ^ wire_fields(model))  # every field used, no key unmodelled
+
+
+def unmodelled(value: Any, model, path: str) -> set[str]:
+    """Every key in a result, at any depth, that its model has no field for. Nested models ignore extras when they
+    validate, so a key they lack would pass silently and go unpublished; this finds it. Fields typed as a plain dict
+    (an entry with every stored column) are not walked."""
+    import typing
+
+    from pydantic import BaseModel
+
+    def models(annotation) -> list:
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return [annotation]
+        return [m for arg in typing.get_args(annotation) for m in models(arg)]
+
+    if isinstance(value, list):
+        return set().union(set(), *(unmodelled(v, model, path) for v in value))
+    if not isinstance(value, dict):
+        return set()
+    fields = {field.alias or name: field for name, field in model.model_fields.items()}
+    found = set()
+    for key, inner in value.items():
+        if key not in fields:
+            found.add(f"{path}.{key}")
+        elif nested := models(fields[key].annotation):
+            found |= unmodelled(inner, nested[0], f"{path}.{key}")
+    return found
+
+
+def test_every_key_of_every_real_result_is_modelled_at_every_depth(http):
+    seen = every_result(http, sign())
+    missing = set().union(*(unmodelled(r, RESULTS[name], name) for name, results in seen.items() for r in results))
+    assert missing == set()
+    assert any(e["saved_food_name"] for r in seen["get_log"] for d in r["days"]
+               for meal in d["food"]["meals"].values() for e in meal)  # the saved roti is in there to be walked
 
 
 def test_a_service_field_with_no_schema_entry_fails_the_check():
@@ -629,6 +685,7 @@ def test_no_database_session_is_opened_on_the_event_loop(http, monkeypatch):
              ("find_food", {"query": "dal"}), ("log_food", {"entries": [{"description": "Dal", "kcal": 180}]}),
              ("save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}),
              ("log_cardio", {"exercise": "Treadmill Walk", "minutes": 30})]
+    calls += [("get_trends", {}), ("get_goals", {"include_closed": True})]
     for name, arguments in calls:
         ok(http, token, name, arguments)
     assert len(loop_threads) >= 1
@@ -691,7 +748,9 @@ def test_the_instructions_say_how_to_use_spotter(http):
     for words in ("Call whoami first", "list_exercises", "time_zone_note", "update_settings", "which city",
                   "Never send the person to a page", "fix", "allow_repeat", "links last"):
         assert words in instructions
-    assert "Settings" not in instructions
+    # Settings is named only to say that export and delete are the person's own clicks there.
+    naming = [s for s in sentences(instructions) if "Settings" in s]
+    assert naming and set(naming) <= set(sentences(mcp_server.SETTINGS_ONLY_RULE)), naming
 
 
 # ---------------------------------------------------------------- tools/mcp_call.py
@@ -743,8 +802,9 @@ OPTIONAL_ARGUMENTS = {
     "list_exercises": {"kind": "lift", "category": "push"},
     "log_lifts": {"date": "2026-01-02", "notes": "Notes", "allow_repeat": True},
     "log_bodyweight": {"date": "2026-01-02", "allow_repeat": True},
-    "set_goal": {"kind": "lift", "exercise": "Back Squat", "target_value": 150.5, "target_date": "2099-01-01",
-                 "text": "Text", "start_value": 100.5, "goal_id": 7, "status": "open"},
+    "set_goal": {"kind": "lift", "exercise": "Back Squat", "measurement_kind": "waist", "distance_km": 5.5,
+                 "target_value": 150.5, "target_date": "2099-01-01", "text": "Text", "start_value": 100.5, "goal_id": 7,
+                 "status": "open"},
     "get_progress": {"exercise": "Back Squat"},
     "update_settings": {"time_zone": "Asia/Kolkata", "calorie_target_kcal": 2200, "target_sessions_per_week": 4,
                         "target_cardio_minutes_per_week": 150, "add_back_exercise_kcal": True},
@@ -760,6 +820,8 @@ OPTIONAL_ARGUMENTS = {
     "save_food": {"grams_per_serving": 40.0},
     "log_cardio": {"date": "2026-01-02", "distance_km": 3.5, "incline_pct": 2.0, "speed_kmh": 7.0, "avg_hr": 130,
                    "machine_kcal": 210, "notes": "Easy", "allow_repeat": True},
+    "get_trends": {},
+    "get_goals": {"include_closed": True},
 }
 REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
             "log_measurement": {"kind": "waist", "value": 84.5},
@@ -798,6 +860,8 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
         return (account, arguments["query"]), {k: v for k, v in arguments.items() if k == "limit"}
     if name == "get_log":
         return (account,), {k: v for k, v in arguments.items() if k in ("date", "days")}
+    if name == "get_goals":
+        return (account,), {k: v for k, v in arguments.items() if k == "include_closed"}
     if name == "edit_entry":
         changes = {k: v for k, v in arguments.items() if k not in ("kind", "entry_id")}
         return (account, arguments["kind"], arguments["entry_id"], changes, "claude"), {}
@@ -1115,6 +1179,7 @@ CONTRACT_NEEDS = {
     "log_lifts": "log", "log_bodyweight": "log", "set_goal": "log", "update_settings": "log",
     "log_measurement": "log", "edit_entry": "log", "restore_entry": "log", "delete_entry": "log_delete",
     "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
+    "get_trends": "read", "get_goals": "read",
 }
 ALLOWS = {"read": {"read"}, "log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}
 
@@ -1224,7 +1289,9 @@ def test_get_log_publishes_the_days_range(http):
 def test_the_write_limit_counts_the_same_names_the_switch_gates_as_writes():
     # The services count call-log rows by function name; every write Claude can make must be among them.
     writes = {name for name, level in mcp_server.NEEDS.items() if level != "read"}
-    assert set(services.WRITE_FUNCTIONS) == writes
+    # Besides them, only the web's own writes, which no function makes (stage 5: sample data, delete account).
+    assert writes <= set(services.WRITE_FUNCTIONS)
+    assert set(services.WRITE_FUNCTIONS) - writes <= {"add_sample_data", "remove_sample_data", "delete_account"}
 
 
 # ---------------------------------------------------------------- food: the tag is the server's (stage 4)
@@ -1246,7 +1313,10 @@ def test_source_is_an_argument_nowhere(http):
         assert "source" not in all_properties(tool["inputSchema"]), tool["name"]
 
 
-@pytest.mark.parametrize("entry", [FULL_ENTRY, {"description": "Dal"}], ids=["every field", "description only"])
+@pytest.mark.parametrize("entry", [FULL_ENTRY, {"description": "Dal"}, {"saved_food_id": 7, "servings": 2.0},
+                                   {"usda_fdc_id": 1234, "grams": 80.0}],
+                         ids=["every field", "description only", "a saved food with no description",
+                              "a usda food with no description"])
 def test_every_food_entry_field_sent_reaches_the_service_and_no_other(http, monkeypatch, entry):
     token = sign()
     whoami(http, token)
@@ -1322,7 +1392,7 @@ def test_can_and_cant_states_the_tags_the_cardio_formula_and_the_food_tables():
                   "Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
                   "(CC BY-NC-ND 4.0).",
                   "With no weigh-in there is no estimate", "USDA FoodData Central", "IFCT 2017 and INDB",
-                  "not openly licensed", "`net_kcal`", "Sixteen functions"):
+                  "not openly licensed", "`net_kcal`", "Eighteen functions"):
         assert words in text, words
 
 
@@ -1346,6 +1416,17 @@ def test_the_real_results_include_the_null_cases_and_the_filled_ones(http):
     assert any(r["saved"] for r in seen["find_food"])
     assert [r["created"] for r in seen["save_food"]] == [True, False]
     assert any("cardio" in r for r in seen["get_progress"])
+    trends = seen["get_trends"]
+    for block in ("bodyweight", "calories", "maintenance"):
+        assert any(r[block] is None for r in trends) and any(r[block] is not None for r in trends), block
+    assert any(r["maintenance_note"] for r in trends)
+    assert any(r["bodyweight"]["rate_window"] is not None for r in trends if r["bodyweight"])
+    assert any(r["closed"] for r in seen["get_goals"]) and any(not r["goals"] for r in seen["get_goals"])
+    closed = [g for r in seen["get_goals"] for g in r["closed"]]
+    assert any(g["is_sample"] for g in closed) and any(not g["is_sample"] for g in closed)
+    for name in ("get_log", "get_progress", "get_trends", "get_goals"):
+        assert any(r["includes_sample"] is True and r["note"] for r in seen[name]), name
+        assert any(r["includes_sample"] is False for r in seen[name]), name
 
 
 # ---------------------------------------------------------------- update_settings: null clears a target
@@ -1497,3 +1578,349 @@ def test_the_cardio_extras_say_what_null_does_and_publish_no_default(http):
     assert "null works it out from distance and minutes" in props["speed_kmh"]["description"]
     assert "null clears them" in props["notes"]["description"]
     assert all("default" not in props[n] for n in ("speed_kmh", "notes"))
+
+
+# ================================================================ stage 5: goals and trends
+
+SITE = "https://spotter.example.app"
+
+# The contract's shapes, key for key. Each model's published fields must be exactly these.
+GOAL_NUMBER_KEYS = {"goal_id", "label", "kind", "exercise", "measurement_kind", "distance_km", "unit", "start_value",
+                    "start_date", "direction", "target_value", "target_date", "latest", "status", "needed_per_week",
+                    "actual_per_week", "projected_date", "projection", "note",
+                    "is_sample"}  # is_sample: beyond the contract's shape, sent by the services for rule 16
+CONTRACT_KEYS = {
+    "GetTrendsResult": {"today", "bodyweight", "calories", "sessions", "cardio", "maintenance", "maintenance_note",
+                        "includes_sample", "how", "summary", "links", "note"},
+    "BodyweightTrends": {"now", "smoothed", "rate_per_week", "rate_window", "weigh_ins_28d", "series"},
+    "RateWindow": {"from", "to", "days"},
+    "SmoothedPoint": {"date", "kg", "smoothed"},
+    "CaloriesTrends": {"avg_7d", "days_logged_7d", "avg_28d", "days_logged_28d", "estimated_share_pct_28d",
+                       "target_kcal"},
+    "SessionsTrends": {"this_week", "target_per_week", "per_week_4w"},
+    "CardioTrends": {"minutes_this_week", "target_minutes", "minutes_per_week_4w"},
+    "Maintenance": {"kcal", "intake_avg_kcal", "weight_change_kg", "days_logged", "window_days", "from", "to"},
+    "TrendsLinks": {"progress", "goals", "settings"},
+    "GetGoalsResult": {"today", "goals", "closed", "includes_sample", "how", "summary", "links", "note"},
+    "ClosedGoal": {"goal_id", "label", "kind", "status", "closed_at", "target_value", "target_date",
+                   "is_sample"},  # is_sample: beyond the contract's shape, as on GoalNumbers
+    "GoalNumbers": GOAL_NUMBER_KEYS,
+}
+# Of the new shapes, only the top-level note is ever left out.
+OPTIONAL_KEYS = {"GetTrendsResult": {"note"}, "GetGoalsResult": {"note"}}
+
+
+def numbers(goal_id: int, kind: str, label: str, unit: str, line: bool = True, **which) -> dict:
+    """One goal's numbers in the contract's shape: with a trend line, or with too few points for one."""
+    projection = {"slope_per_week": -0.3, "projected": 76.2, "status": "on track", "points_used": 4, "latest": 79.1,
+                  "weeks_left": 8.0, "needed_per_week": -0.26, "projected_date": "2027-01-02"}
+    return {"goal_id": goal_id, "label": label, "kind": kind, "exercise": which.get("exercise"),
+            "measurement_kind": which.get("measurement_kind"), "distance_km": which.get("distance_km"), "unit": unit,
+            "start_value": 80.0, "start_date": "2026-11-01", "direction": "down", "target_value": 77.0,
+            "target_date": "2027-01-05", "latest": 79.1 if line else None,
+            "status": "on track" if line else "not enough data", "needed_per_week": -0.26 if line else None,
+            "actual_per_week": -0.3 if line else None, "projected_date": "2027-01-02" if line else None,
+            "projection": projection if line else None,
+            "note": None if line else "A line needs 4 points in the last 6 weeks; there is 1.", "is_sample": False}
+
+
+EVERY_KIND = [
+    numbers(1, "lift", "Back Squat 100 kg", "kg", exercise="Back Squat"),
+    numbers(2, "bodyweight", "Bodyweight 75 kg", "kg"),
+    numbers(3, "measurement", "Waist 80 cm", "cm", measurement_kind="waist"),
+    numbers(4, "cardio_best", "Outdoor Run 5 km in 28:00", "min", line=False, exercise="Outdoor Run", distance_km=5.0),
+]
+SAMPLE_NOTE = "These numbers include sample data. The Remove sample data button on Settings takes it out."
+TRENDS_LINKS = {"progress": f"{SITE}/progress", "goals": f"{SITE}/goals", "settings": f"{SITE}/settings"}
+TRENDS_EMPTY = {
+    "today": "2026-11-10", "bodyweight": None, "calories": None,
+    "sessions": {"this_week": 0, "target_per_week": None, "per_week_4w": 0.0},
+    "cardio": {"minutes_this_week": 0.0, "target_minutes": None, "minutes_per_week_4w": 0.0},
+    "maintenance": None, "maintenance_note": "Needs food logged on 14 more of the last 21 days.",
+    "includes_sample": False, "how": "How.", "summary": "Nothing logged yet.", "links": TRENDS_LINKS,
+}
+TRENDS_NO_RATE = {
+    **TRENDS_EMPTY,
+    "bodyweight": {"now": 80.2, "smoothed": 80.2, "rate_per_week": None, "rate_window": None, "weigh_ins_28d": 1,
+                   "series": [{"date": "2026-11-10", "kg": 80.2, "smoothed": 80.2}]},
+    "calories": {"avg_7d": None, "days_logged_7d": 0, "avg_28d": 2100, "days_logged_28d": 3,
+                 "estimated_share_pct_28d": 0.0, "target_kcal": None},
+    "maintenance_note": "Needs weigh-ins in the last 7 days and around 21 days ago.",
+    "note": "The rate needs a weigh-in dated 14 to 42 days ago.",
+}
+TRENDS_FULL = {
+    "today": "2026-11-10",
+    "bodyweight": {"now": 79.1, "smoothed": 79.4, "rate_per_week": -0.31,
+                   "rate_window": {"from": "2026-10-13", "to": "2026-11-10", "days": 28}, "weigh_ins_28d": 28,
+                   "series": [{"date": "2026-11-09", "kg": 79.2, "smoothed": 79.43},
+                              {"date": "2026-11-10", "kg": 79.0, "smoothed": 79.4}]},
+    "calories": {"avg_7d": 2190, "days_logged_7d": 7, "avg_28d": 2205, "days_logged_28d": 28,
+                 "estimated_share_pct_28d": 21.5, "target_kcal": 2200},
+    "sessions": {"this_week": 3, "target_per_week": 4, "per_week_4w": 3.2},
+    "cardio": {"minutes_this_week": 85.0, "target_minutes": 150, "minutes_per_week_4w": 83.8},
+    "maintenance": {"kcal": 2530, "intake_avg_kcal": 2205, "weight_change_kg": -0.9, "days_logged": 21,
+                    "window_days": 21, "from": "2026-10-21", "to": "2026-11-10"},
+    "maintenance_note": None, "includes_sample": True, "how": "How.", "summary": "Down 0.31 kg a week.",
+    "links": TRENDS_LINKS, "note": SAMPLE_NOTE,
+}
+GOALS_EMPTY = {"today": "2026-11-10", "goals": [], "closed": [], "includes_sample": False, "how": "How.",
+               "summary": "No goals yet.", "links": {"goals": f"{SITE}/goals"}}
+GOALS_FULL = {
+    **GOALS_EMPTY, "goals": EVERY_KIND,
+    "closed": [{"goal_id": 9, "label": "Bench Press 80 kg", "kind": "lift", "status": "dropped",
+                "closed_at": "2026-11-01T10:00:00+00:00", "target_value": 80.0, "target_date": "2027-02-01",
+                "is_sample": True}],
+    "includes_sample": True, "summary": "Four open goals.", "note": SAMPLE_NOTE,
+}
+
+
+def goal_row(n: dict) -> dict:
+    """The stored goal behind a goal's numbers, as set_goal returns it."""
+    return {"id": n["goal_id"], "kind": n["kind"], "exercise_id": 3 if n["exercise"] else None,
+            "exercise": n["exercise"], "measurement_kind": n["measurement_kind"], "distance_km": n["distance_km"],
+            "unit": n["unit"], "start_value": n["start_value"], "start_date": n["start_date"],
+            "direction": n["direction"], "target_value": n["target_value"], "target_date": n["target_date"],
+            "status": "open", "text": "", "created_at": "2026-11-01T10:00:00+00:00",
+            "updated_at": "2026-11-01T10:00:00+00:00", "closed_at": None, "is_sample": False}
+
+
+def set_goal_result(n: dict) -> dict:
+    return {"kind": "goal", "id": n["goal_id"], "goal": goal_row(n), "progress": n, "warnings": [],
+            "links": {"goals": f"{SITE}/goals"}}
+
+
+NEW_SHAPES = [("get_trends", TRENDS_EMPTY), ("get_trends", TRENDS_NO_RATE), ("get_trends", TRENDS_FULL),
+              ("get_goals", GOALS_EMPTY), ("get_goals", GOALS_FULL),
+              *[("set_goal", set_goal_result(n)) for n in EVERY_KIND]]
+NEW_SHAPE_IDS = ["trends empty", "trends without a rate", "trends full", "goals empty", "goals full",
+                 *[f"set_goal {n['kind']}" for n in EVERY_KIND]]
+
+
+def test_the_new_models_have_exactly_the_contracts_keys():
+    from app import mcp_schemas
+
+    for name, keys in CONTRACT_KEYS.items():
+        model = getattr(mcp_schemas, name)
+        assert wire_fields(model) == keys, name
+        required = {f.alias or n for n, f in model.model_fields.items() if f.is_required()}
+        assert required == keys - OPTIONAL_KEYS.get(name, set()), name
+    for name in ("get_log", "get_progress"):
+        fields = RESULTS[name].model_fields
+        assert {"includes_sample", "note"} <= wire_fields(RESULTS[name]), name
+        assert fields["includes_sample"].is_required() and not fields["note"].is_required(), name
+
+
+@pytest.mark.parametrize("name, result", NEW_SHAPES, ids=NEW_SHAPE_IDS)
+def test_the_contracts_shapes_validate_with_their_nulls_and_nothing_else_does(name, result):
+    model = RESULTS[name]
+    model.model_validate(result)
+    with pytest.raises(ValueError):
+        model.model_validate({**result, "surprise": 1})
+    for key in set(result) - {"note"}:
+        with pytest.raises(ValueError):
+            model.model_validate({k: v for k, v in result.items() if k != key})
+
+
+@pytest.mark.parametrize("name, result", [
+    ("get_log", {"from": "2026-11-10", "to": "2026-11-10", "days": [], "includes_sample": True, "summary": "s",
+                 "totals": {"sessions": 0, "weigh_ins": 1, "measurements": 0, "food_entries": 0, "cardio_entries": 0},
+                 "links": {"day": f"{SITE}/day/2026-11-10", "progress": f"{SITE}/progress"}, "note": SAMPLE_NOTE}),
+    ("get_progress", {"today": "2026-11-10", "lifts": [], "goals": EVERY_KIND, "includes_sample": True,
+                      "how": "How.", "links": {"progress": f"{SITE}/progress"}, "note": SAMPLE_NOTE}),
+], ids=["get_log", "get_progress"])
+def test_a_read_with_sample_rows_validates_with_its_note(name, result):
+    RESULTS[name].model_validate(result)
+    with pytest.raises(ValueError):
+        RESULTS[name].model_validate({**result, "includes_sample": "yes, some"})
+
+
+def test_the_new_fields_are_published(http):
+    out = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}
+    for name in ("get_log", "get_progress", "get_trends", "get_goals"):
+        assert {"includes_sample", "note"} <= set(out[name]["properties"]), name
+    for name in ("get_log", "get_progress", "get_trends", "get_goals"):
+        assert "includes_sample" in out[name]["required"] and "note" not in out[name]["required"], name
+    for name in ("set_goal", "get_goals", "get_progress"):
+        assert GOAL_NUMBER_KEYS == set(out[name]["$defs"]["GoalNumbers"]["properties"]), name
+
+
+@pytest.mark.parametrize("name, result", [s for s in NEW_SHAPES if s[0] != "set_goal"],
+                         ids=[i for i in NEW_SHAPE_IDS if not i.startswith("set_goal")])
+def test_a_new_read_answers_through_the_wrapper_nulls_and_all(http, monkeypatch, name, result):
+    received = []
+
+    def fake(*args, **kwargs):
+        received.append((args, kwargs))
+        return result
+
+    monkeypatch.setattr(services, name, fake, raising=False)
+    token = sign()
+    assert ok(http, token, name) == result  # the wrapper's check and the library's both pass it
+    assert received == [((one_user().id,), {})]
+
+
+@pytest.mark.parametrize("goal", EVERY_KIND, ids=[n["kind"] for n in EVERY_KIND])
+def test_set_goal_of_every_kind_answers_through_the_wrapper(http, monkeypatch, goal):
+    received = []
+    monkeypatch.setattr(services, "set_goal", lambda account, data, by: received.append(data) or set_goal_result(goal))
+    arguments = {"kind": goal["kind"], "target_value": goal["target_value"], "target_date": goal["target_date"],
+                 **{k: goal[k] for k in ("exercise", "measurement_kind", "distance_km") if goal[k] is not None}}
+    assert ok(http, sign(), "set_goal", arguments) == set_goal_result(goal)
+    assert received == [arguments]  # every argument sent, and nothing left out sent as null
+
+
+def test_the_new_reads_run_at_read_only(http, monkeypatch):
+    token = sign()
+    whoami(http, token)
+    set_switch(one_user().id, "read")
+    received = spy_on_services(monkeypatch)
+    for name in ("get_trends", "get_goals"):
+        assert failed(http, token, name)["error"] == "spy" and name in received, name
+
+
+# ---------------------------------------------------------------- stage 5: the sentences Claude reads
+
+STAGE_5_WORDS = ("To answer how the person is doing, call get_trends", "whether the person is on track, call get_goals",
+                 "takes the last day of that month as target_date", "worked out from today's date",
+                 "the person's own clicks on Settings", "no function does either", "Never offer to do them",
+                 "the count goes in servings or grams, never in the description", "send the food's name")
+
+
+def test_every_stage_5_sentence_is_in_the_instructions():
+    text = mcp_server.INSTRUCTIONS
+    for rule in (mcp_server.TRENDS_RULE, mcp_server.GOALS_RULE, mcp_server.MONTH_END_RULE,
+                 mcp_server.SETTINGS_ONLY_RULE, mcp_server.FOOD_NAME_RULE):
+        assert rule in text, rule
+    for words in STAGE_5_WORDS:
+        assert words in text, words
+
+
+def test_the_descriptions_carry_the_same_sentences(http):
+    tools = {t["name"]: t for t in tool_list(http, sign())}
+    assert mcp_server.TRENDS_RULE in tools["get_trends"]["description"]
+    assert mcp_server.GOALS_RULE in tools["get_goals"]["description"]
+    for name in ("get_trends", "get_goals"):
+        assert "Quote these numbers" in tools[name]["description"], name
+    goal = tools["set_goal"]
+    assert mcp_server.MONTH_END_RULE in goal["description"]
+    assert mcp_server.MONTH_END_RULE in goal["inputSchema"]["properties"]["target_date"]["description"]
+    for kind in ("lift", "bodyweight", "measurement", "cardio_best"):
+        assert kind in goal["inputSchema"]["properties"]["kind"]["description"], kind
+    target = goal["inputSchema"]["properties"]["target_value"]["description"]
+    for words in ("A lift: kg", "Body weight: kg", "A measurement: its own unit", "A cardio_best: minutes"):
+        assert words in target, words
+    for kind in ("waist", "hips", "chest", "arm", "thigh", "resting_hr"):
+        assert kind in goal["inputSchema"]["properties"]["measurement_kind"]["description"], kind
+    assert "cardio_best" in goal["inputSchema"]["properties"]["distance_km"]["description"]
+    food = tools["log_food"]
+    entry = food["inputSchema"]["$defs"]["FoodEntryIn"]
+    assert mcp_server.FOOD_NAME_RULE in food["description"]
+    assert mcp_server.FOOD_NAME_RULE in entry["properties"]["description"]["description"]
+    assert "description" not in entry.get("required", [])  # optional: a saved or USDA food defaults to its name
+
+
+def test_can_and_cant_states_the_goal_kinds_the_trends_sample_rows_and_the_settings_clicks():
+    text = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
+    for words in ("`lift`", "`bodyweight`", "`measurement`", "`cardio_best`",
+                  "The best session in the last 28 days, else the latest session's",
+                  "the 7-day average, else the latest weigh-in", "The latest value of that kind",
+                  "The best time for the distance in the last 28 days, else the latest",
+                  "Steps, sleep hours and water are a day's amount", "the last day of that month",
+                  "exponentially weighted moving average", "alpha 0.1",
+                  "the latest, dated in the last 7 days, and the last one dated 14 to 42 days before today",
+                  "food logged on at least 14 of the last 21 days", "7,700 kcal a kg",
+                  "it never sets the calorie target", "The projected date",
+                  "more than 2 years from today", "`includes_sample` is true", "Remove sample data",
+                  "the person's own clicks on Settings", "No function does either", "Claude never offers to do them",
+                  "stays valid until it expires, an hour at most", "recreates an empty account",
+                  "`too_many_reads`", "Eighteen functions", "`get_trends`", "`get_goals`"):
+        assert words in text, words
+    lines = CAN_AND_CANT.read_text(encoding="utf-8").splitlines()
+    rows = [m.group(1) for line in lines if (m := re.match(r"\| `([a-z_]+)` \| ", line))]
+    assert [r for r in rows if r in FUNCTIONS] == FUNCTIONS  # the function table: one row each, in order
+    read_row = next(line for line in lines if line.startswith("| `read` |"))
+    assert set(re.findall(r"`([a-z_]+)`", read_row)) - {"read"} == {n for n, level in CONTRACT_NEEDS.items()
+                                                                     if level == "read"}
+
+
+# ---------------------------------------------------------------- stage 5: find_food's read limit
+
+def test_too_many_reads_reaches_claude_as_an_error_with_the_wait(http, monkeypatch):
+    refusal = {"error": "too_many_reads", "message": "120 lookups in the last 10 minutes.",
+               "fix": "Wait 3 minutes, then retry.", "wait_minutes": 3}
+    monkeypatch.setattr(services, "find_food", lambda *a, **k: refusal)
+    result = call(http, sign(), "find_food", {"query": "dal"})
+    assert result["isError"] is True and result["structuredContent"] == refusal
+    assert result["content"][0]["text"] == compact(refusal)
+    with db.session_scope() as session:
+        row = session.scalars(select(CallLog)).one()
+        assert (row.function, row.ok, row.error_code) == ("find_food", False, "too_many_reads")
+
+
+def test_the_real_read_limit_reaches_claude(http):
+    token = sign()
+    account = whoami(http, token)["account_id"]
+    now = db.utcnow()
+    with db.session_scope() as session:
+        session.add_all(CallLog(function="find_food", started_at=now, ms=1, ok=True, error_code=None,
+                                result_bytes=10, user_id=account) for _ in range(125))
+    error = failed(http, token, "find_food", {"query": "dal"})
+    assert error["error"] == "too_many_reads" and error["fix"]
+
+
+# ---------------------------------------------------------------- stage 5: with the real services
+
+def test_set_goal_of_every_kind_through_mcp(http):
+    token = sign()
+    today = date.fromisoformat(whoami(http, token)["today"])
+    by = (today + timedelta(days=90)).isoformat()
+    ok(http, token, "log_lifts", {"sets": squat(90)})
+    ok(http, token, "log_bodyweight", {"kg": 80})
+    ok(http, token, "log_measurement", {"kind": "waist", "value": 88})
+    ok(http, token, "log_cardio", {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5})
+    cases = [({"kind": "lift", "exercise": "Back Squat", "target_value": 120}, "kg", "up"),  # now: 105, Epley
+             ({"kind": "bodyweight", "target_value": 75}, "kg", "down"),
+             ({"kind": "measurement", "measurement_kind": "waist", "target_value": 80}, "cm", "down"),
+             ({"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 28}, "min", "down")]
+    ids = []
+    for arguments, unit, direction in cases:
+        result = ok(http, token, "set_goal", {**arguments, "target_date": by})
+        progress = result["progress"]
+        assert set(progress) == GOAL_NUMBER_KEYS, arguments["kind"]
+        assert (progress["kind"], progress["unit"], progress["direction"]) == (arguments["kind"], unit, direction)
+        assert progress["measurement_kind"] == arguments.get("measurement_kind")
+        assert progress["distance_km"] == arguments.get("distance_km")
+        assert result["goal"]["unit"] == unit and progress["start_value"] is not None
+        ids.append(result["id"])
+    goals = ok(http, token, "get_goals")["goals"]
+    assert [g["goal_id"] for g in goals] == ids
+    assert [g["label"] for g in goals][2:] == ["Waist 80 cm", "Outdoor Run 5 km in 28:00"]
+
+
+def test_set_goal_refusals_carry_fixes_that_work(http):
+    token = sign()
+    today = date.fromisoformat(whoami(http, token)["today"])
+    by = (today + timedelta(days=90)).isoformat()
+    steps = failed(http, token, "set_goal", {"kind": "measurement", "measurement_kind": "steps", "target_value": 10000,
+                                             "target_date": by})
+    assert steps["fix"] and "waist" in steps["fix"]
+    bare = failed(http, token, "set_goal", {"kind": "measurement", "measurement_kind": "waist", "target_value": 80,
+                                            "target_date": by})
+    assert "start_value" in bare["fix"]  # nothing logged to start from
+    ok(http, token, "set_goal", {"kind": "measurement", "measurement_kind": "waist", "target_value": 80,
+                                 "target_date": by, "start_value": 88})
+    no_distance = failed(http, token, "set_goal", {"kind": "cardio_best", "exercise": "Outdoor Run", "target_value": 28,
+                                                   "target_date": by, "start_value": 31})
+    assert "distance_km" in no_distance["fix"]
+    ok(http, token, "set_goal", {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5,
+                                 "target_value": 28, "target_date": by, "start_value": 31})
+
+
+def test_the_new_reads_are_the_services_own_dicts(http):
+    token = sign()
+    ok(http, token, "log_bodyweight", {"kg": 80})
+    ok(http, token, "set_goal", {"kind": "bodyweight", "target_value": 75, "target_date": "2099-01-01"})
+    account = one_user().id
+    assert ok(http, token, "get_trends") == services.get_trends(account)
+    assert ok(http, token, "get_goals") == services.get_goals(account)
+    assert ok(http, token, "get_goals", {"include_closed": True}) == services.get_goals(account, include_closed=True)

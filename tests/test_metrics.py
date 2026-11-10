@@ -5,9 +5,9 @@ from datetime import date, timedelta
 import pytest
 
 from app.metrics import (
-    bodyweight_average, bodyweight_now, bodyweight_trend, days_since_last, epley, in_order, order_key, prs,
-    projection, projection_gap, recent_best,
-    session_best, sessions_vs_target, weekly_sessions,
+    bodyweight_average, bodyweight_now, bodyweight_trend, days_since_last, epley, ewma, in_order, maintenance,
+    maintenance_gap, order_key, prs, projection, projection_gap, recent_best,
+    session_best, sessions_vs_target, trend_rate, trend_rate_gap, weekly_sessions,
 )
 
 TODAY = date(2026, 11, 6)
@@ -87,6 +87,13 @@ def test_recent_best_is_the_best_session_of_the_last_28_days():
     assert recent_best([(TODAY + timedelta(days=1), heavy), (ago(3), light)], TODAY) == heavy
     assert recent_best([(TODAY + timedelta(days=1), light)], TODAY) == light
     assert recent_best([], TODAY) is None
+
+
+def test_recent_best_for_a_time_is_the_lowest():
+    # A cardio time for a distance: lower is better, with the same 28-day window and the same fallback.
+    assert recent_best([(ago(21), 30.0), (ago(3), 31.5), (TODAY, 32.0)], TODAY, lower_is_better=True) == 30.0
+    assert recent_best([(ago(28), 29.0), (TODAY, 32.0)], TODAY, lower_is_better=True) == 32.0
+    assert recent_best([(ago(40), 29.0), (ago(35), 33.0)], TODAY, lower_is_better=True) == 33.0
 
 
 # ---------------------------------------------------------------- training days
@@ -184,9 +191,9 @@ def test_projection_without_goal():
     p = projection([(ago(21), 100), (ago(14), 101), (ago(7), 102), (TODAY, 103)], TODAY)
     assert p["projected"] is None and p["status"] is None
     assert p["slope_per_week"] == pytest.approx(1.0)
-    assert p["weeks_left"] is None and p["needed_per_week"] is None
-    assert set(p) == {"slope_per_week", "projected", "status", "points_used", "latest", "weeks_left",
-                      "needed_per_week"}
+    assert p["weeks_left"] is None and p["needed_per_week"] is None and p["projected_date"] is None
+    assert set(p) == {"slope_per_week", "projected", "projected_date", "status", "points_used", "latest",
+                      "weeks_left", "needed_per_week"}
 
 
 def test_projection_lower_is_better():
@@ -319,6 +326,151 @@ def test_projection_gap_says_why_there_is_no_line():
 def test_cardio_kcal_is_met_times_3_5_times_kg_over_200_times_minutes():
     from app.metrics import cardio_kcal
     assert cardio_kcal(3.8, 80, 30) == 160 and cardio_kcal(9.3, 70, 28) == 319 and cardio_kcal(1, 0, 10) == 0
+
+
+# ---------------------------------------------------------------- projected date (decision 8)
+
+STEADY = [(ago(3), 10), (ago(2), 11), (ago(1), 12), (TODAY, 13)]   # exactly +1 a day: 13 today
+
+
+def test_the_projected_date_is_the_day_the_line_reaches_the_target():
+    # LIFT is +0.5 kg a week and sits at 81.5 today: 100 is 18.5 kg away, 18.5 / (0.5 / 7) = 259 days.
+    p = projection(LIFT, TODAY, goal_target=100, goal_date=TODAY + timedelta(days=28))
+    assert p["projected_date"] == (TODAY + timedelta(days=259)).isoformat()
+    # CUT is -0.2 kg a week at 89.4 today: 85 is 4.4 kg below, 4.4 / (0.2 / 7) = 154 days.
+    down = projection(CUT, TODAY, goal_target=85, goal_date=TODAY + timedelta(days=28), lower_is_better=True)
+    assert down["projected_date"] == (TODAY + timedelta(days=154)).isoformat()
+    # +1 a day from 13: 13.5 is crossed during the first day, so tomorrow; 20 in exactly 7 days.
+    assert projection(STEADY, TODAY, 13.5, TODAY + timedelta(days=9))["projected_date"] == \
+        (TODAY + timedelta(days=1)).isoformat()
+    assert projection(STEADY, TODAY, 20, TODAY + timedelta(days=9))["projected_date"] == \
+        (TODAY + timedelta(days=7)).isoformat()
+
+
+def test_the_projected_date_is_null_when_the_line_points_away():
+    assert projection(CUT, TODAY, goal_target=95, goal_date=TODAY + timedelta(days=28))["projected_date"] is None
+    assert projection(LIFT, TODAY, goal_target=70, goal_date=TODAY + timedelta(days=28),
+                      lower_is_better=True)["projected_date"] is None
+
+
+def test_the_projected_date_is_null_when_the_line_is_flat():
+    flat = [(ago(21), 100), (ago(14), 100), (ago(7), 100), (TODAY, 100)]
+    assert projection(flat, TODAY, 110, TODAY + timedelta(days=28))["projected_date"] is None
+    # A slope that shows as 0.00 a week is flat too: 0.004 kg over three weeks.
+    nearly = [(ago(21), 100), (ago(14), 100), (ago(7), 100), (TODAY, 100.004)]
+    assert projection(nearly, TODAY, 100.005, TODAY + timedelta(days=28))["projected_date"] is None
+
+
+def test_the_projected_date_is_null_more_than_two_years_out():
+    # +1 a day from 13: 743 is exactly 730 days away (kept), 744 is 731 (dropped).
+    assert projection(STEADY, TODAY, 743, TODAY + timedelta(days=9))["projected_date"] == \
+        (TODAY + timedelta(days=730)).isoformat()
+    assert projection(STEADY, TODAY, 744, TODAY + timedelta(days=9))["projected_date"] is None
+    assert projection(LIFT, TODAY, goal_target=200, goal_date=TODAY + timedelta(days=28))["projected_date"] is None
+
+
+def test_a_line_already_past_the_target_projects_today():
+    p = projection(LIFT, TODAY, goal_target=81, goal_date=TODAY + timedelta(days=28))
+    assert p["status"] == "reached" and p["projected_date"] == TODAY.isoformat()
+
+
+# ---------------------------------------------------------------- smoothed weight (decision 5)
+
+def test_ewma_by_hand():
+    # s0 = 80; s1 = 80 + 0.1 x (81 - 80) = 80.1; s2 = 80.1 + 0.1 x (79 - 80.1) = 79.99.
+    assert ewma([(ago(2), 80), (ago(1), 81), (TODAY, 79)], TODAY) == [(ago(2), 80.0), (ago(1), 80.1), (TODAY, 79.99)]
+    assert ewma([], TODAY) == []
+    assert ewma([(TODAY, 80.0)], TODAY) == [(TODAY, 80.0)]
+
+
+def test_ewma_carries_the_unrounded_value_and_rounds_what_it_returns():
+    # 80.003 shows as 80.0 but the next step starts from 80.003: 80.003 + 0.1 x 0.027 = 80.0057, shown 80.01.
+    # Rounding each step first would give 80.0 again.
+    assert [s for _, s in ewma([(ago(2), 80), (ago(1), 80.03), (TODAY, 80.03)], TODAY)] == [80.0, 80.0, 80.01]
+
+
+def test_ewma_follows_the_one_order_and_another_alpha():
+    later = TODAY + timedelta(days=1)
+    # Given out of order: sorted by effective date; the later-dated one counts as today, after the earlier entry.
+    out = ewma([(TODAY, 82), (ago(5), 80), (later, 84)], TODAY)
+    assert out == [(ago(5), 80.0), (TODAY, 80.2), (later, 80.58)]   # 80 + 0.2; 80.2 + 0.1 x 3.8
+    assert [s for _, s in ewma([(ago(1), 80), (TODAY, 90)], TODAY, alpha=0.5)] == [80.0, 85.0]
+
+
+# ---------------------------------------------------------------- the rate's two ends (decision 6)
+
+def test_trend_rate_by_hand():
+    smoothed = [(ago(43), 83.0), (ago(42), 82.0), (ago(14), 81.0), (ago(13), 80.9), (ago(3), 80.4), (TODAY, 80.3)]
+    # to = today (80.3); from = the last one dated 14 to 42 days ago: ago(14), 81.0. (80.3 - 81.0) / 14 x 7.
+    assert trend_rate(smoothed, TODAY) == {"per_week": -0.35, "from": ago(14).isoformat(), "to": TODAY.isoformat(),
+                                           "days": 14}
+    assert trend_rate_gap(smoothed, TODAY) is None
+
+
+def test_the_rate_ends_at_their_boundaries():
+    # The latest may be 6 days old, not 7.
+    assert trend_rate([(ago(20), 81.0), (ago(6), 80.0)], TODAY)["days"] == 14
+    assert trend_rate([(ago(20), 81.0), (ago(7), 80.0)], TODAY) is None
+    # The reference may be 14 or 42 days old, not 13 or 43.
+    assert trend_rate([(ago(42), 82.0), (TODAY, 80.0)], TODAY) == {"per_week": -0.33, "from": ago(42).isoformat(),
+                                                                   "to": TODAY.isoformat(), "days": 42}
+    assert trend_rate([(ago(43), 82.0), (TODAY, 80.0)], TODAY) is None
+    assert trend_rate([(ago(13), 82.0), (TODAY, 80.0)], TODAY) is None
+    # The latest is the last in the one order: a later-dated weigh-in counts as today.
+    later = TODAY + timedelta(days=2)
+    assert trend_rate([(ago(14), 81.0), (later, 80.3)], TODAY) == {"per_week": -0.35, "from": ago(14).isoformat(),
+                                                                   "to": later.isoformat(), "days": 14}
+
+
+def test_the_rate_says_which_end_is_missing():
+    assert trend_rate_gap([(ago(20), 81.0), (ago(8), 80.0)], TODAY) == \
+        "The weekly rate needs a weigh-in in the last 7 days."
+    assert trend_rate_gap([(ago(3), 80.0), (TODAY, 80.0)], TODAY) == \
+        "The weekly rate needs a weigh-in from 14 to 42 days ago."
+    assert trend_rate_gap([(ago(50), 80.0)], TODAY) == \
+        "The weekly rate needs a weigh-in in the last 7 days and one from 14 to 42 days ago."
+    assert trend_rate([], TODAY) is None and trend_rate_gap([], TODAY).startswith("The weekly rate needs")
+
+
+# ---------------------------------------------------------------- maintenance (decision 7)
+
+# Now: the 7 days ending today average 80.0 (79.8, 80.2). Then: the 7 ending 21 days ago (ago 27 .. 21)
+# average 80.6 (80.4, 80.8). The 99s sit outside both windows and must not count.
+WEIGHED = [(ago(28), 99.0), (ago(27), 80.8), (ago(21), 80.4), (ago(7), 99.0), (ago(3), 80.2), (TODAY, 79.8)]
+ATE = [(ago(n), 2100) for n in range(7)] + [(ago(n), 1900) for n in range(7, 14)]   # 14 days, average 2000
+
+
+def test_maintenance_by_hand():
+    # Weight change 80.0 - 80.6 = -0.6 kg. 2000 - (-0.6 x 7,700 / 21) = 2000 + 220 = 2220.
+    m = maintenance(ATE, WEIGHED, TODAY)
+    assert m == {"kcal": 2220, "intake_avg_kcal": 2000, "weight_change_kg": -0.6, "days_logged": 14,
+                 "window_days": 21, "from": ago(20).isoformat(), "to": TODAY.isoformat()}
+    assert maintenance_gap(ATE, WEIGHED, TODAY) is None
+    # Gaining 0.3 kg on 2000 a day: 2000 - 0.3 x 7,700 / 21 = 2000 - 110 = 1890.
+    gaining = [(ago(27), 79.7), (TODAY, 80.0)]
+    assert maintenance(ATE, gaining, TODAY)["kcal"] == 1890
+
+
+def test_maintenance_needs_14_logged_days_in_the_21():
+    thirteen = ATE[:13]
+    assert maintenance(thirteen, WEIGHED, TODAY) is None
+    assert maintenance_gap(thirteen, WEIGHED, TODAY) == "Needs food logged on 1 more of the last 21 days."
+    # A day 21 days back is outside the window; two entries on one day are one logged day, added up.
+    outside = ATE[:13] + [(ago(21), 2000)]
+    assert maintenance(outside, WEIGHED, TODAY) is None
+    doubled = ATE[:13] + [(ago(5), 1000), (ago(5), 900)]
+    assert maintenance(doubled, WEIGHED, TODAY) is None   # still 13 days
+    twice = ATE + [(TODAY, 140)]                           # today: 2100 + 140
+    assert maintenance(twice, WEIGHED, TODAY)["intake_avg_kcal"] == 2010
+    assert maintenance_gap([], WEIGHED, TODAY) == "Needs food logged on 14 more of the last 21 days."
+
+
+def test_maintenance_needs_both_weight_averages():
+    no_then = [w for w in WEIGHED if w[0] > ago(21)]
+    no_now = [w for w in WEIGHED if w[0] < ago(6)]
+    for weighed in (no_then, no_now, []):
+        assert maintenance(ATE, weighed, TODAY) is None
+        assert maintenance_gap(ATE, weighed, TODAY) == "Needs weigh-ins in the last 7 days and around 21 days ago."
 
 
 def test_pace_is_minutes_per_km_as_m_ss():

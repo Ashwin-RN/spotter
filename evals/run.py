@@ -9,6 +9,7 @@ judge.masked, and each run's MCP config file (the one place the token is written
 """
 
 import argparse
+import calendar
 import datetime as dt
 import itertools
 import json
@@ -30,7 +31,7 @@ from evals.issuer import DOMAIN, RESOURCE, FakeProvider, Key, claims, sign
 from evals.recorder import CallRecorder
 
 RUN_TIMEOUT = 180  # seconds per CLI run
-TABLES = ("food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session")
+TABLES = ("food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal")
 
 # Set by the Claude Code session this may be started from. They make a child CLI think it is part of that
 # session (or point it at its IDE and messaging sockets), so they are dropped: each run then is what it
@@ -93,9 +94,23 @@ def local_time_zone(override: str | None = None) -> str:
     return "UTC"
 
 
+def next_month_end(today: dt.date, month: int) -> dt.date:
+    """The last day of this month (1 to 12), the next one strictly after today: "by the end of March"."""
+    if not 1 <= month <= 12:
+        raise ValueError("month is 1 to 12")
+    for year in (today.year, today.year + 1):
+        end = dt.date(year, month, calendar.monthrange(year, month)[1])
+        if end > today:
+            return end
+    raise AssertionError("unreachable")
+
+
 def dates_for(zone: str) -> dict[str, str]:
+    """The placeholders' dates for a person in this zone: today, yesterday, next_month_end:1 to :12."""
     today = dt.datetime.now(zoneinfo.ZoneInfo(zone)).date()
-    return {"today": today.isoformat(), "yesterday": (today - dt.timedelta(days=1)).isoformat()}
+    dates = {"today": today.isoformat(), "yesterday": (today - dt.timedelta(days=1)).isoformat()}
+    dates.update({f"next_month_end:{m}": next_month_end(today, m).isoformat() for m in range(1, 13)})
+    return dates
 
 
 def _plain(value):
@@ -205,7 +220,11 @@ class LocalServer:
         seeded = {}
         dates = dates_for(zone)
         for seed in seeds:
-            result = getattr(services, seed["service"])(user_id, judge.resolve(dict(seed["data"]), dates), "web")
+            service = getattr(services, seed["service"])
+            if seed["service"] in judge.NO_DATA_SERVICES:
+                result = service(user_id, "web")
+            else:
+                result = service(user_id, judge.resolve(dict(seed["data"]), dates), "web")
             if "error" in result:
                 raise RuntimeError(f"seed {seed.get('as')} failed: {result['error']}: {result.get('message')}")
             if seed.get("as"):

@@ -268,6 +268,83 @@ def test_as_save_food_with_bs_name_makes_as_own_and_leaves_bs_alone(world):
     assert snapshot(SavedFood, ids["saved_food"]) == before
 
 
+def test_bs_goals_of_every_kind_and_trends_never_reach_a(world):
+    a, b, _ = world
+    goal_date = (users.today_for(b) + timedelta(days=60)).isoformat()
+    for data in ({"kind": "measurement", "measurement_kind": "waist", "target_value": 85},
+                 {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 27},
+                 {"kind": "bodyweight", "target_value": 85}):
+        made = services.set_goal(b.id, {**data, "target_date": goal_date}, "claude")
+        assert "error" not in made, made
+        assert services.set_goal(a.id, {"goal_id": made["id"], "status": "dropped"}, "claude")["error"] == "not_found"
+    assert len(services.get_goals(b.id)["goals"]) == 4
+    mine = services.get_goals(a.id, include_closed=True)
+    assert mine["goals"] == [] and mine["closed"] == []
+    # A's own goals start from A's own numbers: nothing of B's is logged for A.
+    none_yet = services.set_goal(a.id, {"kind": "measurement", "measurement_kind": "waist", "target_value": 85,
+                                        "target_date": goal_date}, "claude")
+    assert none_yet["error"] == "missing_field"
+    trends = services.get_trends(a.id)
+    assert trends["bodyweight"] is None and trends["calories"] is None and trends["cardio"]["minutes_this_week"] == 0
+    assert services.get_trends(b.id)["bodyweight"]["now"] == 90
+    assert services.list_saved_foods(a.id)["foods"] == []
+    assert [f["id"] for f in services.list_saved_foods(b.id)["foods"]] == [world[2]["saved_food"]]
+
+
+def test_sample_data_is_per_person(world):
+    a, b, _ = world
+    assert services.sample_state(a.id) == {"empty": True, "sample_rows": 0}
+    assert services.add_sample_data(b.id, "web")["error"] == "not_empty"   # B's own rows
+    assert "error" not in services.add_sample_data(a.id, "web")
+    before = {kind: snapshot(model, world[2][kind]) for kind, (model, _) in CASES.items()}
+    services.remove_sample_data(a.id, "web")
+    assert {kind: snapshot(model, world[2][kind]) for kind, (model, _) in CASES.items()} == before
+
+
+# ---------------------------------------------------------------- deleting an account
+
+def test_delete_account_empties_every_table_for_the_person_and_leaves_the_other(world):
+    from sqlalchemy import func
+
+    from app import calllog
+    from app.models import CallLog, User
+    a, b, ids = world
+    services.log_bodyweight(a.id, {"kg": 70}, "web")
+    services.delete_entry(b.id, "bodyweight", ids["bodyweight"])   # a deleted row goes too
+    started = db.utcnow()
+    row_id = calllog.start("delete_account", started, b.id)       # as the web writes it, first
+    calllog.start("get_log", started, b.id)
+    r = services.delete_account(b.id)
+    assert r == {"deleted": True, "rows": {"user": 1, "lift_session": 1, "bodyweight": 1, "measurement": 1, "goal": 1,
+                                           "saved_food": 1, "food_entry": 1, "cardio_entry": 1, "lift_set": 2}}
+    calllog.finish(row_id, 12, True, None, 40)                     # its own row is still there to finish
+    with db.new_session() as s:
+        assert s.get(User, b.id) is None and s.get(User, a.id) is not None
+        for table in user_tables():
+            model = next(m.class_ for m in Base.registry.mappers if m.class_.__tablename__ == table)
+            assert s.scalar(select(func.count()).select_from(model).where(model.user_id == b.id)) == 0, table
+        assert s.scalar(select(func.count()).select_from(LiftSet)) == 0
+        kept = list(s.scalars(select(CallLog).where(CallLog.function.in_(("delete_account", "get_log")))))
+        assert len(kept) == 2 and all(c.user_id is None for c in kept)
+        finished = s.get(CallLog, row_id)
+        assert finished.ok is True and finished.ms == 12 and finished.error_code is None
+    assert services.get_log(a.id)["totals"]["weigh_ins"] == 1
+    assert services.delete_account(b.id)["error"] == "no_account"   # a retry finds nothing left to do
+
+
+def test_delete_account_goes_through_at_the_write_limit_and_touches_only_its_person(world):
+    from app.models import CallLog, User
+    a, b, ids = world
+    with db.session_scope() as s:
+        s.add_all(CallLog(user_id=a.id, function="log_lifts", started_at=db.utcnow(), ms=1, ok=True, result_bytes=1)
+                  for _ in range(services.WRITE_LIMIT + 1))
+    before = {kind: snapshot(model, ids[kind]) for kind, (model, _) in CASES.items()}
+    assert services.delete_account(a.id)["deleted"] is True   # the person can always leave
+    with db.new_session() as s:
+        assert s.get(User, a.id) is None and s.get(User, b.id) is not None
+    assert {kind: snapshot(model, ids[kind]) for kind, (model, _) in CASES.items()} == before
+
+
 def test_bs_food_and_cardio_never_reach_as_day(world):
     a, _, _ = world
     day = services.get_log(a.id)["days"][0]

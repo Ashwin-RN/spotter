@@ -1,7 +1,7 @@
 """Inline SVG charts for the web pages. Pure functions: chart data in, markup out.
 
   chart_svg(chart) -> Markup        estimated max per session for one lift, the goal line, the projection
-  bodyweight_svg(chart) -> Markup   weigh-ins, the 7-day average, the goal line
+  bodyweight_svg(chart) -> Markup   weigh-ins, the smoothed trend, the goal line
 
 The data comes from app.services.progress (lift_chart, bodyweight_chart). Colours come from the
 stylesheet, through the class names. Every chart carries a <title> and a <desc> that state its
@@ -90,19 +90,22 @@ def chart_svg(chart: dict | None, element_id: str = "progress-chart") -> Markup:
 
 
 def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart") -> Markup:
-    """Weigh-ins as dots, the 7-day average as a line, and a horizontal goal line at the target.
+    """Weigh-ins as dots, the smoothed trend as a line, and a horizontal goal line at the target.
 
-    chart: {points [{date, kg}], average [{date, kg}], latest {date, kg}, goal {target_kg, target_date}
-    | None}, or None. Renders nothing under two weigh-ins. Same look as chart_svg.
+    chart: {points [{date, kg, smoothed}], latest {date, kg}, goal {target_kg, target_date} | None}, or
+    None. Renders nothing under two weigh-ins. The line joins each point's `smoothed` value (the
+    exponentially weighted average up to that weigh-in); points without one are left out of the line,
+    and a line needs two. Same look as chart_svg.
     """
     if not chart or len(chart.get("points") or []) < 2:
         return Markup("")
     pts = [(date.fromisoformat(p["date"]), float(p["kg"])) for p in chart["points"]]
-    avg = [(date.fromisoformat(p["date"]), float(p["kg"])) for p in chart["average"] if p["kg"] is not None]
+    smooth = [(date.fromisoformat(p["date"]), float(p["smoothed"])) for p in chart["points"]
+              if p.get("smoothed") is not None]
     goal = chart.get("goal") or None
     target = float(goal["target_kg"]) if goal and goal.get("target_kg") is not None else None
     first, last = pts[0][0], pts[-1][0]
-    values = [v for _, v in pts] + ([target] if target is not None else [])
+    values = [v for _, v in pts + smooth] + ([target] if target is not None else [])
     lo, hi = min(values), max(values)
     pad = max((hi - lo) * 0.1, 1.0)
     lo, hi = max(0.0, lo - pad), hi + pad
@@ -118,8 +121,8 @@ def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart") -> 
     latest = chart["latest"]
     desc = (f"{len(pts)} weigh-ins from {first.isoformat()} to {last.isoformat()}. "
             f"Latest {latest['kg']:g} kg on {latest['date']}.")
-    if avg:
-        desc += f" 7-day average {avg[-1][1]:g} kg."
+    if len(smooth) > 1:
+        desc += f" The line is the smoothed trend, now {smooth[-1][1]:g} kg."
     if target is not None:
         desc += f" Goal {target:g} kg" + (f" by {goal['target_date']}." if goal.get("target_date") else ".")
     out = _svg_open(element_id, "Body weight over time", desc)
@@ -133,8 +136,9 @@ def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart") -> 
         out.append(f'<line class="goal" x1="{PAD_L}" x2="{CHART_W - PAD_R}" y1="{y(target)}" y2="{y(target)}" />')
         out.append(f'<text class="goal-label" x="{CHART_W - PAD_R}" y="{y(target) - 5}" text-anchor="end">'
                    f'Goal {target:g} kg</text>')
-    if len(avg) > 1:
-        out.append(f'<polyline class="series" fill="none" points="{" ".join(f"{x(d)},{y(v)}" for d, v in avg)}" />')
+    if len(smooth) > 1:
+        out.append(f'<polyline class="series smoothed" fill="none" '
+                   f'points="{" ".join(f"{x(d)},{y(v)}" for d, v in smooth)}" />')
     for d, v in pts:
         out.append(f'<circle class="dot weigh-in" cx="{x(d)}" cy="{y(v)}" r="4"><title>{d.isoformat()}: {v:g} kg'
                    f'</title></circle>')

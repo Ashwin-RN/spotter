@@ -350,3 +350,77 @@ Two edits in the stage commit were not re-checked by a reviewer: the summary now
 - **The first evals found text, not code.** Every service rule passed its tests and its review; two of ten eval cases still went wrong, and both were sentences that were missing from the instructions (what to do when a word fits two activities; what to do when "delete" fits two entries). The cases were cheap to run and caught this before a person did. The ground truth is the server's record of what it received, never the model's account of what it did.
 - **A rule that spans the service and its wrapper is only checked through the wrapper.** The speed fix was whole in the service and useless through MCP, because the service's own advice (send null) was a value the wrapper could not carry. The reviewer's re-check of each fix, through MCP, is what found it, twice.
 - **No network call under a lock.** The USDA lookup inside the write transaction worked on Postgres and failed on SQLite, which the tests and the evals run on. Resolving every outside lookup before the lock is cheaper than finding out which database is running.
+
+## Stage 5: goals and trends
+
+**Goal: a person asks "how am I doing?" and "am I on track?" and gets numbers worked out from their own logs; the two clicks only they can make, export and delete, sit on Settings; and an empty account can fill itself with sample data to see all of it before logging anything.** Contract: `docs/contracts/stage-5.md`.
+
+The first-use path, walked before anything was built: "I want to be 75 kg by the end of March" sets a goal from the 7-day average with the pace it needs. "How am I doing?" is one call, `get_trends`: the smoothed weight trend and its rate, calories a day over the last 7 and 28 logged days, sessions and cardio minutes against the targets, and a maintenance estimate once 14 of the last 21 days have food logged, else how many more it needs. "Am I on track?" is `get_goals`: each goal's needed pace against its actual pace, the date it is reached at that pace, and one of reached, on track, behind, not enough data. Export and delete are the person's own clicks on Settings, and Claude is told to say so rather than offer. A new account's Today has one button that fills four weeks of everything, marked sample, removed by one click.
+
+Two rules were added. A read that includes sample rows says so (`includes_sample`, with a note naming the button that removes them). Export and delete account are never offered through Claude: no function does either.
+
+### What was built
+
+Four packages again: services, web and MCP on disjoint files at the same time, the evals once the services and MCP had landed. This stage needed the first migration since stage 3: one nullable column, `goal.measurement_kind`, because the stage 1 schema had nowhere to say which measurement a goal was about.
+
+| Package | What |
+|---|---|
+| Services | Four goal kinds through `set_goal` (a lift's estimated max, body weight, a measurement of six kinds, a time for a distance in one cardio activity), one shape of numbers for every kind, with the projected date from the same fitted line as the projection; `get_trends` (an exponentially weighted moving average of the weigh-ins, α 0.1; the rate per week between a weigh-in in the last 7 days and the last one 14 to 42 days back; calorie averages over logged days; sessions and cardio against the targets; the maintenance estimate from the 21-day window at 7,700 kcal a kg, never setting the target); `get_goals`; sample data (307 rows over 28 days, deterministic from the day and a fixed seed, added only to an empty account as one write, every row marked, removed completely by one call); export as CSV texts; `delete_account` (the person's call-log rows kept with no owner, then the user row, and the schema's cascade); a read throttle on `find_food`; `list_saved_foods`; a saved food's description defaulting to its name; `includes_sample` on every read |
+| Web | A Goals page with every kind's numbers, Hit, Drop and Reopen, and one form for any kind; Progress with a Trends card from `get_trends` and the chart's line now the smoothed trend; Settings with Export (a zip of CSVs, built in memory), Remove sample data, and Delete my account behind a confirm page that deletes the sign-in at the provider first and the rows here second, so a half-done delete can be finished; "Add sample data" on an empty account's Today, a banner and a tag while sample rows exist; a saved food shown as "Roti × 2 (2 rotis)"; the landing page rewritten as a six-step walkthrough from sign-in to the first sentence said to Claude, with the Claude Code command carrying the live address |
+| MCP | Eighteen functions. `get_trends` and `get_goals`; `set_goal` with four kinds, `measurement_kind` and `distance_km`; five new instruction sentences kept as named constants shared with the descriptions (how am I doing, am I on track, the end of a month, export and delete are the person's clicks, the count goes in servings); result models for every new shape, and a new check that walks every real result at every depth and fails on any key no model has, which found a stage 4 gap (`met` and `compendium_code` on the exercise list); `can-and-cant` with the goal kinds, the trend method, the maintenance rule, sample rows, and the one accepted hole: a sign-in already given to Claude stays valid until it expires, an hour at most, and a call in that hour recreates an empty account |
+| Evals | Six cases added, sixteen in all; the runner gains a next-month-end date and a reply-must-say check. See `docs/evals.md` |
+
+Each builder broke its own behaviours before reporting: 57, 40 and 42 breaks, each turning a test red (one survivor on the services side was a test gap, closed). Suite before review: 1,543 tests, plain and with warnings as errors, from 1,287. The sample set's goal and trend numbers for a fixed day were worked out a second way, by a plain script from the seed with no app code, and matched to the decimal.
+
+### The review
+
+Two reviewers at once, one over the services and MCP surface, one over the web, each with the contract's numbers in hand.
+
+**Services and MCP.** The reviewer hand-worked every number the contract fixes and compared it with the code's: the EWMA carried unrounded (80, 80.04, 80.04 gives 80.0, 80.0, 80.01; a rounded carry would give 80.0), the rate's two ends at every boundary (a weigh-in at T−6 counts and T−7 does not; a reference at T−14 and T−42 counts, T−13 and T−43 do not), the maintenance estimate (14 days at 2,000 kcal with 80.0 → 79.3 kg gives 2,257; 13 days gives "needs 1 more"; the sample day's 2,513 = 2,198 + 0.86 × 7,700 ÷ 21), the projected date and its three nulls (a line falling 0.5 kg a week from 80.5 to 78 lands on T+35; exactly 730 days out is kept), needed against actual for each of the four kinds, a 5 km time from a 10 km run's pace with shorter, older and slower runs left out. It drove `set_goal` of every kind through MCP, checked every new refusal's fix could be followed with the arguments the wrapper carries (the stage 4 lesson), ran the migration up and down with rows present and read its Postgres SQL, added sample data for two people and checked determinism, every count and tag, every duplicate key, the three refusals and that removal touched only one person's sample rows, read the export for another person's rows (none) and deleted rows (present), deleted an account and found every table empty for that person and the call-log rows kept with no owner, and found the read throttle counts only `find_food` and never blocks a write. It ran 55 mutants on the services and 9 on the MCP side: 59 died, one was equivalent, and four survived. No code bugs; the four survivors were missing tests.
+
+| Finding | Fix |
+|---|---|
+| Removing the `deleted_at` filters from a goal's "now" (a deleted waist value, a deleted faster run) left the whole suite green | Tests: a deleted 84 leaves the waist at 86; a deleted faster run leaves the time at 30; restoring brings them back |
+| Only a dropped goal was tested as "closed"; a hit goal would have blocked sample data unnoticed | A hit goal in the test |
+| The sample flags were only ever tested on the full sample set, where every kind sets the flag; a flag broken for one kind survived | Tests per kind: with only sample meals left, `get_log` and `get_trends` still say so; sample weigh-ins under a real goal flag `get_goals` |
+| Removing sample data left a real entry logged against a sample food with its number and tag but no link, so its day line lost "× 3 (3 rotis)" | The removal summary counts and names those entries |
+| An edit that tried to change a goal's identity got `cannot_change_kind` and a contradicting `nothing_to_change` | Only the first |
+| Whole-number kcal written as `100.0` in the CSV | Written as `100` |
+| A lift goal naming a cardio activity answered "not on the exercise list", which was false | "Outdoor Run is a cardio activity; a lift goal needs a lift", and the reverse, each with a fix naming the right kind |
+
+**Web.** The reviewer posted every kind of goal and thirty-odd bad values (wrong-kind exercises both ways, steps and sleep, a target the wrong way or equal to the start, past and malformed dates, oversized text, an empty form) and found every refusal beside the right field with nothing written, tried another person's goal ids on the status route with nine kinds of id and got the same 404 echoing nothing, opened the export zip and found all ten files with deleted rows in and nothing of another person, ran the delete with the seam succeeding, raising, answering "no such user" and failing locally after the provider had succeeded, checked the Trends card figure by figure against `get_trends` for the same person, counted sample tags against live rows on all 29 day pages, and read the landing page against the current claude.ai and Claude Code documentation. It ran 42 mutants: 36 died, two were equivalent, four were test gaps. Four should-fixes, none a data bug.
+
+| Finding | Fix |
+|---|---|
+| Sample goals showed no "sample" tag: the numbers carried the flag, the template never read it | The tag beside the label, on closed goals too (the closed shape gained the flag) |
+| Every `set_goal` warning was thrown away after a save: a second identical goal was created with "Goal set." and no word that the first was kept | Warnings shown after a save and after Hit, Drop and Reopen, carried across the redirect as short codes; nothing from the address is echoed |
+| At the write limit, the delete deleted the sign-in at the provider and then answered 429, leaving only the session cookie able to finish | Deleting the account is exempt from the write limit, as the Claude switch is: the person must always be able to leave. The local-failure page adds "Do not sign out until this finishes." |
+| The Claude Code command on the landing page added Spotter only for the folder it was run in | `--scope user` |
+| The claude.ai steps left out the connector's name field and the per-chat switch | Both named, as the help page has them |
+| The serving pluraliser produced "2 mediums apple", "2 ozes", "2 tomatos" | Plurals only for "1 word" and "1 small/medium/large word" where a plain -s is right; units and awkward endings fall back to "2 × label" |
+| "7-day average" shown when the figure was the latest weigh-in; the rate line used fixed text instead of the service's note saying which end is missing | "latest weigh-in" when the 7 days are empty; the service's note shown |
+| The cardio "nothing to start from" refusal landed under Distance | Placed under "Where you are now" |
+| The export zip was built on the event loop; dead stand-in services and skip markers could hide a broken export as a quiet skip | The threadpool; the scaffolding removed |
+
+Both reviewers re-checked the fixed tree once the builders had stopped. The services reviewer drove each of its nine items through MCP again on the quiet tree (a deleted waist of 86 leaves the goal's start at 90; a hit goal no longer blocks sample data; the four flags per kind; the removal sentence; the single error on an identity edit; `100` in the CSV; the delete at 130 write rows with exactly one lock call; both wrong-kind refusals followed to a working call) and ran 15 more mutants, all dead: holds. The web reviewer re-ran every finding with the test client, crafted the warning codes (`bogus`, a script tag, `__class__`, an empty value, a 64-character value: none shown, nothing echoed), and found one leftover skip marker in a chart test, removed. On the sample flag the two builders' readings differed and the reviewer settled it: a read says `includes_sample` when sample rows are in its own numbers, so with only sample meals left `get_log` and `get_trends` say so and `get_goals` does not.
+
+Two edits after the re-checks were mine and not re-checked by a reviewer: the leftover skip marker removed, and one serving of any label shown as the label itself ("1 roti (40 g)", not "1 × 1 roti (40 g)"). The suite covers both.
+
+### Exit test
+
+| Check | Status |
+|---|---|
+| The full suite is green, plain and with warnings as errors, on a clean export | Pending |
+| Live, on an empty account: "Add sample data" fills Today, Progress and Goals; the three goals show the numbers the suite computed for that day | Pending |
+| "How am I doing?" from Claude → `get_trends` with the same numbers; "Am I on track?" → `get_goals` | Pending |
+| "Drop the squat goal" → dropped; "Remove sample data" → Today is empty again | Pending |
+| "Export my data" from Settings → a zip with every file | Pending |
+| Delete account: the person's own click; removes the account here and at the provider | The person's, when they choose |
+| The evals: every case passes at least 2 of 3 runs, the rate reported as it is | Pending |
+
+### What this stage taught
+
+- **A deterministic sample set turns "matches a hand-worked example" into a test.** The plan's exit test asked for goal numbers checked by hand. With the sample rows fixed by the day and a seed, the suite asserts every goal and trend figure to the decimal for a fixed day, a plain script from the seed with no app code gives the same figures, and the live check is reading the same numbers off a page.
+- **A builder's mutants test what the builder thought of.** All three builders ran their own mutation passes and reported every mutant dead. The reviewers' passes, from a different angle, still found five that lived: a deleted row leaking into a goal's "now", a hit goal blocking sample data, a sample flag broken for one kind. None was a code bug, every one was a test that did not exist, and each would have become a bug the first time the code was touched again.
+- **The person must always be able to leave.** The write limit is right for every write except the one that ends the account: at the limit the first design deleted the sign-in at the provider and then refused the local delete. The exemption the Claude switch already had is the exemption delete needed.
+- **Two reviewers see what one does not.** The web reviewer found the write-limit hole in a service; the services reviewer found a schema field the web had asked for and nobody had modelled. Findings crossed package lines both ways, and routing them is the control centre's job.

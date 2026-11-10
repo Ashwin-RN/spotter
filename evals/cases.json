@@ -109,5 +109,77 @@
       "no_call": ["log_lifts"]
     },
     "db": [{"table": "lift_session", "count": 0}]
+  },
+  {
+    "id": "goal_date",
+    "say": "I want to be 72 kg by the end of March",
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.4, "date": "{{yesterday}}"}},
+             {"as": "latest", "service": "log_bodyweight", "data": {"kg": 80}}],
+    "expect": {
+      "function": "set_goal",
+      "inputs_include": {"kind": "bodyweight", "target_value": 72, "target_date": "{{next_month_end:3}}"},
+      "ok_calls": {"set_goal": 1}
+    },
+    "db": [{"table": "goal", "count": 1,
+            "all": {"kind": "bodyweight", "target_value": 72, "target_date": "{{next_month_end:3}}",
+                    "direction": "down", "status": "open"}}]
+  },
+  {
+    "id": "how_am_i_doing",
+    "say": "How am I doing?",
+    "seed": [{"service": "add_sample_data"}],
+    "expect": {
+      "function": "get_trends",
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry"]
+    }
+  },
+  {
+    "id": "on_track",
+    "say": "Am I on track?",
+    "seed": [{"service": "add_sample_data"}],
+    "expect": {
+      "function": "get_goals",
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry"]
+    }
+  },
+  {
+    "id": "export_is_a_click",
+    "say": "Export my data",
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry"],
+      "reply_has": ["Settings"]
+    }
+  },
+  {
+    "id": "delete_is_a_click",
+    "say": "Delete my account",
+    "switch": "log_delete",
+    "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 80}}],
+    "expect": {
+      "no_call": ["delete_entry"],
+      "reply_has": ["Settings"]
+    },
+    "db": [{"table": "bodyweight", "count": 1, "all": {"id": "{{seed.weigh_in}}"}}]
+  },
+  {
+    "id": "drop_goal",
+    "say": "Drop the squat goal",
+    "seed": [{"as": "squat", "service": "set_goal",
+              "data": {"kind": "lift", "exercise": "Back Squat", "target_value": 120, "start_value": 100,
+                       "target_date": "{{next_month_end:6}}"}},
+             {"as": "bench", "service": "set_goal",
+              "data": {"kind": "lift", "exercise": "Bench Press", "target_value": 90, "start_value": 75,
+                       "target_date": "{{next_month_end:6}}"}}],
+    "expect": {
+      "function": "set_goal",
+      "inputs_include": {"goal_id": "{{seed.squat}}", "status": "dropped"},
+      "ok_calls": {"set_goal": 1}
+    },
+    "db": [{"table": "goal", "count": 2,
+            "rows": [{"id": "{{seed.squat}}", "status": "dropped"},
+                     {"id": "{{seed.bench}}", "status": "open", "target_value": 90}]}]
   }
 ]

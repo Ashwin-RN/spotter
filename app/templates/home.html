@@ -1,29 +1,64 @@
 {% extends "base.html" %}
 {% block main %}
 <h1>Spotter</h1>
-<p class="lead">A personal fitness record you keep by talking to Claude. Tell Claude what you lifted or what
-you weighed, and Spotter stores it, works out your bests and tracks your goals.</p>
+<p class="lead">A personal fitness record you keep by talking to Claude. Tell Claude what you lifted, ate or
+weighed. Spotter stores it, works out your bests and trends, and tracks your goals.</p>
 
 <div class="card accent-border">
-  <h2>Connect Spotter to Claude</h2>
-  {% if mcp_url %}
-  <p>Spotter's address:</p>
-  <code class="link-box">{{ mcp_url }}</code>
-  <ol>
-    <li>In Claude, open Settings, then Connectors, and add a custom connector.</li>
-    <li>Paste the address above.</li>
-    <li>Claude asks you to sign in. Use the same sign-in here and there, and both reach one account.</li>
+  <h2>{% if signed_in %}Connect Claude and start{% else %}How to start{% endif %}</h2>
+  <ol class="steps">
+    {% if not signed_in %}
+    <li>
+      <p><strong>Sign in here.</strong> The first sign-in creates your account. Your time zone is saved from your browser.</p>
+      {% if web_ready %}
+      <p><a class="button" href="/sign-in">Sign in</a></p>
+      {% else %}
+      <p class="notice">Sign-in on the web is not set up on this server yet.</p>
+      {% endif %}
+    </li>
+    {% endif %}
+    <li>
+      <p><strong>Connect Claude.</strong></p>
+      {% if mcp_url %}
+      <p>Spotter's address:</p>
+      <code class="link-box">{{ mcp_url }}</code>
+      <p>On claude.ai or the Claude desktop app: Customize, then Connectors, then "+ Add",
+        then Add custom connector. Enter a name, such as Spotter, and the address above. Press Continue, choose how to
+        sign in, then Add. Sign in with the same account you use here: both reach one account.</p>
+      <p>In Claude Code, run this once, then type <code>/mcp</code> and pick spotter to sign in. It works in every
+        folder:</p>
+      <code class="link-box" id="claude-code-command">claude mcp add --transport http --scope user spotter {{ mcp_url }}</code>
+      {% else %}
+      <p class="notice">This server's address is not set up yet, so it cannot be connected.</p>
+      {% endif %}
+    </li>
+    <li>
+      <p><strong>Talk to it.</strong> In a new chat, check that the Spotter connector is switched on for that chat:
+        on claude.ai, press "+" in the message box, then Connectors. Then say "whoami", or just start: "Logged back squat, 3 sets of 5 at 60 kg", or "Lunch: two rotis and dal".</p>
+      <p class="muted">The first time, Claude may ask you to allow each call. Allow it.</p>
+    </li>
+    <li>
+      <p><strong>What you get.</strong></p>
+      <dl class="facts">
+        {% for path, name, line in [("/today", "Today", "everything you logged, by day."),
+                                    ("/progress", "Progress", "your bests, the weight trend, and how you are doing against your targets."),
+                                    ("/goals", "Goals", "each goal with the pace it needs and the pace so far."),
+                                    ("/foods", "Foods", "your saved foods."),
+                                    ("/settings", "Settings", "your targets, what Claude may do, export and delete.")] %}
+        <dt>{% if signed_in %}<a href="{{ path }}">{{ name }}</a>{% else %}{{ name }}{% endif %}</dt><dd>{{ line }}</dd>
+        {% endfor %}
+      </dl>
+    </li>
+    {% if not signed_in %}
+    <li>
+      <p><strong>Want to see it full first?</strong> Sign in and press "Add sample data" on Today. One click on
+        Settings removes it.</p>
+    </li>
+    <li>
+      <p><strong>You decide what Claude may do.</strong> A switch on Settings: read only, log, or log and delete.
+        It starts at log.</p>
+    </li>
+    {% endif %}
   </ol>
-  {% else %}
-  <p class="notice">This server's address is not set up yet, so it cannot be connected.</p>
-  {% endif %}
 </div>
-
-{% if signed_in %}
-<p><a class="button" href="/settings">Settings</a></p>
-{% elif web_ready %}
-<p><a class="button" href="/sign-in">Sign in</a> to see your account and set your time zone.</p>
-{% else %}
-<p class="notice">Sign-in on the web is not set up on this server yet.</p>
-{% endif %}
 {% endblock %}

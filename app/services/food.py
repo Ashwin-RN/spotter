@@ -10,6 +10,8 @@ log_food(user_id, data, by)
     - A number and an id never travel together (rule 14): kcal with either id is invalid_field. A
       saved food is logged by id and servings (default 1); a USDA food by id and grams. The app works
       out kcal, stored as a whole number and held to the same 0 to 5,000 a stated number is.
+    - description is optional with saved_food_id or usda_fdc_id: it defaults to the saved food's
+      name, or the USDA food's description (decision 14). The count goes in servings or grams.
     - USDA ids are looked up before the user row is locked: no network call under the lock.
     - A meal slot not given comes from the person's clock (users.now_for): 04:00 to 11:00 breakfast,
       11:00 to 16:00 lunch, 16:00 to 22:00 dinner, 22:00 to 04:00 snack.
@@ -25,6 +27,12 @@ find_food(user_id, query, limit=8)
     A read. The person's saved foods whose name holds the query, most logged first, then by name;
     their own you_said and claude_estimate entries whose description holds it, grouped by the
     casefolded description, most frequent first; then USDA when the key is set.
+    Throttled (decision 13): more than 120 find_food calls in 10 minutes, counted on the person's own
+    call-log rows as the write limit counts, is too_many_reads, before any other work.
+
+list_saved_foods(user_id)
+    A read for the Foods page: every saved food, live first by name, then the deleted ones, each with
+    times_logged and last_logged worked out as find_food does (_usage), so the two agree.
 
 day_numbers(user, food_rows, cardio_rows)
     One day's numbers: total, estimated, estimated share, target, remaining, net. log_food and
@@ -43,8 +51,8 @@ from app import db, links, rules, users
 from app.models import CardioEntry, FoodEntry, SavedFood, User
 from app.services import usda
 from app.services.common import (
-    DUPLICATE_MINUTES, check_by, check_data, check_write_limit, dedupe_key, duplicate_note, entry_id, lock_user,
-    no_account, not_found, owned, truthy,
+    DUPLICATE_MINUTES, check_by, check_data, check_read_limit, check_write_limit, dedupe_key, duplicate_note,
+    entry_id, lock_user, no_account, not_found, owned, truthy,
 )
 
 KIND = "food_entry"
@@ -71,12 +79,19 @@ def meal_for(now: datetime) -> str:
 def entry_dict(e: FoodEntry) -> dict:
     return {"id": e.id, "date": e.date.isoformat(), "meal": e.meal, "description": e.description,
             "kcal": int(e.kcal), "source": e.source, "estimated": e.estimated, "saved_food_id": e.saved_food_id,
-            "servings": e.servings, "usda_fdc_id": e.usda_fdc_id, "grams": e.grams}
+            "servings": e.servings, "usda_fdc_id": e.usda_fdc_id, "grams": e.grams, "is_sample": e.is_sample}
 
 
 def food_dict(f: SavedFood) -> dict:
     return {"id": f.id, "name": f.name, "serving_label": f.serving_label, "kcal_per_serving": f.kcal_per_serving,
             "grams_per_serving": f.grams_per_serving}
+
+
+def saved_parts(e: FoodEntry) -> dict:
+    """The saved food an entry came from, by name and serving, for showing it as "Roti × 2" with its
+    serving (decision 14). Both null for an entry not logged from a saved food."""
+    food = e.saved_food if e.saved_food_id is not None else None
+    return {"saved_food_name": food.name if food else None, "serving_label": food.serving_label if food else None}
 
 
 def entry_key(on, rows: list[tuple]) -> str:
@@ -374,10 +389,10 @@ def find_food(user_id: int, query, limit=8) -> dict:
     with db.new_session() as s:
         if s.get(User, user_id) is None:
             return no_account()
-        used = dict((fid, (n, last)) for fid, n, last in s.execute(
-            select(FoodEntry.saved_food_id, func.count(), func.max(FoodEntry.date)).where(
-                FoodEntry.user_id == user_id, FoodEntry.deleted_at.is_(None), FoodEntry.saved_food_id.is_not(None))
-            .group_by(FoodEntry.saved_food_id)))
+        limited = check_read_limit(s, user_id, "find_food")
+        if limited:
+            return limited
+        used = _usage(s, user_id)
         foods = [f for f in s.scalars(select(SavedFood).where(SavedFood.user_id == user_id,
                                                               SavedFood.deleted_at.is_(None)))
                  if needle in f.name_key]
@@ -411,6 +426,35 @@ def find_food(user_id: int, query, limit=8) -> dict:
     summary += f", {len(found)} from USDA." if found is not None else ". " + usda_note
     return {"query": text, "saved": saved, "recent": recent, "usda": found, "usda_note": usda_note,
             "summary": summary}
+
+
+def _usage(s, user_id: int) -> dict[int, tuple[int, object]]:
+    """{saved food id: (times logged, last date logged)} over the person's live entries. find_food and
+    list_saved_foods both read it, so the Foods page and Claude see the same counts."""
+    return {fid: (n, last) for fid, n, last in s.execute(
+        select(FoodEntry.saved_food_id, func.count(), func.max(FoodEntry.date)).where(
+            FoodEntry.user_id == user_id, FoodEntry.deleted_at.is_(None), FoodEntry.saved_food_id.is_not(None))
+        .group_by(FoodEntry.saved_food_id))}
+
+
+def list_saved_foods(user_id: int) -> dict:
+    """Every saved food the person has, for the Foods page: live ones first by name, then the deleted.
+
+    Returns {foods [{id, name, serving_label, kcal_per_serving, grams_per_serving, times_logged,
+    last_logged, is_sample, deleted_at}], summary} or {error, message, fix}. A read: no lock."""
+    with db.new_session() as s:
+        if s.get(User, user_id) is None:
+            return no_account()
+        used = _usage(s, user_id)
+        rows = sorted(s.scalars(select(SavedFood).where(SavedFood.user_id == user_id)),
+                      key=lambda f: (f.deleted_at is not None, f.name_key, f.id))
+        foods = [{**food_dict(f), "times_logged": used.get(f.id, (0, None))[0],
+                  "last_logged": used[f.id][1].isoformat() if f.id in used else None, "is_sample": f.is_sample,
+                  "deleted_at": f.deleted_at.isoformat() if f.deleted_at else None} for f in rows]
+    live = sum(1 for f in foods if f["deleted_at"] is None)
+    summary = f"{live} saved food{'s' if live != 1 else ''}"
+    summary += f", {len(foods) - live} deleted." if len(foods) > live else "."
+    return {"foods": foods, "summary": summary}
 
 
 def _limit(value) -> tuple[int | None, dict | None]:

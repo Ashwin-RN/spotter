@@ -27,14 +27,28 @@ set_claude_can(user_id, value)
 list_exercises(kind=None, category=None)
     The names entries must use, filtered by kind (lift, cardio) and category.
 
+delete_account(user_id)
+    The Settings page's delete, after the web has deleted the sign-in at the provider (decision 11).
+    Local only. The person's call-log rows stay, for the counts, with user_id set to null first; then
+    the user row goes, and the schema's ON DELETE CASCADE takes every row they own with it. Its own
+    call-log row is one of those kept, so calllog.finish still records how it ended.
+    Exempt from the write limit, as set_claude_can is: the web deletes the sign-in at the provider
+    first, so a refusal here would leave the person half gone. The person can always leave.
+
 Every write here locks the user row first (common.lock_user), then checks the write limit
-(common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
+(common.check_write_limit: 120 writes in 10 minutes), before any other read or work. The two
+exceptions, set_claude_can and delete_account, lock the row and skip the limit.
 """
 
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import delete, func, select, update
+
 from app import db, exercises as exercise_list, links, rules, users
-from app.models import CLAUDE_CAN, EXERCISE_KINDS, User
+from app.models import (
+    CLAUDE_CAN, EXERCISE_KINDS, Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement,
+    SavedFood, User,
+)
 from app.rules import error, quote
 from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account, truthy
 
@@ -205,6 +219,34 @@ def set_claude_can(user_id: int, value) -> dict:
             user.claude_can = value
             user.updated_at = db.utcnow()
         return {"claude_can": user.claude_can, "changed": changed}
+
+
+# ---------------------------------------------------------------- deleting the account
+
+OWNED = (LiftSession, Bodyweight, Measurement, Goal, SavedFood, FoodEntry, CardioEntry)
+
+
+def delete_account(user_id: int) -> dict:
+    """Delete this person's account here and every row they own. The provider's sign-in is the web's
+    to delete, first. Returns {deleted: true, rows: {table: rows deleted}} (user, every owned table, and
+    lift_set through its sessions) or {error, message, fix}. A write: lock_user first; never the write
+    limit (see the module notes)."""
+    with db.session_scope() as s:
+        user = lock_user(s, user_id)
+        if user is None:
+            return no_account()
+        rows = {"user": 1}
+        for model in OWNED:
+            rows[model.__tablename__] = s.scalar(select(func.count()).select_from(model)
+                                                 .where(model.user_id == user.id))
+        rows["lift_set"] = s.scalar(select(func.count()).select_from(LiftSet).join(LiftSession)
+                                    .where(LiftSession.user_id == user.id))
+        # The call log keeps its rows, with no owner: they hold no content, only that calls happened.
+        s.execute(update(CallLog).where(CallLog.user_id == user.id).values(user_id=None)
+                  .execution_options(synchronize_session=False))
+        s.expunge(user)
+        s.execute(delete(User).where(User.id == user_id).execution_options(synchronize_session=False))
+        return {"deleted": True, "rows": rows}
 
 
 # ---------------------------------------------------------------- exercises

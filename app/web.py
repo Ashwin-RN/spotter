@@ -12,10 +12,18 @@ and Settings.
     /entries/{kind}/{id}/edit      the fields the kind allows on the web (GET, POST)
     /entries/{kind}/{id}/delete    POST: delete, back to the day with "Deleted. Undo"
     /entries/{kind}/{id}/restore   POST: undo a delete, back to the day
-    /progress                      one line per lift, and the body weight trend with its chart
+    /progress                      one line per lift, the Trends card (get_trends), and the body weight
+                                   chart with its smoothed line
     /progress/{lift}               one lift: its chart, bests and sessions
+    /goals                         every goal with its numbers (get_goals); Hit, Drop and Reopen POST to
+                                   /goals/{goal_id}/status; one form for a new goal of any kind (POST)
     /settings                      the account, the time zone, and the switch for what Claude may do
-                                   (the switch POSTs to /settings/claude-can)
+                                   (the switch POSTs to /settings/claude-can); export, sample data, delete
+    /settings/sample               POST: sample data into an empty account, then Today
+    /settings/sample/remove        POST: every sample row removed, then Today
+    /settings/export               POST: a zip of CSVs, one per table the person owns
+    /settings/delete               GET: what goes; POST: the sign-in at the provider, then every row here,
+                                   then the session, then a plain "deleted" page
     PLACEHOLDERS                   every other page links.py names, until its real page is built
 
 Every page but / and /sign-in needs sign-in. Every web write calls the service Claude's function calls,
@@ -34,14 +42,16 @@ but / says sign-in is not set up, no session is kept, and MCP is unaffected.
 Database calls are synchronous, so they run in a worker thread, never on the event loop.
 """
 
+import io
 import json
 import logging
 import re
 import secrets
 import time
+import zipfile
 from datetime import date, timedelta
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import quote as url_quote, urlsplit
 
 from jinja2 import Environment, FileSystemLoader
@@ -60,8 +70,11 @@ from sqlalchemy import func, select
 
 from app import calllog, charts, csrf, db, links, rules, services, users, web_auth
 from app.config import Settings, get_settings
-from app.models import CLAUDE_CAN, MEASUREMENT_KINDS, FoodEntry, Goal, SavedFood, User
+from app.models import (
+    CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
+)
 from app.services import body, lifts, progress as progress_data
+from app.services.common import SAMPLE_NOTE
 
 log = logging.getLogger("spotter")
 
@@ -80,9 +93,7 @@ STATE = "sign_in_state"
 # Pages links.py names that are not built yet: name -> route path. Each answers, behind sign-in, with a
 # short "not built yet" page, so no link Spotter hands out is a dead end. Delete an entry when its
 # real page arrives.
-PLACEHOLDERS = {
-    "goals": "/goals",
-}
+PLACEHOLDERS: dict[str, str] = {}
 
 # The kinds of entry the web shows and edits, and the fields it offers for each (decision 7: sets are
 # changed through Claude only in this stage).
@@ -147,6 +158,39 @@ CLAUDE_CAN_LABELS = {"read": "Read", "log": "Log", "log_delete": "Log and delete
 # Measurement kinds as the page names them. Units and ranges come from rules.MEASUREMENTS, the table the
 # services check against.
 MEASUREMENT_LABELS = {"sleep_hours": "Sleep", "resting_hr": "Resting heart rate", "water_ml": "Water"}
+
+# Goals (stage 5, decisions 1 to 3). The form shows every field for every kind; the service decides.
+GOAL_KINDS = (("lift", "A lift: an estimated max in kg"), ("bodyweight", "Body weight in kg"),
+              ("measurement", "A measurement: a body size or resting heart rate"),
+              ("cardio_best", "A cardio time for a distance"))
+GOAL_MEASUREMENTS = ("waist", "hips", "chest", "arm", "thigh", "resting_hr")  # decision 2: states, not daily amounts
+GOAL_FIELDS = ("kind", "exercise", "measurement_kind", "distance_km", "target_value", "target_date", "start_value",
+               "text")
+GOAL_FIELD_NAMES = re.compile(r"\b(" + "|".join(GOAL_FIELDS) + r")\b")
+# Which field a set_goal refusal belongs beside, by its code, where the code says it.
+GOAL_ERROR_FIELDS = {"unknown_exercise": "exercise", "wrong_direction": "target_value",
+                     "target_is_start": "target_value", "invalid_date": "target_date",
+                     "date_not_in_future": "target_date", "cannot_change_kind": "kind"}
+GOAL_SAVED = {"goal": "Goal set.", "hit": "Marked as hit.", "dropped": "Dropped.", "open": "Reopened."}
+# set_goal's warnings, said in the page's own words. A saved goal's warnings travel across the redirect as
+# these codes (as the day page carries its undo): (code, how the warning starts, what the page says).
+GOAL_NOTES = (
+    ("duplicate", "There is already an open goal",
+     "You already had an open goal like this one. Both are kept: drop the one you no longer want."),
+    ("start", "start_value was ignored",
+     "The goal starts from what you have logged, not from the number you typed for where you are now."),
+    ("past_date", "Reopened, but its target date",
+     "Its date has passed, so there is nothing to aim at: set a new goal with a later date."),
+    ("ignored", None, "Fields this kind of goal does not use were left out."),
+)
+GOAL_NOTE_TEXT = {code: text for code, _, text in GOAL_NOTES}
+CLOSED_WORDS = {"hit": "hit", "dropped": "dropped"}
+STATUS_CLASSES = {"reached": "tag-good", "on track": "tag-good", "behind": "tag-behind"}
+
+# What Delete my account says goes, by count. Deleted rows count: they go too.
+DELETE_COUNTS = ((LiftSession, "Lift sessions"), (Bodyweight, "Weigh-ins"), (Measurement, "Measurements"),
+                 (FoodEntry, "Food entries"), (CardioEntry, "Cardio entries"), (SavedFood, "Saved foods"),
+                 (Goal, "Goals"))
 
 ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -510,11 +554,13 @@ async def settings_page(request: Request) -> Response:
             return redirect(links.page("settings") + "?saved=time_zone")
         # The service's own text is written for Claude; the page says it in its own words.
         error = ZONE_REFUSED
-    return settings_view(request, user, error=error, status_code=400 if error else 200)
+    return await settings_view(request, user, error=error, status_code=400 if error else 200)
 
 
-def settings_view(request: Request, user: User, error: dict | None = None, switch_error: bool = False,
-                  target_errors: dict | None = None, typed: dict | None = None, status_code: int = 200) -> Response:
+async def settings_view(request: Request, user: User, error: dict | None = None, switch_error: bool = False,
+                        target_errors: dict | None = None, typed: dict | None = None,
+                        status_code: int = 200) -> Response:
+    state = await _db(services.sample_state, user.id)
     groups, selected = zone_choices(user.time_zone)
     saved = request.query_params.get("saved")
     targets = {f: getattr(user, f) for f in TARGET_FIELDS}
@@ -525,7 +571,8 @@ def settings_view(request: Request, user: User, error: dict | None = None, switc
                 targets_saved=saved == "targets" and not target_errors, target_errors=target_errors or {},
                 targets=shown,
                 switch_error=switch_error, zone_groups=groups, selected_zone=selected,
-                choices=[(value, CLAUDE_CAN_LABELS[value], CLAUDE_CAN_LINES[value]) for value in CLAUDE_CAN])
+                choices=[(value, CLAUDE_CAN_LABELS[value], CLAUDE_CAN_LINES[value]) for value in CLAUDE_CAN],
+                sample_rows=state["sample_rows"])
 
 
 async def claude_can_page(request: Request) -> Response:
@@ -538,7 +585,7 @@ async def claude_can_page(request: Request) -> Response:
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if failed(result):
-        return settings_view(request, user, switch_error=True, status_code=400)
+        return await settings_view(request, user, switch_error=True, status_code=400)
     return redirect(links.page("settings") + "?saved=claude_can")
 
 
@@ -592,12 +639,56 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     next_day = on + timedelta(days=1) if on < today else next((d for d in later if d > on), None)
     activities = await cardio_names()
     cardio = day.get("cardio") or []
+    food = day.get("food")
+    state = await _db(services.sample_state, user.id)
     return page(request, "day.html", status_code=status_code, day=day, on=on, today=today,
                 prev_day=prev_day, next_day=next_day,
                 kinds=measurement_kinds(), undo=undo, form_error=form_error or {}, kg=rules.kg,
                 kind_names=KIND_NAMES, labels=MEASUREMENT_LABELS, meals=MEALS, source_words=SOURCE_WORDS,
-                food=day.get("food"), cardio=cardio, activities=activities,
+                food=food, cardio=cardio, activities=activities,
+                serving_text=serving_text, same_name=same_name,
+                sample_rows=state["sample_rows"], offer_sample=state["empty"] and on == today,
                 shows_estimate=any(c.get("estimate") for c in cardio))
+
+
+SIZE_WORDS = ("small", "medium", "large")
+UNIT_WORDS = {"g", "kg", "mg", "ml", "l", "oz", "lb", "tbsp", "tsp", "pc", "pcs"}
+IRREGULAR = {"child", "person", "man", "woman", "foot", "tooth", "mouse", "goose", "leaf", "loaf", "knife", "half",
+             "fish", "sheep", "deer"}
+
+
+def _plural(word: str) -> str | None:
+    """The word with a plain -s, or None when -s would be wrong or a guess (units, -o, -y, -s and the like)."""
+    w = word.casefold()
+    if not w.isalpha() or len(w) < 2 or w in UNIT_WORDS or w in IRREGULAR or w in SIZE_WORDS:
+        return None
+    if w.endswith(("s", "x", "z", "ch", "sh", "y", "o", "f", "fe")):
+        return None
+    return word + "s"
+
+
+def serving_text(servings, label) -> str:
+    """How much of a saved food was eaten, in the serving's own words (decision 14). Only "1 <word>" and
+    "1 <size> <word>" are put in the plural, and only where a plain -s is right: 2 of "1 roti" is
+    "2 rotis", of "1 medium apple" "2 medium apples". Anything else is counted: "2 × 100 g", "2 × 1 oz".
+    One serving is the label itself; no label is the bare amount."""
+    amount = rules.kg(servings)
+    text = str(label or "").strip()
+    if not text:
+        return amount
+    if float(servings) == 1:  # one serving is the label itself, whatever its shape
+        return text
+    found = re.fullmatch(r"1 (?:(small|medium|large) )?([^\s]+)", text, re.I)
+    plural = _plural(found.group(2)) if found else None
+    if plural is None:
+        return f"{amount} × {text}"
+    size = f"{found.group(1)} " if found.group(1) else ""
+    return f"{amount} {size}{plural}"
+
+
+def same_name(description: str | None, name: str | None) -> bool:
+    """True when an entry's description only repeats its saved food's name, so the page shows it once."""
+    return (description or "").strip().casefold() == (name or "").strip().casefold()
 
 
 async def cardio_names() -> list[str]:
@@ -862,24 +953,20 @@ def food_form(form) -> dict:
     return data
 
 
-def _saved_foods(user_id: int) -> list[dict]:
-    """Every live saved food of this person with how often it was logged, by name. A read only.
-    No service lists them: find_food needs a query, stops at 25 and asks USDA when the key is set."""
-    with db.new_session() as s:
-        used = dict(s.execute(select(FoodEntry.saved_food_id, func.count()).where(
-            FoodEntry.user_id == user_id, FoodEntry.deleted_at.is_(None), FoodEntry.saved_food_id.is_not(None))
-            .group_by(FoodEntry.saved_food_id)).all())
-        foods = s.scalars(select(SavedFood).where(SavedFood.user_id == user_id, SavedFood.deleted_at.is_(None))
-                          .order_by(SavedFood.name_key))
-        return [{"id": f.id, "name": f.name, "serving_label": f.serving_label, "kcal_per_serving": f.kcal_per_serving,
-                 "grams_per_serving": f.grams_per_serving, "times_logged": used.get(f.id, 0)} for f in foods]
+async def live_foods(user: User) -> list[dict]:
+    """The person's live saved foods, by name, with times logged: list_saved_foods (decision 15), the
+    same numbers find_food gives. Deleted ones are left off the page."""
+    result = await _db(services.list_saved_foods, user.id)
+    return [f for f in result.get("foods", []) if f.get("deleted_at") is None]
 
 
 async def foods_view(request: Request, user: User, errors: dict | None = None, typed: dict | None = None,
                      status_code: int = 200) -> Response:
-    saved = await _db(_saved_foods, user.id)
+    saved = await live_foods(user)
+    state = await _db(services.sample_state, user.id)
     deleted = request.query_params.get("deleted")
     return page(request, "foods.html", status_code=status_code, foods=saved, errors=errors or {},
+                sample_rows=state["sample_rows"],
                 typed=typed or {}, kg=rules.kg, saved=request.query_params.get("saved") == "1",
                 undo=deleted if isinstance(deleted, str) and deleted.isdigit() and len(deleted) <= 10 else None)
 
@@ -907,7 +994,7 @@ async def food_edit_page(request: Request) -> Response:
     if user is None:
         return redirect(links.page("sign_in"))
     food_id = request.path_params["food_id"]
-    food = next((f for f in await _db(_saved_foods, user.id) if str(f["id"]) == food_id), None)
+    food = next((f for f in await live_foods(user) if str(f["id"]) == food_id), None)
     if food is None:
         return not_found_page(request)
     errors, status = {}, 200
@@ -981,8 +1068,8 @@ async def targets_page(request: Request) -> Response:
         return too_many(request, result)
     if failed(result):
         typed = {f: str(form.get(f) or "") for f in TARGET_FIELDS}
-        return settings_view(request, user, target_errors=field_errors("settings", result), typed=typed,
-                             status_code=400)
+        return await settings_view(request, user, target_errors=field_errors("settings", result), typed=typed,
+                                   status_code=400)
     return redirect(links.page("settings") + "?saved=targets")
 
 
@@ -1021,8 +1108,35 @@ async def progress_page(request: Request) -> Response:
     if failed(result):
         return not_found_page(request)
     trend = await _db(_trend, user.id)
+    trends = await _db(services.get_trends, user.id)
+    state = await _db(services.sample_state, user.id)
     return page(request, "progress.html", lifts=result["lifts"], best_sets=trend["best_sets"], trend=trend,
-                chart=charts.bodyweight_svg(trend["bodyweight"]), kg=rules.kg, slug=links.slug)
+                chart=charts.bodyweight_svg(trend["bodyweight"]), kg=rules.kg, slug=links.slug,
+                trends=None if failed(trends) else trends, signed=signed, sample_rows=state["sample_rows"],
+                weight_now_label=weight_now_label, rate_note=rate_note)
+
+
+def signed(value) -> str:
+    """A change with its sign: +0.25, -0.3, 0."""
+    return ("+" if value > 0 else "-" if value < 0 else "") + rules.kg(abs(value))
+
+
+def weight_now_label(trends: dict) -> str:
+    """What bodyweight.now is: the 7-day average when a weigh-in falls in the last 7 days, else the
+    latest weigh-in (get_trends' own rule)."""
+    try:
+        today = date.fromisoformat(trends["today"])
+        dates = [date.fromisoformat(p["date"]) for p in (trends.get("bodyweight") or {}).get("series") or []]
+    except (KeyError, TypeError, ValueError):
+        return "now"
+    recent = any(d >= today - timedelta(days=6) for d in dates)
+    return "7-day average" if recent else "latest weigh-in"
+
+
+def rate_note(trends: dict) -> str:
+    """Why there is no weekly rate, in the service's words: its note without the sample-data sentence."""
+    note = str(trends.get("note") or "").replace(SAMPLE_NOTE, "").strip()
+    return note or "No weekly rate yet: it needs more weigh-ins."
 
 
 async def lift_names() -> dict[str, str]:
@@ -1044,6 +1158,243 @@ async def progress_lift_page(request: Request) -> Response:
     chart = progress_data.lift_chart(_lift_points(lift), lift["goals"], lift["exercise"])
     return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart), kg=rules.kg,
                 sessions=list(reversed(lift["estimated_max_over_time"])))
+
+
+# ---------------------------------------------------------------- Goals
+
+def clock(minutes) -> str:
+    """Minutes as m:ss, the way a cardio time is said: 27.5 is 27:30."""
+    total = round(float(minutes) * 60)
+    return f"{total // 60}:{total % 60:02d}"
+
+
+def amount(value, unit: str) -> str:
+    """A goal's number in its unit: 80 kg, 86.5 cm, 62 bpm, 27:30 min."""
+    return f"{clock(value)} min" if unit == "min" else f"{rules.kg(value)} {unit}"
+
+
+def per_week(value, unit: str) -> str:
+    """A goal's pace, signed: +2.5 kg a week, -0.3 kg a week, -0.5 min a week."""
+    return f"{signed(value)} {unit} a week"
+
+
+def goal_from_form(form) -> dict:
+    """The new-goal form as set_goal's data: every field the person filled in, as typed. Empty fields
+    are left out, so a body weight goal sends no exercise. The service checks everything."""
+    data = {}
+    for field in GOAL_FIELDS:
+        value = str(form.get(field) or "").strip()
+        if value:
+            data[field] = value
+    return data
+
+
+def goal_error_field(err: dict) -> str:
+    """Which field a set_goal refusal belongs beside: the field the error names, else its code, else
+    the first field its message names (the services' messages start with the field), else its fix.
+    "form" when none says."""
+    if err.get("field") in GOAL_FIELDS:
+        return err["field"]
+    if err.get("error") in GOAL_ERROR_FIELDS:
+        return GOAL_ERROR_FIELDS[err["error"]]
+    text = str(err.get("message") or "")
+    found = GOAL_FIELD_NAMES.search(text)
+    if found:
+        return found.group(1)
+    if any(text.casefold().startswith(kind.replace("_", " ") + " ") for kind in rules.MEASUREMENTS):
+        return "measurement_kind"  # "steps cannot be a goal: ..."
+    fix = str(err.get("fix") or "")
+    if re.search(r"\bstart_value\b", fix):  # "nothing to start from": the fix names distance_km too
+        return "start_value"
+    found = GOAL_FIELD_NAMES.search(fix)
+    return found.group(1) if found else "form"
+
+
+def goal_note_codes(warnings) -> list[str]:
+    """The codes of a set_goal result's warnings, in GOAL_NOTES order, each once. A warning that a field
+    "was ignored" (exercise, measurement_kind, distance_km) is "ignored"."""
+    found = set()
+    for text in warnings or []:
+        text = str(text)
+        code = next((c for c, start, _ in GOAL_NOTES if start and text.startswith(start)), None)
+        if code is None and "was ignored" in text:
+            code = "ignored"
+        if code:
+            found.add(code)
+    return [c for c, _, _ in GOAL_NOTES if c in found]
+
+
+def goal_notes_shown(value: object) -> list[str]:
+    """`notes=a,b` after a save: the page's own text for each known code. Anything else shows nothing."""
+    codes = str(value or "").split(",") if isinstance(value, str) and len(value) <= 64 else []
+    return [GOAL_NOTE_TEXT[c] for c in dict.fromkeys(codes) if c in GOAL_NOTE_TEXT]
+
+
+def saved_address(saved: str, result: dict) -> str:
+    codes = goal_note_codes(result.get("warnings"))
+    return links.page("goals") + f"?saved={saved}" + (f"&notes={','.join(codes)}" if codes else "")
+
+
+def goal_errors(result: dict) -> dict[str, list[dict]]:
+    """{field: [{message, fix}]}: each refusal from set_goal, beside the field it is about."""
+    found = [e for e in result.get("errors") or [] if isinstance(e, dict)] or [result]
+    out: dict[str, list[dict]] = {}
+    for err in found:
+        out.setdefault(goal_error_field(err), []).append({"message": err.get("message"), "fix": err.get("fix")})
+    return out
+
+
+async def exercise_names(kind: str) -> list[str]:
+    result = await _db(services.list_exercises, kind)
+    return [e["name"] for e in result.get("exercises", [])]
+
+
+async def goals_view(request: Request, user: User, errors: dict | None = None, typed: dict | None = None,
+                     status_code: int = 200) -> Response:
+    result = await _db(services.get_goals, user.id, True)
+    if failed(result):
+        return not_found_page(request)
+    state = await _db(services.sample_state, user.id)
+    saved = GOAL_SAVED.get(request.query_params.get("saved") or "") if status_code == 200 else None
+    notes = goal_notes_shown(request.query_params.get("notes")) if saved else []
+    return page(request, "goals.html", status_code=status_code, goals=result.get("goals") or [], notes=notes,
+                closed=result.get("closed") or [], errors=errors or {}, typed=typed or {}, saved=saved,
+                kinds=GOAL_KINDS, lifts=await exercise_names("lift"), activities=await cardio_names(),
+                measurement_choices=[(k, measurement_label(k), rules.MEASUREMENTS[k][0]) for k in GOAL_MEASUREMENTS],
+                amount=amount, per_week=per_week, status_class=lambda s: STATUS_CLASSES.get(s, ""),
+                closed_words=CLOSED_WORDS, sample_rows=state["sample_rows"])
+
+
+async def goals_page(request: Request) -> Response:
+    """GET: every goal. POST: a new goal of any kind, through set_goal as Claude sets one."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    if request.method == "GET":
+        return await goals_view(request, user)
+    form = await request.form()
+    result = await write(user, "set_goal", services.set_goal, user.id, goal_from_form(form), "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if failed(result):
+        typed = {f: str(form.get(f) or "") for f in GOAL_FIELDS}
+        return await goals_view(request, user, errors=goal_errors(result), typed=typed, status_code=400)
+    return redirect(saved_address("goal", result))
+
+
+async def goal_status_page(request: Request) -> Response:
+    """POST from Goals: Hit, Drop or Reopen one goal, through set_goal with its id and the status."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    form = await request.form()
+    status = str(form.get("status") or "")
+    result = await write(user, "set_goal", services.set_goal, user.id,
+                         {"goal_id": request.path_params["goal_id"], "status": status}, "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if "not_found" in codes(result):
+        return not_found_page(request)
+    if failed(result):
+        return message(request, "Not changed", "That goal was not changed.",
+                       "Go back to Goals and use Hit, Drop or Reopen.", status_code=400)
+    return redirect(saved_address(status, result))
+
+
+# ---------------------------------------------------------------- Settings: sample data, export, delete
+
+async def sample_add_page(request: Request) -> Response:
+    """POST from an empty Today: four weeks of sample rows, every one marked, then back to Today."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await write(user, "add_sample_data", services.add_sample_data, user.id, "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if "already_sample" in codes(result):
+        return message(request, "Already added", "Sample data is already on this account.",
+                       "Remove it on Settings to start again.", status_code=409)
+    if "not_empty" in codes(result):
+        return message(request, "Not added", "Sample data goes only into an empty account, and this one has "
+                       "entries, saved foods or goals.", "Delete them on the day pages first, or keep your own.",
+                       status_code=409)
+    if failed(result):
+        return message(request, "Not added", "Sample data could not be added, so nothing was changed.",
+                       "Go back to Today and try again.", status_code=400)
+    return redirect(links.page("today"))
+
+
+async def sample_remove_page(request: Request) -> Response:
+    """POST from Settings: every sample row goes, live or deleted. Real entries stay."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await write(user, "remove_sample_data", services.remove_sample_data, user.id, "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if failed(result):
+        return message(request, "Not removed", "The sample data could not be removed, so nothing was changed.",
+                       "Go back to Settings and try again.", status_code=400)
+    return redirect(links.page("today"))
+
+
+def export_zip(files: dict) -> bytes:
+    """The CSV texts as one zip, built in memory. Each file keeps only its own name."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, text in files.items():
+            archive.writestr(PurePosixPath(str(name).replace("\\", "/")).name or "file.txt", text)
+    return buffer.getvalue()
+
+
+async def export_page(request: Request) -> Response:
+    """POST from Settings: everything the person owns, as a zip of CSVs (decision 10). A read: nothing changes."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await _db(services.export_data, user.id)
+    if failed(result):
+        return message(request, "Not exported", "Spotter could not put your data together just now.",
+                       "Go back to Settings and try again.", status_code=500)
+    name = f"spotter-export-{users.today_for(user).isoformat()}.zip"
+    return Response(await run_in_threadpool(export_zip, result["files"]), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _delete_counts(user_id: int) -> list[tuple[str, int]]:
+    """(what, how many) of everything Delete my account removes, deleted rows included. A read only."""
+    with db.new_session() as s:
+        return [(label, s.scalar(select(func.count()).select_from(model).where(model.user_id == user_id)))
+                for model, label in DELETE_COUNTS]
+
+
+async def delete_account_page(request: Request) -> Response:
+    """GET: what goes. POST (decision 11): the sign-in at the provider first, then every row here through
+    delete_account, then the session. A provider failure deletes nothing; a failure here leaves the
+    sign-in gone and the account still working, and a retry finishes it."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    if request.method == "GET":
+        return page(request, "delete_account.html", counts=await _db(_delete_counts, user.id))
+    try:
+        await web_auth.delete_identity(user.subject)
+    except Exception:  # web_auth has logged the reason by type
+        return message(request, "Not deleted", "Spotter could not delete your sign-in, so nothing was deleted.",
+                       "Try again in a few minutes.", status_code=502)
+    try:
+        result = await write(user, "delete_account", services.delete_account, user.id)
+    except Exception as exc:  # the database or a bug: the sign-in is gone, the rows are not
+        log.warning("Web delete_account failed after the sign-in was deleted: %s", type(exc).__name__)
+        result = None
+    if result is None or failed(result):
+        return message(request, "Not finished", "Your sign-in is deleted, but your data here is not deleted yet.",
+                       "Try again now from Settings: you are still signed in here, and the delete finishes where it "
+                       "stopped. Do not sign out until this finishes.", status_code=500)
+    request.session.clear()  # as sign-out does; there is no provider sign-out: the provider user is gone
+    request.state.user = None
+    return message(request, "Your account is deleted", "Everything you logged here is deleted, and so is your sign-in.",
+                   "Signing in again starts a new, empty account.")
 
 
 async def placeholder(request: Request) -> Response:
@@ -1084,6 +1435,12 @@ PAGES = [
     ("/entries/{kind}/{entry_id}/restore", restore_page, ["POST"]),
     ("/progress", progress_page, ["GET"]),
     ("/progress/{lift}", progress_lift_page, ["GET"]),
+    ("/goals", goals_page, ["GET", "POST"]),
+    ("/goals/{goal_id}/status", goal_status_page, ["POST"]),
+    ("/settings/sample", sample_add_page, ["POST"]),
+    ("/settings/sample/remove", sample_remove_page, ["POST"]),
+    ("/settings/export", export_page, ["POST"]),
+    ("/settings/delete", delete_account_page, ["GET", "POST"]),
 ]
 
 

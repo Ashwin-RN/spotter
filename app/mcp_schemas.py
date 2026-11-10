@@ -1,4 +1,4 @@
-"""The shapes of the sixteen MCP functions' arguments and results.
+"""The shapes of the eighteen MCP functions' arguments and results.
 
 Each result model is published as that function's result schema, and the MCP library checks every
 successful result against it. The top-level fields match the service's keys exactly, and a top-level
@@ -14,6 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 TOP = ConfigDict(extra="forbid")
 
+# For a saved or USDA food, the count is an amount, never words. The instructions and log_food say the same.
+FOOD_NAME_RULE = (
+    "For a saved or USDA food, the count goes in servings or grams, never in the description: leave the "
+    "description out, or send the food's name."
+)
+
 
 # ---------------------------------------------------------------- arguments
 
@@ -28,7 +34,11 @@ class SetIn(BaseModel):
 class FoodEntryIn(BaseModel):
     """One food in a log_food call. There is no tag field: Spotter works out who supplied the number."""
 
-    description: str = Field(description="What was eaten, in the person's words, such as 2 rotis. 1 to 200 characters.")
+    description: str | None = Field(
+        default=None,
+        description="What was eaten, in the person's words, such as dal. 1 to 200 characters. Needed when no id "
+                    "is sent. With saved_food_id or usda_fdc_id it is optional: left out, it is the food's name. "
+                    + FOOD_NAME_RULE)
     meal: str | None = Field(
         default=None,
         description="breakfast, lunch, dinner or snack, only when the person named it. Leave out otherwise: "
@@ -51,44 +61,71 @@ class FoodEntryIn(BaseModel):
 
 # ---------------------------------------------------------------- shared pieces
 
+GOAL_KINDS_TEXT = "lift, bodyweight, measurement or cardio_best."
+INCLUDES_SAMPLE_TEXT = ("True when sample rows are in these numbers. Then say so: they are not the person's own, "
+                        "and the Remove sample data button on Settings takes them out.")
+SAMPLE_NOTE_TEXT = "Present when sample rows are in these numbers: what to tell the person."
+
+
 class Projection(BaseModel):
-    slope_per_week: float = Field(description="The trend: the fitted change per week over the last 6 weeks, in kg.")
-    projected: float | None = Field(description="Where the trend line reaches on the target date, in kg.")
+    slope_per_week: float = Field(
+        description="The trend: the fitted change per week over the last 6 weeks, in the goal's unit.")
+    projected: float | None = Field(description="Where the trend line reaches on the target date, in the goal's unit.")
     status: str | None = Field(
         description="reached (already at or past the target), on track (the line meets it by the date) or behind.")
     points_used: int = Field(description="How many points the trend line used.")
-    latest: float = Field(description="Where the person is now, in kg: the same value as the goal's latest.")
+    latest: float = Field(description="Where the person is now, in the goal's unit: the same value as the goal's latest.")
     weeks_left: float | None = Field(description="Weeks from today to the target date; 0 once it has passed.")
     needed_per_week: float | None = Field(
-        description="The steady change per week that reaches the target by its date, in kg. Signed.")
+        description="The steady change per week that reaches the target by its date, in the goal's unit. Signed.")
+    projected_date: str | None = Field(
+        description="The day the trend line reaches the target, YYYY-MM-DD. Null when the line points away from "
+                    "the target, is flat, or reaches it more than 2 years from today.")
 
 
 class GoalNumbers(BaseModel):
-    """Where one open goal stands. The same shape in set_goal and get_progress."""
+    """Where one open goal stands. The same shape in set_goal, get_goals and get_progress, for every kind."""
 
     goal_id: int = Field(description="The goal's id. set_goal takes it as goal_id to change or close the goal.")
-    label: str = Field(description="The goal in a few words, such as 'Back Squat 120 kg'.")
-    kind: str = Field(description="lift or bodyweight.")
-    exercise: str | None = Field(description="The lift, for a lift goal; null for a body weight goal.")
-    unit: str = Field(description="The unit of every value here: kg.")
+    label: str = Field(
+        description="The goal in a few words, such as 'Back Squat 100 kg', 'Bodyweight 75 kg', 'Waist 80 cm' or "
+                    "'Outdoor Run 5 km in 28:00'.")
+    kind: str = Field(description=GOAL_KINDS_TEXT)
+    exercise: str | None = Field(
+        description="The lift, for a lift goal; the cardio activity, for a cardio_best goal; else null.")
+    measurement_kind: str | None = Field(
+        description="For a measurement goal: waist, hips, chest, arm, thigh or resting_hr; else null.")
+    distance_km: float | None = Field(
+        description="For a cardio_best goal: the distance its time is for, in km; else null.")
+    unit: str = Field(
+        description="The unit of every value here: kg for a lift or body weight, cm or bpm for a measurement, "
+                    "minutes for a cardio_best.")
     start_value: float = Field(
-        description="Where the goal started. A lift: its best session estimated max in the 28 days before the "
-                    "goal was set. Body weight: the 7-day average, or the latest weigh-in when the 7 days had none.")
+        description="Where the goal started, measured the same way as latest, on the day it was set.")
     start_date: str = Field(description="The date the goal was set, YYYY-MM-DD.")
-    direction: str = Field(description="up or down: which way the goal points. It never changes.")
-    target_value: float = Field(description="The target in kg.")
+    direction: str = Field(
+        description="up or down: which way the goal points. It never changes. A lift is up; a cardio_best is down "
+                    "(a faster time).")
+    target_value: float = Field(description="The target, in unit.")
     target_date: str = Field(description="The date to reach it by, YYYY-MM-DD.")
     latest: float | None = Field(
-        description="Where the person is now, measured the same way as start_value. Null with nothing logged.")
+        description="Where the person is now. A lift: the best session estimated max in the last 28 days, else "
+                    "the latest session's. Body weight: the 7-day average, else the latest weigh-in. A measurement: "
+                    "its latest value. A cardio_best: the best time for the distance in the last 28 days, from "
+                    "sessions at or over it, else the latest such time. Null with nothing logged.")
     status: str = Field(
         description="reached (latest is at or past the target), on track or behind (from the trend line), or "
                     "not enough data (too few points for a line, and not reached).")
     needed_per_week: float | None = Field(
-        description="The steady change per week from latest that reaches the target by its date, in kg. Signed. "
+        description="The steady change per week from latest that reaches the target by its date, in unit. Signed. "
                     "Worked out with or without a trend line; 0 once reached; null once the date has passed.")
-    actual_per_week: float | None = Field(description="The trend so far, in kg per week. Signed.")
+    actual_per_week: float | None = Field(description="The trend so far, in unit per week. Signed.")
+    projected_date: str | None = Field(
+        description="The day the trend line reaches the target, YYYY-MM-DD. Null without a line, when it points "
+                    "away from the target or is flat, or when it reaches it more than 2 years from today.")
     projection: Projection | None = Field(description="The trend line's numbers, or null without enough points.")
     note: str | None = Field(description="Why there is no projection; null when there is one or the goal is reached.")
+    is_sample: bool = Field(description="True when this is a sample goal, not the person's own.")
 
 
 # ---------------------------------------------------------------- whoami
@@ -141,6 +178,10 @@ class ExerciseItem(BaseModel):
     kind: str = Field(description="lift or cardio.")
     category: str = Field(description="A lift: squat, hinge, push, pull, carry, core or accessory. Cardio: "
                                       "walk, run, cycle, row, swim, machine or other.")
+    met: float | None = Field(
+        description="A cardio activity's MET value, from the 2024 Adult Compendium of Physical Activities; null "
+                    "for a lift.")
+    compendium_code: str | None = Field(description="The Compendium row the MET value comes from; null for a lift.")
 
 
 class ExercisesResult(BaseModel):
@@ -259,16 +300,20 @@ class LogBodyweightResult(BaseModel):
 
 class Goal(BaseModel):
     id: int = Field(description="The goal's id. set_goal takes it as goal_id.")
-    kind: str = Field(description="lift or bodyweight.")
-    exercise_id: int | None = Field(description="The lift's id on the exercise list, for a lift goal.")
-    exercise: str | None = Field(description="The lift's name, for a lift goal; null for body weight.")
-    distance_km: float | None = Field(description="Not used by lift or body weight goals: null.")
-    unit: str = Field(description="kg.")
-    start_value: float = Field(description="Where the goal started, in kg. See get_progress for how it is measured.")
+    kind: str = Field(description=GOAL_KINDS_TEXT)
+    exercise_id: int | None = Field(
+        description="The exercise's id on the list: the lift, or a cardio_best goal's activity; else null.")
+    exercise: str | None = Field(
+        description="The lift's name, for a lift goal; the activity's, for a cardio_best goal; else null.")
+    measurement_kind: str | None = Field(description="For a measurement goal: which measurement; else null.")
+    distance_km: float | None = Field(description="For a cardio_best goal: the distance in km; else null.")
+    unit: str = Field(description="kg, cm, bpm or min: fixed by the kind.")
+    start_value: float = Field(description="Where the goal started, in unit. See get_goals for how it is measured.")
     start_date: str = Field(description="The date the goal was set, YYYY-MM-DD.")
     direction: str = Field(description="up or down. It never changes; to aim the other way, drop it and set a new one.")
     target_value: float | None = Field(
-        description="The target in kg. A lift goal is an estimated one-rep max, up to 666.67 kg.")
+        description="The target, in unit. A lift goal is an estimated one-rep max; a cardio_best goal is minutes "
+                    "for the distance.")
     target_date: str | None = Field(description="The date to reach it by, YYYY-MM-DD.")
     status: str = Field(description="open, hit or dropped.")
     text: str = Field(description="The goal in the person's words; empty when none.")
@@ -311,6 +356,16 @@ class FoodEntryOut(BaseModel):
     servings: float | None = Field(description="Servings of the saved food, or null.")
     usda_fdc_id: int | None = Field(description="The USDA food it came from, or null.")
     grams: float | None = Field(description="Grams of the USDA food, or null.")
+    is_sample: bool = Field(description="True only for sample data.")
+
+
+class LogFoodEntry(FoodEntryOut):
+    """A food entry in get_log: a saved food's entry also names the food and its serving."""
+
+    saved_food_name: str | None = Field(
+        description="The saved food's name, for an entry logged from one; else null. Show the entry as this "
+                    "name, the servings and the serving.")
+    serving_label: str | None = Field(description="What one serving of the saved food is; else null.")
 
 
 class FoodDay(BaseModel):
@@ -529,9 +584,11 @@ class GetProgressResult(BaseModel):
     lifts: list[LiftLine] | None = Field(default=None, description="Without an exercise: one line per lift logged.")
     cardio: CardioProgress | None = Field(default=None, description="With a cardio activity: its sessions and week.")
     goals: list[GoalNumbers] | None = Field(default=None, description="Without an exercise: every open goal.")
+    includes_sample: bool = Field(description=INCLUDES_SAMPLE_TEXT)
     how: str = Field(description="How the numbers are worked out.")
     links: ProgressLinks = Field(description="Pages to offer the person. Put links last in a reply.")
-    note: str | None = Field(default=None, description="Present when nothing is logged yet.")
+    note: str | None = Field(
+        default=None, description="Present when nothing is logged yet, or when sample rows are in these numbers.")
 
 
 # ---------------------------------------------------------------- update_settings
@@ -645,10 +702,10 @@ class LogSession(Session):
 
 
 class Meals(BaseModel):
-    breakfast: list[FoodEntryOut] = Field(description="Breakfast entries.")
-    lunch: list[FoodEntryOut] = Field(description="Lunch entries.")
-    dinner: list[FoodEntryOut] = Field(description="Dinner entries.")
-    snack: list[FoodEntryOut] = Field(description="Snacks.")
+    breakfast: list[LogFoodEntry] = Field(description="Breakfast entries.")
+    lunch: list[LogFoodEntry] = Field(description="Lunch entries.")
+    dinner: list[LogFoodEntry] = Field(description="Dinner entries.")
+    snack: list[LogFoodEntry] = Field(description="Snacks.")
 
 
 class LogFood(FoodDay):
@@ -685,8 +742,135 @@ class GetLogResult(BaseModel):
     to: str = Field(description="The last day shown, YYYY-MM-DD.")
     days: list[LogDay] = Field(description="Every day in the range, newest first, empty days included.")
     totals: LogTotals = Field(description="How many entries of each kind the range holds.")
+    includes_sample: bool = Field(description=INCLUDES_SAMPLE_TEXT)
     summary: str = Field(description="The range in a few lines, ready to quote.")
     links: LogLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+    note: str | None = Field(default=None, description=SAMPLE_NOTE_TEXT)
+
+
+# ---------------------------------------------------------------- get_goals
+
+class ClosedGoal(BaseModel):
+    goal_id: int = Field(description="The goal's id. set_goal with status open reopens it.")
+    label: str = Field(description="The goal in a few words.")
+    kind: str = Field(description=GOAL_KINDS_TEXT)
+    status: str = Field(description="hit or dropped.")
+    closed_at: str | None = Field(description="When it was marked hit or dropped, UTC.")
+    target_value: float | None = Field(description="The target it had, in its unit.")
+    target_date: str | None = Field(description="The date it had, YYYY-MM-DD.")
+    is_sample: bool = Field(description="True when this is a sample goal, not the person's own.")
+
+
+class GetGoalsResult(BaseModel):
+    model_config = TOP
+
+    today: str = Field(description="Today's date for the person, YYYY-MM-DD.")
+    goals: list[GoalNumbers] = Field(
+        description="Every open goal, by id: the pace it needs against the pace so far, the projected date and its "
+                    "status.")
+    closed: list[ClosedGoal] = Field(
+        description="The goals marked hit or dropped, with include_closed; empty without it.")
+    includes_sample: bool = Field(description=INCLUDES_SAMPLE_TEXT)
+    how: str = Field(description="How the numbers are worked out.")
+    summary: str = Field(description="Every goal in a few lines, ready to quote.")
+    links: GoalLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+    note: str | None = Field(default=None, description=SAMPLE_NOTE_TEXT)
+
+
+# ---------------------------------------------------------------- get_trends
+
+class RateWindow(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from", description="The reference weigh-in's date, 14 to 42 days before today.")
+    to: str = Field(description="The latest weigh-in's date, in the last 7 days.")
+    days: int = Field(description="Days between the two.")
+
+
+class SmoothedPoint(BaseModel):
+    date: str = Field(description="The weigh-in's date, YYYY-MM-DD.")
+    kg: float = Field(description="The weigh-in, in kg.")
+    smoothed: float = Field(description="The smoothed line at that weigh-in, in kg.")
+
+
+class BodyweightTrends(BaseModel):
+    now: float = Field(description="Body weight now: the 7-day average, else the latest weigh-in. Goals use it.")
+    smoothed: float = Field(
+        description="The smoothed trend at the latest weigh-in, in kg: each weigh-in moves it a tenth of the way "
+                    "(an exponentially weighted average, alpha 0.1).")
+    rate_per_week: float | None = Field(
+        description="How fast the smoothed line moves, in kg per week. Signed. Null without a weigh-in in the last "
+                    "7 days and one 14 to 42 days ago.")
+    rate_window: RateWindow | None = Field(description="The two weigh-ins the rate is worked out between, or null.")
+    weigh_ins_28d: int = Field(description="Weigh-ins in the last 28 days.")
+    series: list[SmoothedPoint] = Field(description="The last 28 days' weigh-ins, each with the smoothed line.")
+
+
+class CaloriesTrends(BaseModel):
+    avg_7d: int | None = Field(
+        description="Calories a day over the logged days of the 7 ending today, whole kcal. Null with none logged.")
+    days_logged_7d: int = Field(description="Days of those 7 with food logged.")
+    avg_28d: int = Field(description="Calories a day over the logged days of the 28 ending today, whole kcal.")
+    days_logged_28d: int = Field(description="Days of those 28 with food logged.")
+    estimated_share_pct_28d: float = Field(
+        description="How much of those 28 days' calories are your estimates, as a percentage.")
+    target_kcal: int | None = Field(description="The daily calorie target, or null when none is set.")
+
+
+class SessionsTrends(BaseModel):
+    this_week: int = Field(description="Lift sessions in the 7 days ending today.")
+    target_per_week: int | None = Field(description="The weekly sessions target, or null when none is set.")
+    per_week_4w: float = Field(description="Lift sessions a week over the last 28 days.")
+
+
+class CardioTrends(BaseModel):
+    minutes_this_week: float = Field(description="Cardio minutes in the 7 days ending today.")
+    target_minutes: int | None = Field(description="The weekly cardio target, or null when none is set.")
+    minutes_per_week_4w: float = Field(description="Cardio minutes a week over the last 28 days.")
+
+
+class Maintenance(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kcal: int = Field(
+        description="The estimated maintenance calories a day, whole kcal: the intake average less the weight "
+                    "change at 7,700 kcal a kg, spread over the 21 days. An estimate: it never sets the target.")
+    intake_avg_kcal: int = Field(description="Calories a day over the logged days of the 21.")
+    weight_change_kg: float = Field(
+        description="The 7-day average ending today less the 7-day average ending 21 days ago, in kg. Signed.")
+    days_logged: int = Field(description="Days of the 21 with food logged: at least 14.")
+    window_days: int = Field(description="The window: 21 days ending today.")
+    from_: str = Field(alias="from", description="The window's first day, YYYY-MM-DD.")
+    to: str = Field(description="The window's last day: today.")
+
+
+class TrendsLinks(BaseModel):
+    progress: str = Field(description="The progress page.")
+    goals: str = Field(description="The goals page.")
+    settings: str = Field(description="The Settings page: the person's targets.")
+
+
+class GetTrendsResult(BaseModel):
+    model_config = TOP
+
+    today: str = Field(description="Today's date for the person, YYYY-MM-DD.")
+    bodyweight: BodyweightTrends | None = Field(
+        description="The smoothed body weight trend and its rate, or null with no weigh-in.")
+    calories: CaloriesTrends | None = Field(
+        description="Calories a day over the last 7 and 28 days, or null with no food logged in the last 28.")
+    sessions: SessionsTrends = Field(description="Lift sessions this week against the weekly target.")
+    cardio: CardioTrends = Field(description="Cardio minutes this week against the weekly target.")
+    maintenance: Maintenance | None = Field(
+        description="The maintenance estimate, or null until 14 of the last 21 days have food logged and there are "
+                    "weigh-ins in the last 7 days and around 21 days ago.")
+    maintenance_note: str | None = Field(description="What the maintenance estimate still needs, or null.")
+    includes_sample: bool = Field(description=INCLUDES_SAMPLE_TEXT)
+    how: str = Field(description="How the numbers are worked out.")
+    summary: str = Field(description="How the person is doing, in a few lines, ready to quote.")
+    links: TrendsLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+    note: str | None = Field(
+        default=None, description="Present when sample rows are in these numbers, or when the rate cannot be "
+                                  "worked out: what to tell the person.")
 
 
 RESULTS = {
@@ -706,4 +890,6 @@ RESULTS = {
     "log_food": LogFoodResult,
     "save_food": SaveFoodResult,
     "log_cardio": LogCardioResult,
+    "get_trends": GetTrendsResult,
+    "get_goals": GetGoalsResult,
 }

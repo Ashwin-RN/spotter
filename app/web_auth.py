@@ -4,6 +4,9 @@ the provider's library.
     sign_in_url(state)       -> the provider's sign-in address, carrying `state`
     exchange(code)           -> Identity(subject, email, name, session_id)  (async, time-limited)
     sign_out_url(session_id) -> the provider's sign-out address, returning to the home page
+    delete_identity(subject) -> None: the person's sign-in is deleted at the provider (async, time-limited).
+                                "No such user" counts as done, so a retry after a half-finished delete
+                                finishes it. Any other failure raises DeleteFailed.
 
 Only the person's provider id, email, name and provider session id leave this module. The access
 token and refresh token the provider returns are dropped here and never stored. The provider client
@@ -15,7 +18,7 @@ import logging
 from dataclasses import dataclass
 
 import jwt
-from workos import AsyncWorkOSClient, WorkOSClient
+from workos import AsyncWorkOSClient, NotFoundError, WorkOSClient
 
 from app import links
 from app.config import get_settings
@@ -29,6 +32,10 @@ EXCHANGE_SECONDS = 15  # the whole exchange, whatever the library does inside it
 
 class SignInFailed(Exception):
     """The provider did not finish the sign-in. The reason is logged by type only."""
+
+
+class DeleteFailed(Exception):
+    """The provider did not delete the sign-in. The reason is logged by type only."""
 
 
 @dataclass(frozen=True)
@@ -104,3 +111,20 @@ async def exchange(code: str) -> Identity:
     except Exception as exc:  # the provider's errors, the network's, a timeout, a malformed reply
         log.warning("Web sign-in failed at the provider: %s", type(exc).__name__)
         raise SignInFailed(type(exc).__name__) from None
+
+
+async def _delete_user(subject: str) -> None:
+    async with AsyncWorkOSClient(**_client_values()) as client:
+        await client.user_management.delete_user(id=subject)
+
+
+async def delete_identity(subject: str) -> None:
+    """Delete the person's sign-in at the provider. The provider saying there is no such user counts as
+    done. Any other failure, including a slow provider, raises DeleteFailed. Never blocks the event loop."""
+    try:
+        await asyncio.wait_for(_delete_user(subject), timeout=EXCHANGE_SECONDS)
+    except NotFoundError:
+        log.info("Web account delete: the provider had no such user, so the sign-in is already gone.")
+    except Exception as exc:  # the provider's errors, the network's, a timeout
+        log.warning("Web account delete failed at the provider: %s", type(exc).__name__)
+        raise DeleteFailed(type(exc).__name__) from None
