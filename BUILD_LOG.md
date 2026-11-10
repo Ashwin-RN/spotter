@@ -332,12 +332,18 @@ The speed check took three passes to close, and the re-checks are why. The first
 
 | Check | Status |
 |---|---|
-| The full suite is green, plain and with warnings as errors, on a clean export | Pending the stage commit's export check (1287 tests in the working tree, both ways) |
-| Live: save roti by talking, then "Two rotis and dal, then 30 minutes on the treadmill" in one message → one `log_food` with both tags, one `log_cardio`, Today shows the meal, the cardio and the right total | Pending the live run |
-| "Dal was 150" → the tag flips to *you said*; the total follows | Pending the live run |
+| The full suite is green, plain and with warnings as errors, on a clean export | Done: 1287 tests, both ways, on the export of `cdb10c8` |
+| The connector offers the four new functions | Done: Claude listed sixteen, the four among them, with no reconnect |
+| "Save roti as a food: 1 roti is 120 kcal" | Done: one `save_food`; Foods shows Roti, 1 roti, 120 kcal |
+| "Two rotis and dal, then 30 minutes on the treadmill" in one message → one `log_food` with both tags, one `log_cardio`, Today shows the meal, the cardio and the right total | Done: `find_food("dal")`, `list_exercises(cardio)`, then one `log_food` with two entries (Roti by id, 2 servings, no number; dal 150 marked as an estimate; no meal sent) and one `log_cardio` (Treadmill Walk, 30 min). Claude asked nothing, said the dal was its estimate, said it chose a walk because no speed was given and offered the run. Today: both under Lunch, "saved food" and "estimate" tags, a Confirm button on the dal, total 390 of which 150 estimated (38%); the cardio with the no-weigh-in note and no footer line, since the account had no weigh-in that day |
+| "Dal was 150" → the tag flips to *you said*; the total follows | Done, by the confirmation path: Claude's estimate was already 150, so the edit sent the same number, the tag became *you said*, the Confirm button went, and the total stayed 390 |
+| "Dal was 180" → the number changes | Done: one `edit_entry`, kcal 180; Today shows dal 180 *you said*, total 420 |
+| Settings shows the targets; "Set my calorie target to 2200"; "Remove my calorie target" | Done: the form is there; `update_settings(2200)` gave Target 2200 and Remaining 1810 on Today; `update_settings(null)` cleared it and the lines went |
 | The evals: every case passes at least 2 of 3 runs, the rate reported as it is | Done: ten cases, 30 of 30 runs, model `claude-opus-5-5`, $4.46 at list price. Run after the last service fix; one later change (explicit nulls through `edit_entry`, and a summary wording for cleared values) landed after it, and no case edits an entry |
 
-Two edits in this commit were not re-checked by a reviewer: the summary now writes a cleared value as "none, cleared" instead of Python's `None`, for any field on any kind, and a cleared distance says "cleared with the distance" for the speed it takes with it. The suite covers both.
+Run live by the same agent in the person's browser as stage 3's, every tool call allowed by hand. Two things the run showed. The cardio estimate and the Compendium footer were not seen live, because the account had no weigh-in that day; the suite and the reviewer's MCP run cover them, and nobody invented a weigh-in for a real account. And the day page read "2 rotis × 2: 240 kcal": Claude wrote the count into the description and into servings, so a saved-food line can look like twice its amount. The number is right; the display and the description rule go to stage 5.
+
+Two edits in the stage commit were not re-checked by a reviewer: the summary now writes a cleared value as "none, cleared" instead of Python's `None`, for any field on any kind, and a cleared distance says "cleared with the distance" for the speed it takes with it. The suite covers both.
 
 ### What this stage taught
 
