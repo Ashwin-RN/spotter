@@ -178,15 +178,19 @@ def test_every_entry_table_has_the_five_columns_and_two_indexes():
 def test_the_exercise_sync_fills_an_empty_table_and_is_idempotent(db_session):
     db_session.execute(Exercise.__table__.delete())
     db_session.commit()
-    assert exercises.sync(db_session) == len(exercises.LIFTS)
+    every = len(exercises.LIFTS) + len(exercises.CARDIO)
+    assert exercises.sync(db_session) == every
     db_session.commit()
-    before = [(e.id, e.name, e.kind, e.category) for e in db_session.scalars(select(Exercise).order_by(Exercise.id))]
+    columns = lambda e: (e.id, e.name, e.kind, e.category, e.met, e.compendium_code)  # noqa: E731
+    before = [columns(e) for e in db_session.scalars(select(Exercise).order_by(Exercise.id))]
     assert exercises.sync(db_session) == 0
     db_session.commit()
-    after = [(e.id, e.name, e.kind, e.category) for e in db_session.scalars(select(Exercise).order_by(Exercise.id))]
-    assert before == after and len(after) == len(exercises.LIFTS)
-    assert {kind for _, _, kind, _ in after} == {"lift"}
-    assert {category for *_, category in after} == set(exercises.CATEGORIES)
+    after = [columns(e) for e in db_session.scalars(select(Exercise).order_by(Exercise.id))]
+    assert before == after and len(after) == every
+    assert {kind for _, _, kind, *_ in after} == {"lift", "cardio"}
+    assert {c for _, _, kind, c, *_ in after if kind == "lift"} == set(exercises.CATEGORIES)
+    assert {c for _, _, kind, c, *_ in after if kind == "cardio"} <= set(exercises.CARDIO_CATEGORIES)
+    assert all(met and code for _, _, kind, _, met, code in after if kind == "cardio")
 
 
 def test_the_sync_adds_only_what_is_missing_and_changes_nothing_else(db_session):
@@ -202,9 +206,12 @@ def test_the_sync_adds_only_what_is_missing_and_changes_nothing_else(db_session)
 
 def test_the_lift_list_has_unique_names_that_fit_the_columns():
     names = [row["name"] for row in exercises.rows()]
-    assert len(names) == len(set(names)) == 41
+    assert len(names) == len(set(names)) == 41 + 15
     assert all(len(n) <= 64 for n in names)
-    assert all(row["category"] in exercises.CATEGORIES and len(row["category"]) <= 16 for row in exercises.rows())
+    for row in exercises.rows():
+        allowed = exercises.CATEGORIES if row["kind"] == "lift" else exercises.CARDIO_CATEGORIES
+        assert row["category"] in allowed and len(row["category"]) <= 16
+        assert row["compendium_code"] is None or len(row["compendium_code"]) <= 8
 
 
 # ---------------------------------------------------------------- server defaults and sessions

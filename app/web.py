@@ -56,11 +56,11 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app import calllog, charts, csrf, db, links, rules, services, users, web_auth
 from app.config import Settings, get_settings
-from app.models import CLAUDE_CAN, MEASUREMENT_KINDS, Goal, User
+from app.models import CLAUDE_CAN, MEASUREMENT_KINDS, FoodEntry, Goal, SavedFood, User
 from app.services import body, lifts, progress as progress_data
 
 log = logging.getLogger("spotter")
@@ -82,14 +82,59 @@ STATE = "sign_in_state"
 # real page arrives.
 PLACEHOLDERS = {
     "goals": "/goals",
-    "foods": "/foods",
 }
 
 # The kinds of entry the web shows and edits, and the fields it offers for each (decision 7: sets are
 # changed through Claude only in this stage).
-EDIT_FIELDS = {"bodyweight": ("kg", "date"), "measurement": ("value", "date"), "lift_session": ("date", "notes")}
-KIND_NAMES = {"bodyweight": "weigh-in", "measurement": "measurement", "lift_session": "lift session"}
+EDIT_FIELDS = {
+    "bodyweight": ("kg", "date"),
+    "measurement": ("value", "date"),
+    "lift_session": ("date", "notes"),
+    "food_entry": ("description", "kcal", "meal", "date"),
+    "cardio_entry": ("exercise", "minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal",
+                     "notes", "date"),
+}
+KIND_NAMES = {"bodyweight": "weigh-in", "measurement": "measurement", "lift_session": "lift session",
+              "food_entry": "food", "cardio_entry": "cardio"}
+NUMBER_FIELDS = {"kg", "value", "kcal", "minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr",
+                 "machine_kcal", "kcal_per_serving", "grams_per_serving", "calorie_target_kcal",
+                 "target_sessions_per_week", "target_cardio_minutes_per_week"}
 DATE_ERRORS = {"invalid_date", "date_in_future", "date_too_old", "day_taken"}
+
+MEALS = ("breakfast", "lunch", "dinner", "snack")
+# Who supplied a food entry's number (rule 13), in words. An estimate is marked on the page.
+SOURCE_WORDS = {"you_said": "you said", "saved_food": "saved food", "usda": "USDA", "claude_estimate": "estimate"}
+ATTRIBUTION = ("Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
+               "(CC BY-NC-ND 4.0).")
+TARGET_FIELDS = ("calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week")
+FOOD_FIELDS = ("name", "serving_label", "kcal_per_serving", "grams_per_serving")
+
+# What a page says beside a field the service refused, in its own words: (kind, field) -> text.
+FIELD_HELP = {
+    ("food_entry", "description"): "Give a description, up to 200 characters.",
+    ("food_entry", "kcal"): "That kcal was not saved: give a whole number from 0 to 5,000.",
+    ("food_entry", "meal"): "Choose breakfast, lunch, dinner or snack.",
+    ("cardio_entry", "exercise"): "Choose an activity from the list.",
+    ("cardio_entry", "minutes"): "Give the minutes, from 1 to 600.",
+    ("cardio_entry", "distance_km"): "Give the distance in km, from 0.01 to 300, or leave it empty.",
+    ("cardio_entry", "incline_pct"): "Give the incline in %, from 0 to 40, or leave it empty.",
+    ("cardio_entry", "speed_kmh"): "Give the speed in km/h, from 0.1 to 60, or leave it empty.",
+    ("cardio_entry", "avg_hr"): "Give the average heart rate, 30 to 240, as a whole number, or leave it empty.",
+    ("cardio_entry", "machine_kcal"): "Give the machine's number, 1 to 5,000, as a whole number, or leave it empty.",
+    ("cardio_entry", "notes"): "Keep the notes under 2,000 characters.",
+    ("saved_food", "name"): "Give the food a name, up to 128 characters.",
+    ("saved_food", "serving_label"): "Say what one serving is, such as 1 roti, up to 64 characters.",
+    ("saved_food", "kcal_per_serving"): "Give the kcal in one serving, from 0 to 5,000.",
+    ("saved_food", "grams_per_serving"): "Give the grams in one serving, or leave it empty.",
+    ("settings", "calorie_target_kcal"): "Give a daily target from 800 to 10,000 kcal, as a whole number, or leave it empty.",
+    ("settings", "target_sessions_per_week"): "Give sessions a week from 0 to 14, or leave it empty.",
+    ("settings", "target_cardio_minutes_per_week"): "Give cardio minutes a week from 0 to 3,000, or leave it empty.",
+    ("settings", "add_back_exercise_kcal"): "That setting was not saved.",
+}
+FIRST_FIELD = {"bodyweight": "kg", "measurement": "value", "lift_session": "notes", "food_entry": "description",
+               "cardio_entry": "minutes", "saved_food": "name", "settings": "calorie_target_kcal"}
+FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS, "settings": (*TARGET_FIELDS, "add_back_exercise_kcal")}
+
 
 # What each setting of the switch lets Claude do, in one line each.
 CLAUDE_CAN_LINES = {
@@ -229,6 +274,8 @@ def page(request: Request, name: str, status_code: int = 200, **context) -> Resp
         # Where the automatic zone save brings the person back to. Never set on an error page, so a
         # 404 never repeats the address it was given.
         "next_path": request.url.path if status_code < 400 else None,
+        # Rule 15: the one footer line naming the Compendium, on a page that shows a cardio estimate only.
+        "attribution": ATTRIBUTION if context.pop("shows_estimate", False) else None,
         **context,
     }
     return templates.TemplateResponse(request, name, values, status_code=status_code)
@@ -467,11 +514,16 @@ async def settings_page(request: Request) -> Response:
 
 
 def settings_view(request: Request, user: User, error: dict | None = None, switch_error: bool = False,
-                  status_code: int = 200) -> Response:
+                  target_errors: dict | None = None, typed: dict | None = None, status_code: int = 200) -> Response:
     groups, selected = zone_choices(user.time_zone)
     saved = request.query_params.get("saved")
+    targets = {f: getattr(user, f) for f in TARGET_FIELDS}
+    shown = {f: (typed[f] if typed is not None else ("" if targets[f] is None else rules.kg(targets[f])))
+             for f in TARGET_FIELDS}
     return page(request, "settings.html", status_code=status_code, user=user, error=error,
                 saved=saved == "time_zone" and error is None, switch_saved=saved == "claude_can",
+                targets_saved=saved == "targets" and not target_errors, target_errors=target_errors or {},
+                targets=shown,
                 switch_error=switch_error, zone_groups=groups, selected_zone=selected,
                 choices=[(value, CLAUDE_CAN_LABELS[value], CLAUDE_CAN_LINES[value]) for value in CLAUDE_CAN])
 
@@ -538,10 +590,20 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     else:
         prev_day = on - timedelta(days=1) if on - timedelta(days=1) > date.min else None
     next_day = on + timedelta(days=1) if on < today else next((d for d in later if d > on), None)
+    activities = await cardio_names()
+    cardio = day.get("cardio") or []
     return page(request, "day.html", status_code=status_code, day=day, on=on, today=today,
                 prev_day=prev_day, next_day=next_day,
                 kinds=measurement_kinds(), undo=undo, form_error=form_error or {}, kg=rules.kg,
-                kind_names=KIND_NAMES, labels=MEASUREMENT_LABELS)
+                kind_names=KIND_NAMES, labels=MEASUREMENT_LABELS, meals=MEALS, source_words=SOURCE_WORDS,
+                food=day.get("food"), cardio=cardio, activities=activities,
+                shows_estimate=any(c.get("estimate") for c in cardio))
+
+
+async def cardio_names() -> list[str]:
+    """The cardio activities, as list_exercises gives them."""
+    result = await _db(services.list_exercises, "cardio")
+    return [e["name"] for e in result.get("exercises", [])]
 
 
 def undo_target(value: object) -> tuple[str, str] | None:
@@ -572,19 +634,33 @@ def form_message(kind: str, field: str, measured: str | None = None) -> str:
     return "That value was not saved: give a number in the unit shown."
 
 
+def error_field(kind: str, err: dict) -> str:
+    """Which field a refusal is about. The services' errors carry a code, and their range and number
+    messages start with the field's name ("kcal 6000 is outside ..."); anything else goes to the kind's
+    first field."""
+    code = err.get("error")
+    if code in DATE_ERRORS:
+        return "date"
+    if code == "invalid_kind" and kind == "measurement":
+        return "kind"
+    if code == "unknown_exercise" and kind == "cardio_entry":
+        return "exercise"
+    # A message about one entry of several starts "Entry 2: ..."; the field comes after that.
+    words = re.sub(r"^[A-Z][a-z]+ \d+: ", "", str(err.get("message") or "")).split()
+    first = words[0].strip("':,.").casefold() if words else ""
+    if first in FIELDS_OF.get(kind, ()):
+        return first
+    return FIRST_FIELD[kind]
+
+
 def field_errors(kind: str, result: dict, measured: str | None = None) -> dict:
-    """{field: the page's own message}, from the codes of a refused write."""
+    """{field: the page's own message}, from a refused write: every error, a combined one included."""
+    found = [e for e in result.get("errors") or [] if isinstance(e, dict)] or [result]
     out = {}
-    for code in codes(result):
-        if code in DATE_ERRORS:
-            field = "date"
-        elif code == "invalid_kind":
-            field = "kind"
-        else:
-            field = "notes" if kind == "lift_session" else EDIT_FIELDS[kind][0]
-        out[field] = form_message(kind, field, measured)
-    first = EDIT_FIELDS[kind][0] if kind != "lift_session" else "notes"
-    return out or {first: form_message(kind, first, measured)}
+    for err in found:
+        field = error_field(kind, err)
+        out[field] = FIELD_HELP.get((kind, field)) or form_message(kind, field, measured)
+    return out
 
 
 async def log_on_day(request: Request, kind: str) -> Response:
@@ -599,10 +675,16 @@ async def log_on_day(request: Request, kind: str) -> Response:
     if kind == "bodyweight":
         result = await write(user, "log_bodyweight", services.log_bodyweight, user.id,
                              {"kg": str(form.get("kg") or ""), "date": on.isoformat()}, "web")
-    else:
+    elif kind == "measurement":
         result = await write(user, "log_measurement", services.log_measurement, user.id,
                              {"kind": str(form.get("kind") or ""), "value": str(form.get("value") or ""),
                               "date": on.isoformat()}, "web")
+    elif kind == "food_entry":
+        result = await write(user, "log_food", services.log_food, user.id,
+                             {"entries": [food_from_form(form)], "date": on.isoformat()}, "web")
+    else:
+        result = await write(user, "log_cardio", services.log_cardio, user.id,
+                             {**cardio_from_form(form), "date": on.isoformat()}, "web")
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if failed(result):
@@ -619,8 +701,35 @@ async def log_weigh_in(request: Request) -> Response:
     return await log_on_day(request, "bodyweight")
 
 
+def food_from_form(form) -> dict:
+    """One food entry from the day page's form. No meal unless one was chosen: the server picks the slot
+    from the person's clock (decision 3). No tag and no `estimated`: the server tags it you_said."""
+    entry = {"description": str(form.get("description") or ""), "kcal": str(form.get("kcal") or "")}
+    meal = str(form.get("meal") or "")
+    if meal:
+        entry["meal"] = meal
+    return entry
+
+
+def cardio_from_form(form) -> dict:
+    """A cardio entry from the day page's form: activity, minutes, and the distance when one is given."""
+    data = {"exercise": str(form.get("exercise") or ""), "minutes": str(form.get("minutes") or "")}
+    distance = str(form.get("distance_km") or "").strip()
+    if distance:
+        data["distance_km"] = distance
+    return data
+
+
 async def log_measurement(request: Request) -> Response:
     return await log_on_day(request, "measurement")
+
+
+async def log_food_page(request: Request) -> Response:
+    return await log_on_day(request, "food_entry")
+
+
+async def log_cardio_page(request: Request) -> Response:
+    return await log_on_day(request, "cardio_entry")
 
 
 # ---------------------------------------------------------------- one entry: edit, delete, restore
@@ -651,25 +760,64 @@ async def edit_page(request: Request) -> Response:
             return redirect(links.page("day", date=after["date"]))
         errors, status = field_errors(kind, result, entry.get("kind") if kind == "measurement" else None), 400
         entry = {**entry, **{f: str(form.get(f) or "") for f in EDIT_FIELDS[kind]}}  # show what they typed
+    activities = await cardio_names() if kind == "cardio_entry" else []
     return page(request, "edit.html", status_code=status, kind=kind, kind_name=KIND_NAMES[kind],
-                entry_id=found["id"], entry=entry, errors=errors, kg=rules.kg, labels=MEASUREMENT_LABELS)
+                entry_id=found["id"], entry=entry, errors=errors, kg=rules.kg, labels=MEASUREMENT_LABELS,
+                meals=MEALS, source_words=SOURCE_WORDS, activities=activities,
+                shows_estimate=kind == "cardio_entry" and entry.get("estimated_kcal") is not None)
 
 
-def edit_changes(kind: str, entry: dict, form) -> dict:
-    """Only the fields the person changed, as they typed them: the service checks and stores them."""
+def changed_fields(fields, current: dict, form) -> dict:
+    """Only the fields the person changed, as they typed them: the service checks and stores them. An
+    optional number left empty where none is stored is no change; emptied where one is stored, it is
+    sent empty, and the service decides."""
     changes = {}
-    for field in EDIT_FIELDS[kind]:
+    for field in fields:
         sent = str(form.get(field) or "")
-        current = entry.get(field)
-        if field in ("kg", "value"):
-            same = rules.to_float(sent) is not None and current is not None and rules.to_float(sent) == float(current)
+        now = current.get(field)
+        if field in NUMBER_FIELDS:
+            if not sent.strip():
+                same = now is None
+            else:
+                number = rules.to_float(sent)
+                same = number is not None and now is not None and number == float(now)
         elif field == "notes":
-            same = sent.strip() == (current or "").strip()
+            same = sent.strip() == (now or "").strip()
         else:
-            same = sent.strip() == str(current or "")
+            same = sent.strip() == str(now if now is not None else "")
         if not same:
             changes[field] = sent
     return changes
+
+
+def edit_changes(kind: str, entry: dict, form) -> dict:
+    return changed_fields(EDIT_FIELDS[kind], entry, form)
+
+
+async def confirm_page(request: Request) -> Response:
+    """POST: the person confirms Claude's estimate for a food entry. "Yes, that's right" is the same
+    number, stated (decision 1): the entry's own kcal goes to edit_entry explicitly, and the service
+    makes it you_said. Back to the day."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    entry_id = request.path_params["entry_id"]
+    found = await _db(services.get_entry, user.id, "food_entry", entry_id)
+    if failed(found):
+        return not_found_page(request)
+    entry = found["entry"]
+    if entry.get("source") != "claude_estimate":  # nothing to confirm: already the person's or the app's number
+        return redirect(links.page("day", date=entry["date"]))
+    result = await write(user, "edit_entry", services.edit_entry, user.id, "food_entry", entry_id,
+                         {"kcal": entry["kcal"]}, "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if "not_found" in codes(result):
+        return not_found_page(request)
+    if failed(result):
+        return message(request, "Not confirmed", "That estimate could not be confirmed, so nothing was changed.",
+                       "Go back to the day and try again, or edit the entry.", status_code=400)
+    return redirect(links.page("day", date=(result.get("after") or entry)["date"]))
 
 
 async def delete_page(request: Request) -> Response:
@@ -703,6 +851,139 @@ async def restore_page(request: Request) -> Response:
     if failed(result):
         return not_found_page(request)
     return redirect(links.page("day", date=result["entry"]["date"]))
+
+
+# ---------------------------------------------------------------- Foods
+
+def food_form(form) -> dict:
+    data = {f: str(form.get(f) or "") for f in FOOD_FIELDS}
+    if not data["grams_per_serving"].strip():
+        del data["grams_per_serving"]
+    return data
+
+
+def _saved_foods(user_id: int) -> list[dict]:
+    """Every live saved food of this person with how often it was logged, by name. A read only.
+    No service lists them: find_food needs a query, stops at 25 and asks USDA when the key is set."""
+    with db.new_session() as s:
+        used = dict(s.execute(select(FoodEntry.saved_food_id, func.count()).where(
+            FoodEntry.user_id == user_id, FoodEntry.deleted_at.is_(None), FoodEntry.saved_food_id.is_not(None))
+            .group_by(FoodEntry.saved_food_id)).all())
+        foods = s.scalars(select(SavedFood).where(SavedFood.user_id == user_id, SavedFood.deleted_at.is_(None))
+                          .order_by(SavedFood.name_key))
+        return [{"id": f.id, "name": f.name, "serving_label": f.serving_label, "kcal_per_serving": f.kcal_per_serving,
+                 "grams_per_serving": f.grams_per_serving, "times_logged": used.get(f.id, 0)} for f in foods]
+
+
+async def foods_view(request: Request, user: User, errors: dict | None = None, typed: dict | None = None,
+                     status_code: int = 200) -> Response:
+    saved = await _db(_saved_foods, user.id)
+    deleted = request.query_params.get("deleted")
+    return page(request, "foods.html", status_code=status_code, foods=saved, errors=errors or {},
+                typed=typed or {}, kg=rules.kg, saved=request.query_params.get("saved") == "1",
+                undo=deleted if isinstance(deleted, str) and deleted.isdigit() and len(deleted) <= 10 else None)
+
+
+async def foods_page(request: Request) -> Response:
+    """GET: the saved foods. POST: save one; the same name updates it (save_food's rule)."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    if request.method == "GET":
+        return await foods_view(request, user)
+    form = await request.form()
+    result = await write(user, "save_food", services.save_food, user.id, food_form(form), "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if failed(result):
+        return await foods_view(request, user, errors=field_errors("saved_food", result), typed=food_form(form),
+                                status_code=400)
+    return redirect(links.page("foods") + "?saved=1")
+
+
+async def food_edit_page(request: Request) -> Response:
+    """One saved food: change its serving or kcal. The name is how save_food finds it, so it stays."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    food_id = request.path_params["food_id"]
+    food = next((f for f in await _db(_saved_foods, user.id) if str(f["id"]) == food_id), None)
+    if food is None:
+        return not_found_page(request)
+    errors, status = {}, 200
+    if request.method == "POST":
+        form = await request.form()
+        data = {**food_form(form), "name": food["name"]}
+        if not changed_fields(FOOD_FIELDS[1:], food, form):
+            return redirect(links.page("foods"))
+        saved = await write(user, "save_food", services.save_food, user.id, data, "web")
+        if "too_many_writes" in codes(saved):
+            return too_many(request, saved)
+        if not failed(saved):
+            return redirect(links.page("foods") + "?saved=1")
+        errors, status = field_errors("saved_food", saved), 400
+        food = {**food, **{f: str(form.get(f) or "") for f in FOOD_FIELDS[1:]}}
+    return page(request, "food_edit.html", status_code=status, food=food, errors=errors, kg=rules.kg)
+
+
+async def food_delete_page(request: Request) -> Response:
+    """POST: delete a saved food (soft), back to Foods with Undo. Entries logged with it keep their kcal."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await write(user, "delete_entry", services.delete_entry, user.id, "saved_food",
+                         request.path_params["food_id"])
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if failed(result):
+        return not_found_page(request)
+    return redirect(links.page("foods") + f"?deleted={result['id']}")
+
+
+async def food_restore_page(request: Request) -> Response:
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await write(user, "restore_entry", services.restore_entry, user.id, "saved_food",
+                         request.path_params["food_id"])
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if "not_deleted" in codes(result):
+        return message(request, "Already back", "That food is not deleted, so there was nothing to undo.",
+                       "Go back to Foods to see it.", status_code=409)
+    if failed(result):
+        return not_found_page(request)
+    return redirect(links.page("foods") + "?saved=1")
+
+
+# ---------------------------------------------------------------- the targets on Settings
+
+def targets_from_form(form, user: User) -> dict:
+    """The targets and the add-back switch, only those that differ from what is stored."""
+    data = changed_fields(TARGET_FIELDS, {f: getattr(user, f) for f in TARGET_FIELDS}, form)
+    add_back = form.get("add_back_exercise_kcal") == "on"
+    if add_back != bool(user.add_back_exercise_kcal):
+        data["add_back_exercise_kcal"] = add_back
+    return data
+
+
+async def targets_page(request: Request) -> Response:
+    """POST from Settings: the calorie target, weekly sessions, weekly cardio minutes and add-back."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    form = await request.form()
+    data = targets_from_form(form, user)
+    if not data:
+        return redirect(links.page("settings") + "?saved=targets")
+    result = await write(user, "update_settings", services.update_settings, user.id, data, "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if failed(result):
+        typed = {f: str(form.get(f) or "") for f in TARGET_FIELDS}
+        return settings_view(request, user, target_errors=field_errors("settings", result), typed=typed,
+                             status_code=400)
+    return redirect(links.page("settings") + "?saved=targets")
 
 
 # ---------------------------------------------------------------- Progress
@@ -790,7 +1071,15 @@ PAGES = [
     ("/day/{date}", day_page, ["GET"]),
     ("/day/{date}/weigh-in", log_weigh_in, ["POST"]),
     ("/day/{date}/measurement", log_measurement, ["POST"]),
+    ("/day/{date}/food", log_food_page, ["POST"]),
+    ("/day/{date}/cardio", log_cardio_page, ["POST"]),
+    ("/foods", foods_page, ["GET", "POST"]),
+    ("/foods/{food_id}/edit", food_edit_page, ["GET", "POST"]),
+    ("/foods/{food_id}/delete", food_delete_page, ["POST"]),
+    ("/foods/{food_id}/restore", food_restore_page, ["POST"]),
+    ("/settings/targets", targets_page, ["POST"]),
     ("/entries/{kind}/{entry_id}/edit", edit_page, ["GET", "POST"]),
+    ("/entries/food_entry/{entry_id}/confirm", confirm_page, ["POST"]),
     ("/entries/{kind}/{entry_id}/delete", delete_page, ["POST"]),
     ("/entries/{kind}/{entry_id}/restore", restore_page, ["POST"]),
     ("/progress", progress_page, ["GET"]),

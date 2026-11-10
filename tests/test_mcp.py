@@ -249,12 +249,13 @@ def test_spotter_logs_through_its_own_handler_added_once(provider):
 # ================================================================ stage 2: the seven functions
 
 FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings",
-             "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry"]
-READS = {"whoami", "list_exercises", "get_progress", "get_log"}
+             "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
+             "find_food", "log_food", "save_food", "log_cardio"]
+READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 SETTING_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
-SETTINGS = {"update_settings"}
+SETTINGS = {"update_settings", "save_food"}  # idempotent: the same call twice ends in the same state
 DELETE_HINTS = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 DELETES = {"delete_entry"}
 
@@ -325,6 +326,12 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("list_exercises", {"kind": "lift", "category": "push"})
     keep("get_progress")  # nothing logged: note
     keep("get_progress", {"exercise": "Back Squat"})  # nothing logged: note
+    keep("log_cardio", {"exercise": "Treadmill Walk", "minutes": 30})  # no weigh-in yet: no estimate, a note
+    keep("find_food", {"query": "dal"})  # nothing saved or logged; USDA off: usda null and a note
+    estimate = keep("log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True},
+                                             {"description": "Dal", "kcal": 180, "estimated": True}]})  # note
+    keep("log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True},
+                                  {"description": "Dal", "kcal": 180, "estimated": True}]})  # duplicate
     for days_ago, weight in ((21, 100), (14, 102.5), (7, 105)):
         keep("log_lifts", {"sets": squat(weight), "date": (today - timedelta(days=days_ago)).isoformat()})
     sets = squat(110) + [{"exercise": "Bench Press", "weight_kg": 60, "reps": 8}]
@@ -356,6 +363,19 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("delete_entry", {"kind": "measurement", "entry_id": second["id"]})
     keep("restore_entry", {"kind": "measurement", "entry_id": second["id"]})  # nothing in its place
     keep("restore_entry", {"kind": "measurement", "entry_id": first["id"]})  # swaps: replaced and note
+    roti = keep("save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120})  # created
+    keep("save_food", {"name": "roti", "serving_label": "1 roti", "kcal_per_serving": 110, "grams_per_serving": 40})
+    keep("find_food", {"query": "roti"})  # a saved hit and a recent entry
+    keep("update_settings", {"calorie_target_kcal": 2200, "target_cardio_minutes_per_week": 150,
+                             "add_back_exercise_kcal": True})  # a target: remaining and net are numbers
+    keep("log_food", {"entries": [{"description": "Roti", "saved_food_id": roti["id"], "servings": 2,
+                                   "meal": "Dinner"}]})
+    cardio = keep("log_cardio", {"exercise": "Treadmill Run", "minutes": 25, "distance_km": 4.5,
+                                 "machine_kcal": 280, "notes": "Intervals"})  # an estimate and a pace
+    keep("edit_entry", {"kind": "food_entry", "entry_id": estimate["ids"][1], "kcal": 150})  # becomes you_said
+    keep("edit_entry", {"kind": "cardio_entry", "entry_id": cardio["id"], "minutes": 30})  # re-estimated
+    keep("get_log", {"days": 14})
+    keep("get_progress", {"exercise": "Treadmill Run"})  # a cardio activity
     return seen
 
 
@@ -392,7 +412,17 @@ def test_the_arguments_are_typed_parameters(http):
     assert set(schemas["set_goal"]["properties"]) == {"kind", "exercise", "target_value", "target_date", "text",
                                                       "start_value", "goal_id", "status"}
     assert list(schemas["get_progress"]["properties"]) == ["exercise"]
-    assert list(schemas["update_settings"]["properties"]) == ["time_zone"]
+    assert list(schemas["update_settings"]["properties"]) == [
+        "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
+        "add_back_exercise_kcal"]
+    assert list(schemas["find_food"]["properties"]) == ["query", "limit"]
+    assert list(schemas["log_food"]["properties"]) == ["entries", "date", "allow_repeat"]
+    assert list(schemas["log_food"]["$defs"]["FoodEntryIn"]["properties"]) == [
+        "description", "meal", "kcal", "estimated", "saved_food_id", "servings", "usda_fdc_id", "grams"]
+    assert list(schemas["save_food"]["properties"]) == ["name", "serving_label", "kcal_per_serving", "grams_per_serving"]
+    assert list(schemas["log_cardio"]["properties"]) == [
+        "exercise", "minutes", "date", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal", "notes",
+        "allow_repeat"]
     assert list(schemas["list_exercises"]["properties"]) == ["kind", "category"]
     assert schemas["whoami"]["properties"] == {}
     one_set = schemas["log_lifts"]["$defs"]["SetIn"]
@@ -595,7 +625,10 @@ def test_no_database_session_is_opened_on_the_event_loop(http, monkeypatch):
              ("set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150,
                            "target_date": (date.today() + timedelta(days=90)).isoformat()}),
              ("update_settings", {"time_zone": "Europe/London"}),
-             ("get_log", {"days": 3}), ("log_measurement", {"kind": "waist", "value": 84})]
+             ("get_log", {"days": 3}), ("log_measurement", {"kind": "waist", "value": 84}),
+             ("find_food", {"query": "dal"}), ("log_food", {"entries": [{"description": "Dal", "kcal": 180}]}),
+             ("save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}),
+             ("log_cardio", {"exercise": "Treadmill Walk", "minutes": 30})]
     for name, arguments in calls:
         ok(http, token, name, arguments)
     assert len(loop_threads) >= 1
@@ -713,19 +746,32 @@ OPTIONAL_ARGUMENTS = {
     "set_goal": {"kind": "lift", "exercise": "Back Squat", "target_value": 150.5, "target_date": "2099-01-01",
                  "text": "Text", "start_value": 100.5, "goal_id": 7, "status": "open"},
     "get_progress": {"exercise": "Back Squat"},
-    "update_settings": {"time_zone": "Asia/Kolkata"},
+    "update_settings": {"time_zone": "Asia/Kolkata", "calorie_target_kcal": 2200, "target_sessions_per_week": 4,
+                        "target_cardio_minutes_per_week": 150, "add_back_exercise_kcal": True},
     "get_log": {"date": "2026-01-02", "days": 7},
     "log_measurement": {"date": "2026-01-02", "allow_repeat": True},
-    "edit_entry": {"date": "2026-01-02", "notes": "Notes", "sets": squat(105), "kg": 80.5, "value": 84.5},
+    "edit_entry": {"date": "2026-01-02", "notes": "Notes", "sets": squat(105), "kg": 80.5, "value": 84.5,
+                   "meal": "lunch", "description": "Dal", "kcal": 150.0, "exercise": "Treadmill Walk", "minutes": 30.0,
+                   "distance_km": 3.5, "incline_pct": 2.0, "speed_kmh": 7.0, "avg_hr": 130, "machine_kcal": 210},
     "restore_entry": {},
     "delete_entry": {},
+    "find_food": {"limit": 5},
+    "log_food": {"date": "2026-01-02", "allow_repeat": True},
+    "save_food": {"grams_per_serving": 40.0},
+    "log_cardio": {"date": "2026-01-02", "distance_km": 3.5, "incline_pct": 2.0, "speed_kmh": 7.0, "avg_hr": 130,
+                   "machine_kcal": 210, "notes": "Easy", "allow_repeat": True},
 }
 REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
             "log_measurement": {"kind": "waist", "value": 84.5},
             "edit_entry": {"kind": "lift_session", "entry_id": 7},
             "restore_entry": {"kind": "measurement", "entry_id": 7},
-            "delete_entry": {"kind": "bodyweight", "entry_id": 7}}
-DATA_WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement"}
+            "delete_entry": {"kind": "bodyweight", "entry_id": 7},
+            "find_food": {"query": "banana"},
+            "log_food": {"entries": [{"description": "Dal", "kcal": 180.0}]},
+            "save_food": {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120.0},
+            "log_cardio": {"exercise": "Treadmill Walk", "minutes": 30.0}}
+DATA_WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "log_food",
+               "save_food", "log_cardio"}
 
 
 def spy_on_services(monkeypatch) -> dict[str, tuple]:
@@ -748,6 +794,8 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
         return (arguments.get("kind"), arguments.get("category")), {}
     if name == "get_progress":
         return (account, arguments.get("exercise")), {}
+    if name == "find_food":
+        return (account, arguments["query"]), {k: v for k, v in arguments.items() if k == "limit"}
     if name == "get_log":
         return (account,), {k: v for k, v in arguments.items() if k in ("date", "days")}
     if name == "edit_entry":
@@ -959,7 +1007,9 @@ def test_an_abbreviation_or_an_offset_is_refused_with_a_fix(http, zone):
 def test_the_permission_switch_cannot_be_set_through_update_settings(http, monkeypatch):
     # By the schema: the only argument is time_zone.
     schema = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["update_settings"]
-    assert set(schema["properties"]) == {"time_zone"}
+    assert "claude_can" not in schema["properties"] and set(schema["properties"]) == {
+        "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
+        "add_back_exercise_kcal"}
     assert not any("claude_can" in t["inputSchema"].get("properties", {}) for t in tool_list(http, sign()))
     # And in practice: an extra claude_can is dropped before the service; the stored switch is unchanged.
     token = sign()
@@ -1064,6 +1114,7 @@ CONTRACT_NEEDS = {
     "whoami": "read", "list_exercises": "read", "get_progress": "read", "get_log": "read",
     "log_lifts": "log", "log_bodyweight": "log", "set_goal": "log", "update_settings": "log",
     "log_measurement": "log", "edit_entry": "log", "restore_entry": "log", "delete_entry": "log_delete",
+    "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
 }
 ALLOWS = {"read": {"read"}, "log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}
 
@@ -1174,3 +1225,275 @@ def test_the_write_limit_counts_the_same_names_the_switch_gates_as_writes():
     # The services count call-log rows by function name; every write Claude can make must be among them.
     writes = {name for name, level in mcp_server.NEEDS.items() if level != "read"}
     assert set(services.WRITE_FUNCTIONS) == writes
+
+
+# ---------------------------------------------------------------- food: the tag is the server's (stage 4)
+
+FULL_ENTRY = {"description": "Roti", "meal": "lunch", "kcal": 240.0, "estimated": True, "saved_food_id": 7,
+              "servings": 2.0, "usda_fdc_id": 1234, "grams": 80.0}
+
+
+def all_properties(schema: dict) -> set[str]:
+    """Every argument name in an input schema, nested ones included."""
+    found = set(schema.get("properties", {}))
+    for nested in schema.get("$defs", {}).values():
+        found |= set(nested.get("properties", {}))
+    return found
+
+
+def test_source_is_an_argument_nowhere(http):
+    for tool in tool_list(http, sign()):
+        assert "source" not in all_properties(tool["inputSchema"]), tool["name"]
+
+
+@pytest.mark.parametrize("entry", [FULL_ENTRY, {"description": "Dal"}], ids=["every field", "description only"])
+def test_every_food_entry_field_sent_reaches_the_service_and_no_other(http, monkeypatch, entry):
+    token = sign()
+    whoami(http, token)
+    account = one_user().id
+    received = spy_on_services(monkeypatch)
+    failed(http, token, "log_food", {"entries": [entry, {"description": "Tea", "kcal": 40}]})
+    assert received["log_food"] == ((account, {"entries": [entry, {"description": "Tea", "kcal": 40.0}]}, "claude"), {})
+
+
+def test_a_source_sent_by_the_caller_never_reaches_the_service(http, monkeypatch):
+    token = sign()
+    whoami(http, token)
+    received = spy_on_services(monkeypatch)
+    failed(http, token, "log_food", {"entries": [{"description": "Dal", "kcal": 180, "source": "usda"}],
+                                     "source": "you_said"})
+    assert received["log_food"][0][1] == {"entries": [{"description": "Dal", "kcal": 180.0}]}
+
+
+def food_tags(result: dict) -> list[tuple[str, float, bool]]:
+    return [(e["source"], e["kcal"], e["estimated"]) for e in result["entries"]]
+
+
+def test_a_stated_number_is_you_said_and_a_worked_out_one_is_claude_estimate(http):
+    token = sign()
+    stated = ok(http, token, "log_food", {"entries": [{"description": "Dal", "kcal": 180}]})
+    assert food_tags(stated) == [("you_said", 180, False)] and "note" not in stated
+    guessed = ok(http, token, "log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True}]})
+    assert food_tags(guessed) == [("claude_estimate", 240, True)]
+    assert "estimate" in guessed["note"] and guessed["day"]["estimated_kcal"] == 240
+
+
+def test_a_saved_food_by_id_is_tagged_saved_food_with_the_apps_number(http):
+    token = sign()
+    roti = ok(http, token, "save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120})
+    logged = ok(http, token, "log_food", {"entries": [{"description": "Rotis", "saved_food_id": roti["id"],
+                                                       "servings": 2}]})
+    [entry] = logged["entries"]
+    assert (entry["source"], entry["kcal"], entry["estimated"]) == ("saved_food", 240, False)
+    assert (entry["saved_food_id"], entry["servings"]) == (roti["id"], 2)
+
+
+@pytest.mark.parametrize("ids", [{"saved_food_id": 1, "servings": 1}, {"usda_fdc_id": 1234, "grams": 100}],
+                         ids=["saved food", "usda food"])
+def test_a_number_with_an_id_is_refused_through_mcp(http, ids):
+    token = sign()
+    if "saved_food_id" in ids:
+        ids = {**ids, "saved_food_id": ok(http, token, "save_food", {"name": "Roti", "serving_label": "1 roti",
+                                                                     "kcal_per_serving": 120})["id"]}
+    result = call(http, token, "log_food", {"entries": [{"description": "Roti", "kcal": 300, **ids}]})
+    assert result["isError"] is True
+    error = result["structuredContent"]
+    assert error["error"] == "invalid_field" and "app supplies the number" in error["fix"]
+    assert result["content"][0]["text"] == compact(error)
+
+
+def test_a_meal_left_out_is_picked_by_the_server_not_asked(http):
+    entry = ok(http, sign(), "log_food", {"entries": [{"description": "Dal", "kcal": 180}]})["entries"][0]
+    assert entry["meal"] in ("breakfast", "lunch", "dinner", "snack")
+
+
+def test_the_tag_rule_and_the_meal_rule_are_in_the_instructions():
+    text = mcp_server.INSTRUCTIONS
+    for words in ("estimated false", "estimated true, always", "say in your reply that it is an estimate",
+                  "by its id with servings or grams, and no kcal", "you may estimate, and must say so",
+                  "Never ask which meal"):
+        assert words in text, words
+
+
+def test_can_and_cant_states_the_tags_the_cardio_formula_and_the_food_tables():
+    text = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
+    for words in ("`you_said`", "`claude_estimate`", "`saved_food`", "`usda`", "04:00 to 11:00 breakfast", "otherwise snack (22:00 to 04:00",
+                  "MET x 3.5 x body weight in kg / 200 x minutes",
+                  "Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
+                  "(CC BY-NC-ND 4.0).",
+                  "With no weigh-in there is no estimate", "USDA FoodData Central", "IFCT 2017 and INDB",
+                  "not openly licensed", "`net_kcal`", "Sixteen functions"):
+        assert words in text, words
+
+
+def test_a_cardio_estimate_names_the_compendium(http):
+    token = sign()
+    ok(http, token, "log_bodyweight", {"kg": 80})
+    result = ok(http, token, "log_cardio", {"exercise": "Treadmill Walk", "minutes": 30})
+    assert "Compendium" in result["estimate"]["source"]
+    assert result["estimate"]["weight_kg"] == 80
+
+
+def test_the_real_results_include_the_null_cases_and_the_filled_ones(http):
+    seen = every_result(http, sign())
+    days = [r["day"] for r in seen["log_food"]]
+    assert any(d["target_kcal"] is None and d["remaining_kcal"] is None and d["net_kcal"] is None for d in days)
+    assert any(d["target_kcal"] == 2200 and d["remaining_kcal"] is not None and d["net_kcal"] is not None
+               for d in days)
+    assert any(r["estimate"] is None and r["note"] for r in seen["log_cardio"])  # no weigh-in yet
+    assert any(r["estimate"] is not None and r["pace"] is not None for r in seen["log_cardio"])
+    assert any(r["usda"] is None and r["usda_note"] for r in seen["find_food"])  # no USDA key in the tests
+    assert any(r["saved"] for r in seen["find_food"])
+    assert [r["created"] for r in seen["save_food"]] == [True, False]
+    assert any("cardio" in r for r in seen["get_progress"])
+
+
+# ---------------------------------------------------------------- update_settings: null clears a target
+
+TARGETS = {"calorie_target_kcal": 2200, "target_sessions_per_week": 4, "target_cardio_minutes_per_week": 150}
+
+
+def stored_targets() -> dict:
+    row = one_user()
+    return {field: getattr(row, field) for field in TARGETS}
+
+
+@pytest.mark.parametrize("field", sorted(TARGETS))
+def test_a_target_sent_as_null_is_cleared_and_one_left_out_is_kept(http, field):
+    token = sign()
+    ok(http, token, "update_settings", TARGETS)
+    assert stored_targets() == TARGETS
+    cleared = ok(http, token, "update_settings", {field: None})
+    assert cleared["changed"] == [field] and "cleared" in cleared["summary"]
+    assert stored_targets() == {**TARGETS, field: None}  # only that one: the others were left out, and kept
+
+
+def test_leaving_every_target_out_changes_nothing(http):
+    token = sign()
+    ok(http, token, "update_settings", TARGETS)
+    result = call(http, token, "update_settings", {})
+    assert result["structuredContent"]["error"] == "nothing_to_change"
+    assert stored_targets() == TARGETS
+
+
+def test_a_null_reaches_the_service_and_a_missing_field_does_not(http, monkeypatch):
+    token = sign()
+    whoami(http, token)
+    received = spy_on_services(monkeypatch)
+    failed(http, token, "update_settings", {"calorie_target_kcal": None, "add_back_exercise_kcal": None})
+    assert received["update_settings"][0][1] == {"calorie_target_kcal": None, "add_back_exercise_kcal": None}
+    failed(http, token, "update_settings", {"time_zone": None, "target_sessions_per_week": 3})
+    assert received["update_settings"][0][1] == {"target_sessions_per_week": 3}  # the time zone stays as before
+
+
+def test_a_null_add_back_is_refused_by_the_service_with_its_fix(http):
+    token = sign()
+    ok(http, token, "update_settings", {"add_back_exercise_kcal": True})
+    error = failed(http, token, "update_settings", {"add_back_exercise_kcal": None})
+    assert error["error"] == "invalid_field" and "true or false" in error["fix"]
+    assert one_user().add_back_exercise_kcal is True
+
+
+def test_the_targets_say_null_clears_them_and_publish_no_default(http):
+    schema = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["update_settings"]
+    for field in TARGETS:
+        assert "null clears it" in schema["properties"][field]["description"]
+        assert "default" not in schema["properties"][field]
+    assert not schema.get("required")
+
+
+# ---------------------------------------------------------------- which activity, which entry
+
+CARDIO_WORDS = ("When the person's words fit more than one activity", "more than 7 km/h is a run, otherwise a walk",
+                "with nothing to go on, the walk", "Say in your reply which one was taken", "edit_entry",
+                "Never ask first")
+DELETE_WORDS = ("Delete only the entry the person named", "ask which", "never delete on a guess",
+                "say what was deleted and that restore_entry brings it back")
+
+
+def test_the_instructions_say_log_the_activity_dont_ask_and_never_delete_on_a_guess():
+    for words in CARDIO_WORDS + DELETE_WORDS:
+        assert words in mcp_server.INSTRUCTIONS, words
+
+
+def test_log_cardio_and_delete_entry_carry_the_same_rules(http):
+    tools = {t["name"]: t for t in tool_list(http, sign())}
+    exercise = tools["log_cardio"]["inputSchema"]["properties"]["exercise"]["description"]
+    for words in CARDIO_WORDS:
+        assert words in exercise, words
+    delete = tools["delete_entry"]["description"]
+    for words in DELETE_WORDS + ("still needs the person's go-ahead first",):
+        assert words in delete, words
+
+
+# ---------------------------------------------------------------- edit_entry: null clears a cardio extra
+
+CARDIO_EXTRAS = {"distance_km": 5.0, "incline_pct": 2.0, "avg_hr": 150, "machine_kcal": 300, "notes": "Hard"}
+
+
+def cardio_now(entry_id: int) -> dict:
+    return services.get_entry(one_user().id, "cardio_entry", entry_id)["entry"]
+
+
+@pytest.fixture
+def cardio(http) -> tuple[str, int]:
+    """A token and one cardio entry with every extra set."""
+    token = sign()
+    entry = ok(http, token, "log_cardio", {"exercise": "Treadmill Run", "minutes": 30, **CARDIO_EXTRAS})
+    return token, entry["id"]
+
+
+@pytest.mark.parametrize("field", sorted(CARDIO_EXTRAS))
+def test_a_cardio_extra_sent_as_null_is_cleared_and_the_rest_are_kept(http, cardio, field):
+    token, entry_id = cardio
+    before = cardio_now(entry_id)
+    result = ok(http, token, "edit_entry", {"kind": "cardio_entry", "entry_id": entry_id, field: None})
+    assert field in result["changed"]
+    after = cardio_now(entry_id)
+    assert after[field] in (None, "")  # notes clear to empty text
+    for other in set(CARDIO_EXTRAS) - {field}:
+        if not (field == "distance_km" and other == "speed_kmh"):
+            assert after[other] == before[other], other
+
+
+def test_a_null_speed_is_worked_out_from_distance_and_minutes(http):
+    token = sign()
+    entry_id = ok(http, token, "log_cardio", {"exercise": "Treadmill Run", "minutes": 30, "speed_kmh": 9})["id"]
+    ok(http, token, "edit_entry", {"kind": "cardio_entry", "entry_id": entry_id, "distance_km": 5})
+    assert cardio_now(entry_id)["speed_kmh"] == 9  # the stated speed is kept
+    result = ok(http, token, "edit_entry", {"kind": "cardio_entry", "entry_id": entry_id, "speed_kmh": None})
+    assert result["changed"] == ["speed_kmh"]
+    assert cardio_now(entry_id)["speed_kmh"] == pytest.approx(5.0 / 30 * 60, abs=0.01)  # 10 km/h, from the distance
+
+
+def test_fields_left_out_of_a_cardio_edit_are_untouched(http, cardio):
+    token, entry_id = cardio
+    before = cardio_now(entry_id)
+    ok(http, token, "edit_entry", {"kind": "cardio_entry", "entry_id": entry_id, "minutes": 40})
+    after = cardio_now(entry_id)
+    assert {k: after[k] for k in CARDIO_EXTRAS} == {k: before[k] for k in CARDIO_EXTRAS}
+
+
+def test_a_cardio_edit_with_nothing_sent_is_nothing_to_change(http, cardio):
+    token, entry_id = cardio
+    error = failed(http, token, "edit_entry", {"kind": "cardio_entry", "entry_id": entry_id})
+    assert error["error"] == "nothing_to_change"
+
+
+def test_edit_nulls_reach_the_service_only_for_the_cardio_extras_and_notes(http, monkeypatch):
+    token = sign()
+    whoami(http, token)
+    received = spy_on_services(monkeypatch)
+    nulls = {name: None for name in ("distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal", "notes")}
+    failed(http, token, "edit_entry", {"kind": "cardio_entry", "entry_id": 7, **nulls,
+                                       "kcal": None, "meal": None, "date": None, "minutes": None})
+    assert received["edit_entry"][0][3] == nulls  # food's fields, date and minutes sent as null are not passed
+
+
+def test_the_cardio_extras_say_what_null_does_and_publish_no_default(http):
+    props = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["edit_entry"]["properties"]
+    for name in ("distance_km", "incline_pct", "avg_hr", "machine_kcal"):
+        assert "null clears it" in props[name]["description"] and "default" not in props[name], name
+    assert "null works it out from distance and minutes" in props["speed_kmh"]["description"]
+    assert "null clears them" in props["notes"]["description"]
+    assert all("default" not in props[n] for n in ("speed_kmh", "notes"))

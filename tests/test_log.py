@@ -34,12 +34,12 @@ def test_one_day_by_default_with_the_contracts_shape(user):
     assert set(r) == {"from", "to", "days", "totals", "summary", "links"}
     assert r["from"] == r["to"] == day(user, 0) and len(r["days"]) == 1
     only = r["days"][0]
-    assert set(only) == {"date", "sessions", "weigh_in", "measurements"}
+    assert set(only) == {"date", "sessions", "weigh_in", "measurements", "food", "cardio"}
     assert [x["id"] for x in only["sessions"]] == [s["id"]] and only["sessions"][0]["sets"][0]["weight_kg"] == 60
     assert only["sessions"][0]["new_bests"] == []
     assert only["weigh_in"]["id"] == w["id"] and [x["id"] for x in only["measurements"]] == [m["id"]]
-    assert r["totals"] == {"sessions": 1, "weigh_ins": 1, "measurements": 1}
-    assert r["summary"] == "1 day, 1 session, 1 weigh-in, 1 measurement."
+    assert r["totals"] == {"sessions": 1, "weigh_ins": 1, "measurements": 1, "food_entries": 0, "cardio_entries": 0}
+    assert r["summary"] == "1 day, 1 session, 1 weigh-in, 1 measurement, 0 food entries, 0 cardio sessions."
     assert r["links"]["day"].endswith(f"/day/{day(user, 0)}") and r["links"]["progress"].endswith("/progress")
 
 
@@ -50,9 +50,10 @@ def test_every_day_in_the_range_newest_first_empty_ones_included(user):
     r = services.get_log(user.id, days=3)
     assert [d["date"] for d in r["days"]] == [day(user, 0), day(user, -1), day(user, -2)]
     assert r["from"] == day(user, -2) and r["to"] == day(user, 0)
-    assert r["days"][0] == {"date": day(user, 0), "sessions": [], "weigh_in": None, "measurements": []}
+    assert r["days"][0] == {"date": day(user, 0), "sessions": [], "weigh_in": None, "measurements": [],
+                            "food": {"meals": {"breakfast": [], "lunch": [], "dinner": [], "snack": []}, "total_kcal": 0, "estimated_kcal": 0, "estimated_share_pct": 0, "target_kcal": None, "remaining_kcal": None, "net_kcal": None}, "cardio": []}
     assert [m["kind"] for m in r["days"][2]["measurements"]] == ["waist", "steps"]  # the kinds' own order
-    assert r["summary"] == "3 days, 1 session, 0 weigh-ins, 2 measurements."
+    assert r["summary"] == "3 days, 1 session, 0 weigh-ins, 2 measurements, 0 food entries, 0 cardio sessions."
 
 
 def test_a_date_ends_the_range(user):
@@ -114,7 +115,34 @@ def test_after_a_change_of_zone_a_later_dated_day_appears_on_top(user, monkeypat
     assert [x["id"] for x in r["days"][0]["sessions"]] == [later["id"]] and r["days"][0]["measurements"]
     assert [x["id"] for x in r["days"][1]["sessions"]] == [now["id"]]
     assert r["from"] == "2026-11-08" and r["to"] == "2026-11-09"
-    assert r["summary"] == "3 days, 2 sessions, 0 weigh-ins, 1 measurement."
+    assert r["summary"] == "3 days, 2 sessions, 0 weigh-ins, 1 measurement, 0 food entries, 0 cardio sessions."
     # With a date given, the range is exactly the range asked for.
     asked = services.get_log(user.id, date="2026-11-09", days=2)
     assert [d["date"] for d in asked["days"]] == ["2026-11-09", "2026-11-08"]
+
+
+
+def test_each_day_has_its_food_by_meal_and_its_cardio(make_user):
+    person = make_user(calorie_target_kcal=2000)
+    services.log_bodyweight(person.id, {"kg": 80}, "web")
+    eaten = services.log_food(person.id, {"entries": [
+        {"description": "oats", "kcal": 300, "meal": "breakfast"},
+        {"description": "dal", "kcal": 200, "meal": "lunch", "estimated": True},
+        {"description": "rice", "kcal": 250, "meal": "lunch"}], "date": day(person, -1)}, "claude")
+    walk = services.log_cardio(person.id, {"exercise": "Outdoor Walk", "minutes": 30, "distance_km": 3,
+                                           "date": day(person, -1)}, "claude")
+    r = services.get_log(person.id, days=2)
+    yesterday = r["days"][1]
+    meals = yesterday["food"]["meals"]
+    assert [e["description"] for e in meals["breakfast"]] == ["oats"]
+    assert [e["description"] for e in meals["lunch"]] == ["dal", "rice"] and meals["dinner"] == meals["snack"] == []
+    assert yesterday["food"]["total_kcal"] == 750 and yesterday["food"]["estimated_kcal"] == 200
+    assert yesterday["food"]["remaining_kcal"] == 1250 and yesterday["food"]["estimated_share_pct"] == 27
+    assert eaten["day"] == {k: yesterday["food"][k] for k in eaten["day"]}
+    [moved] = yesterday["cardio"]
+    assert moved["id"] == walk["id"] and moved["exercise"] == "Outdoor Walk"
+    assert moved["pace"]["min_per_km"] == "10:00" and moved["estimate"] == walk["estimate"]
+    assert "machine_kcal" in moved
+    assert r["totals"]["food_entries"] == 3 and r["totals"]["cardio_entries"] == 1
+    assert "3 food entries, 1 cardio session." in r["summary"]
+    assert r["days"][0]["food"]["total_kcal"] == 0

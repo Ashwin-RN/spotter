@@ -23,7 +23,7 @@ from starlette.testclient import TestClient
 from app import db, links, rules, services, users, web, web_auth
 from app.config import Settings
 from app.main import create_app
-from app.models import Bodyweight, CallLog, LiftSession, Measurement, User
+from app.models import Bodyweight, CallLog, CardioEntry, FoodEntry, LiftSession, Measurement, SavedFood, User
 
 from .conftest import RESOURCE, TEST_DIR, rpc, settings
 
@@ -398,8 +398,10 @@ def test_every_non_get_web_route_checks_the_token(client):
     posting = [r for r in web.routes(settings(**WEB)) if getattr(r, "methods", None) and "POST" in r.methods]
     assert {r.path for r in posting} == {
         "/sign-out", "/settings", "/settings/claude-can", "/day/{date}/weigh-in", "/day/{date}/measurement",
-        "/entries/{kind}/{entry_id}/edit", "/entries/{kind}/{entry_id}/delete", "/entries/{kind}/{entry_id}/restore"}
-    filled = {"{date}": "2026-11-09", "{kind}": "bodyweight", "{entry_id}": "1"}
+        "/entries/{kind}/{entry_id}/edit", "/entries/{kind}/{entry_id}/delete", "/entries/{kind}/{entry_id}/restore",
+        "/day/{date}/food", "/day/{date}/cardio", "/foods", "/foods/{food_id}/edit", "/foods/{food_id}/delete",
+        "/foods/{food_id}/restore", "/settings/targets", "/entries/food_entry/{entry_id}/confirm"}
+    filled = {"{date}": "2026-11-09", "{kind}": "bodyweight", "{entry_id}": "1", "{food_id}": "1"}
     for route in posting:
         path = route.path
         for marker, value in filled.items():
@@ -1107,7 +1109,8 @@ def test_every_page_renders_for_a_person_with_no_entries(client):
     assert f"Today, {today}" in page and "No lifts logged on this day" in page
     assert "No weigh-in on this day" in page and "No measurements on this day" in page
     assert f'action="/day/{today}/weigh-in"' in page and f'action="/day/{today}/measurement"' in page
-    assert re.findall(r'<option value="([a-z_]+)">', page) == list(web.MEASUREMENT_KINDS)
+    kinds = re.search(r'<select id="measurement-kind" name="kind" required>(.*?)</select>', page, re.S).group(1)
+    assert re.findall(r'<option value="([a-z_]+)">', kinds) == list(web.MEASUREMENT_KINDS)
     assert 'rel="next"' not in page  # nothing after today
     progress = client.get("/progress")
     assert progress.status_code == 200 and "No lifts logged yet" in progress.text and "No weigh-ins yet" in progress.text
@@ -1458,10 +1461,23 @@ TOO_MANY = {"error": "too_many_writes", "message": "120 writes in the last 10 mi
     ("restore_entry", "/entries/bodyweight/{weigh_in}/restore", {}),
     ("update_settings", "/settings", {"time_zone": "Asia/Kolkata"}),
     ("set_claude_can", "/settings/claude-can", {"claude_can": "read"}),
-])
+    ("log_food", "/day/{today}/food", {"description": "Apple", "kcal": "80"}),
+    ("log_cardio", "/day/{today}/cardio", {"exercise": "Outdoor Walk", "minutes": "20"}),
+    ("save_food", "/foods", {"name": "Dosa", "serving_label": "1 dosa", "kcal_per_serving": "170"}),
+    ("save_food", "/foods/{food}/edit", {"serving_label": "2 rotis", "kcal_per_serving": "240"}),
+    ("delete_entry", "/foods/{food}/delete", {}),
+    ("restore_entry", "/foods/{food}/restore", {}),
+    ("update_settings", "/settings/targets", {"calorie_target_kcal": "2100"}),
+    ("edit_entry", "/entries/food_entry/{estimate}/confirm", {}),
+], ids=["weigh-in", "measurement", "edit", "delete", "restore", "zone", "switch", "food", "cardio", "save food",
+        "edit food", "delete food", "restore food", "targets", "confirm"])
 def test_a_limit_refusal_is_a_429_with_the_wait(client, stocked, monkeypatch, name, path, data):
+    uid = only_user().id
+    food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    estimate = services.log_food(uid, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True}]}, "claude")
     monkeypatch.setattr(services, name, lambda *args: dict(TOO_MANY))
-    fill = {"today": stocked["today"].isoformat(), "weigh_in": stocked["weigh_in"]}
+    fill = {"today": stocked["today"].isoformat(), "weigh_in": stocked["weigh_in"], "food": food["id"],
+            "estimate": estimate["ids"][0]}
     r = post(client, path.format(**fill), **{k: v.format(**fill) for k, v in data.items()})
     assert r.status_code == 429 and "Try again in 3 minutes." in r.text and "nothing was saved" in r.text
     assert calls(only_user().id)[-1] == (name, False, "too_many_writes")
@@ -1582,3 +1598,522 @@ def test_a_lost_call_log_never_costs_the_write(client, monkeypatch):
     monkeypatch.setattr(web.calllog, "finish", down)
     r = post(client, f"/day/{today_of(only_user()).isoformat()}/weigh-in", kg="80.5")
     assert r.status_code == 303 and [b.kg for b in rows(Bodyweight, only_user().id)] == [80.5]
+
+
+
+# ================================================================ stage 4: food and cardio
+
+ATTRIBUTION = ("Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
+               "(CC BY-NC-ND 4.0).")
+
+
+def stock_food(user: User, weigh_in: bool = True) -> dict:
+    """One of each, the way Claude logs them: a saved food logged by id, an estimate, a stated number, and
+    a treadmill run with a distance and the machine's number (with an estimate when there is a weigh-in)."""
+    today = today_of(user).isoformat()
+    roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    if weigh_in:
+        assert "error" not in services.log_bodyweight(user.id, {"kg": "80"}, "claude")
+    food = services.log_food(user.id, {"entries": [
+        {"description": "Roti", "saved_food_id": roti["id"], "servings": 2, "meal": "lunch"},
+        {"description": "Dal", "kcal": 180, "estimated": True, "meal": "lunch"},
+        {"description": "Tea", "kcal": 40, "meal": "breakfast"}]}, "claude")
+    run = services.log_cardio(user.id, {"exercise": "Treadmill Run", "minutes": 30, "distance_km": 5,
+                                        "machine_kcal": 300}, "claude")
+    for result in (roti, food, run):
+        assert "error" not in result, result
+    return {"today": today, "roti": roti["id"], "food": food["ids"], "run": run["id"],
+            "estimate": run["estimate"]}
+
+
+@pytest.fixture
+def fed(client):
+    sign_in(client)
+    return stock_food(only_user())
+
+
+def section(page: str, title: str) -> str:
+    return re.search(rf'<h2>{title}</h2>(.*?)</div>\s*(?=<div class="card">|$)', page, re.S).group(1)
+
+
+# ---------------------------------------------------------------- the day page
+
+def test_a_day_with_no_food_or_cardio(client):
+    sign_in(client)
+    page = day_of(client, today_of(only_user()).isoformat())
+    food = section(page, "Food")
+    assert [m for m in re.findall(r'<div class="meal( empty)?">\s*<h3>(\w+)</h3>', food)] == \
+        [(" empty", "Breakfast"), (" empty", "Lunch"), (" empty", "Dinner"), (" empty", "Snack")]
+    assert "<strong>0 kcal</strong>" in food and "Target" not in food and "Net" not in food
+    assert "No cardio logged on this day" in page
+    activities = re.search(r'<select id="cardio-exercise" name="exercise" required>(.*?)</select>', page, re.S).group(1)
+    names = [e["name"] for e in services.list_exercises("cardio")["exercises"]]
+    assert re.findall(r'<option value="([^"]+)">', activities) == names and len(names) >= 15
+    assert ATTRIBUTION not in page and "<footer" not in page
+
+
+def test_the_day_shows_food_by_meal_with_each_tag_and_the_numbers(client, fed):
+    page = day_of(client, fed["today"])
+    food = section(page, "Food")
+    lunch = re.search(r'<h3>Lunch</h3>(.*?)</ul>', food, re.S).group(1)
+    assert re.search(r'Roti <span class="muted">× 2</span>:\s*<strong>240 kcal</strong>\s*'
+                     r'<span class="tag tag-saved_food">saved food</span>', lunch)
+    assert re.search(r'Dal:\s*<strong>180 kcal</strong>\s*<span class="tag tag-claude_estimate">estimate</span>', lunch)
+    breakfast = re.search(r'<h3>Breakfast</h3>(.*?)</ul>', food, re.S).group(1)
+    assert re.search(r'Tea:\s*<strong>40 kcal</strong>\s*<span class="tag tag-you_said">you said</span>', breakfast)
+    assert '<div class="meal empty">\n    <h3>Dinner</h3>' in food and '<div class="meal empty">\n    <h3>Snack</h3>' in food
+    numbers = services.get_log(only_user().id, fed["today"], 1)["days"][0]["food"]
+    assert numbers["total_kcal"] == 460 and numbers["estimated_kcal"] == 180
+    assert "<strong>460 kcal</strong>, of which" in food
+    assert f"estimate</span> 180 kcal ({rules.kg(numbers['estimated_share_pct'])}%)" in food
+    assert "Target" not in food and "Net" not in food  # no target, add-back off
+    for entry_id in fed["food"]:
+        assert f'href="/entries/food_entry/{entry_id}/edit"' in page
+        assert f'action="/entries/food_entry/{entry_id}/delete"' in page
+
+
+def test_a_target_shows_target_and_remaining_and_add_back_shows_net(client, fed):
+    uid = only_user().id
+    services.update_settings(uid, {"calorie_target_kcal": 2200}, "web")
+    food = section(day_of(client, fed["today"]), "Food")
+    assert "<dt>Target</dt><dd>2200 kcal</dd>" in food and "<dt>Remaining</dt><dd>1740 kcal</dd>" in food
+    assert "<dt>Net</dt>" not in food
+    services.update_settings(uid, {"add_back_exercise_kcal": True}, "web")
+    food = section(day_of(client, fed["today"]), "Food")
+    net = services.get_log(uid, fed["today"], 1)["days"][0]["food"]["net_kcal"]
+    assert net == 460 - fed["estimate"]["kcal"] and f"<dt>Net</dt><dd>{net} kcal" in food
+
+
+def test_the_day_shows_cardio_with_pace_estimate_and_machine_number_and_names_the_compendium(client, fed):
+    page = day_of(client, fed["today"])
+    row = re.search(r'<td>Treadmill Run</td>(.*?)</tr>', page, re.S).group(1)
+    cells = re.findall(r"<td>(.*?)</td>", row, re.S)
+    assert cells[:5] == ["30", "5 km", "6:00 /km", f"{fed['estimate']['kcal']} kcal", "300 kcal"]
+    assert f'href="/entries/cardio_entry/{fed["run"]}/edit"' in row
+    assert page.count(ATTRIBUTION) == 1 and '<footer class="attribution">' in page
+    assert "no weigh-in to work it from" not in page
+
+
+def test_cardio_with_no_weigh_in_has_no_estimate_a_note_and_no_attribution(client):
+    sign_in(client)
+    stock_food(only_user(), weigh_in=False)
+    page = day_of(client, today_of(only_user()).isoformat())
+    row = re.search(r'<td>Treadmill Run</td>(.*?)</tr>', page, re.S).group(1)
+    assert '<span class="muted">none</span>' in row and "300 kcal" in row
+    assert "there is no weigh-in to work it from" in page
+    assert ATTRIBUTION not in page
+
+
+def test_a_day_with_thirty_food_entries(client):
+    sign_in(client)
+    uid = only_user().id
+    entries = [{"description": f"Item {n}", "kcal": 10 + n, "meal": ("breakfast", "lunch", "dinner", "snack")[n % 4]}
+               for n in range(30)]
+    assert "error" not in services.log_food(uid, {"entries": entries}, "claude")
+    page = day_of(client, today_of(only_user()).isoformat())
+    assert all(f"Item {n}:" in page for n in range(30))
+    assert page.count('href="/entries/food_entry/') == 30
+    assert f"<strong>{sum(10 + n for n in range(30))} kcal</strong>" in page
+
+
+def test_the_attribution_is_nowhere_else(client, fed):
+    for path in ("/settings", "/foods", "/progress", f"/entries/food_entry/{fed['food'][0]}/edit", "/"):
+        assert ATTRIBUTION not in client.get(path).text, path
+    assert client.get(f"/entries/cardio_entry/{fed['run']}/edit").text.count(ATTRIBUTION) == 1
+
+
+# ---------------------------------------------------------------- the two day-page forms
+
+def test_the_food_form_logs_one_you_said_entry_and_leaves_the_meal_to_the_clock(client, monkeypatch):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    sent = []
+    real = services.log_food
+    monkeypatch.setattr(services, "log_food", lambda *args: sent.append(args) or real(*args))
+    r = post(client, f"/day/{on}/food", description="Poha", kcal="250", meal="")
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}"
+    assert sent == [(only_user().id, {"entries": [{"description": "Poha", "kcal": "250"}], "date": on}, "web")]
+    [entry] = rows(FoodEntry, only_user().id)
+    assert (entry.description, entry.kcal, entry.source, entry.estimated, entry.logged_by) == \
+        ("Poha", 250, "you_said", False, "web")
+    assert entry.meal in web.MEALS
+
+
+def test_the_food_form_sends_a_chosen_meal(client):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    post(client, f"/day/{on}/food", description="Rice", kcal="300", meal="dinner")
+    assert [(e.meal, e.source) for e in rows(FoodEntry, only_user().id)] == [("dinner", "you_said")]
+
+
+@pytest.mark.parametrize("data, says", [
+    ({"description": "Rice", "kcal": "6000"}, "That kcal was not saved: give a whole number from 0 to 5,000."),
+    ({"description": "Rice", "kcal": "abc"}, "That kcal was not saved"),
+    ({"description": "", "kcal": "100"}, "Give a description, up to 200 characters."),
+    ({"description": "Rice", "kcal": "100", "meal": "brunch"}, "Choose breakfast, lunch, dinner or snack."),
+])
+def test_a_refused_food_entry_says_why_in_the_pages_words(client, data, says):
+    sign_in(client)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/food", **data)
+    assert r.status_code == 400 and says in r.text and "Entry 1" not in r.text
+    assert rows(FoodEntry, only_user().id) == []
+
+
+def test_the_cardio_form_logs_activity_minutes_and_distance(client, monkeypatch):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    sent = []
+    real = services.log_cardio
+    monkeypatch.setattr(services, "log_cardio", lambda *args: sent.append(args) or real(*args))
+    assert post(client, f"/day/{on}/cardio", exercise="Outdoor Walk", minutes="45", distance_km="").status_code == 303
+    assert post(client, f"/day/{on}/cardio", exercise="Outdoor Run", minutes="25", distance_km="5").status_code == 303
+    assert [a[1] for a in sent] == [{"exercise": "Outdoor Walk", "minutes": "45", "date": on},
+                                    {"exercise": "Outdoor Run", "minutes": "25", "distance_km": "5", "date": on}]
+    assert [(c.minutes, c.distance_km, c.logged_by) for c in rows(CardioEntry, only_user().id)] == \
+        [(45, None, "web"), (25, 5, "web")]
+
+
+@pytest.mark.parametrize("data, says", [
+    ({"exercise": "Treadmill Run", "minutes": "0"}, "Give the minutes, from 1 to 600."),
+    ({"exercise": "Treadmill Run", "minutes": "30", "distance_km": "900"}, "Give the distance in km"),
+    ({"exercise": "Back Squat", "minutes": "30"}, "Choose an activity from the list."),
+])
+def test_a_refused_cardio_entry_says_why_in_the_pages_words(client, data, says):
+    sign_in(client)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/cardio", **data)
+    assert r.status_code == 400 and says in r.text and "is outside" not in r.text
+    assert rows(CardioEntry, only_user().id) == []
+
+
+# ---------------------------------------------------------------- the two edit pages
+
+def test_the_food_edit_page_says_a_new_kcal_is_a_number_you_said(client, fed):
+    dal = fed["food"][1]
+    page = client.get(f"/entries/food_entry/{dal}/edit").text
+    assert '<span class="tag tag-claude_estimate">estimate</span>' in page
+    assert "If you change the kcal, it becomes a number you said." in page
+    assert 'name="description" value="Dal"' in page and 'name="kcal" value="180"' in page
+    assert '<option value="lunch" selected>' in page
+
+
+def test_editing_a_foods_kcal_makes_it_you_said(client, fed):
+    dal = fed["food"][1]
+    r = post(client, f"/entries/food_entry/{dal}/edit", description="Dal", kcal="150", meal="lunch", date=fed["today"])
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}"
+    row = next(e for e in rows(FoodEntry, only_user().id) if e.id == dal)
+    assert (row.kcal, row.source, row.estimated) == (150, "you_said", False)
+    lunch = re.search(r'<h3>Lunch</h3>(.*?)</ul>', day_of(client, fed["today"]), re.S).group(1)
+    assert re.search(r'Dal:\s*<strong>150 kcal</strong>\s*<span class="tag tag-you_said">you said</span>', lunch)
+
+
+def test_editing_a_foods_description_or_meal_keeps_its_tag(client, fed):
+    dal = fed["food"][1]
+    post(client, f"/entries/food_entry/{dal}/edit", description="Dal tadka", kcal="180", meal="dinner",
+         date=fed["today"])
+    row = next(e for e in rows(FoodEntry, only_user().id) if e.id == dal)
+    assert (row.description, row.meal, row.source) == ("Dal tadka", "dinner", "claude_estimate")
+
+
+def test_the_cardio_edit_page_and_a_re_estimate(client, fed):
+    page = client.get(f"/entries/cardio_entry/{fed['run']}/edit").text
+    assert '<option value="Treadmill Run" selected>' in page and 'name="minutes" value="30"' in page
+    assert 'name="distance_km" value="5"' in page and 'name="machine_kcal" value="300"' in page
+    assert f"Calorie estimate now: {fed['estimate']['kcal']} kcal" in page
+    r = post(client, f"/entries/cardio_entry/{fed['run']}/edit", exercise="Treadmill Run", minutes="60",
+             distance_km="5", incline_pct="", speed_kmh="", avg_hr="", machine_kcal="", notes="", date=fed["today"])
+    assert r.status_code == 303
+    row = next(c for c in rows(CardioEntry, only_user().id) if c.id == fed["run"])
+    assert row.minutes == 60 and row.machine_kcal is None
+    assert abs(row.estimated_kcal - 2 * fed["estimate"]["kcal"]) <= 1  # worked out again for twice the minutes
+
+
+def test_a_refused_cardio_edit_says_why_beside_the_field(client, fed):
+    r = post(client, f"/entries/cardio_entry/{fed['run']}/edit", exercise="Treadmill Run", minutes="700",
+             distance_km="5", machine_kcal="300", date=fed["today"])
+    assert r.status_code == 400 and "Give the minutes, from 1 to 600." in r.text and 'value="700"' in r.text
+    assert next(c.minutes for c in rows(CardioEntry, only_user().id) if c.id == fed["run"]) == 30
+
+
+@pytest.mark.parametrize("which", ["food_entry", "cardio_entry"])
+def test_delete_then_undo_food_and_cardio(client, fed, which):
+    entry_id = fed["food"][0] if which == "food_entry" else fed["run"]
+    r = post(client, f"/entries/{which}/{entry_id}/delete")
+    assert r.headers["location"] == SITE + f"/day/{fed['today']}?deleted={which}:{entry_id}"
+    page = client.get(r.headers["location"]).text
+    assert f'href="/entries/{which}/{entry_id}/edit"' not in page
+    token = re.search(rf'action="/entries/{which}/{entry_id}/restore" class="inline">\s*'
+                      r'<input type="hidden" name="csrf_token" value="([^"]+)">', page).group(1)
+    assert client.post(f"/entries/{which}/{entry_id}/restore", data={"csrf_token": token}).status_code == 303
+    assert f'href="/entries/{which}/{entry_id}/edit"' in day_of(client, fed["today"])
+
+
+# ---------------------------------------------------------------- Foods
+
+def test_foods_with_none_saved(client):
+    sign_in(client)
+    page = client.get("/foods").text
+    assert "No saved foods yet." in page and 'action="/foods"' in page
+
+
+def test_foods_lists_name_serving_kcal_and_times_logged(client, fed):
+    page = client.get("/foods").text
+    row = re.search(r"<tr>\s*<td>Roti</td>(.*?)</tr>", page, re.S).group(1)
+    assert re.findall(r"<td>(.*?)</td>", row, re.S)[:3] == ["1 roti", "120", "1"]
+    assert f'href="/foods/{fed["roti"]}/edit"' in row and f'action="/foods/{fed["roti"]}/delete"' in row
+
+
+def test_adding_a_food_from_the_page(client):
+    sign_in(client)
+    r = post(client, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="58", grams_per_serving="")
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=1"
+    [food] = rows(SavedFood, only_user().id)
+    assert (food.name, food.serving_label, food.kcal_per_serving, food.grams_per_serving) == ("Idli", "1 idli", 58, None)
+    assert "Saved." in client.get(r.headers["location"]).text
+
+
+@pytest.mark.parametrize("data, field_says", [
+    ({"name": "", "serving_label": "1", "kcal_per_serving": "10"}, "Give the food a name"),
+    ({"name": "Idli", "serving_label": "", "kcal_per_serving": "10"}, "Say what one serving is"),
+    ({"name": "Idli", "serving_label": "1 idli", "kcal_per_serving": "9999"}, "Give the kcal in one serving"),
+])
+def test_a_refused_food_says_why_beside_the_field(client, data, field_says):
+    sign_in(client)
+    r = post(client, "/foods", **data)
+    assert r.status_code == 400 and field_says in r.text and rows(SavedFood, only_user().id) == []
+    assert f'value="{data["name"]}"' in r.text
+
+
+def test_editing_a_food_updates_it_and_keeps_what_was_logged(client, fed):
+    page = client.get(f"/foods/{fed['roti']}/edit").text
+    assert 'name="kcal_per_serving" value="120"' in page and 'name="name"' not in page
+    r = post(client, f"/foods/{fed['roti']}/edit", serving_label="1 roti", kcal_per_serving="110", grams_per_serving="40")
+    assert r.status_code == 303
+    [food] = rows(SavedFood, only_user().id)
+    assert (food.kcal_per_serving, food.grams_per_serving) == (110, 40)
+    assert next(e.kcal for e in rows(FoodEntry, only_user().id) if e.id == fed["food"][0]) == 240  # history kept
+
+
+def test_deleting_a_food_then_undo(client, fed):
+    r = post(client, f"/foods/{fed['roti']}/delete")
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/foods?deleted={fed['roti']}"
+    page = client.get(r.headers["location"]).text
+    assert "Deleted." in page and "<td>Roti</td>" not in page
+    token = re.search(rf'action="/foods/{fed["roti"]}/restore" class="inline">\s*'
+                      r'<input type="hidden" name="csrf_token" value="([^"]+)">', page).group(1)
+    back = client.post(f"/foods/{fed['roti']}/restore", data={"csrf_token": token})
+    assert back.status_code == 303 and "<td>Roti</td>" in client.get("/foods").text
+    assert post(client, f"/foods/{fed['roti']}/restore").status_code == 409
+
+
+def test_someone_elses_food_is_a_404(client, fed, make_user):
+    other = make_user()
+    theirs = services.save_food(other.id, {"name": "Secret stew", "serving_label": "1 bowl", "kcal_per_serving": 321},
+                                "claude")
+    for r in (client.get(f"/foods/{theirs['id']}/edit"),
+              post(client, f"/foods/{theirs['id']}/edit", serving_label="x", kcal_per_serving="1"),
+              post(client, f"/foods/{theirs['id']}/delete"), post(client, f"/foods/{theirs['id']}/restore"),
+              client.get("/foods/abc/edit")):
+        assert r.status_code == 404 and "Secret stew" not in r.text and "321" not in r.text
+    assert "Secret stew" not in client.get("/foods").text
+    assert [f.deleted_at for f in rows(SavedFood, other.id)] == [None]
+
+
+# ---------------------------------------------------------------- targets on Settings
+
+def test_settings_sets_the_targets_and_add_back(client):
+    sign_in(client)
+    r = post(client, "/settings/targets", calorie_target_kcal="2200", target_sessions_per_week="4",
+             target_cardio_minutes_per_week="150", add_back_exercise_kcal="on")
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=targets"
+    user = only_user()
+    assert (user.calorie_target_kcal, user.target_sessions_per_week, user.target_cardio_minutes_per_week,
+            user.add_back_exercise_kcal) == (2200, 4, 150, True)
+    page = client.get(r.headers["location"]).text
+    assert "Targets saved." in page and 'name="calorie_target_kcal" value="2200"' in page
+    assert 'name="add_back_exercise_kcal" checked' in page
+
+
+def test_settings_clears_a_target_and_turns_add_back_off(client):
+    sign_in(client)
+    services.update_settings(only_user().id, {"calorie_target_kcal": 2000, "add_back_exercise_kcal": True}, "web")
+    post(client, "/settings/targets", calorie_target_kcal="", target_sessions_per_week="",
+         target_cardio_minutes_per_week="")
+    user = only_user()
+    assert user.calorie_target_kcal is None and user.add_back_exercise_kcal is False
+
+
+@pytest.mark.parametrize("field, value, says", [
+    ("calorie_target_kcal", "100", "Give a daily target from 800 to 10,000 kcal"),
+    ("target_sessions_per_week", "30", "Give sessions a week from 0 to 14"),
+    ("target_cardio_minutes_per_week", "abc", "Give cardio minutes a week from 0 to 3,000"),
+])
+def test_a_refused_target_says_why_beside_the_field(client, field, value, says):
+    sign_in(client)
+    r = post(client, "/settings/targets", **{field: value})
+    assert r.status_code == 400 and says in r.text and f'name="{field}" value="{value}"' in r.text
+    assert getattr(only_user(), field) is None
+
+
+def test_unchanged_targets_write_nothing(client):
+    sign_in(client)
+    before = calls(only_user().id)
+    assert post(client, "/settings/targets", calorie_target_kcal="").status_code == 303
+    assert calls(only_user().id) == before
+
+
+# ---------------------------------------------------------------- call-log rows and escaping
+
+def test_every_food_and_cardio_write_leaves_a_row_under_the_mcp_name(client, fed):
+    uid = only_user().id
+    start = len(calls(uid))
+    on = fed["today"]
+    post(client, f"/day/{on}/food", description="Apple", kcal="80")
+    post(client, f"/day/{on}/cardio", exercise="Outdoor Walk", minutes="20")
+    post(client, "/foods", name="Dosa", serving_label="1 dosa", kcal_per_serving="170")
+    post(client, f"/entries/food_entry/{fed['food'][2]}/edit", description="Tea", kcal="45", meal="breakfast", date=on)
+    post(client, f"/foods/{fed['roti']}/delete")
+    post(client, f"/foods/{fed['roti']}/restore")
+    post(client, "/settings/targets", calorie_target_kcal="2100")
+    assert calls(uid)[start:] == [("log_food", True, None), ("log_cardio", True, None), ("save_food", True, None),
+                                  ("edit_entry", True, None), ("delete_entry", True, None),
+                                  ("restore_entry", True, None), ("update_settings", True, None)]
+    assert {name for name, _, _ in calls(uid)[start:]} <= set(services.WRITE_FUNCTIONS)
+
+
+HTML = '<script>alert(1)</script><img src=x onerror=alert(2)>'
+ESCAPED = "&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src=x onerror=alert(2)&gt;"
+
+
+def test_html_in_descriptions_and_food_names_is_escaped(client):
+    sign_in(client)
+    uid = only_user().id
+    on = today_of(only_user()).isoformat()
+    saved = services.save_food(uid, {"name": HTML, "serving_label": HTML[:60], "kcal_per_serving": 100}, "claude")
+    logged = services.log_food(uid, {"entries": [{"description": HTML, "kcal": 100}]}, "claude")
+    refused = post(client, f"/entries/food_entry/{logged['ids'][0]}/edit", description=HTML, kcal="99999", date=on)
+    pages = [day_of(client, on), client.get(f"/entries/food_entry/{logged['ids'][0]}/edit").text, refused.text,
+             client.get("/foods").text, client.get(f"/foods/{saved['id']}/edit").text]
+    for page in pages:
+        assert "<script>alert(1)" not in page and "<img src=x" not in page
+        assert ESCAPED in page or ESCAPED[:40] in page
+
+
+@pytest.mark.parametrize("path, data", [
+    ("/day/{today}/food", {"description": "Apple", "kcal": "80"}),
+    ("/day/{today}/cardio", {"exercise": "Outdoor Walk", "minutes": "20"}),
+    ("/foods", {"name": "Dosa", "serving_label": "1 dosa", "kcal_per_serving": "170"}),
+    ("/settings/targets", {"calorie_target_kcal": "2100"}),
+])
+def test_the_new_forms_refuse_a_missing_csrf_token(client, path, data):
+    sign_in(client)
+    path = path.format(today=today_of(only_user()).isoformat())
+    for token in (None, "wrong"):
+        sent = data if token is None else {**data, "csrf_token": token}
+        assert client.post(path, data=sent).status_code == 403
+    assert rows(FoodEntry, only_user().id) == [] and rows(CardioEntry, only_user().id) == []
+    assert rows(SavedFood, only_user().id) == [] and only_user().calorie_target_kcal is None
+
+
+
+# ---------------------------------------------------------------- review: Foods edits and the food form
+
+def test_an_unchanged_food_edit_writes_nothing(client, fed):
+    before = calls(only_user().id)
+    r = post(client, f"/foods/{fed['roti']}/edit", serving_label="1 roti", kcal_per_serving="120", grams_per_serving="")
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods"
+    assert calls(only_user().id) == before
+
+
+def test_times_logged_counts_live_entries_only(client, fed):
+    uid = only_user().id
+    second = services.log_food(uid, {"entries": [{"description": "Roti", "saved_food_id": fed["roti"], "servings": 3,
+                                                  "meal": "dinner"}]}, "claude")
+    times = lambda: re.findall(r"<td>(.*?)</td>", re.search(r"<tr>\s*<td>Roti</td>(.*?)</tr>",  # noqa: E731
+                                                              client.get("/foods").text, re.S).group(1), re.S)[2]
+    assert times() == "2"
+    services.delete_entry(uid, "food_entry", second["ids"][0])
+    assert times() == "1"
+
+
+def test_a_food_edit_never_rewrites_another_food_by_name(client, fed):
+    uid = only_user().id
+    other = services.save_food(uid, {"name": "Other", "serving_label": "1 cup", "kcal_per_serving": 50}, "claude")
+    r = post(client, f"/foods/{fed['roti']}/edit", name="Other", serving_label="1 roti", kcal_per_serving="999")
+    assert r.status_code == 303
+    foods = {f.id: (f.name, f.kcal_per_serving) for f in rows(SavedFood, uid)}
+    assert foods[other["id"]] == ("Other", 50) and foods[fed["roti"]] == ("Roti", 999)
+
+
+def test_a_crafted_food_form_cannot_name_an_id_or_a_tag(client, fed, monkeypatch):
+    on = fed["today"]
+    sent = []
+    real = services.log_food
+    monkeypatch.setattr(services, "log_food", lambda *args: sent.append(args) or real(*args))
+    r = post(client, f"/day/{on}/food", description="Ghee", kcal="90", meal="snack", saved_food_id=str(fed["roti"]),
+             usda_fdc_id="171", source="usda", estimated="true", grams="10", servings="2")
+    assert r.status_code == 303
+    assert sent[0][1] == {"entries": [{"description": "Ghee", "kcal": "90", "meal": "snack"}], "date": on}
+    [entry] = [e for e in rows(FoodEntry, only_user().id) if e.description == "Ghee"]
+    assert (entry.source, entry.estimated, entry.saved_food_id, entry.usda_fdc_id, entry.servings, entry.grams) == \
+        ("you_said", False, None, None, None, None)
+
+
+# ---------------------------------------------------------------- review: confirming an estimate
+
+def test_confirm_makes_an_estimate_the_persons_number(client, fed):
+    dal = fed["food"][1]
+    start = len(calls(only_user().id))
+    r = post(client, f"/entries/food_entry/{dal}/confirm")
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}"
+    row = next(e for e in rows(FoodEntry, only_user().id) if e.id == dal)
+    assert (row.kcal, row.source, row.estimated) == (180, "you_said", False)
+    assert calls(only_user().id)[start:] == [("edit_entry", True, None)]
+    lunch = re.search(r"<h3>Lunch</h3>(.*?)</ul>", day_of(client, fed["today"]), re.S).group(1)
+    assert re.search(r'Dal:\s*<strong>180 kcal</strong>\s*<span class="tag tag-you_said">you said</span>', lunch)
+    assert "/confirm" not in lunch
+
+
+def test_confirm_is_offered_on_estimates_only(client, fed):
+    page = day_of(client, fed["today"])
+    roti, dal, tea = fed["food"]
+    assert f'action="/entries/food_entry/{dal}/confirm"' in page
+    assert f'action="/entries/food_entry/{roti}/confirm"' not in page
+    assert f'action="/entries/food_entry/{tea}/confirm"' not in page
+    assert page.count("/confirm") == 1
+
+
+def test_confirming_a_number_that_is_already_the_persons_writes_nothing(client, fed):
+    tea = fed["food"][2]
+    before = calls(only_user().id)
+    r = post(client, f"/entries/food_entry/{tea}/confirm")
+    assert r.status_code == 303 and calls(only_user().id) == before
+    assert next(e.source for e in rows(FoodEntry, only_user().id) if e.id == tea) == "you_said"
+
+
+def test_confirming_someone_elses_estimate_is_a_404(client, fed, make_user):
+    other = make_user()
+    theirs = services.log_food(other.id, {"entries": [{"description": "Secret soup", "kcal": 777, "estimated": True}]},
+                               "claude")
+    for path in (f"/entries/food_entry/{theirs['ids'][0]}/confirm", "/entries/food_entry/abc/confirm",
+                 "/entries/food_entry/99999/confirm"):
+        r = post(client, path)
+        assert r.status_code == 404 and "Secret soup" not in r.text and "777" not in r.text
+    assert [(e.source, e.kcal) for e in rows(FoodEntry, other.id)] == [("claude_estimate", 777)]
+
+
+def test_confirm_needs_the_csrf_token(client, fed):
+    dal = fed["food"][1]
+    for data in ({}, {"csrf_token": "wrong"}):
+        assert client.post(f"/entries/food_entry/{dal}/confirm", data=data).status_code == 403
+    assert next(e.source for e in rows(FoodEntry, only_user().id) if e.id == dal) == "claude_estimate"
+
+
+def test_the_rendered_confirm_form_carries_a_token_that_works(client, fed):
+    dal = fed["food"][1]
+    page = day_of(client, fed["today"])
+    form = re.search(rf'<form method="post" action="/entries/food_entry/{dal}/confirm" class="inline">(.*?)</form>',
+                     page, re.S).group(1)
+    token = re.search(r'name="csrf_token" value="([^"]+)"', form).group(1)
+    r = client.post(f"/entries/food_entry/{dal}/confirm", data={"csrf_token": token})
+    assert r.status_code == 303
+    assert next(e.source for e in rows(FoodEntry, only_user().id) if e.id == dal) == "you_said"

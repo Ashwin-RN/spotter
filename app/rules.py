@@ -45,6 +45,27 @@ MEASUREMENTS = {
     "resting_hr": ("bpm", 20, 250, True),
     "water_ml": ("ml", 0, 20_000, True),
 }
+
+# Food, cardio and the settings' targets: field -> (lowest, highest, how it is kept). "whole" refuses a
+# fraction; "round" keeps a whole number however it was sent; an int keeps that many decimals.
+NUMBERS = {
+    "kcal": (0, 5_000, "round"),
+    "servings": (0.1, 50, 2),
+    "grams": (1, 5_000, 2),
+    "kcal_per_serving": (0, 5_000, 2),
+    "grams_per_serving": (1, 5_000, 2),
+    "minutes": (1, 600, 1),
+    "distance_km": (0.01, 300, 2),
+    "incline_pct": (0, 40, 2),
+    "speed_kmh": (0.1, 60, 2),
+    "avg_hr": (30, 240, "whole"),
+    "machine_kcal": (1, 5_000, "whole"),
+    "calorie_target_kcal": (800, 10_000, "whole"),
+    "target_sessions_per_week": (0, 14, "whole"),
+    "target_cardio_minutes_per_week": (0, 3_000, "whole"),
+}
+TEXT_LIMITS = {"description": 200, "serving_label": 64, "name": 128}
+MEALS = ("breakfast", "lunch", "dinner", "snack")
 OLDEST_DAYS = 2 * 365 + 1  # entries go back two years at most, either side of a leap day
 TEXT_MAX = 2000            # notes and goal text
 QUOTE_MAX = 80             # the most of a caller's value an error message repeats
@@ -209,6 +230,47 @@ def measurement_value(kind: str, value) -> tuple[float | int | None, dict | None
     if not lo <= number <= hi:
         return None, error("invalid_field", f"{kind} {number:g} {unit} is outside {lo:,} to {hi:,}.", fix)
     return (int(number) if whole else round(number, 2) + 0.0), None
+
+
+def bounded(field: str, value, where: str = "") -> tuple[float | int | None, dict | None]:
+    """A number for one of the NUMBERS fields: in its range and kept its way, else an error.
+    `where` names the place, such as "Entry 2", in the message."""
+    lo, hi, keep = NUMBERS[field]
+    at = f"{where}: " if where else ""
+    kind = "a whole number" if keep in ("whole", "round") else "a number"
+    fix = f"Give {field} as {kind} from {lo:,} to {hi:,}{' on ' + where.lower() if where else ''}."
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, error("missing_field", f"{at}{field} is missing.", fix)
+    number = to_float(value)
+    if number is None:
+        return None, error("invalid_field", f"{at}{field} '{quote(value)}' is not a number.", fix)
+    if keep == "whole" and number != int(number):
+        return None, error("invalid_field", f"{at}{field} must be a whole number, not {number:g}.", fix)
+    kept = int(round(number)) if keep in ("whole", "round") else round(number, keep) + 0.0
+    if not lo <= kept <= hi:
+        return None, error("invalid_field", f"{at}{field} {number:g} is outside {lo:,} to {hi:,}.", fix)
+    return kept, None
+
+
+def required_text(value, field: str, where: str = "") -> tuple[str | None, dict | None]:
+    """Free text that must be there: 1 to TEXT_LIMITS[field] characters, through text()."""
+    at = f"{where}: " if where else ""
+    kept, err = text(value, field, TEXT_LIMITS[field])
+    if err:
+        return None, {**err, "message": at + err["message"]}
+    if not kept:
+        return None, error("missing_field", f"{at}{field} is missing.", f"Give {field}, 1 to {TEXT_LIMITS[field]} characters.")
+    return kept, None
+
+
+def match_meal(name, where: str = "") -> tuple[str | None, dict | None]:
+    """A meal slot: case and spaces forgiven (" Lunch "), meaning not."""
+    key = " ".join(name.split()).casefold() if isinstance(name, str) else ""
+    if key in MEALS:
+        return key, None
+    at = f"{where}: " if where else ""
+    return None, error("invalid_field", f"{at}meal '{quote(name)}' is not a meal.",
+                       f"Use one of: {', '.join(MEALS)}, or leave meal out and the person's clock picks it.")
 
 
 def entry_date(value, today: date, noun: str = "entries") -> tuple[date | None, dict | None]:

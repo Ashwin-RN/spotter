@@ -6,6 +6,8 @@ One module per area, so each later stage adds its own:
   lifts         log_lifts
   body          log_bodyweight
   measurements  log_measurement
+  food          log_food, save_food, find_food (usda: the cached FoodData Central lookup)
+  cardio        log_cardio
   goals         set_goal
   progress      get_progress
   log           get_log
@@ -23,6 +25,8 @@ from app.services.account import list_exercises, set_claude_can, update_settings
 from app.services.body import log_bodyweight
 from app.services.common import DUPLICATE_MINUTES, WRITE_FUNCTIONS, WRITE_LIMIT, WRITE_WINDOW_MINUTES
 from app.services.entries import delete_entry, edit_entry, entry_kinds, get_entry, restore_entry
+from app.services.cardio import log_cardio
+from app.services.food import find_food, log_food, save_food
 from app.services.goals import set_goal
 from app.services.lifts import log_lifts
 from app.services.log import get_log
@@ -31,7 +35,7 @@ from app.services.progress import get_progress
 
 __all__ = [
     "DUPLICATE_MINUTES", "WRITE_FUNCTIONS", "WRITE_LIMIT", "WRITE_WINDOW_MINUTES",
-    "delete_entry", "edit_entry", "entry_kinds", "get_entry", "get_log", "get_progress", "list_exercises",
-    "log_bodyweight", "log_lifts", "log_measurement", "restore_entry", "set_claude_can", "set_goal",
-    "update_settings", "whoami",
+    "delete_entry", "edit_entry", "entry_kinds", "find_food", "get_entry", "get_log", "get_progress",
+    "list_exercises", "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "restore_entry",
+    "save_food", "set_claude_can", "set_goal", "update_settings", "whoami",
 ]

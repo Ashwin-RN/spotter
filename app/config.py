@@ -4,8 +4,8 @@ A missing or malformed setting never stops the app from starting. Without the si
 app is unconfigured and /mcp answers 503 with the reason. Without the WorkOS settings web sign-in is
 off and MCP still works.
 
-Secret values (DATABASE_URL, WORKOS_API_KEY, SESSION_SECRET) are never part of a repr and are never
-logged. get_settings() is how the rest of the app reads them; tests swap them with use_settings().
+Secret values (DATABASE_URL, WORKOS_API_KEY, SESSION_SECRET, USDA_API_KEY) are never part of a repr
+and are never logged. Without USDA_API_KEY the USDA food lookup is off and everything else works. get_settings() is how the rest of the app reads them; tests swap them with use_settings().
 """
 
 import os
@@ -51,6 +51,7 @@ class Settings:
     session_secret: str | None = field(default=None, repr=False)
     auth_provider: str = DEFAULT_AUTH_PROVIDER
     signups_per_day: int = DEFAULT_SIGNUPS_PER_DAY
+    usda_api_key: str | None = field(default=None, repr=False)  # unset: USDA lookup is off
 
     @property
     def site_origin(self) -> str | None:
@@ -167,6 +168,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         session_secret=_text(env, "SESSION_SECRET"),
         auth_provider=_text(env, "AUTH_PROVIDER") or DEFAULT_AUTH_PROVIDER,
         signups_per_day=_signups_per_day(env.get("SIGNUPS_PER_DAY")),
+        usda_api_key=_text(env, "USDA_API_KEY"),
     )
 
 

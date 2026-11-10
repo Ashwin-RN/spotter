@@ -274,3 +274,73 @@ Two things the run showed about the model rather than the server. After the edit
 - **A limit counted after the fact is not a limit under load.** The write limit counted call-log rows that were written when a call finished. Six calls arriving together all passed the count before any row existed. Writing the row before the call runs, under the same lock the writes queue on, closed it, at the price of one more row update per call.
 - **A reviewer's time is best spent where the contract is newest.** Both reviewers were pointed at the new rules first (the switch, the limit, the edit rules, `next`), and that is where the findings were. The parts carried from stage 2 produced none.
 - **The model can answer from the conversation instead of calling the server.** A repeated "Waist 84" never reached Spotter; Claude said it was already logged, which happened to be true. The duplicate guard protects against retries the model does send, not against the model deciding for itself. An eval case has to check the call was made.
+
+## Stage 4: food and cardio
+
+**Goal: a person logs what they ate and what they did by talking, every calorie number carries a tag saying who supplied it, and cardio gets a calorie estimate the person did not have to work out.** Contract: `docs/contracts/stage-4.md`.
+
+The first-use path, walked before anything was built: a new person with nothing saved says "Lunch: two rotis and dal". Claude estimates, says so, and the entries land tagged as estimates. "Dal was 150" edits the entry and the tag becomes *you said*. "Save roti: 1 roti, 120 kcal" is the first saved food; from then on "two rotis" goes by id and servings and the app supplies the number. Nobody is asked which meal: the server picks it from the person's own clock. The USDA lookup sits behind a key and the stage ships without it. Nothing is set up by hand.
+
+Three rules were added. A food tag is the server's (`you_said`, `saved_food`, `usda`, `claude_estimate`): Claude sends a number, or an id and an amount, or a number marked as its estimate, and the server decides the tag. A number and an id never travel together: the app supplies the number for a saved or USDA food, and a `kcal` sent with an id is refused. An estimate stays an estimate until the person states a number.
+
+### What was built
+
+Four packages: services, web and MCP on disjoint files at the same time, then the evals once the services and MCP had landed.
+
+| Package | What |
+|---|---|
+| Services | `log_food` (one to thirty entries in one call, all or nothing, the tag decided per entry, the meal from the clock, the duplicate guard over the whole set), `save_food` (the same name updates, a deleted food comes back), `find_food` (saved foods most-logged first, then the person's own recent entries, then USDA when the key is set), the USDA client (standard library only, the key in a header and never in an address, a five-second timeout, both cache tables, off without the key), `log_cardio` (kcal = MET × 3.5 × kg ÷ 200 × minutes from body weight now, a note instead of a number when there is no weigh-in, the machine's number kept beside it, pace and speed, the last seven days' minutes against the target), four targets in `update_settings`, `edit_entry` for both kinds (a kcal edit re-tags to *you said*, the same number included; a cardio edit re-estimates), food and cardio in `get_log`, a cardio activity in `get_progress`, fifteen cardio activities with their 2024 Compendium codes in the exercise list, the three new writes locked and limited |
+| Web | The day page shows food by meal with each entry's tag in words and estimates marked, the total, the estimated share, the target and what remains, and net only when adding exercise back is on; cardio with estimate and machine number side by side. A one-line food form (always *you said*; a meal only when chosen) and a cardio form. Edit pages for both kinds, a Foods page for saved foods with delete and undo, the targets on Settings. The Compendium attribution line is a footer on exactly the pages that show an estimate |
+| MCP | Sixteen functions. `find_food`, `log_food`, `save_food`, `log_cardio` with typed arguments and result models; the tag rule written once in Claude's terms and used by both the instructions and the `log_food` description; a `source` sent by a caller is dropped before the service; `can-and-cant` gains the tags, the meal hours, the cardio formula, the Compendium sentence and licence, what USDA covers, and that no Indian table values are shipped (IFCT 2017 and INDB are not openly licensed) |
+| Evals | The first eval cases, run with the Claude Code CLI against a local server with a fake sign-in provider. The server records what it received; the eval judges that, not the model's own account. See `docs/evals.md` |
+
+Each builder broke its own behaviours before reporting: 34, 12 and 9 breaks, each turning a test red. One weak test was found that way: sorting saved foods by name happened to give the same order as by times logged. Suite before review: 1181 tests, plain and with warnings as errors. The models and the migrations were compared column by column on fresh databases: the stage 1 schema already held every table and column this stage needed, so there is no stage 4 migration.
+
+### The review
+
+Two reviewers at once, one over the services and MCP surface, one over the web, plus a third agent sent to pacompendium.com with only the MET table: all fifteen codes and values matched the 2024 Compendium rows, none flagged as estimated.
+
+**Services and MCP.** The reviewer ran the tag table through MCP (a stated number, an estimate, each id with and without a number, both ids, a smuggled `source`, 31 entries, 5,001 kcal), every edit rule, isolation across two people for food, saved foods and cardio, the meal slot at six boundaries in the person's own zone, USDA with a fake transport, the cardio formula by hand, and the targets' ranges. It undid 25 behaviours; 24 turned a test red. Four should-fixes and six smaller findings; all fixed, and the reviewer re-checked each on a copy.
+
+| Finding | Fix |
+|---|---|
+| Logging a USDA food by id with an empty cache failed on SQLite: the lookup ran inside the write transaction, holding the user lock while a second session tried to store the cache row, and the network call ran under the lock too | Every USDA id is resolved, and the cache filled, before the lock; no network call under a lock |
+| A number worked out from a saved or USDA food skipped the 5,000 kcal cap: fifty servings of a 5,000 kcal food stored 250,000 kcal | The worked-out number goes through the same range, with a fix naming servings or grams |
+| The USDA client followed redirects, carrying the key to the new host, the hole stage 1 closed for sign-in | The USDA client uses the sign-in module's redirect-refusing opener |
+| Two failures escaped as `internal_error`: an incomplete read from USDA, and two first searches for one query inserting the same cache row | Both are "USDA did not answer"; the cache store is an upsert and a failed store still returns the answer |
+| A target could be cleared by the service but not through MCP: the wrapper dropped a null | The four target fields tell "not sent" from "sent as null"; null clears, and the descriptions say so |
+| A stated speed could contradict the distance and minutes (30 km/h beside a 6:00/km pace) | A stated speed more than 20% from distance ÷ minutes is refused, with both numbers; on edit too |
+| A back-dated session's estimate uses body weight now, by decision, but the summary did not say so | The summary says "from body weight now, 80 kg" when the date is not today |
+| Half past midnight was breakfast | 22:00 to 04:00 is a snack; the contract and the doc amended |
+| The exercise sync never updated an existing row, so a corrected MET would not reach a live table | The sync updates a cardio row's MET and code when they differ |
+| Dropping the meal from the duplicate key left every test green | A test: the same foods at another meal are not a duplicate |
+
+The speed check took three passes to close, and the re-checks are why. The first fix held when logging but not when editing: a stated speed was kept unchecked when the distance or minutes changed. The second fix held in the service but not through MCP: its error told Claude to send the speed as null to have it worked out again, and the MCP wrapper dropped nulls, a dead end. The third let an explicit null through `edit_entry` for cardio's optional fields (null clears; for speed, null means work it out), and made the edit summary show the stored speed rather than the null that asked for it. A USDA lookup also now runs after a cheap limit check, so a throttled loop cannot burn the USDA quota while being refused.
+
+**Web.** The reviewer posted crafted forms (a saved-food id, `estimated`, a tag, a USDA id, servings, grams in the food form; a machine number and notes in the cardio form) and found every one dropped; tried another person's entries and foods on every route with nine kinds of id and got a 404 that echoed nothing; checked every figure on the day page against `get_log`; found the attribution line on exactly the two pages that show an estimate; and rendered a day with sixty-five entries in 0.03 s. It ran 36 mutants: 28 died, and the survivors were five test gaps and one product gap. No behaviour bugs.
+
+| Finding | Fix |
+|---|---|
+| None of the eight new write routes had a test for the write limit's 429 | All eight in the limit test |
+| An unchanged saved-food edit, the "times logged" count, a crafted food name on the edit page, and ids in the food form had no test | Four tests, each killing its mutant |
+| The web had no way to confirm a Claude estimate without retyping its number: an untouched kcal sends nothing | A Confirm button beside each estimate on the day page, posting the entry's own number so the service re-tags it *you said* |
+| The Confirm form's rendered token was not read by any test | A test posts the token read from the rendered form |
+
+**The first evals, and what they found.** Ten cases, three runs each, the Claude Code CLI against a local server with a fake sign-in provider (the same hook the tests use; nothing in the app bypassed). On the first run, eight of nine cases passed 3 of 3 and one passed 0 of 3: "30 minutes on the treadmill" made the model ask "walk or run?" every time, because the list has two treadmill rows and nothing said what to do when a word fits more than one activity. A second case passed for the wrong reason: "Delete my last weigh-in" was deleted at once without a question, and the switch at `log` refused it. Both were text gaps. The instructions gained an activity rule (log the one the words point to, more than 7 km/h is a run, with nothing to go on the walk, say which, never ask first) and a delete rule (delete only the entry named; when the words fit more than one, ask which; never delete on a guess), the `log_cardio` result gained a note naming the sibling activity with its own estimate, and the delete case was split into an ambiguous one (two weigh-ins, Claude allowed to delete: it must ask) and an explicit one (it must delete the right row). After the change the three cases passed 9 of 9 runs.
+
+### Exit test
+
+| Check | Status |
+|---|---|
+| The full suite is green, plain and with warnings as errors, on a clean export | Pending the stage commit's export check (1287 tests in the working tree, both ways) |
+| Live: save roti by talking, then "Two rotis and dal, then 30 minutes on the treadmill" in one message → one `log_food` with both tags, one `log_cardio`, Today shows the meal, the cardio and the right total | Pending the live run |
+| "Dal was 150" → the tag flips to *you said*; the total follows | Pending the live run |
+| The evals: every case passes at least 2 of 3 runs, the rate reported as it is | Done: ten cases, 30 of 30 runs, model `claude-opus-5-5`, $4.46 at list price. Run after the last service fix; one later change (explicit nulls through `edit_entry`, and a summary wording for cleared values) landed after it, and no case edits an entry |
+
+Two edits in this commit were not re-checked by a reviewer: the summary now writes a cleared value as "none, cleared" instead of Python's `None`, for any field on any kind, and a cleared distance says "cleared with the distance" for the speed it takes with it. The suite covers both.
+
+### What this stage taught
+
+- **The first evals found text, not code.** Every service rule passed its tests and its review; two of ten eval cases still went wrong, and both were sentences that were missing from the instructions (what to do when a word fits two activities; what to do when "delete" fits two entries). The cases were cheap to run and caught this before a person did. The ground truth is the server's record of what it received, never the model's account of what it did.
+- **A rule that spans the service and its wrapper is only checked through the wrapper.** The speed fix was whole in the service and useless through MCP, because the service's own advice (send null) was a value the wrapper could not carry. The reviewer's re-check of each fix, through MCP, is what found it, twice.
+- **No network call under a lock.** The USDA lookup inside the write transaction worked on Postgres and failed on SQLite, which the tests and the evals run on. Resolving every outside lookup before the lock is cheaper than finding out which database is running.

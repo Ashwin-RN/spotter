@@ -5,32 +5,36 @@ get_log(user_id, date=None, days=1)
     today is date_in_future. Every day in the range is listed, newest first, empty days included.
 
     Each day: its sessions (with sets, and that session's new bests), its weigh-in or null, its
-    measurements. A session's new bests come from lifts.history, the one computation that also
+    measurements, its food (by meal, with the day's numbers from food.day_numbers, the same helper
+    log_food uses) and its cardio (each entry with its activity, pace, estimate and machine number).
+    A session's new bests come from lifts.history, the one computation that also
     feeds get_progress, so the two never disagree.
 
     With date left out, an entry dated after today (left there by a change of time zone) is not
     hidden: its day gets a block of its own above today (the one ordering rule, metrics.on_or_before).
     Within a day, entries are in the order they were logged.
 
-    Returns {from, to, days [{date, sessions, weigh_in, measurements}], totals {sessions, weigh_ins,
-    measurements}, summary, links {day: <to>, progress}} or {error, message, fix}. A read: no lock,
+    Returns {from, to, days [{date, sessions, weigh_in, measurements, food, cardio}], totals {sessions,
+    weigh_ins, measurements, food_entries, cardio_entries}, summary, links {day: <to>, progress}} or
+    {error, message, fix}. A read: no lock,
     no write limit.
 """
 
 from datetime import timedelta
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app import db, links, rules, users
-from app.models import MEASUREMENT_KINDS, Bodyweight, Measurement, User
-from app.services import lifts
+from app.models import MEALS, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Measurement, User
+from app.services import cardio, food, lifts
 from app.services.common import no_account, row_dict
 
 DAYS = (1, 14)
 
 
-def _plural(n: int, word: str) -> str:
-    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+def _plural(n: int, word: str, many: str | None = None) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {many or word + 's'}"
 
 
 def _days(value) -> tuple[int | None, dict | None]:
@@ -85,20 +89,36 @@ def get_log(user_id: int, date=None, days=1) -> dict:
             Measurement.user_id == user.id, Measurement.deleted_at.is_(None), Measurement.date >= start))
             if shown(m.date)), key=lambda m: (kinds.get(m.kind, len(kinds)), m.id))
 
+        eaten = [f for f in s.scalars(select(FoodEntry).where(
+            FoodEntry.user_id == user.id, FoodEntry.deleted_at.is_(None), FoodEntry.date >= start)
+            .order_by(FoodEntry.id)) if shown(f.date)]
+        moved = [c for c in s.scalars(select(CardioEntry).where(
+            CardioEntry.user_id == user.id, CardioEntry.deleted_at.is_(None), CardioEntry.date >= start)
+            .order_by(CardioEntry.id).options(selectinload(CardioEntry.exercise))) if shown(c.date)]
+
         dates = [end - timedelta(days=n) for n in range(count)]
-        later = sorted({e.date for e in (*sessions, *weigh_ins, *measured) if e.date > end}, reverse=True)
+        later = sorted({e.date for e in (*sessions, *weigh_ins, *measured, *eaten, *moved) if e.date > end},
+                       reverse=True)
         out_days = []
         for day in later + dates:
             weighed = [b for b in weigh_ins if b.date == day]
+            food_rows = [f for f in eaten if f.date == day]
+            cardio_rows = [c for c in moved if c.date == day]
+            meals = {meal: [food.entry_dict(f) for f in food_rows if f.meal == meal] for meal in MEALS}
             out_days.append({
                 "date": day.isoformat(),
                 "sessions": [{**lifts.session_dict(t), "new_bests": bests.get(t.id, [])}
                              for t in sessions if t.date == day],
                 "weigh_in": row_dict(weighed[-1]) if weighed else None,
                 "measurements": [row_dict(m) for m in measured if m.date == day],
+                "food": {"meals": meals, **food.day_numbers(user, food_rows, cardio_rows)},
+                "cardio": [cardio.cardio_dict(c) for c in cardio_rows],
             })
-        totals = {"sessions": len(sessions), "weigh_ins": len(weigh_ins), "measurements": len(measured)}
+        totals = {"sessions": len(sessions), "weigh_ins": len(weigh_ins), "measurements": len(measured),
+                  "food_entries": len(eaten), "cardio_entries": len(moved)}
         summary = (f"{_plural(len(out_days), 'day')}, {_plural(totals['sessions'], 'session')}, "
-                   f"{_plural(totals['weigh_ins'], 'weigh-in')}, {_plural(totals['measurements'], 'measurement')}.")
+                   f"{_plural(totals['weigh_ins'], 'weigh-in')}, {_plural(totals['measurements'], 'measurement')}, "
+                   f"{_plural(totals['food_entries'], 'food entry', 'food entries')}, "
+                   f"{_plural(totals['cardio_entries'], 'cardio session')}.")
         return {"from": start.isoformat(), "to": end.isoformat(), "days": out_days, "totals": totals,
                 "summary": summary, "links": {"day": links.page("day", date=end), "progress": links.page("progress")}}

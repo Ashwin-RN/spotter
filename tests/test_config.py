@@ -81,13 +81,20 @@ def test_session_secret_wins_over_the_derived_key():
 
 def test_secrets_never_appear_in_a_repr():
     s = load_settings({**BASE, "DATABASE_URL": "postgresql://u:db-pass-123@h/x", "WORKOS_CLIENT_ID": "client_01",
-                       "WORKOS_API_KEY": "sk_secret_456", "SESSION_SECRET": "session-secret-789"})
+                       "WORKOS_API_KEY": "sk_secret_456", "SESSION_SECRET": "session-secret-789",
+                       "USDA_API_KEY": "usda-key-246"})
     for text in (repr(s), str(s)):
-        for secret in ("db-pass-123", "sk_secret_456", "session-secret-789", s.session_key):
+        for secret in ("db-pass-123", "sk_secret_456", "session-secret-789", s.session_key, "usda-key-246"):
             assert secret not in text
     assert "client_01" in repr(s)  # public values still show
     hidden = {f.name for f in dataclasses.fields(s) if not f.repr}
-    assert hidden == {"database_url", "workos_api_key", "session_secret"}
+    assert hidden == {"database_url", "workos_api_key", "session_secret", "usda_api_key"}
+
+
+def test_the_usda_key_is_read_and_off_when_unset():
+    assert load_settings(BASE).usda_api_key is None
+    assert load_settings({**BASE, "USDA_API_KEY": "  "}).usda_api_key is None
+    assert load_settings({**BASE, "USDA_API_KEY": " k-1 "}).usda_api_key == "k-1"
 
 
 def test_get_settings_reads_once_and_use_settings_replaces(app_settings):

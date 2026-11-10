@@ -15,8 +15,8 @@ from sqlalchemy import select
 
 from app import db, services, users
 from app.models import (
-    Base, Bodyweight, CardioEntry, Exercise, FoodEntry, Goal, LiftSession, LiftSet, Measurement, entry_models,
-    user_tables,
+    Base, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood,
+    entry_models, user_tables,
 )
 
 MISSING = 10 ** 9
@@ -30,16 +30,16 @@ CASES = {
     "bodyweight": (Bodyweight, ("read", "edit", "delete", "restore")),
     "measurement": (Measurement, ("read", "edit", "delete", "restore")),
     "goal": (Goal, ("read", "edit", "delete", "restore")),
-    # No function logs these yet; the by-id functions are generic, so they are covered now.
-    "food_entry": (FoodEntry, ("read", "delete", "restore")),
-    "cardio_entry": (CardioEntry, ("read", "delete", "restore")),
+    "food_entry": (FoodEntry, ("read", "edit", "delete", "restore")),
+    "cardio_entry": (CardioEntry, ("read", "edit", "delete", "restore")),
+    # A saved food is changed only through save_food, by name: A's save_food never reaches B's (tested below).
+    "saved_food": (SavedFood, ("read", "delete", "restore")),
 }
 
 # Tables with a user_id that no by-id function reaches. (The user table is the account itself: it
 # has no user_id, so it never appears in user_tables().)
 EXEMPT = {
     "call_log": "Written by the MCP wrapper, never read back by id, and holds no content.",
-    "saved_food": "No service reads or writes it in this stage; its functions add a row to CASES.",
 }
 
 # Tables with no user_id of their own, owned through a parent that has one.
@@ -70,17 +70,12 @@ def world(make_user):
     ids["measurement"] = services.log_measurement(b.id, {"kind": "waist", "value": 90}, "web")["id"]
     ids["goal"] = services.set_goal(b.id, {"kind": "lift", "exercise": "Deadlift", "target_value": 200,
                                            "target_date": (today + timedelta(days=60)).isoformat()}, "claude")["id"]
-    with db.session_scope() as s:
-        lift = s.scalar(select(Exercise.id).where(Exercise.name == "Deadlift"))  # any exercise row will do
-        rows = {
-            "food_entry": FoodEntry(user_id=b.id, date=today, meal="lunch", description="B's lunch", kcal=650,
-                                    source="you_said", estimated=False, logged_by="claude", dedupe_key="2" * 64),
-            "cardio_entry": CardioEntry(user_id=b.id, date=today, exercise_id=lift, minutes=30, logged_by="web",
-                                        dedupe_key="3" * 64),
-        }
-        s.add_all(rows.values())
-        s.flush()
-        ids.update({kind: row.id for kind, row in rows.items()})
+    ids["saved_food"] = services.save_food(b.id, {"name": "B's roti", "serving_label": "1 roti",
+                                                  "kcal_per_serving": 120}, "web")["id"]
+    ids["food_entry"] = services.log_food(b.id, {"entries": [
+        {"saved_food_id": ids["saved_food"], "servings": 2}]}, "claude")["ids"][0]
+    ids["cardio_entry"] = services.log_cardio(b.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5},
+                                              "web")["id"]
     return a, b, ids
 
 
@@ -102,6 +97,8 @@ EDITS = {
     "lift_session": {"notes": "A was here", "sets": [{"exercise": "Deadlift", "weight_kg": 10, "reps": 1}]},
     "bodyweight": {"kg": 60, "date": "2026-01-01"},
     "measurement": {"value": 70},
+    "food_entry": {"kcal": 10, "description": "A was here", "meal": "snack"},
+    "cardio_entry": {"exercise": "Hiking", "minutes": 5, "distance_km": 1, "machine_kcal": 1},
 }
 
 
@@ -240,7 +237,8 @@ def test_a_measurement_on_bs_day_leaves_bs_untouched(world):
     r = services.log_measurement(a.id, {"kind": "waist", "value": 70}, "claude")
     assert r["replaced"] is None and r["recent"] == [{"date": users.today_for(a).isoformat(), "value": 70}]
     assert snapshot(Measurement, ids["measurement"]) == before
-    assert services.get_log(a.id)["totals"] == {"sessions": 0, "weigh_ins": 0, "measurements": 1}
+    assert services.get_log(a.id)["totals"] == {"sessions": 0, "weigh_ins": 0, "measurements": 1,
+                                                "food_entries": 0, "cardio_entries": 0}
     assert services.get_log(b.id)["totals"]["measurements"] == 1
 
 
@@ -250,3 +248,28 @@ def test_the_guard_sees_real_measurement_rows(world):
         row = s.get(Measurement, ids["measurement"])
         assert row.user_id == b.id and row.deleted_at is None
     assert "measurement" in user_tables() and "edit" in CASES["measurement"][1]
+
+
+
+def test_find_food_never_shows_bs_foods_and_a_cannot_log_bs_saved_food(world):
+    a, b, ids = world
+    r = services.find_food(a.id, "roti")
+    assert r["saved"] == [] and r["recent"] == []
+    assert services.find_food(b.id, "roti")["saved"][0]["id"] == ids["saved_food"]
+    used = services.log_food(a.id, {"entries": [{"saved_food_id": ids["saved_food"], "servings": 1}]}, "claude")
+    assert used["error"] == "not_found" and services.get_log(a.id)["totals"]["food_entries"] == 0
+
+
+def test_as_save_food_with_bs_name_makes_as_own_and_leaves_bs_alone(world):
+    a, b, ids = world
+    before = snapshot(SavedFood, ids["saved_food"])
+    mine = services.save_food(a.id, {"name": "B's roti", "serving_label": "1", "kcal_per_serving": 1}, "web")
+    assert mine["created"] is True and mine["id"] != ids["saved_food"]
+    assert snapshot(SavedFood, ids["saved_food"]) == before
+
+
+def test_bs_food_and_cardio_never_reach_as_day(world):
+    a, _, _ = world
+    day = services.get_log(a.id)["days"][0]
+    assert day["food"]["total_kcal"] == 0 and day["cardio"] == []
+    assert services.get_progress(a.id, "Outdoor Run")["cardio"]["sessions"] == []

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Foods · Spotter{% endblock %}
+{% block main %}
+<h1>Foods</h1>
+<p class="muted">Foods you save are logged by name and amount: Spotter works out the kcal. Saving one by talking to Claude works too.</p>
+{% if saved %}<p class="ok">Saved.</p>{% endif %}
+{% if undo %}
+<div class="ok undo">
+  Deleted.
+  <form method="post" action="/foods/{{ undo }}/restore" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="link">Undo</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Saved foods</h2>
+  {% if foods %}
+  <table class="foods">
+    <thead><tr><th>Food</th><th>Serving</th><th>kcal</th><th>Times logged</th><th></th></tr></thead>
+    <tbody>
+    {% for f in foods %}
+    <tr>
+      <td>{{ f.name }}</td>
+      <td>{{ f.serving_label }}{% if f.grams_per_serving %} <span class="muted">({{ kg(f.grams_per_serving) }} g)</span>{% endif %}</td>
+      <td>{{ kg(f.kcal_per_serving) }}</td>
+      <td>{{ f.times_logged }}</td>
+      <td><span class="entry-actions"><a href="/foods/{{ f.id }}/edit">Edit</a>
+        <form method="post" action="/foods/{{ f.id }}/delete" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="link">Delete</button>
+        </form></span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No saved foods yet.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Save a food</h2>
+  <p class="muted small">Saving a name you already have updates it.</p>
+  <form method="post" action="/foods">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% for field, label, required in [("name", "Name", true), ("serving_label", "One serving is", true),
+                                      ("kcal_per_serving", "kcal in one serving", true),
+                                      ("grams_per_serving", "Grams in one serving (optional)", false)] %}
+    <label for="food-{{ field }}">{{ label }}</label>
+    <input id="food-{{ field }}" name="{{ field }}" value="{{ typed.get(field, '') }}"{% if required %} required{% endif %} autocomplete="off">
+    {% if errors[field] %}<p class="error">{{ errors[field] }}</p>{% endif %}
+    {% endfor %}
+    <button class="primary">Save food</button>
+  </form>
+</div>
+{% endblock %}

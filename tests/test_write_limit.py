@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import delete, func, select
 
 from app import db, services
-from app.models import Bodyweight, CallLog, Goal, LiftSession, Measurement, User
+from app.models import Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User
 from app.services.common import WRITE_FUNCTIONS, WRITE_LIMIT, WRITE_WINDOW_MINUTES
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
@@ -41,7 +41,7 @@ def counts(user_id) -> dict:
     """How many rows of each kind this person has, live or deleted: what a write would change."""
     with db.new_session() as s:
         out = {m.__tablename__: s.scalar(select(func.count()).select_from(m).where(m.user_id == user_id))
-               for m in (LiftSession, Bodyweight, Measurement, Goal)}
+               for m in (LiftSession, Bodyweight, Measurement, Goal, FoodEntry, CardioEntry, SavedFood)}
         out["deleted"] = sum(s.scalar(select(func.count()).select_from(m).where(
             m.user_id == user_id, m.deleted_at.is_not(None))) for m in (LiftSession, Bodyweight, Measurement))
         user = s.get(User, user_id)
@@ -62,6 +62,10 @@ WRITES = {
         u.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 100, "reps": 5}]}, "claude"),
     "log_bodyweight": lambda u, ids: services.log_bodyweight(u.id, {"kg": 79}, "claude"),
     "log_measurement": lambda u, ids: services.log_measurement(u.id, {"kind": "waist", "value": 84}, "claude"),
+    "log_food": lambda u, ids: services.log_food(u.id, {"entries": [{"description": "dal", "kcal": 180}]}, "claude"),
+    "save_food": lambda u, ids: services.save_food(
+        u.id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude"),
+    "log_cardio": lambda u, ids: services.log_cardio(u.id, {"exercise": "Elliptical", "minutes": 20}, "claude"),
     "set_goal": lambda u, ids: services.set_goal(
         u.id, {"kind": "bodyweight", "target_value": 75, "target_date": "2027-01-01"}, "claude"),
     "update_settings": lambda u, ids: services.update_settings(u.id, {"time_zone": "Asia/Tokyo"}, "claude"),

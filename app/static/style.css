@@ -65,3 +65,10 @@ svg.chart .goal { stroke: var(--text); stroke-width: 1.5; opacity: .55; }
 svg.chart .goal-label { fill: var(--text); font-size: 12px; font-weight: 600; }
 svg.chart .projection { stroke: var(--accent); stroke-width: 2; opacity: .8; }
 @media (max-width: 600px) { .day-head { flex-wrap: wrap; } table.sets th:nth-child(2), table.sets td:nth-child(2) { display: none; } }
+.meal { padding: .25rem 0; }
+.meal h3 { font-size: .95rem; margin: .5rem 0 .25rem; }
+.meal.empty h3 { color: var(--muted); font-weight: 500; }
+.tag { display: inline-block; font-size: .78rem; border-radius: 999px; padding: 0 .45rem; border: 1px solid var(--line); color: var(--muted); }
+.tag-claude_estimate { border-color: #d97706; color: #92400e; background: #fffbeb; font-weight: 600; }
+dl.totals { margin-top: .75rem; }
+.attribution { max-width: 960px; margin: 0 auto; padding: 0 1rem 1.5rem; color: var(--muted); font-size: .8rem; }

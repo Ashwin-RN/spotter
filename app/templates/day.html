@@ -28,6 +28,67 @@
 {% endmacro %}
 
 <div class="card">
+  <h2>Food</h2>
+  {% if food %}
+  {% for meal in meals %}
+  {% set entries = food.meals.get(meal) or [] %}
+  <div class="meal{% if not entries %} empty{% endif %}">
+    <h3>{{ meal.capitalize() }}</h3>
+    {% if entries %}
+    <ul class="entries">
+      {% for f in entries %}
+      <li class="entry-line">
+        <span>{{ f.description }}{% if f.servings %} <span class="muted">× {{ kg(f.servings) }}</span>{% endif %}:
+          <strong>{{ kg(f.kcal) }} kcal</strong>
+          <span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span></span>
+        <span class="entry-actions">
+          {% if f.source == "claude_estimate" %}
+          <form method="post" action="/entries/food_entry/{{ f.id }}/confirm" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="link" title="Keep this number as yours">Confirm</button>
+          </form>
+          {% endif %}
+          {{ actions("food_entry", f.id) }}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted small">Nothing logged.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <dl class="facts totals">
+    <dt>Total</dt><dd><strong>{{ kg(food.total_kcal) }} kcal</strong>{% if food.estimated_kcal %}, of which <span class="tag tag-claude_estimate">estimate</span> {{ kg(food.estimated_kcal) }} kcal ({{ kg(food.estimated_share_pct) }}%){% endif %}</dd>
+    {% if food.target_kcal is not none %}
+    <dt>Target</dt><dd>{{ kg(food.target_kcal) }} kcal</dd>
+    <dt>Remaining</dt><dd>{{ kg(food.remaining_kcal) }} kcal</dd>
+    {% endif %}
+    {% if food.net_kcal is not none %}
+    <dt>Net</dt><dd>{{ kg(food.net_kcal) }} kcal <span class="muted">(food minus cardio)</span></dd>
+    {% endif %}
+  </dl>
+  {% else %}
+  <p class="muted">No food logged on this day.</p>
+  {% endif %}
+  {% set errors = form_error.get("food_entry", {}) %}
+  <form method="post" action="/day/{{ on.isoformat() }}/food" class="one-line">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="food-description">Food</label>
+    <input id="food-description" name="description" required maxlength="200" autocomplete="off">
+    <label for="food-kcal">kcal</label>
+    <input id="food-kcal" name="kcal" inputmode="numeric" required autocomplete="off">
+    <label for="food-meal">Meal</label>
+    <select id="food-meal" name="meal">
+      <option value="">From the time of day</option>
+      {% for meal in meals %}<option value="{{ meal }}">{{ meal.capitalize() }}</option>{% endfor %}
+    </select>
+    <button class="primary">Save food</button>
+  </form>
+  {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
+</div>
+
+<div class="card">
   <h2>Lifts</h2>
   {% for session in day.sessions %}
   <div class="session">
@@ -52,6 +113,47 @@
   {% else %}
   <p class="muted">No lifts logged on this day. Tell Claude what you lifted and it shows here.</p>
   {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Cardio</h2>
+  {% if cardio %}
+  <table class="cardio">
+    <thead><tr><th>Activity</th><th>Minutes</th><th>Distance</th><th>Pace</th><th>Estimate</th><th>Machine</th><th></th></tr></thead>
+    <tbody>
+    {% for c in cardio %}
+    <tr>
+      <td>{{ c.exercise }}</td>
+      <td>{{ kg(c.minutes) }}</td>
+      <td>{% if c.distance_km is not none %}{{ kg(c.distance_km) }} km{% endif %}</td>
+      <td>{% if c.pace %}{{ c.pace.min_per_km }} /km{% endif %}</td>
+      <td>{% if c.estimate %}{{ kg(c.estimate.kcal) }} kcal{% else %}<span class="muted">none</span>{% endif %}</td>
+      <td>{% if c.machine_kcal is not none %}{{ kg(c.machine_kcal) }} kcal{% endif %}</td>
+      <td>{{ actions("cardio_entry", c.id) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if cardio|rejectattr("estimate")|list %}
+  <p class="muted small">No calorie estimate where none is shown: there is no weigh-in to work it from. Log a weigh-in and new cardio gets one.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">No cardio logged on this day.</p>
+  {% endif %}
+  {% set errors = form_error.get("cardio_entry", {}) %}
+  <form method="post" action="/day/{{ on.isoformat() }}/cardio" class="one-line">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="cardio-exercise">Activity</label>
+    <select id="cardio-exercise" name="exercise" required>
+      {% for name in activities %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+    </select>
+    <label for="cardio-minutes">Minutes</label>
+    <input id="cardio-minutes" name="minutes" inputmode="decimal" required autocomplete="off">
+    <label for="cardio-distance">Distance (km)</label>
+    <input id="cardio-distance" name="distance_km" inputmode="decimal" autocomplete="off">
+    <button class="primary">Save cardio</button>
+  </form>
+  {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
 </div>
 
 <div class="card">

@@ -311,3 +311,18 @@ def test_projection_gap_says_why_there_is_no_line():
     assert projection(same_day, TODAY) is None
     assert projection_gap(same_day, TODAY) == "A projection needs points on at least 2 different days."
     assert projection_gap(LIFT, TODAY) is None
+
+
+
+# ---------------------------------------------------------------- cardio
+
+def test_cardio_kcal_is_met_times_3_5_times_kg_over_200_times_minutes():
+    from app.metrics import cardio_kcal
+    assert cardio_kcal(3.8, 80, 30) == 160 and cardio_kcal(9.3, 70, 28) == 319 and cardio_kcal(1, 0, 10) == 0
+
+
+def test_pace_is_minutes_per_km_as_m_ss():
+    from app.metrics import pace, speed
+    assert pace(5, 28) == "5:36" and pace(3, 30) == "10:00" and pace(10, 45.5) == "4:33"
+    assert pace(1, 59.999) == "60:00" and pace(None, 30) is None and pace(0, 30) is None
+    assert speed(5, 30) == 10.0 and speed(5, 28) == 10.71 and speed(None, 30) is None

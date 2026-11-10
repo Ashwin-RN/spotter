@@ -161,3 +161,32 @@ def test_measurement_values_by_kind():
     for bad in (True, "x", float("nan"), 10 ** 400):
         assert rules.measurement_value("waist", bad)[1]["error"] == "invalid_field"
     assert "Give steps, 0 to 200,000, a whole number." == rules.measurement_value("steps", -1)[1]["fix"]
+
+
+
+# ---------------------------------------------------------------- food and cardio numbers, meals
+
+def test_bounded_numbers_keep_their_rule():
+    assert rules.bounded("kcal", "180.6") == (181, None)            # whole number stored
+    assert rules.bounded("kcal", 0) == (0, None) and rules.bounded("kcal", 5001)[1]["error"] == "invalid_field"
+    assert rules.bounded("avg_hr", 120.5)[1]["error"] == "invalid_field"   # whole only
+    assert rules.bounded("servings", 1.234) == (1.23, None)
+    assert rules.bounded("minutes", 30.04) == (30.0, None)
+    assert rules.bounded("minutes", None)[1]["error"] == "missing_field"
+    for bad in (True, "x", float("inf"), 10 ** 400, [1]):
+        assert rules.bounded("grams", bad)[1]["error"] == "invalid_field"
+    assert "Entry 2:" in rules.bounded("kcal", -1, "Entry 2")[1]["message"]
+
+
+def test_meals_are_matched_like_a_kind():
+    assert rules.match_meal(" Lunch ") == ("lunch", None) and rules.match_meal("SNACK") == ("snack", None)
+    for bad in ("brunch", "", None, 3):
+        assert rules.match_meal(bad)[1]["error"] == "invalid_field"
+    assert "breakfast, lunch, dinner, snack" in rules.match_meal("tea")[1]["fix"]
+
+
+def test_required_text_is_one_to_the_limit():
+    assert rules.required_text("  dal ", "description") == ("dal", None)
+    assert rules.required_text("", "description")[1]["error"] == "missing_field"
+    assert rules.required_text("x" * 201, "description")[1]["error"] == "invalid_field"
+    assert rules.required_text("x" * 128, "name")[1] is None and rules.required_text("x" * 65, "serving_label")[1]

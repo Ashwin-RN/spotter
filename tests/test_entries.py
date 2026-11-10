@@ -185,7 +185,7 @@ def test_kinds_goal_and_unknown(user):
                                        "target_date": "2099-01-01"}, "web")
     r = services.edit_entry(user.id, "goal", goal["id"], {"target_value": 71}, "claude")
     assert r["error"] == "unknown_kind" and "set_goal" in r["fix"]
-    for kind in ("food_entry", ["bodyweight"], None, "x" * 10_000):
+    for kind in ("usda_food", "saved_food", ["bodyweight"], None, "x" * 10_000):
         r = services.edit_entry(user.id, kind, 1, {"kg": 70}, "claude")
         assert r["error"] == "unknown_kind" and len(str(r)) < 1_000
 
@@ -263,3 +263,153 @@ def test_a_long_set_list_is_cut_in_the_summary(user):
     r = edit(user, "lift_session", s["id"], sets=many[:-1])
     before, after = r["summary"].split(": sets ", 1)[1].rstrip(".").split(" -> ")
     assert len(before) <= 80 and before.endswith("…") and len(after) <= 80
+
+
+
+# ---------------------------------------------------------------- food and cardio edits (decision 11)
+
+def meal_of(user, **entry):
+    return services.log_food(user.id, {"entries": [entry]}, "claude")
+
+
+def test_editing_a_food_entrys_kcal_makes_it_the_persons_number(user):
+    guess = meal_of(user, description="dal", kcal=180, estimated=True)
+    r = edit(user, "food_entry", guess["ids"][0], kcal=150)
+    assert r["changed"] == ["kcal"] and r["after"]["kcal"] == 150
+    assert (r["before"]["source"], r["after"]["source"], r["after"]["estimated"]) == ("claude_estimate", "you_said", False)
+    assert r["summary"] == f"Food entry {guess['ids'][0]} changed: kcal 180 -> 150." and "you_said" in r["note"]
+    roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1", "kcal_per_serving": 120}, "web")
+    by_id = meal_of(user, saved_food_id=roti["id"], servings=2)
+    r = edit(user, "food_entry", by_id["ids"][0], kcal=250)
+    after = r["after"]
+    assert (after["source"], after["saved_food_id"], after["servings"], after["usda_fdc_id"], after["grams"]) == (
+        "you_said", None, None, None, None)
+    assert services.get_log(user.id)["days"][0]["food"]["estimated_kcal"] == 0
+
+
+def test_editing_a_food_entrys_description_or_meal_keeps_its_tag(user):
+    guess = meal_of(user, description="dal", kcal=180, estimated=True, meal="lunch")
+    r = edit(user, "food_entry", guess["ids"][0], description="dal tadka", meal=" Dinner ")
+    assert r["changed"] == ["meal", "description"] and r["after"]["source"] == "claude_estimate"
+    assert r["after"]["meal"] == "dinner" and "note" not in r
+    assert "description 'dal' -> 'dal tadka'" in r["summary"] and "meal lunch -> dinner" in r["summary"]
+    stated = edit(user, "food_entry", guess["ids"][0], kcal=180)                   # the same number, stated
+    assert stated["changed"] == ["kcal"] and stated["after"]["source"] == "you_said"
+    assert "kcal 180 confirmed by the person" in stated["summary"]
+    assert edit(user, "food_entry", guess["ids"][0], kcal=180)["changed"] == []    # already the person's
+
+
+def test_a_food_edit_passes_the_same_checks_as_a_log(user):
+    e = meal_of(user, description="dal", kcal=180)["ids"][0]
+    assert edit(user, "food_entry", e, kcal=5001)["error"] == "invalid_field"
+    assert edit(user, "food_entry", e, meal="brunch")["error"] == "invalid_field"
+    assert edit(user, "food_entry", e, description="")["error"] == "missing_field"
+    assert edit(user, "food_entry", e, saved_food_id=1)["error"] == "invalid_field"
+    assert edit(user, "food_entry", e, source="you_said")["error"] == "invalid_field"
+
+
+def test_an_edited_food_entry_is_re_keyed(user):
+    e = meal_of(user, description="dal", kcal=180)["ids"][0]
+    edit(user, "food_entry", e, kcal=150)
+    again = meal_of(user, description="dal", kcal=150)
+    assert again["duplicate"] is True and again["ids"] == [e]
+
+
+def test_editing_a_cardio_entry_re_estimates_it(user):
+    services.log_bodyweight(user.id, {"kg": 80}, "web")
+    walk = services.log_cardio(user.id, {"exercise": "Outdoor Walk", "minutes": 30, "distance_km": 3}, "claude")
+    assert walk["estimate"]["kcal"] == 160 and walk["entry"]["speed_kmh"] == 6.0
+    services.log_bodyweight(user.id, {"kg": 90}, "web")          # body weight now moves: today's replaces 80
+    r = edit(user, "cardio_entry", walk["id"], minutes=45)
+    assert r["changed"] == ["minutes", "speed_kmh"] and r["after"]["speed_kmh"] == 4.0
+    assert r["after"]["estimate"]["kcal"] == 269 and r["after"]["estimate"]["weight_kg"] == 90
+    assert r["after"]["estimated_kcal"] == 269 and "worked out again" in r["note"]
+    assert r["after"]["pace"]["min_per_km"] == "15:00"
+
+
+def test_a_speed_the_person_gave_stays_theirs(user):
+    run = services.log_cardio(user.id, {"exercise": "Treadmill Run", "minutes": 30, "distance_km": 5,
+                                        "speed_kmh": 10.5}, "claude")
+    r = edit(user, "cardio_entry", run["id"], minutes=28)
+    assert r["changed"] == ["minutes"] and r["after"]["speed_kmh"] == 10.5
+
+
+def test_a_cardio_activity_can_change_within_cardio_names_only(user):
+    services.log_bodyweight(user.id, {"kg": 80}, "web")
+    walk = services.log_cardio(user.id, {"exercise": "Outdoor Walk", "minutes": 30}, "claude")
+    r = edit(user, "cardio_entry", walk["id"], exercise="hiking")
+    assert r["changed"] == ["exercise"] and r["after"]["exercise"] == "Hiking"
+    assert r["after"]["estimate"]["met"] == 6.0 and "activity Outdoor Walk -> Hiking" in r["summary"]
+    lift = edit(user, "cardio_entry", walk["id"], exercise="Back Squat")
+    assert lift["error"] == "unknown_exercise" and "Treadmill Walk" in lift["fix"]
+
+
+def test_a_cardio_edit_without_a_weigh_in_clears_the_estimate_with_a_note(user):
+    walk = services.log_cardio(user.id, {"exercise": "Outdoor Walk", "minutes": 30, "machine_kcal": 120}, "claude")
+    r = edit(user, "cardio_entry", walk["id"], machine_kcal=130, notes="windy")
+    assert r["changed"] == ["machine_kcal", "notes"] and r["after"]["estimate"] is None
+    assert r["after"]["machine_kcal"] == 130 and "No weigh-in yet" in r["note"]
+    assert edit(user, "cardio_entry", walk["id"], machine_kcal=None)["after"]["machine_kcal"] is None
+    assert edit(user, "cardio_entry", walk["id"], minutes=0)["error"] == "invalid_field"
+    assert edit(user, "cardio_entry", walk["id"], kcal=100)["error"] == "invalid_field"
+
+
+# ---------------------------------------------------------------- saved foods by id
+
+def test_a_saved_food_is_read_deleted_and_restored_by_id_but_edited_by_save_food(user):
+    roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1", "kcal_per_serving": 120}, "web")
+    read = services.get_entry(user.id, "saved_food", roti["id"])
+    assert read["entry"]["name"] == "Roti" and read["links"]["foods"].endswith("/foods")
+    assert services.delete_entry(user.id, "saved_food", roti["id"])["entry"]["deleted_at"]
+    assert services.get_entry(user.id, "saved_food", roti["id"])["error"] == "not_found"
+    assert services.restore_entry(user.id, "saved_food", roti["id"])["entry"]["deleted_at"] is None
+    refused = services.edit_entry(user.id, "saved_food", roti["id"], {"kcal_per_serving": 1}, "web")
+    assert refused["error"] == "unknown_kind" and "save_food" in refused["fix"]
+    assert "save_food" in services.get_entry(user.id, "saved_food", MISSING)["fix"]
+
+
+
+@pytest.mark.parametrize("change,ok", [
+    ({"distance_km": 5.5}, True),           # 5.5 km in 30 min is 11 km/h: the stated 11 fits exactly
+    ({"distance_km": 6.5}, True),           # 13 km/h: 11 is 15% off, inside 20%
+    ({"distance_km": 8}, False),            # 16 km/h: 31% off
+    ({"minutes": 32}, True),                # 9.38 km/h: 11 is 17% over, inside 20%
+    ({"minutes": 33}, False),               # 9.09 km/h: 11 is 21% over, outside
+    ({"minutes": 60}, False),               # 5 km/h
+])
+def test_a_stated_speed_is_rechecked_when_distance_or_minutes_change(user, change, ok):
+    run = services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5,
+                                        "speed_kmh": 11}, "claude")
+    assert run["entry"]["speed_kmh"] == 11
+    r = edit(user, "cardio_entry", run["id"], **change)
+    if ok:
+        assert "error" not in r and r["after"]["speed_kmh"] == 11, r
+    else:
+        assert r["error"] == "invalid_field" and "the speed you gave, 11, no longer fits" in r["message"], r
+        assert "speed_kmh" in r["fix"]
+        assert services.get_entry(user.id, "cardio_entry", run["id"])["entry"]["distance_km"] == 5
+
+
+def test_a_stated_speed_can_be_replaced_or_cleared_with_the_new_distance(user):
+    run = services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5,
+                                        "speed_kmh": 11}, "claude")
+    assert edit(user, "cardio_entry", run["id"], distance_km=8, speed_kmh=16)["after"]["speed_kmh"] == 16
+    cleared = edit(user, "cardio_entry", run["id"], distance_km=7, speed_kmh=None)
+    assert cleared["after"]["speed_kmh"] == 14.0 and cleared["after"]["pace"]["min_per_km"] == "4:17"
+
+
+
+def test_a_speed_worked_out_in_an_edit_is_summarised_as_stored(user):
+    run = services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5,
+                                        "speed_kmh": 11}, "claude")
+    cleared = edit(user, "cardio_entry", run["id"], distance_km=8, speed_kmh=None)
+    assert cleared["after"]["speed_kmh"] == 16.0
+    assert "speed_kmh 11 -> 16, worked out from distance and minutes" in cleared["summary"]
+    assert "None" not in cleared["summary"]
+    walk = services.log_cardio(user.id, {"exercise": "Outdoor Walk", "minutes": 30, "distance_km": 3}, "claude")
+    longer = edit(user, "cardio_entry", walk["id"], minutes=45)        # a worked-out speed, worked out again
+    assert longer["summary"].endswith("minutes 30 -> 45; speed_kmh 6 -> 4, worked out from distance and minutes.")
+    gone = edit(user, "cardio_entry", walk["id"], distance_km=None)    # the distance goes, and the speed with it
+    assert gone["after"]["speed_kmh"] is None and gone["after"]["pace"] is None
+    assert "distance_km 3 -> none, cleared; speed_kmh 4 -> none, cleared with the distance" in gone["summary"]
+    assert "worked out" not in gone["summary"] and "None" not in gone["summary"]

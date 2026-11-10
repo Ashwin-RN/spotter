@@ -7,8 +7,10 @@ whoami(user_id)
     date and time_zone_note tells Claude to set it with update_settings.
 
 update_settings(user_id, data, by)
-    Change the person's own settings. In this stage that is only time_zone (SETTABLE lists what can
-    be set; later stages add the targets). claude_can, what Claude may do, is never set here, whoever
+    Change the person's own settings (SETTABLE): time_zone; calorie_target_kcal (800 to 10,000),
+    target_sessions_per_week (0 to 14) and target_cardio_minutes_per_week (0 to 3,000), whole numbers,
+    null to clear; add_back_exercise_kcal, true or false. The summary names each change.
+    claude_can, what Claude may do, is never set here, whoever
     calls: only the person changes it, on the Settings page, through set_claude_can.
 
 set_claude_can(user_id, value)
@@ -34,7 +36,7 @@ from zoneinfo import ZoneInfo
 from app import db, exercises as exercise_list, links, rules, users
 from app.models import CLAUDE_CAN, EXERCISE_KINDS, User
 from app.rules import error, quote
-from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account
+from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account, truthy
 
 TIME_ZONE_NOTE = ("No time zone is set, so today is the UTC date. Set it now with update_settings: use the "
                   "person's time zone if you know it, otherwise ask once which city they are in. Set it "
@@ -91,9 +93,47 @@ def _time_zone(value) -> tuple[str | None, dict | None]:
                        closest=closest)
 
 
+def _target(field: str):
+    """A target in its range (rules.NUMBERS), or null to clear it: no target, no comparison."""
+    def check(value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None, None
+        return rules.bounded(field, value)
+    return check
+
+
+ON, OFF = ("1", "true", "yes", "on"), ("0", "false", "no", "off", "")
+
+
+def _switch(value) -> tuple[bool | None, dict | None]:
+    """add_back_exercise_kcal: a bool, or the web's form values ("on", "1"; "off", "0", "")."""
+    if isinstance(value, bool):
+        return value, None
+    if isinstance(value, str) and value.strip().lower() in ON + OFF:
+        return truthy(value), None
+    return None, error("invalid_field", f"add_back_exercise_kcal '{quote(value)}' is not true or false.",
+                       "Give add_back_exercise_kcal as true or false.")
+
+
 # What update_settings can set: field -> its check, which returns (stored value, error).
-# Later stages add the calorie target and the weekly targets here.
-SETTABLE = {"time_zone": _time_zone}
+SETTABLE = {
+    "time_zone": _time_zone,
+    "calorie_target_kcal": _target("calorie_target_kcal"),
+    "target_sessions_per_week": _target("target_sessions_per_week"),
+    "target_cardio_minutes_per_week": _target("target_cardio_minutes_per_week"),
+    "add_back_exercise_kcal": _switch,
+}
+SAID = {
+    "time_zone": lambda v: f"Time zone set to {v}",
+    "calorie_target_kcal": lambda v: (f"Calorie target set to {v} kcal a day" if v is not None
+                                      else "Calorie target cleared"),
+    "target_sessions_per_week": lambda v: (f"Weekly sessions target set to {v}" if v is not None
+                                           else "Weekly sessions target cleared"),
+    "target_cardio_minutes_per_week": lambda v: (f"Weekly cardio target set to {v} minutes" if v is not None
+                                                 else "Weekly cardio target cleared"),
+    "add_back_exercise_kcal": lambda v: ("Exercise calories are now added back" if v
+                                         else "Exercise calories are no longer added back"),
+}
 
 
 def update_settings(user_id: int, data: dict | None, by: str) -> dict:
@@ -137,9 +177,9 @@ def update_settings(user_id: int, data: dict | None, by: str) -> dict:
         s.flush()
         today = users.today_for(user).isoformat()
         if changed:
-            summary = f"Time zone set to {user.time_zone}. Today is {today}."
+            summary = ". ".join(SAID[field](values[field]) for field in changed) + f". Today is {today}."
         else:
-            summary = f"Nothing changed: the time zone is already {user.time_zone}. Today is {today}."
+            summary = f"Nothing changed: every value given is already set. Today is {today}."
         return {"time_zone": user.time_zone, "today": today, "changed": changed, "summary": summary,
                 "links": {"settings": links.page("settings")}}
 
@@ -174,7 +214,8 @@ def _categories() -> list[str]:
 
 
 def list_exercises(kind: str | None = None, category: str | None = None) -> dict:
-    """Returns {exercises [{name, kind, category}]} or {error, message, fix}."""
+    """Returns {exercises [{name, kind, category, met, compendium_code}]} or {error, message, fix}.
+    met and compendium_code are the 2024 Adult Compendium's for a cardio activity, null for a lift."""
     if kind not in (None, "") and not (isinstance(kind, str) and kind in EXERCISE_KINDS):
         return error("invalid_field", f"kind '{quote(kind)}' is not one of {', '.join(EXERCISE_KINDS)}.",
                      f"Use one of: {', '.join(EXERCISE_KINDS)}, or leave it out for all.")
@@ -183,6 +224,7 @@ def list_exercises(kind: str | None = None, category: str | None = None) -> dict
         return error("invalid_field", f"category '{quote(category)}' is not one of {', '.join(categories)}.",
                      f"Use one of: {', '.join(categories)}, or leave it out for all.")
     with db.new_session() as s:
-        rows = [{"name": e.name, "kind": e.kind, "category": e.category} for e in exercises(s, kind or None)
-                if not category or e.category == category]
+        rows = [{"name": e.name, "kind": e.kind, "category": e.category, "met": e.met,
+                 "compendium_code": e.compendium_code}
+                for e in exercises(s, kind or None) if not category or e.category == category]
     return {"exercises": rows}

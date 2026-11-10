@@ -29,10 +29,12 @@ restore_entry(user_id, kind, entry_id)   -> {kind, id, restored: true, entry, re
 
 from sqlalchemy import Index, select
 
-from app import db, links, rules, users
-from app.models import Bodyweight, Goal, LiftSession, LiftSet, Measurement, entry_models
+from app import db, links, metrics, rules, users
+from app.models import (
+    Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, entry_models,
+)
 from app.rules import error, quote
-from app.services import body, lifts, measurements
+from app.services import body, cardio, food, lifts, measurements
 from app.services.common import (
     check_by, check_data, check_write_limit, exercises, lock_user, no_account, not_found, owned, row_dict,
 )
@@ -44,10 +46,18 @@ EDITABLE = {
     "lift_session": ("date", "notes", "sets"),
     "bodyweight": ("date", "kg"),
     "measurement": ("date", "value"),
+    "food_entry": ("date", "meal", "description", "kcal"),
+    "cardio_entry": ("date", "exercise", "minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr",
+                     "machine_kcal", "notes"),
 }
-LABELS = {"lift_session": "Lift session", "bodyweight": "Weigh-in", "measurement": "Measurement"}
-NOUNS = {"lift_session": "sessions", "bodyweight": "weigh-ins", "measurement": "measurements"}
+LABELS = {"lift_session": "Lift session", "bodyweight": "Weigh-in", "measurement": "Measurement",
+          "food_entry": "Food entry", "cardio_entry": "Cardio entry"}
+NOUNS = {"lift_session": "sessions", "bodyweight": "weigh-ins", "measurement": "measurements",
+         "food_entry": "meals", "cardio_entry": "cardio sessions"}
 SESSION_NOTE = "Bests are worked out from history: get_progress shows them."
+KCAL_NOTE = "The number is now the person's own: tagged you_said."
+REESTIMATE_NOTE = "The calorie estimate was worked out again, from body weight now."
+CARDIO_NUMBERS = ("minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal")
 
 
 def entry_kinds() -> dict[str, type]:
@@ -55,8 +65,13 @@ def entry_kinds() -> dict[str, type]:
     return {m.__tablename__: m for m in entry_models()}
 
 
+def _deletable() -> dict[str, type]:
+    """What delete_entry and restore_entry take: every entry kind, and a saved food."""
+    return {**entry_kinds(), "saved_food": SavedFood}
+
+
 def _readable() -> dict[str, type]:
-    return {**entry_kinds(), "goal": Goal}
+    return {**_deletable(), "goal": Goal}
 
 
 def _model(kinds: dict[str, type], kind):
@@ -76,12 +91,20 @@ def entry_dict(row) -> dict:
         return session_dict(row)
     if isinstance(row, Goal):
         return goal_dict(row)
+    if isinstance(row, FoodEntry):
+        return {**food.entry_dict(row), "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None}
+    if isinstance(row, CardioEntry):
+        return cardio.cardio_dict(row)
+    if isinstance(row, SavedFood):
+        return {**food.food_dict(row), "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None}
     return row_dict(row)
 
 
 def _links(row) -> dict:
     if isinstance(row, Goal):
         return {"goals": links.page("goals")}
+    if isinstance(row, SavedFood):
+        return {"foods": links.page("foods")}
     return {"day": links.page("day", date=row.date)}
 
 
@@ -110,7 +133,7 @@ def get_entry(user_id: int, kind: str, entry_id) -> dict:
 
 
 def delete_entry(user_id: int, kind: str, entry_id) -> dict:
-    kinds = entry_kinds()
+    kinds = _deletable()
     model = _model(kinds, kind)
     if model is None:
         return _unknown(kind, kinds)
@@ -130,7 +153,7 @@ def delete_entry(user_id: int, kind: str, entry_id) -> dict:
 
 
 def restore_entry(user_id: int, kind: str, entry_id) -> dict:
-    kinds = entry_kinds()
+    kinds = _deletable()
     model = _model(kinds, kind)
     if model is None:
         return _unknown(kind, kinds)
@@ -172,6 +195,8 @@ def _set_rows(row: LiftSession) -> list[tuple[int, int, float, int]]:
 
 
 def _shown(value) -> str:
+    if value is None:
+        return "none"  # a cleared value, in words: never Python's None in a summary
     if isinstance(value, float):
         return rules.kg(value)
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
@@ -191,7 +216,19 @@ def _checked(field: str, value, row, s, today, kind: str) -> tuple[object, dict 
         return (None, err) if err else (lifts.number_sets(checked, by_name), None)
     if field == "kg":
         return body.check_kg(value)
-    return rules.measurement_value(row.kind, value)
+    if field == "value":
+        return rules.measurement_value(row.kind, value)
+    if field == "meal":
+        return rules.match_meal(value)
+    if field == "description":
+        return rules.required_text(value, "description")
+    if field == "kcal":
+        return rules.bounded("kcal", value)
+    if field == "exercise":
+        return cardio.match_cardio(s, value)
+    if field in ("distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal") and value in (None, ""):
+        return None, None  # an optional cardio number can be cleared
+    return rules.bounded(field, value)
 
 
 def _day_taken(s, model, row, on, user_id: int) -> dict | None:
@@ -221,6 +258,9 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
     if kind == "goal":
         return error("unknown_kind", "A goal is not edited here.",
                      "Use set_goal with goal_id and the fields to change.")
+    if kind == "saved_food":
+        return error("unknown_kind", "A saved food is not edited here.",
+                     "Use save_food with the same name and the new serving or kcal.")
     if not (isinstance(kind, str) and kind in EDITABLE):
         return error("unknown_kind", f"'{quote(kind)}' is not a kind of entry that can be edited.",
                      f"Use one of: {', '.join(EDITABLE)}.")
@@ -257,10 +297,19 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
         if errors:
             return rules.combine(errors)
 
-        current = {f: getattr(row, f, None) for f in ("date", "notes", "kg", "value")}
+        current = {f: getattr(row, f, None) for f in EDITABLE[kind] if f not in ("sets", "exercise")}
         if kind == "lift_session":
             current["sets"] = _set_rows(row)
-        changed = [f for f in EDITABLE[kind] if f in new and new[f] != current[f]]
+        if kind == "cardio_entry":
+            current["exercise"] = row.exercise
+            if "kcal" in current:
+                del current["kcal"]
+        if kind == "food_entry" and "kcal" in new:
+            current["kcal"] = int(row.kcal)
+        # A stated number makes a food entry the person's, even when it is the number already there
+        # (decision 1: "yes, that's right" is the same number, stated).
+        restated = kind == "food_entry" and "kcal" in new and row.source != "you_said"
+        changed = [f for f in EDITABLE[kind] if f in new and (new[f] != current[f] or (f == "kcal" and restated))]
         if not changed:
             out = {"kind": kind, "id": row.id, "changed": [], "before": before, "after": before,
                    "summary": f"{LABELS[kind]} {row.id}: nothing changed; every value given is already stored.",
@@ -273,6 +322,19 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
             if taken:
                 return taken
 
+        worked_out = set()
+        if kind == "cardio_entry":
+            if "speed_kmh" in changed:
+                err = cardio.speed_disagrees({f: new.get(f, getattr(row, f)) for f in ("speed_kmh", "distance_km",
+                                                                                     "minutes")})
+                if err:
+                    return err
+            moved, err = _cardio_speed(row, new, changed)
+            if err:
+                return err
+            new.update(moved)
+            worked_out = set(moved)
+            changed += [f for f in moved if f not in changed]
         parts = []
         for field in changed:
             if field == "sets":
@@ -284,17 +346,46 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
                 parts.append(f"sets {written(current['sets'])} -> {written(new['sets'])}")
             elif field == "notes":
                 parts.append("notes changed")
+            elif field == "description":
+                parts.append(f"description '{quote(current[field])}' -> '{quote(new[field])}'")
+            elif field == "exercise":
+                parts.append(f"activity {current[field].name} -> {new[field].name}")
+            elif field == "kcal" and current[field] == new[field]:
+                parts.append(f"kcal {new[field]} confirmed by the person")
+            elif field in worked_out and new[field] is None:  # the distance went, and the speed with it
+                parts.append(f"{field} {_shown(current[field])} -> none, cleared with the distance")
+            elif new[field] is None:
+                parts.append(f"{field} {_shown(current[field])} -> none, cleared")
+            elif field in worked_out:  # the stored value, not the null that asked for it
+                parts.append(f"{field} {_shown(current[field])} -> {_shown(new[field])}, worked out from distance "
+                             "and minutes")
             else:
                 parts.append(f"{field} {_shown(current[field])} -> {_shown(new[field])}")
         if "sets" in changed:
             row.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in new["sets"]]
-        for field in ("date", "notes", "kg", "value"):
-            if field in changed:
+        for field in changed:
+            if field == "exercise":
+                row.exercise_id, row.exercise = new["exercise"].id, new["exercise"]
+            elif field != "sets":
                 setattr(row, field, new[field])
+        note = SESSION_NOTE if kind == "lift_session" else None
+        if kind == "food_entry" and "kcal" in changed:
+            row.source, row.estimated = "you_said", False  # an edited number is the person's number
+            row.saved_food_id = row.servings = row.usda_fdc_id = row.grams = None
+            note = KCAL_NOTE
+        if kind == "cardio_entry":
+            est = cardio.estimate(s, user, row.exercise, row.minutes, today)
+            row.estimated_kcal = est["kcal"] if est else None
+            row.estimate_weight_kg = est["weight_kg"] if est else None
+            note = REESTIMATE_NOTE if est else cardio.NO_WEIGH_IN
         if isinstance(row, LiftSession):
             row.dedupe_key = lifts.session_key(row.date, row.notes, new.get("sets", current["sets"]))
         elif isinstance(row, Bodyweight):
             row.dedupe_key = body.weigh_in_key(row.date, row.kg)
+        elif isinstance(row, FoodEntry):
+            row.dedupe_key = food.entry_key(row.date, [food.entry_tuple(row)])
+        elif isinstance(row, CardioEntry):
+            row.dedupe_key = cardio.cardio_key(row.date, row.exercise_id, {f: getattr(row, f) for f in CARDIO_NUMBERS})
         else:
             row.dedupe_key = measurements.measurement_key(row.date, row.kind, row.value)
         row.updated_at = db.utcnow()
@@ -302,6 +393,35 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
         out = {"kind": kind, "id": row.id, "changed": changed, "before": before, "after": entry_dict(row),
                "summary": f"{LABELS[kind]} {row.id} changed: {'; '.join(parts)}.",
                "links": {"day": links.page("day", date=row.date)}}
-        if kind == "lift_session":
-            out["note"] = SESSION_NOTE
+        if note:
+            out["note"] = note
         return out
+
+
+def _cardio_speed(row: CardioEntry, new: dict, changed: list) -> tuple[dict, dict | None]:
+    """The speed after an edit of distance or minutes. A worked-out speed is worked out again; a speed
+    the person gave stays theirs only while it still fits the new distance and minutes (within 20%);
+    speed_kmh sent as null is worked out from them."""
+    distance = new["distance_km"] if "distance_km" in changed else row.distance_km
+    minutes = new["minutes"] if "minutes" in changed else row.minutes
+    if "speed_kmh" in changed:
+        if new["speed_kmh"] is not None or not distance:
+            return {}, None
+        values, err = cardio.with_speed({"distance_km": distance, "minutes": minutes, "speed_kmh": None})
+        return ({}, err) if err else ({"speed_kmh": values["speed_kmh"]}, None)
+    if not ({"distance_km", "minutes"} & set(changed)):
+        return {}, None
+    was_worked_out = row.speed_kmh is not None and row.speed_kmh == metrics.speed(row.distance_km, row.minutes)
+    if row.speed_kmh is not None and not was_worked_out:
+        if cardio.speed_disagrees({"speed_kmh": row.speed_kmh, "distance_km": distance, "minutes": minutes}):
+            worked = metrics.speed(distance, minutes)
+            return {}, error("invalid_field",
+                             f"{distance:g} km in {minutes:g} minutes is {worked:g} km/h; the speed you gave, "
+                             f"{row.speed_kmh:g}, no longer fits.",
+                             "Send speed_kmh too, or speed_kmh as null to have it worked out from distance and "
+                             "minutes.")
+        return {}, None
+    values, err = cardio.with_speed({"distance_km": distance, "minutes": minutes, "speed_kmh": None})
+    if err:
+        return {}, err
+    return ({"speed_kmh": values["speed_kmh"]} if values["speed_kmh"] != row.speed_kmh else {}), None

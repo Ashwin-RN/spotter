@@ -1,4 +1,4 @@
-"""Spotter's MCP server: twelve functions and two resources.
+"""Spotter's MCP server: sixteen functions and two resources.
 
 The MCP library does the sign-in work: it serves the protected-resource metadata, answers 401 with
 `resource_metadata`, and runs every call through the token verifier. Functions read the verified token
@@ -47,16 +47,38 @@ from app import calllog, db, links, services, users
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings
 from app.mcp_schemas import (
-    DeleteEntryResult, EditEntryResult, ExercisesResult, GetLogResult, GetProgressResult, LogBodyweightResult,
-    LogLiftsResult, LogMeasurementResult, RestoreEntryResult, SetGoalResult, SetIn, UpdateSettingsResult,
-    WhoamiResult,
+    DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn, GetLogResult,
+    GetProgressResult, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult,
+    RestoreEntryResult, SaveFoodResult, SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
 )
 from app.models import User
 
 log = logging.getLogger("spotter.mcp")
 
+# The tag rule, in Claude's terms. Spotter derives the tag; this is what Claude sends for each kind of number.
+# Which activity to log when the person's word fits more than one. Log, don't ask: the person corrects it.
+CARDIO_RULE = (
+    "When the person's words fit more than one activity (treadmill, outdoor, bike), log the one their words "
+    "point to: a pace, speed or distance that means more than 7 km/h is a run, otherwise a walk; with nothing "
+    "to go on, the walk, the lower estimate. Say in your reply which one was taken; the person can correct it "
+    "with edit_entry. Never ask first."
+)
+
+# Which entry to delete. Unlike the activity, a delete is never a guess.
+DELETE_RULE = (
+    "Delete only the entry the person named. When their words fit more than one entry, ask which; never "
+    "delete on a guess. After a delete, say what was deleted and that restore_entry brings it back."
+)
+
+FOOD_RULE = (
+    "A number the person stated goes as kcal, with estimated false. A number you worked out goes as kcal with "
+    "estimated true, always, and you say in your reply that it is an estimate. A saved or USDA food from "
+    "find_food goes by its id with servings or grams, and no kcal: Spotter works out the number. If find_food "
+    "has no match and the person gave no number, you may estimate, and must say so."
+)
+
 INSTRUCTIONS = (
-    "Spotter is the person's own record of lifts, body weight and goals. "
+    "Spotter is the person's own record of lifts, body weight, measurements, food, cardio and goals. "
     "Call whoami first: it says whose account this is and what today's date is for them. "
     "If whoami carries time_zone_note, set the time zone with update_settings before logging anything: use the "
     "person's time zone if you already know it, otherwise ask once which city they are in. Never send the person "
@@ -68,6 +90,10 @@ INSTRUCTIONS = (
     "duplicate: true means nothing was written: say so, and send allow_repeat: true only when the person "
     "confirms it was a separate entry. "
     "To answer what the person did on a day or in a week, use get_log. "
+    "Food: " + FOOD_RULE + " "
+    "Leave the meal out unless the person named it: Spotter picks it from their clock. Never ask which meal. "
+    "Cardio: " + CARDIO_RULE + " "
+    "Deleting: " + DELETE_RULE + " "
     "If a call returns not_allowed, tell the person what this account lets Claude do, and do not retry: "
     "only the person can change it. "
     "Put links last."
@@ -83,7 +109,7 @@ READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempot
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 # Setting the same value twice changes nothing the second time.
 SETTING = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
-# A delete is undone by restore_entry, but the client should still ask the person first.
+# A delete is undone by restore_entry, but it still needs the person's go-ahead: the description says so too.
 DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False)
 
 # What each function needs the person's permission switch (claude_can) to be at least.
@@ -92,6 +118,7 @@ NEEDS = {
     "whoami": "read", "list_exercises": "read", "get_progress": "read", "get_log": "read",
     "log_lifts": "log", "log_bodyweight": "log", "set_goal": "log", "update_settings": "log",
     "log_measurement": "log", "edit_entry": "log", "restore_entry": "log",
+    "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
     "delete_entry": "log_delete",
 }
 NOT_ALLOWED_MESSAGES = {"read": "This account lets Claude read only.",
@@ -100,8 +127,9 @@ NOT_ALLOWED_MESSAGES = {"read": "This account lets Claude read only.",
 NOT_ALLOWED_FIX = "The person can change what Claude may do on the Settings page."
 
 LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
-KIND_DESCRIPTION = "lift_session, bodyweight or measurement."
-ENTRY_ID_DESCRIPTION = ("The entry's id, from log_lifts, log_bodyweight, log_measurement or get_log, "
+KIND_DESCRIPTION = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
+ENTRY_ID_DESCRIPTION = ("The entry's id, from log_lifts, log_bodyweight, log_measurement, log_food, log_cardio "
+                        "or get_log, "
                         "with the kind it came with.")
 
 CAN_AND_CANT = ROOT / "docs" / "can-and-cant.md"
@@ -300,7 +328,29 @@ def _sign_in(result: dict, token: AccessToken) -> dict:
 
 def _sent(**values) -> dict:
     """The arguments the caller sent, as the service's data dict. Left out: None, so service defaults apply."""
-    return {k: v for k, v in values.items() if v is not None}
+    return {k: v for k, v in values.items() if v is not None and v is not NOT_SENT}
+
+
+class _NotSent:
+    """The default of an argument where an explicit null means something (clear a target). The library
+    validates no default and publishes none from a factory, so the argument stays optional; a call that
+    leaves it out gets this marker, and one that sends null gets None."""
+
+    def __repr__(self) -> str:
+        return "NOT_SENT"
+
+
+NOT_SENT = _NotSent()
+
+
+def _nullable(**values) -> dict:
+    """The arguments the caller sent, nulls included: only the ones left out are dropped."""
+    return {k: v for k, v in values.items() if v is not NOT_SENT}
+
+
+def not_sent():
+    """A parameter default: Field(default_factory=...) keeps the marker out of the published schema."""
+    return Field(default_factory=lambda: NOT_SENT)
 
 
 def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: UserinfoClient) -> MCPServer:
@@ -350,7 +400,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     async def list_exercises(
         kind: Annotated[str | None, Field(description="lift or cardio. Leave out for all.")] = None,
         category: Annotated[str | None, Field(
-            description="squat, hinge, push, pull, carry, core or accessory. Leave out for all.")] = None,
+            description="For lifts: squat, hinge, push, pull, carry, core or accessory. For cardio: walk, run, "
+                        "cycle, row, swim, machine or other. Leave out for all.")] = None,
     ) -> Annotated[CallToolResult, ExercisesResult]:
         return await wrapper.call("list_exercises", ExercisesResult,
                                   lambda _account: services.list_exercises(kind, category))
@@ -445,7 +496,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     )
     async def get_progress(
         exercise: Annotated[str | None, Field(
-            description="The lift, as list_exercises gives it. Leave out for every lift.")] = None,
+            description="A lift or a cardio activity, as list_exercises gives it. Leave out for every lift.")] = None,
     ) -> Annotated[CallToolResult, GetProgressResult]:
         return await wrapper.call("get_progress", GetProgressResult,
                                   lambda account: services.get_progress(account, exercise))
@@ -454,9 +505,12 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="update_settings",
         title="Update settings",
         description=(
-            "Sets the person's time zone, which decides what today is for them. Give an IANA name such as "
-            "Asia/Kolkata or Europe/London, worked out from the city they are in. An abbreviation (IST) or an "
-            "offset (+05:30) is refused. It cannot change what Claude may do: only the person can."
+            "Sets the person's time zone and targets. The time zone decides what today is for them: give an "
+            "IANA name such as Asia/Kolkata or Europe/London, worked out from the city they are in; an "
+            "abbreviation (IST) or an offset (+05:30) is refused. The targets: daily calories, sessions a week, "
+            "cardio minutes a week, and whether cardio calories are added back to the day's food. Send only what "
+            "the person asked to change; a target sent as null is cleared. It cannot change what Claude may do: "
+            "only the person can."
         ),
         annotations=SETTING,
     )
@@ -464,8 +518,21 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         time_zone: Annotated[str | None, Field(
             description="An IANA time zone name, such as Asia/Kolkata, from the city the person is in. "
                         "Not an abbreviation or an offset.")] = None,
+        calorie_target_kcal: Annotated[int | None, Field(
+            description="The daily calorie target, 800 to 10,000. null clears it.")] = not_sent(),
+        target_sessions_per_week: Annotated[int | None, Field(
+            description="Training sessions a week the person aims for, 0 to 14. null clears it.")] = not_sent(),
+        target_cardio_minutes_per_week: Annotated[int | None, Field(
+            description="Cardio minutes a week the person aims for, 0 to 3,000. null clears it.")] = not_sent(),
+        add_back_exercise_kcal: Annotated[bool | None, Field(
+            description="true adds cardio calories back to the day's food total (net calories); false stops it.")]
+            = not_sent(),
     ) -> Annotated[CallToolResult, UpdateSettingsResult]:
-        data = _sent(time_zone=time_zone)
+        # A target sent as null is passed on, so the service clears it; one left out is not passed at all.
+        data = {**_sent(time_zone=time_zone),
+                **_nullable(calorie_target_kcal=calorie_target_kcal, target_sessions_per_week=target_sessions_per_week,
+                            target_cardio_minutes_per_week=target_cardio_minutes_per_week,
+                            add_back_exercise_kcal=add_back_exercise_kcal)}
         return await wrapper.call("update_settings", UpdateSettingsResult,
                                   lambda account: services.update_settings(account, data, "claude"))
 
@@ -520,9 +587,11 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         title="Edit an entry",
         description=(
             "Changes one of the person's entries in place, keeping its id. A lift session: its date, notes or "
-            "whole set list. A weigh-in: its kg or date. A measurement: its value or date. Send only what "
-            "changes. Returns the entry before and after. Moving an entry onto a day that already has one is "
-            "refused, never silently replaced."
+            "whole set list. A weigh-in: its kg or date. A measurement: its value or date. A food entry: its "
+            "date, meal, description or kcal; a kcal makes it the person's own number, tagged you_said. A cardio "
+            "entry: its date, activity, minutes, distance, incline, speed, heart rate, machine calories or notes; "
+            "its estimate is worked out again. Send only what changes. Returns the entry before and after. "
+            "Moving a weigh-in or measurement onto a day that already has one is refused, never silently replaced."
         ),
         annotations=WRITE,
     )
@@ -531,14 +600,37 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         entry_id: Annotated[int, Field(description=ENTRY_ID_DESCRIPTION)],
         date: Annotated[str | None, Field(description="The new date, YYYY-MM-DD.")] = None,
         notes: Annotated[str | None, Field(
-            description="A lift session's new notes, up to 2,000 characters.")] = None,
+            description="A lift session's or cardio entry's new notes, up to 2,000 characters. null clears them.")]
+            = not_sent(),
         sets: Annotated[list[SetIn] | None, Field(
             description="A lift session's whole new set list, in order: 1 to 60 sets. It replaces every set.")] = None,
         kg: Annotated[float | None, Field(description="A weigh-in's new weight in kg, 20 to 400.")] = None,
         value: Annotated[float | None, Field(description="A measurement's new value, in its unit.")] = None,
+        meal: Annotated[str | None, Field(description="A food entry's meal: breakfast, lunch, dinner or snack.")] = None,
+        description: Annotated[str | None, Field(description="A food entry's new description.")] = None,
+        kcal: Annotated[float | None, Field(
+            description="A food entry's calories, as the person stated them. It becomes their own number.")] = None,
+        exercise: Annotated[str | None, Field(
+            description="A cardio entry's activity, as list_exercises gives it.")] = None,
+        minutes: Annotated[float | None, Field(description="A cardio entry's minutes, 1 to 600.")] = None,
+        distance_km: Annotated[float | None, Field(
+            description="A cardio entry's distance in km. null clears it.")] = not_sent(),
+        incline_pct: Annotated[float | None, Field(
+            description="A cardio entry's incline in percent. null clears it.")] = not_sent(),
+        speed_kmh: Annotated[float | None, Field(
+            description="A cardio entry's speed in km/h. null works it out from distance and minutes.")] = not_sent(),
+        avg_hr: Annotated[int | None, Field(
+            description="A cardio entry's average heart rate in bpm. null clears it.")] = not_sent(),
+        machine_kcal: Annotated[int | None, Field(
+            description="The calories the machine or watch showed. null clears it.")] = not_sent(),
     ) -> Annotated[CallToolResult, EditEntryResult]:
-        changes = _sent(date=date, notes=notes, sets=None if sets is None else [x.model_dump() for x in sets],
-                        kg=kg, value=value)
+        # The cardio extras and notes pass an explicit null on (it clears them, or works the speed out); every
+        # other field sent as null is the same as not sent.
+        changes = {**_sent(date=date, sets=None if sets is None else [x.model_dump() for x in sets], kg=kg,
+                           value=value, meal=meal, description=description, kcal=kcal, exercise=exercise,
+                           minutes=minutes),
+                   **_nullable(notes=notes, distance_km=distance_km, incline_pct=incline_pct, speed_kmh=speed_kmh,
+                               avg_hr=avg_hr, machine_kcal=machine_kcal)}
         return await wrapper.call("edit_entry", EditEntryResult,
                                   lambda account: services.edit_entry(account, kind, entry_id, changes, "claude"))
 
@@ -562,8 +654,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="delete_entry",
         title="Delete an entry",
         description=(
-            "Deletes one of the person's entries. Nothing is erased: restore_entry brings it back. Allowed only "
-            "when the person lets Claude delete; otherwise the answer is not_allowed."
+            "Deletes one of the person's entries. Nothing is erased: restore_entry brings it back, but a delete "
+            "still needs the person's go-ahead first. " + DELETE_RULE + " Allowed only when the person lets Claude "
+            "delete; otherwise the answer is not_allowed."
         ),
         annotations=DELETE,
     )
@@ -573,6 +666,105 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     ) -> Annotated[CallToolResult, DeleteEntryResult]:
         return await wrapper.call("delete_entry", DeleteEntryResult,
                                   lambda account: services.delete_entry(account, kind, entry_id))
+
+    @server.tool(
+        name="find_food",
+        title="Find a food",
+        description=(
+            "Looks a food up before logging it: the person's saved foods and their own recent entries first, "
+            "then the USDA table when it is on. Log a saved or USDA food by its id and an amount, with no kcal: "
+            "Spotter works out the number. With no match and no number from the person, you may estimate: send "
+            "it with estimated true and say so in your reply."
+        ),
+        annotations=READ_ONLY,
+    )
+    async def find_food(
+        query: Annotated[str, Field(description="What the person ate, in their words, such as banana or roti.")],
+        limit: Annotated[int | None, Field(
+            description="How many of each kind of match to return. Leave out for 8.")] = None,
+    ) -> Annotated[CallToolResult, FindFoodResult]:
+        sent = _sent(limit=limit)
+        return await wrapper.call("find_food", FindFoodResult,
+                                  lambda account: services.find_food(account, query, **sent))
+
+    @server.tool(
+        name="log_food",
+        title="Log food",
+        description=(
+            "Records what the person ate, one entry per food, in one call for the whole message. Spotter tags "
+            "each number with who supplied it; you never name the tag. " + FOOD_RULE + " "
+            "Returns the entries, their tags and the day's total. The same set again within 10 minutes is a "
+            "duplicate: nothing is written."
+        ),
+        annotations=WRITE,
+    )
+    async def log_food(
+        entries: Annotated[list[FoodEntryIn], Field(description="Every food in the message, one entry each.")],
+        date: Annotated[str | None, Field(
+            description="The day it was eaten, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
+        allow_repeat: Annotated[bool, Field(
+            description="true logs it even when it matches food logged in the last 10 minutes. Send it only "
+                        "when the person confirms they ate it again.")] = False,
+    ) -> Annotated[CallToolResult, LogFoodResult]:
+        data = _sent(entries=[x.model_dump(exclude_none=True) for x in entries], date=date,
+                     allow_repeat=allow_repeat or None)
+        return await wrapper.call("log_food", LogFoodResult,
+                                  lambda account: services.log_food(account, data, "claude"))
+
+    @server.tool(
+        name="save_food",
+        title="Save a food",
+        description=(
+            "Saves a food the person eats often, with its serving and calories per serving, so it can be logged "
+            "later by id and an amount. Saving the same name again updates it."
+        ),
+        annotations=SETTING,
+    )
+    async def save_food(
+        name: Annotated[str, Field(description="The food's name, as the person says it, such as Roti.")],
+        serving_label: Annotated[str, Field(description="What one serving is, such as 1 roti or 1 bowl.")],
+        kcal_per_serving: Annotated[float, Field(
+            description="Calories in one serving, as the person gave them, 0 to 5,000.")],
+        grams_per_serving: Annotated[float | None, Field(description="Grams in one serving, if known.")] = None,
+    ) -> Annotated[CallToolResult, SaveFoodResult]:
+        data = _sent(name=name, serving_label=serving_label, kcal_per_serving=kcal_per_serving,
+                     grams_per_serving=grams_per_serving)
+        return await wrapper.call("save_food", SaveFoodResult,
+                                  lambda account: services.save_food(account, data, "claude"))
+
+    @server.tool(
+        name="log_cardio",
+        title="Log cardio",
+        description=(
+            "Records one cardio session: the activity, as list_exercises gives it (kind cardio), and minutes, "
+            "with distance and the machine's numbers when the person gave them. Spotter estimates the calories "
+            "from the activity's MET value and the person's current body weight, and shows the machine's "
+            "number beside it. With no weigh-in there is no estimate. The same session again within "
+            "10 minutes is a duplicate: nothing is written."
+        ),
+        annotations=WRITE,
+    )
+    async def log_cardio(
+        exercise: Annotated[str, Field(
+            description="The activity, exactly as list_exercises gives it, such as Treadmill Walk. " + CARDIO_RULE)],
+        minutes: Annotated[float, Field(description="How long it lasted, in minutes, 1 to 600.")],
+        date: Annotated[str | None, Field(
+            description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
+        distance_km: Annotated[float | None, Field(description="The distance in km, if the person gave it.")] = None,
+        incline_pct: Annotated[float | None, Field(description="A treadmill's incline in percent, 0 to 40.")] = None,
+        speed_kmh: Annotated[float | None, Field(description="The speed in km/h, if the person gave it.")] = None,
+        avg_hr: Annotated[int | None, Field(description="Average heart rate in bpm, 30 to 240.")] = None,
+        machine_kcal: Annotated[int | None, Field(
+            description="The calories the machine or watch showed, as the person read them.")] = None,
+        notes: Annotated[str | None, Field(description="How it went, in the person's words.")] = None,
+        allow_repeat: Annotated[bool, Field(
+            description="true logs it even when it matches a session from the last 10 minutes.")] = False,
+    ) -> Annotated[CallToolResult, LogCardioResult]:
+        data = _sent(exercise=exercise, minutes=minutes, date=date, distance_km=distance_km, incline_pct=incline_pct,
+                     speed_kmh=speed_kmh, avg_hr=avg_hr, machine_kcal=machine_kcal, notes=notes,
+                     allow_repeat=allow_repeat or None)
+        return await wrapper.call("log_cardio", LogCardioResult,
+                                  lambda account: services.log_cardio(account, data, "claude"))
 
     @server.resource(
         CAN_AND_CANT_URI,

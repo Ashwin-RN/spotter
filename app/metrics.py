@@ -17,6 +17,11 @@ Strength
   recent_best(points: [(date, value)], today, days=28) -> float | None
       A lift's current estimated max: the best session in the last 28 days, else the latest session.
 
+Cardio
+  cardio_kcal(met, weight_kg, minutes) -> int      MET x 3.5 x kg / 200 x minutes, whole kcal
+  pace(distance_km, minutes) -> str | None         minutes per km as "m:ss"
+  speed(distance_km, minutes) -> float | None      km/h, 2 dp
+
 Training days
   days_since_last(session_dates, today) -> int | None
   sessions_vs_target(session_dates, per_week, since, today) -> {"logged", "target", "pct", "weeks"} | None
@@ -138,6 +143,29 @@ def prs(prior_sets: list[tuple[float, int]], session_sets: list[tuple[float, int
     if now_w is not None and prev_w is not None and now_w > prev_w:
         out.append({"kind": "weight", "value": now_w, "previous": prev_w})
     return out
+
+
+# ---------------------------------------------------------------- cardio
+
+def cardio_kcal(met: float, weight_kg: float, minutes: float) -> int:
+    """Calories for an activity: MET x 3.5 x body weight in kg / 200 x minutes, rounded to a whole
+    number. The MET comes from the 2024 Adult Compendium of Physical Activities (app.exercises)."""
+    return int(round(met * 3.5 * weight_kg / 200 * minutes))
+
+
+def pace(distance_km: float | None, minutes: float) -> str | None:
+    """Minutes per km as "m:ss" (5.6 minutes a km is "5:36"). None without a distance."""
+    if not distance_km:
+        return None
+    seconds = round(minutes * 60 / distance_km)
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def speed(distance_km: float | None, minutes: float) -> float | None:
+    """km per hour from a distance and a time, 2 dp. None without a distance."""
+    if not distance_km or not minutes:
+        return None
+    return round(distance_km / (minutes / 60), 2)
 
 
 # ---------------------------------------------------------------- training days

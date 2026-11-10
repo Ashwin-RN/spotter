@@ -240,6 +240,27 @@ def hostile_calls(user_id, goal_id, entry):
         yield "get_log date", lambda: services.get_log(user_id, bad)
         yield "get_log days", lambda: services.get_log(user_id, None, bad)
         yield "set_claude_can value", lambda: services.set_claude_can(user_id, bad)
+        meal = {"description": "dal", "kcal": 180, "meal": "lunch", "estimated": False}
+        for field in meal:
+            yield f"log_food {field}", lambda f=field: services.log_food(
+                user_id, {"entries": [{**meal, f: bad}], "allow_repeat": True}, "claude")
+        yield "log_food saved_food_id", lambda: services.log_food(
+            user_id, {"entries": [{"saved_food_id": bad, "servings": 1}]}, "claude")
+        yield "log_food usda_fdc_id", lambda: services.log_food(
+            user_id, {"entries": [{"usda_fdc_id": bad, "grams": 100}]}, "claude")
+        yield "log_food entries", lambda: services.log_food(user_id, {"entries": bad}, "claude")
+        yield "log_food date", lambda: services.log_food(user_id, {"entries": [meal], "date": bad}, "claude")
+        saved = {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}
+        for field in saved:
+            yield f"save_food {field}", lambda f=field: services.save_food(user_id, {**saved, f: bad}, "claude")
+        yield "find_food query", lambda: services.find_food(user_id, bad)
+        yield "find_food limit", lambda: services.find_food(user_id, "dal", bad)
+        session = {"exercise": "Elliptical", "minutes": 20, "distance_km": 3, "notes": "n"}
+        for field in session:
+            yield f"log_cardio {field}", lambda f=field: services.log_cardio(
+                user_id, {**session, f: bad, "allow_repeat": True}, "claude")
+        for update in ("calorie_target_kcal", "add_back_exercise_kcal"):
+            yield f"update_settings {update}", lambda u=update: services.update_settings(user_id, {u: bad}, "claude")
         for field in lifts:
             yield f"log_lifts {field}", lambda f=field: services.log_lifts(user_id, {**lifts, f: bad}, "web")
         for field in good_set:
@@ -275,7 +296,7 @@ def test_every_result_survives_utf8_whatever_the_input(user):
             raise AssertionError(f"{label}: {exc}") from exc
         if "error" in result:
             assert result["fix"] and len(json.dumps(result)) < 20_000, label
-    assert calls > 400
+    assert calls > 500
 
 
 # ---------------------------------------------------------------- whoami
@@ -315,9 +336,11 @@ def test_whoami_for_a_missing_account():
 
 def test_list_exercises_and_filters():
     every = services.list_exercises()["exercises"]
-    assert len(every) == len(LIFTS) and every[0] == {"name": "Back Squat", "kind": "lift", "category": "squat"}
-    assert services.list_exercises(kind="lift")["exercises"] == every
-    assert services.list_exercises(kind="cardio")["exercises"] == []
+    assert len(every) == len(LIFTS) + 15
+    assert every[0] == {"name": "Back Squat", "kind": "lift", "category": "squat", "met": None, "compendium_code": None}
+    lifts = services.list_exercises(kind="lift")["exercises"]
+    assert lifts == every[:len(LIFTS)] and all(e["kind"] == "lift" for e in lifts)
+    assert len(services.list_exercises(kind="cardio")["exercises"]) == 15
     pulls = services.list_exercises(category="pull")["exercises"]
     assert pulls and all(e["category"] == "pull" for e in pulls)
     assert services.list_exercises(kind="lift", category="carry")["exercises"][0]["name"] == "Farmer's Carry"
@@ -328,9 +351,10 @@ def test_list_exercises_and_filters():
 
 # ---------------------------------------------------------------- texts name only functions Claude has
 
-# The twelve functions Claude is offered in stage 3. A later stage extends this list.
+# The sixteen functions Claude is offered in stage 4. A later stage extends this list.
 OFFERED = ("whoami", "list_exercises", "get_progress", "get_log", "log_lifts", "log_bodyweight", "set_goal",
-           "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry")
+           "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
+           "find_food", "log_food", "save_food", "log_cardio")
 # Functions that exist but Claude cannot call: every other public service function (get_entry,
 # set_claude_can, which is the Settings page's alone, and entry_kinds).
 NOT_OFFERED = sorted({name for name in services.__all__ if callable(getattr(services, name))} - set(OFFERED))
@@ -412,6 +436,27 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
                 services.restore_entry(user.id, "bodyweight", other_day["id"]),
                 services.restore_entry(user.id, "measurement", waist["id"]),
                 services.delete_entry(user.id, "goal", 1)]
+    # Stage 4: food and cardio, through their main paths and their refusals.
+    roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    meal = {"entries": [{"saved_food_id": roti["id"], "servings": 2}, {"description": "dal", "kcal": 180,
+                                                                         "estimated": True}]}
+    eaten = services.log_food(user.id, meal, "claude")
+    results += [roti, services.save_food(user.id, {"name": "roti", "serving_label": "1", "kcal_per_serving": 110},
+                                         "claude"),
+                eaten, services.log_food(user.id, meal, "claude"),
+                services.log_food(user.id, {"entries": [{"saved_food_id": roti["id"], "kcal": 100}]}, "claude"),
+                services.log_food(user.id, {"entries": [{"usda_fdc_id": 1, "grams": 100}]}, "claude"),
+                services.log_food(user.id, {"entries": [{"description": "x"}]}, "claude"),
+                services.find_food(user.id, "roti"), services.find_food(user.id, ""),
+                services.edit_entry(user.id, "food_entry", eaten["ids"][1], {"kcal": 150}, "claude"),
+                services.edit_entry(user.id, "saved_food", roti["id"], {"name": "x"}, "claude"),
+                services.log_cardio(user.id, {"exercise": "Elliptical", "minutes": 20}, "claude"),
+                services.log_cardio(user.id, {"exercise": "Back Squat", "minutes": 20}, "claude"),
+                services.get_progress(user.id, "Elliptical"),
+                services.update_settings(user.id, {"calorie_target_kcal": 2000, "add_back_exercise_kcal": True},
+                                         "claude"),
+                services.delete_entry(user.id, "saved_food", roti["id"]),
+                services.get_log(user.id)]
 
     assert any(r.get("duplicate") for r in results) and any(r.get("replaced") for r in results)
     assert any(g["status"] == "reached" for g in services.get_progress(user.id)["goals"])

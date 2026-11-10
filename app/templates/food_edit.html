@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ food.name }} · Spotter{% endblock %}
+{% block main %}
+<p><a href="/foods">&larr; Foods</a></p>
+<h1>{{ food.name }}</h1>
+<div class="card">
+  <p class="muted small">What you logged before keeps its kcal: a change here applies from now on.</p>
+  <form method="post" action="/foods/{{ food.id }}/edit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% for field, label, required in [("serving_label", "One serving is", true),
+                                      ("kcal_per_serving", "kcal in one serving", true),
+                                      ("grams_per_serving", "Grams in one serving (optional)", false)] %}
+    {% set value = food[field] %}
+    <label for="food-{{ field }}">{{ label }}</label>
+    <input id="food-{{ field }}" name="{{ field }}" value="{{ (kg(value) if value is number else value) if value is not none else '' }}"{% if required %} required{% endif %} autocomplete="off">
+    {% if errors[field] %}<p class="error">{{ errors[field] }}</p>{% endif %}
+    {% endfor %}
+    <div class="actions"><button class="primary">Save</button><a href="/foods">Cancel</a></div>
+  </form>
+</div>
+{% endblock %}

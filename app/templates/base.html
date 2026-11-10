@@ -25,6 +25,7 @@
     {% endif %}
   </header>
   <main>{% block main %}{% endblock %}</main>
+  {% if attribution %}<footer class="attribution">{{ attribution }}</footer>{% endif %}
   {% if time_zone_missing %}
   <form id="auto-time-zone" method="post" action="/settings" hidden>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

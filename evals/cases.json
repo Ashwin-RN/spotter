@@ -1,0 +1,113 @@
+[
+  {
+    "id": "stated_number",
+    "say": "Lunch: dal, 180 kcal",
+    "expect": {
+      "function": "log_food",
+      "inputs_include": {"entries": [{"kcal": 180}]},
+      "inputs_forbid": {"entries.*.estimated": true}
+    },
+    "db": [{"table": "food_entry", "count": 1, "all": {"source": "you_said", "kcal": 180}}]
+  },
+  {
+    "id": "guessed_number",
+    "say": "Lunch: two rotis and dal",
+    "expect": {
+      "function": "log_food",
+      "inputs_include": {"entries": [{"estimated": true}]},
+      "inputs_forbid": {"entries.*.estimated": false}
+    },
+    "db": [{"table": "food_entry", "all": {"source": "claude_estimate", "estimated": true},
+            "rows": [{"source": "claude_estimate"}]}]
+  },
+  {
+    "id": "saved_food",
+    "say": "Two rotis",
+    "seed": [{"as": "roti", "service": "save_food",
+              "data": {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}}],
+    "expect": {
+      "function": "log_food",
+      "inputs_include": {"entries": [{"saved_food_id": "{{seed.roti}}", "servings": 2}]},
+      "inputs_exclude": ["entries.*.kcal"]
+    },
+    "db": [{"table": "food_entry", "count": 1,
+            "all": {"source": "saved_food", "saved_food_id": "{{seed.roti}}", "servings": 2, "kcal": 240}}]
+  },
+  {
+    "id": "meal_not_asked",
+    "say": "Had a banana, 90 kcal",
+    "expect": {
+      "function": "log_food",
+      "inputs_include": {"entries": [{"kcal": 90}]},
+      "inputs_exclude": ["entries.*.meal"],
+      "reply_lacks": ["which meal", "what meal"]
+    },
+    "db": [{"table": "food_entry", "count": 1, "all": {"source": "you_said", "kcal": 90}}]
+  },
+  {
+    "id": "yesterday",
+    "say": "Weighed 70 kg yesterday",
+    "expect": {
+      "function": "log_bodyweight",
+      "inputs_include": {"kg": 70, "date": "{{yesterday}}"}
+    },
+    "db": [{"table": "bodyweight", "count": 1, "all": {"kg": 70, "date": "{{yesterday}}"}}]
+  },
+  {
+    "id": "treadmill_once",
+    "say": "30 minutes on the treadmill",
+    "expect": {
+      "function": "log_cardio",
+      "inputs_include": {"minutes": 30, "exercise": {"$in": ["Treadmill Walk", "Treadmill Run"]}},
+      "ok_calls": {"log_cardio": 1}
+    },
+    "db": [{"table": "cardio_entry", "count": 1, "all": {"minutes": 30}}]
+  },
+  {
+    "id": "repeat_sent",
+    "say": "Waist 84",
+    "seed": [{"as": "waist", "service": "log_measurement", "data": {"kind": "waist", "value": 84}}],
+    "expect": {
+      "function": "log_measurement",
+      "inputs_include": {"kind": "waist", "value": 84}
+    },
+    "db": [{"table": "measurement", "count": 1, "all": {"kind": "waist", "value": 84}}]
+  },
+  {
+    "id": "delete_ambiguous",
+    "say": "Delete my weigh-in",
+    "switch": "log_delete",
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 72, "date": "{{yesterday}}"}},
+             {"as": "latest", "service": "log_bodyweight", "data": {"kg": 71.5}}],
+    "expect": {
+      "no_call": ["delete_entry"]
+    },
+    "db": [{"table": "bodyweight", "count": 2,
+            "rows": [{"id": "{{seed.earlier}}", "kg": 72}, {"id": "{{seed.latest}}", "kg": 71.5}]}]
+  },
+  {
+    "id": "delete_explicit",
+    "say": "Delete my last weigh-in",
+    "switch": "log_delete",
+    "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 71.5}}],
+    "expect": {
+      "function": "delete_entry",
+      "inputs_include": {"kind": "bodyweight", "entry_id": "{{seed.weigh_in}}"},
+      "ok_calls": {"delete_entry": 1}
+    },
+    "db": [{"table": "bodyweight", "count": 0},
+           {"table": "bodyweight", "state": "deleted", "count": 1, "all": {"id": "{{seed.weigh_in}}", "kg": 71.5}}]
+  },
+  {
+    "id": "unknown_exercise",
+    "say": "Log 3 sets of 8 on the zorbinator at 20 kg",
+    "expect": {
+      "any_of": [
+        {"function": "list_exercises"},
+        {"reply_asks": true}
+      ],
+      "no_call": ["log_lifts"]
+    },
+    "db": [{"table": "lift_session", "count": 0}]
+  }
+]

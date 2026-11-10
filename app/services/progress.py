@@ -16,8 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app import db, links, metrics, rules, users
-from app.models import Goal, User
-from app.services import body, lifts
+from app.models import CardioEntry, Goal, User
+from app.services import body, cardio, lifts
 from app.services.common import exercises, no_account
 from app.services.goals import goal_numbers
 
@@ -28,6 +28,12 @@ HOW = ("estimated max = Epley, from sets of 1 to 10 reps; one point per session 
        f"straight line through the last {metrics.PROJECTION_DAYS // 7} weeks, needing "
        f"{metrics.PROJECTION_MIN_POINTS} points. needed_per_week is the steady change that reaches the target by "
        "its date; actual_per_week is the trend so far. Quote these numbers; do not work out your own.")
+
+
+CARDIO_HOW = ("Calorie estimates are MET x 3.5 x body weight in kg / 200 x minutes, with MET values from the "
+              "2024 Adult Compendium of Physical Activities (estimate.source names the row) and body weight now. "
+              "week is the minutes of the 7 days ending today against the weekly cardio target. "
+              "Quote these numbers; do not work out your own.")
 
 
 def _one(name: str, history: dict, numbers: list[dict], today: date) -> dict:
@@ -56,7 +62,10 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
     {slope_per_week, points_used} | None, goal, goals}, how, links[, note]}.
     Without: {today, lifts [{exercise, sessions, last_trained, current_estimated_max_kg,
     best_estimated_max_kg, slope_per_week, goal_status}], goals, how, links[, note]}.
-    An exercise not on the list gives unknown_exercise with the closest names.
+    A cardio activity: {today, cardio {exercise, sessions [{id, date, minutes, distance_km, pace, estimate,
+    machine_kcal}] (newest first, in the one order), week {minutes, target_minutes}}, how, links[, note]}.
+    week counts all cardio in the 7 days ending today, as the weekly cardio target does.
+    An exercise not on the list (lifts and cardio) gives unknown_exercise with the closest names.
     """
     with db.new_session() as s:
         user = s.get(User, user_id)
@@ -65,10 +74,14 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
         today = users.today_for(user)
         only = None
         if exercise not in (None, ""):
-            names = [e.name for e in exercises(s, "lift")]
+            listed = exercises(s)
+            names = [e.name for e in listed]
             only, _ = rules.match_exercise(exercise, names)
             if only is None:
                 return rules.unknown_exercise(exercise, names)
+            activity = next(e for e in listed if e.name == only)
+            if activity.kind == "cardio":
+                return _cardio(s, user, activity, today)
         history = lifts.history(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                .order_by(Goal.id).options(selectinload(Goal.exercise))))
@@ -95,6 +108,21 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
         if not rows:
             out["note"] = "No lift sessions logged yet."
         return out
+
+
+def _cardio(s, user, activity, today) -> dict:
+    """One cardio activity: its sessions, newest first in the one order, and this week's minutes."""
+    rows = sorted(s.scalars(select(CardioEntry).where(
+        CardioEntry.user_id == user.id, CardioEntry.exercise_id == activity.id, CardioEntry.deleted_at.is_(None))),
+        key=lambda c: metrics.order_key(c.date, c.id, today), reverse=True)
+    sessions = [{k: d[k] for k in ("id", "date", "minutes", "distance_km", "pace", "estimate", "machine_kcal")}
+                for d in (cardio.cardio_dict(c) for c in rows)]
+    out = {"today": today.isoformat(),
+           "cardio": {"exercise": activity.name, "sessions": sessions, "week": cardio.week_minutes(s, user, today)},
+           "how": CARDIO_HOW, "links": {"progress": links.page("progress")}}
+    if not sessions:
+        out["note"] = f"No {activity.name} logged yet."
+    return out
 
 
 # ---------------------------------------------------------------- chart data

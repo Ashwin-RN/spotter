@@ -338,3 +338,46 @@ def test_the_switch_locks_the_user_row_first(user):
         event.remove(engine, "before_cursor_execute", record)
     lock = " ".join(str(lock_statement("sqlite", user.id).compile(dialect=sqlite.dialect())).split())
     assert statements[0] == lock
+
+
+
+# ---------------------------------------------------------------- the targets and add-back (stage 4)
+
+@pytest.mark.parametrize("field,good,low,high", [
+    ("calorie_target_kcal", 2200, 799, 10_001),
+    ("target_sessions_per_week", 4, -1, 15),
+    ("target_cardio_minutes_per_week", 150, -1, 3_001),
+])
+def test_each_target_in_its_range_whole_and_clearable(user, field, good, low, high):
+    r = services.update_settings(user.id, {field: good}, "claude")
+    assert r["changed"] == [field] and getattr(stored(user.id), field) == good and str(good) in r["summary"]
+    for bad in (low, high, good + 0.5, "lots", True):
+        assert services.update_settings(user.id, {field: bad}, "web")["error"] == "invalid_field", bad
+    assert getattr(stored(user.id), field) == good
+    cleared = services.update_settings(user.id, {field: None}, "web")
+    assert cleared["changed"] == [field] and getattr(stored(user.id), field) is None and "cleared" in cleared["summary"]
+    assert services.update_settings(user.id, {field: str(good)}, "web")["changed"] == [field]   # a form's text
+
+
+def test_add_back_takes_a_bool_or_the_webs_form_values(user):
+    assert services.update_settings(user.id, {"add_back_exercise_kcal": True}, "claude")["changed"] == \
+        ["add_back_exercise_kcal"]
+    assert stored(user.id).add_back_exercise_kcal is True
+    assert services.update_settings(user.id, {"add_back_exercise_kcal": "on"}, "web")["changed"] == []
+    off = services.update_settings(user.id, {"add_back_exercise_kcal": "0"}, "web")
+    assert off["changed"] == ["add_back_exercise_kcal"] and "no longer added back" in off["summary"]
+    for bad in ("maybe", 2, None, ["on"]):
+        assert services.update_settings(user.id, {"add_back_exercise_kcal": bad}, "web")["error"] == "invalid_field"
+
+
+def test_the_summary_names_every_change_and_the_switch_is_still_refused(user):
+    r = services.update_settings(user.id, {"time_zone": "Asia/Tokyo", "calorie_target_kcal": 2000,
+                                           "target_sessions_per_week": 3}, "claude")
+    assert r["changed"] == ["time_zone", "calorie_target_kcal", "target_sessions_per_week"]
+    assert r["summary"].startswith("Time zone set to Asia/Tokyo. Calorie target set to 2000 kcal a day. "
+                                   "Weekly sessions target set to 3.")
+    assert set(r) == KEYS
+    both = services.update_settings(user.id, {"calorie_target_kcal": 2100, "claude_can": "log_delete"}, "claude")
+    assert both["error"] == "not_allowed" and stored(user.id).calorie_target_kcal == 2000
+    assert services.whoami(user.id)["targets"] == {"calorie_target_kcal": 2000, "target_sessions_per_week": 3,
+                                                   "target_cardio_minutes_per_week": None}

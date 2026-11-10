@@ -121,9 +121,15 @@ MARKED_CALLS = [
     ("get_log", {"date": MARKER, "days": 3}),
     ("log_measurement", {"kind": MARKER, "value": 84, "date": MARKER}),
     ("edit_entry", {"kind": MARKER, "entry_id": 1, "date": MARKER, "notes": MARKER,
-                    "sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}]}),
+                    "sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}], "meal": MARKER,
+                    "description": MARKER, "exercise": MARKER}),
     ("restore_entry", {"kind": MARKER, "entry_id": 1}),
     ("delete_entry", {"kind": MARKER, "entry_id": 1}),  # refused by the switch at log, before the service
+    ("find_food", {"query": MARKER}),  # a read: it answers, with nothing found
+    ("log_food", {"entries": [{"description": MARKER, "meal": MARKER, "kcal": 100}], "date": MARKER}),
+    ("log_food", {"entries": [{"description": MARKER, "kcal": 100}]}),  # succeeds: the marker is the person's text
+    ("save_food", {"name": MARKER, "serving_label": MARKER, "kcal_per_serving": 100}),  # succeeds
+    ("log_cardio", {"exercise": MARKER, "minutes": 30, "date": MARKER, "notes": MARKER}),
 ]
 
 
@@ -165,7 +171,7 @@ def test_a_marker_in_every_argument_reaches_no_log_row_and_no_log_line(make_clie
     for name, arguments in MARKED_CALLS:
         result = call(client, token, name, arguments)
         errors += result["isError"]
-    assert errors == 11  # the eleven marked calls refused; the other three succeed
+    assert errors == 13  # the thirteen marked calls refused; the other six succeed
     logged = rows()
     assert len(logged) == len(MARKED_CALLS)
     for row in logged:

@@ -1,4 +1,4 @@
-"""The shapes of the twelve MCP functions' arguments and results.
+"""The shapes of the sixteen MCP functions' arguments and results.
 
 Each result model is published as that function's result schema, and the MCP library checks every
 successful result against it. The top-level fields match the service's keys exactly, and a top-level
@@ -23,6 +23,30 @@ class SetIn(BaseModel):
     exercise: str = Field(description="The exercise name, exactly as list_exercises gives it.")
     weight_kg: float = Field(description="The weight lifted in kg, 0 to 500. Use 0 for bodyweight work.")
     reps: int = Field(description="Reps done in this set, a whole number from 1 to 30.")
+
+
+class FoodEntryIn(BaseModel):
+    """One food in a log_food call. There is no tag field: Spotter works out who supplied the number."""
+
+    description: str = Field(description="What was eaten, in the person's words, such as 2 rotis. 1 to 200 characters.")
+    meal: str | None = Field(
+        default=None,
+        description="breakfast, lunch, dinner or snack, only when the person named it. Leave out otherwise: "
+                    "Spotter picks it from their clock.")
+    kcal: float | None = Field(
+        default=None,
+        description="The calories, 0 to 5,000: the person's number, or yours with estimated true. Never with "
+                    "saved_food_id or usda_fdc_id.")
+    estimated: bool | None = Field(
+        default=None,
+        description="true when you worked the kcal out yourself, always. Leave out or false when the person "
+                    "stated it.")
+    saved_food_id: int | None = Field(
+        default=None, description="A saved food's id from find_food. Send servings with it, and no kcal.")
+    servings: float | None = Field(default=None, description="How many servings of the saved food, 0.1 to 50.")
+    usda_fdc_id: int | None = Field(
+        default=None, description="A USDA food's fdc_id from find_food. Send grams with it, and no kcal.")
+    grams: float | None = Field(default=None, description="How many grams of the USDA food, 1 to 5,000.")
 
 
 # ---------------------------------------------------------------- shared pieces
@@ -115,7 +139,8 @@ class WhoamiResult(BaseModel):
 class ExerciseItem(BaseModel):
     name: str = Field(description="The name to use in every other function, exactly as written.")
     kind: str = Field(description="lift or cardio.")
-    category: str = Field(description="squat, hinge, push, pull, carry, core or accessory.")
+    category: str = Field(description="A lift: squat, hinge, push, pull, carry, core or accessory. Cardio: "
+                                      "walk, run, cycle, row, swim, machine or other.")
 
 
 class ExercisesResult(BaseModel):
@@ -270,6 +295,155 @@ class SetGoalResult(BaseModel):
     note: str | None = Field(default=None, description="Present when the goal is closed (hit or dropped).")
 
 
+# ---------------------------------------------------------------- food
+
+class FoodEntryOut(BaseModel):
+    id: int = Field(description="The food entry's id.")
+    date: str = Field(description="The day it was eaten, YYYY-MM-DD.")
+    meal: str = Field(description="breakfast, lunch, dinner or snack.")
+    description: str = Field(description="What was eaten.")
+    kcal: float = Field(description="Its calories.")
+    source: str = Field(
+        description="Who supplied the number: you_said (the person), saved_food (the app, from a saved food), "
+                    "usda (the USDA table) or claude_estimate (your estimate).")
+    estimated: bool = Field(description="True when the number is your estimate.")
+    saved_food_id: int | None = Field(description="The saved food it came from, or null.")
+    servings: float | None = Field(description="Servings of the saved food, or null.")
+    usda_fdc_id: int | None = Field(description="The USDA food it came from, or null.")
+    grams: float | None = Field(description="Grams of the USDA food, or null.")
+
+
+class FoodDay(BaseModel):
+    total_kcal: float = Field(description="Everything eaten on the day, in kcal.")
+    estimated_kcal: float = Field(description="How much of the total is your estimates, in kcal.")
+    estimated_share_pct: float | None = Field(description="The estimated part as a percentage of the total.")
+    target_kcal: int | None = Field(description="The daily calorie target, or null when none is set.")
+    remaining_kcal: float | None = Field(description="Target minus total, or null without a target.")
+    net_kcal: float | None = Field(
+        description="Food minus cardio calories, or null unless the person has turned adding them back on.")
+
+
+class FoodLinks(BaseModel):
+    day: str = Field(description="The page for the day.")
+    foods: str = Field(description="The saved foods page.")
+
+
+class LogFoodResult(BaseModel):
+    model_config = TOP
+
+    kind: str = Field(description="What was logged: food_entry.")
+    ids: list[int] = Field(description="The entries' ids, in the order sent.")
+    duplicate: bool = Field(
+        description="True when the same set of foods was logged in the last 10 minutes. Then nothing was "
+                    "written and these are the earlier entries. Say so.")
+    entries: list[FoodEntryOut] = Field(description="The entries as saved, each with its tag.")
+    day: FoodDay = Field(description="The day's totals after this call.")
+    summary: str = Field(description="What was logged, in one line, ready to quote.")
+    links: FoodLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+    note: str | None = Field(
+        default=None, description="Present when an entry is your estimate, or on a duplicate: what to tell the person.")
+
+
+class SavedFood(BaseModel):
+    id: int = Field(description="The saved food's id: log_food takes it as saved_food_id.")
+    name: str = Field(description="The food's name.")
+    serving_label: str = Field(description="What one serving is.")
+    kcal_per_serving: float = Field(description="Calories in one serving.")
+    grams_per_serving: float | None = Field(description="Grams in one serving, or null.")
+
+
+class SavedFoodLinks(BaseModel):
+    foods: str = Field(description="The saved foods page.")
+
+
+class SaveFoodResult(BaseModel):
+    model_config = TOP
+
+    kind: str = Field(description="What was saved: saved_food.")
+    id: int = Field(description="The saved food's id.")
+    created: bool = Field(description="True when it is new; false when a food of the same name was updated.")
+    food: SavedFood = Field(description="The saved food as it is now.")
+    summary: str = Field(description="What was saved, in one line, ready to quote.")
+    links: SavedFoodLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+
+
+class SavedFoodHit(SavedFood):
+    times_logged: int = Field(description="How often the person has logged it.")
+    last_logged: str | None = Field(description="When they last logged it, YYYY-MM-DD, or null.")
+
+
+class RecentFood(BaseModel):
+    description: str = Field(description="What the person logged before.")
+    kcal: float = Field(description="Its calories then.")
+    source: str = Field(description="you_said or claude_estimate: who supplied that number.")
+    last_logged: str = Field(description="When it was last logged, YYYY-MM-DD.")
+    times: int = Field(description="How often it was logged.")
+
+
+class UsdaFood(BaseModel):
+    fdc_id: int = Field(description="The USDA id: log_food takes it as usda_fdc_id, with grams.")
+    description: str = Field(description="The USDA's name for it.")
+    data_type: str = Field(description="Which USDA data set it comes from.")
+    kcal_per_100g: float = Field(description="Calories in 100 g.")
+
+
+class FindFoodResult(BaseModel):
+    model_config = TOP
+
+    query: str = Field(description="What was looked up.")
+    saved: list[SavedFoodHit] = Field(description="The person's saved foods that match: log one by its id.")
+    recent: list[RecentFood] = Field(
+        description="The person's own earlier entries that match, most frequent first. Their numbers are what "
+                    "was logged then: reuse one only as the person's number if they confirm it.")
+    usda: list[UsdaFood] | None = Field(description="USDA matches, or null when the USDA lookup is off or failed.")
+    usda_note: str | None = Field(description="Why there are no USDA matches, or null.")
+    summary: str = Field(description="What was found, in one line.")
+
+
+# ---------------------------------------------------------------- cardio
+
+class Pace(BaseModel):
+    min_per_km: str = Field(description="Minutes per km, as m:ss.")
+    speed_kmh: float = Field(description="Speed in km/h.")
+
+
+class CardioEstimate(BaseModel):
+    kcal: int = Field(description="The estimated calories: MET x 3.5 x body weight in kg / 200 x minutes.")
+    weight_kg: float = Field(description="The body weight used: the person's current body weight.")
+    met: float = Field(description="The activity's MET value.")
+    source: str = Field(description="Where the MET value comes from: the 2024 Adult Compendium of Physical "
+                                    "Activities, with its code. Name it when you quote the estimate.")
+
+
+class CardioWeek(BaseModel):
+    minutes: float = Field(description="Cardio minutes in the 7 days ending today.")
+    target_minutes: int | None = Field(description="The weekly cardio target, or null when none is set.")
+
+
+class CardioLinks(BaseModel):
+    day: str = Field(description="The page for the day.")
+    progress: str = Field(description="The progress page.")
+
+
+class LogCardioResult(BaseModel):
+    model_config = TOP
+
+    kind: str = Field(description="What was logged: cardio_entry.")
+    id: int = Field(description="The cardio entry's id.")
+    duplicate: bool = Field(
+        description="True when the same session was logged in the last 10 minutes. Then nothing was written. "
+                    "Say so.")
+    entry: dict = Field(description="The cardio entry as saved, with every stored field.")
+    pace: Pace | None = Field(description="The pace, when a distance was given; else null.")
+    estimate: CardioEstimate | None = Field(
+        description="Spotter's calorie estimate, or null when there is no weigh-in to work it from.")
+    machine_kcal: int | None = Field(description="The machine's or watch's number, as the person gave it, or null.")
+    week: CardioWeek = Field(description="Cardio minutes in the 7 days ending today, against the weekly target.")
+    summary: str = Field(description="The session in one line, ready to quote.")
+    links: CardioLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+    note: str | None = Field(default=None, description="Present when there is no estimate, or on a duplicate.")
+
+
 # ---------------------------------------------------------------- get_progress
 
 class EstimatedMaxPoint(BaseModel):
@@ -331,12 +505,29 @@ class ProgressLinks(BaseModel):
     progress: str | None = Field(default=None, description="The progress page (without an exercise).")
 
 
+class CardioSession(BaseModel):
+    id: int = Field(description="The cardio entry's id.")
+    date: str = Field(description="The day, YYYY-MM-DD.")
+    minutes: float = Field(description="How long it lasted.")
+    distance_km: float | None = Field(description="The distance in km, or null.")
+    pace: Pace | None = Field(description="The pace, when a distance was given; else null.")
+    estimate: CardioEstimate | None = Field(description="Spotter's calorie estimate, or null with no weigh-in.")
+    machine_kcal: int | None = Field(description="The machine's or watch's number, or null.")
+
+
+class CardioProgress(BaseModel):
+    exercise: str = Field(description="The cardio activity.")
+    sessions: list[CardioSession] = Field(description="Its sessions, newest first.")
+    week: CardioWeek = Field(description="Its minutes in the 7 days ending today, against the weekly target.")
+
+
 class GetProgressResult(BaseModel):
     model_config = TOP
 
     today: str = Field(description="Today's date for the person, YYYY-MM-DD.")
     lift: LiftDetail | None = Field(default=None, description="With an exercise: that lift in full.")
     lifts: list[LiftLine] | None = Field(default=None, description="Without an exercise: one line per lift logged.")
+    cardio: CardioProgress | None = Field(default=None, description="With a cardio activity: its sessions and week.")
     goals: list[GoalNumbers] | None = Field(default=None, description="Without an exercise: every open goal.")
     how: str = Field(description="How the numbers are worked out.")
     links: ProgressLinks = Field(description="Pages to offer the person. Put links last in a reply.")
@@ -453,17 +644,33 @@ class LogSession(Session):
         description="New bests this session set, against every earlier set of the lift.")
 
 
+class Meals(BaseModel):
+    breakfast: list[FoodEntryOut] = Field(description="Breakfast entries.")
+    lunch: list[FoodEntryOut] = Field(description="Lunch entries.")
+    dinner: list[FoodEntryOut] = Field(description="Dinner entries.")
+    snack: list[FoodEntryOut] = Field(description="Snacks.")
+
+
+class LogFood(FoodDay):
+    meals: Meals = Field(description="The day's food entries, by meal, each with its tag.")
+
+
 class LogDay(BaseModel):
     date: str = Field(description="The day, YYYY-MM-DD.")
     sessions: list[LogSession] = Field(description="The lift sessions on this day, with their sets and new bests.")
     weigh_in: WeighIn | None = Field(description="The day's weigh-in, or null.")
     measurements: list[MeasurementOut] = Field(description="The day's measurements, one per kind at most.")
+    food: LogFood = Field(description="The day's food by meal, with the day's totals.")
+    cardio: list[dict] = Field(
+        description="The day's cardio sessions, each with its activity, pace, estimate and the machine's number.")
 
 
 class LogTotals(BaseModel):
     sessions: int = Field(description="Lift sessions in the range.")
     weigh_ins: int = Field(description="Weigh-ins in the range.")
     measurements: int = Field(description="Measurements in the range.")
+    food_entries: int = Field(description="Food entries in the range.")
+    cardio_entries: int = Field(description="Cardio sessions in the range.")
 
 
 class LogLinks(BaseModel):
@@ -495,4 +702,8 @@ RESULTS = {
     "edit_entry": EditEntryResult,
     "restore_entry": RestoreEntryResult,
     "delete_entry": DeleteEntryResult,
+    "find_food": FindFoodResult,
+    "log_food": LogFoodResult,
+    "save_food": SaveFoodResult,
+    "log_cardio": LogCardioResult,
 }

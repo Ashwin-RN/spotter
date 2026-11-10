@@ -45,6 +45,28 @@
   </form>
 </div>
 <div class="card">
+  <h2>Targets</h2>
+  {% if targets_saved %}<p class="ok">Targets saved.</p>{% endif %}
+  <p class="muted">Leave a target empty to have none: totals then show with nothing to compare against.</p>
+  <form method="post" action="/settings/targets">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% for field, label in [("calorie_target_kcal", "Calories a day (kcal)"),
+                            ("target_sessions_per_week", "Training sessions a week"),
+                            ("target_cardio_minutes_per_week", "Cardio minutes a week")] %}
+    <label for="{{ field }}">{{ label }}</label>
+    <input id="{{ field }}" name="{{ field }}" value="{{ targets[field] }}" inputmode="numeric" autocomplete="off">
+    {% if target_errors[field] %}<p class="error">{{ target_errors[field] }}</p>{% endif %}
+    {% endfor %}
+    <label class="choice">
+      <input type="checkbox" name="add_back_exercise_kcal"{% if user.add_back_exercise_kcal %} checked{% endif %}>
+      <span>Add cardio back: show a net total, food minus cardio calories</span>
+    </label>
+    {% if target_errors.add_back_exercise_kcal %}<p class="error">{{ target_errors.add_back_exercise_kcal }}</p>{% endif %}
+    <button class="primary">Save targets</button>
+  </form>
+</div>
+
+<div class="card">
   <h2>What Claude may do</h2>
   <p class="muted">Only you can change this, here: Claude is never offered this switch.</p>
   {% if switch_saved %}<p class="ok">Saved.</p>{% endif %}

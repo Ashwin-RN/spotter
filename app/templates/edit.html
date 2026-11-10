@@ -14,6 +14,38 @@
     <label for="edit-value">Value</label>
     <input id="edit-value" name="value" value="{{ kg(entry.value) if entry.value is number else entry.value }}" inputmode="decimal" required autocomplete="off">
     {% if errors.value %}<p class="error">{{ errors.value }}</p>{% endif %}
+    {% elif kind == "food_entry" %}
+    <p class="muted small">This number is
+      <span class="tag tag-{{ entry.source }}">{{ source_words.get(entry.source, entry.source) }}</span>.
+      If you change the kcal, it becomes a number you said.</p>
+    <label for="edit-description">Food</label>
+    <input id="edit-description" name="description" value="{{ entry.description }}" maxlength="200" required autocomplete="off">
+    {% if errors.description %}<p class="error">{{ errors.description }}</p>{% endif %}
+    <label for="edit-kcal">kcal</label>
+    <input id="edit-kcal" name="kcal" value="{{ kg(entry.kcal) if entry.kcal is number else entry.kcal }}" inputmode="numeric" required autocomplete="off">
+    {% if errors.kcal %}<p class="error">{{ errors.kcal }}</p>{% endif %}
+    <label for="edit-meal">Meal</label>
+    <select id="edit-meal" name="meal">
+      {% for meal in meals %}<option value="{{ meal }}"{% if entry.meal == meal %} selected{% endif %}>{{ meal.capitalize() }}</option>{% endfor %}
+    </select>
+    {% if errors.meal %}<p class="error">{{ errors.meal }}</p>{% endif %}
+    {% elif kind == "cardio_entry" %}
+    <label for="edit-exercise">Activity</label>
+    <select id="edit-exercise" name="exercise">
+      {% for name in activities %}<option value="{{ name }}"{% if entry.exercise == name %} selected{% endif %}>{{ name }}</option>{% endfor %}
+    </select>
+    {% if errors.exercise %}<p class="error">{{ errors.exercise }}</p>{% endif %}
+    {% for field, label in [("minutes", "Minutes"), ("distance_km", "Distance (km)"), ("incline_pct", "Incline (%)"),
+                            ("speed_kmh", "Speed (km/h)"), ("avg_hr", "Average heart rate"),
+                            ("machine_kcal", "The machine's kcal")] %}
+    <label for="edit-{{ field }}">{{ label }}</label>
+    <input id="edit-{{ field }}" name="{{ field }}" value="{{ (kg(entry[field]) if entry[field] is number else entry[field]) if entry[field] is not none else '' }}" inputmode="decimal" autocomplete="off"{% if field == "minutes" %} required{% endif %}>
+    {% if errors[field] %}<p class="error">{{ errors[field] }}</p>{% endif %}
+    {% endfor %}
+    <label for="edit-notes">Notes</label>
+    <textarea id="edit-notes" name="notes" rows="2">{{ entry.notes or "" }}</textarea>
+    {% if errors.notes %}<p class="error">{{ errors.notes }}</p>{% endif %}
+    {% if entry.estimated_kcal is not none %}<p class="muted small">Calorie estimate now: {{ kg(entry.estimated_kcal) }} kcal. It is worked out again when you save.</p>{% endif %}
     {% else %}
     <label for="edit-notes">Notes</label>
     <textarea id="edit-notes" name="notes" rows="3">{{ entry.notes or "" }}</textarea>

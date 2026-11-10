@@ -48,12 +48,15 @@ KIND_LABELS = {
     "lift_session": ("lift session", "the id that log_lifts returned, or one from get_log"),
     "bodyweight": ("weigh-in", "the id that log_bodyweight returned, or one from get_log"),
     "measurement": ("measurement", "the id that log_measurement returned, or one from get_log"),
+    "food_entry": ("food entry", "an id that log_food returned, or one from get_log"),
+    "cardio_entry": ("cardio entry", "the id that log_cardio returned, or one from get_log"),
+    "saved_food": ("saved food", "the id that save_food returned, or one from find_food"),
     "goal": ("goal", "the id that set_goal returned, or a goal_id from get_progress"),
 }
 
 # Every write, by the name its call-log rows carry (the MCP name, which the web uses too).
-WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "set_goal", "update_settings",
-                   "edit_entry", "delete_entry", "restore_entry")
+WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                   "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry")
 WRITE_LIMIT = 120
 WRITE_WINDOW_MINUTES = 10
 
