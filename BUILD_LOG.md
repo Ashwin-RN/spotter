@@ -251,3 +251,26 @@ Two reviewers at once, one over the services, migration and MCP surface, one ove
 | No test read the CSRF token from the Undo form | The test posts the rendered form's own token |
 | The Today-in-your-zone test passed with the machine's date, since UTC+14 agrees most of the day | The clock is frozen at a moment where they differ |
 | Two `next` checks had no test | Added |
+
+### Exit test
+
+Run live by an agent driving the person's own browser: a new Claude chat with the Spotter connector in one tab, the Today page reloaded in another after every step.
+
+| Check | Status |
+|---|---|
+| The full suite is green, plain and with warnings as errors, on a clean export | Done: 980 tests |
+| "Log back squat, 3×5 at 60" shows on Today after one reload | Done: a second session beside the morning's |
+| "It was 65, not 60" | Done: Today shows 65, with two new-best lines |
+| "Delete that session" with the switch at log | Done: Claude called delete, the server refused it, Claude explained and linked Settings. The block was the server's, which is the point |
+| Switch to "log and delete" on Settings, "Delete it" | Done: the client asked to allow the destructive tool once, then the session was gone |
+| "Restore it" | Done: back, with its bests |
+| "Waist 84", then "Waist 84" again | First shown. Second: Claude answered from the conversation without calling Spotter, so the server's duplicate check for measurements was not observed live; it is covered by the suite and by the reviewer's run through MCP |
+| Switch set back to log | Done |
+
+Two things the run showed about the model rather than the server. After the edit to 65 kg, Claude did not mention the new bests the page shows: the edit result says bests come from history rather than listing them. And on the repeated "Waist 84", Claude judged the repeat itself instead of sending it. Both go to the eval set and the reply-shape stage.
+
+### What this stage taught
+
+- **A limit counted after the fact is not a limit under load.** The write limit counted call-log rows that were written when a call finished. Six calls arriving together all passed the count before any row existed. Writing the row before the call runs, under the same lock the writes queue on, closed it, at the price of one more row update per call.
+- **A reviewer's time is best spent where the contract is newest.** Both reviewers were pointed at the new rules first (the switch, the limit, the edit rules, `next`), and that is where the findings were. The parts carried from stage 2 produced none.
+- **The model can answer from the conversation instead of calling the server.** A repeated "Waist 84" never reached Spotter; Claude said it was already logged, which happened to be true. The duplicate guard protects against retries the model does send, not against the model deciding for itself. An eval case has to check the call was made.
