@@ -183,6 +183,17 @@ The first live sign-in showed the mistake at once. The Settings page asked the p
 
 The fix is one ordering rule, written once and used by every reader: entries are ordered by effective date (the entry's own date, or today when it is later), and within a date by the order they were logged. "Latest", "previous" and "newest first" all mean that order. Stored dates are still what is shown.
 
+### Exit test
+
+| Check | Status |
+|---|---|
+| The full suite is green | Done: 739 tests, plain and with warnings as errors, on a clean export |
+| The cross-user test passes, through the services and through MCP | Done: in the suite, and the reviewer ran 20 simultaneous calls from two people against a real server |
+| Live: the sign-in id on Settings equals `whoami.user_id`, and the account id is the same | Web side seen: Settings shows the stage 1 sign-in id and account 1. Claude logged into account 1 as session 1 |
+| Live: `log_lifts` from Claude, then the same message again, reports a duplicate | Done: the second call wrote nothing and named the first session |
+
+The live run found one wording problem. A lift's first session has nothing to beat, so it sets no best, and the summary said "No new bests." Claude read that as a bug and told the person so. The summary now says "First Back Squat session: estimated max 70 kg is the mark to beat."
+
 ### What this stage has taught so far
 
 - **The host did not read the repo's deploy file.** The first deploy of package A succeeded and the database stayed empty: the migration step had never run. The host has retired config files for new services, so the start command, the pre-deploy step and the health check now live in its dashboard. The check that caught it was looking at the database itself, not at the green deploy.
@@ -193,6 +204,7 @@ The fix is one ordering rule, written once and used by every reader: entries are
 - **A passing isolation test does not prove every query is scoped.** With the owner filter removed from two helper queries, the suite stayed green. Undoing each filter and watching for a red test is what found them.
 - **Walk the first-use path before fixing a stage's function list.** Every stage 2 test passed, every review came back sound, and the first thing a real person saw was a form asking for an IANA zone name. No test or reviewer was asked "what does a new person have to do by hand, and could the software do it?" That question now opens every stage contract.
 - **A safe filter stops being safe when the thing it compares against can move.** Every read kept only entries dated up to today. That hid nothing while today only went forward. Letting the time zone change let today go back a day, and yesterday's filter hid this morning's weigh-in. Removing the filter was half the fix: the same assumption sat in every sort, and it took a second review to find it there.
+- **A true result can still be misread by the model that relays it.** "No new bests" was correct for a first session, and Claude called it a bug. Every result text is read by a model before a person sees it, so a result that is right for a non-obvious reason has to say the reason.
 - **A fix is new code, and it needs its own review.** The first review of the services found the crashes. The review of the fixes found a contradiction the fixes themselves had introduced.
 - **A library can log on your behalf.** The MCP library set up logging at INFO when the server was built, and one of its lines repeated a name chosen by the caller. Spotter's own "no content in the logs" rule did not cover lines it never wrote, until a reviewer read the real log.
 - **Matching a shell command with one pattern does not work.** The command arrives inside a JSON string, so quotes are escaped, and no single pattern told `bash -c "git commit"` from `--grep="git commit"`. Splitting into shell words did.

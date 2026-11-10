@@ -37,6 +37,17 @@ def best_text(p: dict) -> str:
     return f"{p['exercise']} {BEST_LABELS.get(p['kind'], p['kind'])} {p['value']:g} kg (was {p['previous']:g} kg)"
 
 
+def first_text(lift: str, lift_sets: list[tuple[float, int]]) -> str:
+    """'First Back Squat session: estimated max 70 kg is the mark to beat.' Heaviest weight when no set
+    is 1 to 10 reps; nothing to measure when no set counts at all."""
+    estimate, heaviest = metrics.session_best(lift_sets), metrics.max_weight(lift_sets)
+    if estimate is not None:
+        return f"First {lift} session: estimated max {estimate:g} kg is the mark to beat."
+    if heaviest is not None:
+        return f"First {lift} session: {heaviest:g} kg is the mark to beat."
+    return f"First {lift} session."
+
+
 def sets_text(sets: list[tuple[str, float, int]]) -> str:
     """'Back Squat 3 × 5 @ 80 kg; Bench Press 60 kg × 5, 60 kg × 4' from (exercise, weight, reps), in order."""
     groups: dict[str, list[tuple[float, int]]] = {}
@@ -170,6 +181,14 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         s.flush()
 
         summary = f"{on.isoformat()}: {sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets])}."
-        summary += (" New bests: " + "; ".join(p["text"] for p in new_bests) + ".") if new_bests else " No new bests."
+        # A lift's first session has nothing to beat, so it sets the mark rather than a best; the
+        # summary says so, or "No new bests" reads as a missed one.
+        firsts = [first_text(lift, lift_sets) for lift, lift_sets in grouped.items() if not prior.get(lift)]
+        if new_bests:
+            summary += " New bests: " + "; ".join(p["text"] for p in new_bests) + "."
+        if firsts:
+            summary += " " + " ".join(firsts)
+        if not new_bests and not firsts:
+            summary += " No new bests."
         return {"kind": KIND, "id": session.id, "duplicate": False, "session": session_dict(session),
                 "new_bests": new_bests, "summary": summary, "links": _links(on, lifts)}

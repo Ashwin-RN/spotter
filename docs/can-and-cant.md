@@ -18,6 +18,8 @@ Exercise names come from one shared list. Use them exactly as `list_exercises` g
   not a tested one-rep max.
 - **Current estimated max** is the best session in the last 28 days, or the latest session's when none
   is that recent.
+- **A new best** beats every earlier set of that lift. A lift's first session has nothing to beat, so
+  it sets the mark and is never a new best; `log_lifts` says so in its summary.
 - **Body weight now** is the 7-day average, or the latest weigh-in when the last 7 days have none.
 - **Trends and projections** are a straight line through the last 6 weeks. They need 4 points. They
   say where the line goes, not whether that pace is realistic.

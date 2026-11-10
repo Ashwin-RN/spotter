@@ -53,6 +53,18 @@ def log(user, *rows, by="claude", **data):
 
 # ---------------------------------------------------------------- logging
 
+def test_the_summary_tells_a_first_session_from_no_new_best(user):
+    first = log(user, ("Back Squat", 60, 5))
+    assert first["new_bests"] == [] and first["summary"].endswith("First Back Squat session: estimated max 70 kg is the mark to beat.")
+    same = log(user, ("Back Squat", 60, 5), allow_repeat=True)
+    assert same["new_bests"] == [] and same["summary"].endswith(" No new bests.") and "First" not in same["summary"]
+    mixed = log(user, ("Back Squat", 70, 5), ("Deadlift", 80, 12))
+    assert [p["kind"] for p in mixed["new_bests"]] == ["estimated_max", "weight"]
+    assert mixed["summary"].endswith("New bests: Back Squat estimated max 81.67 kg (was 70 kg); Back Squat heaviest weight "
+                                     "70 kg (was 60 kg). First Deadlift session: 80 kg is the mark to beat.")
+
+
+
 def test_log_lifts_numbers_sets_per_exercise_and_links_each_lift(user):
     r = log(user, ("back squat", 60, 5), ("Back Squat", 60, 5), ("Deadlift", 80, 5), ("Back Squat", 60, 4),
             notes="  good depth ")
@@ -68,7 +80,9 @@ def test_log_lifts_numbers_sets_per_exercise_and_links_each_lift(user):
     assert r["links"] == {"day": f"{SITE}/day/{today}",
                           "progress": {"Back Squat": f"{SITE}/progress/back-squat",
                                        "Deadlift": f"{SITE}/progress/deadlift"}}
-    assert r["summary"].startswith(f"{today}: Back Squat ") and "No new bests." in r["summary"]
+    assert r["summary"].startswith(f"{today}: Back Squat ") and "No new bests" not in r["summary"]
+    assert ("First Back Squat session: estimated max 70 kg is the mark to beat. "
+            "First Deadlift session: estimated max 93.33 kg is the mark to beat." in r["summary"])
     with db.new_session() as s:
         row = s.get(LiftSession, r["id"])
         assert row.user_id == user.id and row.logged_by == "claude" and len(row.dedupe_key) == 64

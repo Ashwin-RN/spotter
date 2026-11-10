@@ -168,7 +168,8 @@ class LogLiftsResult(BaseModel):
     new_bests: list[NewBest] = Field(
         description="New bests this session set, against every earlier set of the lift. A lift's first session "
                     "never sets one. Empty on a duplicate.")
-    summary: str = Field(description="The session in one line, with its new bests, ready to quote.")
+    summary: str = Field(description="The session in one line, ready to quote: its new bests, or for a lift's "
+                                     "first session the mark it sets (a first session is never a new best).")
     links: LiftLinks = Field(description="Pages to offer the person. Put links last in a reply.")
     note: str | None = Field(default=None, description="Present on a duplicate: what happened and what to do.")
 
