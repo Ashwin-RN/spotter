@@ -1501,7 +1501,10 @@ def test_editing_a_weigh_in_moves_it_and_returns_to_its_new_day(client, stocked)
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}?saved=bodyweight"
     row = next(b for b in rows(Bodyweight, only_user().id) if b.id == stocked["weigh_in"])
     assert (row.kg, row.date.isoformat(), row.deleted_at) == (77.95, two_days_ago, None)
-    assert "77.95\u00a0kg" in day_of(client, two_days_ago) and "78.4" not in day_of(client, stocked["today"].isoformat())
+    # Today's glance block shows the 7-day average of 77.95 and 78.9, 78.4 kg, so the moved weigh-in's old figure
+    # is looked for in the rest of the page.
+    assert "77.95\u00a0kg" in day_of(client, two_days_ago)
+    assert "78.4" not in without_glance(day_of(client, stocked["today"].isoformat()))
 
 
 def test_editing_a_measurement_changes_its_value(client, stocked):
@@ -3244,13 +3247,20 @@ def test_each_wrapper_holds_exactly_its_cards_and_the_banner_spans_the_page(clie
     address = address.format(today=today.isoformat(), yesterday=(today - timedelta(days=1)).isoformat())
     main = next(iter(parse(day_of(client, address)).find_all("main")))
     children = main.elements()
+    # The glance block sits between the Today card and col-main, on today's page only (section L, Today).
+    glance = [("div", "glance")] if address.startswith(today.isoformat()) else []
     assert [shape(c) for c in children] == [("div", "page-head"), ("p", "notice", "sample-banner"), ("p", "ok"),
-                                            ("section", "card", "hero"), ("div", "col-main"), ("div", "col-side")]
+                                            ("section", "card", "hero"), *glance, ("div", "col-main"),
+                                            ("div", "col-side")]
     head, banner = children[0], children[1]
     assert not head.find_all(cls="sample-banner") and banner.parent is main
-    assert card_titles(children[4]) == ["Food"] and len(children[4].elements()) == 1
-    assert card_titles(children[5]) == ["Lifts", "Cardio", "Weigh-in", "Measurements"]
-    assert len(children[5].elements()) == 4
+    main_col, side = children[-2], children[-1]
+    assert card_titles(main_col) == ["Food"] and len(main_col.elements()) == 1
+    assert card_titles(side) == ["Lifts", "Cardio", "Weigh-in", "Measurements"]
+    assert len(side.elements()) == 4
+    if glance:  # the tiles, then the sheets they open, and nothing else yet
+        inside = [shape(c)[:2] for c in children[4].elements()]
+        assert inside[0] == ("div", "tiles") and inside[1:] and set(inside[1:]) == {("div", "sheet")}
 
 
 def test_todays_h1_is_today_with_the_day_under_it(client, monkeypatch):
@@ -4692,3 +4702,412 @@ def test_the_edit_selects_offer_every_meal_and_every_activity(client, every_kind
                   if f["name"] == "exercise"]
     names = [e["name"] for e in services.list_exercises("cardio")["exercises"]]
     assert activity["options"] == [(name, name) for name in names] and len(names) >= 15
+
+
+# ---------------------------------------------------------------- stage 6, step 4: Today's tiles and sheets
+
+FIXED_NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)  # the contract's fixed day, a Tuesday
+NB = " "
+CONTROLS = ("a", "button", "input", "select", "textarea")
+
+
+def without_glance(page: str) -> str:
+    """The day page with its glance block cut out: what the rest of the page shows."""
+    if '<div class="glance">' not in page:
+        return page
+    return page[:page.index('<div class="glance">')] + page[page.index('<div class="col-main">'):]
+
+
+def glance_node(page: str):
+    """div.glance read as a tree, or None."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    found = parse(page).find_all("div", "glance")
+    return found[0] if found else None
+
+
+def slot(node, cls: str) -> str | None:
+    found = node.find_all(cls=cls)
+    return found[0].text() if found else None
+
+
+def tiles_of(page: str) -> list[dict]:
+    """Each element in div.tiles, in markup order: the controls, their twins and the plain tiles."""
+    [grid] = glance_node(page).find_all("div", "tiles")
+    return [{"tag": t.tag, "classes": t.classes, "attrs": t.attrs, "name": slot(t, "sr"), "value": slot(t, "tile-value"),
+             "label": slot(t, "tile-label"), "note": slot(t, "tile-note"), "text": t.text(),
+             "tags": t.find_all(cls="tag"), "node": t} for t in grid.elements()]
+
+
+def sheets_of(page: str) -> dict:
+    """Each sheet in the glance block, by its id, read as a person reads it."""
+    out = {}
+    for s in glance_node(page).find_all("div", "sheet"):
+        tables = s.find_all("table")
+        rows = [r for r in tables[0].find_all("tr") if r.elements()[0].tag == "td"] if tables else []
+        panels = s.find_all("div", "panel")
+        out[s.attrs["id"]] = {
+            "node": s, "period": slot(s, "period"), "giant": slot(s, "giant"), "title": slot(s, "noun"),
+            "sentence": slot(s, "sentence"),
+            "panel": [e.text() if e.tag != "svg" else "svg" for e in panels[0].elements()] if panels else None,
+            "svg": s.find_all("svg"),
+            "head": [c.text() for c in tables[0].find_all("th")] if tables else None,
+            "rows": [[(c.text(), c.classes) for c in r.elements()] for r in rows],
+            "middle": [shape(e)[:2] for e in s.elements()[3:-1]]}
+    return out
+
+
+def sheet_frame_findings(sheet: dict, sid: str, link: str) -> list[str]:
+    """The sheet's frame (section L, the components and Today): a popover dialog named by its title, the head
+    with the grab and the bar, the close button the first control with its two attributes, the number and the
+    title, then the caller's part, the Open Progress link last. No form, every table in its wrap."""
+    node, out = sheet["node"], []
+    if (node.attrs.get("popover"), node.attrs.get("role"), node.attrs.get("aria-labelledby")) != (
+            "", "dialog", f"{sid}-title"):
+        out.append(f"not a dialog popover named by its title: {node.attrs}")
+    kids = node.elements()
+    head = kids[0].elements() if kids else []
+    if shape(kids[0]) != ("div", "sheet-head") or [shape(e) for e in head] != [("div", "grab"), ("div", "sheet-bar")] \
+            or head[0].attrs.get("aria-hidden") != "true":
+        out.append("no sheet-head holding the grab and the bar")
+    bar = head[1].elements() if len(head) == 2 else []
+    close = {"class": "close", "type": "button", "popovertarget": sid, "popovertargetaction": "hide", "autofocus": ""}
+    if not bar or bar[0].tag != "button" or bar[0].attrs != close or bar[0].text() != "Close":
+        out.append(f"the close button is not first in the bar: {bar[0].attrs if bar else None}")
+    if len(bar) != 2 or shape(bar[1]) != ("p", "period"):
+        out.append("no period after the close button")
+    controls = [n for n in node.iter() if n.tag in CONTROLS]
+    if not controls or not bar or controls[0] is not bar[0]:
+        out.append("the close button is not the sheet's first control")
+    if [shape(k) for k in kids[1:3]] != [("p", "giant"), ("h2", "noun")] or kids[2].attrs.get("id") != f"{sid}-title":
+        out.append("no number then its title")
+    last = kids[-1]
+    anchor = last.elements()
+    if shape(last) != ("p", "sheet-link") or len(anchor) != 1 \
+            or anchor[0].attrs != {"class": "button secondary", "href": link} or anchor[0].text() != "Open Progress":
+        out.append("the sheet does not end with its secondary Open Progress link")
+    if node.find_all("form") or node.find_all("input"):
+        out.append("a sheet holds a form")
+    out += [f"a table outside div.table-wrap: {t.text()[:30]!r}" for t in node.find_all("table")
+            if not t.parent.is_("div", "table-wrap")]
+    return out
+
+
+@pytest.fixture
+def fixed_day(client, monkeypatch):
+    """The contract's fixed day: sample data, the clock pinned to Tuesday 10 November 2026."""
+    sign_in(client)
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    assert "error" not in services.add_sample_data(only_user().id, "web")
+    return day_of(client, "2026-11-10")
+
+
+def test_the_three_tiles_on_the_fixed_day_carry_section_ls_figures_and_words(fixed_day):
+    """Section L's tile table, against the fixed-day values of the read table: 79.22 shown "79.2", a rate of
+    -0.24, 2,216 over 7 days and 3 sessions. Each tile that opens a sheet is a button, then its twin link."""
+    shown = [(t["tag"], t["classes"], t["name"], t["value"], t["label"], t["note"]) for t in tiles_of(fixed_day)]
+    weight = ("Weight:", "79.2", "kg trend", f"-0.24{NB}kg a week")
+    calories = ("Eaten a day:", "2,216", "kcal eaten a day", "last 7 days")
+    training = ("Training:", "3", "lift sessions", "last 7 days")
+    assert shown == [("button", ["tile", "tile-weight"], *weight), ("a", ["tile", "tile-weight", "tile-link"], *weight),
+                     ("button", ["tile", "tile-calories"], *calories),
+                     ("a", ["tile", "tile-calories", "tile-link"], *calories),
+                     ("button", ["tile", "tile-training"], *training),
+                     ("a", ["tile", "tile-training", "tile-link"], *training)]
+    assert '<span class="tile-note">-0.24&nbsp;kg a week</span>' in fixed_day  # the held fix: a no-break space
+
+
+def test_each_tile_button_has_a_twin_link_to_its_part_of_progress_with_the_same_words(fixed_day):
+    shown = tiles_of(fixed_day)
+    buttons, twins = shown[0::2], shown[1::2]
+    assert [b["attrs"] for b in buttons] == [
+        {"class": f"tile tile-{v}", "type": "button", "popovertarget": f"sheet-{v}"}
+        for v in ("weight", "calories", "training")]
+    assert [a["attrs"] for a in twins] == [
+        {"class": "tile tile-weight tile-link", "href": "/progress#body-weight"},
+        {"class": "tile tile-calories tile-link", "href": "/progress#trends"},
+        {"class": "tile tile-training tile-link", "href": "/progress#trends"}]
+    for b, a in zip(buttons, twins):
+        assert a["text"] == b["text"] and a["text"]
+    assert all(t["tags"] == [] for t in shown)  # no tile holds a sample tag, nor any tag
+
+
+def test_the_weight_sheet_on_the_fixed_day(fixed_day):
+    sheet = sheets_of(fixed_day)["sheet-weight"]
+    assert sheet_frame_findings(sheet, "sheet-weight", "/progress#body-weight") == []
+    assert (sheet["period"], sheet["giant"], sheet["title"]) == ("Last 4 weeks", f"79.2{NB}kg", "Weight trend")
+    assert sheet["sentence"] == (f"The trend moved -0.24{NB}kg a week from 27 Oct to 10 Nov. The 7-day average is "
+                                 f"79{NB}kg, from 28 weigh-ins in 28 days.")
+    assert sheet["middle"] == [("p", "sentence"), ("div", "panel"), ("div", "table-wrap")]
+    assert sheet["panel"] == ["Smoothed weight", "svg"]
+    [svg] = sheet["svg"]
+    assert svg.attrs["id"] == "chart-weight-sheet" and svg.attrs["role"] == "img"
+    assert [e.tag for e in svg.elements()][:2] == ["title", "desc"]
+    assert sheet["head"] == ["Quantity", "Value", "Remark"]
+    assert sheet["rows"] == [
+        [("Smoothed trend", []), (f"79.2{NB}kg", ["num"]), ("Evens out day-to-day swings", ["remark"])],
+        [("7-day average", []), (f"79{NB}kg", ["num"]), ("Last 7 days", ["remark"])],
+        [("Rate", []), (f"-0.24{NB}kg a week", ["num"]), ("27 Oct to 10 Nov", ["remark"])],
+        [("Weigh-ins", []), ("28", ["num"]), ("In the last 28 days", ["remark"])]]
+
+
+def test_the_calories_sheet_on_the_fixed_day(fixed_day):
+    sheet = sheets_of(fixed_day)["sheet-calories"]
+    assert sheet_frame_findings(sheet, "sheet-calories", "/progress#trends") == []
+    assert (sheet["period"], sheet["giant"], sheet["title"]) == ("Last 7 days", f"2,216{NB}kcal",
+                                                                 "Eaten a day, on average")
+    assert sheet["sentence"] == (f"Over the last 28 days it is 2,196{NB}kcal a day, and 41% of it is estimates. "
+                                 "No calorie target is set.")
+    assert sheet["middle"] == [("p", "sentence"), ("div", "panel"), ("div", "table-wrap")]
+    assert sheet["panel"] == ["Each day", "svg"]
+    [svg] = sheet["svg"]
+    assert svg.attrs["id"] == "chart-calories-sheet" and svg.attrs["role"] == "img"
+    assert sheet["head"] == ["Quantity", "Value", "Remark"]
+    assert sheet["rows"] == [
+        [("Eaten a day", []), (f"2,216{NB}kcal", ["num"]), ("Last 7 days, 7 logged", ["remark"])],
+        [("Eaten a day", []), (f"2,196{NB}kcal", ["num"]), ("Last 28 days, 28 logged", ["remark"])],
+        [("From estimates", []), ("41%", ["num"]), ("Last 28 days", ["remark"])],
+        [("Calorie target", []), ("", ["num"]), ("Not set. Set one on Settings.", ["remark"])]]
+
+
+def test_the_training_sheet_on_the_fixed_day(fixed_day):
+    sheet = sheets_of(fixed_day)["sheet-training"]
+    assert sheet_frame_findings(sheet, "sheet-training", "/progress#trends") == []
+    assert (sheet["period"], sheet["giant"], sheet["title"]) == ("Last 7 days", "3", "Lift sessions")
+    assert sheet["sentence"] == (f"3 a week over the last 4 weeks. Cardio came to 85{NB}min in the last 7 days, and "
+                                 f"85{NB}min a week over 4 weeks. No session or cardio target is set.")
+    assert sheet["middle"] == [("p", "sentence"), ("div", "table-wrap")] and sheet["svg"] == []
+    assert sheet["head"] == ["Week ending", "Lift sessions", "Cardio (min)"]  # four weeks, oldest first, no Remark
+    assert sheet["rows"] == [[(day, []), ("3", ["num"]), (minutes, ["num"])] for day, minutes in (
+        ("Tue 20 Oct", "86"), ("Tue 27 Oct", "86"), ("Tue 3 Nov", "85"), ("Tue 10 Nov", "85"))]
+
+
+def test_the_glance_reads_as_text_says_no_claude_and_holds_no_form_or_sample_tag(fixed_day):
+    glance = glance_node(fixed_day)
+    assert glued(glance) == []  # a name never touches its figure
+    pieces = [p.text for p in tr.html_text(fixed_day[fixed_day.index('<div class="glance">'):
+                                                     fixed_day.index('<div class="col-main">')])]
+    assert pieces and not any(re.search(r"claude", t, re.I) for t in pieces)
+    assert not glance.find_all("form") and not glance.find_all(cls="tag-sample") and not glance.find_all(cls="tag")
+    assert fixed_day.count("tag-sample") == without_glance(fixed_day).count("tag-sample") > 0
+
+
+def test_a_new_account_shows_the_empty_tiles_and_trainings_true_zero(client):
+    sign_in(client)
+    page = day_of(client, today_of(only_user()).isoformat())
+    shown = tiles_of(page)
+    assert [(t["tag"], t["classes"], t["value"], t["label"], t["note"]) for t in shown] == [
+        ("div", ["tile", "tile-weight", "is-empty"], "No weigh-ins yet", None, None),
+        ("div", ["tile", "tile-calories", "is-empty"], "No food in the last 28 days", None, None),
+        ("button", ["tile", "tile-training"], "0", "lift sessions", "last 7 days"),
+        ("a", ["tile", "tile-training", "tile-link"], "0", "lift sessions", "last 7 days")]
+    assert '<span class="tile-value">No <span class="nowrap">weigh-ins</span> yet</span>' in page
+    assert [t["attrs"] for t in shown[:2]] == [{"class": "tile tile-weight is-empty"},
+                                               {"class": "tile tile-calories is-empty"}]
+    sheets = sheets_of(page)
+    assert list(sheets) == ["sheet-training"] and "sheet-weight" not in page and "sheet-calories" not in page
+    sheet = sheets["sheet-training"]
+    assert sheet_frame_findings(sheet, "sheet-training", "/progress#trends") == []
+    assert sheet["giant"] == "0" and sheet["sentence"] == (
+        f"0 a week over the last 4 weeks. Cardio came to 0{NB}min in the last 7 days, and 0{NB}min a week over 4 "
+        "weeks. No session or cardio target is set.")
+    assert [[c[0] for c in r[1:]] for r in sheet["rows"]] == [["0", "0"]] * 4
+
+
+def test_food_in_28_days_but_none_in_7_empties_the_calories_tile_and_opens_no_sheet(client):
+    sign_in(client)
+    ten_ago = (today_of(only_user()) - timedelta(days=10)).isoformat()
+    assert "error" not in services.log_food(only_user().id, {"date": ten_ago, "entries": [
+        {"description": "Dal", "kcal": 400}]}, "claude")
+    page = day_of(client, today_of(only_user()).isoformat())
+    [calories] = [t for t in tiles_of(page) if "tile-calories" in t["classes"]]
+    assert (calories["tag"], calories["classes"], calories["value"], calories["label"], calories["note"]) == (
+        "div", ["tile", "tile-calories", "is-empty"], "No food in the last 7 days", None, None)
+    assert "sheet-calories" not in page and 'popovertarget="sheet-calories"' not in page
+    assert list(sheets_of(page)) == ["sheet-training"]
+
+
+@pytest.mark.parametrize("state, opens", [
+    ("new", ["sheet-training"]),
+    ("food", ["sheet-calories", "sheet-training"]),
+    ("weighed", ["sheet-weight", "sheet-training"]),
+    ("old food and an old weigh-in", ["sheet-weight", "sheet-training"]),
+    ("both", ["sheet-weight", "sheet-calories", "sheet-training"]),
+])
+def test_which_tiles_open_a_sheet_state_by_state(client, state, opens):
+    """Training always opens its sheet. Weight opens one with any weigh-in, even none in 28 days. Calories
+    opens one only with food in the last 7 days. A tile without a sheet is an empty div, never a control."""
+    sign_in(client)
+    uid, today = only_user().id, today_of(only_user())
+    ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
+    if state in ("food", "both"):
+        services.log_food(uid, {"entries": [{"description": "Dal", "kcal": 400}]}, "claude")
+    if state in ("weighed", "both"):
+        services.log_bodyweight(uid, {"kg": "80"}, "claude")
+    if state == "old food and an old weigh-in":
+        assert "error" not in services.log_food(uid, {"date": ago(10), "entries": [{"description": "Dal", "kcal": 400}]},
+                                                "claude")
+        services.log_bodyweight(uid, {"kg": "80", "date": ago(40)}, "claude")
+    page = day_of(client, today.isoformat())
+    shown = tiles_of(page)
+    assert [t["attrs"].get("popovertarget") for t in shown if t["tag"] == "button"] == opens
+    assert list(sheets_of(page)) == opens
+    assert [t["tag"] for t in shown].count("a") == len(opens) and len(shown) == 3 + len(opens)
+    for t in shown:
+        if t["tag"] == "div":
+            assert "is-empty" in t["classes"] and t["label"] is None and "popovertarget" not in t["attrs"]
+
+
+def test_one_weigh_in_has_no_rate_and_the_chart_says_why_it_is_empty(client):
+    sign_in(client)
+    services.log_bodyweight(only_user().id, {"kg": "80"}, "claude")
+    page = day_of(client, today_of(only_user()).isoformat())
+    assert tiles_of(page)[0]["note"] == "No weekly rate yet"
+    sheet = sheets_of(page)["sheet-weight"]
+    assert sheet_frame_findings(sheet, "sheet-weight", "/progress#body-weight") == []
+    # The rate's sentence is left out, and the read's own words say why (web.rate_note).
+    assert sheet["sentence"] == ("The weekly rate needs a weigh-in from 14 to 42 days ago. The 7-day average is "
+                                 f"80{NB}kg, from 1 weigh-in in 28 days.")
+    assert sheet["panel"] == ["Smoothed weight",
+                              "One weigh-in in the last 28 days. The chart starts from the second one."]
+    assert sheet["svg"] == []
+    assert sheet["rows"][2] == [("Rate", []), ("", ["num"]), ("No weekly rate yet", ["remark"])]
+    assert sheet["rows"][3] == [("Weigh-ins", []), ("1", ["num"]), ("In the last 28 days", ["remark"])]
+
+
+def test_weigh_ins_but_none_in_28_days_still_open_the_sheet_and_its_chart_says_why(client):
+    sign_in(client)
+    uid, today = only_user().id, today_of(only_user())
+    for n in (40, 45):
+        services.log_bodyweight(uid, {"kg": "80", "date": (today - timedelta(days=n)).isoformat()}, "claude")
+    page = day_of(client, today.isoformat())
+    weight = tiles_of(page)[0]
+    assert (weight["tag"], weight["value"], weight["label"], weight["note"]) == ("button", "80", "kg trend",
+                                                                                 "No weekly rate yet")
+    sheet = sheets_of(page)["sheet-weight"]
+    assert sheet["sentence"] == ("The weekly rate needs a weigh-in in the last 7 days. The latest weigh-in is "
+                                 f"80{NB}kg, from 0 weigh-ins in 28 days.")
+    assert sheet["panel"] == ["Smoothed weight", "No weigh-ins in the last 28 days."] and sheet["svg"] == []
+    assert sheet["rows"][1] == [("Latest weigh-in", []), (f"80{NB}kg", ["num"]),
+                                ("No weigh-in in the last 7 days", ["remark"])]
+    assert sheet["rows"][3][1] == ("0", ["num"])
+
+
+def test_two_recent_weigh_ins_draw_the_chart_with_no_rate(client):
+    sign_in(client)
+    uid, today = only_user().id, today_of(only_user())
+    services.log_bodyweight(uid, {"kg": "80.4", "date": (today - timedelta(days=3)).isoformat()}, "claude")
+    services.log_bodyweight(uid, {"kg": "80"}, "claude")
+    sheet = sheets_of(day_of(client, today.isoformat()))["sheet-weight"]
+    assert sheet["sentence"].startswith("The weekly rate needs a weigh-in from 14 to 42 days ago. The 7-day average is ")
+    assert sheet["panel"] == ["Smoothed weight", "svg"] and len(sheet["svg"]) == 1
+
+
+@pytest.mark.parametrize("sessions, cardio, words", [
+    (None, None, " No session or cardio target is set."),
+    (0, None, " The session target is 0 a week."),
+    (None, 150, f" The cardio target is 150{NB}min a week."),
+    (3, 150, f" The session target is 3 a week. The cardio target is 150{NB}min a week."),
+])
+def test_the_training_sentence_names_each_target_that_is_set(client, sessions, cardio, words):
+    sign_in(client)
+    targets = {k: v for k, v in (("target_sessions_per_week", sessions), ("target_cardio_minutes_per_week", cardio))
+               if v is not None}
+    if targets:
+        assert "error" not in services.update_settings(only_user().id, targets, "web")
+    sheet = sheets_of(day_of(client, today_of(only_user()).isoformat()))["sheet-training"]
+    assert sheet["sentence"] == (f"0 a week over the last 4 weeks. Cardio came to 0{NB}min in the last 7 days, and "
+                                 f"0{NB}min a week over 4 weeks." + words)
+
+
+def test_a_zero_rate_and_a_calorie_target_show_as_figures(client):
+    """A rate of 0 is a rate, and a target shows in its row with a blank remark: zero is a value."""
+    sign_in(client)
+    uid, today = only_user().id, today_of(only_user())
+    assert "error" not in services.update_settings(uid, {"calorie_target_kcal": 2000}, "web")
+    for n in (21, 14, 7, 0):
+        services.log_bodyweight(uid, {"kg": "80", "date": (today - timedelta(days=n)).isoformat()}, "claude")
+    services.log_food(uid, {"entries": [{"description": "Thali", "kcal": 1000}]}, "claude")
+    page = day_of(client, today.isoformat())
+    assert tiles_of(page)[0]["note"] == f"0{NB}kg a week"
+    weight = sheets_of(page)["sheet-weight"]
+    window = formatting.days(today - timedelta(days=14), today, today)  # the last weigh-in 14 to 42 days back
+    assert weight["sentence"] == (f"The trend moved 0{NB}kg a week from {window}. The 7-day average is 80{NB}kg, "
+                                  "from 4 weigh-ins in 28 days.")
+    assert weight["rows"][2] == [("Rate", []), (f"0{NB}kg a week", ["num"]), (window, ["remark"])]
+    calories = sheets_of(page)["sheet-calories"]
+    assert calories["sentence"] == (f"Over the last 28 days it is 1,000{NB}kcal a day, and 0% of it is estimates. "
+                                    f"The calorie target is 2,000{NB}kcal a day.")
+    assert calories["rows"][3] == [("Calorie target", []), (f"2,000{NB}kcal", ["num"]), ("", ["remark"])]
+
+
+def test_a_past_day_has_no_glance_block(client, stocked):
+    for page in (day_of(client, stocked["yesterday"]),
+                 day_of(client, (stocked["today"] - timedelta(days=40)).isoformat())):
+        assert glance_node(page) is None
+        assert "popover" not in page and 'class="tile' not in page and 'class="sheet' not in page
+    assert glance_node(day_of(client, stocked["today"].isoformat())) is not None
+
+
+def test_a_day_after_today_has_no_glance_block(client):
+    sign_in(client)
+    user = only_user()
+    services.update_settings(user.id, {"time_zone": "Pacific/Kiritimati"}, "web")  # UTC+14
+    services.log_bodyweight(user.id, {"kg": "70"}, "claude")
+    later = today_of(user).isoformat()
+    services.update_settings(user.id, {"time_zone": "Pacific/Pago_Pago"}, "web")  # UTC-11
+    page = day_of(client, later)
+    assert '<main class="page today past">' in page and glance_node(page) is None and "popover" not in page
+    assert glance_node(day_of(client, today_of(user).isoformat())) is not None
+
+
+def test_a_form_sent_back_with_its_error_keeps_the_glance_block(client):
+    sign_in(client)
+    today = today_of(only_user()).isoformat()
+    r = post(client, f"/day/{today}/weigh-in", kg="abc")
+    assert r.status_code == 400 and glance_node(r.text) is not None and list(sheets_of(r.text)) == ["sheet-training"]
+
+
+@pytest.mark.parametrize("read", ["get_trends", "get_days"])
+def test_a_failed_read_draws_no_glance_block(client, monkeypatch, read):
+    sign_in(client)
+    monkeypatch.setattr(services, read, lambda *a: {"error": "no_account", "message": "x", "fix": "y"})
+    page = day_of(client, today_of(only_user()).isoformat())
+    assert glance_node(page) is None and '<div class="col-main">' in page
+
+
+def test_glance_of_hands_back_the_reads_as_they_come(client, monkeypatch):
+    sign_in(client)
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    uid = only_user().id
+    assert "error" not in services.add_sample_data(uid, "web")
+    glance = asyncio.run(web.glance_of(uid))
+    trends, days = services.get_trends(uid), services.get_days(uid)
+    assert set(glance) == {"trends", "days", "basis", "rate_words", "weight_chart", "eaten_chart"}
+    assert glance["trends"] == trends and glance["days"] == days
+    assert (glance["basis"], glance["rate_words"]) == (web.weight_now_label(trends), web.rate_note(trends))
+    assert glance["weight_chart"] == web.charts.weight_sheet_svg(trends["bodyweight"]["series"], date(2026, 11, 10))
+    assert glance["eaten_chart"] == web.charts.eaten_sheet_svg(days["days"], date(2026, 11, 10))
+
+
+def test_the_training_sentence_reads_this_week_and_the_four_week_figures_apart(client):
+    """On the fixed day this week's figures and the 4-week ones print the same ("3" and "3", "85 min" twice),
+    so a swap would pass there. Here two sessions 9 and 10 days ago and 40 min of cardio 10 days ago: 0 this
+    week, 0.5 sessions and 10 min a week over 4 weeks. (One session would be 0.25, which get_trends rounds with
+    Python's round to 0.2: the service's rounding, not the page's.)"""
+    sign_in(client)
+    uid, today = only_user().id, today_of(only_user())
+    ten_ago = (today - timedelta(days=10)).isoformat()
+    for n in (9, 10):
+        assert "error" not in services.log_lifts(uid, {"date": (today - timedelta(days=n)).isoformat(), "sets": [
+            {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
+    assert "error" not in services.log_cardio(uid, {"exercise": "Outdoor Walk", "minutes": 40, "date": ten_ago},
+                                              "claude")
+    page = day_of(client, today.isoformat())
+    sheet = sheets_of(page)["sheet-training"]
+    assert sheet["giant"] == "0" and tiles_of(page)[-1]["value"] == "0"
+    assert sheet["sentence"] == (f"0.5 a week over the last 4 weeks. Cardio came to 0{NB}min in the last 7 days, and "
+                                 f"10{NB}min a week over 4 weeks. No session or cardio target is set.")
+    # The week ending 7 days ago holds the 10th day back: the third of four, oldest first.
+    assert [[c[0] for c in r] for r in sheet["rows"]][2] == [formatting.day(today - timedelta(days=7), today), "2",
+                                                             "40"]

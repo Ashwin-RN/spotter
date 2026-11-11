@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -508,7 +508,7 @@ def test_every_page_keeps_the_frame_and_page_rules(client, account):
     held = {route: [] for route in TEXT_HELD}
     for s in seen:
         if s.posted_to:
-            found = page_findings(s.address, s.markup, entered, only_user().id)
+            found = page_findings(s.address, s.markup, entered, only_user().id, route=s.posted_to)
             if s.posted_to in TEXT_HELD:
                 held[s.posted_to] += found
             else:
@@ -1071,3 +1071,137 @@ def test_the_sweeps_reach_each_kinds_edit_page_and_its_errors(client):
             n.tag for n in parse(r.text).iter() if n.attrs.get("aria-invalid") == "true")
     assert set(invalid) == kinds and all(invalid.values()), invalid
     assert set().union(*invalid.values()) == {"input", "select", "textarea"}
+
+
+# ---------------------------------------------------------------- Today's glance block: tiles, twins, sheets
+
+def glance_page(client, account: str = "sample") -> tuple[str, str]:
+    """Today's page on an account, with its glance block: (address, markup)."""
+    sign_in(client)
+    ACCOUNTS[account](only_user().id)
+    address = f"/day/{today_of(only_user()).isoformat()}"
+    r = client.get(address)
+    assert r.status_code == 200 and '<div class="glance">' in r.text
+    return address, r.text
+
+
+def test_the_popover_and_twin_rules_catch_each_break_on_the_real_glance(client):
+    """The first page with a tile and a sheet: each rule passes the real glance block, and finds each break in
+    it. A tile's popovertarget naming no popover, a sheet that is no popover, a sheet's title gone, a tile with
+    no twin, a twin with other words, a chart with no desc."""
+    address, page = glance_page(client)
+    today = address.split("/")[2]
+    rules = (popover_findings, twin_findings, svg_findings, labelledby_findings)
+
+    def found(markup: str) -> list[str]:
+        return [f for rule in rules for f in rule(Seen(address, markup, True, today=today))]
+
+    assert found(page) == []
+    assert page.count('popovertarget="sheet-') == 6  # three tiles, three close buttons
+
+    def broken(old: str, new: str, pattern: bool = False) -> list[str]:
+        if pattern:
+            assert len(re.findall(old, page, re.S)) == 1, old
+            return found(re.sub(old, new, page, count=1, flags=re.S))
+        assert page.count(old) == 1, old
+        return found(page.replace(old, new))
+
+    button = '<button class="tile tile-weight" type="button" popovertarget="sheet-weight">'
+    assert any("names no popover" in f for f in broken(button, button.replace("sheet-weight", "sheet-nope")))
+    sheet = '<div class="sheet" popover id="sheet-calories"'
+    assert any("names no popover" in f for f in broken(sheet, '<div class="sheet" id="sheet-calories"'))
+    title = '<h2 class="noun" id="sheet-training-title">'
+    assert any("aria-labelledby" in f for f in broken(title, '<h2 class="noun">'))
+    twin = r'<a class="tile tile-training tile-link" href="/progress#trends">.*?</a>'
+    assert any("has no twin link" in f for f in broken(twin, "", pattern=True))
+    other = r'(<a class="tile tile-calories tile-link" href="/progress#trends">.*?)kcal eaten a day'
+    assert any("has no twin link" in f for f in broken(other, r"\1kcal a day", pattern=True))
+    desc = r'<desc id="chart-weight-sheet-desc">.*?</desc>'
+    assert any("without role, title and desc" in f for f in broken(desc, "", pattern=True))
+
+
+def _one_weigh_in(user_id: int, today) -> None:
+    services.log_bodyweight(user_id, {"kg": "80"}, "claude")
+
+
+def _none_in_28_days(user_id: int, today) -> None:
+    for n in (40, 45):
+        services.log_bodyweight(user_id, {"kg": "80", "date": (today - timedelta(days=n)).isoformat()}, "claude")
+
+
+def _two_recent_no_rate(user_id: int, today) -> None:
+    services.log_bodyweight(user_id, {"kg": "80.4", "date": (today - timedelta(days=3)).isoformat()}, "claude")
+    services.log_bodyweight(user_id, {"kg": "80"}, "claude")
+
+
+def _food_in_28_not_7(user_id: int, today) -> None:
+    services.log_food(user_id, {"date": (today - timedelta(days=10)).isoformat(),
+                                "entries": [{"description": "Dal", "kcal": 400}]}, "claude")
+
+
+def _targets_and_a_zero_rate(user_id: int, today) -> None:
+    services.update_settings(user_id, {"calorie_target_kcal": 2000, "target_sessions_per_week": 0,
+                                       "target_cardio_minutes_per_week": 150}, "web")
+    for n in (21, 14, 7, 0):
+        services.log_bodyweight(user_id, {"kg": "80", "date": (today - timedelta(days=n)).isoformat()}, "claude")
+    services.log_food(user_id, {"entries": [{"description": "Thali", "kcal": 1000}]}, "claude")
+
+
+# Each state, and markup only that state draws: proof the page reached it.
+GLANCE_STATES = {
+    _one_weigh_in: ("One weigh-in in the last 28 days. The chart starts from the second one.",),
+    _none_in_28_days: ("No weigh-ins in the last 28 days.", "No weigh-in in the last 7 days"),
+    _two_recent_no_rate: ("The weekly rate needs a weigh-in from 14 to 42 days ago.", 'id="chart-weight-sheet"'),
+    _food_in_28_not_7: ('<span class="tile-value">No food in the last 7 days</span>',),
+    _targets_and_a_zero_rate: ("The trend moved 0&nbsp;kg a week", "The session target is 0 a week.",
+                               "The calorie target is 2,000 kcal a day."),
+}
+
+
+@pytest.mark.parametrize("state", list(GLANCE_STATES), ids=lambda f: f.__name__.strip("_"))
+def test_the_glance_states_the_sweeps_never_reach_keep_every_rule(client, state):
+    """The sweeps' three accounts never show one weigh-in in 28 days, weigh-ins but none in 28 days, weigh-ins
+    with no rate, food in 28 days but none in 7, or a 0 target. Each such page, and the page sent back with an
+    error, keeps the frame rules, the page rules, T1's text rules and T3's step 4 checks."""
+    sign_in(client)
+    user = only_user()
+    today = today_of(user)
+    state(user.id, today)
+    address = f"/day/{today.isoformat()}"
+    names, notes, entered = names_of(user.id), entered_notes(user.id), entered_text(user.id)
+    r = client.get(address)
+    error = post(client, f"{address}/weigh-in", kg="abc")
+    assert r.status_code == 200 and error.status_code == 400
+    findings = []
+    zone_missing = not only_user().time_zone
+    for s in (Seen(address, r.text, True, zone_missing=zone_missing, today=today.isoformat()),
+              Seen(f"{address}/weigh-in", error.text, True, zone_missing=zone_missing, today=today.isoformat(),
+                   calm=True, posted_to="/day/{date}")):
+        assert '<div class="glance">' in s.markup
+        assert all(marker in s.markup for marker in GLANCE_STATES[state]), state.__name__
+        findings += frame_findings(s) + page_rule_findings(s)
+        findings += page_findings(s.address, s.markup, entered, user.id, route=s.posted_to or None)
+        findings += step_4_findings(s.address, s.markup, names, notes, route=s.posted_to or None)
+    assert not findings, "\n".join(findings)
+
+
+@pytest.mark.parametrize("account", sorted(ACCOUNTS))
+def test_the_sweeps_reach_todays_glance_and_past_days_without_it(client, account):
+    """Both sweeps render every address of get_paths: today's page on each account carries the glance block,
+    and every other day, a day after today among them, carries none."""
+    sign_in(client)
+    user = only_user()
+    ACCOUNTS[account](user.id)
+    today = today_of(only_user()).isoformat()
+    on_today, other = 0, 0
+    for address in get_paths(user.id)["/day/{date}"]:
+        r = client.get(address)
+        assert r.status_code == 200, address
+        has = '<div class="glance">' in r.text
+        if address.split("?")[0].split("/")[2] == today:
+            assert has, address
+            on_today += 1
+        else:
+            assert not has and "popover" not in r.text, address
+            other += 1
+    assert on_today >= 10 and other >= 2

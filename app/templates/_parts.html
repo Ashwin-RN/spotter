@@ -52,6 +52,40 @@
   {% endif %}{% if hint %}<p class="hint" id="{{ id }}-hint">{{ hint }}</p>
   {% endif %}</div>{% endmacro %}
 
+{# A tile: with a sheet, a button that opens it and its twin link to Progress, the same words in each. Without one, a div. Empty: dashed, the words in the number's slot, no label, not a control. tag is a (variant, words) pair in the note's place. #}
+{% macro tile(variant, name, value, label=none, note=none, sheet=none, href=none, empty=false, tag=none) %}
+{%- set inner -%}
+  <span class="sr">{{ name }}</span>
+  <span class="tile-value">{{ value }}</span>
+  {% if label and not empty %}<span class="tile-label">{{ label }}</span>
+  {% endif %}{% if tag and not empty %}<span class="tag tag-{{ tag[0] }}">{{ tag[1] }}</span>
+  {% elif note and not empty %}<span class="tile-note">{{ note }}</span>
+  {% endif %}
+{%- endset -%}
+{% if sheet and href and not empty %}<button class="tile tile-{{ variant }}" type="button" popovertarget="{{ sheet }}">
+{{ inner }}
+</button>
+<a class="tile tile-{{ variant }} tile-link" href="{{ href }}">
+{{ inner }}
+</a>{% else %}<div class="tile tile-{{ variant }}{% if empty %} is-empty{% endif %}">
+{{ inner }}
+</div>{% endif %}{% endmacro %}
+
+{# A sheet: a popover dialog named by its title. The close button first, then the period, the number, the title, the caller's sentences, panel and table, and an Open Progress link when link is given. #}
+{% macro sheet(id, period, number, title, unit=none, link=none) %}<div class="sheet" popover id="{{ id }}" role="dialog" aria-labelledby="{{ id }}-title">
+  <div class="sheet-head">
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sheet-bar">
+      <button class="close" type="button" popovertarget="{{ id }}" popovertargetaction="hide" autofocus><span class="sr">Close</span></button>
+      <p class="period">{{ period }}</p>
+    </div>
+  </div>
+  <p class="giant">{{ number }}{% if unit %}&nbsp;<span class="unit">{{ unit }}</span>{% endif %}</p>
+  <h2 class="noun" id="{{ id }}-title">{{ title }}</h2>
+  {{ caller() }}
+  {% if link %}<p class="sheet-link"><a class="button secondary" href="{{ link }}">Open Progress</a></p>
+  {% endif %}</div>{% endmacro %}
+
 {# A lift session's sets in a table, in its scrolling wrap: Exercise, Set, Weight (kg), Reps. The kg sits in the
    header, so each weight is a bare figure. A set at 0 kg leaves its weight cell blank, and sets with no weight
    above 0 kg show no Weight column at all. #}

@@ -890,6 +890,8 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     food = day.get("food")
     state = await _db(services.sample_state, user.id)
     return page(request, "day.html", status_code=status_code, day=day, on=on, today=today,
+                # The glance block, on today's page only: "now" figures, which would mislead on a past day.
+                glance=await glance_of(user.id) if on == today else None,
                 prev_day=prev_day, next_day=next_day,
                 strip=day_strip(request.query_params), form_error=form_error or {},
                 kind_names=KIND_NAMES, meals=MEALS,
@@ -911,6 +913,21 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
                 sample_rows=state["sample_rows"], new_account=state["empty"] and on == today,
                 has_food=bool(food) and any((food.get("meals") or {}).values()),
                 shows_estimate=any(c.get("estimate") for c in cardio))
+
+
+async def glance_of(user_id: int) -> dict | None:
+    """What Today's glance block shows: get_trends and get_days as they come back, the words for what
+    bodyweight.now is and for a missing rate, and the two sheets' charts. The web works out no figure.
+    None when either read fails: the page then draws no glance block."""
+    trends = await _db(services.get_trends, user_id)
+    days = await _db(services.get_days, user_id)
+    if failed(trends) or failed(days):
+        return None
+    today = date.fromisoformat(trends["today"])
+    series = (trends.get("bodyweight") or {}).get("series")
+    return {"trends": trends, "days": days, "basis": weight_now_label(trends), "rate_words": rate_note(trends),
+            "weight_chart": charts.weight_sheet_svg(series, today),
+            "eaten_chart": charts.eaten_sheet_svg(days["days"], today)}
 
 
 SIZE_WORDS = ("small", "medium", "large")

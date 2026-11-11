@@ -84,11 +84,31 @@ NUMBER_RULES = ("thousands", "trailing_zero")
 # day.html:84), the Notes columns, and the Goals page printing the service's message and fix
 # (goals.html:66-67, which only a refused POST renders).
 
-# Where a bare "0" is a true count the page reads from the data, and how many the account holds.
+def glance_zeros(user_id: int, address: str, tag: str) -> int:
+    """The true zeros Today's glance block shows, read from get_trends and get_days, never from the page: the
+    Training sheet's number (a p), and its weeks' lift sessions and cardio minutes and the Weight sheet's
+    weigh-ins (each a td), counted where they show as "0". Today's page and its error renders only: a past day
+    has no glance block, so it allows none."""
+    trends, grid = services.get_trends(user_id), services.get_days(user_id)
+    if address.split("?")[0].split("/")[2:3] != [trends["today"]]:
+        return 0
+    zero = lambda value, quantity: formatting.show(value, quantity, unit=False) == "0"  # noqa: E731
+    if tag == "p":
+        return int(zero(trends["sessions"]["this_week"], "count"))
+    weeks = sum(zero(w["lift_sessions"], "count") + zero(w["cardio_minutes"], "week_minutes") for w in grid["weeks"])
+    weight = trends["bodyweight"]
+    return weeks + int(bool(weight) and zero(weight["weigh_ins_28d"], "count"))
+
+
+# Where a bare "0" is a true count the page reads from the data, and how many the account holds there: by
+# route and the piece's tag, a function of the account and the address. Training's 0 is a true zero (section
+# L, "Training always shows a number").
 TRUE_ZEROS = {
-    ("/foods", "td"): lambda user_id: sum(
+    ("/foods", "td"): lambda user_id, address: sum(
         (f["times_logged"] == 0) + (f["kcal_per_serving"] == 0)
         for f in services.list_saved_foods(user_id)["foods"] if f.get("deleted_at") is None),
+    ("/day/{date}", "p"): lambda user_id, address: glance_zeros(user_id, address, "p"),
+    ("/day/{date}", "td"): lambda user_id, address: glance_zeros(user_id, address, "td"),
 }
 
 
@@ -284,8 +304,10 @@ def skipped(path: str, rule: str, match: str, tag: str = "") -> bool:
                and (bare == s.path if s.path == "/" else bare.startswith(s.path)) for s in SKIPS)
 
 
-def page_findings(path: str, markup: str, entered: list[str], user_id: int | None) -> list[str]:
-    """Every finding on one rendered page, after the skips and the true zeros."""
+def page_findings(path: str, markup: str, entered: list[str], user_id: int | None,
+                  route: str | None = None) -> list[str]:
+    """Every finding on one rendered page, after the skips and the true zeros. route: the page's route when
+    the address is not its own, as for a form sent back with its error."""
     out = []
     zeros: dict[tuple, int] = {}
     for piece in tr.html_text(markup):
@@ -295,13 +317,13 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
             if skipped(path, f.rule, f.match, piece.tag):
                 continue
             if f.rule == tr.EMPTY_FIGURE and f.match == "0":
-                key = (path.split("?")[0], piece.tag)
+                key = (route or route_of(path), piece.tag)
                 if key in TRUE_ZEROS:
                     zeros[key] = zeros.get(key, 0) + 1
                     continue
             out.append(f"{path} line {piece.line} <{piece.tag}>: {f}")
     for key, seen in zeros.items():
-        held = TRUE_ZEROS[key](user_id) if user_id is not None else 0
+        held = TRUE_ZEROS[key](user_id, path) if user_id is not None else 0
         if seen > held:
             out.append(f"{path}: {seen} bare 0 in <{key[1]}>, but the data holds {held} true zeros")
     for line in confirmations(markup):
@@ -828,6 +850,43 @@ def test_a_bare_zero_passes_only_as_a_true_count(client):
     assert any("true zeros" in f for f in page_findings("/foods", invented, entered_text(user_id), user_id))
     # And a bare 0 anywhere else is an empty figure.
     assert any("empty_figure" in f for f in page_findings("/progress", "<dl><dd>0</dd></dl>", [], user_id))
+
+
+def test_the_glance_zeros_pass_on_todays_page_only_and_only_as_many_as_the_data_holds(client):
+    """Training always shows a number, so a new account's Training sheet reads 0, and so does each of its four
+    weeks' cells. Those zeros pass on today's page and its error renders. One more 0 is an invented figure,
+    the same zeros at a past day's address are too, and a form sent back reads them by its page's route."""
+    sign_in(client)
+    user_id = only_user().id
+    today = today_of(only_user())
+    address, yesterday = f"/day/{today.isoformat()}", f"/day/{(today - timedelta(days=1)).isoformat()}"
+    page = client.get(address).text
+    assert page.count('<td class="num">0</td>') == 8 and page.count('<p class="giant">0</p>') == 1
+    assert (glance_zeros(user_id, address, "td"), glance_zeros(user_id, address, "p")) == (8, 1)
+    assert glance_zeros(user_id, yesterday, "td") == glance_zeros(user_id, yesterday + "?saved=bodyweight", "p") == 0
+    assert page_findings(address, page, [], user_id) == []
+    assert page_findings(address + "?saved=bodyweight", page, [], user_id) == []
+    assert page_findings(f"{address}/weigh-in", page, [], user_id, route="/day/{date}") == []
+    for extra in (page.replace('<p class="giant">0</p>', '<p class="giant">0</p><p>0</p>'),
+                  page.replace('<td class="num">0</td>', '<td class="num">0</td><td>0</td>', 1)):
+        assert any("true zeros" in f for f in page_findings(address, extra, [], user_id))
+    assert any("true zeros" in f for f in page_findings(yesterday, page, [], user_id))
+    # Without its route, a form sent back is read by the address it was posted to, which allows no zero.
+    assert any("empty_figure" in f for f in page_findings(f"{address}/weigh-in", page, [], user_id))
+    # Foods reads its zeros as it did before.
+    assert page_findings("/foods?saved=1", '<table><tr><td>0</td></tr></table>', [], user_id)
+
+
+def test_the_glance_zeros_count_what_shows_as_0_not_what_equals_0(client, monkeypatch):
+    """A week of 0.4 cardio minutes shows "0" in its cell, so it is a zero the page shows. No form logs under
+    a minute, so the read is stood in for here."""
+    sign_in(client)
+    user_id = only_user().id
+    address = f"/day/{today_of(only_user()).isoformat()}"
+    real = services.get_days(user_id)
+    weeks = [{**w, "lift_sessions": 1, "cardio_minutes": 0.4 if n == 0 else 5} for n, w in enumerate(real["weeks"])]
+    monkeypatch.setattr(services, "get_days", lambda uid: {**real, "weeks": weeks})
+    assert glance_zeros(user_id, address, "td") == 1
 
 
 def test_a_zone_name_is_masked_and_a_bare_confirmation_fails(client):

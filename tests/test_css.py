@@ -900,6 +900,8 @@ PLACED = {
     "a small chart in a plain card": ([_el("div", "card"), _el("svg", "chart", "small")], ("149px", "149px")),
     "a chart in a sheet": ([_el("div", "sheet"), _el("svg", "chart")], ("336px", "none")),
     "a small chart in a sheet": ([_el("div", "sheet"), _el("svg", "chart", "small")], ("149px", "none")),
+    "a Today sheet's chart": ([_el("div", "glance"), _el("div", "sheet"), _el("div", "panel"), _el("svg", "chart")],
+                              ("336px", "none")),
     "the Today pair": ([_el("div", "glance"), _el("svg", "chart", "small")], ("149px", "261px")),
     "a goal chart": ([_el("li", "goal"), _el("svg", "chart")], ("336px", "373px")),
     "the body weight chart": ([_el("div", "bw-card"), _el("svg", "chart", id_="bodyweight-chart")],
