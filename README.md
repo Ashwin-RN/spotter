@@ -14,7 +14,7 @@ Live: https://spotter-production-0c0f.up.railway.app
 - **Numbers worked out in code.** Bests, trends and goal pace come from your own log. Every food number is tagged with who supplied it: you, a saved food, the USDA table, or the assistant's estimate.
 - **Your record, not the assistant's.** It lives in Spotter under your sign-in, so the same data is there from any assistant you connect. Use more than one, or switch, with nothing to export or import.
 - **You set the limit.** One switch on Settings says what the assistant may do: read, log, or log and delete. It starts at log. A deleted entry can be restored.
-- **See it and take it with you.** A web app on the same account (Today, Progress with a page per lift, Goals, Foods, Settings). From Settings you can export everything as CSV files or delete the account.
+- **See it and take it with you.** A web app on the same account (Today, Progress with a page per lift, Goals, Foods, Settings, Privacy). From Settings you can export everything as CSV files or delete the account.
 
 ## Set up
 
@@ -36,7 +36,7 @@ The client must support remote MCP over streamable HTTP with OAuth sign-in.
 | [Cursor](https://cursor.com/docs/context/mcp) | In `~/.cursor/mcp.json`, add a server under `mcpServers` with its `url` set to the address, then sign in. | From its docs |
 | [VS Code with Copilot](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) | Run "MCP: Add Server", choose HTTP, and enter the address. | From its docs |
 | [Gemini app](https://support.google.com/gemini/answer/17209137) | On the web: Settings, then "Connected Apps". Under "Custom apps", enter the address, then "Next". | From its docs. US only, 18 or over, personal account, Keep Activity on. |
-| [Mistral](https://docs.mistral.ai/le-chat/knowledge-integrations/connectors/mcp-connectors) | Connectors, then "+ Add Connector", then the "Custom MCP Connector" tab. Enter a name and the address, then "Connect". | From its docs. An administrator adds it. |
+| [Mistral](https://docs.mistral.ai/le-chat/knowledge-integrations/connectors/mcp-connectors) | In the sidebar: Context, then Connectors, then "New connector", then "Add custom connector". Enter a name and the address, leave Authentication on "Auto-detect", then "Add connector". Sign in and approve. | Tried |
 | [goose](https://goose-docs.ai/docs/getting-started/using-extensions) | Run `goose configure`, then "Add Extension", then "Remote Extension (Streamable HTTP)", and give it the address. | From its docs |
 
 "From its docs" means the steps follow that client's own documentation and have not been tried with Spotter yet.
@@ -66,7 +66,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 - 18 MCP functions and two resources, over streamable HTTP.
 - Python 3.12, Starlette, SQLAlchemy, Alembic, the `mcp` library and Postgres. Sign-in goes through an outside provider (WorkOS AuthKit) for the web and the assistant, so both reach one account.
 - Every write locks the person's row first, counts against a write limit, and passes the same checks whether it came from the assistant or a form.
-- The test suite runs plain and with warnings as errors on a clean export before every push.
+- A docs-only change runs the docs tests, and a small code change runs the tests for the code it touches. The whole suite runs with warnings as errors on a clean export before a big push, and about once in every four or five pushes otherwise.
 - Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 17 cases, 3 runs each. At stage 5, with one case fewer, 48 of 48 runs passed, on `claude-fable-5-2`. The newest case, from stage 6, has not been run yet. The runner now pins `claude-opus-5-5`. The result is recorded in `BUILD_LOG.md`; how the evals run is in `docs/evals.md`.
 
 ## Read more
