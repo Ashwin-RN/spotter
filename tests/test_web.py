@@ -545,8 +545,9 @@ def test_the_same_zone_again_is_a_success(client):
     sign_in(client)
     set_zone(client, "Europe/London")
     r = set_zone(client, "europe/london")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=time_zone"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=unchanged"
     assert only_user().time_zone == "Europe/London"
+    assert 'class="ok' not in client.get(r.headers["location"]).text  # nothing changed, so nothing says saved
 
 
 # ---------------------------------------------------------------- failing closed
@@ -1578,6 +1579,7 @@ def test_a_day_after_today_left_by_a_zone_change_still_has_a_page(client):
 def test_the_switch_changes_claude_can_and_nothing_else(client, value):
     sign_in(client)
     services.update_settings(only_user().id, {"time_zone": "Asia/Kolkata"}, "web")
+    services.set_claude_can(only_user().id, "read" if value != "read" else "log")  # so the post changes it
     before = {c.name: getattr(only_user(), c.key) for c in User.__table__.columns}
     r = post(client, "/settings/claude-can", claude_can=value)
     assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=claude_can"
@@ -2137,7 +2139,7 @@ def test_editing_a_food_updates_it_and_keeps_what_was_logged(client, fed):
     page = client.get(f"/foods/{fed['roti']}/edit").text
     assert 'name="kcal_per_serving" value="120"' in page and 'name="name"' not in page
     r = post(client, f"/foods/{fed['roti']}/edit", serving_label="1 roti", kcal_per_serving="110", grams_per_serving="40")
-    assert r.status_code == 303
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=1"
     [food] = rows(SavedFood, only_user().id)
     assert (food.kcal_per_serving, food.grams_per_serving) == (110, 40)
     assert next(e.kcal for e in rows(FoodEntry, only_user().id) if e.id == fed["food"][0]) == 240  # history kept
@@ -2459,8 +2461,11 @@ def test_a_crash_is_the_designed_500_signed_out_and_the_session_survives(web_cli
     token = session_of(client)["csrf"]
     after = client.get("/settings")
     assert after.status_code == 200 and '<header class="top">' in after.text and session_of(client)["csrf"] == token
-    # A crashing write is the same page.
-    monkeypatch.setattr(services, "log_bodyweight", boom)
+    # A crashing write is the same page, whatever the error's type.
+    def missing(*args, **kwargs):
+        raise KeyError("zqwy")
+
+    monkeypatch.setattr(services, "log_bodyweight", missing)
     r = post(client, f"/day/{today_of(only_user()).isoformat()}/weigh-in", kg="80")
     assert_designed(r, 500, PROBLEM, [("/", "Home")], signed_in=False)
     assert client.get("/settings").status_code == 200
@@ -2487,7 +2492,8 @@ def test_a_500_page_that_cannot_be_drawn_leaves_the_plain_500(web_client, monkey
     monkeypatch.setattr(web, "problem", boom)  # every page, the 500 page too, asks it
     r = client.get("/")
     assert r.status_code == 500 and r.text == "Internal Server Error"
-    assert "The 500 page could not be drawn: RuntimeError" in logs.text
+    lines = [rec.getMessage() for rec in logs.records if rec.name == "spotter" and "500 page" in rec.getMessage()]
+    assert lines == ["The 500 page could not be drawn: RuntimeError"]  # the type only, never the error's text
 
 
 def test_a_malformed_form_is_a_400_not_the_500_page(web_client):
@@ -2530,35 +2536,6 @@ def test_the_500_wrapper_sends_nothing_once_a_response_has_started():
     assert [m["type"] for m in sent] == ["http.response.start"]
 
 
-# What /mcp, /.well-known and /static answer in each create_app branch: the same as before the fallback, as
-# read on the tree before it. (method, path, status, content type, location, how the body starts)
-MCP_ON = [
-    ("GET", "/mcp", 401, "application/json", None, '{"error": "invalid_token"'),
-    ("POST", "/mcp", 401, "application/json", None, '{"error": "invalid_token"'),
-    ("GET", "/mcp/", 307, None, SITE + "/mcp", ""),
-    ("GET", "/mcp/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("POST", "/mcp/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", METADATA_PATH, 200, "application/json", None, '{"resource":'),
-    ("GET", "/.well-known/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", "/.well-known", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", "/.well-known/oauth-authorization-server", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", "/static/nope.css", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", "/static/", 404, "text/plain; charset=utf-8", None, "Not Found"),
-]
-MCP_OFF = [
-    ("GET", "/mcp", 503, "application/json", None, '{"error":"not_configured"'),
-    ("POST", "/mcp", 503, "application/json", None, '{"error":"not_configured"'),
-    ("GET", "/mcp/", 307, None, SITE + "/mcp", ""),
-    ("GET", "/mcp/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("POST", "/mcp/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", METADATA_PATH, 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", "/.well-known/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", "/.well-known", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", "/static/nope.css", 404, "text/plain; charset=utf-8", None, "Not Found"),
-    ("GET", "/static/", 404, "text/plain; charset=utf-8", None, "Not Found"),
-]
-
-
 def branch_client(provider, mcp: bool, raise_server_exceptions: bool = True) -> TestClient:
     """A client on create_app's MCP branch (mcp=True) or its no-MCP branch (settings.problem set)."""
     chosen = settings(**WEB) if mcp else Settings(None, None, database_url=settings().database_url, **WEB)
@@ -2566,18 +2543,54 @@ def branch_client(provider, mcp: bool, raise_server_exceptions: bool = True) -> 
                       raise_server_exceptions=raise_server_exceptions)
 
 
+# What /mcp, /.well-known and /static answer in each create_app branch, by method: the same as before the
+# fallback. Recorded on the parent tree (45b3804) with every header but content-length. Allow follows the hash
+# seed, so it is compared as a set. (status, headers, how the body starts); HEAD has no body.
+SIX_METHODS = ("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS")
+PLAIN = {"content-type": "text/plain; charset=utf-8"}
+PLAIN_404 = (404, PLAIN, "Not Found")
+TO_MCP = (307, {"location": SITE + "/mcp"}, "")
+STATIC_405 = (405, {**PLAIN, "allow": {"GET", "HEAD"}}, "Method Not Allowed")
+MCP_401 = (401, {"content-type": "application/json", "www-authenticate":
+                 'Bearer error="invalid_token", error_description="Authentication required", '
+                 f'resource_metadata="{SITE}{METADATA_PATH}"'}, '{"error": "invalid_token"')
+MCP_503 = (503, {"content-type": "application/json"}, '{"error":"not_configured"')
+METADATA_200 = (200, {"cache-control": "public, max-age=3600", "content-type": "application/json", "vary": "Origin"},
+                '{"resource":')
+METADATA_405 = (405, {**PLAIN, "allow": {"GET", "HEAD", "OPTIONS"}}, "Method Not Allowed")
+MCP_PATHS_ASKED = ("/mcp", "/mcp/", "/mcp/x", METADATA_PATH, "/.well-known/x", "/.well-known",
+                   "/.well-known/oauth-authorization-server", "/static/nope.css", "/static/")
+
+
+def answer_before(mcp: bool, method: str, path: str) -> tuple:
+    """What the parent tree answered."""
+    if path == "/mcp":
+        return MCP_401 if mcp else MCP_503
+    if path == "/mcp/":
+        return TO_MCP
+    if path == METADATA_PATH and mcp:
+        return METADATA_200 if method in ("GET", "HEAD", "OPTIONS") else METADATA_405
+    if path.startswith("/static/"):
+        return PLAIN_404 if method in ("GET", "HEAD") else STATIC_405
+    return PLAIN_404
+
+
+def headers_of(r) -> dict:
+    out = {k: v for k, v in r.headers.items() if k != "content-length"}
+    if "allow" in out:
+        out["allow"] = {m.strip() for m in out["allow"].split(",")}
+    return out
+
+
 @pytest.mark.parametrize("mcp", [True, False], ids=["mcp-on", "mcp-off"])
 def test_mcp_well_known_and_static_answer_as_before_in_both_branches(provider, seam, mcp):
     with branch_client(provider, mcp) as client:
-        for method, path, status, kind, where, body in MCP_ON if mcp else MCP_OFF:
-            r = client.request(method, path)
-            assert r.status_code == status, (method, path, r.status_code)
-            assert r.headers.get("content-type") == kind and r.headers.get("location") == where, (method, path)
-            assert r.text.startswith(body), (method, path, r.text[:80])
-            # Never an HTML page, and never the page header the 404 page adds.
-            assert "<html" not in r.text and "x-frame-options" not in r.headers, (method, path)
-            if path.startswith("/static"):
-                assert "cache-control" not in r.headers  # a /static 404 stays exactly as it was
+        for path in MCP_PATHS_ASKED:
+            for method in SIX_METHODS:
+                status, headers, body = answer_before(mcp, method, path)
+                r = client.request(method, path)
+                assert (r.status_code, headers_of(r)) == (status, headers), (method, path)
+                assert r.text.startswith("" if method == "HEAD" else body), (method, path, r.text[:80])
         assert client.get("/static/style.css").status_code == 200
 
 
@@ -2585,9 +2598,50 @@ def test_mcp_well_known_and_static_answer_as_before_in_both_branches(provider, s
 def test_an_unrouted_path_is_the_404_page_in_both_branches(provider, seam, mcp):
     offered = SIGNED_OUT_LINKS if mcp else [("/", "Home")]  # without MCP settings there is no web sign-in
     with branch_client(provider, mcp) as client:
-        for method, path in (("GET", UNROUTED), ("POST", UNROUTED), ("GET", "/mcpx"), ("GET", "/.well-knownx")):
-            # Without MCP settings there is no site address, so no HSTS, as on every page there.
-            assert_designed(client.request(method, path), 404, NOT_FOUND, offered, signed_in=False, hsts=mcp)
+        for path in (UNROUTED, "/mcpx", "/.well-knownx", "/MCP", "/Mcp/x", "/.WELL-KNOWN/x"):
+            for method in ("GET", "POST", "PUT", "DELETE", "OPTIONS"):
+                # Without MCP settings there is no site address, so no HSTS, as on every page there.
+                assert_designed(client.request(method, path), 404, NOT_FOUND, offered, signed_in=False, hsts=mcp)
+            head = client.head(path)
+            assert head.status_code == 404 and head.text == "", path
+            assert head.headers["content-type"] == "text/html; charset=utf-8"
+            assert_page_header(head, mcp)
+
+
+@pytest.mark.parametrize("mcp", [True, False], ids=["mcp-on", "mcp-off"])
+def test_under_a_root_path_mcp_and_the_metadata_answer_as_the_parent_did(provider, seam, mcp):
+    """Served under a prefix, the fallback reads the path with the prefix removed, as Starlette's router does."""
+    chosen = settings(**WEB) if mcp else Settings(None, None, database_url=settings().database_url, **WEB)
+    with TestClient(create_app(chosen, fetch=provider.fetch), base_url=SITE, follow_redirects=False,
+                    root_path="/x") as client:
+        for method in SIX_METHODS:
+            r = client.request(method, "/x/mcp")
+            status, headers, body = MCP_401 if mcp else MCP_503
+            assert r.status_code == status and r.headers["content-type"] == "application/json", (method, r.status_code)
+            assert "x-frame-options" not in r.headers
+        meta = client.get("/x" + METADATA_PATH)
+        if mcp:
+            assert meta.status_code == 200 and meta.headers["content-type"] == "application/json"
+            assert meta.json()["resource"] == RESOURCE
+        else:
+            assert (meta.status_code, meta.text) == (404, "Not Found")
+        assert_designed(client.get("/x/nope"), 404, NOT_FOUND, SIGNED_OUT_LINKS if mcp else [("/", "Home")],
+                        signed_in=False, hsts=mcp)
+        # A prefix that only looks alike is not stripped: "/xy/mcp" under "/x" is no /mcp.
+        assert_designed(client.get("/xy/mcp"), 404, NOT_FOUND, SIGNED_OUT_LINKS if mcp else [("/", "Home")],
+                        signed_in=False, hsts=mcp)
+
+
+@pytest.mark.parametrize("root, path, read", [
+    ("", "/mcp", "/mcp"),            # no root_path: the path as it is
+    ("/x", "/y/mcp", "/y/mcp"),      # the path does not start with it: as it is
+    ("/x", "/x", ""),                # the path is the root_path: empty
+    ("/x", "/x/mcp", "/mcp"),        # "/" right after the root_path: the rest, from that "/"
+    ("/x", "/xy/mcp", "/xy/mcp"),    # a prefix that only looks alike: as it is
+])
+def test_route_path_reads_the_path_as_the_router_does(root, path, read):
+    scope = {"type": "http", "path": path, **({"root_path": root} if root else {})}
+    assert web.route_path(scope) == read
 
 
 @pytest.mark.parametrize("mcp", [True, False], ids=["mcp-on", "mcp-off"])
@@ -2722,9 +2776,12 @@ def test_the_automatic_zone_save_is_marked_time_zone_on_the_page_it_returns_to(c
     sign_in(client)
     r = post(client, "/settings", time_zone="Asia/Kolkata", next="/day/2026-11-09?add=food#food")
     assert location(r) == SITE + "/day/2026-11-09?add=food&saved=time_zone#food"
-    r = post(client, "/settings", time_zone="Asia/Kolkata", next="/progress")
+    r = post(client, "/settings", time_zone="Europe/London", next="/progress")
     assert location(r) == SITE + "/progress?saved=time_zone"
     assert 'class="ok' not in client.get(location(r)).text
+    # The same zone again changes nothing: marked so, on the page it returns to too.
+    r = post(client, "/settings", time_zone="Europe/London", next="/progress")
+    assert location(r) == SITE + "/progress?saved=unchanged"
 
 
 @pytest.mark.parametrize("query, passed", [
@@ -2733,6 +2790,9 @@ def test_the_automatic_zone_save_is_marked_time_zone_on_the_page_it_returns_to(c
     ("restored=bodyweight", "?restored=bodyweight"),
     ("deleted=bodyweight:5", "?deleted=bodyweight:5"),
     ("restored=x&deleted=sample&saved=sample", "?saved=sample&deleted=sample&restored=x"),
+    # A value is passed on encoded: it can never become a second mark or another address.
+    ("saved=x%26deleted%3Dbodyweight:5", "?saved=x%26deleted%3Dbodyweight:5"),
+    ("saved=a%23b%0D%0Ac", "?saved=a%23b%0D%0Ac"),
     ("add=food&kind=lift&notes=x&q=1", ""),  # only the three marks of a write go on
     ("", ""),  # a plain visit to Today stays plain, so it is not calm
 ])
@@ -2751,3 +2811,69 @@ def test_sample_data_added_and_removed_land_on_the_marked_day(client):
     assert location(removed) == day + "?deleted=sample"
     page = client.get(location(removed)).text
     assert '<div class="ok undo">' not in page and "/restore" not in page  # no Undo for sample data (D15)
+
+
+# ---------------------------------------------------------------- the fix round: the 500 wrapper's edges
+
+def test_the_same_switch_again_is_marked_unchanged_with_no_strip(client):
+    sign_in(client)
+    assert only_user().claude_can == "log"
+    r = post(client, "/settings/claude-can", claude_can="log")
+    assert location(r) == SITE + "/settings?saved=unchanged"
+    assert 'class="ok' not in client.get(location(r)).text
+
+
+def full_scope(path: str = "/progress") -> dict:
+    return {"type": "http", "method": "GET", "path": path, "root_path": "", "scheme": "https", "query_string": b"",
+            "headers": [(b"host", b"spotter.example.app")], "server": ("spotter.example.app", 443)}
+
+
+def test_a_send_that_fails_while_the_500_page_goes_out_leaves_the_crash_raised(client, logs):
+    """The original crash is what leaves PageErrors, never the error of the failed send."""
+    sent = []
+
+    async def crashing(scope, receive, send):
+        raise RuntimeError("zqwy original")
+
+    async def send(message):
+        sent.append(message)
+        raise OSError("zqwy client gone")
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    with pytest.raises(RuntimeError, match="zqwy original"):
+        asyncio.run(web.PageErrors(crashing)(full_scope(), receive, send))
+    assert [m["type"] for m in sent] == ["http.response.start"]
+    assert "The 500 page could not be sent: OSError" in [r.getMessage() for r in logs.records]
+
+
+def test_a_cancelled_request_passes_through_with_nothing_sent(client):
+    """A cancelled request is not a crash: nothing is sent. The same harness does send the page on a crash."""
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def cancelled(scope, receive, send):
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(web.PageErrors(cancelled)(full_scope(), receive, send))
+    assert sent == []
+
+    async def crashing(scope, receive, send):
+        raise ValueError("zqwy")
+
+    with pytest.raises(ValueError):
+        asyncio.run(web.PageErrors(crashing)(full_scope(), receive, send))
+    assert [m["type"] for m in sent][:1] == ["http.response.start"] and sent[0]["status"] == 500
+
+
+def test_a_crash_while_drawing_the_unrouted_404_is_the_500_page(web_client, monkeypatch):
+    client = web_client(raise_server_exceptions=False)
+    monkeypatch.setattr(web, "not_found_page", boom)
+    assert_designed(client.get(UNROUTED), 500, PROBLEM, [("/", "Home")], signed_in=False)

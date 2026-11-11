@@ -354,7 +354,10 @@ class PageErrors:
         except Exception as exc:  # noqa: BLE001 - the page could not be drawn: the plain 500 stands
             log.warning("The 500 page could not be drawn: %s", type(exc).__name__)
             return
-        await response(bare, receive, send)
+        try:
+            await response(bare, receive, send)
+        except Exception as exc:  # noqa: BLE001 - the crash is what is raised, never the failed send
+            log.warning("The 500 page could not be sent: %s", type(exc).__name__)
 
 
 # ---------------------------------------------------------------- helpers
@@ -553,13 +556,25 @@ def mcp_path(path: str) -> bool:
     return any(path == p or path.startswith(p + "/") for p in MCP_PATHS)
 
 
+def route_path(scope: Scope) -> str:
+    """The path as the router reads it: without the root_path prefix the app is served under. A path that
+    only looks alike ("/xy/mcp" under "/x") keeps its prefix."""
+    path, root = scope["path"], scope.get("root_path", "")
+    if not root or not path.startswith(root):
+        return path
+    if path == root:
+        return ""
+    return path[len(root):] if path[len(root)] == "/" else path
+
+
 def fallback(settings: Settings, mcp_app: ASGIApp) -> ASGIApp:
     """Mounted at "/", last: /mcp, /.well-known and anything under them go to mcp_app untouched. Every other
     path no route answered, by any method, gets the designed 404 with the page header."""
     page_app = SecurityHeaders(PageErrors(request_response(unrouted)), headers_for(settings))
 
     async def app(scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and not mcp_path(scope["path"]):
+        # The path as the router reads it, without any root_path prefix the app is served under.
+        if scope["type"] == "http" and not mcp_path(route_path(scope)):
             await page_app(scope, receive, send)
         else:
             await mcp_app(scope, receive, send)
@@ -760,12 +775,13 @@ async def settings_page(request: Request) -> Response:
                              {"time_zone": str(form.get("time_zone") or "")}, "web")
         if "too_many_writes" in codes(result):
             return too_many(request, result)
-        if not failed(result):  # changed: [] (the same zone again) is a success
+        if not failed(result):  # changed: [] (the same zone again) is a success, marked as no change
+            mark = UNCHANGED if result.get("changed") == [] else ("saved", "time_zone")
             # The automatic save carries `next`, the page the person was on: they stay there (decision 1).
             back = local_path(form.get("next"))
             if back is not None and urlsplit(back).path != "/settings":
-                return redirect(marked(get_settings().site_origin + back, "saved", "time_zone"))
-            return redirect(links.page("settings") + "?saved=time_zone")
+                return redirect(marked(get_settings().site_origin + back, *mark))
+            return redirect(marked(links.page("settings"), *mark))
         # The service's own text is written for Claude; the page says it in its own words.
         error = ZONE_REFUSED
     return await settings_view(request, user, error=error, status_code=400 if error else 200)
@@ -801,7 +817,9 @@ async def claude_can_page(request: Request) -> Response:
         return too_many(request, result)
     if failed(result):
         return await settings_view(request, user, switch_error=True, status_code=400)
-    return redirect(links.page("settings") + "?saved=claude_can")
+    # The switch already at that setting: changed is False, marked as no change.
+    mark = UNCHANGED if result.get("changed") is False else ("saved", "claude_can")
+    return redirect(marked(links.page("settings"), *mark))
 
 
 # ---------------------------------------------------------------- Today and a day

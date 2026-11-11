@@ -1062,6 +1062,21 @@ def error_page_findings(page: Rendered) -> list[str]:
             + claude_findings(page.address, r.text))
 
 
+# Section L, "404 and 500 pages", as written there: the two designed pages and every message it names, by
+# status and h1. The sample refusals (409) are named there without a title.
+CONTRACT_STATUSES = {404, 500, 403, 429, 409, 400, 503, 200}
+CONTRACT_PAGES = {(404, "Page not found"), (500, "Something went wrong"), (403, "Form expired"),
+                  (429, "Too many changes"), (409, "Already back"), (400, "Not saved"), (400, "Not changed"),
+                  (503, "Not set up yet"), (200, "Your account is deleted"), (400, "Sign-in failed"),
+                  (403, "No new accounts today")}
+
+
+def test_the_error_pages_cover_every_status_and_page_the_contract_lists():
+    assert {status for status, _ in ERROR_PAGES.values()} == CONTRACT_STATUSES
+    assert CONTRACT_PAGES <= set(ERROR_PAGES.values()), CONTRACT_PAGES - set(ERROR_PAGES.values())
+    assert sum(1 for status, _ in ERROR_PAGES.values() if status == 409) >= 3  # Already back, two sample refusals
+
+
 @pytest.mark.parametrize("case", sorted(ERROR_PAGES))
 def test_each_error_and_message_page_passes_the_page_rules(case, web_client, seam, monkeypatch):
     page = render_error_page(case, web_client, seam, monkeypatch)
