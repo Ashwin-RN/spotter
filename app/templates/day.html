@@ -79,16 +79,6 @@
 </section>
 {% endif %}
 
-{% macro actions(kind, id) %}
-<span class="entry-actions">
-  <a href="/entries/{{ kind }}/{{ id }}/edit">Edit</a>
-  <form method="post" action="/entries/{{ kind }}/{{ id }}/delete" class="inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button class="link">Delete</button>
-  </form>
-</span>
-{% endmacro %}
-
 {# The laptop's two columns place whole wrappers: col-main holds Food, col-side the four cards after it. The
    glance block goes between the Today card and col-main, on today's page only. #}
 <div class="col-main">
@@ -111,7 +101,12 @@
       {% set served = serving_words(f) %}
       {% set note = food_note(f) %}
       <li class="entry-line">
-        <div class="entry-main"><span class="entry-name">{{ food_name(f) }}</span><span class="entry-figures">{{ f.kcal|show("kcal") }}{% if served %}, {{ served }}{% endif %}</span>{% if note %}<span class="entry-note">{{ note }}</span>{% endif %}</div>
+        {# Whitespace between the lines, so text read without the stylesheet keeps the name apart from its kcal. #}
+        <div class="entry-main">
+          <span class="entry-name">{{ food_name(f) }}</span>
+          <span class="entry-figures">{{ f.kcal|show("kcal") }}{% if served %}, {{ served }}{% endif %}</span>
+          {% if note %}<span class="entry-note">{{ note }}</span>{% endif %}
+        </div>
         <span class="entry-tags"><span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span>{{ sample_tag(f) }}</span>
         {{ parts.entry_actions("food_entry", f.id, csrf_token, confirm=f.source == "claude_estimate") }}
       </li>

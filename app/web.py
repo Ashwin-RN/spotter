@@ -954,9 +954,12 @@ SAMPLE_SUFFIX = " (sample)"
 
 
 def food_name(entry: dict) -> str:
-    """An entry's line one: the saved food's name, else the description. On a sample row, without the
-    "(sample)" its name may carry: the sample tag beside it says so."""
-    name = entry.get("saved_food_name") or entry.get("description") or ""
+    """An entry's line one: the saved food's name, else the description. A sample row's saved food name
+    loses the "(sample)" sample data may have added: the sample tag beside it says so. A description is
+    the person's words, so it is never cut."""
+    name = entry.get("saved_food_name")
+    if not name:
+        return entry.get("description") or ""
     if entry.get("is_sample") and name.casefold().endswith(SAMPLE_SUFFIX):
         return name[:-len(SAMPLE_SUFFIX)]
     return name
@@ -972,9 +975,13 @@ def food_note(entry: dict) -> str | None:
 
 def serving_words(entry: dict) -> str:
     """How much was eaten, after the kcal on line two: a saved food's servings in its own words, a USDA
-    food's grams. Nothing for a number stated or estimated."""
+    food's grams. Servings whose saved food is gone (Remove sample data unlinks a sample food) are counted:
+    "3 servings", "1 serving". Nothing for a number stated or estimated."""
     if entry.get("saved_food_name") is not None and entry.get("servings"):
         return serving_text(entry["servings"], entry.get("serving_label"), page=True)
+    if entry.get("servings"):
+        amount = formatting.show(entry["servings"], "servings")
+        return f"{amount}{NBSP}{'serving' if amount == '1' else 'servings'}"
     if entry.get("source") == "usda" and entry.get("grams"):
         return formatting.show(entry["grams"], "grams", page=True)
     return ""

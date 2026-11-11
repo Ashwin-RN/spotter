@@ -35,13 +35,17 @@
   {{ caller() }}
 </details>{% endmacro %}
 
-{# A labelled field: an input, or a select when choices are (value, words) pairs, its error under it and tied to it. #}
-{% macro field(id, name, label, error=none, value="", inputmode=none, choices=none, empty=none, required=false, maxlength=none) %}<div class="field{% if error %} has-error{% endif %}">
+{# A labelled field: an input, or a select when choices are (value, words) pairs, its error then its hint under it, both tied to it. #}
+{% macro field(id, name, label, error=none, value="", inputmode=none, choices=none, empty=none, required=false, maxlength=none, hint=none) %}
+{%- set given = value is not none and value|string != "" -%}
+{%- set described = ((id ~ "-error") if error else "") ~ (" " if error and hint else "") ~ ((id ~ "-hint") if hint else "") -%}
+<div class="field{% if error %} has-error{% endif %}">
   <label for="{{ id }}">{{ label }}</label>
-  {% if choices is not none %}<select id="{{ id }}" name="{{ name }}"{% if required %} required{% endif %}{% if error %} aria-invalid="true" aria-describedby="{{ id }}-error"{% endif %}>
+  {% if choices is not none %}<select id="{{ id }}" name="{{ name }}"{% if required %} required{% endif %}{% if error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described }}"{% endif %}>
     {% if empty is not none %}<option value="">{{ empty }}</option>{% endif %}
-    {% for choice, words in choices %}<option value="{{ choice }}"{% if value and choice == value %} selected{% endif %}>{{ words }}</option>{% endfor %}
+    {% for choice, words in choices %}<option value="{{ choice }}"{% if given and choice|string == value|string %} selected{% endif %}>{{ words }}</option>{% endfor %}
   </select>
-  {% else %}<input id="{{ id }}" name="{{ name }}"{% if value %} value="{{ value }}"{% endif %}{% if inputmode %} inputmode="{{ inputmode }}"{% endif %}{% if required %} required{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %} autocomplete="off"{% if error %} aria-invalid="true" aria-describedby="{{ id }}-error"{% endif %}>
+  {% else %}<input id="{{ id }}" name="{{ name }}"{% if given %} value="{{ value }}"{% endif %}{% if inputmode %} inputmode="{{ inputmode }}"{% endif %}{% if required %} required{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %} autocomplete="off"{% if error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described }}"{% endif %}>
   {% endif %}{% if error %}<p class="error" id="{{ id }}-error">{{ error }}</p>
+  {% endif %}{% if hint %}<p class="hint" id="{{ id }}-hint">{{ hint }}</p>
   {% endif %}</div>{% endmacro %}

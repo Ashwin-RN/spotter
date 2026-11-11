@@ -1878,8 +1878,9 @@ def section(page: str, title: str) -> str:
 # One Food entry as the card draws it: line one the name, line two the figures, a grey line for a differing
 # description, then the tags' slot and the actions' slot.
 FOOD_ENTRY = re.compile(
-    r'<li class="entry-line">\s*<div class="entry-main"><span class="entry-name">(?P<name>[^<]*)</span>'
-    r'<span class="entry-figures">(?P<figures>[^<]*)</span>(?:<span class="entry-note">(?P<note>[^<]*)</span>)?</div>'
+    r'<li class="entry-line">\s*<div class="entry-main">\s*<span class="entry-name">(?P<name>[^<]*)</span>'
+    r'\s*<span class="entry-figures">(?P<figures>[^<]*)</span>\s*(?:<span class="entry-note">(?P<note>[^<]*)</span>)?'
+    r'\s*</div>'
     r'\s*<span class="entry-tags">(?P<tags>.*?)</span>\s*<span class="entry-actions">(?P<actions>.*?)</span>\s*</li>',
     re.S)
 
@@ -2458,6 +2459,20 @@ def test_the_rendered_confirm_form_carries_a_token_that_works(client, fed):
     r = client.post(f"/entries/food_entry/{dal}/confirm", data={"csrf_token": token})
     assert r.status_code == 303
     assert next(e.source for e in rows(FoodEntry, only_user().id) if e.id == dal) == "you_said"
+
+
+@pytest.mark.parametrize("which", [0, 1, 2])
+def test_the_rendered_delete_form_carries_a_token_that_works(client, fed, which):
+    """Each Food entry's Delete form, posted as drawn: its own fields only, the token among them."""
+    entry_id = fed["food"][which]
+    card = food_card(day_of(client, fed["today"]))
+    form = re.search(rf'<form method="post" action="/entries/food_entry/{entry_id}/delete" class="inline">(.*?)</form>',
+                     card, re.S).group(1)
+    fields = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', form))
+    assert set(fields) == {"csrf_token"} and fields["csrf_token"]
+    r = client.post(f"/entries/food_entry/{entry_id}/delete", data=fields)
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}?deleted=food_entry:{entry_id}"
+    assert next(e.deleted_at for e in rows(FoodEntry, only_user().id) if e.id == entry_id) is not None
 
 
 # ---------------------------------------------------------------- stage 6, step 4: the 404 and 500 pages
@@ -3432,7 +3447,8 @@ def test_a_sample_food_named_with_sample_shows_the_sample_mark_once(client):
     ({"saved_food_name": "Roti (sample)", "description": "Roti (sample)", "is_sample": True}, "Roti"),
     ({"saved_food_name": "Roti (Sample)", "description": "x", "is_sample": True}, "Roti"),
     ({"saved_food_name": "Roti (sample)", "description": "Roti (sample)", "is_sample": False}, "Roti (sample)"),
-    ({"saved_food_name": None, "description": "Tea (sample)", "is_sample": True}, "Tea"),
+    ({"saved_food_name": None, "description": "Tea (sample)", "is_sample": True}, "Tea (sample)"),
+    ({"saved_food_name": "", "description": "My lunch (sample)", "is_sample": True}, "My lunch (sample)"),
     ({"saved_food_name": None, "description": "Tea", "is_sample": True}, "Tea"),
     ({"saved_food_name": "Dal", "description": "Dal tadka", "is_sample": False}, "Dal"),
 ])
@@ -4051,3 +4067,121 @@ def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
     assert "<p>Resting heart rate (bpm)</p>" in edit
     goals = client.get("/goals").text
     assert '<option value="resting_hr">Resting heart rate (bpm)</option>' in goals
+
+
+# ---------------------------------------------------------------- stage 6, step 4: the Food card review's fixes
+
+def test_servings_whose_saved_food_went_with_the_sample_data_are_counted(client):
+    """A person's own entry logged against a sample food keeps its servings when Remove sample data takes the
+    food away (the link is set to null). Line two counts them in words."""
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.add_sample_data(uid, "web")
+    roti = next(f["id"] for f in services.list_saved_foods(uid)["foods"] if f["name"] == "Roti")
+    mine = services.log_food(uid, {"entries": [{"saved_food_id": roti, "servings": 3, "meal": "snack"}]}, "claude")
+    assert "error" not in mine
+    on = today_of(only_user()).isoformat()
+    [before] = meal_of(food_card(day_of(client, on)), "Snack")[-1:]
+    assert (before["name"], before["figures"]) == ("Roti", "360 kcal, 3 rotis")
+    assert "error" not in services.remove_sample_data(uid, "web")
+    [row] = [e for e in rows(FoodEntry, uid) if e.id == mine["ids"][0]]
+    assert (row.saved_food_id, row.servings, row.deleted_at) == (None, 3, None)  # the real path unlinks it
+    [after] = meal_of(food_card(day_of(client, on)), "Snack")
+    assert (after["name"], after["figures"], after["note"]) == ("Roti", "360 kcal, 3 servings", None)
+
+
+@pytest.mark.parametrize("servings, says", [(3, "3 servings"), (1, "1 serving"), (1.5, "1.5 servings"),
+                                            (0.25, "0.25 servings")])
+def test_servings_with_no_saved_food_are_counted_through_the_servings_rule(servings, says):
+    entry = {"saved_food_name": None, "servings": servings, "source": "saved_food", "description": "Roti"}
+    assert web.serving_words(entry) == says
+    assert says.split(" ")[0] == formatting.show(servings, "servings")
+    assert web.serving_words({**entry, "servings": None}) == ""
+
+
+def test_a_name_ending_in_a_digit_stays_apart_from_its_kcal(client):
+    """Read without the stylesheet, the name, line two and the grey line keep a space between them, so a
+    number in the name never runs into the kcal."""
+    from .test_pages_text import page_findings  # noqa: PLC0415 - test_pages_text imports this file
+
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.log_food(uid, {"entries": [{"description": "Protein bar 2", "kcal": 250}]},
+                                            "claude")
+    on = today_of(only_user()).isoformat()
+    card = food_card(day_of(client, on))
+    line = re.search(r'<li class="entry-line">.*?</li>', card, re.S).group(0)
+    assert "Protein bar 2 250 kcal" in " ".join(p.text for p in tr.html_text(line))
+    assert page_findings(f"/day/{on}", card, [], uid) == []  # nothing masked: the text rules read it all
+    joined = card.replace("</span>\n          <span", "</span><span")
+    assert joined != card and page_findings(f"/day/{on}", joined, [], uid)  # touching, it reads "2250"
+
+
+def test_a_sample_row_renamed_with_sample_keeps_the_word(client):
+    """Only a saved food's name ever gets " (sample)" from sample data. A description is the person's own."""
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.add_sample_data(uid, "web")
+    tea = next(e for e in rows(FoodEntry, uid) if e.description == "Tea with milk" and e.is_sample)
+    on = tea.date.isoformat()
+    assert "error" not in services.edit_entry(uid, "food_entry", tea.id, {"description": "My lunch (sample)"}, "claude")
+    card = food_card(day_of(client, on))
+    [mine] = [e for e in food_entries(card) if e["name"].startswith("My lunch")]
+    assert mine["name"] == "My lunch (sample)" and ("tag-sample", "sample") in mine["tags"]
+
+
+def parts_field(*args, **kwargs) -> str:
+    return str(web.templates.env.get_template("_parts.html").module.field(*args, **kwargs))
+
+
+@pytest.mark.parametrize("value, drawn", [(0, ' value="0"'), ("0", ' value="0"'),
+                                          ("", None), (None, None), ("72.5", ' value="72.5"')])
+def test_the_field_keeps_a_zero_and_draws_no_value_for_nothing(value, drawn):
+    shown = parts_field("kg", "kg", "Weight (kg)", None, value, inputmode="decimal")
+    tag = re.search(r"<input [^>]*>", shown).group(0)
+    assert (drawn in tag) if drawn else ("value=" not in tag)
+    chosen = parts_field("k", "k", "Kind", None, value, choices=[(0, "Zero"), ("72.5", "Some")])
+    assert ("selected" in chosen) is (drawn is not None)
+
+
+@pytest.mark.parametrize("error, hint, described", [
+    (None, "Leave it empty for a walk on a machine.", "d-hint"),
+    ("Give the distance in km.", "Leave it empty for a walk on a machine.", "d-error d-hint"),
+    ("Give the distance in km.", None, "d-error"),
+    (None, None, None),
+])
+def test_the_field_ties_its_hint_and_its_error_to_the_control(error, hint, described):
+    for kwargs in ({"inputmode": "decimal"}, {"choices": [("a", "A")]}):
+        shown = parts_field("d", "distance_km", "Distance (km)", error, "", hint=hint, **kwargs)
+        control = re.search(r"<(?:input|select) [^>]*>", shown).group(0)
+        if described:
+            assert f'aria-describedby="{described}"' in control
+        else:
+            assert "aria-describedby" not in control
+        assert ('aria-invalid="true"' in control) is bool(error)
+        blocks = re.findall(r'<p class="(error|hint)" id="([^"]+)">([^<]*)</p>', shown)
+        want = ([("error", "d-error", error)] if error else []) + ([("hint", "d-hint", hint)] if hint else [])
+        assert blocks == want  # the error right under the control, then the hint
+        if want:
+            assert shown.index(control) < shown.index("<p ")
+
+
+def test_a_hint_on_the_page_passes_the_tie_rule():
+    from .test_page_rules import describedby_findings, seen  # noqa: PLC0415 - test_page_rules imports this file
+
+    good = parts_field("d", "distance_km", "Distance (km)", "Give the distance.", "x", hint="Optional.")
+    assert describedby_findings(seen(good)) == []
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_the_fields_select_carries_required_when_asked(required):
+    shown = parts_field("cardio-exercise", "exercise", "Activity", None, "", choices=[("Walk", "Walk")],
+                        required=required)
+    select = re.search(r"<select [^>]*>", shown).group(0)
+    assert (" required" in select) is required
+    assert select == f'<select id="cardio-exercise" name="exercise"{" required" if required else ""}>'
+
+
+def test_the_unused_actions_macro_is_gone():
+    day = (web.HERE / "templates" / "day.html").read_text(encoding="utf-8")
+    assert "macro actions" not in day and not re.search(r"\{\{\s*actions\(", day)

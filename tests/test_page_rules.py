@@ -335,6 +335,19 @@ def goal_li_findings(s: Seen) -> list[str]:
     return [f"an li inside li.goal {g.attrs.get('id')}" for g in s.dom.find_all("li", "goal") if g.find_all("li")]
 
 
+def token_findings(s: Seen) -> list[str]:
+    """Every form that posts holds its CSRF token: a hidden input named csrf_token with a value. Without it
+    the server answers Form expired (403), and nothing the person pressed is saved."""
+    out = []
+    for form in s.dom.find_all("form"):
+        if (form.attrs.get("method") or "").casefold() != "post":
+            continue
+        if not any(i.attrs.get("type") == "hidden" and i.attrs.get("name") == "csrf_token" and i.attrs.get("value")
+                   for i in form.find_all("input")):
+            out.append(f"the form posting to {form.attrs.get('action')!r} holds no csrf_token")
+    return out
+
+
 def table_wrap_findings(s: Seen) -> list[str]:
     return [f"a table outside div.table-wrap: {t.text()[:40]!r}" for t in s.dom.find_all("table")
             if not (t.parent.tag == "div" and "table-wrap" in t.parent.classes)]
@@ -377,12 +390,12 @@ def describedby_findings(s: Seen) -> list[str]:
 
 
 PAGE_RULES = (svg_findings, popover_findings, twin_findings, foldout_findings, goal_li_findings,
-              labelledby_findings, table_wrap_findings, inputmode_findings, describedby_findings)
+              labelledby_findings, token_findings, table_wrap_findings, inputmode_findings, describedby_findings)
 # The page rules that already hold on every page today, so they run on every page. The other three (a table
 # outside div.table-wrap, a number input with no inputmode, an error tied to no input) fail on today's
 # pages, so they run on the routes in BUILT only.
 EVERYWHERE = (svg_findings, popover_findings, twin_findings, foldout_findings, goal_li_findings,
-              labelledby_findings)
+              labelledby_findings, token_findings)
 
 
 def page_rule_findings(s: Seen) -> list[str]:
@@ -965,3 +978,35 @@ def test_the_card_rules_catch_each_break_on_the_real_card(client):
                                                   '<span class="entry-tags">(<span class="tag tag-claude_estimate">'))
     assert any("table outside" in f for f in broken(page, '<dl class="facts totals">', '<table><tr><td>x</td></tr></table>'
                                                     '<dl class="facts totals">'))
+
+
+# ---------------------------------------------------------------- every form that posts holds its token
+
+@pytest.mark.parametrize("bad", [
+    '<form method="post" action="/x"><button>Go</button></form>',
+    '<form method="POST" action="/x"><input type="hidden" name="csrf_token" value=""></form>',
+    '<form method="post" action="/x"><input type="text" name="csrf_token" value="t"></form>',
+    '<form method="post" action="/x"><input type="hidden" name="token" value="t"></form>',
+    '<form method="post" action="/x"><input type="hidden" name="csrf_token"></form>',
+])
+def test_the_token_rule_finds_a_form_that_posts_without_its_token(bad):
+    good = ('<form method="post" action="/x" class="inline"><input type="hidden" name="csrf_token" value="t">'
+            '<button class="link">Go</button></form><form method="get" action="/y"><button>Find</button></form>')
+    assert token_findings(seen(good)) == []
+    assert token_findings(seen(good + bad))
+    assert token_findings in EVERYWHERE and token_findings in PAGE_RULES
+
+
+def test_the_token_rule_reads_every_form_on_a_full_day_page(client):
+    sign_in(client)
+    services.update_settings(only_user().id, {"time_zone": "Asia/Kolkata"}, "web")
+    services.add_sample_data(only_user().id, "web")
+    today = today_of(only_user()).isoformat()
+    page = client.get(f"/day/{today}").text
+    s = Seen(f"/day/{today}", page, True, today=today)
+    posting = [f for f in s.dom.find_all("form") if f.attrs.get("method") == "post"]
+    assert len(posting) >= 15 and token_findings(s) == []  # sign-out, each Confirm and Delete, each fold-out
+    one = re.search(r'(<form method="post" action="/entries/food_entry/\d+/delete" class="inline">\s*)'
+                    r'<input type="hidden" name="csrf_token" value="[^"]+">', page)
+    broken = page.replace(one.group(0), one.group(1), 1)
+    assert [f for f in token_findings(Seen(f"/day/{today}", broken, True, today=today)) if "food_entry" in f]
