@@ -10,7 +10,8 @@ get_log(user_id, date=None, days=1)
     A food entry logged from a saved food also carries saved_food_name and serving_label (null
     otherwise), so a page can show it as the name, the servings and the serving (decision 14).
     A session's new bests come from lifts.history, the one computation that also
-    feeds get_progress, so the two never disagree.
+    feeds get_progress, so the two never disagree; an estimated max and the one it beat are rounded
+    together (lifts.rounded_best), as get_progress rounds them.
 
     With date left out, an entry dated after today (left there by a change of time zone) is not
     hidden: its day gets a block of its own above today (the one ordering rule, metrics.on_or_before).
@@ -29,7 +30,7 @@ from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app import db, links, rules, users
+from app import db, formatting, links, rules, users
 from app.models import MEALS, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Measurement, User
 from app.services import cardio, food, lifts
 from app.services.common import SAMPLE_NOTE, no_account, row_dict
@@ -38,7 +39,7 @@ DAYS = (1, 14)
 
 
 def _plural(n: int, word: str, many: str | None = None) -> str:
-    return f"{n} {word}" if n == 1 else f"{n} {many or word + 's'}"
+    return f"{formatting.show(n, 'count')} {word if n == 1 else many or word + 's'}"
 
 
 def _days(value) -> tuple[int | None, dict | None]:
@@ -82,7 +83,7 @@ def get_log(user_id: int, date=None, days=1) -> dict:
         bests: dict[int, list[dict]] = {}
         for per_lift in history["bests"].values():
             for b in per_lift:
-                best = {k: b[k] for k in ("exercise", "kind", "value", "previous")}
+                best = lifts.rounded_best({k: b[k] for k in ("exercise", "kind", "value", "previous")})
                 bests.setdefault(b["session_id"], []).append({**best, "text": lifts.best_text(best)})
         sessions = [t for t in history["sessions"] if shown(t.date)]
         weigh_ins = [b for b in s.scalars(select(Bodyweight).where(

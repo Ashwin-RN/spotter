@@ -25,18 +25,20 @@ restore_entry(user_id, kind, entry_id)   -> {kind, id, restored: true, entry, re
   weigh-in (or a measurement of that kind) is refused with day_taken; nothing is replaced. The
   dedupe_key is worked out again, so a repeat of the new content is a duplicate.
 - Edit, delete and restore are writes: lock_user first, then common.check_write_limit.
+- An edit's summary names each change in words, every value through app.formatting: "Weigh-in
+  changed: kg from 74.8 to 78.4." The entry's id is the result's id, never in the summary.
 """
 
 from sqlalchemy import Index, select
 
-from app import db, links, metrics, rules, users
+from app import db, formatting, links, metrics, rules, users
 from app.models import (
     Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, entry_models,
 )
 from app.rules import error, quote
 from app.services import body, cardio, food, lifts, measurements
 from app.services.common import (
-    check_by, check_data, check_write_limit, exercises, lock_user, no_account, not_found, owned, row_dict,
+    check_by, check_data, check_write_limit, exercises, lock_user, no_account, not_found, owned, pair, row_dict,
 )
 from app.services.goals import goal_dict
 from app.services.lifts import session_dict
@@ -194,12 +196,31 @@ def _set_rows(row: LiftSession) -> list[tuple[int, int, float, int]]:
     return [(x.exercise_id, x.set_number, x.weight_kg, x.reps) for x in sorted(row.sets, key=lambda x: x.id)]
 
 
-def _shown(value) -> str:
-    if value is None:
-        return "none"  # a cleared value, in words: never Python's None in a summary
-    if isinstance(value, float):
-        return rules.kg(value)
-    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+def _quantity(field: str) -> str | None:
+    """The quantity a number field is shown in, in an edit summary."""
+    return "weigh_in" if field == "kg" else rules.NUMBER_QUANTITIES.get(field)
+
+
+def _shown(field: str, value, row, today) -> str:
+    """One stored value in an edit summary, through the formatter. A number takes its field's quantity,
+    with no unit (the field names it), except a measurement's value, which carries its own; a date is
+    the page form (D13). Never called on an empty value: the summary says "cleared" or "set to"."""
+    if field == "date":
+        return formatting.day(value, today)
+    if field == "value":
+        return measurements.shown(row.kind, value)
+    if _quantity(field) and isinstance(value, (int, float)):
+        return formatting.show(value, _quantity(field), unit=False)
+    return str(value)
+
+
+def _change(field: str, old, new, row, today) -> tuple[str, str]:
+    """A before and an after, widened together when they would print the same (common.pair)."""
+    if field == "value":
+        return measurements.shown_pair(row.kind, old, new)
+    if _quantity(field) and isinstance(old, (int, float)) and isinstance(new, (int, float)):
+        return pair(old, new, _quantity(field), unit=False)
+    return _shown(field, old, row, today), _shown(field, new, row, today)
 
 
 def _checked(field: str, value, row, s, today, kind: str) -> tuple[object, dict | None]:
@@ -312,7 +333,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
         changed = [f for f in EDITABLE[kind] if f in new and (new[f] != current[f] or (f == "kcal" and restated))]
         if not changed:
             out = {"kind": kind, "id": row.id, "changed": [], "before": before, "after": before,
-                   "summary": f"{LABELS[kind]} {row.id}: nothing changed; every value given is already stored.",
+                   "summary": f"{LABELS[kind]}: nothing changed. Every value given is already stored.",
                    "links": {"day": links.page("day", date=row.date)}}
             if kind == "lift_session":
                 out["note"] = SESSION_NOTE
@@ -343,24 +364,26 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
                 def written(rows):  # "Back Squat 3 × 5 @ 60 kg", cut to a sane length
                     return quote(lifts.sets_text([(name_of.get(e, "?"), w, r) for e, _, w, r in rows]))
 
-                parts.append(f"sets {written(current['sets'])} -> {written(new['sets'])}")
+                parts.append(f"sets from {written(current['sets'])} to {written(new['sets'])}")
             elif field == "notes":
                 parts.append("notes changed")
             elif field == "description":
-                parts.append(f"description '{quote(current[field])}' -> '{quote(new[field])}'")
+                parts.append(f"description from '{quote(current[field])}' to '{quote(new[field])}'")
             elif field == "exercise":
-                parts.append(f"activity {current[field].name} -> {new[field].name}")
+                parts.append(f"activity from {current[field].name} to {new[field].name}")
             elif field == "kcal" and current[field] == new[field]:
-                parts.append(f"kcal {new[field]} confirmed by the person")
-            elif field in worked_out and new[field] is None:  # the distance went, and the speed with it
-                parts.append(f"{field} {_shown(current[field])} -> none, cleared with the distance")
-            elif new[field] is None:
-                parts.append(f"{field} {_shown(current[field])} -> none, cleared")
-            elif field in worked_out:  # the stored value, not the null that asked for it
-                parts.append(f"{field} {_shown(current[field])} -> {_shown(new[field])}, worked out from distance "
-                             "and minutes")
+                parts.append(f"kcal {_shown(field, new[field], row, today)} confirmed by the person")
+            elif new[field] is None:  # a cleared value, in words: never "none", never Python's None
+                old = _shown(field, current[field], row, today)
+                with_distance = " with the distance" if field in worked_out else ""  # the speed goes with it
+                parts.append(f"{field} {old} cleared{with_distance}")
             else:
-                parts.append(f"{field} {_shown(current[field])} -> {_shown(new[field])}")
+                how = ", worked out from distance and minutes" if field in worked_out else ""  # the stored value
+                if current[field] is None:  # an empty field filled: never Python's None in a summary
+                    parts.append(f"{field} set to {_shown(field, new[field], row, today)}{how}")
+                else:
+                    old, now = _change(field, current[field], new[field], row, today)
+                    parts.append(f"{field} from {old} to {now}{how}")
         if "sets" in changed:
             row.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in new["sets"]]
         for field in changed:
@@ -391,7 +414,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
         row.updated_at = db.utcnow()
         s.flush()
         out = {"kind": kind, "id": row.id, "changed": changed, "before": before, "after": entry_dict(row),
-               "summary": f"{LABELS[kind]} {row.id} changed: {'; '.join(parts)}.",
+               "summary": f"{LABELS[kind]} changed: {'. '.join(parts)}.",
                "links": {"day": links.page("day", date=row.date)}}
         if note:
             out["note"] = note
@@ -416,8 +439,8 @@ def _cardio_speed(row: CardioEntry, new: dict, changed: list) -> tuple[dict, dic
         if cardio.speed_disagrees({"speed_kmh": row.speed_kmh, "distance_km": distance, "minutes": minutes}):
             worked = metrics.speed(distance, minutes)
             return {}, error("invalid_field",
-                             f"{distance:g} km in {minutes:g} minutes is {worked:g} km/h; the speed you gave, "
-                             f"{row.speed_kmh:g}, no longer fits.",
+                             f"{cardio.ran(distance, minutes)} is {formatting.show(worked, 'speed')}; the speed you "
+                             f"gave, {formatting.field(row.speed_kmh, 'speed')}, no longer fits.",
                              "Send speed_kmh too, or speed_kmh as null to have it worked out from distance and "
                              "minutes.")
         return {}, None

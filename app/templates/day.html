@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}{{ on.isoformat() }} · Spotter{% endblock %}
+{% block title %}{{ on|day(today) }} · Spotter{% endblock %}
 {% block main %}
 <div class="day-head">
-  {% if prev_day %}<a href="/day/{{ prev_day.isoformat() }}" rel="prev">&larr; {{ prev_day.isoformat() }}</a>{% else %}<span></span>{% endif %}
-  <h1>{% if on == today %}Today, {% endif %}{{ on.isoformat() }}</h1>
-  {% if next_day %}<a href="/day/{{ next_day.isoformat() }}" rel="next">{{ next_day.isoformat() }} &rarr;</a>{% else %}<span></span>{% endif %}
+  {% if prev_day %}<a href="/day/{{ prev_day.isoformat() }}" rel="prev">Previous day</a>{% else %}<span></span>{% endif %}
+  <h1>{{ on|day_heading(today) }}</h1>
+  {% if next_day %}<a href="/day/{{ next_day.isoformat() }}" rel="next">Next day</a>{% else %}<span></span>{% endif %}
 </div>
 {% include "sample_banner.html" %}
 
@@ -24,7 +24,7 @@
 
 {% if undo %}
 <div class="ok undo">
-  Deleted.
+  {{ entry_words.get(undo[0], "Entry") }} deleted.
   <form method="post" action="/entries/{{ undo[0] }}/{{ undo[1] }}/restore" class="inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="link">Undo</button>
@@ -54,8 +54,8 @@
       {% for f in entries %}
       <li class="entry-line">
         {# a saved food: its name, the servings, the serving in its own words (get_log's saved_food_name, serving_label) #}
-        <span>{% if f.saved_food_name %}{{ f.saved_food_name }}{% if f.servings %} × {{ kg(f.servings) }} <span class="muted">({{ serving_text(f.servings, f.serving_label) }})</span>{% endif %}{% if not same_name(f.description, f.saved_food_name) %} <span class="muted">{{ f.description }}</span>{% endif %}{% else %}{{ f.description }}{% if f.servings %} <span class="muted">× {{ kg(f.servings) }}</span>{% endif %}{% endif %}:
-          <strong>{{ kg(f.kcal) }} kcal</strong>
+        <span>{% if f.saved_food_name %}{{ f.saved_food_name }}{% if f.servings %} × {{ f.servings|show("servings") }} <span class="muted">({{ serving_text(f.servings, f.serving_label) }})</span>{% endif %}{% if not same_name(f.description, f.saved_food_name) %} <span class="muted">{{ f.description }}</span>{% endif %}{% else %}{{ f.description }}{% if f.servings %} <span class="muted">× {{ f.servings|show("servings") }}</span>{% endif %}{% endif %}:
+          <strong>{{ f.kcal|show("kcal") }}</strong>
           <span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span>{{ sample_tag(f) }}</span>
         <span class="entry-actions">
           {% if f.source == "claude_estimate" %}
@@ -75,13 +75,13 @@
   </div>
   {% endfor %}
   <dl class="facts totals">
-    <dt>Total</dt><dd><strong>{{ kg(food.total_kcal) }} kcal</strong>{% if food.estimated_kcal %}, of which <span class="tag tag-claude_estimate">estimate</span> {{ kg(food.estimated_kcal) }} kcal ({{ kg(food.estimated_share_pct) }}%){% endif %}</dd>
+    <dt>Total</dt><dd><strong>{{ food.total_kcal|show("kcal") }}</strong>{% if food.estimated_kcal %}, of which <span class="tag tag-claude_estimate">estimate</span> {{ food.estimated_kcal|show("kcal") }} ({{ food.estimated_share_pct|show("percent") }}){% endif %}</dd>
     {% if food.target_kcal is not none %}
-    <dt>Target</dt><dd>{{ kg(food.target_kcal) }} kcal</dd>
-    <dt>Remaining</dt><dd>{{ kg(food.remaining_kcal) }} kcal</dd>
+    <dt>Target</dt><dd>{{ food.target_kcal|show("kcal") }}</dd>
+    <dt>Remaining</dt><dd>{{ food.remaining_kcal|show("kcal_left") }}</dd>
     {% endif %}
     {% if food.net_kcal is not none %}
-    <dt>Net</dt><dd>{{ kg(food.net_kcal) }} kcal <span class="muted">(food minus cardio)</span></dd>
+    <dt>Net</dt><dd>{{ food.net_kcal|show("net_kcal") }} <span class="muted">(food minus cardio)</span></dd>
     {% endif %}
   </dl>
   {% else %}
@@ -116,13 +116,13 @@
       <thead><tr><th>Exercise</th><th>Set</th><th>Weight</th><th>Reps</th></tr></thead>
       <tbody>
       {% for s in session.sets %}
-      <tr><td>{{ s.exercise }}</td><td>{{ s.set_number }}</td><td>{{ kg(s.weight_kg) }} kg</td><td>{{ s.reps }}</td></tr>
+      <tr><td>{{ s.exercise }}</td><td>{{ s.set_number|show("count") }}</td><td>{{ s.weight_kg|show("weight_kg") }}</td><td>{{ s.reps|show("reps") }}</td></tr>
       {% endfor %}
       </tbody>
     </table>
     {% if session.new_bests %}
     <ul class="bests">
-      {% for b in session.new_bests %}<li>New best: {{ b.text if b.text else b.exercise ~ " " ~ kg(b.value) ~ " kg" }}</li>{% endfor %}
+      {% for b in session.new_bests %}<li>New best: {{ b.text if b.text else b.exercise ~ " " ~ b.value|show("estimated_max" if b.kind == "estimated_max" else "weight_kg") }}</li>{% endfor %}
     </ul>
     {% endif %}
   </div>
@@ -140,18 +140,18 @@
     {% for c in cardio %}
     <tr>
       <td>{{ c.exercise }}{{ sample_tag(c) }}</td>
-      <td>{{ kg(c.minutes) }}</td>
-      <td>{% if c.distance_km is not none %}{{ kg(c.distance_km) }} km{% endif %}</td>
+      <td>{{ c.minutes|show("session_time") }}</td>
+      <td>{% if c.distance_km is not none %}{{ c.distance_km|show("km") }}{% endif %}</td>
       <td>{% if c.pace %}{{ c.pace.min_per_km }} /km{% endif %}</td>
-      <td>{% if c.estimate %}{{ kg(c.estimate.kcal) }} kcal{% else %}<span class="muted">none</span>{% endif %}</td>
-      <td>{% if c.machine_kcal is not none %}{{ kg(c.machine_kcal) }} kcal{% endif %}</td>
+      <td>{% if c.estimate %}{{ c.estimate.kcal|show("kcal") }}{% else %}<span class="muted">No estimate</span>{% endif %}</td>
+      <td>{% if c.machine_kcal is not none %}{{ c.machine_kcal|show("kcal") }}{% endif %}</td>
       <td>{{ actions("cardio_entry", c.id) }}</td>
     </tr>
     {% endfor %}
     </tbody>
   </table>
   {% if cardio|rejectattr("estimate")|list %}
-  <p class="muted small">No calorie estimate where none is shown: there is no weigh-in to work it from. Log a weigh-in and new cardio gets one.</p>
+  <p class="muted small">No calorie estimate on a row that says No estimate: there was no weigh-in when it was logged. Log a weigh-in and new cardio gets one.</p>
   {% endif %}
   {% else %}
   <p class="muted">No cardio logged on this day.</p>
@@ -176,7 +176,7 @@
   <h2>Weigh-in</h2>
   {% if day.weigh_in %}
   <div class="entry-line">
-    <span><strong>{{ kg(day.weigh_in.kg) }} kg</strong>{{ sample_tag(day.weigh_in) }}</span>
+    <span><strong>{{ day.weigh_in.kg|show("weigh_in") }}</strong>{{ sample_tag(day.weigh_in) }}</span>
     {{ actions("bodyweight", day.weigh_in.id) }}
   </div>
   {% else %}
@@ -198,7 +198,7 @@
   <ul class="entries">
     {% for m in day.measurements %}
     <li class="entry-line">
-      <span>{{ labels.get(m.kind, m.kind.replace("_", " ").capitalize()) }}: <strong>{{ kg(m.value) }} {{ m.unit }}</strong>{{ sample_tag(m) }}</span>
+      <span>{{ labels.get(m.kind, m.kind.replace("_", " ").capitalize()) }}: <strong>{{ m.value|show(measurement_quantity(m.kind)) }}</strong>{{ sample_tag(m) }}</span>
       {{ actions("measurement", m.id) }}
     </li>
     {% endfor %}

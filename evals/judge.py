@@ -25,6 +25,10 @@ expect, every key optional, all of them must hold:
   reply_asks        true: the final reply asks the person something (it contains a question mark).
   reply_has         phrases the final reply must contain, every one (ignoring case).
   reply_lacks       phrases the final reply must not contain (ignoring case).
+  reply_lacks_pattern
+                    regular expressions the final reply must not match anywhere (re.search, ignoring case).
+                    Each must compile: a pattern that does not is a problem when the cases are loaded, and an
+                    error when judged, never a pass.
   any_of            a list of expects of this same shape; at least one must hold.
 
 seed, rows created for the person before the run, through Spotter's own services, in order:
@@ -54,7 +58,7 @@ CASES_FILE = Path(__file__).resolve().parent / "cases.json"
 HIDDEN = "[token hidden]"
 
 EXPECT_KEYS = {"function", "inputs_include", "inputs_exclude", "inputs_forbid", "ok_calls", "no_call",
-               "refused", "reply_asks", "reply_has", "reply_lacks", "any_of"}
+               "refused", "reply_asks", "reply_has", "reply_lacks", "reply_lacks_pattern", "any_of"}
 CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db"}
 DB_KEYS = {"table", "state", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
@@ -115,8 +119,27 @@ def _expect_problems(expect: Any, where: str) -> list[str]:
     needs_function = {"inputs_include", "inputs_exclude", "inputs_forbid", "refused"} & set(expect)
     if needs_function and "function" not in expect:
         problems.append(f"{where}: {', '.join(sorted(needs_function))} needs function")
+    if "reply_lacks_pattern" in expect:
+        problems += _pattern_problems(expect["reply_lacks_pattern"], f"{where}.reply_lacks_pattern")
     for i, sub in enumerate(expect.get("any_of") or []):
         problems += _expect_problems(sub, f"{where}.any_of[{i}]")
+    return problems
+
+
+def _pattern_problems(patterns: Any, where: str) -> list[str]:
+    """A list of non-empty strings, each a regular expression that compiles. A bare string is refused:
+    it would be read one character at a time."""
+    if not isinstance(patterns, list) or not patterns:
+        return [f"{where} must be a non-empty list of regular expressions"]
+    problems = []
+    for i, pattern in enumerate(patterns):
+        if not isinstance(pattern, str) or not pattern:
+            problems.append(f"{where}[{i}] must be a non-empty string")
+            continue
+        try:
+            re.compile(pattern, re.IGNORECASE)
+        except re.error as e:
+            problems.append(f"{where}[{i}] {pattern!r} is not a valid regular expression: {e}")
     return problems
 
 
@@ -235,6 +258,14 @@ def judge_calls(expect: dict, calls: list[dict], reply: str) -> list[str]:
     for phrase in expect.get("reply_lacks") or []:
         if phrase.casefold() in text.casefold():
             reasons.append(f"the reply says {phrase!r}")
+    if "reply_lacks_pattern" in expect:
+        problems = _pattern_problems(expect["reply_lacks_pattern"], "reply_lacks_pattern")
+        if problems:
+            raise ValueError("; ".join(problems))
+        for pattern in expect["reply_lacks_pattern"]:
+            found = re.search(pattern, text, re.IGNORECASE)
+            if found:
+                reasons.append(f"the reply matches {pattern!r}: it says {found.group(0)!r}")
     if expect.get("any_of"):
         options = [judge_calls(sub, calls, reply) for sub in expect["any_of"]]
         if all(options):

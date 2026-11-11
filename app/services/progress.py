@@ -9,9 +9,13 @@ get_progress(user_id, exercise=None)
     Every result carries includes_sample; when sample rows are in its numbers, the note says so
     (common.SAMPLE_NOTE) after any other note.
 
+    Results are rounded where section D of stage 6 names them, once, as the result is built: an
+    estimated max at 1 dp (a best and the one it beat together, lifts.rounded_best), and the goals
+    through goals.rounded_numbers. The numbers worked out from stay unrounded.
+
 lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals, today)
     The data app.charts draws, from the same numbers. Each body weight point carries its smoothed
-    value (metrics.ewma), the line the chart draws.
+    value (metrics.ewma), the line the chart draws, and the 7-day average there, both at 1 dp.
 """
 
 from datetime import date
@@ -19,11 +23,11 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app import db, links, metrics, rules, users
+from app import db, formatting, links, metrics, rules, users
 from app.models import CardioEntry, Goal, User
 from app.services import cardio, lifts
 from app.services.common import SAMPLE_NOTE, exercises, no_account
-from app.services.goals import goal_numbers, load_numbers
+from app.services.goals import goal_numbers, load_numbers, rounded_numbers
 
 HOW = ("estimated max = Epley, from sets of 1 to 10 reps; one point per session (the session's best). "
        f"The current estimated max is the best session in the last {metrics.RECENT_BEST_DAYS} days, or the latest "
@@ -40,7 +44,13 @@ CARDIO_HOW = ("Calorie estimates are MET x 3.5 x body weight in kg / 200 x minut
               "Quote these numbers; do not work out your own.")
 
 
+def _max(value: float | None) -> float | None:
+    """An estimated max at 1 dp, for a result."""
+    return None if value is None else formatting.rounded(value, "estimated_max")
+
+
 def _one(name: str, history: dict, numbers: list[dict], today: date) -> dict:
+    """One lift. numbers: goals.rounded_numbers. history's own values are never changed."""
     pts = history["points"].get(name, [])
     trend = metrics.projection(pts, today)
     goals = [g for g in numbers if g["exercise"] == name]
@@ -48,10 +58,11 @@ def _one(name: str, history: dict, numbers: list[dict], today: date) -> dict:
         "exercise": name,
         "sessions": history["logged"].get(name, 0),
         "last_trained": history["last"][name].isoformat() if name in history["last"] else None,
-        "estimated_max_over_time": [{"date": d.isoformat(), "estimated_max_kg": v} for d, v in pts],
-        "current_estimated_max_kg": metrics.recent_best(pts, today),
+        "estimated_max_over_time": [{"date": d.isoformat(), "estimated_max_kg": _max(v)} for d, v in pts],
+        "current_estimated_max_kg": _max(metrics.recent_best(pts, today)),
         "best_set": history["best_set"].get(name),
-        "bests": [{k: p[k] for k in ("date", "kind", "value", "previous")} for p in history["bests"].get(name, [])],
+        "bests": [lifts.rounded_best({k: p[k] for k in ("date", "kind", "value", "previous")})
+                  for p in history["bests"].get(name, [])],
         "trend": {"slope_per_week": trend["slope_per_week"], "points_used": trend["points_used"]} if trend else None,
         "goal": goals[0] if goals else None,
         "goals": goals,
@@ -91,7 +102,7 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                .order_by(Goal.id).options(selectinload(Goal.exercise))))
         loaded = load_numbers(s, user.id, today, goals, lift_history=history)
-        numbers = goal_numbers(goals, loaded, today)
+        numbers = rounded_numbers(goal_numbers(goals, loaded, today))
         shown = {n["goal_id"] for n in numbers}
 
         if only is not None:
@@ -165,6 +176,11 @@ def lift_chart(lift_history: dict, numbers: list[dict], lift: str | None = None)
     }
 
 
+def _derived(value: float | None) -> float | None:
+    """A smoothed or averaged body weight at 1 dp (D4). A weigh-in's own kg stays as entered."""
+    return None if value is None else formatting.rounded(value, "bodyweight_derived")
+
+
 def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date) -> dict | None:
     """Data for bodyweight_svg: weigh-ins with their smoothed value, the 7-day average at each, the
     open bodyweight goal. None with fewer than 2 weigh-ins. Every weigh-in is drawn, whatever its
@@ -179,8 +195,9 @@ def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date) -> dict | 
     goal = next((g for g in goals if g.kind == "bodyweight" and g.status == "open" and g.target_value is not None),
                 None)
     return {
-        "points": [{"date": d.isoformat(), "kg": kg, "smoothed": sm} for (d, kg), sm in zip(pts, smoothed)],
-        "average": [{"date": d.isoformat(), "kg": metrics.bodyweight_average(aged, metrics.on_or_before(d, today))}
+        "points": [{"date": d.isoformat(), "kg": kg, "smoothed": _derived(sm)} for (d, kg), sm in zip(pts, smoothed)],
+        "average": [{"date": d.isoformat(),
+                     "kg": _derived(metrics.bodyweight_average(aged, metrics.on_or_before(d, today)))}
                     for d, _ in pts],
         "latest": {"date": pts[-1][0].isoformat(), "kg": pts[-1][1]},
         "goal": None if goal is None else {

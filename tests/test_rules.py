@@ -150,6 +150,30 @@ def test_kinds_are_matched_like_exercise_names():
         assert rules.match_kind(odd)[1]["error"] == "invalid_kind"
 
 
+def test_a_refused_number_is_said_as_sent_and_a_range_through_the_formatter():
+    """A message repeats the caller's number as it came in, never rounded to a shown step; a range has commas."""
+    steps = rules.measurement_value("steps", 8000.5)[1]
+    assert steps["message"] == "steps must be a whole number, not 8000.5."
+    assert steps["fix"] == "Give steps, 0 to 200,000, a whole number."
+    assert rules.measurement_value("water_ml", " 25000 ")[1]["message"] == "water_ml 25000 ml is outside 0 to 20,000."
+    assert rules.bounded("avg_hr", 120.5)[1]["message"] == "avg_hr must be a whole number, not 120.5."
+    assert rules.bounded("kcal", 5000.6)[1]["message"] == "kcal 5000.6 is outside 0 to 5,000."
+    assert rules.bounded("speed_kmh", 0.05)[1]["fix"] == "Give speed_kmh as a number from 0.1 to 60."
+
+
+def test_a_huge_refused_number_keeps_the_message_short():
+    """A refused weight or reps is echoed as sent (rules.as_sent), never spelled out to 300 digits."""
+    today = date(2026, 11, 10)
+    _, _, err = rules.check_session("", [{"exercise": "Back Squat", "weight_kg": 1e300, "reps": 1e300}] * 2,
+                                    ["Back Squat"], today)
+    messages = [e["message"] for e in err["errors"]]
+    assert "Set 1: weight 1e+300 kg is outside 0 to 500 kg." in messages
+    assert "Set 1: reps 1e+300 is outside 1 to 30." in messages
+    assert len(err["message"]) < 400 and all(len(m) < 100 for m in messages)
+    assert rules.bounded("kcal", 10 ** 30)[1]["message"].startswith("kcal 1000000000000000000000000000000 is outside")
+    assert len(rules.measurement_value("steps", 10 ** 200)[1]["message"]) < 200
+
+
 def test_measurement_values_by_kind():
     assert rules.measurement_value("waist", "84.567") == (84.57, None)
     assert rules.measurement_value("steps", 8000.0) == (8000, None)

@@ -10,22 +10,22 @@
   <h2>Trends</h2>
   <dl class="facts">
     <dt>Body weight</dt>
-    <dd>{% if bw %}Smoothed trend <strong>{{ kg(bw.smoothed) }} kg</strong>{% if bw.now is not none %}, {{ weight_now_label(trends) }} {{ kg(bw.now) }} kg{% endif %}.
-      {% if bw.rate_per_week is not none %}<strong>{{ signed(bw.rate_per_week) }} kg a week</strong>{% if bw.rate_window %}, from {{ bw.rate_window.from }} to {{ bw.rate_window.to }}{% endif %}.
+    <dd>{% if bw %}Smoothed trend <strong>{{ bw.smoothed|show("bodyweight_derived") }}</strong>{% if bw.now is not none %}, {{ weight_now_label(trends) }} {{ bw.now|show("bodyweight_derived") }}{% endif %}.
+      {% if bw.rate_per_week is not none %}<strong>{{ bw.rate_per_week|show("rate") }} kg a week</strong>{% if bw.rate_window %}, from {{ bw.rate_window.from|days(bw.rate_window.to, trends.today) }}{% endif %}.
       {% else %}<span class="muted">{{ rate_note(trends) }}</span>{% endif %}
       {% else %}<span class="muted">No weigh-ins yet.</span>{% endif %}</dd>
     <dt>Calories a day</dt>
-    <dd>{% if cal %}{% if cal.avg_7d is not none %}<strong>{{ kg(cal.avg_7d) }} kcal</strong> over the {{ cal.days_logged_7d }} logged {{ "day" if cal.days_logged_7d == 1 else "days" }} of the last 7{% else %}<span class="muted">None logged in the last 7 days</span>{% endif %};
-      {{ kg(cal.avg_28d) }} kcal over the {{ cal.days_logged_28d }} logged {{ "day" if cal.days_logged_28d == 1 else "days" }} of the last 28.
-      {% if cal.target_kcal is not none %}Target {{ kg(cal.target_kcal) }} kcal.{% endif %}
-      {% if cal.estimated_share_pct_28d %}<span class="muted">{{ kg(cal.estimated_share_pct_28d) }}% of it is estimates.</span>{% endif %}
+    <dd>{% if cal %}{% if cal.avg_7d is not none %}<strong>{{ cal.avg_7d|show("kcal") }}</strong> over the {{ cal.days_logged_7d|show("count") }} logged {{ "day" if cal.days_logged_7d == 1 else "days" }} of the last 7{% else %}<span class="muted">None logged in the last 7 days</span>{% endif %}.
+      {{ cal.avg_28d|show("kcal") }} over the {{ cal.days_logged_28d|show("count") }} logged {{ "day" if cal.days_logged_28d == 1 else "days" }} of the last 28.
+      {% if cal.target_kcal is not none %}Target {{ cal.target_kcal|show("kcal") }}.{% endif %}
+      {% if cal.estimated_share_pct_28d %}<span class="muted">{{ cal.estimated_share_pct_28d|show("percent") }} of it is estimates.</span>{% endif %}
       {% else %}<span class="muted">No food logged in the last 28 days.</span>{% endif %}</dd>
     <dt>Sessions</dt>
-    <dd><strong>{{ ses.this_week }}</strong> in the last 7 days{% if ses.target_per_week is not none %}, target {{ ses.target_per_week }}{% endif %}; {{ kg(ses.per_week_4w) }} a week over the last 4 weeks.</dd>
+    <dd><strong>{{ ses.this_week|show("count") }}</strong> in the last 7 days{% if ses.target_per_week is not none %}, target {{ ses.target_per_week|show("count") }}{% endif %}. {{ ses.per_week_4w|show("count_avg") }} a week over the last 4 weeks.</dd>
     <dt>Cardio</dt>
-    <dd><strong>{{ kg(car.minutes_this_week) }} minutes</strong> in the last 7 days{% if car.target_minutes is not none %}, target {{ kg(car.target_minutes) }}{% endif %}; {{ kg(car.minutes_per_week_4w) }} a week over the last 4 weeks.</dd>
+    <dd><strong>{{ car.minutes_this_week|show("week_minutes") }}</strong> in the last 7 days{% if car.target_minutes is not none %}, target {{ car.target_minutes|show("week_minutes") }}{% endif %}. {{ car.minutes_per_week_4w|show("week_minutes") }} a week over the last 4 weeks.</dd>
     <dt>Maintenance</dt>
-    <dd>{% if trends.maintenance %}{% set m = trends.maintenance %}About <strong>{{ kg(m.kcal) }} kcal a day</strong>, from {{ m.days_logged }} days with food logged between {{ m.from }} and {{ m.to }}.
+    <dd>{% if trends.maintenance %}{% set m = trends.maintenance %}About <strong>{{ m.kcal|show("maintenance") }} a day</strong>, from {{ m.days_logged|show("count") }} days with food logged, {{ m.from|days(m.to, trends.today) }}.
       <span class="muted">An estimate from your intake and weight change. Your calorie target stays yours to set.</span>
       {% else %}<span class="muted">{{ trends.maintenance_note or "Not enough logged yet for an estimate." }}</span>{% endif %}</dd>
   </dl>
@@ -42,9 +42,9 @@
     {% set best = best_sets.get(row.exercise) %}
     <tr>
       <td><a href="/progress/{{ slug(row.exercise) }}">{{ row.exercise }}</a></td>
-      <td>{% if row.current_estimated_max_kg is not none %}{{ kg(row.current_estimated_max_kg) }} kg{% else %}<span class="muted">none yet</span>{% endif %}</td>
-      <td>{% if best %}{{ kg(best.weight_kg) }} kg × {{ best.reps }}{% else %}<span class="muted">none yet</span>{% endif %}</td>
-      <td>{% if row.last_trained %}<a href="/day/{{ row.last_trained }}">{{ row.last_trained }}</a>{% endif %}</td>
+      <td>{% if row.current_estimated_max_kg is not none %}{{ row.current_estimated_max_kg|show("estimated_max") }}{% else %}<span class="muted">No estimated max yet</span>{% endif %}</td>
+      <td>{% if best %}{{ best.weight_kg|show("weight_kg") }} × {{ best.reps|show("reps") }}{% else %}<span class="muted">No best set yet</span>{% endif %}</td>
+      <td>{% if row.last_trained %}<a href="/day/{{ row.last_trained }}">{{ row.last_trained|day(today) }}</a>{% endif %}</td>
     </tr>
     {% endfor %}
     </tbody>
@@ -57,9 +57,9 @@
 <div class="card">
   <h2>Body weight</h2>
   {% if trend.latest_weigh_in %}
-  <p>Latest: <strong>{{ kg(trend.latest_weigh_in.kg) }} kg</strong> on
-    <a href="/day/{{ trend.latest_weigh_in.date }}">{{ trend.latest_weigh_in.date }}</a>.
-    {% if trend.bodyweight %}7-day average: <strong>{{ kg(trend.bodyweight.average[-1].kg) }} kg</strong>.{% endif %}</p>
+  <p>Latest: <strong>{{ trend.latest_weigh_in.kg|show("weigh_in") }}</strong> on
+    <a href="/day/{{ trend.latest_weigh_in.date }}">{{ trend.latest_weigh_in.date|day(today) }}</a>.
+    {% if trend.bodyweight %}7-day average: <strong>{{ trend.bodyweight.average[-1].kg|show("bodyweight_derived") }}</strong>.{% endif %}</p>
   {% if chart %}{{ chart }}
   <p class="muted small">Dots are weigh-ins. The line is the smoothed trend, which steadies day-to-day swings.</p>
   {% else %}<p class="muted">The chart appears from the second weigh-in.</p>{% endif %}

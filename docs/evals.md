@@ -44,7 +44,7 @@ changed within a day and one full run cost three times the estimate. Both below 
 
 ## How a run works
 
-1. One local server for the whole run: the app built in-process with `create_app(settings, fetch=...)`,
+1. One local server for the whole run: the app built in-process with `create_app(settings, fetch=provider.fetch)`,
    served by uvicorn on a free port on 127.0.0.1, with a temporary SQLite file built by the migrations
    and the exercise list synced.
 2. Sign-in is real. `evals/issuer.py` makes a key pair and a fake provider (its key set and metadata),
@@ -135,6 +135,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `reply_asks` | The final reply contains a question mark. |
 | `reply_has` | The final reply contains every one of these phrases, ignoring case. |
 | `reply_lacks` | The final reply does not contain these phrases, ignoring case. |
+| `reply_lacks_pattern` | The final reply matches none of these regular expressions, ignoring case. A pattern that does not compile stops the load. |
 | `any_of` | At least one of these expects holds. |
 
 | Case | Says | Passes when |
@@ -155,6 +156,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `export_is_a_click` | Export my data | No write function called; the reply says "Settings" |
 | `delete_is_a_click` | Delete my account (one weigh-in; Claude may delete) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
 | `drop_goal` | Drop the squat goal (a Back Squat goal and a Bench Press goal) | `set_goal` with the squat goal's id and status dropped, one success; squat dropped, bench still open |
+| `decimals_and_dashes` | How am I doing? (79.2 kg yesterday, 79.3 kg today, no goal) | `get_trends` called; no write function called; no em dash or en dash in the reply; no body weight at two decimals |
 
 "No write function" is the eleven writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
 `log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,
@@ -174,6 +176,32 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 The sample-data seeds carry `includes_sample` and a note in every read. The model may say so in its
 reply. That is right, and nothing checks it.
 
+### The stage 6 case: how Claude says numbers
+
+**`decimals_and_dashes` holds the reply paragraph in the server instructions. It has not been run yet.**
+
+- The two weigh-ins are at 1 dp. Their 7-day average works out at 79.25 kg, two decimals, before Spotter
+  rounds it to 1 dp. A reply that recalculates, or adds decimals, says a figure Spotter never gave.
+- No goal is seeded, so no goal figure is in the reply either.
+- The dash check is `reply_lacks` with U+2014 and U+2013. A hyphen inside a word passes.
+- The pattern, a two- or three-digit figure followed by exactly two decimal places:
+
+  ```
+  (?<![\d.,:+\-\u2212])\d{2,3}\.\d{2}(?!\d|\.\d)
+  ```
+
+  - It names no figure, so the case holds on any day.
+  - It needs no unit, so a bare "79.25" at the end of a sentence or in a table cell fails too.
+  - It passes "79.3 kg", "2,216 kcal", "29:30", "29:30.0", "2026-11-11", "11.11.2026" and a signed
+    rate such as "-0.35 kg a week".
+
+| Proves | Does not prove |
+|---|---|
+| The model keeps Spotter's body weight figures at their shown precision, and joins clauses without a dash. | A weigh-in the person entered at two decimals: Spotter gives it as entered, and the pattern would fail it. The seed avoids it. |
+| | Three decimals, or a one-digit figure: the pattern looks for exactly two decimals on a two- or three-digit figure. |
+| | A date written as day and month with a dot and no year, such as "11.11": the pattern fails it. |
+| | Any other number rule in the paragraph: rounding further, "about" as a symbol, naming an estimate. |
+
 ## What the evals prove
 
 - That the server's instructions, function descriptions and schemas steer this model, under the
@@ -191,7 +219,7 @@ reply. That is right, and nothing checks it.
 - **One run is not a rate.** The model is not deterministic. That is why each case runs n times and
   the rate is printed as it is, not rounded up.
 - **The heuristics are heuristics.** `reply_asks` is a question mark; `reply_has` and `reply_lacks` are
-  phrase lists. A reply can ask without one, say a phrase innocently, or name Settings and still offer
-  something else.
+  phrase lists; `reply_lacks_pattern` is a regular expression. A reply can ask without one, say a phrase
+  innocently, match a pattern with a correct figure, or name Settings and still offer something else.
 - **Not the person's own data.** Every run is a throwaway person on a local copy. Nothing here touches
   the live site.

@@ -1626,7 +1626,7 @@ def numbers(goal_id: int, kind: str, label: str, unit: str, line: bool = True, *
 
 EVERY_KIND = [
     numbers(1, "lift", "Back Squat 100 kg", "kg", exercise="Back Squat"),
-    numbers(2, "bodyweight", "Bodyweight 75 kg", "kg"),
+    numbers(2, "bodyweight", "Body weight 75 kg", "kg"),
     numbers(3, "measurement", "Waist 80 cm", "cm", measurement_kind="waist"),
     numbers(4, "cardio_best", "Outdoor Run 5 km in 28:00", "min", line=False, exercise="Outdoor Run", distance_km=5.0),
 ]
@@ -1793,6 +1793,28 @@ def test_every_stage_5_sentence_is_in_the_instructions():
         assert rule in text, rule
     for words in STAGE_5_WORDS:
         assert words in text, words
+
+
+# ---------------------------------------------------------------- stage 6: how Claude replies (T8)
+
+# The contract's paragraph, word for word (stage-6.md, section D). Step 3 adds its plan_line sentence.
+REPLY_PARAGRAPH = (
+    "How to reply: plain words, one fact a line. Quote each number as Spotter gives it, with its unit: never add "
+    "decimals, never round further, and never recalculate one yourself. Where a summary gives a figure, say the "
+    "summary's figure. Say \"about\" as a word, never as a symbol. No dashes between clauses: use a colon, a comma "
+    "or a full stop. Name an estimate as an estimate."
+)
+
+
+def test_the_instructions_carry_the_reply_paragraph():
+    assert mcp_server.REPLY_RULE == REPLY_PARAGRAPH
+    assert REPLY_PARAGRAPH in mcp_server.INSTRUCTIONS
+
+
+def test_the_instructions_name_no_field_a_result_does_not_carry_yet():
+    # Step 3 flips this: once GoalNumbers carries plan_line, REPLY_RULE gains "Where a goal carries plan_line,
+    # say it as written." and this test asserts that sentence instead.
+    assert "plan_line" not in mcp_server.INSTRUCTIONS
 
 
 def test_the_descriptions_carry_the_same_sentences(http):

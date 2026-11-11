@@ -8,7 +8,6 @@ from sqlalchemy import event, select
 
 from app import db, services, users
 from app.exercises import LIFTS
-from app.metrics import epley
 from app.models import Exercise, LiftSession, LiftSet
 from tests.conftest import RESOURCE
 
@@ -50,8 +49,9 @@ def test_one_lift_in_full(user):
     assert r["today"] == day(user, 0) and squat["exercise"] == "Back Squat"
     series = squat["estimated_max_over_time"]
     assert len(series) == squat["sessions"] == 5 and series[0] == {"date": day(user, -25), "estimated_max_kg": 70.0}
-    assert squat["current_estimated_max_kg"] == series[-1]["estimated_max_kg"] == epley(70, 5)
-    assert squat["best_set"] == {"weight_kg": 70, "reps": 5, "date": day(user, -5), "estimated_max_kg": epley(70, 5)}
+    # epley(70, 5) is 81.67: every estimated max in the result is at 1 dp, 81.7.
+    assert squat["current_estimated_max_kg"] == series[-1]["estimated_max_kg"] == 81.7
+    assert squat["best_set"] == {"weight_kg": 70, "reps": 5, "date": day(user, -5), "estimated_max_kg": 81.7}
     assert squat["last_trained"] == day(user, -5)
     assert len(squat["bests"]) == 8 and {b["kind"] for b in squat["bests"]} == {"estimated_max", "weight"}
     assert squat["trend"]["slope_per_week"] > 0 and squat["trend"]["points_used"] == 5
@@ -68,7 +68,7 @@ def test_a_summary_of_every_lift_logged(user):
     r = services.get_progress(user.id)
     assert [row["exercise"] for row in r["lifts"]] == ["Back Squat", "Bench Press", "Pull-Up"]
     squat, bench, pull = r["lifts"]
-    assert squat["sessions"] == 5 and squat["best_estimated_max_kg"] == epley(70, 5)
+    assert squat["sessions"] == 5 and squat["best_estimated_max_kg"] == 81.7   # epley(70, 5), 81.67, at 1 dp
     assert squat["slope_per_week"] > 0 and squat["goal_status"] is None
     assert bench["sessions"] == 1 and bench["slope_per_week"] is None
     assert pull == {"exercise": "Pull-Up", "sessions": 1, "last_trained": day(user, -3),
@@ -96,7 +96,7 @@ def test_deleted_sessions_are_left_out(user):
     gone = lift(user, 1, ("Deadlift", 140, 5))
     services.delete_entry(user.id, "lift_session", gone["id"])
     r = services.get_progress(user.id, "Deadlift")["lift"]
-    assert r["sessions"] == 1 and r["current_estimated_max_kg"] == epley(100, 5) and r["bests"] == []
+    assert r["sessions"] == 1 and r["current_estimated_max_kg"] == 116.7 and r["bests"] == []   # 116.67 at 1 dp
     services.restore_entry(user.id, "lift_session", gone["id"])
     assert services.get_progress(user.id, "Deadlift")["lift"]["sessions"] == 2
 
@@ -111,10 +111,10 @@ def test_a_session_dated_after_today_is_still_shown(user):
         s.add(session)
     row = services.get_progress(user.id)["lifts"][0]
     assert row["exercise"] == "Deadlift" and row["last_trained"] == later.isoformat()
-    assert row["current_estimated_max_kg"] == epley(200, 5)
+    assert row["current_estimated_max_kg"] == 233.3   # epley(200, 5), 233.33, at 1 dp
     one = services.get_progress(user.id, "Deadlift")["lift"]
     assert one["sessions"] == 1 and one["estimated_max_over_time"] == [
-        {"date": later.isoformat(), "estimated_max_kg": epley(200, 5)}]
+        {"date": later.isoformat(), "estimated_max_kg": 233.3}]
 
 
 def test_a_change_of_time_zone_never_hides_what_was_logged(user, monkeypatch):
@@ -128,7 +128,7 @@ def test_a_change_of_time_zone_never_hides_what_was_logged(user, monkeypatch):
 
     one = services.get_progress(user.id, "Deadlift")["lift"]
     assert one["last_trained"] == "2026-11-10" and one["sessions"] == 1
-    assert one["current_estimated_max_kg"] == epley(100, 5) and len(one["estimated_max_over_time"]) == 1
+    assert one["current_estimated_max_kg"] == 116.7 and len(one["estimated_max_over_time"]) == 1   # 116.67, 1 dp
     assert services.get_progress(user.id)["lifts"][0]["last_trained"] == "2026-11-10"
     again = services.log_bodyweight(user.id, {"kg": 79.5, "date": "2026-11-08"}, "claude")
     assert again["recent"][0] == {"date": "2026-11-10", "kg": 80}
@@ -136,7 +136,7 @@ def test_a_change_of_time_zone_never_hides_what_was_logged(user, monkeypatch):
     assert services.get_entry(user.id, "bodyweight", weighed["id"])["entry"]["date"] == "2026-11-10"
     # A goal starts from those entries too.
     goal = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75, "target_date": "2026-12-31"}, "web")
-    assert goal["goal"]["start_value"] == 79.75 and goal["progress"]["latest"] == 79.75
+    assert goal["goal"]["start_value"] == 79.8 and goal["progress"]["latest"] == 79.8   # 79.75 at 1 dp
     # A write for the date the new zone calls the future is still refused.
     assert services.log_bodyweight(user.id, {"kg": 79, "date": "2026-11-10"}, "claude")["error"] == "date_in_future"
     assert services.log_lifts(user.id, {"date": "2026-11-10", "sets": [
@@ -180,10 +180,25 @@ def test_the_body_weight_chart_draws_the_smoothed_line(user):
         services.log_bodyweight(user.id, {"kg": kg, "date": day(user, -days_ago)}, "web")
     with db.new_session() as s:
         chart = bodyweight_chart(body.weigh_ins(s, user.id, users.today_for(user)), [], users.today_for(user))
-    # The same line get_trends reports: 80, 80.1, 79.99.
-    assert [(p["kg"], p["smoothed"]) for p in chart["points"]] == [(80, 80.0), (81, 80.1), (79, 79.99)]
+    # The same line get_trends reports: 80, 80.1, 79.99, each at 1 dp (D4): 79.99 is 80.0.
+    assert [(p["kg"], p["smoothed"]) for p in chart["points"]] == [(80, 80.0), (81, 80.1), (79, 80.0)]
     assert [p["smoothed"] for p in chart["points"]] == [p["smoothed"] for p in
                                                        services.get_trends(user.id)["bodyweight"]["series"]]
+
+
+def test_the_chart_rounds_its_smoothed_and_average_points_and_keeps_each_weigh_in(user):
+    """D4: the chart's smoothed line and 7-day averages at 1 dp; a weigh-in's own kg as entered."""
+    from app.services import body
+    from app.services.progress import bodyweight_chart
+    for days_ago, kg in ((2, 80), (1, 81), (0, 79.45)):
+        services.log_bodyweight(user.id, {"kg": kg, "date": day(user, -days_ago)}, "web")
+    with db.new_session() as s:
+        chart = bodyweight_chart(body.weigh_ins(s, user.id, users.today_for(user)), [], users.today_for(user))
+    # Smoothed 80, 80.1, 80.1 + 0.1 x (79.45 - 80.1) = 80.035, kept as 80.03 or 80.04: 80.0 at 1 dp either way.
+    # Averages 80, 80.5, (80 + 81 + 79.45) / 3 = 80.15, kept as 80.15: 80.2 at 1 dp, the half away from zero.
+    assert [p["smoothed"] for p in chart["points"]] == [80.0, 80.1, 80.0]
+    assert [p["kg"] for p in chart["average"]] == [80.0, 80.5, 80.2]
+    assert [p["kg"] for p in chart["points"]] == [80, 81, 79.45] and chart["latest"]["kg"] == 79.45
 
 
 def test_every_result_is_plain_json(user):

@@ -33,6 +33,12 @@ gives them.
   Goals and calorie estimates use it.
 - **Trends and projections** are a straight line through the last 6 weeks. They need 4 points. They
   say where the line goes, not whether that pace is realistic.
+- **Rounded figures:** the smoothed weight, the 7-day average and the estimated max come back at
+  1 decimal place, wherever a result names them. They round whatever they were worked out from, so
+  body weight now, the start of a body weight or lift goal and a cardio estimate's body weight round
+  even when they come from a single weigh-in. A weigh-in's own `kg` stays as entered. A best of kind
+  `estimated_max` and the one it beat carry 2 decimal places when 1 would read the same. Every other
+  figure keeps the precision it has.
 
 Quote these numbers. Do not work out your own.
 
@@ -66,7 +72,7 @@ Every goal has a start, a target, a date and a direction, and comes back in the 
 `get_trends` answers "how am I doing?". `get_goals` answers "am I on track?".
 
 - **The smoothed weight trend** is an exponentially weighted moving average of the weigh-ins, with
-  alpha 0.1 (α 0.1): each weigh-in moves the line a tenth of the way from where it was. The chart on
+  alpha 0.1: each weigh-in moves the line a tenth of the way from where it was. The chart on
   Progress draws this line. "Body weight now" stays the 7-day average.
 - **The rate per week** comes from the smoothed line between two weigh-ins: the latest, dated in the
   last 7 days, and the last one dated 14 to 42 days before today. Without both ends the rate is null,
@@ -131,7 +137,7 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 - **Duplicates.** The same session, the same weight on the same day, the same measurement on the
   same day, the same set of foods or the same cardio session, logged again within 10 minutes comes
   back with `duplicate` true. Nothing new is written.
-  Send `allow_repeat` true only when the person confirms it really happened twice.
+  Send `allow_repeat` true only when the person confirms it happened twice.
 - **Replacements.** A second, different weigh-in on the same day replaces the first; so does a second
   value of the same measurement kind. The first is kept, not erased, and `restore_entry` brings it back.
 - **Edits.** `edit_entry` changes an entry in place and keeps its id: a session's date, notes or whole

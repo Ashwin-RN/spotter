@@ -26,8 +26,8 @@ Live: https://spotter-production-0c0f.up.railway.app. The landing page carries t
 
 - Python 3.12, Starlette, SQLAlchemy, Alembic, the `mcp` library (streamable HTTP, stateless); Postgres; sign-in through an outside provider (WorkOS AuthKit) for the web and for Claude, so both reach one account.
 - Every write locks the person's row first, counts against a write limit, and passes the same checks whether it came from Claude or a form.
-- 1,598 tests, run plain and with warnings as errors on a clean export before every push.
-- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 16 cases, 3 runs each: 48 of 48 runs passed at stage 5, on `claude-fable-5-2`. The runner now pins `claude-opus-5-5`. See `docs/evals.md`.
+- The test suite runs plain and with warnings as errors on a clean export before every push.
+- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 17 cases, 3 runs each. At stage 5, with one case fewer, 48 of 48 runs passed, on `claude-fable-5-2`. The newest case, from stage 6, has not been run yet. The runner now pins `claude-opus-5-5`. See `docs/evals.md`.
 
 ## Where to read more
 

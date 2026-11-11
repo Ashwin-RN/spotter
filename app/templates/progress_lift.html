@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ lift.exercise }} · Spotter{% endblock %}
 {% block main %}
-<p><a href="/progress">&larr; Progress</a></p>
+<p><a href="/progress">Progress</a></p>
 <h1>{{ lift.exercise }}</h1>
 
 {% if lift.sessions %}
 <div class="card">
   <dl class="facts">
-    <dt>Estimated max now</dt><dd>{% if lift.current_estimated_max_kg is not none %}{{ kg(lift.current_estimated_max_kg) }} kg{% else %}none yet{% endif %}</dd>
-    <dt>Best set</dt><dd>{% if lift.best_set %}{{ kg(lift.best_set.weight_kg) }} kg × {{ lift.best_set.reps }} on <a href="/day/{{ lift.best_set.date }}">{{ lift.best_set.date }}</a>{% else %}none yet{% endif %}</dd>
-    <dt>Sessions</dt><dd>{{ lift.sessions }}</dd>
-    <dt>Last trained</dt><dd>{% if lift.last_trained %}<a href="/day/{{ lift.last_trained }}">{{ lift.last_trained }}</a>{% endif %}</dd>
+    <dt>Estimated max now</dt><dd>{% if lift.current_estimated_max_kg is not none %}{{ lift.current_estimated_max_kg|show("estimated_max") }}{% else %}No estimated max yet{% endif %}</dd>
+    <dt>Best set</dt><dd>{% if lift.best_set %}{{ lift.best_set.weight_kg|show("weight_kg") }} × {{ lift.best_set.reps|show("reps") }} on <a href="/day/{{ lift.best_set.date }}">{{ lift.best_set.date|day(today) }}</a>{% else %}No best set yet{% endif %}</dd>
+    <dt>Sessions</dt><dd>{{ lift.sessions|show("count") }}</dd>
+    <dt>Last trained</dt><dd>{% if lift.last_trained %}<a href="/day/{{ lift.last_trained }}">{{ lift.last_trained|day(today) }}</a>{% endif %}</dd>
   </dl>
   {{ chart }}
 </div>
@@ -20,7 +20,8 @@
   {% if lift.bests %}
   <ul class="entries">
     {% for b in lift.bests|reverse %}
-    <li><a href="/day/{{ b.date }}">{{ b.date }}</a>: {{ "estimated max" if b.kind == "estimated_max" else "heaviest weight" }} {{ kg(b.value) }} kg (was {{ kg(b.previous) }} kg)</li>
+    {% set q, wide = ("estimated_max" if b.kind == "estimated_max" else "weight_kg"), best_widened(b) %}
+    <li><a href="/day/{{ b.date }}">{{ b.date|day(today) }}</a>: {{ "estimated max" if b.kind == "estimated_max" else "heaviest weight" }} {{ b.value|show(q, wide) }}{% if b.previous is not none %} (was {{ b.previous|show(q, wide) }}){% endif %}</li>
     {% endfor %}
   </ul>
   {% else %}
@@ -32,7 +33,7 @@
   <h2>Sessions</h2>
   {% if sessions %}
   <ul class="entries">
-    {% for p in sessions %}<li><a href="/day/{{ p.date }}">{{ p.date }}</a>: estimated max {{ kg(p.estimated_max_kg) }} kg</li>{% endfor %}
+    {% for p in sessions %}<li><a href="/day/{{ p.date }}">{{ p.date|day(today) }}</a>: estimated max {{ p.estimated_max_kg|show("estimated_max") }}</li>{% endfor %}
   </ul>
   {% else %}
   <p class="muted">No session with a set of 1 to 10 reps, so no estimated max yet.</p>

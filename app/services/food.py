@@ -47,7 +47,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 
-from app import db, links, rules, users
+from app import db, formatting, links, rules, users
 from app.models import CardioEntry, FoodEntry, SavedFood, User
 from app.services import usda
 from app.services.common import (
@@ -175,7 +175,7 @@ def _check_entry(s, user_id: int, raw, where: str, default_meal: str,
         if err:
             return None, [err]
         kcal, err = _worked(food.kcal_per_serving * servings, where,
-                            f"{servings:g} servings of {food.name}", "Give fewer servings")
+                            f"{formatting.show(servings, 'servings')} servings of {food.name}", "Give fewer servings")
         if err:
             return None, [err]
         out.update(source="saved_food", saved_food_id=food.id, servings=servings, kcal=kcal,
@@ -191,8 +191,8 @@ def _check_entry(s, user_id: int, raw, where: str, default_meal: str,
         found, err = resolved.get(fdc_id, (None, usda.unavailable()))
         if err:
             return None, [err]
-        kcal, err = _worked(found["kcal_per_100g"] * grams / 100, where, f"{grams:g} g of {found['description']}",
-                            "Give fewer grams")
+        kcal, err = _worked(found["kcal_per_100g"] * grams / 100, where,
+                            f"{formatting.show(grams, 'grams')} of {found['description']}", "Give fewer grams")
         if err:
             return None, [err]
         out.update(source="usda", usda_fdc_id=fdc_id, grams=grams, kcal=kcal,
@@ -212,8 +212,8 @@ def _worked(value: float, where: str, what: str, fewer: str) -> tuple[int | None
     if err is None:
         return kcal, None
     lo, hi, _ = rules.NUMBERS["kcal"]
-    return None, rules.error("invalid_field", f"{where}: {rules.quote(what)} works out at {round(value):,} kcal, "
-                             f"outside {lo:,} to {hi:,} for one entry.",
+    return None, rules.error("invalid_field", f"{where}: {rules.quote(what)} works out at "
+                             f"{formatting.show(value, 'kcal')}, outside {rules.span(lo, hi, 'kcal')} for one entry.",
                              f"{fewer}: the app supplies the number for a saved or USDA food.")
 
 
@@ -229,17 +229,20 @@ def _usda_ids(raw) -> list[int]:
     return out
 
 
-def _summary(on, rows: list[FoodEntry], day: dict) -> str:
-    by_meal: dict[str, list[str]] = {}
-    for e in rows:
-        by_meal.setdefault(e.meal, []).append(f"{e.description} {int(e.kcal)} kcal ({SOURCES_SHOWN[e.source]})")
-    parts = [f"{meal.capitalize()}: {', '.join(items)}" for meal, items in by_meal.items()]
-    text = f"{on.isoformat()}: " + "; ".join(parts) + f". Day total {day['total_kcal']} kcal"
+def _summary(on, today, rows: list[FoodEntry], day: dict) -> str:
+    """'Tue 10 Nov. Lunch: Roti, 240 kcal, saved food. Day total 2,430 kcal, 980 kcal of it estimated.
+    430 kcal over the 2,000 kcal target.' One sentence an entry, its tag in its own slot."""
+    kcal = lambda n: formatting.show(n, "kcal")  # noqa: E731
+    text = f"{formatting.day(on, today)}." + "".join(
+        f" {e.meal.capitalize()}: {e.description}, {kcal(e.kcal)}, {SOURCES_SHOWN[e.source]}." for e in rows)
+    text += f" Day total {kcal(day['total_kcal'])}"
     if day["estimated_kcal"]:
-        text += f", {day['estimated_kcal']} of it estimated"
+        text += f", {kcal(day['estimated_kcal'])} of it estimated"
+    text += "."
     if day["remaining_kcal"] is not None:
-        text += f"; {day['remaining_kcal']} kcal left of {day['target_kcal']}"
-    return text + "."
+        left, target = formatting.show(day["remaining_kcal"], "kcal_left"), kcal(day["target_kcal"])
+        text += f" {left} {'the' if day['remaining_kcal'] < 0 else 'of the'} {target} target."
+    return text
 
 
 def log_food(user_id: int, data: dict | None, by: str) -> dict:
@@ -302,13 +305,13 @@ def log_food(user_id: int, data: dict | None, by: str) -> dict:
         day = day_numbers(user, *_day_rows(s, user.id, on))
         out = {"kind": KIND, "ids": [r.id for r in rows], "duplicate": duplicate,
                "entries": [entry_dict(r) for r in rows], "day": day,
-               "summary": ("Already logged: " if duplicate else "") + _summary(on, rows, day),
+               "summary": ("Already logged: " if duplicate else "") + _summary(on, today, rows, day),
                "links": {"day": links.page("day", date=on), "foods": links.page("foods")}}
         guesses = sum(1 for r in rows if r.source == "claude_estimate")
         if duplicate:
             out["note"] = duplicate_note("meal")
         elif guesses:
-            out["note"] = (f"{guesses} {'entry is' if guesses == 1 else 'entries are'} Claude's "
+            out["note"] = (f"{formatting.show(guesses, 'count')} {'entry is' if guesses == 1 else 'entries are'} Claude's "
                            f"{'estimate' if guesses == 1 else 'estimates'}: the person can confirm or correct "
                            f"{'it' if guesses == 1 else 'them'}, and the day total says how much of it is estimated.")
         return out
@@ -366,10 +369,11 @@ def save_food(user_id: int, data: dict | None, by: str) -> dict:
         food.deleted_at = None
         food.updated_at = db.utcnow()
         s.flush()
-        grams = f" ({food.grams_per_serving:g} g)" if food.grams_per_serving else ""
+        grams = f", {formatting.show(food.grams_per_serving, 'grams')} a serving" if food.grams_per_serving else ""
         verb = "Saved" if created else ("Brought back and updated" if was_deleted else "Updated")
         return {"kind": "saved_food", "id": food.id, "created": created, "food": food_dict(food),
-                "summary": f"{verb} {food.name}: {food.serving_label}{grams} is {food.kcal_per_serving:g} kcal.",
+                "summary": (f"{verb} {food.name}: {food.serving_label} is "
+                            f"{formatting.show(food.kcal_per_serving, 'kcal_per_serving')}{grams}."),
                 "links": {"foods": links.page("foods")}}
 
 
@@ -422,8 +426,9 @@ def find_food(user_id: int, query, limit=8) -> dict:
         found = None
         usda_note = ("USDA lookup is off: no key is set." if err["error"] == "usda_off"
                      else "USDA did not answer: use a saved food or the person's own number.")
-    summary = f"For '{rules.quote(text)}': {len(saved)} saved, {len(recent)} recent"
-    summary += f", {len(found)} from USDA." if found is not None else ". " + usda_note
+    count = lambda n: formatting.show(n, "count")  # noqa: E731
+    summary = f"For '{rules.quote(text)}': {count(len(saved))} saved, {count(len(recent))} recent"
+    summary += f", {count(len(found))} from USDA." if found is not None else ". " + usda_note
     return {"query": text, "saved": saved, "recent": recent, "usda": found, "usda_note": usda_note,
             "summary": summary}
 
@@ -452,8 +457,8 @@ def list_saved_foods(user_id: int) -> dict:
                   "last_logged": used[f.id][1].isoformat() if f.id in used else None, "is_sample": f.is_sample,
                   "deleted_at": f.deleted_at.isoformat() if f.deleted_at else None} for f in rows]
     live = sum(1 for f in foods if f["deleted_at"] is None)
-    summary = f"{live} saved food{'s' if live != 1 else ''}"
-    summary += f", {len(foods) - live} deleted." if len(foods) > live else "."
+    summary = f"{formatting.show(live, 'count')} saved food{'s' if live != 1 else ''}"
+    summary += f", {formatting.show(len(foods) - live, 'count')} deleted." if len(foods) > live else "."
     return {"foods": foods, "summary": summary}
 
 

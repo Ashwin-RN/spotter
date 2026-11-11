@@ -181,5 +181,18 @@
     "db": [{"table": "goal", "count": 2,
             "rows": [{"id": "{{seed.squat}}", "status": "dropped"},
                      {"id": "{{seed.bench}}", "status": "open", "target_value": 90}]}]
+  },
+  {
+    "id": "decimals_and_dashes",
+    "say": "How am I doing?",
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 79.2, "date": "{{yesterday}}"}},
+             {"as": "latest", "service": "log_bodyweight", "data": {"kg": 79.3}}],
+    "expect": {
+      "function": "get_trends",
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry"],
+      "reply_lacks": ["\u2014", "\u2013"],
+      "reply_lacks_pattern": ["(?<![\\d.,:+\\-\\u2212])\\d{2,3}\\.\\d{2}(?!\\d|\\.\\d)"]
+    }
   }
 ]

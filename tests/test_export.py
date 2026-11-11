@@ -2,6 +2,7 @@
 
 import csv
 import io
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -10,6 +11,7 @@ from app import db, services
 from app.models import Base, user_tables
 
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
+BOM = "\ufeff"
 FILES = ["account.csv", "lift_sessions.csv", "lift_sets.csv", "bodyweight.csv", "measurements.csv", "goals.csv",
          "saved_foods.csv", "food_entries.csv", "cardio_entries.csv", "README.txt"]
 
@@ -20,7 +22,9 @@ def fixed_clock(monkeypatch):
 
 
 def table(text: str) -> list[dict]:
-    return list(csv.DictReader(io.StringIO(text)))
+    """A CSV file's rows. Every CSV starts with the byte-order mark (D16), which is not part of the header."""
+    assert text.startswith(BOM)
+    return list(csv.DictReader(io.StringIO(text.removeprefix(BOM))))
 
 
 def one_of_everything(user_id: int) -> dict:
@@ -96,7 +100,7 @@ def test_names_not_ids_and_the_tags_and_sample_marks(make_user):
     assert saved["name"] == "Roti" and "name_key" not in saved
     for name, text in files.items():
         if name.endswith(".csv"):
-            header = next(csv.reader(io.StringIO(text)))
+            header = next(csv.reader(io.StringIO(text.removeprefix(BOM))))
             assert "user_id" not in header and "dedupe_key" not in header, name
     assert "you_said" in files["README.txt"] and "UTC" in files["README.txt"] and "deleted_at" in files["README.txt"]
 
@@ -131,3 +135,120 @@ def test_every_table_the_person_owns_has_a_file():
 
 def test_no_account():
     assert services.export_data(987654)["error"] == "no_account"
+
+
+# ---------------------------------------------------------------- T6: the files a spreadsheet opens
+
+UNIT_PARTS = {"kg", "kcal", "km", "kmh", "pct", "bpm", "minutes", "grams"}
+# Number columns with no unit to name: ids, counts, and a value whose unit is in its row's unit column.
+UNITLESS = {"id", "account_id", "session_id", "saved_food_id", "usda_fdc_id", "set_number", "reps", "servings",
+            "target_sessions_per_week", "value", "start_value", "target_value"}
+NUMBER = re.compile(r"-?\d+(\.\d+)?")
+TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00")
+
+
+def hostile(user_id: int) -> None:
+    """Text a spreadsheet would run as a formula, in every kind of text cell the person writes."""
+    services.log_lifts(user_id, {"notes": "=SUM(A1:A9)", "sets": [{"exercise": "Deadlift", "weight_kg": 100,
+                                                                    "reps": 5}]}, "claude")
+    services.log_food(user_id, {"entries": [{"description": "+cmd", "kcal": 10},
+                                            {"description": "-2 dal", "kcal": 20}]}, "claude")
+    services.save_food(user_id, {"name": "@home roti", "serving_label": "=1 roti", "kcal_per_serving": 90,
+                                 "grams_per_serving": 40}, "web")
+    services.log_cardio(user_id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5, "avg_hr": 150,
+                                  "notes": "-fast"}, "web")
+    services.set_goal(user_id, {"kind": "bodyweight", "target_value": 75, "target_date": "2027-03-31",
+                                "text": "@ the wedding"}, "web")
+
+
+def test_every_csv_is_utf8_with_a_byte_order_mark_and_readme_is_plain(make_user):
+    user = make_user(name="Asha")
+    one_of_everything(user.id)
+    files = services.export_data(user.id)["files"]
+    for name, text in files.items():
+        if name.endswith(".csv"):
+            assert text.startswith(BOM) and text.count(BOM) == 1, name
+            assert text.encode("utf-8").startswith(b"\xef\xbb\xbf"), name
+    assert not files["README.txt"].startswith(BOM)
+
+
+def test_headers_are_snake_case_with_a_unit_on_every_fixed_unit_number(make_user):
+    user = make_user(calorie_target_kcal=2200, target_sessions_per_week=3, target_cardio_minutes_per_week=150)
+    one_of_everything(user.id)
+    hostile(user.id)
+    services.add_sample_data(make_user().id, "web")   # another person's: no bearing on this export
+    files = services.export_data(user.id)["files"]
+    checked = set()
+    for name, text in files.items():
+        if not name.endswith(".csv"):
+            continue
+        rows = table(text)
+        header = list(rows[0])
+        assert all(re.fullmatch(r"[a-z][a-z0-9]*(_[a-z0-9]+)*", h) for h in header), (name, header)
+        for column in header:
+            cells = [r[column] for r in rows if r[column] != ""]
+            if not cells or not all(NUMBER.fullmatch(c) for c in cells):
+                continue
+            checked.add(column)
+            assert column in UNITLESS or set(column.split("_")) & UNIT_PARTS, (name, column)
+    assert {"weight_kg", "kg", "kcal", "grams_per_serving", "minutes", "distance_km", "speed_kmh", "avg_hr_bpm",
+            "estimated_kcal", "estimate_weight_kg", "calorie_target_kcal", "target_cardio_minutes_per_week"} <= checked
+    assert "avg_hr" not in table(files["cardio_entries.csv"])[0]
+
+
+def test_a_notes_column_wherever_a_table_has_notes(make_user):
+    from app.services.export import TABLES
+    user = make_user()
+    one_of_everything(user.id)
+    files = services.export_data(user.id)["files"]
+    with_notes = [name for name, (model, _) in TABLES.items() if "notes" in model.__table__.c]
+    assert sorted(with_notes) == ["cardio_entries.csv", "lift_sessions.csv"]
+    for name in with_notes:
+        assert "notes" in next(csv.reader(io.StringIO(files[name].removeprefix(BOM)))), name
+
+
+def test_cells_carry_no_unit_no_formula_and_no_point_zero(make_user):
+    user = make_user()
+    one_of_everything(user.id)
+    hostile(user.id)
+    files = services.export_data(user.id)["files"]
+    cells = [(name, c, v) for name, text in files.items() if name.endswith(".csv")
+             for row in table(text) for c, v in row.items()]
+    for name, column, value in cells:
+        assert not re.fullmatch(r"-?\d+(\.\d+)?\s*(kg|kcal|km|km/h|cm|bpm|min|g|ml|h|%)", value), (name, column, value)
+        assert not re.fullmatch(r"-?\d+\.0+", value), (name, column, value)   # 100, not 100.0
+        if not NUMBER.fullmatch(value):
+            assert value[:1] not in ("=", "+", "-", "@"), (name, column, value)
+    food = {f["description"] for f in table(files["food_entries.csv"])}
+    assert {"'+cmd", "'-2 dal"} <= food                     # shown as text, never run as a formula
+    saved = table(files["saved_foods.csv"])[-1]
+    assert (saved["name"], saved["serving_label"]) == ("'@home roti", "'=1 roti")
+    assert table(files["lift_sessions.csv"])[-1]["notes"] == "'=SUM(A1:A9)"
+    assert table(files["cardio_entries.csv"])[-1]["notes"] == "'-fast"
+    assert table(files["goals.csv"])[-1]["text"] == "'@ the wedding"
+    # What the person typed is stored as typed: the apostrophe is the file's, not the data's.
+    assert services.get_log(user.id)["days"][0]["sessions"][-1]["notes"] == "=SUM(A1:A9)"
+
+
+def test_dates_are_iso_and_times_are_utc_with_the_offset(make_user):
+    user = make_user()
+    one_of_everything(user.id)
+    hostile(user.id)
+    goal = services.get_goals(user.id)["goals"][0]["goal_id"]
+    services.set_goal(user.id, {"goal_id": goal, "status": "dropped"}, "web")   # a closed_at to read
+    files = services.export_data(user.id)["files"]
+    seen = set()
+    for name, text in files.items():
+        if not name.endswith(".csv"):
+            continue
+        for row in table(text):
+            for column, value in row.items():
+                if value == "":
+                    continue
+                if column == "date" or column.endswith("_date"):
+                    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", value), (name, column, value)
+                    seen.add(column)
+                elif column.endswith("_at"):
+                    assert TIME.fullmatch(value), (name, column, value)
+                    seen.add(column)
+    assert {"date", "start_date", "target_date", "created_at", "updated_at", "deleted_at", "closed_at"} <= seen

@@ -88,7 +88,7 @@ class GoalNumbers(BaseModel):
 
     goal_id: int = Field(description="The goal's id. set_goal takes it as goal_id to change or close the goal.")
     label: str = Field(
-        description="The goal in a few words, such as 'Back Squat 100 kg', 'Bodyweight 75 kg', 'Waist 80 cm' or "
+        description="The goal in a few words, such as 'Back Squat 100 kg', 'Body weight 75 kg', 'Waist 80 cm' or "
                     "'Outdoor Run 5 km in 28:00'.")
     kind: str = Field(description=GOAL_KINDS_TEXT)
     exercise: str | None = Field(

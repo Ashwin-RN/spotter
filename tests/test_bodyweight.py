@@ -39,6 +39,22 @@ def age_all(user_id, minutes):
             row.created_at = row.created_at - timedelta(minutes=minutes)
 
 
+def test_a_before_and_after_that_print_the_same_widen_together():
+    """common.pair: the rule the edit and replace texts share. A weigh-in prints as entered, so its replace
+    note never needs it; a derived figure at 1 dp does."""
+    from app.services.common import pair
+    assert pair(80.26, 80.34, "bodyweight_derived") == ("80.26 kg", "80.34 kg")   # both 80.3 at 1 dp
+    assert pair(80.25, 80.5, "bodyweight_derived") == ("80.3 kg", "80.5 kg")
+    assert pair(80.25, 80.25, "bodyweight_derived") == ("80.3 kg", "80.3 kg")
+    assert pair(1.04, 1.01, "incline", unit=False) == ("1.04", "1.01")
+
+
+def test_a_replaced_weigh_in_is_named_as_entered(user):
+    weigh(user, 80.25)
+    r = weigh(user, 80.24)
+    assert r["note"].startswith("Replaced the ") and " weigh-in of 80.25 kg: one weigh-in a day." in r["note"]
+
+
 def test_trend_recent_and_a_different_weight_the_same_day_replaces(user):
     today = users.today_for(user).isoformat()
     first = weigh(user, 80)
@@ -49,11 +65,13 @@ def test_trend_recent_and_a_different_weight_the_same_day_replaces(user):
         weigh(user, kg, days_ago)
     r = weigh(user, 79.5, by="web")  # today again, a different weight: replaces 80
     assert r["replaced"]["id"] == first["id"] and r["replaced"]["kg"] == 80 and r["replaced"]["deleted_at"]
-    assert "Replaced" in r["note"] and str(first["id"]) in r["note"] and "kept, not erased" in r["note"]
+    assert "Replaced" in r["note"] and "kept, not erased" in r["note"] and "Its id is under replaced" in r["note"]
+    assert f"id {first['id']}" not in r["note"]   # the id is in replaced, not in the words
     assert r["weigh_in"]["logged_by"] == "web"
     assert [w["kg"] for w in r["recent"]] == [79.5, 81, 83.6, 84]
     assert r["trend"]["method"] == "7-day average"
-    assert r["trend"]["now_avg"] == 80.25 and r["trend"]["then_avg"] == 83.8 and r["trend"]["change_kg"] == -3.55
+    # now_avg is 80.25 and then_avg 83.8, each at 1 dp in the result (80.25 is 80.3); change_kg keeps 2 dp.
+    assert r["trend"]["now_avg"] == 80.3 and r["trend"]["then_avg"] == 83.8 and r["trend"]["change_kg"] == -3.55
     assert live_per_day(user.id)[users.today_for(user)] == 1
 
 

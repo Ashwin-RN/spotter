@@ -7,7 +7,7 @@
 {% if saved %}<p class="ok">Saved.</p>{% endif %}
 {% if undo %}
 <div class="ok undo">
-  Deleted.
+  Saved food deleted.
   <form method="post" action="/foods/{{ undo }}/restore" class="inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="link">Undo</button>
@@ -24,9 +24,9 @@
     {% for f in foods %}
     <tr>
       <td>{{ f.name }}{% if f.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}</td>
-      <td>{{ f.serving_label }}{% if f.grams_per_serving %} <span class="muted">({{ kg(f.grams_per_serving) }} g)</span>{% endif %}</td>
-      <td>{{ kg(f.kcal_per_serving) }}</td>
-      <td>{{ f.times_logged }}</td>
+      <td>{{ f.serving_label }}{% if f.grams_per_serving %} <span class="muted">({{ f.grams_per_serving|show("grams") }})</span>{% endif %}</td>
+      <td>{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td>
+      <td>{{ f.times_logged|show("count") }}</td>
       <td><span class="entry-actions"><a href="/foods/{{ f.id }}/edit">Edit</a>
         <form method="post" action="/foods/{{ f.id }}/delete" class="inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

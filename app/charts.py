@@ -6,11 +6,21 @@
 The data comes from app.services.progress (lift_chart, bodyweight_chart). Colours come from the
 stylesheet, through the class names. Every chart carries a <title> and a <desc> that state its
 numbers, so it reads without the picture. Text from the data is escaped.
+
+Every number and date goes through app.formatting, with a plain space before a unit (text inside an
+SVG). today is the person's own date, for the date form: without it, the chart's last day stands in.
 """
 
 from datetime import date
 
 from markupsafe import Markup, escape
+
+from app import formatting
+
+
+def _goal_kg(value) -> str:
+    """A goal's target in kg, as entered: "100 kg"."""
+    return f"{formatting.show(value, 'goal_target')} kg"
 
 CHART_W, CHART_H = 640, 260
 PAD_L, PAD_R, PAD_T, PAD_B = 52, 16, 16, 30
@@ -25,7 +35,7 @@ def _svg_open(element_id: str, title: str, desc: str) -> list[str]:
             f'<title id="{tid}">{escape(title)}</title>', f'<desc id="{did}">{escape(desc)}</desc>']
 
 
-def chart_svg(chart: dict | None, element_id: str = "progress-chart") -> Markup:
+def chart_svg(chart: dict | None, element_id: str = "progress-chart", today: date | None = None) -> Markup:
     """Estimated max per session for one lift, a horizontal goal line at the target, and the
     projection as a dashed line from the latest point to the projected value at the goal date.
 
@@ -62,34 +72,39 @@ def chart_svg(chart: dict | None, element_id: str = "progress-chart") -> Markup:
         return round(PAD_T + (hi - v) / (hi - lo) * inner_h, 1)
 
     latest = chart["latest"]
-    desc = (f"{len(pts)} sessions from {first.isoformat()} to {pts[-1][0].isoformat()}. "
-            f"Latest {latest['value']:g} kg on {latest['date']}.")
+    today = today or last
+    desc = (f"{len(pts)} sessions from {formatting.day(first, today)} to {formatting.day(pts[-1][0], today)}. "
+            f"Latest {formatting.show(latest['value'], 'estimated_max')} on {formatting.day(latest['date'], today)}.")
     if goal:
-        desc += f" Goal {goal['target_kg']:g} kg by {goal['target_date']}: {goal['status']}"
-        desc += f", projected {goal['projected']:g} kg." if goal.get("projected") is not None else "."
+        desc += f" Goal {_goal_kg(goal['target_kg'])} by {formatting.day(goal['target_date'], today)}: {goal['status']}"
+        desc += (f", projected {formatting.show(goal['projected'], 'estimated_max')}."
+                 if goal.get("projected") is not None else ".")
     out = _svg_open(element_id, f"Estimated max over time: {chart['lift']}", desc)
     for n in range(5):  # horizontal grid in four bands, labelled in kg
         v = lo + (hi - lo) * n / 4
         out.append(f'<line class="grid" x1="{PAD_L}" x2="{CHART_W - PAD_R}" y1="{y(v)}" y2="{y(v)}" />')
-        out.append(f'<text class="axis" x="{PAD_L - 6}" y="{y(v) + 4}" text-anchor="end">{v:.0f}</text>')
-    out.append(f'<text class="axis" x="{PAD_L}" y="{CHART_H - 8}">{first.isoformat()}</text>')
-    out.append(f'<text class="axis" x="{CHART_W - PAD_R}" y="{CHART_H - 8}" text-anchor="end">{last.isoformat()}</text>')
+        out.append(f'<text class="axis" x="{PAD_L - 6}" y="{y(v) + 4}" text-anchor="end">'
+                   f'{formatting.show(v, "estimated_max", unit=False)}</text>')
+    out.append(f'<text class="axis" x="{PAD_L}" y="{CHART_H - 8}">{formatting.day(first, today)}</text>')
+    out.append(f'<text class="axis" x="{CHART_W - PAD_R}" y="{CHART_H - 8}" text-anchor="end">'
+               f'{formatting.day(last, today)}</text>')
     if target is not None:
         out.append(f'<line class="goal" x1="{PAD_L}" x2="{CHART_W - PAD_R}" y1="{y(target)}" y2="{y(target)}" />')
         out.append(f'<text class="goal-label" x="{CHART_W - PAD_R}" y="{y(target) - 5}" text-anchor="end">'
-                   f'Goal {target:g} kg</text>')
+                   f'Goal {_goal_kg(target)}</text>')
     if projected is not None and goal_date is not None:
         out.append(f'<line class="projection" x1="{x(pts[-1][0])}" y1="{y(pts[-1][1])}" x2="{x(goal_date)}" '
                    f'y2="{y(projected)}" stroke-dasharray="6 4" />')
     if len(pts) > 1:
         out.append(f'<polyline class="series" fill="none" points="{" ".join(f"{x(d)},{y(v)}" for d, v in pts)}" />')
     for d, v in pts:
-        out.append(f'<circle class="dot" cx="{x(d)}" cy="{y(v)}" r="3"><title>{d.isoformat()}: {v:g} kg</title></circle>')
+        out.append(f'<circle class="dot" cx="{x(d)}" cy="{y(v)}" r="3"><title>{formatting.day(d, today)}: '
+                   f'{formatting.show(v, "estimated_max")}</title></circle>')
     out.append("</svg>")
     return Markup("\n".join(out))
 
 
-def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart") -> Markup:
+def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart", today: date | None = None) -> Markup:
     """Weigh-ins as dots, the smoothed trend as a line, and a horizontal goal line at the target.
 
     chart: {points [{date, kg, smoothed}], latest {date, kg}, goal {target_kg, target_date} | None}, or
@@ -119,28 +134,32 @@ def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart") -> 
         return round(PAD_T + (hi - v) / (hi - lo) * inner_h, 1)
 
     latest = chart["latest"]
-    desc = (f"{len(pts)} weigh-ins from {first.isoformat()} to {last.isoformat()}. "
-            f"Latest {latest['kg']:g} kg on {latest['date']}.")
+    today = today or last
+    desc = (f"{len(pts)} weigh-ins from {formatting.day(first, today)} to {formatting.day(last, today)}. "
+            f"Latest {formatting.show(latest['kg'], 'weigh_in')} on {formatting.day(latest['date'], today)}.")
     if len(smooth) > 1:
-        desc += f" The line is the smoothed trend, now {smooth[-1][1]:g} kg."
+        desc += f" The line is the smoothed trend, now {formatting.show(smooth[-1][1], 'bodyweight_derived')}."
     if target is not None:
-        desc += f" Goal {target:g} kg" + (f" by {goal['target_date']}." if goal.get("target_date") else ".")
+        desc += f" Goal {_goal_kg(target)}" + (f" by {formatting.day(goal['target_date'], today)}."
+                                               if goal.get("target_date") else ".")
     out = _svg_open(element_id, "Body weight over time", desc)
     for n in range(5):
         v = lo + (hi - lo) * n / 4
         out.append(f'<line class="grid" x1="{PAD_L}" x2="{CHART_W - PAD_R}" y1="{y(v)}" y2="{y(v)}" />')
-        out.append(f'<text class="axis" x="{PAD_L - 6}" y="{y(v) + 4}" text-anchor="end">{v:.1f}</text>')
-    out.append(f'<text class="axis" x="{PAD_L}" y="{CHART_H - 8}">{first.isoformat()}</text>')
-    out.append(f'<text class="axis" x="{CHART_W - PAD_R}" y="{CHART_H - 8}" text-anchor="end">{last.isoformat()}</text>')
+        out.append(f'<text class="axis" x="{PAD_L - 6}" y="{y(v) + 4}" text-anchor="end">'
+                   f'{formatting.show(v, "bodyweight_derived", unit=False)}</text>')
+    out.append(f'<text class="axis" x="{PAD_L}" y="{CHART_H - 8}">{formatting.day(first, today)}</text>')
+    out.append(f'<text class="axis" x="{CHART_W - PAD_R}" y="{CHART_H - 8}" text-anchor="end">'
+               f'{formatting.day(last, today)}</text>')
     if target is not None:
         out.append(f'<line class="goal" x1="{PAD_L}" x2="{CHART_W - PAD_R}" y1="{y(target)}" y2="{y(target)}" />')
         out.append(f'<text class="goal-label" x="{CHART_W - PAD_R}" y="{y(target) - 5}" text-anchor="end">'
-                   f'Goal {target:g} kg</text>')
+                   f'Goal {_goal_kg(target)}</text>')
     if len(smooth) > 1:
         out.append(f'<polyline class="series smoothed" fill="none" '
                    f'points="{" ".join(f"{x(d)},{y(v)}" for d, v in smooth)}" />')
     for d, v in pts:
-        out.append(f'<circle class="dot weigh-in" cx="{x(d)}" cy="{y(v)}" r="4"><title>{d.isoformat()}: {v:g} kg'
-                   f'</title></circle>')
+        out.append(f'<circle class="dot weigh-in" cx="{x(d)}" cy="{y(v)}" r="4"><title>{formatting.day(d, today)}: '
+                   f'{formatting.show(v, "weigh_in")}</title></circle>')
     out.append("</svg>")
     return Markup("\n".join(out))

@@ -31,6 +31,16 @@ def age_all(user_id, minutes):
             m.created_at = m.created_at - timedelta(minutes=minutes)
 
 
+def test_a_replacement_that_prints_the_same_shows_one_more_decimal(user):
+    measure(user, "waist", 84.25)
+    r = measure(user, "waist", 84.34)                       # both read 84.3 cm at 1 dp
+    d = users.today_for(user)
+    assert r["summary"] == f"Waist 84.34 cm on {d:%a} {d.day} {d:%b}. Replaced 84.25 cm."
+    assert r["note"].startswith(f"Replaced the {d:%a} {d.day} {d:%b} waist of 84.25 cm: one a day.")
+    again = measure(user, "waist", 86)
+    assert again["summary"].endswith(". Replaced 84.3 cm.") and "of 84.3 cm" in again["note"]
+
+
 def test_a_measurement_returns_the_contracts_shape(user):
     r = measure(user, "Waist", 84)
     assert set(r) == {"kind", "id", "duplicate", "measurement", "replaced", "recent", "summary", "links"}
@@ -40,7 +50,8 @@ def test_a_measurement_returns_the_contracts_shape(user):
     assert m["id"] == r["id"] and m["kind"] == "waist" and m["value"] == 84 and m["unit"] == "cm" and m["date"] == today
     assert "user_id" not in m and "dedupe_key" not in m
     assert r["recent"] == [{"date": today, "value": 84}]
-    assert r["summary"] == f"Waist 84 cm on {today}." and r["links"]["day"].endswith(f"/day/{today}")
+    d = users.today_for(user)   # the summary's date is the D12 form (D13); the link keeps ISO
+    assert r["summary"] == f"Waist 84 cm on {d:%a} {d.day} {d:%b}." and r["links"]["day"].endswith(f"/day/{today}")
 
 
 def test_the_table_is_the_contracts():

@@ -58,6 +58,7 @@ def test_it_adds_four_weeks_of_everything(user):
     r = added(user)
     assert r["added"] == COUNTS and r["from"] == "2026-10-14" and r["to"] == "2026-11-10"
     assert set(r["links"]) == {"today", "progress", "goals"} and "Remove sample data" in r["summary"]
+    assert r["summary"].startswith("Added sample data for 14 Oct to 10 Nov: 12 lift sessions, ") and ";" not in r["summary"]
     assert services.sample_state(user.id) == {"empty": False, "sample_rows": sum(COUNTS.values())}
     assert rows_of(user.id)["lift_set"] == 6 * (9 + 7)   # six A sessions of 9 sets, six B of 7
     with db.new_session() as s:
@@ -167,18 +168,22 @@ def test_get_goals_numbers_for_the_fixed_day(user):
     assert "Remove sample data" in r["note"]
     weight, squat, run = r["goals"]
     assert all(g["is_sample"] is True for g in r["goals"])   # each one can be tagged on the Goals page
+    # A body weight or lift goal's start_value and latest come back at 1 dp (stage 6, section D): the
+    # 7-day average 79.01 is 79.0, the squat's 93.33 and 107.92 are 93.3 and 107.9. The pace, the
+    # projection and the dates are worked out from the unrounded figures, so they do not move. The
+    # run, a cardio time goal, keeps its precision.
     assert {k: weight[k] for k in ("label", "kind", "unit", "start_value", "start_date", "direction", "target_value",
                                    "target_date", "latest", "status", "needed_per_week", "actual_per_week",
                                    "projected_date")} == {
-        "label": "Bodyweight 77 kg", "kind": "bodyweight", "unit": "kg", "start_value": 79.9,
+        "label": "Body weight 77 kg", "kind": "bodyweight", "unit": "kg", "start_value": 79.9,
         "start_date": "2026-10-14", "direction": "down", "target_value": 77.0, "target_date": "2027-01-05",
-        "latest": 79.01, "status": "on track", "needed_per_week": -0.25, "actual_per_week": -0.29,
+        "latest": 79.0, "status": "on track", "needed_per_week": -0.25, "actual_per_week": -0.29,
         "projected_date": "2026-12-26"}
     assert weight["projection"]["projected"] == 76.59 and weight["projection"]["points_used"] == 28
     assert {k: squat[k] for k in ("label", "exercise", "start_value", "start_date", "target_date", "latest", "status",
                                   "needed_per_week", "actual_per_week", "projected_date")} == {
-        "label": "Back Squat 120 kg", "exercise": "Back Squat", "start_value": 93.33, "start_date": "2026-10-14",
-        "target_date": "2027-02-02", "latest": 107.92, "status": "on track", "needed_per_week": 1.01,
+        "label": "Back Squat 120 kg", "exercise": "Back Squat", "start_value": 93.3, "start_date": "2026-10-14",
+        "target_date": "2027-02-02", "latest": 107.9, "status": "on track", "needed_per_week": 1.01,
         "actual_per_week": 4.41, "projected_date": "2026-11-26"}
     assert squat["projection"]["projected"] == 163.17 and squat["projection"]["points_used"] == 6
     assert {k: run[k] for k in ("label", "kind", "exercise", "distance_km", "unit", "start_value", "start_date",
@@ -189,18 +194,23 @@ def test_get_goals_numbers_for_the_fixed_day(user):
         "target_date": "2027-01-05", "latest": 29.5, "status": "on track", "needed_per_week": -0.31,
         "actual_per_week": -0.5, "projected_date": "2026-12-12"}
     assert run["projection"]["projected"] == 25.29
-    assert r["summary"].startswith("3 open goals: Bodyweight 77 kg by 2027-01-05, on track;")
+    assert weight["projection"]["latest"] == 79.0 and squat["projection"]["latest"] == 107.9
+    assert run["projection"]["latest"] == 29.5
+    assert r["summary"] == ("3 open goals: Body weight 77 kg by Tue 5 Jan 2027, on track. Back Squat 120 kg by "
+                            "Tue 2 Feb 2027, on track. Outdoor Run 5 km in 27:00 by Tue 5 Jan 2027, on track.")
 
 
 def test_get_trends_numbers_for_the_fixed_day(user):
     added(user)
     r = services.get_trends(user.id)
     bw = r["bodyweight"]
+    # now and the smoothed figures at 1 dp: 79.01 is 79.0, 79.22 is 79.2, 79.71 is 79.7. The rate is worked out
+    # from the unrounded line, so it does not move.
     assert {k: bw[k] for k in ("now", "smoothed", "rate_per_week", "rate_window", "weigh_ins_28d")} == {
-        "now": 79.01, "smoothed": 79.22, "rate_per_week": -0.24,
+        "now": 79.0, "smoothed": 79.2, "rate_per_week": -0.24,
         "rate_window": {"from": "2026-10-27", "to": "2026-11-10", "days": 14}, "weigh_ins_28d": 28}
     assert bw["series"][0] == {"date": "2026-10-14", "kg": 79.9, "smoothed": 79.9}
-    assert bw["series"][-15] == {"date": "2026-10-27", "kg": 79.4, "smoothed": 79.71}
+    assert bw["series"][-15] == {"date": "2026-10-27", "kg": 79.4, "smoothed": 79.7}
     assert r["calories"] == {"avg_7d": 2216, "days_logged_7d": 7, "avg_28d": 2196, "days_logged_28d": 28,
                              "estimated_share_pct_28d": 41, "target_kcal": None}
     assert r["sessions"] == {"this_week": 3, "target_per_week": None, "per_week_4w": 3.0}
@@ -208,6 +218,10 @@ def test_get_trends_numbers_for_the_fixed_day(user):
     assert r["maintenance"] == {"kcal": 2513, "intake_avg_kcal": 2198, "weight_change_kg": -0.86, "days_logged": 21,
                                 "window_days": 21, "from": "2026-10-21", "to": "2026-11-10"}
     assert r["maintenance_note"] is None and r["includes_sample"] is True and "Remove sample data" in r["note"]
+    # The field keeps whole kcal; the summary says the nearest 10 (D11): 2513 is "about 2,510 kcal".
+    assert "Maintenance about 2,510 kcal a day, from 21 logged days of the last 21." in r["summary"]
+    assert r["summary"].startswith("Body weight 79 kg now, smoothed 79.2 kg, -0.24 kg a week. Calories 2,216 a day "
+                                   "over 7 logged days of the last 7, 2,196 over 28 of the last 28.")
 
 
 def test_every_read_says_it_includes_sample_rows_until_they_go(user):
@@ -322,7 +336,7 @@ def test_sample_weigh_ins_under_a_real_goal_flag_get_goals(user):
     for g in services.get_goals(user.id)["goals"]:
         services.set_goal(user.id, {"goal_id": g["goal_id"], "status": "dropped"}, "web")
     real = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75, "target_date": "2027-01-01"}, "web")
-    assert real["goal"]["is_sample"] is False and real["goal"]["start_value"] == 79.01
+    assert real["goal"]["is_sample"] is False and real["goal"]["start_value"] == 79.0   # 79.01 at 1 dp
     r = services.get_goals(user.id)
     assert [g["is_sample"] for g in r["goals"]] == [False] and r["includes_sample"] is True
     assert services.get_progress(user.id)["includes_sample"] is True
@@ -346,7 +360,7 @@ def test_removal_says_which_of_the_persons_own_entries_lose_their_link(user):
     mine = services.log_food(user.id, {"entries": [{"saved_food_id": roti, "servings": 3, "meal": "snack"},
                                                    {"saved_food_id": roti, "servings": 1, "meal": "lunch"}]}, "web")
     r = services.remove_sample_data(user.id, "web")
-    assert r["summary"].endswith(" 2 of your own entries were logged against a sample food; they keep their numbers "
+    assert r["summary"].endswith(" 2 real entries were logged against a sample food. They keep their numbers "
                                  "and lose the link.")
     after = [services.get_entry(user.id, "food_entry", i)["entry"] for i in mine["ids"]]
     assert [(e["kcal"], e["source"], e["saved_food_id"], e["servings"]) for e in after] == [
@@ -358,10 +372,10 @@ def test_removal_says_which_of_the_persons_own_entries_lose_their_link(user):
         roti = s.scalar(select(SavedFood.id).where(SavedFood.user_id == user.id, SavedFood.name == "Roti"))
     services.log_food(user.id, {"entries": [{"saved_food_id": roti, "servings": 2}]}, "web")
     one = services.remove_sample_data(user.id, "web")["summary"]
-    assert one.endswith(" 1 of your own entries was logged against a sample food; it keeps its numbers and loses the "
+    assert one.endswith(" 1 real entry was logged against a sample food. It keeps its numbers and loses the "
                         "link.")
     added_again = services.remove_sample_data(user.id, "web")["summary"]
-    assert "own entr" not in added_again
+    assert "real entr" not in added_again
 
 
 def test_never_twice(user):

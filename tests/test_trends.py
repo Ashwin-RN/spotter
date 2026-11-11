@@ -46,11 +46,12 @@ def test_the_smoothed_weight_and_its_rate_by_hand(user):
         weigh(user, days_ago, kg)
     bw = services.get_trends(user.id)["bodyweight"]
     # Smoothed: 80; 80 + 0.1 x 2 = 80.2; 80.2 + 0.1 x 1.8 = 80.38. Rate: (80.38 - 80.2) / 14 x 7 = 0.09.
-    assert bw["smoothed"] == 80.38 and bw["rate_per_week"] == 0.09
+    # The rate is worked out from 80.38; the smoothed figures come back at 1 dp: 80.38 is 80.4.
+    assert bw["smoothed"] == 80.4 and bw["rate_per_week"] == 0.09
     assert bw["rate_window"] == {"from": day(user, -14), "to": day(user, 0), "days": 14}
     assert bw["now"] == 82 and bw["weigh_ins_28d"] == 2   # the one 30 days back is outside the 28
     assert bw["series"] == [{"date": day(user, -14), "kg": 82, "smoothed": 80.2},
-                            {"date": day(user, 0), "kg": 82, "smoothed": 80.38}]
+                            {"date": day(user, 0), "kg": 82, "smoothed": 80.4}]
 
 
 def test_without_both_ends_the_rate_is_null_and_the_note_says_which(user):

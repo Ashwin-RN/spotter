@@ -13,6 +13,11 @@ export_data(user_id)
     - Never the owner's id, a duplicate key or a casefolded name: those are Spotter's own bookkeeping.
       The call log is not exported: it holds no content, only that calls happened.
     Rows are in id order. The csv module writes them (RFC 4180: CRLF line ends, quotes where needed).
+    - Each CSV starts with the UTF-8 byte-order mark (D16), so a spreadsheet reads it as UTF-8. The web
+      writes the text as it gets it.
+    - Headers are lower snake_case, a fixed-unit number column named with its unit (weight_kg,
+      avg_hr_bpm). A text cell that starts with =, +, - or @ gets a leading apostrophe, so a
+      spreadsheet shows it as text and never runs it as a formula.
 
 Returns {files: {name: text}, rows: {name: count} (every CSV, README.txt aside), summary}. The web
 puts the files in a zip; nothing here writes a file.
@@ -25,7 +30,7 @@ from datetime import date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app import db
+from app import db, formatting
 from app.models import (
     Bodyweight, CardioEntry, Exercise, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, User,
 )
@@ -42,8 +47,10 @@ TABLES = {
     "goals.csv": (Goal, {"exercise_id": "exercise"}),
     "saved_foods.csv": (SavedFood, {}),
     "food_entries.csv": (FoodEntry, {"saved_food_id": "saved_food"}),
-    "cardio_entries.csv": (CardioEntry, {"exercise_id": "exercise"}),
+    "cardio_entries.csv": (CardioEntry, {"exercise_id": "exercise", "avg_hr": "avg_hr_bpm"}),
 }
+BOM = "\ufeff"           # the byte-order mark each CSV starts with (D16)
+FORMULA_START = "=+-@"   # what a spreadsheet would read as the start of a formula
 SET_COLUMNS = ("session_id", "exercise", "set_number", "weight_kg", "reps")
 ORDER = ("account.csv", "lift_sessions.csv", "lift_sets.csv", "bodyweight.csv", "measurements.csv", "goals.csv",
          "saved_foods.csv", "food_entries.csv", "cardio_entries.csv")
@@ -80,6 +87,8 @@ def _cell(value) -> str:
         return str(int(value))  # 100.0 kcal is written 100
     if isinstance(value, (date, datetime)):
         return value.isoformat()
+    if isinstance(value, str) and value and value[0] in FORMULA_START:
+        return "'" + value  # text, never a formula
     return str(value)
 
 
@@ -88,7 +97,7 @@ def _csv(header: list[str], rows: list[list]) -> str:
     writer = csv.writer(out)
     writer.writerow(header)
     writer.writerows([_cell(v) for v in row] for row in rows)
-    return out.getvalue()
+    return BOM + out.getvalue()
 
 
 def _table(s, model, renamed: dict, user_id: int, names: dict) -> tuple[str, int]:
@@ -136,4 +145,5 @@ def export_data(user_id: int) -> dict:
     rows = {name: rows[name] for name in ORDER}
     total = sum(rows.values())
     return {"files": files, "rows": rows,
-            "summary": f"{total} rows in {len(ORDER)} CSV files, deleted and sample rows included, times in UTC."}
+            "summary": (f"{formatting.show(total, 'count')} rows in {formatting.show(len(ORDER), 'count')} CSV "
+                        "files, deleted and sample rows included, times in UTC.")}

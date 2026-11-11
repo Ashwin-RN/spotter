@@ -26,6 +26,8 @@ import math
 import unicodedata
 from datetime import date, datetime, timedelta
 
+from app import formatting
+
 HARD_RULES = {
     "reps": (1, 30),
     "weight_kg": (0, 500),
@@ -71,11 +73,25 @@ TEXT_MAX = 2000            # notes and goal text
 QUOTE_MAX = 80             # the most of a caller's value an error message repeats
 NAME_MAX = 80              # far longer than any exercise name: no closest-name search beyond it
 TODAY_NOTE = "Today is the person's own date: their time zone, or UTC until update_settings sets one."
+# The quantity (app.formatting) each measurement unit and each NUMBERS field is shown in.
+UNIT_QUANTITIES = {"kg": "weigh_in", "cm": "cm", "steps": "steps", "h": "hours", "bpm": "bpm", "ml": "ml"}
+NUMBER_QUANTITIES = {
+    "kcal": "kcal", "servings": "servings", "grams": "grams", "kcal_per_serving": "kcal_per_serving",
+    "grams_per_serving": "grams", "minutes": "session_time", "distance_km": "km", "incline_pct": "incline",
+    "speed_kmh": "speed", "avg_hr": "bpm", "machine_kcal": "kcal", "calorie_target_kcal": "kcal",
+    "target_sessions_per_week": "count", "target_cardio_minutes_per_week": "week_minutes",
+}
 
 
-def kg(x) -> str:
-    """12.0 -> '12', 2.5 -> '2.5'."""
-    return f"{x:g}"
+def span(lo, hi, quantity: str) -> str:
+    """A range for a message or a fix, through the formatter: "0 to 5,000", "0.1 to 60"."""
+    return f"{formatting.show(lo, quantity, unit=False)} to {formatting.show(hi, quantity, unit=False)}"
+
+
+def as_sent(value) -> str:
+    """A refused number as the caller sent it, for a message: never rounded to a shown step, so
+    "not a whole number, not 2.5" and "5000.6 is outside" say what came in."""
+    return quote(value.strip() if isinstance(value, str) else value)
 
 
 def quote(value) -> str:
@@ -219,16 +235,17 @@ def measurement_value(kind: str, value) -> tuple[float | int | None, dict | None
     """A value for this kind: in its range, a whole number where the kind counts, else 2 dp."""
     unit, lo, hi, whole = MEASUREMENTS[kind]
     in_unit = "" if unit == kind else f" in {unit}"
-    fix = f"Give {kind.replace('_', ' ')}{in_unit}, {lo:,} to {hi:,}" + (", a whole number." if whole else ".")
+    limits = span(lo, hi, UNIT_QUANTITIES[unit])
+    fix = f"Give {kind.replace('_', ' ')}{in_unit}, {limits}" + (", a whole number." if whole else ".")
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, error("missing_field", "value is missing.", fix)
     number = to_float(value)
     if number is None:
         return None, error("invalid_field", f"value '{quote(value)}' is not a number.", fix)
     if whole and number != int(number):
-        return None, error("invalid_field", f"{kind} must be a whole number, not {number:g}.", fix)
+        return None, error("invalid_field", f"{kind} must be a whole number, not {as_sent(value)}.", fix)
     if not lo <= number <= hi:
-        return None, error("invalid_field", f"{kind} {number:g} {unit} is outside {lo:,} to {hi:,}.", fix)
+        return None, error("invalid_field", f"{kind} {as_sent(value)} {unit} is outside {limits}.", fix)
     return (int(number) if whole else round(number, 2) + 0.0), None
 
 
@@ -238,17 +255,19 @@ def bounded(field: str, value, where: str = "") -> tuple[float | int | None, dic
     lo, hi, keep = NUMBERS[field]
     at = f"{where}: " if where else ""
     kind = "a whole number" if keep in ("whole", "round") else "a number"
-    fix = f"Give {field} as {kind} from {lo:,} to {hi:,}{' on ' + where.lower() if where else ''}."
+    # A range of minutes reads as whole minutes ("1 to 600"), not as a session's m:ss.
+    limits = span(lo, hi, "week_minutes" if field == "minutes" else NUMBER_QUANTITIES[field])
+    fix = f"Give {field} as {kind} from {limits}{' on ' + where.lower() if where else ''}."
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, error("missing_field", f"{at}{field} is missing.", fix)
     number = to_float(value)
     if number is None:
         return None, error("invalid_field", f"{at}{field} '{quote(value)}' is not a number.", fix)
     if keep == "whole" and number != int(number):
-        return None, error("invalid_field", f"{at}{field} must be a whole number, not {number:g}.", fix)
+        return None, error("invalid_field", f"{at}{field} must be a whole number, not {as_sent(value)}.", fix)
     kept = int(round(number)) if keep in ("whole", "round") else round(number, keep) + 0.0
     if not lo <= kept <= hi:
-        return None, error("invalid_field", f"{at}{field} {number:g} is outside {lo:,} to {hi:,}.", fix)
+        return None, error("invalid_field", f"{at}{field} {as_sent(value)} is outside {limits}.", fix)
     return kept, None
 
 
@@ -325,13 +344,15 @@ def check_session(date_value, rows, names: list[str], today: date) -> tuple[date
         if err:
             errors.append(err)
         elif not w_lo <= weight <= w_hi:
-            errors.append(error("weight_out_of_range", f"{where}: weight {kg(weight)} kg is outside {w_lo} to {w_hi} kg.",
+            sent = as_sent(row.get("weight_kg"))  # as sent: a huge number stays short (quote cuts it)
+            errors.append(error("weight_out_of_range", f"{where}: weight {sent} kg is outside {w_lo} to {w_hi} kg.",
                                 f"Give weight_kg on set {n} from {w_lo} to {w_hi} (0 for bodyweight)."))
         reps, err = number(row.get("reps"), int, "reps", where)
         if err:
             errors.append(err)
         elif not r_lo <= reps <= r_hi:
-            errors.append(error("reps_out_of_range", f"{where}: reps {reps} is outside {r_lo} to {r_hi}.",
+            errors.append(error("reps_out_of_range", f"{where}: reps {as_sent(row.get('reps'))} is outside "
+                                f"{r_lo} to {r_hi}.",
                                 f"Give reps on set {n} from {r_lo} to {r_hi}."))
         sets.append({"exercise": name, "weight_kg": weight, "reps": reps})
     if errors:

@@ -7,12 +7,12 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% if kind == "bodyweight" %}
     <label for="edit-kg">Weight (kg)</label>
-    <input id="edit-kg" name="kg" value="{{ kg(entry.kg) if entry.kg is number else entry.kg }}" inputmode="decimal" required autocomplete="off">
+    <input id="edit-kg" name="kg" value="{{ entry.kg|field("weigh_in") if entry.kg is number else entry.kg }}" inputmode="decimal" required autocomplete="off">
     {% if errors.kg %}<p class="error">{{ errors.kg }}</p>{% endif %}
     {% elif kind == "measurement" %}
     <p>{{ labels.get(entry.kind, entry.kind.replace("_", " ").capitalize()) }}{% if entry.unit %} ({{ entry.unit }}){% endif %}</p>
     <label for="edit-value">Value</label>
-    <input id="edit-value" name="value" value="{{ kg(entry.value) if entry.value is number else entry.value }}" inputmode="decimal" required autocomplete="off">
+    <input id="edit-value" name="value" value="{{ entry.value|field(measurement_quantity(entry.kind)) if entry.value is number else entry.value }}" inputmode="decimal" required autocomplete="off">
     {% if errors.value %}<p class="error">{{ errors.value }}</p>{% endif %}
     {% elif kind == "food_entry" %}
     <p class="muted small">This number is
@@ -22,7 +22,7 @@
     <input id="edit-description" name="description" value="{{ entry.description }}" maxlength="200" required autocomplete="off">
     {% if errors.description %}<p class="error">{{ errors.description }}</p>{% endif %}
     <label for="edit-kcal">kcal</label>
-    <input id="edit-kcal" name="kcal" value="{{ kg(entry.kcal) if entry.kcal is number else entry.kcal }}" inputmode="numeric" required autocomplete="off">
+    <input id="edit-kcal" name="kcal" value="{{ entry.kcal|field("kcal") if entry.kcal is number else entry.kcal }}" inputmode="numeric" required autocomplete="off">
     {% if errors.kcal %}<p class="error">{{ errors.kcal }}</p>{% endif %}
     <label for="edit-meal">Meal</label>
     <select id="edit-meal" name="meal">
@@ -39,13 +39,13 @@
                             ("speed_kmh", "Speed (km/h)"), ("avg_hr", "Average heart rate"),
                             ("machine_kcal", "The machine's kcal")] %}
     <label for="edit-{{ field }}">{{ label }}</label>
-    <input id="edit-{{ field }}" name="{{ field }}" value="{{ (kg(entry[field]) if entry[field] is number else entry[field]) if entry[field] is not none else '' }}" inputmode="decimal" autocomplete="off"{% if field == "minutes" %} required{% endif %}>
+    <input id="edit-{{ field }}" name="{{ field }}" value="{{ (entry[field]|field(field_quantities[field]) if entry[field] is number else entry[field]) if entry[field] is not none else '' }}" inputmode="decimal" autocomplete="off"{% if field == "minutes" %} required{% endif %}>
     {% if errors[field] %}<p class="error">{{ errors[field] }}</p>{% endif %}
     {% endfor %}
     <label for="edit-notes">Notes</label>
     <textarea id="edit-notes" name="notes" rows="2">{{ entry.notes or "" }}</textarea>
     {% if errors.notes %}<p class="error">{{ errors.notes }}</p>{% endif %}
-    {% if entry.estimated_kcal is not none %}<p class="muted small">Calorie estimate now: {{ kg(entry.estimated_kcal) }} kcal. It is worked out again when you save.</p>{% endif %}
+    {% if entry.estimated_kcal is not none %}<p class="muted small">Calorie estimate now: {{ entry.estimated_kcal|show("kcal") }}. It is worked out again when you save.</p>{% endif %}
     {% else %}
     <label for="edit-notes">Notes</label>
     <textarea id="edit-notes" name="notes" rows="3">{{ entry.notes or "" }}</textarea>
@@ -66,7 +66,7 @@
   <table class="sets">
     <thead><tr><th>Exercise</th><th>Set</th><th>Weight</th><th>Reps</th></tr></thead>
     <tbody>
-    {% for s in entry.sets %}<tr><td>{{ s.exercise }}</td><td>{{ s.set_number }}</td><td>{{ kg(s.weight_kg) }} kg</td><td>{{ s.reps }}</td></tr>{% endfor %}
+    {% for s in entry.sets %}<tr><td>{{ s.exercise }}</td><td>{{ s.set_number|show("count") }}</td><td>{{ s.weight_kg|show("weight_kg") }}</td><td>{{ s.reps|show("reps") }}</td></tr>{% endfor %}
     </tbody>
   </table>
   <p class="muted">Sets are changed through Claude for now: tell it what to fix.</p>

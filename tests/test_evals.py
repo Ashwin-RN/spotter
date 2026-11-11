@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from app import db, services
+from app import db, metrics, services
 from app.models import User
 from app.main import create_app
 from evals import judge
@@ -21,7 +21,9 @@ from tests.conftest import HEADERS, settings
 
 CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_asked", "yesterday", "treadmill_once",
                   "repeat_sent", "delete_ambiguous", "delete_explicit", "unknown_exercise",
-                  "goal_date", "how_am_i_doing", "on_track", "export_is_a_click", "delete_is_a_click", "drop_goal"}
+                  "goal_date", "how_am_i_doing", "on_track", "export_is_a_click", "delete_is_a_click", "drop_goal",
+                  "decimals_and_dashes"}
+EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
           "update_settings", "edit_entry", "restore_entry", "delete_entry"}
 
@@ -34,6 +36,7 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
+    assert len(cases) == 17
     assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)
@@ -309,6 +312,178 @@ def test_the_stage_5_cases_judge_as_designed():
     assert judge.judge_db(drop["db"], rows) == []
     rows["goal"][1]["status"] = "dropped"
     assert judge.judge_db(drop["db"], rows)
+
+
+# ---------------------------------------------------------------- reply_lacks_pattern, and the stage 6 case
+
+def test_reply_lacks_pattern_fails_on_a_match_and_names_it():
+    expect = {"reply_lacks_pattern": [r"\d+\.\d{2} kg"]}
+    assert judge.judge_calls(expect, [], "Body weight 79.3 kg now.") == []
+    assert judge.judge_calls(expect, [], "") == []
+    assert judge.judge_calls(expect, [], "Body weight 79.25 kg now.") == [
+        r"the reply matches '\\d+\\.\\d{2} kg': it says '79.25 kg'"]
+    two = {"reply_lacks_pattern": [r"\d+\.\d{2} kg", r"smoothed"]}
+    assert len(judge.judge_calls(two, [], "79.25 kg, smoothed 79.21 kg")) == 2
+
+
+def test_reply_lacks_pattern_ignores_case_as_the_phrase_keys_do():
+    expect = {"reply_lacks_pattern": [r"which\s+meal"]}
+    assert judge.judge_calls(expect, [], "Which  MEAL was it?") == [
+        r"the reply matches 'which\\s+meal': it says 'Which  MEAL'"]
+    assert judge.judge_calls(expect, [], "Logged as a snack.") == []
+
+
+def test_reply_lacks_pattern_holds_inside_any_of():
+    expect = {"any_of": [{"reply_lacks_pattern": [r"\d\.\d{2}"]}, {"reply_has": ["never"]}]}
+    assert judge.judge_calls(expect, [], "79.3 kg") == []
+    assert judge.judge_calls(expect, [], "79.25 kg")
+
+
+@pytest.mark.parametrize("value, problem", [
+    ("\\d", "expect.reply_lacks_pattern must be a non-empty list of regular expressions"),  # a bare string
+    ([], "expect.reply_lacks_pattern must be a non-empty list of regular expressions"),
+    ([""], "expect.reply_lacks_pattern[0] must be a non-empty string"),
+    ([3], "expect.reply_lacks_pattern[0] must be a non-empty string"),
+])
+def test_reply_lacks_pattern_refuses_a_malformed_list(value, problem):
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"reply_lacks_pattern": value}}) == [problem]
+
+
+def test_an_invalid_pattern_is_loud_when_loaded_and_when_judged():
+    bad = {"id": "a", "say": "x", "expect": {"reply_lacks_pattern": [r"\d{2", r"(unclosed"]}}
+    problems = judge.case_problems(bad)
+    assert len(problems) == 1 and problems[0].startswith("expect.reply_lacks_pattern[1] '(unclosed' is not a valid")
+    nested = {"id": "a", "say": "x", "expect": {"any_of": [{"reply_lacks_pattern": ["[a-"]}]}}
+    assert judge.case_problems(nested)[0].startswith("expect.any_of[0].reply_lacks_pattern[0] '[a-' is not a valid")
+    with tempfile.TemporaryDirectory() as folder:  # not tmp_path: pytest's own temp root is not always writable
+        path = Path(folder) / "cases.json"
+        path.write_text(json.dumps([bad]), encoding="utf-8")
+        with pytest.raises(ValueError, match="is not a valid regular expression"):
+            judge.load_cases(path)
+    # Judged without loading: an error, never a silent pass, even on an empty reply.
+    with pytest.raises(ValueError, match="is not a valid regular expression"):
+        judge.judge_calls({"reply_lacks_pattern": ["(unclosed"]}, [], "")
+    with pytest.raises(ValueError, match="non-empty list"):
+        judge.judge_calls({"reply_lacks_pattern": "79.25"}, [], "79.25 kg")
+
+
+def _decimals_case() -> dict:
+    return {c["id"]: c for c in judge.load_cases()}["decimals_and_dashes"]
+
+
+def test_the_decimals_case_is_well_formed():
+    case = _decimals_case()
+    assert case["say"] == "How am I doing?"
+    assert judge.case_problems(case) == []
+    expect = case["expect"]
+    assert expect["function"] == "get_trends"
+    assert set(expect["no_call"]) == WRITES
+    assert set(expect["reply_lacks"]) == {EM_DASH, EN_DASH}
+    assert len(expect["reply_lacks_pattern"]) == 1
+    assert [s["service"] for s in case["seed"]] == ["log_bodyweight", "log_bodyweight"]  # no goal of any kind
+    assert all(round(s["data"]["kg"], 1) == s["data"]["kg"] for s in case["seed"])  # weigh-ins at 1 dp
+
+
+def _decimals_reply(reply: str) -> list[str]:
+    """The decimals case's reply checks alone, on a run that called get_trends and wrote nothing."""
+    return judge.judge_calls(_decimals_case()["expect"], [call("whoami"), call("get_trends")], reply)
+
+
+@pytest.mark.parametrize("reply", [
+    "Body weight 79.25 kg now.",
+    "Body weight 79.25kg now.",
+    "Body weight 104.50 kg, smoothed 104.21 kg.",
+    "Your 7-day average is 79.25.",            # a bare figure at the end of a sentence
+    "| Today | 79.25 |",                        # a bare figure in a table cell
+    "Smoothed weight 79.21 kg.",
+    "Body weight 79.25\u00a0kg now.",           # a no-break space before the unit
+])
+def test_the_decimals_case_fails_a_body_weight_at_two_decimals(reply):
+    reasons = _decimals_reply(reply)
+    assert len(reasons) == 1 and reasons[0].startswith("the reply matches ")
+    said = reasons[0].split(": it says ", 1)[1].strip("'")
+    assert said in reply and len(said.split(".")[1]) == 2
+
+
+@pytest.mark.parametrize("reply", [
+    "Body weight 79.3 kg now, smoothed 79.2 kg.",
+    "Calories 2,216 kcal a day over 7 logged days.",
+    "Your best 5 km is 29:30.",
+    "Your 5 km pace was 5:54 a km, 29:30.0 in all.",
+    "Two weigh-ins, on 2026-11-10 and 2026-11-11.",
+    "Two weigh-ins, on 10.11.2026 and 11.11.2026.",
+    "Two weigh-ins, on 10 November and 11 November 2026.",
+    "Down 0.35 kg a week.",                     # a rate at 2 dp is Spotter's own figure
+    "Down -0.35 kg a week.",
+    "Change since the first weigh-in: +0.10 kg.",
+    "Change since the first weigh-in: -10.25 kg.",   # a signed figure is a change, not a body weight
+    "Change since the first weigh-in: +10.25 kg.",
+    "Change since the first weigh-in: \u221210.25 kg.",
+    "Total 1,080.25 kcal.",                          # inside a larger figure
+    "Maintenance about 2,350 kcal a day.",
+    "",
+])
+def test_the_decimals_case_passes_figures_as_spotter_gives_them(reply):
+    assert _decimals_reply(reply) == []
+
+
+# The known limit: a weigh-in the person entered at two decimals ("79.25 kg on the scale") is a figure
+# Spotter gives as entered, and the pattern would fail it. The contract accepts this by seeding only 1 dp
+# weigh-ins, so on this case no correct body weight in a reply has two decimals.
+def test_the_known_limit_a_two_decimal_weigh_in_would_fail():
+    assert _decimals_reply("Your latest weigh-in is 79.25 kg.")
+
+
+def test_the_other_limits_docs_evals_names():
+    assert _decimals_reply("Your weigh-in on 11.11 was 79.3 kg.")  # a day and month with a dot, no year
+    assert _decimals_reply("Body weight 79.253 kg.") == []         # three decimals are not looked for
+    assert _decimals_reply("Body weight 9.25 kg.") == []           # nor a one-digit figure
+
+
+@pytest.mark.parametrize("reply, reason", [
+    (f"Body weight 79.3 kg {EM_DASH} steady.", f"the reply says {EM_DASH!r}"),
+    (f"Body weight 79.3 kg {EN_DASH} steady.", f"the reply says {EN_DASH!r}"),
+    (f"Body weight 79.3 kg{EM_DASH}steady.", f"the reply says {EM_DASH!r}"),
+])
+def test_the_decimals_case_fails_a_dash_between_clauses(reply, reason):
+    assert _decimals_reply(reply) == [reason]
+
+
+@pytest.mark.parametrize("reply", [
+    "Body weight 79.3 kg: steady.",
+    "Body weight 79.3 kg, steady.",
+    "Body weight 79.3 kg. Steady.",
+    "Two weigh-ins so far, a 7-day average.",   # a hyphen inside a word is not a dash
+])
+def test_the_decimals_case_passes_a_colon_a_comma_or_a_full_stop(reply):
+    assert _decimals_reply(reply) == []
+
+
+def test_the_decimals_case_needs_get_trends_and_no_write():
+    expect = _decimals_case()["expect"]
+    assert judge.judge_calls(expect, [call("get_trends"), call("get_goals")], "Body weight 79.3 kg.") == []
+    assert judge.judge_calls(expect, [call("get_progress")], "Body weight 79.3 kg.") == [
+        "get_trends was not called (calls: get_progress)"]
+    assert judge.judge_calls(expect, [call("get_trends"), call("log_bodyweight")], "Logged.") == [
+        "log_bodyweight was called and should not have been"]
+    both = judge.judge_calls(expect, [call("get_trends")], f"79.25 kg {EM_DASH} fine.")
+    assert len(both) == 2
+
+
+def test_the_decimals_case_seeds_an_average_with_a_second_decimal(app_settings):
+    server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
+    server.settings = app_settings
+    zone = "Asia/Kolkata"
+    user_id, _, seeded = server.new_person(zone, _decimals_case()["seed"])
+    rows = person_rows(user_id)
+    assert rows["goal"] == []
+    weigh_ins = rows["bodyweight"]
+    assert len(weigh_ins) == 2 and set(seeded) == {"earlier", "latest"}
+    assert all(round(r["kg"], 1) == r["kg"] for r in weigh_ins)  # what the scale said, at 1 dp
+    today = dt.date.fromisoformat(dates_for(zone)["today"])
+    points = [(dt.date.fromisoformat(r["date"]), r["kg"]) for r in weigh_ins]
+    average = metrics.bodyweight_average(points, today)  # full precision, before any shown rounding
+    assert average is not None and round(average, 1) != average
 
 
 # ---------------------------------------------------------------- the database checks

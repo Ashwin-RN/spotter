@@ -139,7 +139,7 @@ def test_editing_a_weigh_in_returns_before_after_and_a_one_line_summary(user):
     assert set(r) == {"kind", "id", "changed", "before", "after", "summary", "links"}
     assert r["kind"] == "bodyweight" and r["id"] == w["id"] and r["changed"] == ["kg"]
     assert r["before"]["kg"] == 74.8 and r["after"]["kg"] == 78.4
-    assert r["summary"] == f"Weigh-in {w['id']} changed: kg 74.8 -> 78.4."
+    assert r["summary"] == "Weigh-in changed: kg from 74.8 to 78.4."   # the id is the result's id, not in words
     assert r["after"]["updated_at"] > r["before"]["updated_at"]
     assert services.get_entry(user.id, "bodyweight", w["id"])["entry"]["kg"] == 78.4
 
@@ -200,8 +200,8 @@ def test_sets_replace_the_whole_list_renumbered_per_exercise(user):
     assert r["note"] == "Bests are worked out from history: get_progress shows them."
     assert [(x["exercise"], x["set_number"], x["weight_kg"]) for x in r["after"]["sets"]] == [
         ("Back Squat", 1, 60), ("Deadlift", 1, 100), ("Back Squat", 2, 65)]
-    assert r["summary"] == (f"Lift session {s['id']} changed: notes changed; "
-                            "sets Deadlift 100 kg × 5, 100 kg × 4 -> Back Squat 60 kg × 5, 65 kg × 3; Deadlift 1 × 5 @ 100 kg.")
+    assert r["summary"] == ("Lift session changed: notes changed. sets from Deadlift 100 kg × 5, 100 kg × 4 to "
+                            "Back Squat 60 kg × 5, 65 kg × 3 and Deadlift 1 × 5 at 100 kg.")
     with db.new_session() as s2:
         assert len(list(s2.scalars(select(LiftSet).where(LiftSet.session_id == s["id"])))) == 3
     progress = services.get_progress(user.id, "Deadlift")["lift"]
@@ -253,7 +253,7 @@ def test_a_weight_change_in_the_sets_says_what_changed(user):
     three = lambda kg: [{"exercise": "Back Squat", "weight_kg": kg, "reps": 5}] * 3  # noqa: E731
     s = services.log_lifts(user.id, {"sets": three(60)}, "claude")
     r = edit(user, "lift_session", s["id"], sets=three(65))
-    assert r["summary"] == f"Lift session {s['id']} changed: sets Back Squat 3 × 5 @ 60 kg -> Back Squat 3 × 5 @ 65 kg."
+    assert r["summary"] == "Lift session changed: sets from Back Squat 3 × 5 at 60 kg to Back Squat 3 × 5 at 65 kg."
 
 
 def test_a_long_set_list_is_cut_in_the_summary(user):
@@ -261,7 +261,8 @@ def test_a_long_set_list_is_cut_in_the_summary(user):
             for n, name in enumerate(["Back Squat", "Deadlift", "Bench Press", "Overhead Press", "Barbell Row"] * 6)]
     s = services.log_lifts(user.id, {"sets": many}, "claude")
     r = edit(user, "lift_session", s["id"], sets=many[:-1])
-    before, after = r["summary"].split(": sets ", 1)[1].rstrip(".").split(" -> ")
+    before, after = r["summary"].split(": sets from ", 1)[1].rstrip(".").split(" to Back Squat ")
+    after = "Back Squat " + after
     assert len(before) <= 80 and before.endswith("…") and len(after) <= 80
 
 
@@ -277,7 +278,7 @@ def test_editing_a_food_entrys_kcal_makes_it_the_persons_number(user):
     r = edit(user, "food_entry", guess["ids"][0], kcal=150)
     assert r["changed"] == ["kcal"] and r["after"]["kcal"] == 150
     assert (r["before"]["source"], r["after"]["source"], r["after"]["estimated"]) == ("claude_estimate", "you_said", False)
-    assert r["summary"] == f"Food entry {guess['ids'][0]} changed: kcal 180 -> 150." and "you_said" in r["note"]
+    assert r["summary"] == "Food entry changed: kcal from 180 to 150." and "you_said" in r["note"]
     roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1", "kcal_per_serving": 120}, "web")
     by_id = meal_of(user, saved_food_id=roti["id"], servings=2)
     r = edit(user, "food_entry", by_id["ids"][0], kcal=250)
@@ -292,7 +293,7 @@ def test_editing_a_food_entrys_description_or_meal_keeps_its_tag(user):
     r = edit(user, "food_entry", guess["ids"][0], description="dal tadka", meal=" Dinner ")
     assert r["changed"] == ["meal", "description"] and r["after"]["source"] == "claude_estimate"
     assert r["after"]["meal"] == "dinner" and "note" not in r
-    assert "description 'dal' -> 'dal tadka'" in r["summary"] and "meal lunch -> dinner" in r["summary"]
+    assert r["summary"] == "Food entry changed: meal from lunch to dinner. description from 'dal' to 'dal tadka'."
     stated = edit(user, "food_entry", guess["ids"][0], kcal=180)                   # the same number, stated
     assert stated["changed"] == ["kcal"] and stated["after"]["source"] == "you_said"
     assert "kcal 180 confirmed by the person" in stated["summary"]
@@ -339,7 +340,7 @@ def test_a_cardio_activity_can_change_within_cardio_names_only(user):
     walk = services.log_cardio(user.id, {"exercise": "Outdoor Walk", "minutes": 30}, "claude")
     r = edit(user, "cardio_entry", walk["id"], exercise="hiking")
     assert r["changed"] == ["exercise"] and r["after"]["exercise"] == "Hiking"
-    assert r["after"]["estimate"]["met"] == 6.0 and "activity Outdoor Walk -> Hiking" in r["summary"]
+    assert r["after"]["estimate"]["met"] == 6.0 and "activity from Outdoor Walk to Hiking" in r["summary"]
     lift = edit(user, "cardio_entry", walk["id"], exercise="Back Squat")
     assert lift["error"] == "unknown_exercise" and "Treadmill Walk" in lift["fix"]
 
@@ -399,20 +400,50 @@ def test_a_stated_speed_can_be_replaced_or_cleared_with_the_new_distance(user):
 
 
 
+def test_an_empty_field_filled_by_an_edit_says_set_to_never_none(user):
+    """A cardio entry's optional numbers, and a session's notes, filled where they were empty."""
+    walk = services.log_cardio(user.id, {"exercise": "Outdoor Walk", "minutes": 30}, "claude")
+    r = edit(user, "cardio_entry", walk["id"], distance_km=3, incline_pct=2.5, avg_hr=120, machine_kcal=1500)
+    assert r["summary"] == ("Cardio entry changed: distance_km set to 3. incline_pct set to 2.5. avg_hr set to 120. "
+                            "machine_kcal set to 1,500. speed_kmh set to 6, worked out from distance and minutes.")
+    given = services.log_cardio(user.id, {"exercise": "Treadmill Run", "minutes": 30, "distance_km": 5}, "claude")
+    assert edit(user, "cardio_entry", given["id"], speed_kmh=11)["summary"] == \
+        "Cardio entry changed: speed_kmh from 10 to 11."
+    plain = services.log_cardio(user.id, {"exercise": "Elliptical", "minutes": 20}, "claude")
+    assert edit(user, "cardio_entry", plain["id"], speed_kmh=9.5)["summary"] == "Cardio entry changed: speed_kmh set to 9.5."
+    session = log_session(user)
+    assert edit(user, "lift_session", session["id"], notes="first notes")["summary"] == \
+        "Lift session changed: notes changed."
+
+
+def test_a_change_that_prints_the_same_shows_one_more_decimal(user):
+    """Two values that read the same at the shown step but differ are both widened: never "from 1 to 1"."""
+    waist = services.log_measurement(user.id, {"kind": "waist", "value": 84.25}, "claude")
+    r = edit(user, "measurement", waist["id"], value=84.34)
+    assert r["summary"] == "Measurement changed: value from 84.25 cm to 84.34 cm."    # both 84.3 at 1 dp
+    assert edit(user, "measurement", waist["id"], value=86)["summary"] == "Measurement changed: value from 84.3 cm to 86 cm."
+    run = services.log_cardio(user.id, {"exercise": "Treadmill Run", "minutes": 30, "distance_km": 5,
+                                        "incline_pct": 1.04, "speed_kmh": 10.04}, "claude")
+    r = edit(user, "cardio_entry", run["id"], incline_pct=1.01, speed_kmh=10.01)
+    assert r["summary"] == "Cardio entry changed: incline_pct from 1.04 to 1.01. speed_kmh from 10.04 to 10.01."
+
+
 def test_a_speed_worked_out_in_an_edit_is_summarised_as_stored(user):
     run = services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5,
                                         "speed_kmh": 11}, "claude")
     cleared = edit(user, "cardio_entry", run["id"], distance_km=8, speed_kmh=None)
     assert cleared["after"]["speed_kmh"] == 16.0
-    assert "speed_kmh 11 -> 16, worked out from distance and minutes" in cleared["summary"]
+    assert "speed_kmh from 11 to 16, worked out from distance and minutes" in cleared["summary"]
     assert "None" not in cleared["summary"]
     walk = services.log_cardio(user.id, {"exercise": "Outdoor Walk", "minutes": 30, "distance_km": 3}, "claude")
     longer = edit(user, "cardio_entry", walk["id"], minutes=45)        # a worked-out speed, worked out again
-    assert longer["summary"].endswith("minutes 30 -> 45; speed_kmh 6 -> 4, worked out from distance and minutes.")
+    # minutes are a session's length, m:ss (D7); one sentence a change.
+    assert longer["summary"].endswith("minutes from 30:00 to 45:00. speed_kmh from 6 to 4, worked out from distance "
+                                      "and minutes.")
     gone = edit(user, "cardio_entry", walk["id"], distance_km=None)    # the distance goes, and the speed with it
     assert gone["after"]["speed_kmh"] is None and gone["after"]["pace"] is None
-    assert "distance_km 3 -> none, cleared; speed_kmh 4 -> none, cleared with the distance" in gone["summary"]
-    assert "worked out" not in gone["summary"] and "None" not in gone["summary"]
+    assert "distance_km 3 cleared. speed_kmh 4 cleared with the distance" in gone["summary"]
+    assert "worked out" not in gone["summary"] and "none" not in gone["summary"].casefold()
 
 
 # ---------------------------------------------------------------- stage 5: sample rows stay sample

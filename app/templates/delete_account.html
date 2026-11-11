@@ -6,7 +6,7 @@
   <p><strong>This cannot be undone.</strong> Everything below is deleted, deleted entries included.</p>
   <ul class="entries delete-counts">
     {% for label, count in counts %}
-    <li class="entry-line"><span>{{ label }}</span><strong>{{ count }}</strong></li>
+    <li class="entry-line"><span>{{ label }}</span><strong>{{ count|show("count") }}</strong></li>
     {% endfor %}
   </ul>
   <p>Your settings go too, and so does your sign-in: signing in again starts a new, empty account.</p>

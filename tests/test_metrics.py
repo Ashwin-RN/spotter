@@ -2,6 +2,8 @@
 
 from datetime import date, timedelta
 
+from app import metrics
+
 import pytest
 
 from app.metrics import (
@@ -478,3 +480,9 @@ def test_pace_is_minutes_per_km_as_m_ss():
     assert pace(5, 28) == "5:36" and pace(3, 30) == "10:00" and pace(10, 45.5) == "4:33"
     assert pace(1, 59.999) == "60:00" and pace(None, 30) is None and pace(0, 30) is None
     assert speed(5, 30) == 10.0 and speed(5, 28) == 10.71 and speed(None, 30) is None
+
+
+def test_pace_goes_through_the_formatter_with_halves_away_from_zero():
+    """metrics.pace calls formatting.clock: 12.5 minutes over 60 km is 12.5 seconds a km, so 0:13 (round() gave 0:12)."""
+    assert metrics.pace(60, 12.5) == "0:13"
+    assert metrics.pace(5, 28) == "5:36" and metrics.pace(4, 300) == "75:00" and metrics.pace(None, 30) is None

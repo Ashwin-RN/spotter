@@ -44,7 +44,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select, update
 
-from app import db, exercises as exercise_list, links, rules, users
+from app import db, exercises as exercise_list, formatting, links, rules, users
 from app.models import (
     CLAUDE_CAN, EXERCISE_KINDS, Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement,
     SavedFood, User,
@@ -139,12 +139,13 @@ SETTABLE = {
 }
 SAID = {
     "time_zone": lambda v: f"Time zone set to {v}",
-    "calorie_target_kcal": lambda v: (f"Calorie target set to {v} kcal a day" if v is not None
+    "calorie_target_kcal": lambda v: (f"Calorie target set to {formatting.show(v, 'kcal')} a day" if v is not None
                                       else "Calorie target cleared"),
-    "target_sessions_per_week": lambda v: (f"Weekly sessions target set to {v}" if v is not None
-                                           else "Weekly sessions target cleared"),
-    "target_cardio_minutes_per_week": lambda v: (f"Weekly cardio target set to {v} minutes" if v is not None
-                                                 else "Weekly cardio target cleared"),
+    "target_sessions_per_week": lambda v: (f"Weekly sessions target set to {formatting.show(v, 'count')}"
+                                           if v is not None else "Weekly sessions target cleared"),
+    "target_cardio_minutes_per_week": lambda v: (
+        f"Weekly cardio target set to {formatting.show(v, 'week_minutes', unit=False)} minutes" if v is not None
+        else "Weekly cardio target cleared"),
     "add_back_exercise_kcal": lambda v: ("Exercise calories are now added back" if v
                                          else "Exercise calories are no longer added back"),
 }
@@ -189,12 +190,13 @@ def update_settings(user_id: int, data: dict | None, by: str) -> dict:
         if changed:
             user.updated_at = db.utcnow()
         s.flush()
-        today = users.today_for(user).isoformat()
+        today = users.today_for(user)
+        said = f"Today is {formatting.day(today, today)}."
         if changed:
-            summary = ". ".join(SAID[field](values[field]) for field in changed) + f". Today is {today}."
+            summary = ". ".join(SAID[field](values[field]) for field in changed) + f". {said}"
         else:
-            summary = f"Nothing changed: every value given is already set. Today is {today}."
-        return {"time_zone": user.time_zone, "today": today, "changed": changed, "summary": summary,
+            summary = f"Nothing changed: every value given is already set. {said}"
+        return {"time_zone": user.time_zone, "today": today.isoformat(), "changed": changed, "summary": summary,
                 "links": {"settings": links.page("settings")}}
 
 

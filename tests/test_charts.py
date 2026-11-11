@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app import db, metrics, services, users
+from app import db, formatting, metrics, services, users
 from app.charts import bodyweight_svg, chart_svg
 from app.metrics import bodyweight_average
 from app.models import Goal
@@ -33,7 +33,7 @@ def test_chart_svg_is_valid_with_goal_line_and_dashed_projection():
     root = ET.fromstring(str(chart_svg(CHART)))  # parses: well-formed, the lift name escaped
     assert root.tag == f"{SVG}svg" and root.get("role") == "img"
     assert root.find(f"{SVG}title").text == "Estimated max over time: Bench <Press>"
-    assert "Latest 53 kg on 2026-10-15" in root.find(f"{SVG}desc").text
+    assert "Latest 53 kg on Thu 15 Oct" in root.find(f"{SVG}desc").text  # SVG text: a plain space
     goal = lines(root)["goal"]
     assert goal.get("y1") == goal.get("y2") and goal.get("x1") != goal.get("x2")  # horizontal
     projection = lines(root)["projection"]
@@ -71,7 +71,7 @@ def test_the_element_id_and_the_description_are_escaped():
                 bodyweight_svg({"points": [{"date": "2026-10-01", "kg": 80.0}, {"date": "2026-10-08", "kg": 79.0}],
                                 "average": [{"date": "2026-10-08", "kg": 79.5}],
                                 "latest": {"date": "2026-10-08", "kg": 79.0},
-                                "goal": {"target_kg": 75.0, "target_date": "<2026-12-01>"}}, element_id=odd)):
+                                "goal": {"target_kg": 75.0, "target_date": "2026-12-01"}}, element_id=odd)):
         root = ET.fromstring(str(svg))  # still one well-formed SVG
         assert root.get("id") == odd and not list(root.iter(f"{SVG}script")) and not list(root.iter("script"))
         assert root.find(f"{SVG}title").get("id") == f"{odd}-title"
@@ -103,7 +103,7 @@ def test_the_bodyweight_line_is_the_smoothed_trend_not_the_average():
     assert line.get("class") == "series smoothed"
     assert polyline_values(root, WEIGHED) == [80.0, 80.1, 79.99]  # the smoothed values, not 80, 80.5, 80
     desc = root.find(f"{SVG}desc").text
-    assert "The line is the smoothed trend, now 79.99 kg." in desc and "7-day average" not in desc
+    assert "The line is the smoothed trend, now 80 kg." in desc and "7-day average" not in desc  # 1 dp
     assert len(list(root.iter(f"{SVG}circle"))) == 3  # every weigh-in is still a dot
 
 
@@ -187,8 +187,8 @@ def test_the_real_chart_data_carries_the_smoothed_line(make_user):
         services.log_bodyweight(user.id, {"kg": kg, "date": day(user, -days_ago)}, "claude")
     _, weighed, goals, _, today = numbers_for(user)
     chart = bodyweight_chart(weighed, goals, today)
-    assert [p["smoothed"] for p in chart["points"]] == [s for _, s in metrics.ewma(
-        [(b.date, b.kg) for b in weighed], today)]
+    assert [p["smoothed"] for p in chart["points"]] == [formatting.rounded(s, "bodyweight_derived") for _, s in
+                                                        metrics.ewma([(b.date, b.kg) for b in weighed], today)]
     root = ET.fromstring(str(bodyweight_svg(chart)))
     assert polyline_values(root, chart) == [p["smoothed"] for p in chart["points"]]
 

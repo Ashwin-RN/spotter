@@ -10,7 +10,7 @@ and Settings.
                                    prev and next; a weigh-in form and a measurement form (POST to
                                    /day/{date}/weigh-in and /day/{date}/measurement)
     /entries/{kind}/{id}/edit      the fields the kind allows on the web (GET, POST)
-    /entries/{kind}/{id}/delete    POST: delete, back to the day with "Deleted. Undo"
+    /entries/{kind}/{id}/delete    POST: delete, back to the day with "{Kind} deleted." and Undo
     /entries/{kind}/{id}/restore   POST: undo a delete, back to the day
     /progress                      one line per lift, the Trends card (get_trends), and the body weight
                                    chart with its smoothed line
@@ -68,7 +68,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from sqlalchemy import func, select
 
-from app import calllog, charts, csrf, db, links, rules, services, users, web_auth
+from app import calllog, charts, csrf, db, formatting, links, rules, services, users, web_auth
 from app.config import Settings, get_settings
 from app.models import (
     CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
@@ -79,7 +79,29 @@ from app.services.common import SAMPLE_NOTE
 log = logging.getLogger("spotter")
 
 HERE = Path(__file__).resolve().parent
-templates = Jinja2Templates(env=Environment(loader=FileSystemLoader(str(HERE / "templates")), autoescape=True))
+
+
+def show_filter(value, quantity: str, widened: bool = False, *, unit: bool = True, page: bool = True) -> str:
+    """formatting.show for a template: a page by default, so a no-break space goes before the unit.
+    {{ x|show("kcal") }}; unit=False for a cell under a header that names the unit; page=False for
+    text that keeps a plain space."""
+    return formatting.show(value, quantity, page=page, widened=widened, unit=unit)
+
+
+# The one place numbers and dates reach a template: every figure on a page goes through these filters.
+# field gives a form input's value at the decimals the store keeps.
+FILTERS = {"show": show_filter, "day": formatting.day, "day_heading": formatting.day_heading,
+           "days": formatting.days, "day_utc": formatting.day_utc, "weekday": formatting.weekday,
+           "weekday_letter": formatting.weekday_letter, "field": formatting.field}
+
+
+def _environment() -> Environment:
+    env = Environment(loader=FileSystemLoader(str(HERE / "templates")), autoescape=True)
+    env.filters.update(FILTERS)
+    return env
+
+
+templates = Jinja2Templates(env=_environment())
 
 SESSION_COOKIE = "spotter_session"
 SESSION_DAYS = 14
@@ -105,12 +127,19 @@ EDIT_FIELDS = {
     "cardio_entry": ("exercise", "minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal",
                      "notes", "date"),
 }
-KIND_NAMES = {"bodyweight": "weigh-in", "measurement": "measurement", "lift_session": "lift session",
-              "food_entry": "food", "cardio_entry": "cardio"}
+# The entry kind's one spelling, from one table: "Weigh-in deleted." at the start of a line, "Edit weigh-in"
+# inside one.
+ENTRY_WORDS = {"bodyweight": "Weigh-in", "measurement": "Measurement", "lift_session": "Lift session",
+               "food_entry": "Food entry", "cardio_entry": "Cardio session"}
+KIND_NAMES = {kind: words.lower() for kind, words in ENTRY_WORDS.items()}
 NUMBER_FIELDS = {"kg", "value", "kcal", "minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr",
                  "machine_kcal", "kcal_per_serving", "grams_per_serving", "calorie_target_kcal",
                  "target_sessions_per_week", "target_cardio_minutes_per_week"}
 DATE_ERRORS = {"invalid_date", "date_in_future", "date_too_old", "day_taken"}
+# The quantity of each number an edit form offers, for formatting.field: the decimals the store keeps.
+FIELD_QUANTITIES = {"kg": "weigh_in", "kcal": "kcal", "minutes": "session_time", "distance_km": "km",
+                    "incline_pct": "incline", "speed_kmh": "speed", "avg_hr": "bpm", "machine_kcal": "kcal",
+                    "kcal_per_serving": "kcal_per_serving", "grams_per_serving": "grams"}
 
 MEALS = ("breakfast", "lunch", "dinner", "snack")
 # Who supplied a food entry's number (rule 13), in words. An estimate is marked on the page.
@@ -118,6 +147,8 @@ SOURCE_WORDS = {"you_said": "you said", "saved_food": "saved food", "usda": "USD
 ATTRIBUTION = ("Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
                "(CC BY-NC-ND 4.0).")
 TARGET_FIELDS = ("calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week")
+TARGET_QUANTITIES = {"calorie_target_kcal": "kcal", "target_sessions_per_week": "count",
+                     "target_cardio_minutes_per_week": "week_minutes"}
 FOOD_FIELDS = ("name", "serving_label", "kcal_per_serving", "grams_per_serving")
 
 # What a page says beside a field the service refused, in its own words: (kind, field) -> text.
@@ -171,7 +202,7 @@ GOAL_FIELD_NAMES = re.compile(r"\b(" + "|".join(GOAL_FIELDS) + r")\b")
 GOAL_ERROR_FIELDS = {"unknown_exercise": "exercise", "wrong_direction": "target_value",
                      "target_is_start": "target_value", "invalid_date": "target_date",
                      "date_not_in_future": "target_date", "cannot_change_kind": "kind"}
-GOAL_SAVED = {"goal": "Goal set.", "hit": "Marked as hit.", "dropped": "Dropped.", "open": "Reopened."}
+GOAL_SAVED = {"goal": "Goal set.", "hit": "Goal marked as hit.", "dropped": "Goal dropped.", "open": "Goal reopened."}
 # set_goal's warnings, said in the page's own words. A saved goal's warnings travel across the redirect as
 # these codes (as the day page carries its undo): (code, how the warning starts, what the page says).
 GOAL_NOTES = (
@@ -320,6 +351,8 @@ def page(request: Request, name: str, status_code: int = 200, **context) -> Resp
         "next_path": request.url.path if status_code < 400 else None,
         # Rule 15: the one footer line naming the Compendium, on a page that shows a cardio estimate only.
         "attribution": ATTRIBUTION if context.pop("shows_estimate", False) else None,
+        # The person's own date, for the date filters. A view passes the date its read was worked out on.
+        "today": users.today_for(user) if user is not None and "today" not in context else None,
         **context,
     }
     return templates.TemplateResponse(request, name, values, status_code=status_code)
@@ -356,7 +389,8 @@ def not_found_page(request: Request) -> Response:
 
 def too_many(request: Request, result: dict) -> Response:
     wait = result.get("wait_minutes")
-    when = f"in {wait} minute{'s' if wait != 1 else ''}" if isinstance(wait, int) and wait > 0 else "in a few minutes"
+    when = (f"in {formatting.show(wait, 'count')} minute{'s' if wait != 1 else ''}"
+            if isinstance(wait, int) and wait > 0 else "in a few minutes")
     return message(request, "Too many changes", "There have been too many changes to this account in the last "
                    "10 minutes, so nothing was saved.", f"Try again {when}.", status_code=429)
 
@@ -564,7 +598,8 @@ async def settings_view(request: Request, user: User, error: dict | None = None,
     groups, selected = zone_choices(user.time_zone)
     saved = request.query_params.get("saved")
     targets = {f: getattr(user, f) for f in TARGET_FIELDS}
-    shown = {f: (typed[f] if typed is not None else ("" if targets[f] is None else rules.kg(targets[f])))
+    shown = {f: (typed[f] if typed is not None else
+                 ("" if targets[f] is None else formatting.field(targets[f], TARGET_QUANTITIES[f])))
              for f in TARGET_FIELDS}
     return page(request, "settings.html", status_code=status_code, user=user, error=error,
                 saved=saved == "time_zone" and error is None, switch_saved=saved == "claude_can",
@@ -607,6 +642,15 @@ def measurement_label(kind: str) -> str:
     return MEASUREMENT_LABELS.get(kind, kind.replace("_", " ").capitalize())
 
 
+# The quantity formatting.show takes for a measurement, by the unit rules.MEASUREMENTS gives its kind.
+MEASUREMENT_QUANTITIES = {"cm": "cm", "h": "hours", "bpm": "bpm", "steps": "steps", "ml": "ml"}
+
+
+def measurement_quantity(kind: str) -> str:
+    """The quantity of a measurement kind's value: waist is cm, sleep_hours is hours."""
+    return MEASUREMENT_QUANTITIES[rules.MEASUREMENTS[kind][0]]
+
+
 async def day_page(request: Request, form_error: dict | None = None, status_code: int = 200) -> Response:
     user = await current_user(request)
     if user is None:
@@ -643,8 +687,9 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     state = await _db(services.sample_state, user.id)
     return page(request, "day.html", status_code=status_code, day=day, on=on, today=today,
                 prev_day=prev_day, next_day=next_day,
-                kinds=measurement_kinds(), undo=undo, form_error=form_error or {}, kg=rules.kg,
-                kind_names=KIND_NAMES, labels=MEASUREMENT_LABELS, meals=MEALS, source_words=SOURCE_WORDS,
+                kinds=measurement_kinds(), undo=undo, form_error=form_error or {},
+                kind_names=KIND_NAMES, entry_words=ENTRY_WORDS, labels=MEASUREMENT_LABELS, meals=MEALS,
+                source_words=SOURCE_WORDS, measurement_quantity=measurement_quantity,
                 food=food, cardio=cardio, activities=activities,
                 serving_text=serving_text, same_name=same_name,
                 sample_rows=state["sample_rows"], offer_sample=state["empty"] and on == today,
@@ -672,7 +717,7 @@ def serving_text(servings, label) -> str:
     "1 <size> <word>" are put in the plural, and only where a plain -s is right: 2 of "1 roti" is
     "2 rotis", of "1 medium apple" "2 medium apples". Anything else is counted: "2 × 100 g", "2 × 1 oz".
     One serving is the label itself; no label is the bare amount."""
-    amount = rules.kg(servings)
+    amount = formatting.show(servings, "servings")
     text = str(label or "").strip()
     if not text:
         return amount
@@ -720,8 +765,10 @@ def form_message(kind: str, field: str, measured: str | None = None) -> str:
     if measured in rules.MEASUREMENTS:
         unit, lo, hi, whole = rules.MEASUREMENTS[measured]
         in_unit = "" if unit == measured else f" in {unit}"
-        return (f"That value was not saved: give {measurement_label(measured).lower()}{in_unit}, from {lo:,} to "
-                f"{hi:,}" + (", as a whole number." if whole else "."))
+        quantity = measurement_quantity(measured)
+        lowest, highest = formatting.show(lo, quantity, unit=False), formatting.show(hi, quantity, unit=False)
+        return (f"That value was not saved: give {measurement_label(measured).lower()}{in_unit}, from {lowest} to "
+                f"{highest}" + (", as a whole number." if whole else "."))
     return "That value was not saved: give a number in the unit shown."
 
 
@@ -853,8 +900,9 @@ async def edit_page(request: Request) -> Response:
         entry = {**entry, **{f: str(form.get(f) or "") for f in EDIT_FIELDS[kind]}}  # show what they typed
     activities = await cardio_names() if kind == "cardio_entry" else []
     return page(request, "edit.html", status_code=status, kind=kind, kind_name=KIND_NAMES[kind],
-                entry_id=found["id"], entry=entry, errors=errors, kg=rules.kg, labels=MEASUREMENT_LABELS,
-                meals=MEALS, source_words=SOURCE_WORDS, activities=activities,
+                entry_id=found["id"], entry=entry, errors=errors, labels=MEASUREMENT_LABELS,
+                meals=MEALS, source_words=SOURCE_WORDS, activities=activities, measurement_quantity=measurement_quantity,
+                field_quantities=FIELD_QUANTITIES,
                 shows_estimate=kind == "cardio_entry" and entry.get("estimated_kcal") is not None)
 
 
@@ -967,7 +1015,7 @@ async def foods_view(request: Request, user: User, errors: dict | None = None, t
     deleted = request.query_params.get("deleted")
     return page(request, "foods.html", status_code=status_code, foods=saved, errors=errors or {},
                 sample_rows=state["sample_rows"],
-                typed=typed or {}, kg=rules.kg, saved=request.query_params.get("saved") == "1",
+                typed=typed or {}, saved=request.query_params.get("saved") == "1",
                 undo=deleted if isinstance(deleted, str) and deleted.isdigit() and len(deleted) <= 10 else None)
 
 
@@ -1010,7 +1058,8 @@ async def food_edit_page(request: Request) -> Response:
             return redirect(links.page("foods") + "?saved=1")
         errors, status = field_errors("saved_food", saved), 400
         food = {**food, **{f: str(form.get(f) or "") for f in FOOD_FIELDS[1:]}}
-    return page(request, "food_edit.html", status_code=status, food=food, errors=errors, kg=rules.kg)
+    return page(request, "food_edit.html", status_code=status, food=food, errors=errors,
+                field_quantities=FIELD_QUANTITIES)
 
 
 async def food_delete_page(request: Request) -> Response:
@@ -1110,15 +1159,11 @@ async def progress_page(request: Request) -> Response:
     trend = await _db(_trend, user.id)
     trends = await _db(services.get_trends, user.id)
     state = await _db(services.sample_state, user.id)
+    today = date.fromisoformat(result["today"])
     return page(request, "progress.html", lifts=result["lifts"], best_sets=trend["best_sets"], trend=trend,
-                chart=charts.bodyweight_svg(trend["bodyweight"]), kg=rules.kg, slug=links.slug,
-                trends=None if failed(trends) else trends, signed=signed, sample_rows=state["sample_rows"],
+                chart=charts.bodyweight_svg(trend["bodyweight"], today=today), slug=links.slug, today=today,
+                trends=None if failed(trends) else trends, sample_rows=state["sample_rows"],
                 weight_now_label=weight_now_label, rate_note=rate_note)
-
-
-def signed(value) -> str:
-    """A change with its sign: +0.25, -0.3, 0."""
-    return ("+" if value > 0 else "-" if value < 0 else "") + rules.kg(abs(value))
 
 
 def weight_now_label(trends: dict) -> str:
@@ -1156,26 +1201,35 @@ async def progress_lift_page(request: Request) -> Response:
         return not_found_page(request)
     lift = result["lift"]
     chart = progress_data.lift_chart(_lift_points(lift), lift["goals"], lift["exercise"])
-    return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart), kg=rules.kg,
-                sessions=list(reversed(lift["estimated_max_over_time"])))
+    today = date.fromisoformat(result["today"])
+    return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart, today=today), today=today,
+                sessions=list(reversed(lift["estimated_max_over_time"])), best_widened=best_widened)
+
+
+def best_widened(best: dict) -> bool:
+    """Whether a best and the one it beat show widened, together: an estimated max pair that prints
+    the same at the shown step (D5). A heaviest weight is as entered, and never widens."""
+    previous = best.get("previous")
+    return (best.get("kind") == "estimated_max" and previous is not None
+            and formatting.show(best["value"], "estimated_max") == formatting.show(previous, "estimated_max"))
 
 
 # ---------------------------------------------------------------- Goals
 
 def clock(minutes) -> str:
-    """Minutes as m:ss, the way a cardio time is said: 27.5 is 27:30."""
-    total = round(float(minutes) * 60)
-    return f"{total // 60}:{total % 60:02d}"
+    """Minutes as m:ss, the way a cardio time is said: 27.5 is 27:30. formatting.clock."""
+    return formatting.clock(minutes)
 
 
-def amount(value, unit: str) -> str:
-    """A goal's number in its unit: 80 kg, 86.5 cm, 62 bpm, 27:30 min."""
-    return f"{clock(value)} min" if unit == "min" else f"{rules.kg(value)} {unit}"
+# A goal's figures take the goal unit's quantity (section C of the stage 6 contract).
+GOAL_QUANTITIES = {"bodyweight": "bodyweight_derived", "lift": "estimated_max", "cardio_best": "goal_time"}
 
 
-def per_week(value, unit: str) -> str:
-    """A goal's pace, signed: +2.5 kg a week, -0.3 kg a week, -0.5 min a week."""
-    return f"{signed(value)} {unit} a week"
+def goal_quantity(goal: dict) -> str:
+    """The quantity of a goal's start, now and plan figures: kg, cm, bpm or a cardio time."""
+    if goal.get("kind") in GOAL_QUANTITIES:
+        return GOAL_QUANTITIES[goal["kind"]]
+    return "bpm" if goal.get("unit") == "bpm" else "cm"
 
 
 def goal_from_form(form) -> dict:
@@ -1261,8 +1315,9 @@ async def goals_view(request: Request, user: User, errors: dict | None = None, t
                 closed=result.get("closed") or [], errors=errors or {}, typed=typed or {}, saved=saved,
                 kinds=GOAL_KINDS, lifts=await exercise_names("lift"), activities=await cardio_names(),
                 measurement_choices=[(k, measurement_label(k), rules.MEASUREMENTS[k][0]) for k in GOAL_MEASUREMENTS],
-                amount=amount, per_week=per_week, status_class=lambda s: STATUS_CLASSES.get(s, ""),
-                closed_words=CLOSED_WORDS, sample_rows=state["sample_rows"])
+                goal_quantity=goal_quantity, status_class=lambda s: STATUS_CLASSES.get(s, ""),
+                closed_words=CLOSED_WORDS, sample_rows=state["sample_rows"], today=result.get("today"),
+                zone=user.time_zone)
 
 
 async def goals_page(request: Request) -> Response:
@@ -1354,7 +1409,7 @@ async def export_page(request: Request) -> Response:
         return redirect(links.page("sign_in"))
     result = await _db(services.export_data, user.id)
     if failed(result):
-        return message(request, "Not exported", "Spotter could not put your data together just now.",
+        return message(request, "Not exported", "Spotter could not put your data together this time.",
                        "Go back to Settings and try again.", status_code=500)
     name = f"spotter-export-{users.today_for(user).isoformat()}.zip"
     return Response(await run_in_threadpool(export_zip, result["files"]), media_type="application/zip",

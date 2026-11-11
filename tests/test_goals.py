@@ -9,6 +9,7 @@ from sqlalchemy import event
 from app import db, services, users
 from app.metrics import epley
 from app.models import Goal
+from app.services import goals as goal_service
 
 
 @pytest.fixture
@@ -18,6 +19,13 @@ def user(make_user):
 
 def day(user, offset):
     return (users.today_for(user) + timedelta(days=offset)).isoformat()
+
+
+def page_day(user, offset):
+    """The D12 form a summary gives a date in: 'Sun 10 Jan', with the year when it is not this year's."""
+    today = users.today_for(user)
+    d = today + timedelta(days=offset)
+    return f"{d:%a} {d.day} {d:%b}" + ("" if d.year == today.year else f" {d.year}")
 
 
 def squat(user, days_ago, kg, reps=5):
@@ -43,7 +51,7 @@ def test_a_lift_goal_stores_its_start_and_matches_get_progress(user):
     g = r["goal"]
     assert r["kind"] == "goal" and r["id"] == g["id"] and r["warnings"] == []
     assert g["exercise"] == "Back Squat" and g["status"] == "open" and g["text"] == "100 by spring"
-    assert g["start_value"] == epley(67.5, 5) and g["start_date"] == day(user, 0)
+    assert g["start_value"] == 78.8 and g["start_date"] == day(user, 0)   # epley(67.5, 5) is 78.75: 1 dp, half up
     assert g["direction"] == "up" and g["unit"] == "kg" and g["closed_at"] is None
     progress = services.get_progress(user.id, "Back Squat")["lift"]["goal"]
     assert r["progress"] == progress and progress["status"] in ("on track", "behind")
@@ -160,21 +168,82 @@ def test_a_bodyweight_goal_starts_from_the_7_day_average(user):
         weigh(user, days_ago, kg)
     r = goal(user, kind="bodyweight", target_value=80, target_date=day(user, 30))
     # The 7-day average is 80.34, so a target of 80 points down, and the latest weigh-in has reached it.
-    assert r["goal"]["start_value"] == 80.34 and r["goal"]["direction"] == "down"
-    assert r["progress"]["latest"] == 80.34 and r["progress"]["status"] == "on track"
+    # The result carries it at 1 dp: 80.3.
+    assert r["goal"]["start_value"] == 80.3 and r["goal"]["direction"] == "down"
+    assert r["progress"]["latest"] == 80.3 and r["progress"]["status"] == "on track"
+
+
+def test_the_ignored_start_is_said_as_the_start_field_prints_it(user):
+    """A kg goal's start_value is 1 dp in the result, so the warning says it at 1 dp too."""
+    for days_ago, kg in ((3, 80.25), (0, 80.2)):            # the 7-day average: 80.225, kept as 80.23
+        weigh(user, days_ago, kg)
+    r = goal(user, kind="bodyweight", target_value=75, start_value=90, target_date=day(user, 30))
+    assert r["goal"]["start_value"] == 80.2
+    assert r["warnings"] == ["start_value was ignored: the goal starts from the logged 80.2 kg (the 7-day average)."]
+    squat(user, 1, 102.5)                                    # epley 119.58
+    lift = goal(user, kind="lift", exercise="Back Squat", target_value=150, start_value=100, target_date=day(user, 30))
+    assert lift["goal"]["start_value"] == 119.6
+    assert lift["warnings"] == ["start_value was ignored: the goal starts from the logged 119.6 kg (the best session "
+                                "in the last 28 days)."]
 
 
 def test_a_light_session_does_not_pull_the_start_down(user):
     squat(user, 21, 140)
     squat(user, 0, 100)
     r = goal(user, kind="lift", exercise="Back Squat", target_value=180, target_date=day(user, 60))
-    assert r["goal"]["start_value"] == epley(140, 5) and r["progress"]["latest"] == epley(140, 5)
+    # epley(140, 5) is 163.33 and epley(100, 5) is 116.67: the results carry them at 1 dp.
+    assert r["goal"]["start_value"] == 163.3 and r["progress"]["latest"] == 163.3
     one = services.get_progress(user.id, "Back Squat")["lift"]
-    assert one["current_estimated_max_kg"] == epley(140, 5)
-    assert one["estimated_max_over_time"][-1]["estimated_max_kg"] == epley(100, 5)
+    assert one["current_estimated_max_kg"] == 163.3
+    assert one["estimated_max_over_time"][-1]["estimated_max_kg"] == 116.7
     row = services.get_progress(user.id)["lifts"][0]
-    assert row["current_estimated_max_kg"] == row["best_estimated_max_kg"] == epley(140, 5)
+    assert row["current_estimated_max_kg"] == row["best_estimated_max_kg"] == 163.3
     assert "last 28 days" in services.get_progress(user.id)["how"]
+
+
+def test_goal_numbers_stay_unrounded_and_rounded_numbers_rounds_a_copy(user):
+    """Section D: the maths keeps its precision; the result rounds a kg goal's start, latest and projection.latest
+    to 1 dp, on a copy. cm, bpm and cardio time goals keep the precision they have."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    for days_ago, kg in ((20, 60), (15, 62.5), (10, 65), (5, 67.5)):   # the last is epley 78.75
+        squat(user, days_ago, kg)
+    weigh(user, 3, 81.08)
+    weigh(user, 0, 79.6)                                               # the 7-day average: 80.34
+    services.log_measurement(user.id, {"kind": "waist", "value": 84.25}, "claude")
+    services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 29.3, "distance_km": 5.1}, "claude")
+    for data in ({"kind": "lift", "exercise": "Back Squat", "target_value": 100},
+                 {"kind": "bodyweight", "target_value": 75},
+                 {"kind": "measurement", "measurement_kind": "waist", "target_value": 80},
+                 {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 27}):
+        assert "error" not in goal(user, target_date=day(user, 60), **data)
+    today = users.today_for(user)
+    with db.new_session() as s:
+        rows = list(s.scalars(select(Goal).where(Goal.user_id == user.id).order_by(Goal.id)
+                              .options(selectinload(Goal.exercise))))
+        raw = goal_service.goal_numbers(rows, goal_service.load_numbers(s, user.id, today, rows), today)
+    before = [{**n, "projection": dict(n["projection"]) if n["projection"] else None} for n in raw]
+    shown = goal_service.rounded_numbers(raw)
+    assert raw == before                                               # nothing rounded in place
+    lift, weight, waist, run = raw
+    assert (lift["start_value"], lift["latest"], lift["projection"]["latest"]) == (78.75, 78.75, 78.75)
+    assert (weight["start_value"], weight["latest"]) == (80.34, 80.34)
+    lift, weight, waist, run = shown
+    assert (lift["start_value"], lift["latest"], lift["projection"]["latest"]) == (78.8, 78.8, 78.8)
+    assert (weight["start_value"], weight["latest"]) == (80.3, 80.3)
+    assert (waist["start_value"], waist["latest"]) == (84.25, 84.25)            # cm: as it is
+    assert (run["start_value"], run["latest"]) == (28.73, 28.73)               # 29.3 / 5.1 x 5, 2 dp: as it is
+    assert lift["projection"] is not raw[0]["projection"]
+    assert services.get_goals(user.id)["goals"] == shown
+    assert [g["start_value"] for g in (services.get_entry(user.id, "goal", n["goal_id"])["entry"] for n in raw)] \
+        == [78.8, 80.3, 84.25, 28.73]                                         # goal_dict, the second caller
+
+
+def test_a_status_that_is_not_one_says_hit_is_the_persons_mark(user):
+    """D14: "hit (reached)" goes. Reached is the numbers; hit is the person's own mark."""
+    r = goal(user, kind="bodyweight", target_value=70, start_value=80, target_date=day(user, 30), status="won")
+    assert r["error"] == "invalid_field" and "(reached)" not in r["fix"]
+    assert "Use hit, dropped or open: hit is the person's own mark that a goal is done." in r["fix"]
 
 
 def test_the_lift_target_range_comes_from_the_rules(user):
@@ -281,7 +350,8 @@ def test_a_bodyweight_goal_at_target_on_the_average_is_reached_despite_a_high_we
     for days_ago, kg in ((20, 78), (14, 78.5), (6, 79), (3, 79.5), (1, 80.2), (0, 80.8)):
         weigh(user, days_ago, kg)
     numbers = services.get_progress(user.id)["goals"][0]
-    assert numbers["latest"] == 79.88 and numbers["status"] == "reached" and numbers["needed_per_week"] == 0
+    # The 7-day average is 79.88: 79.9 at 1 dp, still at or below the target of 80.
+    assert numbers["latest"] == 79.9 and numbers["status"] == "reached" and numbers["needed_per_week"] == 0
     agrees(numbers)
 
 
@@ -304,7 +374,7 @@ def test_an_edit_compares_with_the_stored_start_not_todays_numbers(user):
     assert g["goal"]["start_value"] == 85 and g["goal"]["direction"] == "down"
     for days_ago in (3, 2, 1):
         weigh(user, days_ago, 78)                                 # the 7-day average is now 79.75
-    assert goal(user, goal_id=g["id"], target_value=82)["progress"]["latest"] == 79.75  # below 85: accepted
+    assert goal(user, goal_id=g["id"], target_value=82)["progress"]["latest"] == 79.8  # 79.75 at 1 dp; below 85
     assert goal(user, goal_id=g["id"], target_value=86)["error"] == "wrong_direction"   # above the stored start
     same = goal(user, goal_id=g["id"], target_value=85)
     assert same["error"] == "wrong_direction" and "below 85" in same["fix"]
@@ -569,7 +639,7 @@ def test_get_goals_lists_open_goals_and_on_request_closed_ones(user):
     goal(user, goal_id=b, status="hit")
     r = services.get_goals(user.id)
     assert [g["goal_id"] for g in r["goals"]] == [a] and r["closed"] == []
-    assert r["summary"] == f"1 open goal: Bodyweight 75 kg by {day(user, 60)}, not enough data."
+    assert r["summary"] == f"1 open goal: Body weight 75 kg by {page_day(user, 60)}, not enough data."
     full = services.get_goals(user.id, include_closed=True)
     assert full["closed"] == [{"goal_id": b, "label": "Deadlift 150 kg", "kind": "lift", "status": "hit",
                                "closed_at": full["closed"][0]["closed_at"], "target_value": 150,

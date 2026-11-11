@@ -15,6 +15,11 @@ history(s, user_id, today)
     Every live session, whatever its date, worked through in the one order (effective date, then
     id; see metrics.on_or_before): one point per session per lift (that session's best estimated
     max), the best set, and the new bests with their dates. today orders; it never drops a row.
+    The best set's estimated max comes back at 1 dp; every other value at the working precision.
+
+rounded_best(best) and best_text(best)
+    A new best for a result: an estimated max and the one it beat at 1 dp together, or both at 2 dp
+    when they would read the same at 1 dp (D5). best_text says the pair the same way.
 
 Every write here locks the user row first (common.lock_user), then checks the write limit
 (common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
@@ -25,7 +30,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import db, links, metrics, rules, users
+from app import db, formatting, links, metrics, rules, users
 from app.models import LiftSession, LiftSet
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, duplicate_note, exercises, find_duplicate, lock_user,
@@ -36,8 +41,31 @@ KIND = "lift_session"
 BEST_LABELS = {"estimated_max": "estimated max", "weight": "heaviest weight"}
 
 
+def _widened(p: dict) -> bool:
+    """Whether a best of kind estimated_max and the one it beat read the same at 1 dp: then both show
+    and round at 2 dp. metrics.prs needs the new one strictly above at 2 dp, so 2 dp tells them apart."""
+    return p["kind"] == "estimated_max" and (formatting.show(p["value"], "estimated_max")
+                                             == formatting.show(p["previous"], "estimated_max"))
+
+
+def rounded_best(p: dict) -> dict:
+    """A copy of a best with value and previous rounded together for a result (D5). A heaviest weight
+    stays as entered."""
+    if p["kind"] != "estimated_max":
+        return dict(p)
+    wide = _widened(p)
+    return {**p, "value": formatting.rounded(p["value"], "estimated_max", widened=wide),
+            "previous": formatting.rounded(p["previous"], "estimated_max", widened=wide)}
+
+
 def best_text(p: dict) -> str:
-    return f"{p['exercise']} {BEST_LABELS.get(p['kind'], p['kind'])} {p['value']:g} kg (was {p['previous']:g} kg)"
+    """'Back Squat estimated max 81.7 kg, up from 70 kg'. The pair widens together (D5)."""
+    if p["kind"] == "estimated_max":
+        wide = _widened(p)
+        value, previous = (formatting.show(p[k], "estimated_max", widened=wide) for k in ("value", "previous"))
+    else:
+        value, previous = (formatting.show(p[k], "weight_kg") for k in ("value", "previous"))
+    return f"{p['exercise']} {BEST_LABELS.get(p['kind'], p['kind'])} {value}, up from {previous}"
 
 
 def first_text(lift: str, lift_sets: list[tuple[float, int]]) -> str:
@@ -45,25 +73,37 @@ def first_text(lift: str, lift_sets: list[tuple[float, int]]) -> str:
     is 1 to 10 reps; nothing to measure when no set counts at all."""
     estimate, heaviest = metrics.session_best(lift_sets), metrics.max_weight(lift_sets)
     if estimate is not None:
-        return f"First {lift} session: estimated max {estimate:g} kg is the mark to beat."
+        return f"First {lift} session: estimated max {formatting.show(estimate, 'estimated_max')} is the mark to beat."
     if heaviest is not None:
-        return f"First {lift} session: {heaviest:g} kg is the mark to beat."
+        return f"First {lift} session: {formatting.show(heaviest, 'weight_kg')} is the mark to beat."
     return f"First {lift} session."
 
 
+def _joined(items: list[str]) -> str:
+    """'A', 'A and B', 'A, B and C'; '' for none."""
+    if len(items) < 2:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
 def sets_text(sets: list[tuple[str, float, int]]) -> str:
-    """'Back Squat 3 × 5 @ 80 kg; Bench Press 60 kg × 5, 60 kg × 4' from (exercise, weight, reps), in order."""
+    """'Back Squat 3 \u00d7 5 at 80 kg and Bench Press 60 kg \u00d7 5, 60 kg \u00d7 4' from (exercise,
+    weight, reps), in order: one part a lift, joined as a list."""
     groups: dict[str, list[tuple[float, int]]] = {}
     for name, w, r in sets:
         groups.setdefault(name, []).append((w, r))
+    times = "\u00d7"
     parts = []
     for name, rows in groups.items():
         if len(set(rows)) == 1:
             w, r = rows[0]
-            parts.append(f"{name} {len(rows)} × {r}" + (f" @ {w:g} kg" if w else ""))
+            parts.append(f"{name} {formatting.show(len(rows), 'count')} {times} {formatting.show(r, 'reps')}"
+                         + (f" at {formatting.show(w, 'weight_kg')}" if w else ""))
         else:
-            parts.append(f"{name} " + ", ".join(f"{w:g} kg × {r}" if w else f"{r} reps" for w, r in rows))
-    return "; ".join(parts)
+            parts.append(f"{name} " + ", ".join(
+                f"{formatting.show(w, 'weight_kg')} {times} {formatting.show(r, 'reps')}" if w
+                else f"{formatting.show(r, 'reps')} reps" for w, r in rows))
+    return _joined(parts)
 
 
 def session_dict(t: LiftSession) -> dict:
@@ -137,6 +177,9 @@ def history(s: Session, user_id: int, today: date) -> dict:
                 bests.setdefault(lift, []).append({"date": t.date.isoformat(), "exercise": lift, **hit,
                                                    "session_id": t.id})
             prior.setdefault(lift, []).extend(lift_sets)
+    # The loop compares the unrounded estimate; the output carries it at 1 dp, in a new dict.
+    best_set = {lift: {**b, "estimated_max_kg": formatting.rounded(b["estimated_max_kg"], "estimated_max")}
+                for lift, b in best_set.items()}
     return {"sessions": sessions, "points": points, "logged": logged, "last": last, "best_set": best_set,
             "bests": bests}
 
@@ -169,8 +212,10 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         if not truthy(data.get("allow_repeat")):
             first = find_duplicate(s, LiftSession, user.id, on, key)
             if first is not None:
+                done = sets_text([(x.exercise.name, x.weight_kg, x.reps) for x in sorted(first.sets, key=lambda x: x.id)])
                 return {"kind": KIND, "id": first.id, "duplicate": True, "session": session_dict(first),
-                        "new_bests": [], "summary": f"Already logged: lift session {first.id}.",
+                        "new_bests": [],
+                        "summary": f"Already logged: {done} on {formatting.day(first.date, today)}.",
                         "note": duplicate_note("session"), "links": _links(first.date, lifts)}
 
         # New bests against every set that comes before this session in the one order: every
@@ -191,7 +236,7 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         new_bests = []
         for lift, lift_sets in grouped.items():
             for hit in metrics.prs(prior.get(lift, []), lift_sets):
-                p = {"exercise": lift, **hit}
+                p = rounded_best({"exercise": lift, **hit})
                 new_bests.append({**p, "text": best_text(p)})
 
         session = LiftSession(user_id=user.id, date=on, notes=notes, logged_by=by, dedupe_key=key)
@@ -199,12 +244,13 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         s.add(session)
         s.flush()
 
-        summary = f"{on.isoformat()}: {sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets])}."
+        summary = (f"{sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets])} on "
+                   f"{formatting.day(on, today)}.")
         # A lift's first session has nothing to beat, so it sets the mark rather than a best; the
         # summary says so, or "No new bests" reads as a missed one.
         firsts = [first_text(lift, lift_sets) for lift, lift_sets in grouped.items() if not prior.get(lift)]
         if new_bests:
-            summary += " New bests: " + "; ".join(p["text"] for p in new_bests) + "."
+            summary += "".join(f" New best: {p['text']}." for p in new_bests)
         if firsts:
             summary += " " + " ".join(firsts)
         if not new_bests and not firsts:

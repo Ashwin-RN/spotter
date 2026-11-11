@@ -33,7 +33,7 @@ add_sample_data(user_id, by)
                     marked estimates sized so the day lands on its drawn total (2,100 to 2,300 kcal),
                     and a stated snack on some days. Tags saved_food, you_said and claude_estimate all show.
       measurements  waist and resting_hr weekly on today's weekday, 4 each (WAIST, RESTING_HR)
-      goals         Bodyweight 77 kg by today + 56; Back Squat 120 kg by today + 84; Outdoor Run 5 km in
+      goals         Body weight 77 kg by today + 56; Back Squat 120 kg by today + 84; Outdoor Run 5 km in
                     27:00 by today + 56. Each starts where its own series starts: the first value and its
                     date, what set_goal would have stored that day.
 
@@ -48,7 +48,7 @@ from datetime import timedelta
 
 from sqlalchemy import delete, func, select
 
-from app import db, links, metrics, rules, users
+from app import db, formatting, links, metrics, rules, users
 from app.models import (
     Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, User, entry_models,
 )
@@ -292,9 +292,8 @@ def add_sample_data(user_id: int, by: str) -> dict:
                  "saved_foods": len(saved), "food_entries": len(eaten), "cardio_entries": len(moved),
                  "goals": len(goals)}
         return {"added": added, "from": days[0].isoformat(), "to": today.isoformat(),
-                "summary": (f"Added sample data for {days[0].isoformat()} to {today.isoformat()}: "
-                            f"{_listed(added)}. Every row is marked sample; Remove sample data on Settings clears "
-                            "it all."),
+                "summary": (f"Added sample data for {formatting.days(days[0], today, today)}: {_listed(added)}. "
+                            "Every row is marked sample. Remove sample data on Settings clears it all."),
                 "links": {"today": links.page("today"), "progress": links.page("progress"),
                           "goals": links.page("goals")}}
 
@@ -303,7 +302,7 @@ def _listed(counts: dict) -> str:
     words = {"lift_sessions": "lift sessions", "weigh_ins": "weigh-ins", "measurements": "measurements",
              "saved_foods": "saved foods", "food_entries": "food entries", "cardio_entries": "cardio entries",
              "goals": "goals"}
-    return ", ".join(f"{counts[k]} {words[k]}" for k in COUNTS)
+    return ", ".join(f"{formatting.show(counts[k], 'count')} {words[k]}" for k in COUNTS)
 
 
 def remove_sample_data(user_id: int, by: str) -> dict:
@@ -335,7 +334,8 @@ def remove_sample_data(user_id: int, by: str) -> dict:
         summary = (f"Removed the sample data: {_listed(removed)}." if total
                    else "There was no sample data to remove.")
         if unlinked:
-            summary += (f" {unlinked} of your own entries {'was' if unlinked == 1 else 'were'} logged against a "
-                        f"sample food; {'it keeps its' if unlinked == 1 else 'they keep their'} numbers and "
-                        f"{'loses' if unlinked == 1 else 'lose'} the link.")
+            one = unlinked == 1
+            summary += (f" {formatting.show(unlinked, 'count')} real {'entry was' if one else 'entries were'} logged "
+                        f"against a sample food. {'It keeps its' if one else 'They keep their'} numbers and "
+                        f"{'loses' if one else 'lose'} the link.")
         return {"removed": removed, "summary": summary, "links": {"today": links.page("today")}}

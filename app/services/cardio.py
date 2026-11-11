@@ -21,6 +21,8 @@ log_cardio(user_id, data, by)
 
 estimate(s, user, exercise, minutes, today) -> {kcal, weight_kg, met, source} | None
 cardio_dict(entry) -> the entry's columns plus exercise, pace, estimate and machine_kcal
+    The estimate's weight_kg comes back at 1 dp here, and only here: the stored column and estimate()
+    keep the working weight, so an estimate can be worked out again.
 
 Every write here locks the user row first (common.lock_user), then checks the write limit
 (common.check_write_limit), before any other read or work.
@@ -30,7 +32,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
-from app import db, links, metrics, rules, users
+from app import db, formatting, links, metrics, rules, users
 from app.exercises import COMPENDIUM
 from app.models import CardioEntry
 from app.services import body
@@ -69,8 +71,10 @@ def cardio_dict(entry: CardioEntry) -> dict:
     ex = entry.exercise
     est = None
     if entry.estimated_kcal is not None:
-        est = {"kcal": int(entry.estimated_kcal), "weight_kg": entry.estimate_weight_kg, "met": ex.met,
-               "source": source(ex.compendium_code)}
+        weight = entry.estimate_weight_kg
+        est = {"kcal": int(entry.estimated_kcal),
+               "weight_kg": None if weight is None else formatting.rounded(weight, "bodyweight_derived"),
+               "met": ex.met, "source": source(ex.compendium_code)}
     return {**row_dict(entry), "exercise": ex.name, "pace": pace_of(entry), "estimate": est,
             "machine_kcal": entry.machine_kcal}
 
@@ -126,9 +130,14 @@ def speed_disagrees(values: dict) -> dict | None:
     if abs(speed - worked) <= SPEED_TOLERANCE * worked:
         return None
     return rules.error("invalid_field",
-                       f"speed_kmh {speed:g} does not match {distance:g} km in {minutes:g} minutes, which is "
-                       f"{worked:g} km/h.",
+                       f"speed_kmh {formatting.field(speed, 'speed')} does not match {ran(distance, minutes)}, "
+                       f"which is {formatting.show(worked, 'speed')}.",
                        "Check the distance, the minutes and the speed, or leave speed_kmh out and the app works it out.")
+
+
+def ran(distance: float, minutes: float) -> str:
+    """'5 km in 30.5 minutes', as stored: the numbers Claude sent, back in a message."""
+    return f"{formatting.field(distance, 'km')} km in {formatting.field(minutes, 'session_time')} minutes"
 
 
 def with_speed(values: dict) -> tuple[dict, dict | None]:
@@ -142,8 +151,8 @@ def with_speed(values: dict) -> tuple[dict, dict | None]:
         lo, hi, _ = rules.NUMBERS["speed_kmh"]
         if not lo <= worked <= hi:
             return values, rules.error("invalid_field",
-                                       f"{values['distance_km']:g} km in {values['minutes']:g} minutes is "
-                                       f"{worked:g} km/h, outside {lo:g} to {hi:g}.",
+                                       f"{ran(values['distance_km'], values['minutes'])} is "
+                                       f"{formatting.show(worked, 'speed')}, outside {rules.span(lo, hi, 'speed')}.",
                                        "Check the distance and the minutes.")
         values = {**values, "speed_kmh": worked}
     return values, None
@@ -166,36 +175,39 @@ def sibling_note(s, exercise, est: dict | None, minutes: float) -> str | None:
         return None
     word = exercise.name.split()[0].lower()
     head = f"Logged as {exercise.name}."
+    tail = "edit_entry changes it."
+    met = lambda e: formatting.show(e.met, "met")  # noqa: E731
     if est is not None:
-        kcal = {e.id: metrics.cardio_kcal(e.met, est["weight_kg"], minutes) for e in others}
+        kcal = {e.id: formatting.show(metrics.cardio_kcal(e.met, est["weight_kg"], minutes), "kcal") for e in others}
         if len(others) == 1:
             other = others[0]
             return (f"{head} {other.name} is the other {word} activity: its estimate would be about "
-                    f"{kcal[other.id]} kcal instead of {est['kcal']}; edit_entry changes it.")
-        listed = _joined([f"{e.name} (about {kcal[e.id]} kcal)" for e in others])
-        return f"{head} {listed} are the other {word} activities; edit_entry changes it."
+                    f"{kcal[other.id]} instead of {formatting.show(est['kcal'], 'kcal')}. {tail}")
+        listed = _joined([f"{e.name} at about {kcal[e.id]}" for e in others])
+        return f"{head} The other {word} activities are {listed}. {tail}"
     if len(others) == 1:
         other = others[0]
         way = "higher" if other.met > exercise.met else "lower"
-        return (f"{head} {other.name} is the other {word} activity, with a {way} estimate "
-                f"(MET {other.met:g} against {exercise.met:g}); edit_entry changes it.")
-    listed = _joined([f"{e.name} (MET {e.met:g})" for e in others])
-    return (f"{head} {listed} are the other {word} activities, against MET {exercise.met:g} for this one; "
-            "edit_entry changes it.")
+        return (f"{head} {other.name} is the other {word} activity, with a {way} estimate: "
+                f"MET {met(other)} against {met(exercise)}. {tail}")
+    listed = _joined([f"{e.name} at MET {met(e)}" for e in others])
+    return f"{head} The other {word} activities are {listed}, against MET {met(exercise)} for this one. {tail}"
 
 
 def summary(entry: CardioEntry, today: date) -> str:
-    text = f"{entry.exercise.name} {entry.minutes:g} min"
+    """'Outdoor Run on Tue 10 Nov for 30:00, 5 km, pace 6:00 per km, about 300 kcal estimated.'"""
+    text = (f"{entry.exercise.name} on {formatting.day(entry.date, today)} for "
+            f"{formatting.show(entry.minutes, 'session_time')}")
     if entry.distance_km:
-        text += f", {entry.distance_km:g} km, pace {metrics.pace(entry.distance_km, entry.minutes)}/km"
+        text += (f", {formatting.show(entry.distance_km, 'km')}, pace "
+                 f"{metrics.pace(entry.distance_km, entry.minutes)} per km")
     if entry.estimated_kcal is not None:
-        text += f", about {int(entry.estimated_kcal)} kcal (estimate"
+        text += f", about {formatting.show(entry.estimated_kcal, 'kcal')} estimated"
         if entry.date != today:  # decision 7: body weight now, even for an earlier day; say so
-            text += f", from body weight now, {entry.estimate_weight_kg:g} kg"
-        text += ")"
+            text += f" from body weight now, {formatting.show(entry.estimate_weight_kg, 'bodyweight_derived')}"
     if entry.machine_kcal is not None:
-        text += f", the machine said {entry.machine_kcal} kcal"
-    return text + f" on {entry.date.isoformat()}."
+        text += f", the machine said {formatting.show(entry.machine_kcal, 'kcal')}"
+    return text + "."
 
 
 def log_cardio(user_id: int, data: dict | None, by: str) -> dict:

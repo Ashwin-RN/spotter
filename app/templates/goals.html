@@ -6,6 +6,7 @@
 {% if saved %}<p class="ok">{{ saved }}</p>{% endif %}
 {% for note in notes %}<p class="notice goal-note">{{ note }}</p>{% endfor %}
 {% macro sample_tag(g) %}{% if g.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}{% endmacro %}
+{% macro pace(g, value) %}{% if g.kind == "cardio_best" %}{{ value|show("time_pace") }}{% else %}{{ value|show("rate") }} {{ g.unit }} a week{% endif %}{% endmacro %}
 
 {% macro status_form(goal_id, status, label) %}
 <form method="post" action="/goals/{{ goal_id }}/status" class="inline">
@@ -22,19 +23,20 @@
     {% for g in goals %}
     <li class="goal" id="goal-{{ g.goal_id }}">
       <div class="entry-line">
-        <span><strong>{{ g.label }}</strong>{{ sample_tag(g) }} by {{ g.target_date }}
+        <span><strong>{{ g.label }}</strong>{{ sample_tag(g) }} by {{ g.target_date|day(today) }}
           <span class="tag tag-status {{ status_class(g.status) }}">{{ g.status }}</span></span>
         <span class="entry-actions">
           {{ status_form(g.goal_id, "hit", "Hit") }}
           {{ status_form(g.goal_id, "dropped", "Drop") }}
         </span>
       </div>
+      {% set q = goal_quantity(g) %}
       <dl class="facts">
-        <dt>Started</dt><dd>{{ amount(g.start_value, g.unit) }} on {{ g.start_date }}</dd>
-        <dt>Now</dt><dd>{% if g.latest is not none %}{{ amount(g.latest, g.unit) }}{% else %}<span class="muted">nothing logged yet</span>{% endif %}</dd>
-        <dt>Needed</dt><dd>{% if g.needed_per_week is not none %}{{ per_week(g.needed_per_week, g.unit) }}{% else %}<span class="muted">not worked out</span>{% endif %}</dd>
-        <dt>So far</dt><dd>{% if g.actual_per_week is not none %}{{ per_week(g.actual_per_week, g.unit) }}{% else %}<span class="muted">not enough data yet</span>{% endif %}</dd>
-        <dt>At this pace</dt><dd>{% if g.projected_date %}reached on {{ g.projected_date }}{% else %}<span class="muted">no date</span>{% endif %}</dd>
+        <dt>Started</dt><dd>{{ g.start_value|show(q) }} on {{ g.start_date|day(today) }}</dd>
+        <dt>Now</dt><dd>{% if g.latest is not none %}{{ g.latest|show(q) }}{% else %}<span class="muted">nothing logged yet</span>{% endif %}</dd>
+        <dt>Needed</dt><dd>{% if g.needed_per_week is not none %}{{ pace(g, g.needed_per_week) }}{% else %}<span class="muted">not worked out</span>{% endif %}</dd>
+        <dt>So far</dt><dd>{% if g.actual_per_week is not none %}{{ pace(g, g.actual_per_week) }}{% else %}<span class="muted">not enough data yet</span>{% endif %}</dd>
+        <dt>At this pace</dt><dd>{% if g.projected_date %}reached on {{ g.projected_date|day(today) }}{% else %}<span class="muted">no date</span>{% endif %}</dd>
       </dl>
       {% if g.note %}<p class="muted small">{{ g.note }}</p>{% endif %}
     </li>
@@ -52,7 +54,7 @@
     {% for g in closed %}
     <li class="entry-line" id="goal-{{ g.goal_id }}">
       <span>{{ g.label }}{{ sample_tag(g) }} <span class="tag">{{ closed_words.get(g.status, g.status) }}</span>
-        {% if g.closed_at %}<span class="muted small">on {{ g.closed_at[:10] }}</span>{% endif %}</span>
+        {% if g.closed_at %}<span class="muted small">on {{ g.closed_at|day_utc(zone, today) }}</span>{% endif %}</span>
       <span class="entry-actions">{{ status_form(g.goal_id, "open", "Reopen") }}</span>
     </li>
     {% endfor %}
@@ -74,7 +76,7 @@
     {{ field_error("kind") }}
     <label for="goal-exercise">Lift or activity (a lift goal or a cardio time)</label>
     <select id="goal-exercise" name="exercise">
-      <option value="">None</option>
+      <option value="">No lift or activity</option>
       <optgroup label="Lifts">
         {% for name in lifts %}<option value="{{ name }}"{% if typed.get("exercise") == name %} selected{% endif %}>{{ name }}</option>{% endfor %}
       </optgroup>
@@ -85,7 +87,7 @@
     {{ field_error("exercise") }}
     <label for="goal-measurement">Measurement (a measurement goal)</label>
     <select id="goal-measurement" name="measurement_kind">
-      <option value="">None</option>
+      <option value="">No measurement</option>
       {% for value, label, unit in measurement_choices %}<option value="{{ value }}"{% if typed.get("measurement_kind") == value %} selected{% endif %}>{{ label }} ({{ unit }})</option>{% endfor %}
     </select>
     {{ field_error("measurement_kind") }}

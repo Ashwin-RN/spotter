@@ -60,8 +60,45 @@ def test_the_summary_tells_a_first_session_from_no_new_best(user):
     assert same["new_bests"] == [] and same["summary"].endswith(" No new bests.") and "First" not in same["summary"]
     mixed = log(user, ("Back Squat", 70, 5), ("Deadlift", 80, 12))
     assert [p["kind"] for p in mixed["new_bests"]] == ["estimated_max", "weight"]
-    assert mixed["summary"].endswith("New bests: Back Squat estimated max 81.67 kg (was 70 kg); Back Squat heaviest weight "
-                                     "70 kg (was 60 kg). First Deadlift session: 80 kg is the mark to beat.")
+    # epley(70, 5) is 81.67: 81.7 at 1 dp, and 70 is the one it beat. One sentence a best.
+    assert mixed["summary"].endswith("New best: Back Squat estimated max 81.7 kg, up from 70 kg. New best: Back Squat "
+                                     "heaviest weight 70 kg, up from 60 kg. First Deadlift session: 80 kg is the mark "
+                                     "to beat.")
+
+
+def test_the_best_set_is_found_on_the_exact_estimate_and_shown_at_1_dp(user):
+    """history compares the unrounded estimates, then rounds the best set into a new dict."""
+    log(user, ("Back Squat", 100, 5))                               # epley 116.67
+    log(user, ("Back Squat", 100.03, 5))                            # epley 116.70: higher, though both read 116.7
+    best = services.get_progress(user.id, "Back Squat")["lift"]["best_set"]
+    assert best["weight_kg"] == 100.03 and best["estimated_max_kg"] == 116.7
+    row = services.get_progress(user.id)["lifts"][0]
+    assert row["best_estimated_max_kg"] == 116.7 and row["current_estimated_max_kg"] == 116.7
+
+
+def test_an_empty_list_joins_to_nothing():
+    from app.services.lifts import _joined, sets_text
+    assert _joined([]) == "" and _joined(["A"]) == "A" and _joined(["A", "B", "C"]) == "A, B and C"
+    assert sets_text([]) == ""
+
+
+def test_a_best_and_the_one_it_beat_widen_together_when_they_read_the_same(user):
+    """D5: 116.70 against 116.67 both read 116.7 at 1 dp, so both come back and show at 2 dp."""
+    log(user, ("Back Squat", 100, 5))                               # epley 116.67
+    close = log(user, ("Back Squat", 100.03, 5))                    # epley 116.7016: 116.70 at 2 dp
+    best = next(p for p in close["new_bests"] if p["kind"] == "estimated_max")
+    assert (best["value"], best["previous"]) == (116.7, 116.67)
+    assert best["text"] == "Back Squat estimated max 116.70 kg, up from 116.67 kg"
+    clear = log(user, ("Back Squat", 110, 5))                       # epley 128.33 against 116.7: 1 dp apart
+    best = next(p for p in clear["new_bests"] if p["kind"] == "estimated_max")
+    assert (best["value"], best["previous"]) == (128.3, 116.7)
+    assert best["text"] == "Back Squat estimated max 128.3 kg, up from 116.7 kg"
+    logged = [b for day in services.get_log(user.id)["days"] for t in day["sessions"] for b in t["new_bests"]
+              if b["kind"] == "estimated_max"]
+    progress = [b for b in services.get_progress(user.id, "Back Squat")["lift"]["bests"] if b["kind"] == "estimated_max"]
+    assert sorted((b["value"], b["previous"]) for b in logged) == sorted((b["value"], b["previous"]) for b in progress)         == [(116.7, 116.67), (128.3, 116.7)]
+    assert {b["text"] for b in logged} == {"Back Squat estimated max 116.70 kg, up from 116.67 kg",
+                                           "Back Squat estimated max 128.3 kg, up from 116.7 kg"}
 
 
 
@@ -69,7 +106,8 @@ def test_log_lifts_numbers_sets_per_exercise_and_links_each_lift(user):
     r = log(user, ("back squat", 60, 5), ("Back Squat", 60, 5), ("Deadlift", 80, 5), ("Back Squat", 60, 4),
             notes="  good depth ")
     assert "error" not in r, r
-    today = users.today_for(user).isoformat()
+    date = users.today_for(user)
+    today = date.isoformat()
     assert r["kind"] == "lift_session" and r["duplicate"] is False and r["new_bests"] == []
     session = r["session"]
     assert r["id"] == session["id"] and session["date"] == today and session["logged_by"] == "claude"
@@ -80,9 +118,12 @@ def test_log_lifts_numbers_sets_per_exercise_and_links_each_lift(user):
     assert r["links"] == {"day": f"{SITE}/day/{today}",
                           "progress": {"Back Squat": f"{SITE}/progress/back-squat",
                                        "Deadlift": f"{SITE}/progress/deadlift"}}
-    assert r["summary"].startswith(f"{today}: Back Squat ") and "No new bests" not in r["summary"]
+    # The date in the D12 form (D13), the lifts as a list, the "@" a word.
+    assert r["summary"].startswith("Back Squat 60 kg × 5, 60 kg × 5, 60 kg × 4 and Deadlift 1 × 5 at "
+                                   f"80 kg on {date:%a} {date.day} {date:%b}. ")
+    assert "No new bests" not in r["summary"]
     assert ("First Back Squat session: estimated max 70 kg is the mark to beat. "
-            "First Deadlift session: estimated max 93.33 kg is the mark to beat." in r["summary"])
+            "First Deadlift session: estimated max 93.3 kg is the mark to beat." in r["summary"])   # 93.33 at 1 dp
     with db.new_session() as s:
         row = s.get(LiftSession, r["id"])
         assert row.user_id == user.id and row.logged_by == "claude" and len(row.dedupe_key) == 64
@@ -96,10 +137,11 @@ def test_new_bests_against_every_earlier_set_of_the_lift(user):
     assert {(p["exercise"], p["kind"]) for p in second["new_bests"]} == {("Back Squat", "estimated_max"),
                                                                           ("Back Squat", "weight")}
     squat = {p["kind"]: p for p in second["new_bests"]}
-    assert squat["estimated_max"]["value"] == 75.83 and squat["estimated_max"]["previous"] == 70.0
+    # epley(65, 5) is 75.83: 75.8 at 1 dp, apart from 70 at 1 dp, so the pair stays at 1 dp.
+    assert squat["estimated_max"]["value"] == 75.8 and squat["estimated_max"]["previous"] == 70.0
     assert squat["weight"]["value"] == 65 and squat["weight"]["previous"] == 60
-    assert squat["weight"]["text"] == "Back Squat heaviest weight 65 kg (was 60 kg)"
-    assert "New bests:" in second["summary"]
+    assert squat["weight"]["text"] == "Back Squat heaviest weight 65 kg, up from 60 kg"
+    assert "New best: Back Squat estimated max 75.8 kg, up from 70 kg." in second["summary"]
     assert log(user, ("Back Squat", 62.5, 5))["new_bests"] == []
     # More reps at the same top weight: a new estimated max, not a new heaviest weight.
     assert [p["kind"] for p in log(user, ("Back Squat", 65, 8))["new_bests"]] == ["estimated_max"]
@@ -365,7 +407,7 @@ def test_another_persons_sets_never_count_toward_new_bests(make_user):
     log(strong, ("Back Squat", 200, 5))
     log(starting, ("Back Squat", 50, 5))
     second = log(starting, ("Back Squat", 55, 5))
-    assert {p["previous"] for p in second["new_bests"]} == {epley(50, 5), 50}
+    assert {p["previous"] for p in second["new_bests"]} == {58.3, 50}   # epley(50, 5), 58.33, at 1 dp
     with db.new_session() as s:
         assert s.scalar(select(func.count(LiftSet.id)).join(LiftSession)
                         .where(LiftSession.user_id == starting.id)) == 2

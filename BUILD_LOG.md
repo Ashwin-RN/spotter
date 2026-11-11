@@ -426,3 +426,59 @@ Run live by a browser agent in the person's own signed-in browser, every tool ca
 - **A builder's mutants test what the builder thought of.** All three builders ran their own mutation passes and reported every mutant dead. The reviewers' passes, from a different angle, still found five that lived: a deleted row leaking into a goal's "now", a hit goal blocking sample data, a sample flag broken for one kind. None was a code bug, every one was a test that did not exist, and each would have become a bug the first time the code was touched again.
 - **The person must always be able to leave.** The write limit is right for every write except the one that ends the account: at the limit the first design deleted the sign-in at the provider and then refused the local delete. The exemption the Claude switch already had is the exemption delete needed.
 - **Two reviewers see what one does not.** The web reviewer found the write-limit hole in a service; the services reviewer found a schema field the web had asked for and nobody had modelled. Findings crossed package lines both ways, and routing them is the control centre's job.
+
+## Stage 6: the look, the numbers and the words
+
+**Goal: every page and every number Spotter shows reads as finished work. One formatter and one set of text rules sit behind every page and every summary, and tests hold them. Then every page is rebuilt on one design.** Contract: `docs/contracts/stage-6.md`.
+
+The stage lands in four steps. Step 1 was the design, agreed on a static build before any template changed. Step 2 is the number and text rules on today's pages, pushed on its own, and is what this entry covers. Steps 3 and 4 (the stylesheet and three new reads, then every page rebuilt) are added below as they land.
+
+The contract was reviewed against the code before any builder started: 36 findings on the first draft, 14 of them sentences two builders could have built two ways, then 20 more after the look was merged in. None changed the design. Most were about who hands what to whom, and how a half rounds.
+
+### Step 2: what was built
+
+No page changes shape in this step. Numbers and dates read the same on every page and in every summary, and the words lose their arrows, semicolons and filler.
+
+| Package | What |
+|---|---|
+| Numbers and services | `app/formatting.py`: the one place a number or a date is rounded and written (`show`, `rounded`, `is_zero`, `widen`, `clock`, `field`, `day`, `day_heading`, `days`, `day_utc`). Halves round away from zero through `Decimal(repr(value))`, so 80.25 shows 80.3 where Python's `round` gives 80.2. Every summary, note, message and fix goes through it. The smoothed weight, the 7-day average and the estimated max come back at 1 decimal, rounded once on a copy when the result is built: nothing computes from a rounded field. A best and the one it beat carry a second decimal when they would otherwise read the same. Summaries carry dates as "Tue 10 Nov", a comma from 1,000, and no ids: each id is still in a field. The export gains a byte-order mark, a guard on text cells that start like a formula, and a unit on every number column (`avg_hr_bpm`) |
+| Web | Jinja filters over the formatter, and every number and date on a page through them; "Previous day" and "Next day" in place of arrows; words where a page said "none"; a deleted entry named ("Food entry deleted.") |
+| MCP | A reply paragraph in the server instructions (`REPLY_RULE`): quote each number as Spotter gives it, say "about" as a word, no dashes between clauses |
+| Text rules and docs | `tests/text_rules.py`, one set of checks shared by three tests. T1 sweeps every template, every string constant in `app/`, the README and `docs/can-and-cant.md`, and fails a numeric format spec anywhere in `app/` outside the formatter. T2 holds every summary, note, message and fix the services return, on four accounts. T3 holds the visible text of every page on three. `tests/test_docs.py` holds the README's function count, page list and eval case count against the code, so the README no longer states a test count by hand |
+| Evals | A judge key, `reply_lacks_pattern`, and one case, `decimals_and_dashes`: seventeen cases. The new case has not been run |
+
+The order mattered. The formatter was built alone and reviewed before anything imported it, then the shared text checks, then services, web, the sweep and the evals side by side, then the old `rules.kg` deleted once nothing called it. Each builder broke its own behaviours before handing over, about 260 breaks across the packages. Those that stayed green were test gaps and were closed, apart from two in the formatter that changed no behaviour.
+
+### Step 2: the review
+
+Four reviewers, one on the formatter before the fan-out and three on the finished diffs.
+
+| Finding | Fix |
+|---|---|
+| The formatter's rounding depended on the caller's Decimal context: with a precision of 3 set elsewhere, 1234.56 came back as 1230 | One private context around every operation; a test runs it under five hostile contexts |
+| `rounded` on a run time with no stated step returned a fraction of 1/60, which would have gone into a result as 29.516666 | Refused with an error that says to pass the step |
+| An edit that fills an empty field said "distance_km from None to 3" in the summary Claude reads. No test looked for the word | "distance_km set to 3"; T2 fails "None", "True", "False" and "null" in any summary |
+| A before and after that print the same read as no change: a waist edited from 84.25 to 84.34 said "from 84.3 cm to 84.3 cm" | Both carry one more decimal when they would read the same, the rule a best and the one it beat already had |
+| A goal's warning quoted the start at 2 decimals beside a field at 1 | The warning prints what the field prints |
+| A refused weight of 1e300 was echoed as about 300 digits, twice a set | Echoed as sent, cut at 80 characters |
+| T2 masked every value typed on an account in every text of that account, so an uncommaed number could hide behind a refused input | Each call's typed values are masked in that call's texts only |
+| The cardio estimate cell's new words, "No weigh-in", were false once a weigh-in was logged later the same day: the estimate is fixed when the session is logged | "No estimate", and a footnote that is true in both states |
+| An entry kind was spelled two ways: "Food entry deleted." and "Edit food" | One table for both |
+| The text checks had gained a rule the contract does not have (no negative contractions on a page) | Out of the page rules |
+| The README did not say the new eval case had not been run; the rounding line in `docs/can-and-cant.md` could be read as leaving a single weigh-in's decimals on body weight now | Both say so |
+
+Held for step 3, with nothing hiding behind them today: seven ways the format-spec and template checks can be tightened (a nested spec, number formatting inside a template, a template in a subfolder among them).
+
+### Step 2: exit
+
+| Check | Status |
+|---|---|
+| The full suite is green, plain and with warnings as errors, on a clean export | 2,960 tests, from 1,598 |
+| No page changed shape; the security header, every route and the stylesheet are as they were | Held by the reviewer's read of every template diff and by the existing header tests |
+| The new eval case | Written and unit-tested. Not run: a run is the last item of the stage's exit |
+
+### What step 2 taught
+
+- **Review the foundation alone.** Five packages lean on the formatter. Its review found a rounding that depended on global state and a silent wrong value, with no caller yet to rework.
+- **A check that nobody asked for is still a cost.** The text checks arrived with one rule beyond the contract. It was right by a style guide and wrong for the stage, because every page would have been reworded for a rule nobody had agreed.
+- **A summary is an interface.** The word "None" in a sentence passed every type check and every schema. Only a test that reads the sentence as a person would could catch it.

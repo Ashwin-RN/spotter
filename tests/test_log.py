@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app import db, services, users
-from app.metrics import epley
 
 
 @pytest.fixture
@@ -72,12 +71,18 @@ def test_each_session_carries_its_own_new_bests_the_same_as_get_progress(user):
     r = services.get_log(user.id, days=4)
     by_id = {x["id"]: x["new_bests"] for d in r["days"] for x in d["sessions"]}
     assert {(b["kind"], b["value"], b["previous"]) for b in by_id[second["id"]]} == {
-        ("estimated_max", epley(65, 5), epley(60, 5)), ("weight", 65, 60)}
+        ("estimated_max", 75.8, 70.0), ("weight", 65, 60)}   # epley(65, 5) is 75.83 and epley(60, 5) is 70: 1 dp
     assert all(b["text"] for b in by_id[second["id"]])
     assert sum(len(v) for v in by_id.values()) == 2
     progress = services.get_progress(user.id, "Back Squat")["lift"]["bests"]
     assert {(b["kind"], b["value"]) for b in progress} == {(b["kind"], b["value"]) for b in by_id[second["id"]]}
     assert {(b["kind"], b["value"]) for b in second["new_bests"]} == {(b["kind"], b["value"]) for b in by_id[second["id"]]}
+
+
+def test_the_summary_counts_go_through_the_formatter():
+    from app.services.log import _plural
+    assert _plural(1, "food entry", "food entries") == "1 food entry"
+    assert _plural(1234, "food entry", "food entries") == "1,234 food entries"   # a comma from 1,000
 
 
 def test_deleted_entries_are_left_out(user):

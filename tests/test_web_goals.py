@@ -10,7 +10,7 @@ from datetime import timedelta
 
 import pytest
 
-from app import services, web
+from app import formatting, services, web
 from app.models import Goal
 from app.services.common import SAMPLE_NOTE
 
@@ -33,7 +33,7 @@ def numbers(goal_id: int, **values) -> dict:
 
 FOUR = [
     numbers(1),
-    numbers(2, label="Bodyweight 75 kg", kind="bodyweight", exercise=None, start_value=80.4, latest=79.6,
+    numbers(2, label="Body weight 75 kg", kind="bodyweight", exercise=None, start_value=80.4, latest=79.6,
             direction="down", target_value=75.0, needed_per_week=-0.42, actual_per_week=-0.3, status="behind",
             projected_date=None, note="A projection needs 4 points in the last 6 weeks."),
     numbers(3, label="Waist 80 cm", kind="measurement", exercise=None, measurement_kind="waist", unit="cm",
@@ -106,19 +106,19 @@ def test_goals_shows_every_kind_with_its_numbers_and_buttons(signed, fake_goals)
     page = signed.get("/goals").text
     token = session_of(signed)["csrf"]
     lift = goal_item(page, 1)
-    assert "<strong>Back Squat 100 kg</strong> by 2027-02-02" in lift and "tag-good" in lift and ">on track<" in lift
-    assert "<dd>80 kg on 2026-11-01</dd>" in lift and "<dd>85 kg</dd>" in lift
+    assert "<strong>Back Squat 100 kg</strong> by Tue 2 Feb 2027" in lift and "tag-good" in lift and ">on track<" in lift
+    assert "<dd>80\u00a0kg on Sun 1 Nov</dd>" in lift and "<dd>85\u00a0kg</dd>" in lift
     assert "<dd>+1.25 kg a week</dd>" in lift and "<dd>+2.5 kg a week</dd>" in lift
-    assert "<dd>reached on 2027-01-04</dd>" in lift
+    assert "<dd>reached on Mon 4 Jan 2027</dd>" in lift
     weight = goal_item(page, 2)
     assert "tag-behind" in weight and "<dd>-0.42 kg a week</dd>" in weight and "<dd>-0.3 kg a week</dd>" in weight
     assert "no date" in weight and "A projection needs 4 points in the last 6 weeks." in weight
     waist = goal_item(page, 3)
-    assert "Waist 80 cm" in waist and "<dd>88 cm on 2026-11-01</dd>" in waist and "nothing logged yet" in waist
+    assert "Waist 80 cm" in waist and "<dd>88\u00a0cm on Sun 1 Nov</dd>" in waist and "nothing logged yet" in waist
     assert "not worked out" in waist and "not enough data yet" in waist and ">not enough data<" in waist
     run = goal_item(page, 4)
-    assert "Outdoor Run 5 km in 27:00" in run and "<dd>31:00 min on 2026-11-01</dd>" in run
-    assert "<dd>29:30 min</dd>" in run and "<dd>-0.5 min a week</dd>" in run and ">reached<" in run
+    assert "Outdoor Run 5 km in 27:00" in run and "<dd>31:00 on Sun 1 Nov</dd>" in run
+    assert "<dd>29:30</dd>" in run and "<dd>-30\u00a0seconds a week</dd>" in run and ">reached<" in run
     for goal_id in (1, 2, 3, 4):
         item = goal_item(page, goal_id)
         for status, label in (("hit", "Hit"), ("dropped", "Drop")):
@@ -128,7 +128,7 @@ def test_goals_shows_every_kind_with_its_numbers_and_buttons(signed, fake_goals)
                              rf'<button class="link">{label}</button>', item), (goal_id, status)
         assert 'value="open"' not in item
     closed = page.split("<h2>Closed goals</h2>")[1].split("<h2>Set a goal</h2>")[0]
-    assert "Bench Press 80 kg" in closed and ">hit<" in closed and "on 2026-11-05" in closed
+    assert "Bench Press 80 kg" in closed and ">hit<" in closed and "on Thu 5 Nov" in closed
     assert "Waist 85 cm" in closed and ">dropped<" in closed
     assert closed.count('name="status" value="open"') == 2 and closed.count(">Reopen<") == 2
     assert page.index("Open goals") < page.index("Closed goals") < page.index("Set a goal")
@@ -319,7 +319,7 @@ def test_a_goal_of_every_kind_through_the_form_shows_on_the_page(signed):
                  {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": "5", "target_value": "28"}):
         assert post(signed, "/goals", target_date=by, **form).status_code == 303, form
     page = signed.get("/goals").text
-    for label in ("Back Squat 100 kg", "Bodyweight 75 kg", "Waist 80 cm", "Outdoor Run 5 km in 28:00"):
+    for label in ("Back Squat 100 kg", "Body weight 75 kg", "Waist 80 cm", "Outdoor Run 5 km in 28:00"):
         assert f"<strong>{label}</strong>" in page, label
     assert page.count('name="status" value="hit"') == 4
 
@@ -333,7 +333,8 @@ def test_a_daily_amount_is_refused_beside_the_measurement_field(signed):
 
 # ---------------------------------------------------------------- Hit, Drop, Reopen
 
-@pytest.mark.parametrize("status, saved", [("hit", "Marked as hit."), ("dropped", "Dropped."), ("open", "Reopened.")])
+@pytest.mark.parametrize("status, saved", [("hit", "Goal marked as hit."), ("dropped", "Goal dropped."),
+                                           ("open", "Goal reopened.")])
 def test_the_status_buttons_go_through_set_goal(signed, capture_set_goal, fake_goals, status, saved):
     sent, _ = capture_set_goal
     fake_goals()
@@ -434,13 +435,13 @@ def trends_card(client, monkeypatch, trends) -> str:
 def test_the_trends_card_shows_every_number(signed, monkeypatch):
     card = trends_card(signed, monkeypatch, TRENDS)
     text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", card))
-    assert "Smoothed trend 79.12 kg, 7-day average 79.4 kg." in text
-    assert "-0.31 kg a week, from 2026-10-13 to 2026-11-09." in text
-    assert "2150 kcal over the 6 logged days of the last 7; 2210 kcal over the 1 logged day of the last 28." in text
-    assert "Target 2200 kcal." in text and "12.5% of it is estimates." in text
-    assert "3 in the last 7 days, target 4; 2.8 a week over the last 4 weeks." in text
-    assert "95 minutes in the last 7 days, target 150; 87.5 a week over the last 4 weeks." in text
-    assert "About 2480 kcal a day, from 18 days with food logged between 2026-10-21 and 2026-11-10." in text
+    assert "Smoothed trend 79.1 kg, 7-day average 79.4 kg." in text  # every figure through show: 1 dp
+    assert "-0.31 kg a week, from 13 Oct to 9 Nov." in text
+    assert "2,150 kcal over the 6 logged days of the last 7. 2,210 kcal over the 1 logged day of the last 28." in text
+    assert "Target 2,200 kcal." in text and "13% of it is estimates." in text  # percent is whole
+    assert "3 in the last 7 days, target 4. 2.8 a week over the last 4 weeks." in text
+    assert "95 min in the last 7 days, target 150 min. 88 min a week over the last 4 weeks." in text
+    assert "About 2,480 kcal a day, from 18 days with food logged, 21 Oct to 10 Nov." in text
     assert "Your calorie target stays yours to set." in text
 
 
@@ -448,7 +449,7 @@ def test_the_trends_card_without_the_numbers(signed, monkeypatch):
     text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", trends_card(signed, monkeypatch, EMPTY_TRENDS)))
     assert "No weigh-ins yet." in text and "No food logged in the last 28 days." in text
     assert "Needs food logged on 14 more of the last 21 days." in text
-    assert "0 in the last 7 days; 0 a week" in text and "target" not in text.split("Cardio")[1].split("Maintenance")[0]
+    assert "0 in the last 7 days. 0 a week" in text and "target" not in text.split("Cardio")[1].split("Maintenance")[0]
     assert "About" not in text
 
 
@@ -483,8 +484,8 @@ def test_the_progress_chart_draws_the_smoothed_line_and_keeps_the_average_in_the
 
     monkeypatch.setattr(web.progress_data, "bodyweight_chart", with_smoothed)
     page = signed.get("/progress").text
-    assert '<polyline class="series smoothed"' in page and "The line is the smoothed trend, now 79.99 kg." in page
-    assert "7-day average: <strong>80 kg</strong>" in page  # the number in the text stays the 7-day average
+    assert '<polyline class="series smoothed"' in page and "The line is the smoothed trend, now 80 kg." in page
+    assert "7-day average: <strong>80\u00a0kg</strong>" in page  # the number in the text stays the 7-day average
     assert "The line is the smoothed trend, which steadies day-to-day swings." in page
 
 
@@ -496,16 +497,17 @@ def test_the_real_trends_card(signed):
                                       .isoformat()}, "claude")
     trends = services.get_trends(uid)
     page = signed.get("/progress").text
-    assert f"Smoothed trend <strong>{trends['bodyweight']['smoothed']:g} kg</strong>" in page
+    smoothed = formatting.show(trends["bodyweight"]["smoothed"], "bodyweight_derived", page=True)
+    assert f"Smoothed trend <strong>{smoothed}</strong>" in page
     if trends["bodyweight"]["rate_per_week"] is not None:
-        assert f"{web.signed(trends['bodyweight']['rate_per_week'])} kg a week" in page
+        assert f"{formatting.show(trends['bodyweight']['rate_per_week'], 'rate', page=True)} kg a week" in page
     assert '<polyline class="series smoothed"' in page
 
 
 # ================================================================ review fixes
 
 def test_sample_goals_carry_a_sample_tag_open_and_closed(signed, fake_goals):
-    fake_goals([numbers(1, is_sample=True), numbers(2, label="Bodyweight 75 kg", is_sample=False)],
+    fake_goals([numbers(1, is_sample=True), numbers(2, label="Body weight 75 kg", is_sample=False)],
                [{**CLOSED[0], "is_sample": True}, CLOSED[1]])
     page = signed.get("/goals").text
     assert '<strong>Back Squat 100 kg</strong> <span class="tag tag-sample">sample</span> by' in goal_item(page, 1)
@@ -547,7 +549,7 @@ def test_a_reopened_goal_with_a_past_date_says_so(signed, capture_set_goal, fake
     r = post(signed, "/goals/4/status", status="open")
     assert r.headers["location"] == SITE + "/goals?saved=open&notes=past_date"
     page = signed.get(r.headers["location"]).text
-    assert "Reopened." in page and "Its date has passed, so there is nothing to aim at" in page
+    assert "Goal reopened." in page and "Its date has passed, so there is nothing to aim at" in page
     assert "target_date" not in page.split("<h2>Set a goal</h2>")[0]
 
 
@@ -576,14 +578,19 @@ def test_the_cardio_nothing_to_start_from_refusal_lands_under_start_value():
     assert web.goal_error_field(err) == "start_value"
 
 
-def test_signed_zero_has_no_sign():
-    assert (web.signed(0), web.signed(0.0), web.signed(1.5), web.signed(-0.25)) == ("0", "0", "+1.5", "-0.25")
+@pytest.mark.parametrize("rate, shown", [(0, "0"), (0.0, "0"), (0.004, "0"), (-0.004, "0"), (1.5, "+1.5"),
+                                         (-0.25, "-0.25")])
+def test_the_weekly_rate_carries_a_sign_and_zero_has_none(signed, monkeypatch, rate, shown):
+    trends = {**TRENDS, "bodyweight": {**TRENDS["bodyweight"], "rate_per_week": rate}}
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", trends_card(signed, monkeypatch, trends)))
+    assert f". {shown} kg a week, from 13 Oct to 9 Nov." in text
+    assert "+0 " not in text and "-0 " not in text
 
 
 def test_no_estimate_share_line_when_none_is_estimated(signed, monkeypatch):
     text = re.sub(r"<[^>]+>", "", trends_card(signed, monkeypatch, {
         **TRENDS, "calories": {**TRENDS["calories"], "estimated_share_pct_28d": 0}}))
-    assert "of it is estimates" not in text and "2150 kcal" in text
+    assert "of it is estimates" not in text and "2,150\u00a0kcal" in text
 
 
 def test_now_is_named_the_latest_weigh_in_without_one_in_the_last_7_days(signed, monkeypatch):

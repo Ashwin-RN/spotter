@@ -57,6 +57,8 @@ Smoothed weight and what it says
 import math
 from datetime import date, timedelta
 
+from app import formatting
+
 EPLEY_MAX_REPS = 10
 RECENT_BEST_DAYS = 28
 PROJECTION_DAYS = 42
@@ -179,11 +181,11 @@ def cardio_kcal(met: float, weight_kg: float, minutes: float) -> int:
 
 
 def pace(distance_km: float | None, minutes: float) -> str | None:
-    """Minutes per km as "m:ss" (5.6 minutes a km is "5:36"). None without a distance."""
+    """Minutes per km as "m:ss" (5.6 minutes a km is "5:36"), through formatting.clock. None without a
+    distance."""
     if not distance_km:
         return None
-    seconds = round(minutes * 60 / distance_km)
-    return f"{seconds // 60}:{seconds % 60:02d}"
+    return formatting.clock(minutes / distance_km)
 
 
 def speed(distance_km: float | None, minutes: float) -> float | None:

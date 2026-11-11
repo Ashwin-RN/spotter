@@ -20,7 +20,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import InterfaceError, OperationalError
 from starlette.testclient import TestClient
 
-from app import db, links, rules, services, users, web, web_auth
+from app import db, formatting, links, rules, services, users, web, web_auth
 from app.config import Settings
 from app.main import create_app
 from app.models import Bodyweight, CallLog, CardioEntry, FoodEntry, LiftSession, Measurement, SavedFood, User
@@ -1157,7 +1157,7 @@ def test_every_page_renders_for_a_person_with_no_entries(client):
     sign_in(client)
     today = today_of(only_user()).isoformat()
     page = day_of(client, today)
-    assert f"Today, {today}" in page and "No lifts logged on this day" in page
+    assert formatting.day_heading(today, today) in page and "No lifts logged on this day" in page
     assert "No weigh-in on this day" in page and "No measurements on this day" in page
     assert f'action="/day/{today}/weigh-in"' in page and f'action="/day/{today}/measurement"' in page
     kinds = re.search(r'<select id="measurement-kind" name="kind" required>(.*?)</select>', page, re.S).group(1)
@@ -1171,6 +1171,17 @@ def test_every_page_renders_for_a_person_with_no_entries(client):
     assert settings_page.status_code == 200 and 'name="claude_can" value="log" checked' in settings_page.text
 
 
+@pytest.mark.parametrize("on, heading", [("2026-11-10", "Today, Tuesday 10 November"),
+                                         ("2026-11-09", "Yesterday, Monday 9 November"),
+                                         ("2026-11-01", "Sunday 1 November"),
+                                         ("2025-11-10", "Monday 10 November 2025")])
+def test_the_day_heading_names_the_day_in_full(client, monkeypatch, on, heading):
+    sign_in(client)
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc))
+    page = day_of(client, on)
+    assert f"<h1>{heading}</h1>" in page
+
+
 def test_the_measurement_kinds_carry_the_services_units(client):
     sign_in(client)
     page = day_of(client, today_of(only_user()).isoformat())
@@ -1182,12 +1193,12 @@ def test_the_measurement_kinds_carry_the_services_units(client):
 
 def test_the_day_shows_sessions_sets_bests_weigh_in_and_measurements(client, stocked):
     page = day_of(client, stocked["today"].isoformat())
-    assert page.count("<td>Back Squat</td>") == 3 and page.count("<td>65 kg</td>") == 3
+    assert page.count("<td>Back Squat</td>") == 3 and page.count("<td>65\u00a0kg</td>") == 3
     assert "felt strong" in page
-    assert "New best: Back Squat estimated max" in page and "(was 70 kg)" in page
-    assert "<strong>78.4 kg</strong>" in page
-    assert "Waist: <strong>84.5 cm</strong>" in page and "Steps: <strong>9500 steps</strong>" in page
-    assert "Sleep: <strong>7.25 h</strong>" in page
+    assert "New best: Back Squat estimated max" in page and "up from 70 kg" in page  # the service's own text
+    assert "<strong>78.4\u00a0kg</strong>" in page
+    assert "Waist: <strong>84.5\u00a0cm</strong>" in page and "Steps: <strong>9,500\u00a0steps</strong>" in page
+    assert "Sleep: <strong>7.25\u00a0h</strong>" in page
     entries = [("lift_session", stocked["session"]), ("bodyweight", stocked["weigh_in"])] + \
               [("measurement", i) for i in stocked["measurements"]]
     for kind, entry_id in entries:
@@ -1200,7 +1211,7 @@ def test_the_day_shows_sessions_sets_bests_weigh_in_and_measurements(client, sto
 def test_yesterday_links_on_to_today(client, stocked):
     page = day_of(client, stocked["yesterday"])
     assert f'href="/day/{stocked["today"].isoformat()}" rel="next"' in page
-    assert "<td>60 kg</td>" in page and "78.9 kg" in page and "New best" not in page
+    assert "<td>60\u00a0kg</td>" in page and "78.9\u00a0kg" in page and "New best" not in page
 
 
 def test_the_edit_page_renders_for_each_kind(client, stocked):
@@ -1219,9 +1230,9 @@ def test_progress_shows_each_lift_and_the_body_weight_trend(client, stocked):
     page = client.get("/progress").text
     row = re.search(r'<tr>\s*<td><a href="/progress/back-squat">Back Squat</a></td>(.*?)</tr>', page, re.S).group(1)
     current = services.get_progress(only_user().id)["lifts"][0]["current_estimated_max_kg"]
-    assert f"{rules.kg(current)} kg" in row and "65 kg × 5" in row
+    assert formatting.show(current, "estimated_max", page=True) in row and "65\u00a0kg × 5" in row
     assert f'<a href="/day/{stocked["today"].isoformat()}">' in row
-    assert "Latest: <strong>78.4 kg</strong>" in page
+    assert "Latest: <strong>78.4\u00a0kg</strong>" in page
     assert '<svg class="chart" id="bodyweight-chart"' in page and "<title" in page
 
 
@@ -1229,8 +1240,29 @@ def test_one_lifts_progress_shows_its_chart_bests_and_sessions(client, stocked):
     r = client.get("/progress/back-squat")
     assert r.status_code == 200
     assert '<svg class="chart" id="progress-chart"' in r.text and "Estimated max over time: Back Squat" in r.text
-    assert "65 kg × 5" in r.text and "estimated max" in r.text and "(was 70 kg)" in r.text
-    assert r.text.count("estimated max 70 kg") == 1 and "estimated max 75.83 kg" in r.text
+    assert "65\u00a0kg × 5" in r.text and "estimated max" in r.text and "(was 70\u00a0kg)" in r.text
+    assert r.text.count("estimated max 70\u00a0kg") == 1 and "estimated max 75.8\u00a0kg" in r.text
+
+
+def test_a_best_and_the_one_it_beat_widen_together_only_when_they_print_the_same(client, monkeypatch):
+    """D5 on the lift page: an estimated max pair that prints the same at 1 dp shows both at 2 dp, together.
+    A pair that prints apart stays at 1 dp, and a heaviest weight is as entered."""
+    sign_in(client)
+    bests = [{"date": "2026-11-09", "kind": "estimated_max", "value": 80.04, "previous": 80.01},
+             {"date": "2026-11-09", "kind": "heaviest_weight", "value": 80.25, "previous": 80.2},
+             {"date": "2026-11-02", "kind": "estimated_max", "value": 81.7, "previous": 80.0}]
+    lift = {"exercise": "Back Squat", "sessions": 2, "current_estimated_max_kg": 80.04, "last_trained": "2026-11-09",
+            "best_set": {"date": "2026-11-09", "weight_kg": 70.0, "reps": 4, "estimated_max_kg": 80.04},
+            "estimated_max_over_time": [{"date": "2026-11-02", "estimated_max_kg": 80.01},
+                                        {"date": "2026-11-09", "estimated_max_kg": 80.04}],
+            "bests": bests, "goals": []}
+    monkeypatch.setattr(services, "get_progress", lambda *args: {"today": "2026-11-10", "lift": lift})
+    page = client.get("/progress/back-squat").text
+    shown = re.search(r"<h2>Bests</h2>(.*?)</div>", page, re.S).group(1)
+    assert "estimated max 80.04\u00a0kg (was 80.01\u00a0kg)" in shown
+    assert "heaviest weight 80.25\u00a0kg (was 80.2\u00a0kg)" in shown
+    assert "estimated max 81.7\u00a0kg (was 80\u00a0kg)" in shown
+    assert [web.best_widened(b) for b in bests] == [True, False, False]
 
 
 def test_an_unknown_lift_a_bad_date_and_an_unknown_kind_are_404_pages(client, stocked):
@@ -1268,7 +1300,7 @@ def test_the_weigh_in_form_logs_for_that_day(client, stocked):
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}"
     live = [b for b in rows(Bodyweight, only_user().id) if b.deleted_at is None and b.date.isoformat() == on]
     assert [(b.kg, b.logged_by) for b in live] == [(79.2, "web")]
-    assert "79.2 kg" in day_of(client, on)
+    assert "79.2\u00a0kg" in day_of(client, on)
 
 
 def test_the_measurement_form_logs_for_that_day(client):
@@ -1278,7 +1310,7 @@ def test_the_measurement_form_logs_for_that_day(client):
     assert r.status_code == 303
     [m] = rows(Measurement, only_user().id)
     assert (m.kind, m.value, m.unit, m.logged_by) == ("resting_hr", 58, "bpm", "web")
-    assert "Resting heart rate: <strong>58 bpm</strong>" in day_of(client, on)
+    assert "Resting heart rate: <strong>58\u00a0bpm</strong>" in day_of(client, on)
 
 
 @pytest.mark.parametrize("data, near, says", [
@@ -1321,7 +1353,7 @@ def test_editing_a_weigh_in_moves_it_and_returns_to_its_new_day(client, stocked)
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}"
     row = next(b for b in rows(Bodyweight, only_user().id) if b.id == stocked["weigh_in"])
     assert (row.kg, row.date.isoformat(), row.deleted_at) == (77.95, two_days_ago, None)
-    assert "77.95 kg" in day_of(client, two_days_ago) and "78.4" not in day_of(client, stocked["today"].isoformat())
+    assert "77.95\u00a0kg" in day_of(client, two_days_ago) and "78.4" not in day_of(client, stocked["today"].isoformat())
 
 
 def test_editing_a_measurement_changes_its_value(client, stocked):
@@ -1329,7 +1361,7 @@ def test_editing_a_measurement_changes_its_value(client, stocked):
     r = post(client, f"/entries/measurement/{waist}/edit", value="83", date=stocked["today"].isoformat())
     assert r.status_code == 303
     assert next(m.value for m in rows(Measurement, only_user().id) if m.id == waist) == 83
-    assert "Waist: <strong>83 cm</strong>" in day_of(client, stocked["today"].isoformat())
+    assert "Waist: <strong>83\u00a0cm</strong>" in day_of(client, stocked["today"].isoformat())
 
 
 def test_editing_a_session_changes_its_notes_and_date_and_keeps_its_sets(client, stocked):
@@ -1337,7 +1369,7 @@ def test_editing_a_session_changes_its_notes_and_date_and_keeps_its_sets(client,
     r = post(client, f"/entries/lift_session/{stocked['session']}/edit", notes="heavy day", date=two_days_ago)
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}"
     page = day_of(client, two_days_ago)
-    assert "heavy day" in page and page.count("<td>65 kg</td>") == 3
+    assert "heavy day" in page and page.count("<td>65\u00a0kg</td>") == 3
 
 
 def test_an_edit_with_nothing_changed_writes_nothing(client, stocked):
@@ -1364,7 +1396,7 @@ def test_delete_then_undo_through_the_pages(client, stocked, which):
     r = post(client, f"/entries/{which}/{entry_id}/delete")
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}?deleted={which}:{entry_id}"
     page = client.get(r.headers["location"]).text
-    assert "Deleted." in page and f'action="/entries/{which}/{entry_id}/restore"' in page
+    assert f"{web.ENTRY_WORDS[which]} deleted." in page and f'action="/entries/{which}/{entry_id}/restore"' in page
     assert f'href="/entries/{which}/{entry_id}/edit"' not in page
     model = {"lift_session": LiftSession, "bodyweight": Bodyweight, "measurement": Measurement}[which]
     assert next(e.deleted_at for e in rows(model, only_user().id) if e.id == entry_id) is not None
@@ -1388,7 +1420,7 @@ def test_undo_twice_says_there_is_nothing_to_undo(client, stocked):
 @pytest.mark.parametrize("query", ["goal:1", "bodyweight:abc", "bodyweight", "<b>:1", "bodyweight:1;x"])
 def test_a_forged_undo_link_shows_no_undo(client, stocked, query):
     page = client.get(f"/day/{stocked['today'].isoformat()}", params={"deleted": query}).text
-    assert "Deleted." not in page and "/restore" not in page
+    assert '<div class="ok undo">' not in page and "/restore" not in page
 
 
 def test_a_day_after_today_left_by_a_zone_change_still_has_a_page(client):
@@ -1401,7 +1433,7 @@ def test_a_day_after_today_left_by_a_zone_change_still_has_a_page(client):
     today = today_of(user).isoformat()
     assert later > today
     page = day_of(client, later)
-    assert "70 kg" in page
+    assert "70\u00a0kg" in page
     assert f'href="/day/{later}" rel="next"' in day_of(client, today)
     assert client.get("/day/" + (date.fromisoformat(later) + timedelta(days=1)).isoformat()).status_code == 404
 
@@ -1566,7 +1598,7 @@ def test_a_later_days_prev_link_goes_to_a_day_that_has_a_page(client, monkeypatc
     today = day_of(client, "2026-11-09")
     assert 'href="/day/2026-11-11" rel="next"' in today
     later = day_of(client, "2026-11-11")
-    assert "70 kg" in later and 'href="/day/2026-11-09" rel="prev"' in later and 'rel="next"' not in later
+    assert "70\u00a0kg" in later and 'href="/day/2026-11-09" rel="prev"' in later and 'rel="next"' not in later
     assert client.get("/day/2026-11-10").status_code == 404  # after today and empty: no page, and no link to it
 
 
@@ -1695,7 +1727,7 @@ def test_a_day_with_no_food_or_cardio(client):
     food = section(page, "Food")
     assert [m for m in re.findall(r'<div class="meal( empty)?">\s*<h3>(\w+)</h3>', food)] == \
         [(" empty", "Breakfast"), (" empty", "Lunch"), (" empty", "Dinner"), (" empty", "Snack")]
-    assert "<strong>0 kcal</strong>" in food and "Target" not in food and "Net" not in food
+    assert "<strong>0\u00a0kcal</strong>" in food and "Target" not in food and "Net" not in food
     assert "No cardio logged on this day" in page
     activities = re.search(r'<select id="cardio-exercise" name="exercise" required>(.*?)</select>', page, re.S).group(1)
     names = [e["name"] for e in services.list_exercises("cardio")["exercises"]]
@@ -1709,16 +1741,16 @@ def test_the_day_shows_food_by_meal_with_each_tag_and_the_numbers(client, fed):
     lunch = re.search(r'<h3>Lunch</h3>(.*?)</ul>', food, re.S).group(1)
     # decision 14: the saved food's name, the servings, the serving in its own words; the description
     # ("Roti", the name) is not shown twice
-    assert re.search(r'Roti × 2 <span class="muted">\(2 rotis\)</span>:\s*<strong>240 kcal</strong>\s*'
+    assert re.search(r'Roti × 2 <span class="muted">\(2 rotis\)</span>:\s*<strong>240\u00a0kcal</strong>\s*'
                      r'<span class="tag tag-saved_food">saved food</span>', lunch)
-    assert re.search(r'Dal:\s*<strong>180 kcal</strong>\s*<span class="tag tag-claude_estimate">estimate</span>', lunch)
+    assert re.search(r'Dal:\s*<strong>180\u00a0kcal</strong>\s*<span class="tag tag-claude_estimate">estimate</span>', lunch)
     breakfast = re.search(r'<h3>Breakfast</h3>(.*?)</ul>', food, re.S).group(1)
-    assert re.search(r'Tea:\s*<strong>40 kcal</strong>\s*<span class="tag tag-you_said">you said</span>', breakfast)
+    assert re.search(r'Tea:\s*<strong>40\u00a0kcal</strong>\s*<span class="tag tag-you_said">you said</span>', breakfast)
     assert '<div class="meal empty">\n    <h3>Dinner</h3>' in food and '<div class="meal empty">\n    <h3>Snack</h3>' in food
     numbers = services.get_log(only_user().id, fed["today"], 1)["days"][0]["food"]
     assert numbers["total_kcal"] == 460 and numbers["estimated_kcal"] == 180
-    assert "<strong>460 kcal</strong>, of which" in food
-    assert f"estimate</span> 180 kcal ({rules.kg(numbers['estimated_share_pct'])}%)" in food
+    assert "<strong>460\u00a0kcal</strong>, of which" in food
+    assert f"estimate</span> 180\u00a0kcal ({formatting.show(numbers['estimated_share_pct'], 'percent')})" in food
     assert "Target" not in food and "Net" not in food  # no target, add-back off
     for entry_id in fed["food"]:
         assert f'href="/entries/food_entry/{entry_id}/edit"' in page
@@ -1729,22 +1761,22 @@ def test_a_target_shows_target_and_remaining_and_add_back_shows_net(client, fed)
     uid = only_user().id
     services.update_settings(uid, {"calorie_target_kcal": 2200}, "web")
     food = section(day_of(client, fed["today"]), "Food")
-    assert "<dt>Target</dt><dd>2200 kcal</dd>" in food and "<dt>Remaining</dt><dd>1740 kcal</dd>" in food
+    assert "<dt>Target</dt><dd>2,200\u00a0kcal</dd>" in food and "<dt>Remaining</dt><dd>1,740\u00a0kcal left</dd>" in food
     assert "<dt>Net</dt>" not in food
     services.update_settings(uid, {"add_back_exercise_kcal": True}, "web")
     food = section(day_of(client, fed["today"]), "Food")
     net = services.get_log(uid, fed["today"], 1)["days"][0]["food"]["net_kcal"]
-    assert net == 460 - fed["estimate"]["kcal"] and f"<dt>Net</dt><dd>{net} kcal" in food
+    assert net == 460 - fed["estimate"]["kcal"] and f"<dt>Net</dt><dd>{net}\u00a0kcal" in food
 
 
 def test_the_day_shows_cardio_with_pace_estimate_and_machine_number_and_names_the_compendium(client, fed):
     page = day_of(client, fed["today"])
     row = re.search(r'<td>Treadmill Run</td>(.*?)</tr>', page, re.S).group(1)
     cells = re.findall(r"<td>(.*?)</td>", row, re.S)
-    assert cells[:5] == ["30", "5 km", "6:00 /km", f"{fed['estimate']['kcal']} kcal", "300 kcal"]
+    assert cells[:5] == ["30:00", "5\u00a0km", "6:00 /km", f"{fed['estimate']['kcal']}\u00a0kcal", "300\u00a0kcal"]
     assert f'href="/entries/cardio_entry/{fed["run"]}/edit"' in row
     assert page.count(ATTRIBUTION) == 1 and '<footer class="attribution">' in page
-    assert "no weigh-in to work it from" not in page
+    assert "there was no weigh-in when it was logged" not in page
 
 
 def test_cardio_with_no_weigh_in_has_no_estimate_a_note_and_no_attribution(client):
@@ -1752,9 +1784,40 @@ def test_cardio_with_no_weigh_in_has_no_estimate_a_note_and_no_attribution(clien
     stock_food(only_user(), weigh_in=False)
     page = day_of(client, today_of(only_user()).isoformat())
     row = re.search(r'<td>Treadmill Run</td>(.*?)</tr>', page, re.S).group(1)
-    assert '<span class="muted">none</span>' in row and "300 kcal" in row
-    assert "there is no weigh-in to work it from" in page
+    assert '<span class="muted">No estimate</span>' in row and "300\u00a0kcal" in row
+    assert "there was no weigh-in when it was logged" in page
     assert ATTRIBUTION not in page
+
+
+def test_the_undo_line_and_the_edit_page_name_a_kind_the_same_way(client, fed):
+    uid = only_user().id
+    session = services.log_lifts(uid, {"sets": [{"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
+    waist = services.log_measurement(uid, {"kind": "waist", "value": "84"}, "claude")
+    ids = {"bodyweight": rows(Bodyweight, uid)[0].id, "measurement": waist["id"], "lift_session": session["id"],
+           "food_entry": fed["food"][0], "cardio_entry": fed["run"]}
+    named = {}
+    for kind, entry_id in ids.items():
+        edit = client.get(f"/entries/{kind}/{entry_id}/edit").text
+        on_edit = re.search(r"<h1>Edit (.+?)</h1>", edit).group(1)
+        day = day_of(client, f"{fed['today']}?deleted={kind}:{entry_id}")
+        on_undo = re.search(r'<div class="ok undo">\s*(.+?) deleted\.', day).group(1)
+        assert on_undo.casefold() == on_edit, (kind, on_undo, on_edit)
+        named[kind] = on_edit
+    assert named == {"bodyweight": "weigh-in", "measurement": "measurement", "lift_session": "lift session",
+                     "food_entry": "food entry", "cardio_entry": "cardio session"}
+
+
+def test_a_session_logged_before_the_days_weigh_in_still_says_no_estimate_truly(client):
+    """The estimate is stored when the session is logged. A weigh-in later the same day does not give it
+    one, so the row and its note must stay true beside the day's weigh-in."""
+    sign_in(client)
+    stock_food(only_user(), weigh_in=False)
+    assert "error" not in services.log_bodyweight(only_user().id, {"kg": "81.25"}, "claude")
+    page = day_of(client, today_of(only_user()).isoformat())
+    row = re.search(r'<td>Treadmill Run</td>(.*?)</tr>', page, re.S).group(1)
+    assert '<span class="muted">No estimate</span>' in row and "No weigh-in" not in row
+    assert "<strong>81.25\u00a0kg</strong>" in page
+    assert "there was no weigh-in when it was logged" in page and "there is no weigh-in" not in page
 
 
 def test_a_day_with_thirty_food_entries(client):
@@ -1766,7 +1829,7 @@ def test_a_day_with_thirty_food_entries(client):
     page = day_of(client, today_of(only_user()).isoformat())
     assert all(f"Item {n}:" in page for n in range(30))
     assert page.count('href="/entries/food_entry/') == 30
-    assert f"<strong>{sum(10 + n for n in range(30))} kcal</strong>" in page
+    assert f"<strong>{sum(10 + n for n in range(30))}\u00a0kcal</strong>" in page
 
 
 def test_the_attribution_is_nowhere_else(client, fed):
@@ -1856,7 +1919,7 @@ def test_editing_a_foods_kcal_makes_it_you_said(client, fed):
     row = next(e for e in rows(FoodEntry, only_user().id) if e.id == dal)
     assert (row.kcal, row.source, row.estimated) == (150, "you_said", False)
     lunch = re.search(r'<h3>Lunch</h3>(.*?)</ul>', day_of(client, fed["today"]), re.S).group(1)
-    assert re.search(r'Dal:\s*<strong>150 kcal</strong>\s*<span class="tag tag-you_said">you said</span>', lunch)
+    assert re.search(r'Dal:\s*<strong>150\u00a0kcal</strong>\s*<span class="tag tag-you_said">you said</span>', lunch)
 
 
 def test_editing_a_foods_description_or_meal_keeps_its_tag(client, fed):
@@ -1871,7 +1934,7 @@ def test_the_cardio_edit_page_and_a_re_estimate(client, fed):
     page = client.get(f"/entries/cardio_entry/{fed['run']}/edit").text
     assert '<option value="Treadmill Run" selected>' in page and 'name="minutes" value="30"' in page
     assert 'name="distance_km" value="5"' in page and 'name="machine_kcal" value="300"' in page
-    assert f"Calorie estimate now: {fed['estimate']['kcal']} kcal" in page
+    assert f"Calorie estimate now: {fed['estimate']['kcal']}\u00a0kcal" in page
     r = post(client, f"/entries/cardio_entry/{fed['run']}/edit", exercise="Treadmill Run", minutes="60",
              distance_km="5", incline_pct="", speed_kmh="", avg_hr="", machine_kcal="", notes="", date=fed["today"])
     assert r.status_code == 303
@@ -1950,7 +2013,7 @@ def test_deleting_a_food_then_undo(client, fed):
     r = post(client, f"/foods/{fed['roti']}/delete")
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/foods?deleted={fed['roti']}"
     page = client.get(r.headers["location"]).text
-    assert "Deleted." in page and "<td>Roti</td>" not in page
+    assert "Saved food deleted." in page and "<td>Roti</td>" not in page
     token = re.search(rf'action="/foods/{fed["roti"]}/restore" class="inline">\s*'
                       r'<input type="hidden" name="csrf_token" value="([^"]+)">', page).group(1)
     back = client.post(f"/foods/{fed['roti']}/restore", data={"csrf_token": token})
@@ -2122,7 +2185,7 @@ def test_confirm_makes_an_estimate_the_persons_number(client, fed):
     assert (row.kcal, row.source, row.estimated) == (180, "you_said", False)
     assert calls(only_user().id)[start:] == [("edit_entry", True, None)]
     lunch = re.search(r"<h3>Lunch</h3>(.*?)</ul>", day_of(client, fed["today"]), re.S).group(1)
-    assert re.search(r'Dal:\s*<strong>180 kcal</strong>\s*<span class="tag tag-you_said">you said</span>', lunch)
+    assert re.search(r'Dal:\s*<strong>180\u00a0kcal</strong>\s*<span class="tag tag-you_said">you said</span>', lunch)
     assert "/confirm" not in lunch
 
 

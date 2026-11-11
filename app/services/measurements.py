@@ -25,11 +25,11 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import db, links, metrics, rules, users
+from app import db, formatting, links, metrics, rules, users
 from app.models import Measurement
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, duplicate_note, find_duplicate, lock_user, no_account,
-    row_dict, truthy,
+    pair, row_dict, truthy,
 )
 
 KIND = "measurement"
@@ -48,10 +48,22 @@ def measurements_for(s: Session, user_id: int, today: date, kind: str | None = N
     return sorted(s.scalars(query), key=lambda m: metrics.order_key(m.date, m.id, today))
 
 
-def describe(m: Measurement) -> str:
-    """'Waist 84 cm on 2026-11-10'."""
-    unit = "" if m.unit == m.kind else f" {m.unit}"
-    return f"{m.kind.replace('_', ' ').capitalize()} {m.value:g}{unit} on {m.date.isoformat()}"
+def shown(kind: str, value: float) -> str:
+    """A measurement's value through the formatter: '84 cm', '7.5 h', '12,345' for steps (the kind says
+    the unit)."""
+    unit = rules.MEASUREMENTS[kind][0]
+    return formatting.show(value, rules.UNIT_QUANTITIES[unit], unit=unit != kind)
+
+
+def shown_pair(kind: str, old: float, new: float) -> tuple[str, str]:
+    """A replaced or edited value and its successor, widened together when they print the same."""
+    unit = rules.MEASUREMENTS[kind][0]
+    return pair(old, new, rules.UNIT_QUANTITIES[unit], unit=unit != kind)
+
+
+def describe(m: Measurement, today: date) -> str:
+    """'Waist 84 cm on Tue 10 Nov'."""
+    return f"{m.kind.replace('_', ' ').capitalize()} {shown(m.kind, m.value)} on {formatting.day(m.date, today)}"
 
 
 def log_measurement(user_id: int, data: dict | None, by: str) -> dict:
@@ -101,8 +113,9 @@ def log_measurement(user_id: int, data: dict | None, by: str) -> dict:
                 live.deleted_at = db.utcnow()
                 s.flush()  # out of the one-live-per-day index before the new row exists
                 replaced = row_dict(live)
-                note = (f"Replaced the {on.isoformat()} {kind.replace('_', ' ')} of {live.value:g} (id {live.id}): "
-                        "one a day. restore_entry with that id swaps them back.")
+                note = (f"Replaced the {formatting.day(on, today)} {kind.replace('_', ' ')} of "
+                        f"{shown_pair(kind, live.value, value)[0]}: one a day. restore_entry with the id under replaced swaps them "
+                        "back.")
             row = Measurement(user_id=user.id, date=on, kind=kind, value=value, unit=unit, logged_by=by,
                               dedupe_key=key)
             s.add(row)
@@ -110,9 +123,14 @@ def log_measurement(user_id: int, data: dict | None, by: str) -> dict:
 
         recent = [{"date": m.date.isoformat(), "value": m.value}
                   for m in reversed(measurements_for(s, user.id, today, kind)[-RECENT:])]
-        shown_unit = "" if unit == kind else f" {unit}"
-        summary = (f"Already logged: {describe(row)}." if first is not None else f"{describe(row)}."
-                   + (f" Replaced {replaced['value']:g}{shown_unit}." if replaced else ""))
+        if first is not None:
+            summary = f"Already logged: {describe(row, today)}."
+        elif replaced:
+            was, now = shown_pair(kind, replaced["value"], row.value)
+            name = kind.replace("_", " ").capitalize()
+            summary = f"{name} {now} on {formatting.day(row.date, today)}. Replaced {was}."
+        else:
+            summary = f"{describe(row, today)}."
         out = {"kind": KIND, "id": row.id, "duplicate": first is not None, "measurement": row_dict(row),
                "replaced": replaced, "recent": recent, "summary": summary,
                "links": {"day": links.page("day", date=row.date)}}

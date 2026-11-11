@@ -43,9 +43,9 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app import db
+from app import db, formatting
 from app.models import LOGGED_BY, CallLog, Exercise, User
-from app.rules import error, quote, to_float
+from app.rules import as_sent, error, quote, span, to_float
 
 DUPLICATE_MINUTES = 10
 
@@ -241,7 +241,7 @@ def find_duplicate(s: Session, model, user_id: int, on: date, key: str):
 
 def duplicate_note(noun: str) -> str:
     return (f"This {noun} was already logged in the last {DUPLICATE_MINUTES} minutes with the same content, "
-            "so nothing was written. If it really happened twice, send it again with allow_repeat: true.")
+            "so nothing was written. If it happened twice, send it again with allow_repeat: true.")
 
 
 def exercises(s: Session, kind: str | None = None) -> list[Exercise]:
@@ -266,12 +266,25 @@ def row_dict(row) -> dict:
     return out
 
 
-def in_range(value, field: str, lo: float, hi: float, fix: str, low_open: bool = False) -> tuple[float | None, dict | None]:
-    """A finite number from lo to hi (above lo when low_open), 2 dp, or an error carrying `fix`."""
+def pair(old, new, quantity: str, unit: bool = True) -> tuple[str, str]:
+    """A before and an after through formatting.show. When the two print the same at the shown step
+    but the stored values differ, both show one more decimal (widened), so a change never reads as none:
+    the rule a new best and the one it beat follow."""
+    shown = formatting.show(old, quantity, unit=unit), formatting.show(new, quantity, unit=unit)
+    if shown[0] == shown[1] and old != new:
+        return (formatting.show(old, quantity, widened=True, unit=unit),
+                formatting.show(new, quantity, widened=True, unit=unit))
+    return shown
+
+
+def in_range(value, field: str, lo: float, hi: float, fix: str, low_open: bool = False,
+             quantity: str = "goal_target") -> tuple[float | None, dict | None]:
+    """A finite number from lo to hi (above lo when low_open), 2 dp, or an error carrying `fix`.
+    quantity: how the range is shown in the message (app.formatting)."""
     number = to_float(value)
     if number is None:
         return None, error("invalid_field", f"{field} '{quote(value)}' is not a number.", fix)
     inside = lo < number <= hi if low_open else lo <= number <= hi
     if not inside:
-        return None, error("invalid_field", f"{field} {number:g} is outside {lo:g} to {hi:g}.", fix)
+        return None, error("invalid_field", f"{field} {as_sent(value)} is outside {span(lo, hi, quantity)}.", fix)
     return round(number, 2) + 0.0, None

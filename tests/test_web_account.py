@@ -156,7 +156,7 @@ def test_each_sample_row_carries_a_sample_tag(signed, monkeypatch):
     # a session, a weigh-in, a measurement, three food entries, one cardio entry
     assert page.count('<span class="tag tag-sample">sample</span>') == 7
     assert re.search(r'<strong>Session</strong> <span class="tag tag-sample">sample</span>', page)
-    assert re.search(r'<strong>80 kg</strong> <span class="tag tag-sample">sample</span>', page)
+    assert re.search(r'<strong>80\u00a0kg</strong> <span class="tag tag-sample">sample</span>', page)
     assert re.search(r'<td>Treadmill Run <span class="tag tag-sample">sample</span></td>', page)
 
 

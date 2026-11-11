@@ -13,6 +13,9 @@ log_bodyweight(user_id, data, by)
     The schema allows one live row per person and date (a partial unique index). The old row is
     soft-deleted and flushed on its own before the new one is added, so the order is explicit.
 
+    The trend's now_avg and then_avg come back at 1 dp (D4), on a copy; change_kg and every weigh-in's
+    own kg as they are.
+
 weigh_ins(s, user_id, today)
     Every live weigh-in, whatever its date, in the one order (effective date, then id; see
     metrics.on_or_before). today orders; it never drops a row.
@@ -26,11 +29,11 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import db, links, metrics, rules, users
+from app import db, formatting, links, metrics, rules, users
 from app.models import Bodyweight
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, duplicate_note, find_duplicate, in_range, lock_user,
-    no_account, row_dict, truthy,
+    no_account, pair, row_dict, truthy,
 )
 
 KIND = "bodyweight"
@@ -57,6 +60,15 @@ def check_kg(value) -> tuple[float | None, dict | None]:
 def weigh_in_key(on: date, kg: float) -> str:
     """What makes two weigh-ins the same: the date and the weight."""
     return dedupe_key(on, kg)
+
+
+def _trend(points: list, today: date) -> dict | None:
+    """metrics.bodyweight_trend, with its two 7-day averages at 1 dp for the result."""
+    trend = metrics.bodyweight_trend(points, today)
+    if trend is None:
+        return None
+    return {**trend, **{k: None if trend[k] is None else formatting.rounded(trend[k], "bodyweight_derived")
+                        for k in ("now_avg", "then_avg")}}
 
 
 def _check(data: dict, today: date) -> tuple[date | None, float | None, dict | None]:
@@ -108,8 +120,10 @@ def log_bodyweight(user_id: int, data: dict | None, by: str) -> dict:
                 # row exists, by construction rather than by the order SQLAlchemy picks within a flush.
                 s.flush()
                 replaced = row_dict(live)
-                note = (f"Replaced the {on.isoformat()} weigh-in of {live.kg:g} kg (id {live.id}): one weigh-in a "
-                        "day. The earlier weigh-in is kept, not erased, and can be brought back later.")
+                was = pair(live.kg, kg, "weigh_in")[0]
+                note = (f"Replaced the {formatting.day(on, today)} weigh-in of {was}: "
+                        "one weigh-in a day. The earlier weigh-in is kept, not erased, and can be brought back later. "
+                        "Its id is under replaced.")
             row = Bodyweight(user_id=user.id, date=on, kg=kg, logged_by=by, dedupe_key=key)
             s.add(row)
             s.flush()
@@ -119,7 +133,7 @@ def log_bodyweight(user_id: int, data: dict | None, by: str) -> dict:
             "kind": KIND, "id": row.id, "duplicate": first is not None, "weigh_in": row_dict(row),
             "replaced": replaced,
             "recent": [{"date": d.isoformat(), "kg": w} for d, w in reversed(points[-RECENT_WEIGH_INS:])],
-            "trend": metrics.bodyweight_trend(points, today), "how": HOW,
+            "trend": _trend(points, today), "how": HOW,
             "links": {"progress": links.page("progress")},
         }
         if note:

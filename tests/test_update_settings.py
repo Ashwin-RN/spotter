@@ -1,7 +1,7 @@
 """update_settings: the time zone, set by Claude in the first conversation, and the switch it can never touch."""
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import event
@@ -35,7 +35,8 @@ def test_setting_the_time_zone_returns_the_fixed_shape(user):
     before = stored(user.id).updated_at
     r = zone(user, "Asia/Kolkata")
     assert set(r) == KEYS and r["time_zone"] == "Asia/Kolkata" and r["changed"] == ["time_zone"]
-    assert r["summary"] == f"Time zone set to Asia/Kolkata. Today is {r['today']}."
+    d = date.fromisoformat(r["today"])   # the summary's date is the D12 form (D13); the field keeps ISO
+    assert r["summary"] == f"Time zone set to Asia/Kolkata. Today is {d:%a} {d.day} {d:%b}."
     assert r["links"]["settings"].endswith("/settings")
     json.dumps(r).encode("utf-8")
     row = stored(user.id)
@@ -121,7 +122,7 @@ def test_today_follows_the_zone(user, monkeypatch):
     assert zone(user, "Pacific/Kiritimati")["today"] == "2026-11-10"         # UTC+14
     assert services.whoami(user.id)["today"] == "2026-11-10"
     west = zone(user, "America/Los_Angeles")
-    assert west["today"] == "2026-11-09" and "Today is 2026-11-09." in west["summary"]
+    assert west["today"] == "2026-11-09" and "Today is Mon 9 Nov." in west["summary"]
 
 
 def test_a_change_of_zone_changes_no_entry(user):
@@ -233,7 +234,7 @@ def test_a_session_after_a_later_dated_one_is_compared_with_it(user, monkeypatch
 def test_a_back_dated_session_leaves_later_dated_ones_out(user, monkeypatch):
     far_side_then_back(user, monkeypatch)
     back = squat(user, 105, "2026-11-05")
-    assert {(b["kind"], b["previous"]) for b in back["new_bests"]} == {("estimated_max", epley(100, 5)),
+    assert {(b["kind"], b["previous"]) for b in back["new_bests"]} == {("estimated_max", 116.7),   # 116.67, 1 dp
                                                                         ("weight", 100)}
 
 
@@ -350,7 +351,7 @@ def test_the_switch_locks_the_user_row_first(user):
 ])
 def test_each_target_in_its_range_whole_and_clearable(user, field, good, low, high):
     r = services.update_settings(user.id, {field: good}, "claude")
-    assert r["changed"] == [field] and getattr(stored(user.id), field) == good and str(good) in r["summary"]
+    assert r["changed"] == [field] and getattr(stored(user.id), field) == good and f"{good:,}" in r["summary"]
     for bad in (low, high, good + 0.5, "lots", True):
         assert services.update_settings(user.id, {field: bad}, "web")["error"] == "invalid_field", bad
     assert getattr(stored(user.id), field) == good
@@ -374,7 +375,7 @@ def test_the_summary_names_every_change_and_the_switch_is_still_refused(user):
     r = services.update_settings(user.id, {"time_zone": "Asia/Tokyo", "calorie_target_kcal": 2000,
                                            "target_sessions_per_week": 3}, "claude")
     assert r["changed"] == ["time_zone", "calorie_target_kcal", "target_sessions_per_week"]
-    assert r["summary"].startswith("Time zone set to Asia/Tokyo. Calorie target set to 2000 kcal a day. "
+    assert r["summary"].startswith("Time zone set to Asia/Tokyo. Calorie target set to 2,000 kcal a day. "
                                    "Weekly sessions target set to 3.")
     assert set(r) == KEYS
     both = services.update_settings(user.id, {"calorie_target_kcal": 2100, "claude_can": "log_delete"}, "claude")

@@ -94,6 +94,15 @@ SETTINGS_ONLY_RULE = (
     "does either. Never offer to do them; say they are on Settings."
 )
 
+# How Claude words a reply: Spotter's figures as given, with their units, and no dashes between clauses.
+# Step 3 adds one last sentence, for plan_line, once a goal result carries that field.
+REPLY_RULE = (
+    "How to reply: plain words, one fact a line. Quote each number as Spotter gives it, with its unit: never add "
+    "decimals, never round further, and never recalculate one yourself. Where a summary gives a figure, say the "
+    "summary's figure. Say \"about\" as a word, never as a symbol. No dashes between clauses: use a colon, a comma "
+    "or a full stop. Name an estimate as an estimate."
+)
+
 INSTRUCTIONS = (
     "Spotter is the person's own record of lifts, body weight, measurements, food, cardio and goals. "
     "Call whoami first: it says whose account this is and what today's date is for them. "
@@ -116,7 +125,8 @@ INSTRUCTIONS = (
     + SETTINGS_ONLY_RULE + " "
     "If a call returns not_allowed, tell the person what this account lets Claude do, and do not retry: "
     "only the person can change it. "
-    "Put links last."
+    "Put links last. "
+    + REPLY_RULE
 )
 
 # What clients are told to ask for. offline_access is what gets a client a refresh token.

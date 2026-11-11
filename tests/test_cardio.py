@@ -75,7 +75,22 @@ def test_with_a_weigh_in_the_estimate_uses_the_compendium_met_and_body_weight_no
                       "links", "note"}
     row = rows(user.id)[0]
     assert (row.estimated_kcal, row.estimate_weight_kg, row.machine_kcal) == (160, 80, 150)
-    assert "about 160 kcal (estimate)" in r["summary"] and "the machine said 150 kcal" in r["summary"]
+    assert "about 160 kcal estimated" in r["summary"] and "the machine said 150 kcal" in r["summary"]
+
+
+def test_the_estimate_weight_is_rounded_in_the_result_and_nowhere_else(user):
+    """A cardio estimate's weight_kg at 1 dp in the result (section D); the stored column keeps the weight the
+    estimate was worked out from, so it can be worked out again."""
+    today = users.today_for(user)
+    services.log_bodyweight(user.id, {"kg": 80.2, "date": (today - timedelta(days=2)).isoformat()}, "web")
+    services.log_bodyweight(user.id, {"kg": 80.3}, "web")                      # the 7-day average is 80.25
+    r = move(user, "Treadmill Walk", 30)
+    assert r["estimate"]["weight_kg"] == 80.3                                    # 80.25 at 1 dp, half up
+    assert rows(user.id)[0].estimate_weight_kg == 80.25
+    again = services.get_entry(user.id, "cardio_entry", r["id"])["entry"]["estimate"]
+    assert again["weight_kg"] == 80.3 and again["kcal"] == cardio_kcal(3.8, 80.25, 30)
+    back = move(user, "Outdoor Walk", 30, date=(today - timedelta(days=1)).isoformat())
+    assert "from body weight now, 80.3 kg." in back["summary"]
 
 
 def test_the_weight_is_the_7_day_average(user):
@@ -109,7 +124,7 @@ def test_pace_and_speed_from_a_distance(user):
 
 def test_a_worked_out_speed_must_be_believable(user):
     r = move(user, "Outdoor Run", 1, distance_km=300)
-    assert r["error"] == "invalid_field" and "18000 km/h" in r["message"] and rows(user.id) == []
+    assert r["error"] == "invalid_field" and "18,000 km/h" in r["message"] and rows(user.id) == []
 
 
 @pytest.mark.parametrize("field,bad", [
@@ -217,9 +232,9 @@ def test_an_edited_speed_is_held_to_the_same_tolerance(user):
 def test_a_back_dated_estimate_says_it_used_body_weight_now(user):
     services.log_bodyweight(user.id, {"kg": 80}, "web")
     earlier = move(user, "Outdoor Walk", 30, date=(users.today_for(user) - timedelta(days=3)).isoformat())
-    assert "(estimate, from body weight now, 80 kg)" in earlier["summary"]
+    assert "about 160 kcal estimated from body weight now, 80 kg." in earlier["summary"]
     today = move(user, "Outdoor Walk", 31)
-    assert "(estimate)" in today["summary"] and "body weight now" not in today["summary"]
+    assert "estimated" in today["summary"] and "body weight now" not in today["summary"]
 
 
 def test_the_sync_brings_a_corrected_met_to_an_existing_row(db_session, monkeypatch):
@@ -243,17 +258,17 @@ def test_a_treadmill_walk_names_its_sibling_and_its_estimate(user):
     walk = move(user, "Treadmill Walk", 30)
     run_kcal = cardio_kcal(9.3, 80, 30)                                               # 391
     assert walk["note"] == (f"Logged as Treadmill Walk. Treadmill Run is the other treadmill activity: its "
-                            f"estimate would be about {run_kcal} kcal instead of 160; edit_entry changes it.")
+                            f"estimate would be about {run_kcal} kcal instead of 160 kcal. edit_entry changes it.")
     run = move(user, "Treadmill Run", 30)
     assert run["note"].endswith(f"Treadmill Walk is the other treadmill activity: its estimate would be about "
-                                f"160 kcal instead of {run_kcal}; edit_entry changes it.")
+                                f"160 kcal instead of {run_kcal} kcal. edit_entry changes it.")
 
 
 def test_several_siblings_are_all_named_with_their_estimates(user):
     services.log_bodyweight(user.id, {"kg": 80}, "web")
     note = move(user, "Outdoor Walk", 30)["note"]
-    assert note == (f"Logged as Outdoor Walk. Outdoor Run (about {cardio_kcal(9.3, 80, 30)} kcal) and Outdoor "
-                    f"Cycling (about {cardio_kcal(7.0, 80, 30)} kcal) are the other outdoor activities; "
+    assert note == (f"Logged as Outdoor Walk. The other outdoor activities are Outdoor Run at about "
+                    f"{cardio_kcal(9.3, 80, 30)} kcal and Outdoor Cycling at about {cardio_kcal(7.0, 80, 30)} kcal. "
                     "edit_entry changes it.")
 
 
@@ -271,10 +286,10 @@ def test_with_no_weigh_in_the_sibling_note_gives_the_mets(make_user):
     person = make_user()
     walk = move(person, "Treadmill Walk", 30)["note"]
     assert walk == (f"{NO_WEIGH_IN} Logged as Treadmill Walk. Treadmill Run is the other treadmill activity, "
-                    "with a higher estimate (MET 9.3 against 3.8); edit_entry changes it.")
+                    "with a higher estimate: MET 9.3 against 3.8. edit_entry changes it.")
     run = move(person, "Treadmill Run", 30)["note"]
-    assert run.endswith("Treadmill Walk is the other treadmill activity, with a lower estimate "
-                        "(MET 3.8 against 9.3); edit_entry changes it.")
+    assert run.endswith("Treadmill Walk is the other treadmill activity, with a lower estimate: "
+                        "MET 3.8 against 9.3. edit_entry changes it.")
     several = move(person, "Outdoor Walk", 30)["note"]
-    assert several.endswith("Outdoor Run (MET 9.3) and Outdoor Cycling (MET 7) are the other outdoor activities, "
-                            "against MET 3.8 for this one; edit_entry changes it.")
+    assert several.endswith("The other outdoor activities are Outdoor Run at MET 9.3 and Outdoor Cycling at MET 7, "
+                            "against MET 3.8 for this one. edit_entry changes it.")

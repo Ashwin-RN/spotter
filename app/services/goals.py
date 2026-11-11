@@ -49,7 +49,13 @@ goal_numbers(goals, loaded, today)
     For each open goal with a target and a date: where it stands, in one shape for every kind.
     latest is the measure above, and status, needed_per_week, the projection and projected_date all
     read that same value: "reached" once latest is at or past the target, else "on track" or "behind"
-    from the line, else "not enough data".
+    from the line, else "not enough data". Every figure is unrounded: the working precision.
+
+rounded_numbers(numbers)
+    The copy set_goal, get_goals and get_progress return: a body weight or lift goal's start_value,
+    latest and projection.latest at 1 dp (formatting.rounded), on a copy, the projection copied too. A cm,
+    bpm or cardio time goal keeps the precision it has. goal_dict rounds a goal row's start_value the
+    same way, so every result that carries a goal agrees.
 
 Every write here locks the user row first (common.lock_user), then checks the write limit
 (common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
@@ -60,7 +66,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app import db, links, metrics, rules, users
+from app import db, formatting, links, metrics, rules, users
 from app.models import GOAL_STATUSES, CardioEntry, Goal, Measurement, User
 from app.services import body, cardio, lifts
 from app.services.common import (
@@ -81,6 +87,8 @@ UNITS = {"lift": "kg", "bodyweight": "kg", "cardio_best": "min"}  # a measuremen
 UNIT = "kg"
 NAMES = {"resting_hr": "Resting heart rate"}
 WITH_EXERCISE = ("lift", "cardio_best")
+# The quantity a kg goal's start, now and projection are rounded and shown at (section D of stage 6).
+ROUNDED = {"bodyweight": "bodyweight_derived", "lift": "estimated_max"}
 
 GOALS_HOW = (
     "Where each goal is now (latest), the same measure its start used: a lift, the best session estimated max "
@@ -109,9 +117,13 @@ def measurement_name(kind: str) -> str:
 
 
 def clock(minutes: float) -> str:
-    """Minutes as m:ss: 28 is "28:00", 27.5 is "27:30"."""
-    seconds = round(minutes * 60)
-    return f"{seconds // 60}:{seconds % 60:02d}"
+    """Minutes as m:ss: 28 is "28:00", 27.5 is "27:30". formatting.clock."""
+    return formatting.clock(minutes)
+
+
+def said(value: float, unit: str) -> str:
+    """A goal value in a message, as Claude sends it back: "79.01 kg", "29.5 min" (formatting.field)."""
+    return f"{formatting.field(value, 'goal_target')} {unit}"
 
 
 def _limits(kind: str, measurement_kind: str | None) -> tuple[float, float, bool, bool, int]:
@@ -134,7 +146,8 @@ def _value(value, field: str, kind: str, measurement_kind: str | None) -> tuple[
     """target_value or start_value, in the goal's unit and range."""
     lo, hi, low_open, whole, places = _limits(kind, measurement_kind)
     unit = unit_for(kind, measurement_kind)
-    span = f"above {lo:g} to {hi:g}" if low_open else f"{lo:g} to {hi:g}"
+    limits = rules.span(lo, hi, "goal_target")
+    span = f"above {limits}" if low_open else limits
     fix = (f"Give {field} in {unit}, {span}{', a whole number' if whole else ''}, for "
            f"{_what(kind, measurement_kind)}.")
     if kind == "cardio_best":
@@ -143,7 +156,8 @@ def _value(value, field: str, kind: str, measurement_kind: str | None) -> tuple[
     if err:
         return None, err
     if whole and number != int(number):
-        return None, rules.error("invalid_field", f"{field} must be a whole number, not {number:g}.", fix)
+        return None, rules.error("invalid_field", f"{field} must be a whole number, not {rules.as_sent(value)}.",
+                                 fix)
     return round(number, places) + 0.0, None
 
 
@@ -236,20 +250,39 @@ def _source(g, points: list, today: date) -> str:
 
 # ---------------------------------------------------------------- where a goal stands
 
+def _rounded(value, kind: str):
+    """A kg goal's figure at 1 dp for a result; any other kind's as it is. None stays None."""
+    return value if value is None or kind not in ROUNDED else formatting.rounded(value, ROUNDED[kind])
+
+
 def goal_dict(g: Goal) -> dict:
-    return {**row_dict(g), "exercise": g.exercise.name if g.exercise else None}
+    return {**row_dict(g), "exercise": g.exercise.name if g.exercise else None,
+            "start_value": _rounded(g.start_value, g.kind)}
+
+
+def rounded_numbers(numbers: list[dict]) -> list[dict]:
+    """goal_numbers, rounded for a result (see the module notes). A copy: the numbers given, and
+    their projections, are not changed."""
+    out = []
+    for n in numbers:
+        p = n["projection"]
+        out.append({**n, "start_value": _rounded(n["start_value"], n["kind"]),
+                    "latest": _rounded(n["latest"], n["kind"]),
+                    "projection": None if p is None else {**p, "latest": _rounded(p["latest"], n["kind"])}})
+    return out
 
 
 def label(g) -> str:
-    """'Back Squat 100 kg', 'Bodyweight 75 kg', 'Waist 80 cm', 'Outdoor Run 5 km in 28:00'."""
-    target = g.target_value
+    """'Back Squat 100 kg', 'Body weight 75 kg', 'Waist 80 cm', 'Outdoor Run 5 km in 28:00'."""
+    target = formatting.show(g.target_value, "goal_target")
     if g.kind == "lift" and g.exercise:
-        return f"{g.exercise.name} {target:g} kg"
+        return f"{g.exercise.name} {target} kg"
     if g.kind == "measurement" and g.measurement_kind in rules.MEASUREMENTS:
-        return f"{measurement_name(g.measurement_kind)} {target:g} {g.unit}"
+        return f"{measurement_name(g.measurement_kind)} {target} {g.unit}"
     if g.kind == "cardio_best" and g.exercise and g.distance_km:
-        return f"{g.exercise.name} {g.distance_km:g} km in {clock(target)}"
-    return f"Bodyweight {target:g} {g.unit}" if g.kind == "bodyweight" else f"{g.kind} {target:g} {g.unit}"
+        return (f"{g.exercise.name} {formatting.show(g.distance_km, 'km')} in "
+                f"{formatting.show(g.target_value, 'goal_time')}")
+    return f"Body weight {target} {g.unit}" if g.kind == "bodyweight" else f"{g.kind} {target} {g.unit}"
 
 
 def _text(g: Goal) -> str:
@@ -388,12 +421,13 @@ def _identity(s, kind: str, data: dict, errors: list, warnings: list):
         errors += [err] if err else []
         if not present("distance_km"):
             errors.append(rules.error("missing_field", "A cardio_best goal needs distance_km.",
-                                      f"Give distance_km, {DISTANCE_KM[0]:g} to {DISTANCE_KM[1]:g}: the distance the "
-                                      "time is for."))
+                                      f"Give distance_km, {rules.span(*DISTANCE_KM, 'km')}: the distance the time "
+                                      "is for."))
         else:
             lo, hi = DISTANCE_KM
             distance, err = in_range(data["distance_km"], "distance_km", lo, hi,
-                                     f"Give distance_km, {lo:g} to {hi:g}: the distance the time is for.")
+                                     f"Give distance_km, {rules.span(lo, hi, 'km')}: the distance the time is for.",
+                                     quantity="km")
             errors += [err] if err else []
     elif present("exercise"):
         warnings.append(f"exercise '{rules.quote(data['exercise'])}' was ignored: only a lift or cardio_best goal "
@@ -440,10 +474,11 @@ def _no_start(g) -> dict:
         return rules.error("missing_field", f"There is no {name} measurement to start this goal from.",
                            f"Log one first (log_measurement), or give start_value: the person's {name} now, in "
                            f"{g.unit}.")
-    return rules.error("missing_field", f"There is no {g.exercise.name} session of {g.distance_km:g} km or more to "
+    distance = formatting.show(g.distance_km, "km")
+    return rules.error("missing_field", f"There is no {g.exercise.name} session of {distance} or more to "
                        "start this goal from.",
                        f"Log one first (log_cardio with distance_km), or give start_value: the person's time for "
-                       f"{g.distance_km:g} km now, in minutes.")
+                       f"{distance} now, in minutes.")
 
 
 def _start(g, loaded: dict, given, today: date, warnings: list) -> tuple[float | None, str | None, dict | None]:
@@ -454,8 +489,10 @@ def _start(g, loaded: dict, given, today: date, warnings: list) -> tuple[float |
     if current is not None:
         source = _source(g, points, today)
         if given not in (None, ""):
-            warnings.append(f"start_value was ignored: the goal starts from the logged {current:g} {g.unit} "
-                            f"({source}).")
+            # A kg goal's start is said as its result field prints it (1 dp); any other kind as stored.
+            logged = (f"{formatting.show(current, ROUNDED[g.kind], unit=False)} {g.unit}" if g.kind in ROUNDED
+                      else said(current, g.unit))
+            warnings.append(f"start_value was ignored: the goal starts from the logged {logged} ({source}).")
         return current, source, None
     if given in (None, ""):
         return None, None, _no_start(g)
@@ -471,15 +508,17 @@ def _wrong_way(kind: str, measurement_kind: str | None, direction: str, start: f
     lo, hi, *_ = _limits(kind, measurement_kind)
     unit = unit_for(kind, measurement_kind)
     side = "above" if direction == "up" else "below"
-    message = (f"target_value {target:g} {unit} is not {side} the start of {start:g} {unit}, "
+    message = (f"target_value {said(target, unit)} is not {side} the start of {said(start, unit)}, "
                f"and this goal points {direction}.")
     if (direction == "up" and start >= hi) or (direction == "down" and start <= lo):
         return rules.error("wrong_direction", message,
-                           f"No target {side} {start:g} {unit} can be set: {hi if direction == 'up' else lo:g} {unit} "
+                           f"No target {side} {said(start, unit)} can be set: "
+                           f"{said(hi if direction == 'up' else lo, unit)} "
                            f"is the {'most' if direction == 'up' else 'least'} {_what(kind, measurement_kind)} takes. "
                            "Mark this goal dropped, or set another goal.")
-    span = (f"above {start:g} and at most {hi:g} {unit}" if direction == "up"
-            else f"below {start:g} and at least {lo:g} {unit}")
+    shown = formatting.field(start, "goal_target")
+    span = (f"above {shown} and at most {said(hi, unit)}" if direction == "up"
+            else f"below {shown} and at least {said(lo, unit)}")
     return rules.error("wrong_direction", message,
                        f"Give a target {span}. To aim the other way, mark this goal dropped and set a new one.")
 
@@ -511,7 +550,8 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
         if not status_ok:
             errors.append(rules.error("invalid_field",
                                       f"status '{rules.quote(status)}' is not one of {', '.join(GOAL_STATUSES)}.",
-                                      "Use hit (reached), dropped, or open."))
+                                      "Use hit, dropped or open: hit is the person's own mark that a goal is "
+                                      "done."))
         text = None
         if data.get("text") is not None:  # left out: an edit keeps the text it has
             text, err = rules.text(data["text"], "text")
@@ -582,8 +622,8 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
             elif kind == "cardio_best":
                 direction = "down"
             elif target == start:
-                return rules.error("target_is_start", f"target_value {target:g} {goal.unit} is the start itself "
-                                   f"({source}).", f"Give a target above or below {start:g} {goal.unit}.")
+                return rules.error("target_is_start", f"target_value {said(target, goal.unit)} is the start "
+                                   f"itself ({source}).", f"Give a target above or below {said(start, goal.unit)}.")
             else:
                 direction = "down" if target < start else "up"
             err = _wrong_way(kind, measurement_kind, direction, start, target)
@@ -618,7 +658,7 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
             goal.text = text if text is not None else goal.text
             s.flush()
 
-        progress = next(iter(goal_numbers([goal], loaded, today)), None)
+        progress = next(iter(rounded_numbers(goal_numbers([goal], loaded, today))), None)
         out = {"kind": KIND, "id": goal.id, "goal": goal_dict(goal), "progress": progress, "warnings": warnings,
                "links": {"goals": links.page("goals")}}
         if goal.status != "open":
@@ -635,15 +675,17 @@ def _closed(g: Goal) -> dict:
             "is_sample": bool(g.is_sample)}
 
 
-def _summary(numbers: list[dict], closed: list[dict]) -> str:
+def _summary(numbers: list[dict], closed: list[dict], today: date) -> str:
+    """'2 open goals: Body weight 77 kg by Tue 5 Jan 2027, on track. Back Squat 120 kg by Tue 2 Feb 2027,
+    behind. 1 closed.' One sentence a goal."""
     if not numbers:
         text = "No open goals."
     else:
         word = "goal" if len(numbers) == 1 else "goals"
-        text = f"{len(numbers)} open {word}: " + "; ".join(
-            f"{n['label']} by {n['target_date']}, {n['status']}" for n in numbers) + "."
+        text = f"{formatting.show(len(numbers), 'count')} open {word}: " + " ".join(
+            f"{n['label']} by {formatting.day(n['target_date'], today)}, {n['status']}." for n in numbers)
     if closed:
-        text += f" {len(closed)} closed."
+        text += f" {formatting.show(len(closed), 'count')} closed."
     return text
 
 
@@ -663,13 +705,13 @@ def get_goals(user_id: int, include_closed=False) -> dict:
         rows = list(s.scalars(query if wanted else query.where(Goal.status == "open")))
         open_goals = [g for g in rows if g.status == "open"]
         loaded = load_numbers(s, user.id, today, open_goals)
-        numbers = goal_numbers(open_goals, loaded, today)
+        numbers = rounded_numbers(goal_numbers(open_goals, loaded, today))
         shown_ids = {n["goal_id"] for n in numbers}
         closed_rows = [g for g in rows if g.status != "open"] if wanted else []
         closed = [_closed(g) for g in closed_rows]
         sample = loaded["sample"] or any(g.is_sample for g in rows if g.id in shown_ids or g in closed_rows)
         out = {"today": today.isoformat(), "goals": numbers, "closed": closed, "includes_sample": sample,
-               "how": GOALS_HOW, "summary": _summary(numbers, closed), "links": {"goals": links.page("goals")}}
+               "how": GOALS_HOW, "summary": _summary(numbers, closed, today), "links": {"goals": links.page("goals")}}
         if sample:
             out["note"] = SAMPLE_NOTE
         return out

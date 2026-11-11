@@ -185,7 +185,7 @@ def test_the_day_total_target_remaining_and_estimated_share(make_user):
     r = eat(person, {"description": "dal", "kcal": 300}, {"description": "rice", "kcal": 100, "estimated": True})
     assert r["day"] == {"total_kcal": 400, "estimated_kcal": 100, "estimated_share_pct": 25, "target_kcal": 2000,
                         "remaining_kcal": 1600, "net_kcal": None}
-    assert "1600 kcal left of 2000" in r["summary"]
+    assert "1,600 kcal left of the 2,000 kcal target" in r["summary"]
     plain = make_user()
     assert eat(plain, {"description": "x", "kcal": 10})["day"]["remaining_kcal"] is None
 
