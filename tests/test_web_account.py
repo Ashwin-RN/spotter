@@ -24,7 +24,7 @@ from app.models import Bodyweight, CallLog, User
 from .conftest import settings
 from .test_web import (  # noqa: F401 - fixtures
     CSP, SITE, TOO_MANY, WEB, FakeSeam, calls, client, only_user, post, seam, session_of, sign_in,
-    stock, stock_food, today_of, user_count, web_client,
+    meal_of, stock, stock_food, today_of, user_count, web_client,
 )
 
 
@@ -200,13 +200,12 @@ def test_a_lower_case_description_is_not_shown_beside_its_name(signed):
     fed = stock_food(only_user())
     services.log_food(uid, {"entries": [{"description": "roti", "saved_food_id": fed["roti"], "servings": 1,
                                          "meal": "dinner"}]}, "claude")
-    dinner = re.search(r"<h3>Dinner</h3>(.*?)</ul>", signed.get(f"/day/{fed['today']}").text, re.S).group(1)
-    assert re.search(r'<span>Roti × 1 <span class="muted">\(1 roti\)</span>:', dinner)
-    assert '<span class="muted">roti</span>' not in dinner
+    [dinner] = meal_of(signed.get(f"/day/{fed['today']}").text, "Dinner")
+    assert (dinner["name"], dinner["figures"], dinner["note"]) == ("Roti", "120\u00a0kcal, 1 roti", None)
 
 
-def lunch_of(client, today: str) -> str:
-    return re.search(r"<h3>Lunch</h3>(.*?)</ul>", client.get(f"/day/{today}").text, re.S).group(1)
+def lunch_of(client, today: str) -> list[dict]:
+    return meal_of(client.get(f"/day/{today}").text, "Lunch")
 
 
 def test_a_saved_food_line_shows_a_different_description_once(signed):
@@ -214,21 +213,22 @@ def test_a_saved_food_line_shows_a_different_description_once(signed):
     fed = stock_food(only_user())
     services.log_food(uid, {"entries": [{"description": "Two rotis with ghee", "saved_food_id": fed["roti"],
                                          "servings": 2, "meal": "lunch"}]}, "claude")
-    lunch = lunch_of(signed, fed["today"])
-    assert re.search(r'Roti × 2 <span class="muted">\(2 rotis\)</span>:', lunch)  # the description is the name
-    assert re.search(r'Roti × 2 <span class="muted">\(2 rotis\)</span> <span class="muted">Two rotis with ghee</span>:',
-                     lunch)
+    lunch = [(e["name"], e["figures"], e["note"]) for e in lunch_of(signed, fed["today"]) if e["name"] == "Roti"]
+    assert lunch == [("Roti", "240\u00a0kcal, 2\u00a0rotis", None),  # the description is the name
+                     ("Roti", "240\u00a0kcal, 2\u00a0rotis", "Two rotis with ghee")]
 
 
 def test_a_deleted_saved_food_still_names_its_entries(signed):
     fed = stock_food(only_user())
     services.delete_entry(only_user().id, "saved_food", fed["roti"])
-    assert re.search(r'Roti × 2 <span class="muted">\(2 rotis\)</span>:', lunch_of(signed, fed["today"]))
+    roti = lunch_of(signed, fed["today"])[0]
+    assert (roti["name"], roti["figures"]) == ("Roti", "240\u00a0kcal, 2\u00a0rotis")
 
 
 def test_a_food_with_no_saved_food_is_its_description(signed):
     fed = stock_food(only_user())
-    assert re.search(r"<span>Dal:", lunch_of(signed, fed["today"]))
+    dal = lunch_of(signed, fed["today"])[1]
+    assert (dal["name"], dal["figures"], dal["note"]) == ("Dal", "180\u00a0kcal", None)
 
 
 # ---------------------------------------------------------------- Foods reads list_saved_foods

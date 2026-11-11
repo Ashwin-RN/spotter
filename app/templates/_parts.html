@@ -15,3 +15,33 @@
 
 {# The sample mark after a row from sample data: a space, then the tag. Nothing on a row of the person's own. #}
 {% macro sample_tag(row) %}{% if row.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}{% endmacro %}
+
+{# An entry's actions in one slot: Confirm when asked (an estimate), then Edit, then the one-button Delete form. #}
+{% macro entry_actions(kind, id, csrf_token, confirm=false) %}<span class="entry-actions">
+  {% if confirm %}<form method="post" action="/entries/{{ kind }}/{{ id }}/confirm" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="link" title="Keep this number as yours">Confirm</button>
+  </form>
+  {% endif %}<a class="action" href="/entries/{{ kind }}/{{ id }}/edit">Edit</a>
+  <form method="post" action="/entries/{{ kind }}/{{ id }}/delete" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="link">Delete</button>
+  </form>
+</span>{% endmacro %}
+
+{# A fold-out: details.add with its id and the summary naming the action, open only when asked, the caller's form inside. #}
+{% macro foldout(id, summary, open=false) %}<details class="add" id="{{ id }}"{% if open %} open{% endif %}>
+  <summary>{{ summary }}</summary>
+  {{ caller() }}
+</details>{% endmacro %}
+
+{# A labelled field: an input, or a select when choices are (value, words) pairs, its error under it and tied to it. #}
+{% macro field(id, name, label, error=none, value="", inputmode=none, choices=none, empty=none, required=false, maxlength=none) %}<div class="field{% if error %} has-error{% endif %}">
+  <label for="{{ id }}">{{ label }}</label>
+  {% if choices is not none %}<select id="{{ id }}" name="{{ name }}"{% if required %} required{% endif %}{% if error %} aria-invalid="true" aria-describedby="{{ id }}-error"{% endif %}>
+    {% if empty is not none %}<option value="">{{ empty }}</option>{% endif %}
+    {% for choice, words in choices %}<option value="{{ choice }}"{% if value and choice == value %} selected{% endif %}>{{ words }}</option>{% endfor %}
+  </select>
+  {% else %}<input id="{{ id }}" name="{{ name }}"{% if value %} value="{{ value }}"{% endif %}{% if inputmode %} inputmode="{{ inputmode }}"{% endif %}{% if required %} required{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %} autocomplete="off"{% if error %} aria-invalid="true" aria-describedby="{{ id }}-error"{% endif %}>
+  {% endif %}{% if error %}<p class="error" id="{{ id }}-error">{{ error }}</p>
+  {% endif %}</div>{% endmacro %}

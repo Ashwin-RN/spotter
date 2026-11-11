@@ -92,9 +92,15 @@
 {# The laptop's two columns place whole wrappers: col-main holds Food, col-side the four cards after it. The
    glance block goes between the Today card and col-main, on today's page only. #}
 <div class="col-main">
+{# The Food card: the day's entries by meal, the totals under them, then the Add food fold-out. An entry's
+   name, its kcal with how much was eaten, and a differing description each take a line. Its source tag and
+   sample tag share their own slot, apart from every figure. #}
 <div class="card">
-  <h2>Food</h2>
-  {% if food %}
+  <div class="card-head">
+    <h2>Food</h2>
+    <a class="aside" href="/foods">Saved foods</a>
+  </div>
+  {% if has_food %}
   {% for meal in meals %}
   {% set entries = food.meals.get(meal) or [] %}
   <div class="meal{% if not entries %} empty{% endif %}">
@@ -102,56 +108,55 @@
     {% if entries %}
     <ul class="entries">
       {% for f in entries %}
+      {% set served = serving_words(f) %}
+      {% set note = food_note(f) %}
       <li class="entry-line">
-        {# a saved food: its name, the servings, the serving in its own words (get_log's saved_food_name, serving_label) #}
-        <span>{% if f.saved_food_name %}{{ f.saved_food_name }}{% if f.servings %} × {{ f.servings|show("servings") }} <span class="muted">({{ serving_text(f.servings, f.serving_label) }})</span>{% endif %}{% if not same_name(f.description, f.saved_food_name) %} <span class="muted">{{ f.description }}</span>{% endif %}{% else %}{{ f.description }}{% if f.servings %} <span class="muted">× {{ f.servings|show("servings") }}</span>{% endif %}{% endif %}:
-          <strong>{{ f.kcal|show("kcal") }}</strong>
-          <span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span>{{ sample_tag(f) }}</span>
-        <span class="entry-actions">
-          {% if f.source == "claude_estimate" %}
-          <form method="post" action="/entries/food_entry/{{ f.id }}/confirm" class="inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button class="link" title="Keep this number as yours">Confirm</button>
-          </form>
-          {% endif %}
-          {{ actions("food_entry", f.id) }}
-        </span>
+        <div class="entry-main"><span class="entry-name">{{ food_name(f) }}</span><span class="entry-figures">{{ f.kcal|show("kcal") }}{% if served %}, {{ served }}{% endif %}</span>{% if note %}<span class="entry-note">{{ note }}</span>{% endif %}</div>
+        <span class="entry-tags"><span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span>{{ sample_tag(f) }}</span>
+        {{ parts.entry_actions("food_entry", f.id, csrf_token, confirm=f.source == "claude_estimate") }}
       </li>
       {% endfor %}
     </ul>
     {% else %}
-    <p class="muted small">Nothing logged.</p>
+    <p class="small">Nothing logged.</p>
     {% endif %}
   </div>
   {% endfor %}
   <dl class="facts totals">
-    <dt>Total</dt><dd><strong>{{ food.total_kcal|show("kcal") }}</strong>{% if food.estimated_kcal %}, of which <span class="tag tag-claude_estimate">estimate</span> {{ food.estimated_kcal|show("kcal") }} ({{ food.estimated_share_pct|show("percent") }}){% endif %}</dd>
+    <dt class="total">Total</dt><dd class="total">{{ food.total_kcal|show("kcal") }}</dd>
+    {% if has_estimate %}
+    <dt>From estimates</dt><dd>{{ food.estimated_kcal|show("kcal") }}</dd>
+    <dt>Share from estimates</dt><dd>{{ food.estimated_share_pct|show("percent") }}</dd>
+    {% endif %}
     {% if food.target_kcal is not none %}
     <dt>Target</dt><dd>{{ food.target_kcal|show("kcal") }}</dd>
-    <dt>Remaining</dt><dd>{{ food.remaining_kcal|show("kcal_left") }}</dd>
+    <dt>Left</dt><dd>{{ food.remaining_kcal|show("kcal_left") }}</dd>
     {% endif %}
     {% if food.net_kcal is not none %}
-    <dt>Net</dt><dd>{{ food.net_kcal|show("net_kcal") }} <span class="muted">(food minus cardio)</span></dd>
+    <dt>Net (food minus cardio)</dt><dd>{{ food.net_kcal|show("net_kcal") }}</dd>
     {% endif %}
   </dl>
   {% else %}
-  <p class="muted">No food logged on this day.</p>
+  <p class="empty-line">No food logged on this day. Tell your assistant what you ate, or add it below.</p>
   {% endif %}
+  {# Closed unless the address carries ?add=food (the Today card's Add food) or its form came back with an
+     error. A refusal the form has no field for sits above the fields. What was typed stays. #}
   {% set errors = form_error.get("food_entry", {}) %}
-  <form id="add-food" method="post" action="/day/{{ on.isoformat() }}/food" class="one-line">
+  {% set kept = typed.get("food_entry", {}) %}
+  {% call parts.foldout("add-food", "Add food", errors or "food" in adding) %}
+  <form method="post" action="/day/{{ on.isoformat() }}/food">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label for="food-description">Food</label>
-    <input id="food-description" name="description" required maxlength="200" autocomplete="off">
-    <label for="food-kcal">kcal</label>
-    <input id="food-kcal" name="kcal" inputmode="numeric" required autocomplete="off">
-    <label for="food-meal">Meal</label>
-    <select id="food-meal" name="meal">
-      <option value="">From the time of day</option>
-      {% for meal in meals %}<option value="{{ meal }}">{{ meal.capitalize() }}</option>{% endfor %}
-    </select>
-    <button class="primary">Save food</button>
+    {% for field, text in errors.items() if field not in ("description", "kcal", "meal") %}
+    <div class="error"><p>{{ text }}</p></div>
+    {% endfor %}
+    {{ parts.field("food-description", "description", "Food", errors.get("description"), kept.get("description"), required=true, maxlength=200) }}
+    <div class="field-row">
+      {{ parts.field("food-kcal", "kcal", "Calories (kcal)", errors.get("kcal"), kept.get("kcal"), inputmode="numeric", required=true) }}
+      {{ parts.field("food-meal", "meal", "Meal", errors.get("meal"), kept.get("meal"), choices=meal_choices, empty="By the clock") }}
+    </div>
+    <div class="form-actions"><button class="primary">Save food</button></div>
   </form>
-  {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
+  {% endcall %}
 </div>
 </div>
 

@@ -225,6 +225,8 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
              *(f"{mark}={kind}" for mark in ("saved", "restored") for kind, _ in ENTRY_MODELS)]
     strips = [f"/day/{today.isoformat()}?{mark}" for mark in marks] + \
         [f"/day/{(today - timedelta(days=1)).isoformat()}?saved=bodyweight"]
+    # The Today card's Add food lands with ?add=food, which sends the Food fold-out open.
+    strips += [f"/day/{today.isoformat()}?add=food", f"/day/{(today - timedelta(days=1)).isoformat()}?add=food"]
     goal_marks = [f"/goals?saved={s}" for s in web.GOAL_SAVED] + \
         ["/goals?saved=goal&notes=" + ",".join(code for code, _, _ in web.GOAL_NOTES)]
     return {

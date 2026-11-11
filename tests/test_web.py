@@ -7,6 +7,7 @@ redirects (a redirect to the provider would otherwise be fed back into this app)
 import asyncio
 import base64
 import hashlib
+import html
 import json
 import re
 import time
@@ -1863,15 +1864,44 @@ def section(page: str, title: str) -> str:
                      page, re.S).group(1)
 
 
+# One Food entry as the card draws it: line one the name, line two the figures, a grey line for a differing
+# description, then the tags' slot and the actions' slot.
+FOOD_ENTRY = re.compile(
+    r'<li class="entry-line">\s*<div class="entry-main"><span class="entry-name">(?P<name>[^<]*)</span>'
+    r'<span class="entry-figures">(?P<figures>[^<]*)</span>(?:<span class="entry-note">(?P<note>[^<]*)</span>)?</div>'
+    r'\s*<span class="entry-tags">(?P<tags>.*?)</span>\s*<span class="entry-actions">(?P<actions>.*?)</span>\s*</li>',
+    re.S)
+
+
+def food_entries(markup: str) -> list[dict]:
+    """Each Food entry in the markup: its name, figures and note as read (entities decoded), its tags as
+    (class, words), and its actions as (Confirm, Edit, Delete) present or not."""
+    out = []
+    for m in FOOD_ENTRY.finditer(markup):
+        actions = m["actions"]
+        out.append({"name": html.unescape(m["name"]), "figures": html.unescape(m["figures"]),
+                    "note": html.unescape(m["note"]) if m["note"] is not None else None,
+                    "tags": re.findall(r'<span class="tag ([^"]+)">([^<]*)</span>', m["tags"]),
+                    "actions": ("/confirm" in actions, '<a class="action" href="/entries/food_entry/' in actions,
+                                "/delete" in actions)})
+    return out
+
+
+def meal_of(page: str, meal: str) -> list[dict]:
+    """The entries under one meal's h3."""
+    return food_entries(re.search(rf"<h3>{meal}</h3>(.*?)</ul>", page, re.S).group(1))
+
+
 # ---------------------------------------------------------------- the day page
 
 def test_a_day_with_no_food_or_cardio(client):
     sign_in(client)
     page = day_of(client, today_of(only_user()).isoformat())
     food = section(page, "Food")
-    assert [m for m in re.findall(r'<div class="meal( empty)?">\s*<h3>(\w+)</h3>', food)] == \
-        [(" empty", "Breakfast"), (" empty", "Lunch"), (" empty", "Dinner"), (" empty", "Snack")]
-    assert "<strong>0\u00a0kcal</strong>" in food and "Target" not in food and "Net" not in food
+    # No food at all: the card's one empty line in place of the meals and the totals.
+    assert '<p class="empty-line">No food logged on this day. Tell your assistant what you ate, or add it below.</p>' \
+        in food
+    assert '<div class="meal' not in food and "<dl" not in food and "Target" not in food and "Net" not in food
     assert "No cardio logged on this day" in page
     activities = re.search(r'<select id="cardio-exercise" name="exercise" required>(.*?)</select>', page, re.S).group(1)
     names = [e["name"] for e in services.list_exercises("cardio")["exercises"]]
@@ -1882,19 +1912,21 @@ def test_a_day_with_no_food_or_cardio(client):
 def test_the_day_shows_food_by_meal_with_each_tag_and_the_numbers(client, fed):
     page = day_of(client, fed["today"])
     food = section(page, "Food")
-    lunch = re.search(r'<h3>Lunch</h3>(.*?)</ul>', food, re.S).group(1)
-    # decision 14: the saved food's name, the servings, the serving in its own words; the description
+    # decision 14: the saved food's name, then its kcal and the serving in its own words; the description
     # ("Roti", the name) is not shown twice
-    assert re.search(r'Roti × 2 <span class="muted">\(2 rotis\)</span>:\s*<strong>240\u00a0kcal</strong>\s*'
-                     r'<span class="tag tag-saved_food">saved food</span>', lunch)
-    assert re.search(r'Dal:\s*<strong>180\u00a0kcal</strong>\s*<span class="tag tag-claude_estimate">estimate</span>', lunch)
-    breakfast = re.search(r'<h3>Breakfast</h3>(.*?)</ul>', food, re.S).group(1)
-    assert re.search(r'Tea:\s*<strong>40\u00a0kcal</strong>\s*<span class="tag tag-you_said">you said</span>', breakfast)
+    roti, dal = meal_of(food, "Lunch")
+    assert (roti["name"], roti["figures"], roti["note"], roti["tags"]) == \
+        ("Roti", "240\u00a0kcal, 2\u00a0rotis", None, [("tag-saved_food", "saved food")])
+    assert (dal["name"], dal["figures"], dal["note"], dal["tags"]) == \
+        ("Dal", "180\u00a0kcal", None, [("tag-claude_estimate", "estimate")])
+    [tea] = meal_of(food, "Breakfast")
+    assert (tea["name"], tea["figures"], tea["tags"]) == ("Tea", "40\u00a0kcal", [("tag-you_said", "you said")])
     assert '<div class="meal empty">\n    <h3>Dinner</h3>' in food and '<div class="meal empty">\n    <h3>Snack</h3>' in food
     numbers = services.get_log(only_user().id, fed["today"], 1)["days"][0]["food"]
     assert numbers["total_kcal"] == 460 and numbers["estimated_kcal"] == 180
-    assert "<strong>460\u00a0kcal</strong>, of which" in food
-    assert f"estimate</span> 180\u00a0kcal ({formatting.show(numbers['estimated_share_pct'], 'percent')})" in food
+    assert '<dt class="total">Total</dt><dd class="total">460\u00a0kcal</dd>' in food
+    assert "<dt>From estimates</dt><dd>180\u00a0kcal</dd>" in food
+    assert f"<dt>Share from estimates</dt><dd>{formatting.show(numbers['estimated_share_pct'], 'percent')}</dd>" in food
     assert "Target" not in food and "Net" not in food  # no target, add-back off
     for entry_id in fed["food"]:
         assert f'href="/entries/food_entry/{entry_id}/edit"' in page
@@ -1905,12 +1937,12 @@ def test_a_target_shows_target_and_remaining_and_add_back_shows_net(client, fed)
     uid = only_user().id
     services.update_settings(uid, {"calorie_target_kcal": 2200}, "web")
     food = section(day_of(client, fed["today"]), "Food")
-    assert "<dt>Target</dt><dd>2,200\u00a0kcal</dd>" in food and "<dt>Remaining</dt><dd>1,740\u00a0kcal left</dd>" in food
-    assert "<dt>Net</dt>" not in food
+    assert "<dt>Target</dt><dd>2,200\u00a0kcal</dd>" in food and "<dt>Left</dt><dd>1,740\u00a0kcal left</dd>" in food
+    assert "<dt>Net" not in food
     services.update_settings(uid, {"add_back_exercise_kcal": True}, "web")
     food = section(day_of(client, fed["today"]), "Food")
     net = services.get_log(uid, fed["today"], 1)["days"][0]["food"]["net_kcal"]
-    assert net == 460 - fed["estimate"]["kcal"] and f"<dt>Net</dt><dd>{net}\u00a0kcal" in food
+    assert net == 460 - fed["estimate"]["kcal"] and f"<dt>Net (food minus cardio)</dt><dd>{net}\u00a0kcal</dd>" in food
 
 
 def test_the_day_shows_cardio_with_pace_estimate_and_machine_number_and_names_the_compendium(client, fed):
@@ -1971,9 +2003,9 @@ def test_a_day_with_thirty_food_entries(client):
                for n in range(30)]
     assert "error" not in services.log_food(uid, {"entries": entries}, "claude")
     page = day_of(client, today_of(only_user()).isoformat())
-    assert all(f"Item {n}:" in page for n in range(30))
+    assert sorted(e["name"] for e in food_entries(page)) == sorted(f"Item {n}" for n in range(30))
     assert page.count('href="/entries/food_entry/') == 30
-    assert f"<strong>{sum(10 + n for n in range(30))}\u00a0kcal</strong>" in page
+    assert f'<dd class="total">{sum(10 + n for n in range(30))}\u00a0kcal</dd>' in page
 
 
 def test_the_attribution_is_nowhere_else(client, fed):
@@ -2062,8 +2094,8 @@ def test_editing_a_foods_kcal_makes_it_you_said(client, fed):
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}?saved=food_entry"
     row = next(e for e in rows(FoodEntry, only_user().id) if e.id == dal)
     assert (row.kcal, row.source, row.estimated) == (150, "you_said", False)
-    lunch = re.search(r'<h3>Lunch</h3>(.*?)</ul>', day_of(client, fed["today"]), re.S).group(1)
-    assert re.search(r'Dal:\s*<strong>150\u00a0kcal</strong>\s*<span class="tag tag-you_said">you said</span>', lunch)
+    dal_row = next(e for e in meal_of(day_of(client, fed["today"]), "Lunch") if e["name"] == "Dal")
+    assert (dal_row["figures"], dal_row["tags"]) == ("150\u00a0kcal", [("tag-you_said", "you said")])
 
 
 def test_editing_a_foods_description_or_meal_keeps_its_tag(client, fed):
@@ -2329,7 +2361,8 @@ def test_confirm_makes_an_estimate_the_persons_number(client, fed):
     assert (row.kcal, row.source, row.estimated) == (180, "you_said", False)
     assert calls(only_user().id)[start:] == [("edit_entry", True, None)]
     lunch = re.search(r"<h3>Lunch</h3>(.*?)</ul>", day_of(client, fed["today"]), re.S).group(1)
-    assert re.search(r'Dal:\s*<strong>180\u00a0kcal</strong>\s*<span class="tag tag-you_said">you said</span>', lunch)
+    dal_row = next(e for e in food_entries(lunch) if e["name"] == "Dal")
+    assert (dal_row["figures"], dal_row["tags"]) == ("180\u00a0kcal", [("tag-you_said", "you said")])
     assert "/confirm" not in lunch
 
 
@@ -3183,3 +3216,317 @@ def test_the_top_of_today_never_says_claude(client, state):
     top = page[page.index("<main"):page.index('<div class="col-main">')]
     assert "Today" in top or "Eaten" in top
     assert not re.search(r"claude", " ".join(p.text for p in tr.html_text(top)), re.I)
+
+
+# ---------------------------------------------------------------- stage 6, step 4: the Food card
+
+def food_card(page: str) -> str:
+    """The Food card's markup: everything inside div.col-main."""
+    return page[page.index('<div class="col-main">'):page.index('<div class="col-side">')]
+
+
+def foldout_of(page: str) -> str:
+    return re.search(r'<details class="add" id="add-food"[^>]*>.*?</details>', food_card(page), re.S).group(0)
+
+
+def test_the_meals_run_breakfast_to_snack_and_an_empty_meal_says_nothing_logged(client):
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.log_food(uid, {"entries": [
+        {"description": "Biscuits", "kcal": 90, "meal": "snack"},
+        {"description": "Poha", "kcal": 250, "meal": "breakfast"}]}, "claude")
+    card = food_card(day_of(client, today_of(only_user()).isoformat()))
+    meals = re.findall(r'<div class="meal( empty)?">\n    <h3>(\w+)</h3>', card)
+    assert meals == [("", "Breakfast"), (" empty", "Lunch"), (" empty", "Dinner"), ("", "Snack")]
+    for meal in ("Lunch", "Dinner"):
+        assert re.search(rf'<div class="meal empty">\s*<h3>{meal}</h3>\s*<p class="small">Nothing logged.</p>\s*</div>',
+                         card)
+    assert card.count("Nothing logged.") == 2 and "No food logged on this day" not in card
+    assert [e["name"] for e in meal_of(card, "Breakfast")] == ["Poha"]
+
+
+def test_the_food_card_head_names_the_card_and_links_to_saved_foods(client):
+    sign_in(client)
+    card = food_card(day_of(client, today_of(only_user()).isoformat()))
+    assert re.search(r'<div class="card">\s*<div class="card-head">\s*<h2>Food</h2>\s*'
+                     r'<a class="aside" href="/foods">Saved foods</a>\s*</div>', card)
+
+
+def log_one(monkeypatch, kind: str) -> dict:
+    """One food entry of each kind the Food card draws, logged as the assistant would."""
+    uid = only_user().id
+    if kind.startswith("saved"):
+        roti = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+        entry = {"saved_food_id": roti["id"], "servings": 3}
+        if kind == "saved, its own description":
+            entry["description"] = "Three rotis with ghee"
+    elif kind == "usda":
+        monkeypatch.setattr(services.food.usda, "food", lambda fdc: ({
+            "fdc_id": fdc, "description": "Bananas, raw", "data_type": "SR Legacy", "kcal_per_100g": 89.0}, None))
+        entry = {"usda_fdc_id": 173944, "grams": 150}
+    elif kind == "stated":
+        entry = {"description": "Thali", "kcal": 650}
+    else:
+        entry = {"description": "Biryani", "kcal": 700, "estimated": True}
+    result = services.log_food(uid, {"entries": [{**entry, "meal": "lunch"}]}, "claude")
+    assert "error" not in result, result
+    return result
+
+
+@pytest.mark.parametrize("kind, name, figures, note, tag", [
+    ("saved", "Roti", "360 kcal, 3 rotis", None, ("tag-saved_food", "saved food")),
+    ("saved, its own description", "Roti", "360 kcal, 3 rotis", "Three rotis with ghee",
+     ("tag-saved_food", "saved food")),
+    ("usda", "Bananas, raw", "134 kcal, 150 g", None, ("tag-usda", "USDA")),
+    ("stated", "Thali", "650 kcal", None, ("tag-you_said", "you said")),
+    ("estimate", "Biryani", "700 kcal", None, ("tag-claude_estimate", "estimate")),
+])
+def test_each_kind_of_entry_draws_its_lines_its_tag_and_its_actions(client, monkeypatch, kind, name, figures, note,
+                                                                     tag):
+    sign_in(client)
+    result = log_one(monkeypatch, kind)
+    page = day_of(client, today_of(only_user()).isoformat())
+    [entry] = meal_of(food_card(page), "Lunch")
+    assert (entry["name"], entry["figures"], entry["note"], entry["tags"]) == (name, figures, note, [tag])
+    # Confirm on an estimate only, Edit and Delete on every entry.
+    assert entry["actions"] == (kind == "estimate", True, True)
+    entry_id = result["ids"][0]
+    line = re.search(r'<li class="entry-line">(.*?)</li>', food_card(page), re.S).group(1)
+    assert f'<a class="action" href="/entries/food_entry/{entry_id}/edit">Edit</a>' in line
+    assert f'<form method="post" action="/entries/food_entry/{entry_id}/delete" class="inline">' in line
+    assert (f'<form method="post" action="/entries/food_entry/{entry_id}/confirm" class="inline">' in line) is \
+        (kind == "estimate")
+
+
+def test_the_tags_sit_in_their_own_slot_apart_from_every_figure(client, fed):
+    card = food_card(day_of(client, fed["today"]))
+    figures = re.findall(r'<span class="entry-figures">(.*?)</span>', card)
+    assert len(figures) == 3 and not [f for f in figures if "<" in f]
+    assert card.count('<span class="entry-tags">') == 3
+    assert re.findall(r'<span class="tag (tag-[a-z_]+)">', card) == ["tag-you_said", "tag-saved_food",
+                                                                   "tag-claude_estimate"]
+
+
+def test_a_sample_food_named_with_sample_shows_the_sample_mark_once(client):
+    """A deleted saved food of the person's holds the name, so sample data stores its own as "Roti (sample)"
+    (sample._free_name). The card shows the name and the sample tag, never the word as well."""
+    sign_in(client)
+    uid = only_user().id
+    mine = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 110}, "web")
+    assert "error" not in services.delete_entry(uid, "saved_food", mine["id"])
+    assert "error" not in services.add_sample_data(uid, "web")
+    stored = [e.description for e in rows(FoodEntry, uid) if e.saved_food_id is not None]
+    assert "Roti (sample)" in stored  # the real path names it so
+    card = food_card(day_of(client, today_of(only_user()).isoformat()))
+    rotis = [e for e in meal_of(card, "Lunch") if e["name"] == "Roti"]
+    assert rotis and all(e["note"] is None and e["tags"] == [("tag-saved_food", "saved food"), ("tag-sample", "sample")]
+                         for e in rotis)
+    assert "(sample)" not in card
+
+
+@pytest.mark.parametrize("entry, shown", [
+    ({"saved_food_name": "Roti (sample)", "description": "Roti (sample)", "is_sample": True}, "Roti"),
+    ({"saved_food_name": "Roti (Sample)", "description": "x", "is_sample": True}, "Roti"),
+    ({"saved_food_name": "Roti (sample)", "description": "Roti (sample)", "is_sample": False}, "Roti (sample)"),
+    ({"saved_food_name": None, "description": "Tea (sample)", "is_sample": True}, "Tea"),
+    ({"saved_food_name": None, "description": "Tea", "is_sample": True}, "Tea"),
+    ({"saved_food_name": "Dal", "description": "Dal tadka", "is_sample": False}, "Dal"),
+])
+def test_the_name_on_line_one_drops_the_sample_word_only_on_a_sample_row(entry, shown):
+    assert web.food_name(entry) == shown
+
+
+@pytest.mark.parametrize("estimate, target, add_back, terms", [
+    (False, None, False, ["Total"]),
+    (True, None, False, ["Total", "From estimates", "Share from estimates"]),
+    (False, 2000, False, ["Total", "Target", "Left"]),
+    (False, None, True, ["Total", "Net (food minus cardio)"]),
+    (True, 2000, True, ["Total", "From estimates", "Share from estimates", "Target", "Left",
+                        "Net (food minus cardio)"]),
+])
+def test_each_totals_row_shows_by_its_condition(client, estimate, target, add_back, terms):
+    sign_in(client)
+    uid = only_user().id
+    changes = {"add_back_exercise_kcal": add_back, **({"calorie_target_kcal": target} if target else {})}
+    assert "error" not in services.update_settings(uid, changes, "web")
+    entries = [{"description": "Thali", "kcal": 1500}] + ([{"description": "Lassi", "kcal": 500, "estimated": True}]
+                                                          if estimate else [])
+    assert "error" not in services.log_food(uid, {"entries": entries}, "claude")
+    card = food_card(day_of(client, today_of(only_user()).isoformat()))
+    totals = re.search(r'<dl class="facts totals">(.*?)</dl>', card, re.S).group(1)
+    assert re.findall(r"<dt[^>]*>([^<]*)</dt>", totals) == terms
+    numbers = services.get_log(uid, today_of(only_user()).isoformat(), 1)["days"][0]["food"]
+    shown = dict(re.findall(r"<dt[^>]*>([^<]*)</dt><dd[^>]*>([^<]*)</dd>", totals))
+    want = {"Total": formatting.show(numbers["total_kcal"], "kcal", page=True)}
+    if estimate:
+        want["From estimates"] = formatting.show(numbers["estimated_kcal"], "kcal", page=True)
+        want["Share from estimates"] = formatting.show(numbers["estimated_share_pct"], "percent", page=True)
+    if target:
+        want["Target"] = formatting.show(target, "kcal", page=True)
+        want["Left"] = formatting.show(numbers["remaining_kcal"], "kcal_left", page=True)
+    if add_back:
+        want["Net (food minus cardio)"] = formatting.show(numbers["net_kcal"], "net_kcal", page=True)
+    assert shown == want
+    assert '<dt class="total">Total</dt><dd class="total">' in totals  # bold and larger, by the stylesheet
+
+
+def test_an_estimate_of_zero_kcal_still_shows_the_estimates_rows(client):
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.log_food(uid, {"entries": [{"description": "Thali", "kcal": 500},
+                                                              {"description": "Pickle", "kcal": 0, "estimated": True}]},
+                                            "claude")
+    card = food_card(day_of(client, today_of(only_user()).isoformat()))
+    assert "<dt>From estimates</dt><dd>0 kcal</dd>" in card and "<dt>Share from estimates</dt><dd>0%</dd>" in card
+
+
+def test_over_target_the_left_row_says_over(client):
+    sign_in(client)
+    uid = only_user().id
+    services.update_settings(uid, {"calorie_target_kcal": 1000}, "web")
+    services.log_food(uid, {"entries": [{"description": "Thali", "kcal": 1160}]}, "claude")
+    card = food_card(day_of(client, today_of(only_user()).isoformat()))
+    assert "<dt>Left</dt><dd>160 kcal over</dd>" in card and "-160" not in card
+
+
+def test_the_food_card_says_no_of_which_and_brackets_no_figure(client):
+    sign_in(client)
+    uid = only_user().id
+    services.update_settings(uid, {"calorie_target_kcal": 2000, "add_back_exercise_kcal": True}, "web")
+    stock_food(only_user())
+    card = food_card(day_of(client, today_of(only_user()).isoformat()))
+    text = " ".join(p.text for p in tr.html_text(card) if p.kind != "attr")
+    assert "From estimates" in text and "Net (food minus cardio)" in text
+    assert not re.search(r"\bof which\b", text, re.I)
+    assert not re.search(r"\([^()]*\d[^()]*\)", text), text  # no figure inside brackets
+    assert not re.search(r"\(\s*<span", card)  # no tag inside brackets
+
+
+def test_the_fold_out_is_closed_by_default_and_open_by_its_mark(client, fed):
+    on = fed["today"]
+    closed = foldout_of(day_of(client, on))
+    assert closed.startswith('<details class="add" id="add-food">\n  <summary>Add food</summary>')
+    for query in ("add=food", "add=weigh-in&add=food", "add=food&add=weigh-in", "saved=food_entry&add=food"):
+        assert foldout_of(day_of(client, f"{on}?{query}")).startswith('<details class="add" id="add-food" open>'), query
+    for query in ("add=weigh-in", "add=", "add=Food", "saved=food_entry", "addfood=1"):
+        assert foldout_of(day_of(client, f"{on}?{query}")).startswith('<details class="add" id="add-food">'), query
+    page = day_of(client, f"{on}?add=food")
+    assert page.count('id="add-food"') == 1 and '<form id="add-food"' not in page
+    assert f'href="/day/{on}?add=food#add-food"' in hero_of(page)  # the Today card's link lands on it
+
+
+def test_the_fold_out_holds_the_contracts_fields_and_button(client):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    out = foldout_of(day_of(client, on))
+    assert "<summary>Add food</summary>" in out and f'<form method="post" action="/day/{on}/food">' in out
+    labels = re.findall(r'<label for="([^"]+)">([^<]+)</label>', out)
+    assert labels == [("food-description", "Food"), ("food-kcal", "Calories (kcal)"), ("food-meal", "Meal")]
+    assert '<input id="food-kcal" name="kcal" inputmode="numeric" required autocomplete="off">' in out
+    assert '<input id="food-description" name="description" required maxlength="200" autocomplete="off">' in out
+    choices = re.findall(r'<option value="([^"]*)">([^<]+)</option>', out)
+    assert choices == [("", "By the clock"), ("breakfast", "Breakfast"), ("lunch", "Lunch"), ("dinner", "Dinner"),
+                       ("snack", "Snack")]
+    assert '<div class="form-actions"><button class="primary">Save food</button></div>' in out
+    assert re.search(r'<div class="field-row">\s*<div class="field">\s*<label for="food-kcal">', out)
+
+
+@pytest.mark.parametrize("data, field, says", [
+    ({"description": "", "kcal": "100", "meal": ""}, "description", "Give a description, up to 200 characters."),
+    ({"description": "Rice", "kcal": "abc", "meal": "dinner"}, "kcal",
+     "That kcal was not saved: give a whole number from 0 to 5,000."),
+    ({"description": "Rice", "kcal": "6000", "meal": ""}, "kcal",
+     "That kcal was not saved: give a whole number from 0 to 5,000."),
+    ({"description": "Rice", "kcal": "100", "meal": "brunch"}, "meal", "Choose breakfast, lunch, dinner or snack."),
+])
+def test_a_food_error_opens_the_fold_out_under_its_field_tied_to_its_input(client, data, field, says):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    r = post(client, f"/day/{on}/food", **data)
+    assert r.status_code == 400
+    out = foldout_of(r.text)
+    assert out.startswith('<details class="add" id="add-food" open>')
+    control = "select" if field == "meal" else "input"
+    box = re.search(rf'<div class="field has-error">\s*<label for="food-{field}">[^<]*</label>\s*<{control} [^>]*>.*?'
+                    rf'<p class="error" id="food-{field}-error">([^<]*)</p>\s*</div>', out, re.S)
+    assert box and box.group(1) == says
+    tag = re.search(rf'<{control} id="food-{field}"[^>]*>', out).group(0)
+    assert 'aria-invalid="true"' in tag and f'aria-describedby="food-{field}-error"' in tag
+    assert out.count('aria-invalid="true"') == 1 and out.count('class="error"') == 1 and out.count("has-error") == 1
+    # What was typed stays.
+    if data["description"]:
+        assert f'name="description" value="{data["description"]}"' in out
+    if data["kcal"]:
+        assert f'name="kcal" value="{data["kcal"]}"' in out
+    if data["meal"] in web.MEALS:
+        assert f'<option value="{data["meal"]}" selected>' in out
+    else:
+        assert "selected" not in out
+
+
+def test_a_refusal_the_form_has_no_field_for_sits_in_the_fold_out_whole(client, monkeypatch):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    monkeypatch.setattr(services, "log_food", lambda *a: {"error": "date_too_old", "message": "x", "fix": "y"})
+    r = post(client, f"/day/{on}/food", description="Rice", kcal="100")
+    assert r.status_code == 400
+    out = foldout_of(r.text)
+    assert out.startswith('<details class="add" id="add-food" open>')
+    assert re.search(r'<form method="post" action="[^"]+">\s*<input type="hidden" name="csrf_token" value="[^"]+">\s*'
+                     r'<div class="error"><p>That date cannot be used: [^<]+</p></div>', out)
+    assert "aria-invalid" not in out and '<p class="error"' not in out
+
+
+def test_another_cards_error_leaves_the_food_fold_out_closed(client):
+    sign_in(client)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/weigh-in", kg="abc")
+    assert r.status_code == 400 and foldout_of(r.text).startswith('<details class="add" id="add-food">')
+
+
+@pytest.mark.parametrize("servings, label, says", [
+    (2, "1 roti", "2 rotis"), (2, "1 medium apple", "2 medium apples"), (1, "1 roti", "1 roti"),
+    (2, "100 g", "2 × 100 g"), (2, None, "2"),
+])
+def test_on_the_page_a_no_break_space_goes_before_the_serving_words(servings, label, says):
+    assert web.serving_text(servings, label, page=True) == says
+    assert web.serving_text(servings, label) == says.replace(" ", " ")
+
+
+@pytest.mark.parametrize("state", ["empty", "fed", "add", "error", "sample", "past"])
+def test_the_food_card_never_says_claude(client, state):
+    sign_in(client)
+    uid = only_user().id
+    on = today_of(only_user())
+    if state in ("fed", "add", "past"):
+        stock_food(only_user())
+    if state == "sample":
+        services.add_sample_data(uid, "web")
+    address = on.isoformat() + ("?add=food" if state == "add" else "")
+    if state == "past":
+        address = (on - timedelta(days=1)).isoformat()
+    if state == "error":
+        page = post(client, f"/day/{on.isoformat()}/food", description="Rice", kcal="abc").text
+    else:
+        page = day_of(client, address)
+    card = food_card(page)
+    assert "<h2>Food</h2>" in card
+    assert not re.search(r"claude", " ".join(p.text for p in tr.html_text(card)), re.I)
+
+
+def test_food_that_totals_zero_still_draws_the_card_with_its_totals(client):
+    """A logged 0 kcal entry is food: the card shows it, Total 0 kcal and, with add-back on, Net 0 kcal."""
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.update_settings(uid, {"add_back_exercise_kcal": True}, "web")
+    assert "error" not in services.log_food(uid, {"entries": [{"description": "Black coffee", "kcal": 0}]}, "claude")
+    card = food_card(day_of(client, today_of(only_user()).isoformat()))
+    assert [(e["name"], e["figures"]) for e in food_entries(card)] == [("Black coffee", "0\u00a0kcal")]
+    assert '<dd class="total">0\u00a0kcal</dd>' in card and "<dt>Net (food minus cardio)</dt><dd>0\u00a0kcal</dd>" in card
+    assert "No food logged on this day" not in card
+
+
+def test_what_was_typed_comes_back_escaped(client):
+    sign_in(client)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/food", description='<b>"Rice"</b>', kcal="abc")
+    out = foldout_of(r.text)
+    assert 'value="&lt;b&gt;&#34;Rice&#34;&lt;/b&gt;"' in out and "<b>" not in out

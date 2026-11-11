@@ -169,6 +169,7 @@ FIELD_QUANTITIES = {"kg": "weigh_in", "kcal": "kcal", "minutes": "session_time",
                     "kcal_per_serving": "kcal_per_serving", "grams_per_serving": "grams"}
 
 MEALS = ("breakfast", "lunch", "dinner", "snack")
+MEAL_CHOICES = tuple((meal, meal.capitalize()) for meal in MEALS)  # the Food fold-out's Meal choices
 # Who supplied a food entry's number (rule 13), in words. An estimate is marked on the page.
 SOURCE_WORDS = {"you_said": "you said", "saved_food": "saved food", "usda": "USDA", "claude_estimate": "estimate"}
 ATTRIBUTION = ("Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
@@ -854,7 +855,8 @@ def measurement_quantity(kind: str) -> str:
     return MEASUREMENT_QUANTITIES[rules.MEASUREMENTS[kind][0]]
 
 
-async def day_page(request: Request, form_error: dict | None = None, status_code: int = 200) -> Response:
+async def day_page(request: Request, form_error: dict | None = None, status_code: int = 200,
+                   typed: dict | None = None) -> Response:
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
@@ -893,7 +895,12 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
                 kind_names=KIND_NAMES, labels=MEASUREMENT_LABELS, meals=MEALS,
                 source_words=SOURCE_WORDS, measurement_quantity=measurement_quantity,
                 food=food, cardio=cardio, activities=activities,
-                serving_text=serving_text, same_name=same_name,
+                # The Food card: each entry's lines, the estimates row's condition, the fold-out's choices,
+                # what was typed into it before an error, and the marks that send it open (?add=food).
+                food_name=food_name, food_note=food_note, serving_words=serving_words,
+                has_estimate=any(e.get("source") == "claude_estimate"
+                                 for meal in ((food or {}).get("meals") or {}).values() for e in meal),
+                meal_choices=MEAL_CHOICES, typed=typed or {}, adding=request.query_params.getlist("add"),
                 # The Today card's state: a new account (today's page, sample_state empty), or the day's
                 # food, by whether any meal holds an entry (a day can total 0 kcal with food logged).
                 sample_rows=state["sample_rows"], new_account=state["empty"] and on == today,
@@ -917,11 +924,12 @@ def _plural(word: str) -> str | None:
     return word + "s"
 
 
-def serving_text(servings, label) -> str:
+def serving_text(servings, label, page: bool = False) -> str:
     """How much of a saved food was eaten, in the serving's own words (decision 14). Only "1 <word>" and
     "1 <size> <word>" are put in the plural, and only where a plain -s is right: 2 of "1 roti" is
     "2 rotis", of "1 medium apple" "2 medium apples". Anything else is counted: "2 × 100 g", "2 × 1 oz".
-    One serving is the label itself; no label is the bare amount."""
+    One serving is the label itself; no label is the bare amount. page=True puts a no-break space between
+    the amount and the plural words (section C)."""
     amount = formatting.show(servings, "servings")
     text = str(label or "").strip()
     if not text:
@@ -933,12 +941,45 @@ def serving_text(servings, label) -> str:
     if plural is None:
         return f"{amount} × {text}"
     size = f"{found.group(1)} " if found.group(1) else ""
-    return f"{amount} {size}{plural}"
+    return f"{amount}{NBSP if page else ' '}{size}{plural}"
 
 
 def same_name(description: str | None, name: str | None) -> bool:
     """True when an entry's description only repeats its saved food's name, so the page shows it once."""
     return (description or "").strip().casefold() == (name or "").strip().casefold()
+
+
+NBSP = " "
+# What sample data adds to a sample food's name when a deleted saved food of the person's holds it
+# (sample._free_name). The sample tag says it already, so the Food card shows the mark once.
+SAMPLE_SUFFIX = " (sample)"
+
+
+def food_name(entry: dict) -> str:
+    """An entry's line one: the saved food's name, else the description. On a sample row, without the
+    "(sample)" its name may carry: the sample tag beside it says so."""
+    name = entry.get("saved_food_name") or entry.get("description") or ""
+    if entry.get("is_sample") and name.casefold().endswith(SAMPLE_SUFFIX):
+        return name[:-len(SAMPLE_SUFFIX)]
+    return name
+
+
+def food_note(entry: dict) -> str | None:
+    """A description that differs from its saved food's name, for its own grey line. None otherwise."""
+    name, description = entry.get("saved_food_name"), entry.get("description")
+    if not name or not description or same_name(description, name):
+        return None
+    return description
+
+
+def serving_words(entry: dict) -> str:
+    """How much was eaten, after the kcal on line two: a saved food's servings in its own words, a USDA
+    food's grams. Nothing for a number stated or estimated."""
+    if entry.get("saved_food_name") is not None and entry.get("servings"):
+        return serving_text(entry["servings"], entry.get("serving_label"), page=True)
+    if entry.get("source") == "usda" and entry.get("grams"):
+        return formatting.show(entry["grams"], "grams", page=True)
+    return ""
 
 
 async def cardio_names() -> list[str]:
@@ -1056,7 +1097,10 @@ async def log_on_day(request: Request, kind: str) -> Response:
     if failed(result):
         measured = str(form.get("kind") or "") if kind == "measurement" else None
         errors = field_errors(kind, result, measured)
-        shown = await day_page(request, form_error={kind: errors}, status_code=400)
+        # What was typed stays in the Food fold-out, which the error sends open.
+        typed = {kind: {k: str(form.get(k) or "") for k in ("description", "kcal", "meal")}} \
+            if kind == "food_entry" else None
+        shown = await day_page(request, form_error={kind: errors}, status_code=400, typed=typed)
         if shown.status_code == 404:  # a day that has no page (after today): say why, plainly
             return message(request, "Not saved", " ".join(errors.values()), status_code=400)
         return shown

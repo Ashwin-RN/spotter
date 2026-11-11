@@ -28,8 +28,9 @@ import pytest
 from app import services, web
 from app.models import Bodyweight, SavedFood
 
-from .test_pages_text import (ACCOUNTS, BUILT, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes, get_paths,
-                              names_of, parse, render_error_page, route_of, step_4_findings)
+from .test_pages_text import (ACCOUNTS, BUILT, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
+                              estimate_findings, get_paths, names_of, parse, render_error_page, route_of,
+                              step_4_findings)
 from .test_web import client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
 
 STATIC = Path(web.HERE) / "static"
@@ -381,7 +382,9 @@ def error_posts(today: str, user_id: int) -> dict[str, list[tuple[str, dict]]]:
     weigh_in = next(iter(_ids(Bodyweight, user_id)), None)
     out = {
         "/day/{date}": [(f"/day/{today}/weigh-in", {"kg": "abc"}),
-                        (f"/day/{today}/food", {"description": "Rice", "kcal": "abc"})],
+                        (f"/day/{today}/food", {"description": "Rice", "kcal": "abc"}),
+                        (f"/day/{today}/food", {"description": "", "kcal": "100"}),
+                        (f"/day/{today}/food", {"description": "Rice", "kcal": "100", "meal": "brunch"})],
         "/foods": [("/foods", {"name": "", "serving_label": "1 bowl", "kcal_per_serving": "abc"})],
         "/settings": [("/settings", {"time_zone": "Not/AZone"}),
                       ("/settings/targets", {"calorie_target_kcal": "abc"})],
@@ -827,3 +830,75 @@ def test_each_new_mark_makes_its_page_calm_with_no_strip(client, address):
     assert s.expected_calm() and frame_findings(s) == []
     if address.endswith(("saved=unchanged", "saved=time_zone")):
         assert not s.dom.find_all("p", "ok") and not s.dom.find_all("div", "ok")
+
+
+# ---------------------------------------------------------------- the Food card under the page rules (pass B4)
+
+# The page rules that do not yet run on the whole day page (it is not in BUILT), run here on the Food card
+# alone, with T3's estimate check. They hold whether or not BUILT names the day page.
+CARD_RULES = (table_wrap_findings, inputmode_findings, describedby_findings, foldout_findings)
+
+
+def food_card_of(s: Seen) -> Seen:
+    """The same response, its tree cut down to the Food card: the div.card in div.col-main headed Food."""
+    [main] = s.dom.find_all("div", "col-main")
+    [card] = [c for c in main.elements() if c.is_("div", "card") and [h.text() for h in c.find_all("h2")] == ["Food"]]
+    s.dom = card
+    return s
+
+
+def card_findings(s: Seen) -> list[str]:
+    card = food_card_of(s)
+    return [f"{s.address}: {f}" for f in [f for rule in CARD_RULES for f in rule(card)] + estimate_findings(card.dom)]
+
+
+@pytest.mark.parametrize("account", sorted(ACCOUNTS))
+def test_the_food_card_keeps_the_page_rules_on_every_day_and_every_error(client, account):
+    sign_in(client)
+    user = only_user()
+    ACCOUNTS[account](user.id)
+    today = today_of(user).isoformat()
+    findings, opened = [], 0
+    for address in get_paths(user.id)["/day/{date}"]:
+        r = client.get(address)
+        assert r.status_code == 200, address
+        s = Seen(address, r.text, True, today=today)
+        findings += card_findings(s)
+        opened += "open" in s.dom.find_all("details", "add")[0].attrs
+    for address, data in error_posts(today, user.id)["/day/{date}"]:
+        r = post(client, address, **data)
+        assert r.status_code == 400, address
+        s = Seen(address, r.text, True, today=today, posted_to="/day/{date}")
+        findings += card_findings(s)
+        if address.endswith("/food"):
+            assert "open" in s.dom.find_all("details", "add")[0].attrs and s.dom.find_all("p", "error"), data
+    assert opened == 2  # the two ?add=food addresses, and no other
+    assert not findings, "\n".join(findings)
+
+
+def test_the_card_rules_catch_each_break_on_the_real_card(client):
+    """Each rule, on the real Food card: a fold-out sent open with no mark and no error, one with an error sent
+    closed, an error tied to nothing, a number input with no inputmode, and an estimate tag in brackets."""
+    sign_in(client)
+    services.log_food(only_user().id, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True}]}, "claude")
+    today = today_of(only_user()).isoformat()
+    day = f"/day/{today}"
+    page = client.get(day).text
+    error = post(client, f"{day}/food", description="Rice", kcal="abc").text
+    assert card_findings(Seen(day, page, True, today=today)) == []
+    assert card_findings(Seen(f"{day}/food", error, True, today=today, posted_to="/day/{date}")) == []
+
+    def broken(markup: str, old: str, new: str, address: str = day) -> list[str]:
+        assert markup.count(old) == 1, old
+        return card_findings(Seen(address, markup.replace(old, new), True, today=today, posted_to="/day/{date}"))
+
+    closed, opened = '<details class="add" id="add-food">', '<details class="add" id="add-food" open>'
+    assert any("is open" in f for f in broken(page, closed, opened))
+    assert any("holds an error, closed" in f for f in broken(error, opened, closed, f"{day}/food"))
+    assert any("tied to no input" in f for f in broken(error, ' aria-describedby="food-kcal-error"', "", f"{day}/food"))
+    assert any("invalid with no error" in f for f in broken(error, ' id="food-kcal-error"', "", f"{day}/food"))
+    assert any("no inputmode" in f for f in broken(page, ' name="kcal" inputmode="numeric"', ' name="kcal"'))
+    assert any("in brackets" in f for f in broken(page, '<span class="entry-tags"><span class="tag tag-claude_estimate">',
+                                                  '<span class="entry-tags">(<span class="tag tag-claude_estimate">'))
+    assert any("table outside" in f for f in broken(page, '<dl class="facts totals">', '<table><tr><td>x</td></tr></table>'
+                                                    '<dl class="facts totals">'))
