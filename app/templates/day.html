@@ -55,7 +55,7 @@
   {% if has_food %}
   <p class="big">{{ rolling(food.total_kcal|show("kcal", unit=False)) }}&nbsp;<span class="unit">kcal</span></p>
   {% else %}
-  <p class="big">No food yet</p>
+  <p class="big words">No food{{ yet }}</p>
   {% endif %}
   <p class="figure-label">{% if not food or food.target_kcal is none %}No calorie target set{% else %}{{ food.target_kcal|show("kcal") }} target, {{ food.remaining_kcal|show("kcal_left") }}{% endif %}</p>
   <ul class="chips" aria-label="{{ "Logged today" if on_today else "Logged on this day" }}">

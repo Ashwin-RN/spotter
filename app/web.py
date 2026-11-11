@@ -1012,11 +1012,13 @@ def day_strip(params) -> dict | None:
 
 
 def undo_target(value: object) -> tuple[str, str] | None:
-    """`deleted=<kind>:<id>` after a delete: what the Undo form restores. Only a known kind and digits."""
+    """`deleted=<kind>:<id>` after a delete: what the Undo form restores. Only a known kind and an id of
+    ASCII digits, 1 or more, with no leading zero: "²", "١٢" and "５" are digits to str.isdigit, never an id."""
     if not isinstance(value, str) or ":" not in value:
         return None
     kind, _, entry_id = value.partition(":")
-    if kind not in EDIT_FIELDS or not entry_id.isdigit() or len(entry_id) > 10:
+    if kind not in EDIT_FIELDS or not (entry_id.isascii() and entry_id.isdigit()) or len(entry_id) > 10 \
+            or entry_id.startswith("0"):
         return None
     return kind, entry_id
 

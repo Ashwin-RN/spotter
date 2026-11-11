@@ -1560,10 +1560,19 @@ def test_undo_twice_says_there_is_nothing_to_undo(client, stocked):
     assert r.status_code == 409 and "nothing to undo" in r.text
 
 
-@pytest.mark.parametrize("query", ["goal:1", "bodyweight:abc", "bodyweight", "<b>:1", "bodyweight:1;x"])
+@pytest.mark.parametrize("query", ["goal:1", "bodyweight:abc", "bodyweight", "<b>:1", "bodyweight:1;x",
+                                   # digits to str.isdigit that are no id, and no id at all
+                                   "bodyweight:²", "bodyweight:١٢", "bodyweight:５",
+                                   "bodyweight:0", "bodyweight:007", "bodyweight:"])
 def test_a_forged_undo_link_shows_no_undo(client, stocked, query):
     page = client.get(f"/day/{stocked['today'].isoformat()}", params={"deleted": query}).text
     assert '<div class="ok undo">' not in page and "/restore" not in page
+    assert 'class="ok' not in page  # no strip of any kind
+
+
+def test_the_kinds_that_can_be_edited_are_the_kinds_with_words():
+    """day_strip names a deleted entry by ENTRY_WORDS[kind] for any kind undo_target lets through."""
+    assert web.EDIT_FIELDS.keys() == web.ENTRY_WORDS.keys()
 
 
 def test_a_day_after_today_left_by_a_zone_change_still_has_a_page(client):
@@ -2889,6 +2898,26 @@ def test_a_send_that_fails_while_the_500_page_goes_out_leaves_the_crash_raised(c
     assert "The 500 page could not be sent: OSError" in [r.getMessage() for r in logs.records]
 
 
+def test_a_cancel_while_the_500_page_goes_out_passes_through(client, logs):
+    """A cancel is not a failed send: it leaves PageErrors as it came, never swallowed in place of the crash."""
+    sent = []
+
+    async def crashing(scope, receive, send):
+        raise RuntimeError("zqwy original")
+
+    async def send(message):
+        sent.append(message)
+        raise asyncio.CancelledError()
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(web.PageErrors(crashing)(full_scope(), receive, send))
+    assert [m["type"] for m in sent] == ["http.response.start"]
+    assert not [r for r in logs.records if "could not be sent" in r.getMessage()]
+
+
 def test_a_cancelled_request_passes_through_with_nothing_sent(client):
     """A cancelled request is not a crash: nothing is sent. The same harness does send the page on a crash."""
     sent = []
@@ -2969,7 +2998,7 @@ def test_a_new_account_on_another_day_shows_the_food_state_without_yet(client):
     yesterday = (today_of(only_user()) - timedelta(days=1)).isoformat()
     page = day_of(client, yesterday)
     assert hero_of(page).startswith('<section class="card hero" aria-labelledby="today-card-label">')
-    assert hero_lines(page) == ["Eaten", "No food yet", "No calorie target set", "No weigh-in", "No lifts",
+    assert hero_lines(page) == ["Eaten", "No food", "No calorie target set", "No weigh-in", "No lifts",
                                 "No cardio", "Add food"]
     assert [cls for cls, _ in chips_of(page)] == ["chip-weight is-missing", "chip-lifts is-missing",
                                                   "chip-cardio is-missing"]
@@ -3015,7 +3044,7 @@ def test_the_target_line_shows_on_a_day_with_no_food_too(client):
     sign_in(client)
     services.update_settings(only_user().id, {"calorie_target_kcal": 2000}, "web")
     yesterday = (today_of(only_user()) - timedelta(days=1)).isoformat()
-    assert hero_lines(day_of(client, yesterday))[1:3] == ["No food yet", "2,000 kcal target, 2,000 kcal left"]
+    assert hero_lines(day_of(client, yesterday))[1:3] == ["No food", "2,000 kcal target, 2,000 kcal left"]
 
 
 def test_each_chip_present_on_another_day_and_missing_today_with_yet(client):
@@ -3034,7 +3063,8 @@ def test_each_chip_present_on_another_day_and_missing_today_with_yet(client):
     assert [c for c, _ in chips_of(on_today)] == ["chip-weight is-missing", "chip-lifts is-missing",
                                                   "chip-cardio is-missing"]
     before = day_of(client, yesterday)
-    assert hero_lines(before)[:2] == ["Eaten", "No food yet"]
+    assert hero_lines(before)[:2] == ["Eaten", "No food"]
+    assert '<p class="big words">No food</p>' in hero_of(before)
     assert chips_of(before) == [("chip-weight", f"Weigh-in {kg(79)}"), ("chip-lifts", "Lifts logged"),
                                 ("chip-cardio", "Outdoor Walk " + formatting.show(45, "session_time"))]
     assert f"<b>{kg(79)}</b>" in hero_of(before)
@@ -3055,6 +3085,7 @@ def test_each_chip_present_today_and_missing_on_another_day_without_yet(client):
     assert chips_of(page) == [("chip-weight", f"Weigh-in {kg(80.25)}"), ("chip-lifts", "Lifts logged"),
                               ("chip-cardio", "Treadmill Run " + formatting.show(75, "session_time"))]
     assert hero_lines(page)[:2] == ["Eaten today", "No food yet"]
+    assert '<p class="big words">No food yet</p>' in hero_of(page)
     two_ago = (today - timedelta(days=2)).isoformat()
     assert hero_lines(day_of(client, two_ago))[3:6] == ["No weigh-in", "No lifts", "No cardio"]
 
@@ -3073,6 +3104,7 @@ DAY_STRIP_CASES = [
     # One strip only: the Undo strip first, then deleted, saved and restored.
     ("saved=bodyweight&restored=measurement", "Weigh-in saved."),
     ("restored=measurement&deleted=sample", "Sample data removed."),
+    ("saved=bodyweight&deleted=sample", "Sample data removed."),
     ("saved=unchanged&restored=cardio_entry", "Cardio session restored."),
 ]
 
@@ -3128,6 +3160,39 @@ def test_the_top_of_today_runs_head_banner_strip_card_then_the_columns(client, m
     head = re.search(r'<div class="page-head">.*?</div>', page, re.S).group(0)
     assert '<nav class="day-nav" aria-label="Days">' in head and "Next day" not in head
     assert re.search(r'<a class="back" href="/day/[\d-]+" rel="prev">Previous day</a>', head)
+
+
+def shape(node) -> tuple[str, ...]:
+    """An element as its tag and its classes, for comparing a page's structure."""
+    return (node.tag, *node.classes)
+
+
+def card_titles(wrapper) -> list[str]:
+    """The cards directly inside a wrapper, each by its first h2."""
+    return [next(iter(card.find_all("h2"))).text() for card in wrapper.elements()
+            if card.is_(cls="card")]
+
+
+@pytest.mark.parametrize("address", ["{today}?saved=sample", "{yesterday}?saved=sample"])
+def test_each_wrapper_holds_exactly_its_cards_and_the_banner_spans_the_page(client, monkeypatch, address):
+    """Read as a tree, not as text: main's own children run page head, banner, strip, Today card, col-main,
+    col-side. col-main holds the Food card alone, col-side the four cards after it in order. The banner is a
+    child of main, after the page head has closed, never inside it."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    sign_in(client)
+    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3}, raising=False)
+    today = today_of(only_user())
+    address = address.format(today=today.isoformat(), yesterday=(today - timedelta(days=1)).isoformat())
+    main = next(iter(parse(day_of(client, address)).find_all("main")))
+    children = main.elements()
+    assert [shape(c) for c in children] == [("div", "page-head"), ("p", "notice", "sample-banner"), ("p", "ok"),
+                                            ("section", "card", "hero"), ("div", "col-main"), ("div", "col-side")]
+    head, banner = children[0], children[1]
+    assert not head.find_all(cls="sample-banner") and banner.parent is main
+    assert card_titles(children[4]) == ["Food"] and len(children[4].elements()) == 1
+    assert card_titles(children[5]) == ["Lifts", "Cardio", "Weigh-in", "Measurements"]
+    assert len(children[5].elements()) == 4
 
 
 def test_todays_h1_is_today_with_the_day_under_it(client, monkeypatch):
@@ -3196,7 +3261,7 @@ def test_no_rolling_number_without_a_number(client):
     sign_in(client)
     assert 'class="roll' not in day_of(client, today_of(only_user()).isoformat())  # a new account
     yesterday = (today_of(only_user()) - timedelta(days=1)).isoformat()
-    assert 'class="roll' not in day_of(client, yesterday)  # No food yet
+    assert 'class="roll' not in day_of(client, yesterday)  # No food
 
 
 @pytest.mark.parametrize("state", ["new", "food", "none", "past", "strip"])

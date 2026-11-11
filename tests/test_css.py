@@ -623,6 +623,15 @@ def test_the_rolling_number_shows_only_on_the_today_card_with_motion(css):
     assert {f".roll .d{n} .strip" for n in range(10)} <= {s for r in css.rules for s in r.selectors}
 
 
+def test_words_in_the_today_cards_number_slot_wrap_at_the_titles_size(css):
+    """"No food yet" in the 64 px nowrap slot would run off a 360 px phone. Words there (p.big.words) take
+    h2.hero-title's type and wrap. The plain .big keeps nowrap for a number."""
+    for prop in ("font-size", "line-height", "font-weight", "letter-spacing"):
+        assert css.value(".hero .big.words", prop) == css.value(".hero h2.hero-title", prop), prop
+    assert css.value(".hero .big.words", "white-space") == "normal"
+    assert css.value(".big", "white-space") == "nowrap"
+
+
 # ---------------------------------------------------------------- tiles and sheets without popovers
 
 def test_a_tile_twin_shows_where_popovers_do_not(css):

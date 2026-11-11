@@ -286,6 +286,21 @@ def popover_findings(s: Seen) -> list[str]:
     return out
 
 
+def labelledby_findings(s: Seen) -> list[str]:
+    """Every aria-labelledby, on any element, names one or more ids, each on the page. A card named by an id
+    that is gone is named by nothing."""
+    ids, out = _by_id(s), []
+    for node in s.dom.iter():
+        if "aria-labelledby" not in node.attrs:
+            continue
+        labels = node.attrs["aria-labelledby"].split()
+        missing = [label for label in labels if label not in ids]
+        if not labels or missing:
+            out.append(f"<{node.tag} class={node.attrs.get('class', '')!r}> aria-labelledby names no element: "
+                       f"{missing or labels!r}")
+    return out
+
+
 def twin_findings(s: Seen) -> list[str]:
     """Every tile button with a sheet has a twin a.tile-link with the same words."""
     twins = {a.text() for a in s.dom.find_all("a", "tile-link")}
@@ -362,11 +377,12 @@ def describedby_findings(s: Seen) -> list[str]:
 
 
 PAGE_RULES = (svg_findings, popover_findings, twin_findings, foldout_findings, goal_li_findings,
-              table_wrap_findings, inputmode_findings, describedby_findings)
+              labelledby_findings, table_wrap_findings, inputmode_findings, describedby_findings)
 # The page rules that already hold on every page today, so they run on every page. The other three (a table
 # outside div.table-wrap, a number input with no inputmode, an error tied to no input) fail on today's
 # pages, so they run on the routes in BUILT only.
-EVERYWHERE = (svg_findings, popover_findings, twin_findings, foldout_findings, goal_li_findings)
+EVERYWHERE = (svg_findings, popover_findings, twin_findings, foldout_findings, goal_li_findings,
+              labelledby_findings)
 
 
 def page_rule_findings(s: Seen) -> list[str]:
@@ -672,6 +688,11 @@ def test_calm_follows_the_address_and_the_post():
      '<details class="add" open><summary>Add weigh-in</summary></details>'),
     (foldout_findings, '<details class="add" open><summary>Add</summary><p class="error" id="e">x</p></details>',
      '<details class="add"><summary>Add</summary><div class="field has-error"></div></details>'),
+    (labelledby_findings, '<section class="card hero" aria-labelledby="l"><p id="l">Eaten</p></section>',
+     '<section class="card hero" aria-labelledby="l"><p>Eaten</p></section>'),
+    (labelledby_findings, '<section aria-labelledby="a b"><h2 id="a">x</h2><p id="b">y</p></section>',
+     '<section aria-labelledby="a b"><h2 id="a">x</h2></section>'),
+    (labelledby_findings, '<ul aria-label="Logged"><li>x</li></ul>', '<section aria-labelledby=""><h2>x</h2></section>'),
     (goal_li_findings, '<ul class="goals"><li class="goal"><p class="legend"><span>Plan</span></p></li></ul>',
      '<ul class="goals"><li class="goal"><ul class="legend"><li>Plan</li></ul></li></ul>'),
     (table_wrap_findings, '<div class="table-wrap"><table><tr><td>x</td></tr></table></div>',

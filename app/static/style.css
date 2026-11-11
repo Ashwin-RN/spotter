@@ -295,6 +295,7 @@ p.empty-line { color: var(--text-2); font-size: 15px; }
 .hero .big .unit { font-size: 24px; letter-spacing: 0; }
 .hero .figure-label { margin-top: 6px; }
 .hero h2.hero-title { font-size: 30px; line-height: 1.15; font-weight: 700; letter-spacing: -.025em; }
+.hero .big.words { font-size: 30px; line-height: 1.15; font-weight: 700; letter-spacing: -.025em; white-space: normal; }
 .hero > p.muted { max-width: 34em; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
