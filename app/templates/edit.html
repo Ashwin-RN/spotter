@@ -10,7 +10,7 @@
     <input id="edit-kg" name="kg" value="{{ entry.kg|field("weigh_in") if entry.kg is number else entry.kg }}" inputmode="decimal" required autocomplete="off">
     {% if errors.kg %}<p class="error">{{ errors.kg }}</p>{% endif %}
     {% elif kind == "measurement" %}
-    <p>{{ labels.get(entry.kind, entry.kind.replace("_", " ").capitalize()) }}{% if entry.unit %} ({{ entry.unit }}){% endif %}</p>
+    <p>{{ kind_word(entry.kind) }}{% if entry.unit %} ({{ entry.unit }}){% endif %}</p>
     <label for="edit-value">Value</label>
     <input id="edit-value" name="value" value="{{ entry.value|field(measurement_quantity(entry.kind)) if entry.value is number else entry.value }}" inputmode="decimal" required autocomplete="off">
     {% if errors.value %}<p class="error">{{ errors.value }}</p>{% endif %}

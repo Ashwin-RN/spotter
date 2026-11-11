@@ -79,7 +79,7 @@ from app.config import Settings, get_settings
 from app.models import (
     CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
 )
-from app.services import body, lifts, progress as progress_data
+from app.services import body, lifts, measurements, progress as progress_data
 from app.services.common import SAMPLE_NOTE
 
 log = logging.getLogger("spotter")
@@ -213,10 +213,6 @@ CLAUDE_CAN_LINES = {
     "log_delete": "Read, log and delete: Claude can also delete entries. A deleted entry can always be restored.",
 }
 CLAUDE_CAN_LABELS = {"read": "Read", "log": "Log", "log_delete": "Log and delete"}
-
-# Measurement kinds as the page names them. Units and ranges come from rules.MEASUREMENTS, the table the
-# services check against.
-MEASUREMENT_LABELS = {"sleep_hours": "Sleep", "resting_hr": "Resting heart rate", "water_ml": "Water"}
 
 # Goals (stage 5, decisions 1 to 3). The form shows every field for every kind; the service decides.
 GOAL_KINDS = (("lift", "A lift: an estimated max in kg"), ("bodyweight", "Body weight in kg"),
@@ -837,13 +833,10 @@ async def today_page(request: Request) -> Response:
     return redirect(address)
 
 
-def measurement_kinds() -> list[tuple[str, str, str]]:
-    """(kind, label, unit) for the measurement form, in the schema's order."""
-    return [(k, measurement_label(k), rules.MEASUREMENTS[k][0]) for k in MEASUREMENT_KINDS]
-
-
-def measurement_label(kind: str) -> str:
-    return MEASUREMENT_LABELS.get(kind, kind.replace("_", " ").capitalize())
+def measurement_kinds() -> list[tuple[str, str]]:
+    """(kind, words) for the Add measurement fold-out's Kind, in the schema's order: the kind's word from
+    measurements.kind_word, then its unit in brackets ("Resting heart rate (bpm)")."""
+    return [(k, f"{measurements.kind_word(k)} ({rules.MEASUREMENTS[k][0]})") for k in MEASUREMENT_KINDS]
 
 
 # The quantity formatting.show takes for a measurement, by the unit rules.MEASUREMENTS gives its kind.
@@ -891,10 +884,15 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     state = await _db(services.sample_state, user.id)
     return page(request, "day.html", status_code=status_code, day=day, on=on, today=today,
                 prev_day=prev_day, next_day=next_day,
-                kinds=measurement_kinds(), strip=day_strip(request.query_params), form_error=form_error or {},
-                kind_names=KIND_NAMES, labels=MEASUREMENT_LABELS, meals=MEALS,
+                strip=day_strip(request.query_params), form_error=form_error or {},
+                kind_names=KIND_NAMES, meals=MEALS,
                 source_words=SOURCE_WORDS, measurement_quantity=measurement_quantity,
-                food=food, cardio=cardio, activities=activities,
+                food=food, cardio=cardio,
+                # The side cards: a measurement's name, the fold-outs' choices (each activity, each kind
+                # with its unit), and whether any cardio row says No estimate, for the footnote.
+                kind_word=measurements.kind_word, kind_choices=measurement_kinds(),
+                activity_choices=[(name, name) for name in activities],
+                lacks_estimate=any(not c.get("estimate") for c in cardio),
                 # The Food card: each entry's lines, the estimates row's condition, the fold-out's choices,
                 # what was typed into it before an error, and the marks that send it open (?add=food).
                 food_name=food_name, food_note=food_note, serving_words=serving_words,
@@ -1038,7 +1036,7 @@ def form_message(kind: str, field: str, measured: str | None = None) -> str:
         in_unit = "" if unit == measured else f" in {unit}"
         quantity = measurement_quantity(measured)
         lowest, highest = formatting.show(lo, quantity, unit=False), formatting.show(hi, quantity, unit=False)
-        return (f"That value was not saved: give {measurement_label(measured).lower()}{in_unit}, from {lowest} to "
+        return (f"That value was not saved: give {measurements.kind_word(measured).lower()}{in_unit}, from {lowest} to "
                 f"{highest}" + (", as a whole number." if whole else "."))
     return "That value was not saved: give a number in the unit shown."
 
@@ -1072,8 +1070,13 @@ def field_errors(kind: str, result: dict, measured: str | None = None) -> dict:
     return out
 
 
+# The fields each side card's fold-out keeps as typed after its error (the Food fold-out's are in log_on_day).
+TYPED_FIELDS = {"bodyweight": ("kg",), "measurement": ("kind", "value"),
+                "cardio_entry": ("exercise", "minutes", "distance_km")}
+
+
 async def log_on_day(request: Request, kind: str) -> Response:
-    """POST from the day page: a weigh-in or a measurement for that day."""
+    """POST from the day page: a weigh-in, a measurement, a food or a cardio entry for that day."""
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
@@ -1102,6 +1105,9 @@ async def log_on_day(request: Request, kind: str) -> Response:
         # What was typed stays in the Food fold-out, which the error sends open.
         typed = {kind: {k: str(form.get(k) or "") for k in ("description", "kcal", "meal")}} \
             if kind == "food_entry" else None
+        # And in the cardio, weigh-in and measurement fold-outs, the same way.
+        if kind in TYPED_FIELDS:
+            typed = {kind: {k: str(form.get(k) or "") for k in TYPED_FIELDS[kind]}}
         shown = await day_page(request, form_error={kind: errors}, status_code=400, typed=typed)
         if shown.status_code == 404:  # a day that has no page (after today): say why, plainly
             return message(request, "Not saved", " ".join(errors.values()), status_code=400)
@@ -1177,7 +1183,7 @@ async def edit_page(request: Request) -> Response:
         entry = {**entry, **{f: str(form.get(f) or "") for f in EDIT_FIELDS[kind]}}  # show what they typed
     activities = await cardio_names() if kind == "cardio_entry" else []
     return page(request, "edit.html", status_code=status, kind=kind, kind_name=KIND_NAMES[kind],
-                entry_id=found["id"], entry=entry, errors=errors, labels=MEASUREMENT_LABELS,
+                entry_id=found["id"], entry=entry, errors=errors, kind_word=measurements.kind_word,
                 meals=MEALS, source_words=SOURCE_WORDS, activities=activities, measurement_quantity=measurement_quantity,
                 field_quantities=FIELD_QUANTITIES,
                 shows_estimate=kind == "cardio_entry" and entry.get("estimated_kcal") is not None)
@@ -1605,7 +1611,7 @@ async def goals_view(request: Request, user: User, errors: dict | None = None, t
     return page(request, "goals.html", status_code=status_code, goals=result.get("goals") or [], notes=notes,
                 closed=result.get("closed") or [], errors=errors or {}, typed=typed or {}, saved=saved,
                 kinds=GOAL_KINDS, lifts=await exercise_names("lift"), activities=await cardio_names(),
-                measurement_choices=[(k, measurement_label(k), rules.MEASUREMENTS[k][0]) for k in GOAL_MEASUREMENTS],
+                measurement_choices=[(k, measurements.kind_word(k), rules.MEASUREMENTS[k][0]) for k in GOAL_MEASUREMENTS],
                 goal_quantity=goal_quantity, status_class=lambda s: STATUS_CLASSES.get(s, ""),
                 closed_words=CLOSED_WORDS, sample_rows=state["sample_rows"], today=result.get("today"),
                 zone=user.time_zone)

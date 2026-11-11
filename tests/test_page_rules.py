@@ -400,7 +400,11 @@ def error_posts(today: str, user_id: int) -> dict[str, list[tuple[str, dict]]]:
         "/day/{date}": [(f"/day/{today}/weigh-in", {"kg": "abc"}),
                         (f"/day/{today}/food", {"description": "Rice", "kcal": "abc"}),
                         (f"/day/{today}/food", {"description": "", "kcal": "100"}),
-                        (f"/day/{today}/food", {"description": "Rice", "kcal": "100", "meal": "brunch"})],
+                        (f"/day/{today}/food", {"description": "Rice", "kcal": "100", "meal": "brunch"}),
+                        (f"/day/{today}/cardio", {"exercise": "Outdoor Run", "minutes": "0"}),
+                        (f"/day/{today}/cardio", {"exercise": "Back Squat", "minutes": "30"}),
+                        (f"/day/{today}/measurement", {"kind": "waist", "value": "abc"}),
+                        (f"/day/{today}/measurement", {"kind": "wrist", "value": "17"})],
         "/foods": [("/foods", {"name": "", "serving_label": "1 bowl", "kcal_per_serving": "abc"})],
         "/settings": [("/settings", {"time_zone": "Not/AZone"}),
                       ("/settings/targets", {"calorie_target_kcal": "abc"})],
@@ -779,11 +783,12 @@ def test_the_page_after_every_write_is_calm(client):
     sign_in(client)
     user = only_user()
     today = today_of(user).isoformat()
-    landed = []  # (the write, its page's address, its markup, whether the person had no zone yet)
+    # (the write, its page's address, its markup, whether the person had no zone yet, their today then)
+    landed = []
 
     def write(label: str, path: str, **data):
         address, markup = follow(client, post(client, path, **data))
-        landed.append((label, address, markup, not only_user().time_zone))
+        landed.append((label, address, markup, not only_user().time_zone, today_of(only_user()).isoformat()))
         return address
 
     # Sample data first: it goes only into an empty account.
@@ -791,6 +796,9 @@ def test_the_page_after_every_write_is_calm(client):
     assert write("remove sample data", "/settings/sample/remove").endswith("?deleted=sample")
     assert write("the automatic zone save", "/settings", time_zone="Asia/Kolkata", next="/progress") == \
         "/progress?saved=time_zone"
+    # The person's today is read again now the zone is saved: before it, it was UTC's date, a day behind
+    # Asia/Kolkata from 18:30 to 24:00 UTC, so the writes below would land on a past day.
+    today = today_of(only_user()).isoformat()
     write("a weigh-in", f"/day/{today}/weigh-in", kg="80")
     assert write("the same weigh-in again", f"/day/{today}/weigh-in", kg="80").endswith("?saved=unchanged")
     write("a measurement", f"/day/{today}/measurement", kind="waist", value="84")
@@ -822,8 +830,8 @@ def test_the_page_after_every_write_is_calm(client):
     write("drop a goal", f"/goals/{goal}/status", status="dropped")
 
     findings = []
-    for name, address, markup, zone_missing in landed:
-        s = Seen(address, markup, True, zone_missing=zone_missing, today=today)
+    for name, address, markup, zone_missing, then in landed:
+        s = Seen(address, markup, True, zone_missing=zone_missing, today=then)
         if not s.expected_calm():
             findings.append(f"{name}: {address} carries no mark")
         findings += [f"{name}: {f}" for f in frame_findings(s)]
@@ -895,6 +903,40 @@ def test_the_food_card_keeps_the_page_rules_on_every_day_and_every_error(client,
             assert "open" in s.dom.find_all("details", "add")[0].attrs and s.dom.find_all("p", "error"), data
     assert opened == 2  # the two ?add=food addresses, and no other
     assert not findings, "\n".join(findings)
+
+
+SIDE_FOLDOUTS = ("add-cardio", "add-weigh-in", "add-measurement")
+
+
+def test_the_sweeps_open_each_side_fold_out_by_its_mark_and_by_its_error(client):
+    """The day page is in BUILT, so every rule runs on it. The sweeps' own addresses must reach each side
+    fold-out open by its mark (?add=cardio, ?add=weigh-in, ?add=measurement) and by its form's error, or the
+    rules never read an open one."""
+    from .test_pages_text import CLAUDE_SKIPS  # noqa: PLC0415
+
+    assert "/day/{date}" in BUILT and "/day/{date}" not in CLAUDE_SKIPS
+    sign_in(client)
+    user = only_user()
+    today = today_of(user).isoformat()
+    by_mark, by_error = set(), {}
+    for address in get_paths(user.id)["/day/{date}"]:
+        r = client.get(address)
+        assert r.status_code == 200, address
+        by_mark |= {d.attrs["id"] for d in Seen(address, r.text, True, today=today).dom.find_all("details", "add")
+                    if "open" in d.attrs}
+    for address, data in error_posts(today, user.id)["/day/{date}"]:
+        r = post(client, address, **data)
+        assert r.status_code == 400, address
+        for d in Seen(address, r.text, True, today=today, posted_to="/day/{date}").dom.find_all("details", "add"):
+            if "open" in d.attrs:
+                by_error.setdefault(d.attrs["id"], []).append(
+                    [c.tag for c in d.iter() if c.attrs.get("aria-invalid") == "true"])
+    assert set(SIDE_FOLDOUTS) <= by_mark
+    for fold in SIDE_FOLDOUTS:
+        assert fold in by_error, fold
+    # A select's error as well as an input's, on the two fold-outs that have a select.
+    for fold in ("add-cardio", "add-measurement"):
+        assert ["select"] in by_error[fold] and ["input"] in by_error[fold], (fold, by_error[fold])
 
 
 def test_the_card_rules_catch_each_break_on_the_real_card(client):

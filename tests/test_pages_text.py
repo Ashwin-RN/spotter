@@ -227,6 +227,9 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
         [f"/day/{(today - timedelta(days=1)).isoformat()}?saved=bodyweight"]
     # The Today card's Add food lands with ?add=food, which sends the Food fold-out open.
     strips += [f"/day/{today.isoformat()}?add=food", f"/day/{(today - timedelta(days=1)).isoformat()}?add=food"]
+    # The side cards' fold-outs open by their own marks, each alone and all three at once.
+    strips += [f"/day/{today.isoformat()}?add={mark}" for mark in ("cardio", "weigh-in", "measurement")]
+    strips += [f"/day/{(today - timedelta(days=1)).isoformat()}?add=cardio&add=weigh-in&add=measurement"]
     goal_marks = [f"/goals?saved={s}" for s in web.GOAL_SAVED] + \
         ["/goals?saved=goal&notes=" + ",".join(code for code, _, _ in web.GOAL_NOTES)]
     return {
@@ -312,7 +315,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # The routes whose page a step 4 pass has rebuilt: "/" or a GET path template from web.PAGES, such as
 # "/day/{date}". The structure checks below and the page rules in tests/test_page_rules.py run on these
 # routes only. A pass adds its own route here when its page lands.
-BUILT: frozenset[str] = frozenset()
+BUILT: frozenset[str] = frozenset({"/day/{date}"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 
@@ -532,7 +535,6 @@ CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
         "Read, log and delete: Claude can also delete entries.",
         "Claude does not do them for you.",
     ),
-    "/day/{date}": (LIFTS_EMPTY,),  # day.html: the empty Lifts line
     "/foods": ("Saving one by talking to Claude works too.",),  # foods.html: the line under the h1
     "/entries/{kind}/{entry_id}/edit": ("Sets are changed through Claude for now: tell it what to fix.",),
     "/progress": (LIFTS_EMPTY,),  # progress.html: the empty Lifts line

@@ -161,120 +161,151 @@
 </div>
 
 <div class="col-side">
+{# The Lifts card: each session's line with its sample tag and actions, its sets in a table, each new best on
+   a line of its own, then its notes on theirs. A set at 0 kg leaves its weight cell blank, and a session with
+   no weighted set shows no Weight column. No fold-out: lifts are logged through the assistant this stage. #}
 <div class="card">
   <h2>Lifts</h2>
+  {% if day.sessions %}
   {% for session in day.sessions %}
+  {% set weighted = session.sets|selectattr("weight_kg")|list %}
   <div class="session">
     <div class="entry-line">
-      <strong>Session</strong>{{ sample_tag(session) }}{% if session.notes %} <span class="muted">{{ session.notes }}</span>{% endif %}
-      {{ actions("lift_session", session.id) }}
+      <div class="entry-main"><span class="entry-name">Lift session</span></div>
+      {% if session.is_sample %}<span class="entry-tags"><span class="tag tag-sample">sample</span></span>{% endif %}
+      {{ parts.entry_actions("lift_session", session.id, csrf_token) }}
     </div>
-    <table class="sets">
-      <thead><tr><th>Exercise</th><th>Set</th><th>Weight</th><th>Reps</th></tr></thead>
-      <tbody>
-      {% for s in session.sets %}
-      <tr><td>{{ s.exercise }}</td><td>{{ s.set_number|show("count") }}</td><td>{{ s.weight_kg|show("weight_kg") }}</td><td>{{ s.reps|show("reps") }}</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Exercise</th><th class="num">Set</th>{% if weighted %}<th class="num">Weight (kg)</th>{% endif %}<th class="num">Reps</th></tr></thead>
+        <tbody>
+        {% for s in session.sets %}
+        <tr><td>{{ s.exercise }}</td><td class="num">{{ s.set_number|show("count") }}</td>{% if weighted %}<td class="num">{% if s.weight_kg %}{{ s.weight_kg|show("weight_kg", unit=False) }}{% endif %}</td>{% endif %}<td class="num">{{ s.reps|show("reps") }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
     {% if session.new_bests %}
     <ul class="bests">
       {% for b in session.new_bests %}<li>New best: {{ b.text if b.text else b.exercise ~ " " ~ b.value|show("estimated_max" if b.kind == "estimated_max" else "weight_kg") }}</li>{% endfor %}
     </ul>
     {% endif %}
+    {% if session.notes %}<p class="entry-note"><b>Notes</b> {{ session.notes }}</p>{% endif %}
   </div>
-  {% else %}
-  <p class="muted">No lifts logged on this day. Tell Claude what you lifted and it shows here.</p>
   {% endfor %}
+  <p class="small">Lifts are logged through your assistant.</p>
+  {% else %}
+  <p class="empty-line">No lifts logged on this day. Tell your assistant what you lifted and it shows here.</p>
+  {% endif %}
 </div>
 
+{# The Cardio card: the activity on line one, then its labelled figures. A figure the entry lacks is left out,
+   but the calorie estimate says No estimate. The estimate tag and the sample tag share their own slot. #}
 <div class="card">
   <h2>Cardio</h2>
   {% if cardio %}
-  <table class="cardio">
-    <thead><tr><th>Activity</th><th>Minutes</th><th>Distance</th><th>Pace</th><th>Estimate</th><th>Machine</th><th></th></tr></thead>
-    <tbody>
+  <ul class="entries">
     {% for c in cardio %}
-    <tr>
-      <td>{{ c.exercise }}{{ sample_tag(c) }}</td>
-      <td>{{ c.minutes|show("session_time") }}</td>
-      <td>{% if c.distance_km is not none %}{{ c.distance_km|show("km") }}{% endif %}</td>
-      <td>{% if c.pace %}{{ c.pace.min_per_km }} /km{% endif %}</td>
-      <td>{% if c.estimate %}{{ c.estimate.kcal|show("kcal") }}{% else %}<span class="muted">No estimate</span>{% endif %}</td>
-      <td>{% if c.machine_kcal is not none %}{{ c.machine_kcal|show("kcal") }}{% endif %}</td>
-      <td>{{ actions("cardio_entry", c.id) }}</td>
-    </tr>
+    {% set time = c.minutes|show("session_time") %}
+    <li class="entry-line">
+      <div class="entry-main">
+        <span class="entry-name">{{ c.exercise }}</span>
+        <dl class="figures">
+          <div><dt>{{ "Time (h:mm:ss)" if time.count(":") == 2 else "Time (m:ss)" }}</dt><dd>{{ time }}</dd></div>
+          {% if c.distance_km is not none %}<div><dt>Distance (km)</dt><dd>{{ c.distance_km|show("km", unit=False) }}</dd></div>{% endif %}
+          {% if c.pace %}<div><dt>Pace (per km)</dt><dd>{{ c.pace.min_per_km }}</dd></div>{% endif %}
+          <div><dt>Calories (kcal)</dt><dd>{% if c.estimate %}{{ c.estimate.kcal|show("kcal", unit=False) }}{% else %}No estimate{% endif %}</dd></div>
+          {% if c.machine_kcal is not none %}<div><dt>Machine (kcal)</dt><dd>{{ c.machine_kcal|show("kcal", unit=False) }}</dd></div>{% endif %}
+        </dl>
+        {% if c.notes %}<p class="entry-note"><b>Notes</b> {{ c.notes }}</p>{% endif %}
+      </div>
+      {% if c.estimate or c.is_sample %}<span class="entry-tags">{% if c.estimate %}<span class="tag tag-estimate">estimate</span>{% endif %}{{ sample_tag(c) }}</span>{% endif %}
+      {{ parts.entry_actions("cardio_entry", c.id, csrf_token) }}
+    </li>
     {% endfor %}
-    </tbody>
-  </table>
-  {% if cardio|rejectattr("estimate")|list %}
-  <p class="muted small">No calorie estimate on a row that says No estimate: there was no weigh-in when it was logged. Log a weigh-in and new cardio gets one.</p>
+  </ul>
+  {% if lacks_estimate %}
+  <p class="small">No calorie estimate on a row that says No estimate: there was no weigh-in when it was logged. Log a weigh-in and new cardio gets one.</p>
   {% endif %}
   {% else %}
-  <p class="muted">No cardio logged on this day.</p>
+  <p class="empty-line">No cardio logged on this day. Tell your assistant what you did, or add it below.</p>
   {% endif %}
+  {# Closed unless the address carries ?add=cardio or its form came back with an error. What was typed stays. #}
   {% set errors = form_error.get("cardio_entry", {}) %}
-  <form method="post" action="/day/{{ on.isoformat() }}/cardio" class="one-line">
+  {% set kept = typed.get("cardio_entry", {}) %}
+  {% call parts.foldout("add-cardio", "Add cardio", errors or "cardio" in adding) %}
+  <form method="post" action="/day/{{ on.isoformat() }}/cardio">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label for="cardio-exercise">Activity</label>
-    <select id="cardio-exercise" name="exercise" required>
-      {% for name in activities %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
-    </select>
-    <label for="cardio-minutes">Minutes</label>
-    <input id="cardio-minutes" name="minutes" inputmode="decimal" required autocomplete="off">
-    <label for="cardio-distance">Distance (km)</label>
-    <input id="cardio-distance" name="distance_km" inputmode="decimal" autocomplete="off">
-    <button class="primary">Save cardio</button>
+    {% for field, text in errors.items() if field not in ("exercise", "minutes", "distance_km") %}
+    <div class="error"><p>{{ text }}</p></div>
+    {% endfor %}
+    {{ parts.field("cardio-exercise", "exercise", "Activity", errors.get("exercise"), kept.get("exercise"), choices=activity_choices, required=true) }}
+    <div class="field-row">
+      {{ parts.field("cardio-minutes", "minutes", "Time (min)", errors.get("minutes"), kept.get("minutes"), inputmode="decimal", required=true) }}
+      {{ parts.field("cardio-distance", "distance_km", "Distance (km)", errors.get("distance_km"), kept.get("distance_km"), inputmode="decimal") }}
+    </div>
+    <div class="form-actions"><button class="primary">Save cardio</button></div>
   </form>
-  {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
+  {% endcall %}
 </div>
 
+{# The Weigh-in card: the day's one weight, large, with its sample tag and actions. Its fold-out replaces it
+   when there is one, and its summary and its button say the same. #}
 <div class="card">
   <h2>Weigh-in</h2>
   {% if day.weigh_in %}
   <div class="entry-line">
-    <span><strong>{{ day.weigh_in.kg|show("weigh_in") }}</strong>{{ sample_tag(day.weigh_in) }}</span>
-    {{ actions("bodyweight", day.weigh_in.id) }}
+    <div class="entry-main"><span class="entry-big">{{ day.weigh_in.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span></span></div>
+    {% if day.weigh_in.is_sample %}<span class="entry-tags"><span class="tag tag-sample">sample</span></span>{% endif %}
+    {{ parts.entry_actions("bodyweight", day.weigh_in.id, csrf_token) }}
   </div>
   {% else %}
-  <p class="muted">No weigh-in on this day.</p>
+  <p class="empty-line">No weigh-in on this day.</p>
   {% endif %}
   {% set errors = form_error.get("bodyweight", {}) %}
-  <form method="post" action="/day/{{ on.isoformat() }}/weigh-in" class="one-line">
+  {% set kept = typed.get("bodyweight", {}) %}
+  {% set weigh_words = "Replace weigh-in" if day.weigh_in else "Add weigh-in" %}
+  {% call parts.foldout("add-weigh-in", weigh_words, errors or "weigh-in" in adding) %}
+  <form method="post" action="/day/{{ on.isoformat() }}/weigh-in">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label for="kg">Weight (kg)</label>
-    <input id="kg" name="kg" inputmode="decimal" required autocomplete="off">
-    <button class="primary">{{ "Replace weigh-in" if day.weigh_in else "Save weigh-in" }}</button>
+    {% for field, text in errors.items() if field != "kg" %}
+    <div class="error"><p>{{ text }}</p></div>
+    {% endfor %}
+    {{ parts.field("kg", "kg", "Weight (kg)", errors.get("kg"), kept.get("kg"), inputmode="decimal", required=true) }}
+    <div class="form-actions"><button class="primary">{{ weigh_words }}</button></div>
   </form>
-  {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
+  {% endcall %}
 </div>
 
+{# The Measurements card: each kind's name from measurements.kind_word, then the value and its unit. #}
 <div class="card">
   <h2>Measurements</h2>
   {% if day.measurements %}
   <ul class="entries">
     {% for m in day.measurements %}
     <li class="entry-line">
-      <span>{{ labels.get(m.kind, m.kind.replace("_", " ").capitalize()) }}: <strong>{{ m.value|show(measurement_quantity(m.kind)) }}</strong>{{ sample_tag(m) }}</span>
-      {{ actions("measurement", m.id) }}
+      <div class="entry-main"><span class="entry-name">{{ kind_word(m.kind) }}</span><span class="entry-figures">{{ m.value|show(measurement_quantity(m.kind)) }}</span></div>
+      {% if m.is_sample %}<span class="entry-tags"><span class="tag tag-sample">sample</span></span>{% endif %}
+      {{ parts.entry_actions("measurement", m.id, csrf_token) }}
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="muted">No measurements on this day.</p>
+  <p class="empty-line">No measurements on this day.</p>
   {% endif %}
   {% set errors = form_error.get("measurement", {}) %}
-  <form method="post" action="/day/{{ on.isoformat() }}/measurement" class="one-line">
+  {% set kept = typed.get("measurement", {}) %}
+  {% call parts.foldout("add-measurement", "Add measurement", errors or "measurement" in adding) %}
+  <form method="post" action="/day/{{ on.isoformat() }}/measurement">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label for="measurement-kind">Kind</label>
-    <select id="measurement-kind" name="kind" required>
-      {% for kind, label, unit in kinds %}<option value="{{ kind }}">{{ label }} ({{ unit }})</option>{% endfor %}
-    </select>
-    <label for="measurement-value">Value</label>
-    <input id="measurement-value" name="value" inputmode="decimal" required autocomplete="off">
-    <button class="primary">Save measurement</button>
+    {% for field, text in errors.items() if field not in ("kind", "value") %}
+    <div class="error"><p>{{ text }}</p></div>
+    {% endfor %}
+    {{ parts.field("measurement-kind", "kind", "Kind", errors.get("kind"), kept.get("kind"), choices=kind_choices, required=true) }}
+    {{ parts.field("measurement-value", "value", "Value", errors.get("value"), kept.get("value"), inputmode="decimal", required=true) }}
+    <div class="form-actions"><button class="primary">Save measurement</button></div>
   </form>
-  {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
+  {% endcall %}
 </div>
 </div>
 {% endblock %}

@@ -24,7 +24,7 @@ from app.models import Bodyweight, CallLog, User
 from .conftest import settings
 from .test_web import (  # noqa: F401 - fixtures
     CSP, SITE, TOO_MANY, WEB, FakeSeam, calls, client, only_user, post, seam, session_of, sign_in,
-    meal_of, stock, stock_food, today_of, user_count, web_client,
+    entries_of, meal_of, side_card, stock, stock_food, today_of, user_count, web_client,
 )
 
 
@@ -155,9 +155,16 @@ def test_each_sample_row_carries_a_sample_tag(signed, monkeypatch):
     page = signed.get(f"/day/{today}").text
     # a session, a weigh-in, a measurement, three food entries, one cardio entry
     assert page.count('<span class="tag tag-sample">sample</span>') == 7
-    assert re.search(r'<strong>Session</strong> <span class="tag tag-sample">sample</span>', page)
-    assert re.search(r'<strong>80\u00a0kg</strong> <span class="tag tag-sample">sample</span>', page)
-    assert re.search(r'<td>Treadmill Run <span class="tag tag-sample">sample</span></td>', page)
+    # Each on its own entry, in the entry's tag slot: one on each side card, three on the Food card.
+    sample = ("tag-sample", "sample")
+    for title, name, tags in (("Lifts", "Lift session", [sample]),
+                              ("Cardio", "Treadmill Run", [("tag-estimate", "estimate"), sample]),
+                              ("Weigh-in", None, [sample]), ("Measurements", "Waist", [sample])):
+        [entry] = entries_of(side_card(page, title))
+        assert (entry["name"], entry["tags"]) == (name, tags), title
+        assert set(entry["tag_slots"]) == {("entry-tags",)}, title
+    assert entries_of(side_card(page, "Weigh-in"))[0]["big"] == "80\u00a0kg"
+    assert sum(e["tags"][-1] == sample for meal in ("Breakfast", "Lunch") for e in meal_of(page, meal)) == 3
 
 
 def test_real_sample_data_fills_today_and_goes_in_one_click(signed):

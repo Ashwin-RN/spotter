@@ -1265,12 +1265,12 @@ def test_the_measurement_kinds_carry_the_services_units(client):
 
 def test_the_day_shows_sessions_sets_bests_weigh_in_and_measurements(client, stocked):
     page = day_of(client, stocked["today"].isoformat())
-    assert page.count("<td>Back Squat</td>") == 3 and page.count("<td>65\u00a0kg</td>") == 3
+    assert page.count("<td>Back Squat</td>") == 3 and page.count('<td class="num">65</td>') == 3
     assert "felt strong" in page
     assert "New best: Back Squat estimated max" in page and "up from 70 kg" in page  # the service's own text
-    assert "<strong>78.4\u00a0kg</strong>" in page
-    assert "Waist: <strong>84.5\u00a0cm</strong>" in page and "Steps: <strong>9,500\u00a0steps</strong>" in page
-    assert "Sleep: <strong>7.25\u00a0h</strong>" in page
+    assert entries_of(side_card(page, "Weigh-in"))[0]["big"] == "78.4\u00a0kg"
+    assert [(e["name"], e["figures"]) for e in entries_of(side_card(page, "Measurements"))] == \
+        [("Waist", "84.5\u00a0cm"), ("Steps", "9,500\u00a0steps"), ("Sleep", "7.25\u00a0h")]
     entries = [("lift_session", stocked["session"]), ("bodyweight", stocked["weigh_in"])] + \
               [("measurement", i) for i in stocked["measurements"]]
     for kind, entry_id in entries:
@@ -1283,7 +1283,7 @@ def test_the_day_shows_sessions_sets_bests_weigh_in_and_measurements(client, sto
 def test_yesterday_links_on_to_today(client, stocked):
     page = day_of(client, stocked["yesterday"])
     assert f'href="/day/{stocked["today"].isoformat()}" rel="next"' in page
-    assert "<td>60\u00a0kg</td>" in page and "78.9\u00a0kg" in page and "New best" not in page
+    assert '<td class="num">60</td>' in page and "78.9\u00a0kg" in page and "New best" not in page
 
 
 def test_the_edit_page_renders_for_each_kind(client, stocked):
@@ -1453,7 +1453,8 @@ def test_the_measurement_form_logs_for_that_day(client):
     assert r.status_code == 303
     [m] = rows(Measurement, only_user().id)
     assert (m.kind, m.value, m.unit, m.logged_by) == ("resting_hr", 58, "bpm", "web")
-    assert "Resting heart rate: <strong>58\u00a0bpm</strong>" in day_of(client, on)
+    [shown] = entries_of(side_card(day_of(client, on), "Measurements"))
+    assert (shown["name"], shown["figures"]) == ("Resting heart rate", "58\u00a0bpm")
 
 
 @pytest.mark.parametrize("data, near, says", [
@@ -1504,7 +1505,8 @@ def test_editing_a_measurement_changes_its_value(client, stocked):
     r = post(client, f"/entries/measurement/{waist}/edit", value="83", date=stocked["today"].isoformat())
     assert r.status_code == 303
     assert next(m.value for m in rows(Measurement, only_user().id) if m.id == waist) == 83
-    assert "Waist: <strong>83\u00a0cm</strong>" in day_of(client, stocked["today"].isoformat())
+    shown = entries_of(side_card(day_of(client, stocked["today"].isoformat()), "Measurements"))
+    assert (shown[0]["name"], shown[0]["figures"]) == ("Waist", "83\u00a0cm")
 
 
 def test_editing_a_session_changes_its_notes_and_date_and_keeps_its_sets(client, stocked):
@@ -1512,7 +1514,7 @@ def test_editing_a_session_changes_its_notes_and_date_and_keeps_its_sets(client,
     r = post(client, f"/entries/lift_session/{stocked['session']}/edit", notes="heavy day", date=two_days_ago)
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}?saved=lift_session"
     page = day_of(client, two_days_ago)
-    assert "heavy day" in page and page.count("<td>65\u00a0kg</td>") == 3
+    assert "heavy day" in page and page.count('<td class="num">65</td>') == 3
 
 
 def test_an_edit_with_nothing_changed_writes_nothing(client, stocked):
@@ -1901,6 +1903,42 @@ def meal_of(page: str, meal: str) -> list[dict]:
     return food_entries(re.search(rf"<h3>{meal}</h3>(.*?)</ul>", page, re.S).group(1))
 
 
+def side_card(page: str, title: str):
+    """One of div.col-side's cards, read as a tree: the div.card directly inside it whose first child is the
+    h2 with that title."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    [side] = parse(page).find_all("div", "col-side")
+    [card] = [c for c in side.elements() if c.is_("div", "card") and c.elements()
+              and c.elements()[0].is_("h2") and c.elements()[0].text() == title]
+    return card
+
+
+def entries_of(card) -> list[dict]:
+    """Each entry-line of a side card, as read: its name, its line two, its large figure, its labelled figures
+    as (label, figure), its Notes lines, its tags as (class, words) with the slot they sit in, its Edit links
+    and Delete forms."""
+    out = []
+    for line in card.find_all(cls="entry-line"):
+        [main] = line.find_all("div", "entry-main")
+
+        def first(cls, node=main):
+            found = node.find_all(cls=cls)
+            return found[0].text() if found else None
+        figures = main.find_all("dl", "figures")
+        out.append({
+            "name": first("entry-name"), "figures": first("entry-figures"), "big": first("entry-big"),
+            "labelled": [(d.find_all("dt")[0].text(), d.find_all("dd")[0].text()) for d in figures[0].elements()]
+            if figures else [],
+            "notes": [p.text() for p in line.find_all("p", "entry-note")],
+            "tags": [(t.classes[1], t.text()) for t in line.find_all(cls="tag")],
+            "tag_slots": [tuple(t.parent.classes) for t in line.find_all(cls="tag")],
+            "edit": [a.attrs["href"] for a in line.find_all("a", "action")],
+            "delete": [f.attrs["action"] for f in line.find_all("form") if f.attrs["action"].endswith("/delete")],
+        })
+    return out
+
+
 # ---------------------------------------------------------------- the day page
 
 def test_a_day_with_no_food_or_cardio(client):
@@ -1956,10 +1994,11 @@ def test_a_target_shows_target_and_remaining_and_add_back_shows_net(client, fed)
 
 def test_the_day_shows_cardio_with_pace_estimate_and_machine_number_and_names_the_compendium(client, fed):
     page = day_of(client, fed["today"])
-    row = re.search(r'<td>Treadmill Run</td>(.*?)</tr>', page, re.S).group(1)
-    cells = re.findall(r"<td>(.*?)</td>", row, re.S)
-    assert cells[:5] == ["30:00", "5\u00a0km", "6:00 /km", f"{fed['estimate']['kcal']}\u00a0kcal", "300\u00a0kcal"]
-    assert f'href="/entries/cardio_entry/{fed["run"]}/edit"' in row
+    [run] = entries_of(side_card(page, "Cardio"))
+    assert run["name"] == "Treadmill Run"
+    assert run["labelled"] == [("Time (m:ss)", "30:00"), ("Distance (km)", "5"), ("Pace (per km)", "6:00"),
+                               ("Calories (kcal)", str(fed["estimate"]["kcal"])), ("Machine (kcal)", "300")]
+    assert run["edit"] == [f"/entries/cardio_entry/{fed['run']}/edit"]
     assert page.count(ATTRIBUTION) == 1 and '<footer class="attribution">' in page
     assert "there was no weigh-in when it was logged" not in page
 
@@ -1968,8 +2007,8 @@ def test_cardio_with_no_weigh_in_has_no_estimate_a_note_and_no_attribution(clien
     sign_in(client)
     stock_food(only_user(), weigh_in=False)
     page = day_of(client, today_of(only_user()).isoformat())
-    row = re.search(r'<td>Treadmill Run</td>(.*?)</tr>', page, re.S).group(1)
-    assert '<span class="muted">No estimate</span>' in row and "300\u00a0kcal" in row
+    [run] = entries_of(side_card(page, "Cardio"))
+    assert ("Calories (kcal)", "No estimate") in run["labelled"] and ("Machine (kcal)", "300") in run["labelled"]
     assert "there was no weigh-in when it was logged" in page
     assert ATTRIBUTION not in page
 
@@ -1999,9 +2038,9 @@ def test_a_session_logged_before_the_days_weigh_in_still_says_no_estimate_truly(
     stock_food(only_user(), weigh_in=False)
     assert "error" not in services.log_bodyweight(only_user().id, {"kg": "81.25"}, "claude")
     page = day_of(client, today_of(only_user()).isoformat())
-    row = re.search(r'<td>Treadmill Run</td>(.*?)</tr>', page, re.S).group(1)
-    assert '<span class="muted">No estimate</span>' in row and "No weigh-in" not in row
-    assert "<strong>81.25\u00a0kg</strong>" in page
+    [run] = entries_of(side_card(page, "Cardio"))
+    assert ("Calories (kcal)", "No estimate") in run["labelled"] and "No weigh-in" not in str(run)
+    assert entries_of(side_card(page, "Weigh-in"))[0]["big"] == "81.25\u00a0kg"
     assert "there was no weigh-in when it was logged" in page and "there is no weigh-in" not in page
 
 
@@ -3595,3 +3634,420 @@ def test_what_was_typed_comes_back_escaped(client):
     r = post(client, f"/day/{today_of(only_user()).isoformat()}/food", description='<b>"Rice"</b>', kcal="abc")
     out = foldout_of(r.text)
     assert 'value="&lt;b&gt;&#34;Rice&#34;&lt;/b&gt;"' in out and "<b>" not in out
+
+
+# ---------------------------------------------------------------- stage 6, step 4: the side cards
+
+SIDE_EMPTY = {
+    "Lifts": "No lifts logged on this day. Tell your assistant what you lifted and it shows here.",
+    "Cardio": "No cardio logged on this day. Tell your assistant what you did, or add it below.",
+    "Weigh-in": "No weigh-in on this day.",
+    "Measurements": "No measurements on this day.",
+}
+NO_ESTIMATE_NOTE = ("No calorie estimate on a row that says No estimate: there was no weigh-in when it was logged. "
+                    "Log a weigh-in and new cardio gets one.")
+# The three side fold-outs: (id, the mark that opens it, its card).
+SIDE_FOLDOUTS = (("add-cardio", "cardio", "Cardio"), ("add-weigh-in", "weigh-in", "Weigh-in"),
+                 ("add-measurement", "measurement", "Measurements"))
+
+
+def sessions_of(card) -> list:
+    return card.find_all("div", "session")
+
+
+def table_of(node) -> tuple[list[str], list[list[str]]]:
+    """A table's headers and its body rows' cell texts."""
+    [table] = node.find_all("table")
+    headers = [th.text() for th in table.find_all("th")]
+    rows_ = [[td.text() for td in tr_.find_all("td")] for tr_ in table.find_all("tr") if tr_.find_all("td")]
+    return headers, rows_
+
+
+def foldouts_of(page: str) -> dict:
+    """Every details.add on the page by its id."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    return {d.attrs["id"]: d for d in parse(page).find_all("details", "add")}
+
+
+def test_a_lift_session_shows_its_line_its_sets_its_bests_and_its_notes(client, stocked):
+    card = side_card(day_of(client, stocked["today"].isoformat()), "Lifts")
+    [session] = sessions_of(card)
+    [line] = entries_of(session)
+    assert (line["name"], line["figures"], line["tags"]) == ("Lift session", None, [])
+    assert line["edit"] == [f"/entries/lift_session/{stocked['session']}/edit"]
+    assert line["delete"] == [f"/entries/lift_session/{stocked['session']}/delete"]
+    # The sets in a table, in its scrolling wrap, the unit in the header and none in a cell.
+    [table] = session.find_all("table")
+    assert table.parent.is_("div", "table-wrap")
+    headers, cells = table_of(session)
+    assert headers == ["Exercise", "Set", "Weight (kg)", "Reps"]
+    assert cells == [["Back Squat", "1", "65", "5"], ["Back Squat", "2", "65", "5"], ["Back Squat", "3", "65", "5"]]
+    # Each new best on its own line, in the service's words.
+    bests = [li.text() for ul in session.find_all("ul", "bests") for li in ul.find_all("li")]
+    texts = [b["text"] for b in services.get_log(only_user().id, stocked["today"].isoformat(), 1)["days"][0]
+             ["sessions"][0]["new_bests"]]
+    assert texts and bests == [f"New best: {t}" for t in texts]
+    # The notes on a line of their own, labelled Notes, after the sets and the bests.
+    [notes] = session.find_all("p", "entry-note")
+    assert notes.text() == "Notes felt strong" and [b.text() for b in notes.find_all("b")] == ["Notes"]
+    assert session.elements()[-1] is notes and notes.parent is session
+    # Under the sessions, the small line. No empty line.
+    assert [p.text() for p in card.find_all("p", "small")] == ["Lifts are logged through your assistant."]
+    assert card.elements()[-1].is_("p", "small") and not card.find_all("p", "empty-line")
+
+
+def test_a_session_with_no_notes_has_no_notes_line(client, stocked):
+    card = side_card(day_of(client, stocked["yesterday"]), "Lifts")
+    [session] = sessions_of(card)
+    assert not session.find_all("p", "entry-note") and not session.find_all("ul", "bests")
+    assert table_of(session)[1][0] == ["Back Squat", "1", "60", "5"]
+
+
+def test_each_side_card_with_nothing_logged_says_its_empty_line(client):
+    sign_in(client)
+    page = day_of(client, today_of(only_user()).isoformat())
+    for title, words in SIDE_EMPTY.items():
+        card = side_card(page, title)
+        assert [p.text() for p in card.find_all("p", "empty-line")] == [words], title
+        assert not card.find_all(cls="entry-line") and not card.find_all("table"), title
+    assert not side_card(page, "Lifts").find_all("p", "small")  # the small line goes with sessions only
+    assert not side_card(page, "Cardio").find_all("p", "small")  # nor the No estimate footnote
+
+
+def test_a_set_at_0_kg_leaves_its_weight_blank_and_a_session_with_none_weighted_has_no_weight_column(client):
+    sign_in(client)
+    uid = only_user().id
+    pull = [{"exercise": "Pull-Up", "weight_kg": 0, "reps": 6}] * 2
+    mixed = [{"exercise": "Deadlift", "weight_kg": 100, "reps": 5}, {"exercise": "Pull-Up", "weight_kg": 0, "reps": 8}]
+    for sets in (pull, mixed):
+        assert "error" not in services.log_lifts(uid, {"sets": sets}, "claude")
+    first, second = sessions_of(side_card(day_of(client, today_of(only_user()).isoformat()), "Lifts"))
+    assert table_of(first) == (["Exercise", "Set", "Reps"], [["Pull-Up", "1", "6"], ["Pull-Up", "2", "6"]])
+    assert table_of(second) == (["Exercise", "Set", "Weight (kg)", "Reps"],
+                                [["Deadlift", "1", "100", "5"], ["Pull-Up", "1", "", "8"]])
+
+
+def test_the_lifts_card_has_no_fold_out(client, stocked):
+    card = side_card(day_of(client, f"{stocked['today'].isoformat()}?add=lifts"), "Lifts")
+    forms = card.find_all("form")
+    assert not card.find_all("details") and not card.find_all("select")
+    assert [f.attrs["action"] for f in forms] == [f"/entries/lift_session/{stocked['session']}/delete"]
+
+
+@pytest.mark.parametrize("data, labelled", [
+    ({"exercise": "Treadmill Run", "minutes": 30, "distance_km": 5, "machine_kcal": 300},
+     [("Time (m:ss)", "30:00"), ("Distance (km)", "5"), ("Pace (per km)", "6:00"), ("Calories (kcal)", "{kcal}"),
+      ("Machine (kcal)", "300")]),
+    ({"exercise": "Outdoor Walk", "minutes": 45}, [("Time (m:ss)", "45:00"), ("Calories (kcal)", "{kcal}")]),
+    ({"exercise": "Treadmill Run", "minutes": 31.5, "machine_kcal": 280},
+     [("Time (m:ss)", "31:30"), ("Calories (kcal)", "{kcal}"), ("Machine (kcal)", "280")]),
+    ({"exercise": "Outdoor Run", "minutes": 75, "distance_km": 12.5},
+     [("Time (h:mm:ss)", "1:15:00"), ("Distance (km)", "12.5"), ("Pace (per km)", "6:00"),
+      ("Calories (kcal)", "{kcal}")]),
+])
+def test_each_cardio_figure_shows_when_the_entry_has_it_and_is_left_out_when_not(client, data, labelled):
+    sign_in(client)
+    assert "error" not in services.log_bodyweight(only_user().id, {"kg": "80"}, "claude")
+    logged = services.log_cardio(only_user().id, data, "claude")
+    assert "error" not in logged
+    [entry] = entries_of(side_card(day_of(client, today_of(only_user()).isoformat()), "Cardio"))
+    kcal = formatting.show(logged["estimate"]["kcal"], "kcal", unit=False)
+    assert entry["name"] == data["exercise"]
+    assert entry["labelled"] == [(label, figure.format(kcal=kcal)) for label, figure in labelled]
+    # The estimate tag in its own slot beside the sample slot, never inside a figure.
+    assert entry["tags"] == [("tag-estimate", "estimate")] and entry["tag_slots"] == [("entry-tags",)]
+    assert entry["edit"] == [f"/entries/cardio_entry/{logged['id']}/edit"]
+    assert entry["delete"] == [f"/entries/cardio_entry/{logged['id']}/delete"]
+
+
+def test_cardio_with_no_estimate_says_so_in_the_calories_figure_and_keeps_the_footnote(client):
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.log_cardio(uid, {"exercise": "Outdoor Walk", "minutes": 20}, "claude")
+    card = side_card(day_of(client, today_of(only_user()).isoformat()), "Cardio")
+    [entry] = entries_of(card)
+    assert entry["labelled"] == [("Time (m:ss)", "20:00"), ("Calories (kcal)", "No estimate")]
+    assert entry["tags"] == [] and not card.find_all(cls="tag-estimate")
+    assert [p.text() for p in card.find_all("p", "small")] == [NO_ESTIMATE_NOTE]
+    # With an estimate on every row, no footnote.
+    assert "error" not in services.log_bodyweight(uid, {"kg": "80"}, "claude")
+    assert "error" not in services.delete_entry(uid, "cardio_entry", rows(CardioEntry, uid)[0].id)
+    assert "error" not in services.log_cardio(uid, {"exercise": "Outdoor Walk", "minutes": 20}, "claude")
+    card = side_card(day_of(client, today_of(only_user()).isoformat()), "Cardio")
+    assert not card.find_all("p", "small") and entries_of(card)[0]["tags"] == [("tag-estimate", "estimate")]
+
+
+def test_the_footnote_shows_when_any_entry_says_no_estimate_not_only_the_first(client):
+    sign_in(client)
+    uid = only_user().id
+    weigh_in = services.log_bodyweight(uid, {"kg": "80"}, "claude")
+    assert "error" not in services.log_cardio(uid, {"exercise": "Outdoor Walk", "minutes": 20}, "claude")
+    assert "error" not in services.delete_entry(uid, "bodyweight", weigh_in["id"])
+    assert "error" not in services.log_cardio(uid, {"exercise": "Outdoor Walk", "minutes": 25}, "claude")
+    card = side_card(day_of(client, today_of(only_user()).isoformat()), "Cardio")
+    first, second = entries_of(card)
+    assert first["tags"] == [("tag-estimate", "estimate")]
+    assert ("Calories (kcal)", "No estimate") in second["labelled"] and second["tags"] == []
+    assert [p.text() for p in card.find_all("p", "small")] == [NO_ESTIMATE_NOTE]
+
+
+def test_the_cardio_card_has_no_minutes_header_and_no_per_km_in_a_figure(client, fed):
+    card = side_card(day_of(client, fed["today"]), "Cardio")
+    text = card.text()
+    assert not card.find_all("table") and not card.find_all("th")
+    assert "Minutes" not in text and "/km" not in text and " /km" not in text
+    [pace] = [dd for dd in card.find_all("dd") if dd.parent.find_all("dt")[0].text() == "Pace (per km)"]
+    assert pace.text() == "6:00"
+
+
+def test_a_cardio_note_sits_on_its_own_line_labelled_notes(client):
+    sign_in(client)
+    assert "error" not in services.log_cardio(only_user().id, {"exercise": "Outdoor Walk", "minutes": 20,
+                                                               "notes": "easy pace"}, "claude")
+    card = side_card(day_of(client, today_of(only_user()).isoformat()), "Cardio")
+    [entry] = entries_of(card)
+    assert entry["notes"] == ["Notes easy pace"]
+    [note] = card.find_all("p", "entry-note")
+    assert note.parent.is_("div", "entry-main") and not note.inside("dl")
+
+
+def test_the_weigh_in_shows_large_with_its_actions_and_the_fold_out_replaces_it(client, stocked):
+    page = day_of(client, stocked["today"].isoformat())
+    card = side_card(page, "Weigh-in")
+    [entry] = entries_of(card)
+    assert entry["big"] == "78.4 kg" and entry["tags"] == []
+    [big] = card.find_all(cls="entry-big")
+    assert [u.text() for u in big.find_all("span", "unit")] == ["kg"]
+    assert '<span class="entry-big">78.4&nbsp;<span class="unit">kg</span></span>' in page
+    assert entry["edit"] == [f"/entries/bodyweight/{stocked['weigh_in']}/edit"]
+    assert entry["delete"] == [f"/entries/bodyweight/{stocked['weigh_in']}/delete"]
+    fold = foldouts_of(page)["add-weigh-in"]
+    assert fold.find_all("summary")[0].text() == "Replace weigh-in"
+    assert [b.text() for b in fold.find_all("button")] == ["Replace weigh-in"]
+
+
+def test_with_no_weigh_in_the_fold_out_adds_one(client):
+    sign_in(client)
+    fold = foldouts_of(day_of(client, today_of(only_user()).isoformat()))["add-weigh-in"]
+    assert fold.find_all("summary")[0].text() == "Add weigh-in"
+    assert [b.text() for b in fold.find_all("button")] == ["Add weigh-in"]
+
+
+def test_each_measurement_kind_is_named_by_kind_word(client):
+    from app.services import measurements  # noqa: PLC0415
+
+    sign_in(client)
+    uid = only_user().id
+    values = {"waist": "84.5", "hips": "98", "chest": "101.2", "arm": "35", "thigh": "58", "steps": "9500",
+              "sleep_hours": "7.25", "resting_hr": "58", "water_ml": "2501"}
+    assert set(values) == set(web.MEASUREMENT_KINDS)
+    ids = []
+    for kind, value in values.items():
+        logged = services.log_measurement(uid, {"kind": kind, "value": value}, "claude")
+        assert "error" not in logged
+        ids.append(logged["id"])
+    entries = entries_of(side_card(day_of(client, today_of(only_user()).isoformat()), "Measurements"))
+    assert [(e["name"], e["figures"]) for e in entries] == [
+        (measurements.kind_word(k), formatting.show(float(values[k]), web.measurement_quantity(k), page=True))
+        for k in web.MEASUREMENT_KINDS]
+    assert [e["name"] for e in entries][-2:] == ["Resting heart rate", "Water"]
+    assert [e["edit"] for e in entries] == [[f"/entries/measurement/{i}/edit"] for i in ids]
+    assert [e["delete"] for e in entries] == [[f"/entries/measurement/{i}/delete"] for i in ids]
+    assert all(e["tags"] == [] for e in entries)
+
+
+def test_the_measurement_fold_out_names_each_kind_by_kind_word_with_its_unit(client):
+    from app.services import measurements  # noqa: PLC0415
+
+    sign_in(client)
+    fold = foldouts_of(day_of(client, today_of(only_user()).isoformat()))["add-measurement"]
+    choices = [(o.attrs["value"], o.text()) for o in fold.find_all("option")]
+    assert choices == [(k, f"{measurements.kind_word(k)} ({rules.MEASUREMENTS[k][0]})") for k in web.MEASUREMENT_KINDS]
+    assert ("resting_hr", "Resting heart rate (bpm)") in choices and ("water_ml", "Water (ml)") in choices
+
+
+def test_each_side_fold_out_holds_the_contracts_fields_and_button(client):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    folds = foldouts_of(day_of(client, on))
+    want = {
+        "add-cardio": ("Add cardio", f"/day/{on}/cardio",
+                       [("cardio-exercise", "Activity"), ("cardio-minutes", "Time (min)"),
+                        ("cardio-distance", "Distance (km)")], "Save cardio"),
+        "add-weigh-in": ("Add weigh-in", f"/day/{on}/weigh-in", [("kg", "Weight (kg)")], "Add weigh-in"),
+        "add-measurement": ("Add measurement", f"/day/{on}/measurement",
+                            [("measurement-kind", "Kind"), ("measurement-value", "Value")], "Save measurement"),
+    }
+    for fold_id, (summary, action, labels, button) in want.items():
+        fold = folds[fold_id]
+        assert fold.find_all("summary")[0].text() == summary, fold_id
+        [form] = fold.find_all("form")
+        assert (form.attrs["method"], form.attrs["action"]) == ("post", action), fold_id
+        assert [(lb.attrs["for"], lb.text()) for lb in form.find_all("label")] == labels, fold_id
+        assert [b.text() for b in form.find_all("button")] == [button], fold_id
+        assert all(f.parent.is_("div", "field") or f.attrs.get("type") == "hidden"
+                   for f in form.find_all("input") + form.find_all("select")), fold_id
+        for control in form.find_all("input"):
+            if control.attrs.get("type") != "hidden":
+                assert control.attrs.get("inputmode") == "decimal", (fold_id, control.attrs)
+    # Time and Distance side by side. Distance is optional, the rest are required.
+    [row] = folds["add-cardio"].find_all("div", "field-row")
+    assert [lb.text() for lb in row.find_all("label")] == ["Time (min)", "Distance (km)"]
+    required = {c.attrs["id"]: "required" in c.attrs for i, f in folds.items() if i != "add-food"
+                for c in f.find_all("input") + f.find_all("select") if c.attrs.get("type") != "hidden"}
+    assert required == {"cardio-exercise": True, "cardio-minutes": True, "cardio-distance": False, "kg": True,
+                        "measurement-kind": True, "measurement-value": True}
+    activities = [(o.attrs["value"], o.text()) for o in folds["add-cardio"].find_all("option")]
+    assert activities == [(e["name"], e["name"]) for e in services.list_exercises("cardio")["exercises"]]
+
+
+@pytest.mark.parametrize("fold_id, mark, card", SIDE_FOLDOUTS)
+def test_each_side_fold_out_is_closed_by_default_and_open_by_its_mark(client, fed, fold_id, mark, card):
+    on = fed["today"]
+    assert not any("open" in d.attrs for d in foldouts_of(day_of(client, on)).values())
+    for query in (f"add={mark}", f"add=food&add={mark}", f"add={mark}&add=food", f"saved=bodyweight&add={mark}"):
+        folds = foldouts_of(day_of(client, f"{on}?{query}"))
+        opened = {i for i, d in folds.items() if "open" in d.attrs}
+        assert opened == {fold_id} | ({"add-food"} if "food" in query else set()), query
+    for query in (f"add={mark.capitalize()}", "add=", f"add{mark}=1", "add=lifts"):
+        assert not any("open" in d.attrs for d in foldouts_of(day_of(client, f"{on}?{query}")).values()), query
+    page = day_of(client, f"{on}?add={mark}")
+    assert page.count(f'id="{fold_id}"') == 1
+    home = foldouts_of(page)[fold_id].parent
+    assert home.is_("div", "card") and home.elements()[0].text() == card and home.parent.is_("div", "col-side")
+
+
+@pytest.mark.parametrize("path, data, field, control, says, kept", [
+    ("cardio", {"exercise": "Outdoor Run", "minutes": "0", "distance_km": "5"}, "cardio-minutes", "input",
+     "Give the minutes, from 1 to 600.", {"cardio-minutes": "0", "cardio-distance": "5", "cardio-exercise": "Outdoor Run"}),
+    ("cardio", {"exercise": "Outdoor Run", "minutes": "30", "distance_km": "900"}, "cardio-distance", "input",
+     "Give the distance in km, from 0.01 to 300, or leave it empty.",
+     {"cardio-minutes": "30", "cardio-distance": "900", "cardio-exercise": "Outdoor Run"}),
+    ("cardio", {"exercise": "Back Squat", "minutes": "30", "distance_km": ""}, "cardio-exercise", "select",
+     "Choose an activity from the list.", {"cardio-minutes": "30", "cardio-distance": None, "cardio-exercise": None}),
+    ("weigh-in", {"kg": "abc"}, "kg", "input", "That weight was not saved: give it in kg, from 20 to 400.",
+     {"kg": "abc"}),
+    ("measurement", {"kind": "waist", "value": "500"}, "measurement-value", "input",
+     "That value was not saved: give waist in cm, from 30 to 300.",
+     {"measurement-value": "500", "measurement-kind": "waist"}),
+    ("measurement", {"kind": "resting_hr", "value": "300"}, "measurement-value", "input",
+     "That value was not saved: give resting heart rate in bpm, from 20 to 250, as a whole number.",
+     {"measurement-value": "300", "measurement-kind": "resting_hr"}),
+    ("measurement", {"kind": "wrist", "value": "17"}, "measurement-kind", "select", "Choose a kind from the list.",
+     {"measurement-value": "17", "measurement-kind": None}),
+])
+def test_a_side_error_opens_its_fold_out_under_its_field_tied_to_its_input(client, path, data, field, control,
+                                                                            says, kept):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    r = post(client, f"/day/{on}/{path}", **data)
+    assert r.status_code == 400
+    folds = foldouts_of(r.text)
+    fold_id = f"add-{path}"
+    assert {i for i, d in folds.items() if "open" in d.attrs} == {fold_id}
+    fold = folds[fold_id]
+    # The error right under its control, in the page's words, tied by aria-describedby, the control invalid.
+    [error] = fold.find_all("p", "error")
+    assert error.text() == says and error.attrs["id"] == f"{field}-error"
+    box = error.parent
+    assert box.is_("div", "field") and "has-error" in box.classes
+    assert [e.tag for e in box.elements()] == ["label", control, "p"]
+    [target] = [c for c in box.elements() if c.tag == control]
+    assert target.attrs["id"] == field and target.attrs.get("aria-invalid") == "true"
+    assert target.attrs.get("aria-describedby") == f"{field}-error"
+    assert sum(c.attrs.get("aria-invalid") == "true" for c in fold.iter()) == 1
+    assert len(fold.find_all(cls="has-error")) == 1 and not fold.find_all("div", "error")
+    # What was typed stays: an input's value, a select's choice when it is one of the list.
+    for control_id, value in kept.items():
+        [c] = [n for n in fold.iter() if n.attrs.get("id") == control_id]
+        if c.tag == "input":
+            assert c.attrs.get("value") == value, control_id
+        else:
+            chosen = [o.attrs["value"] for o in c.find_all("option") if "selected" in o.attrs]
+            assert chosen == ([value] if value else []), control_id
+
+
+@pytest.mark.parametrize("path, service", [("cardio", "log_cardio"), ("weigh-in", "log_bodyweight"),
+                                           ("measurement", "log_measurement")])
+def test_a_side_refusal_the_form_has_no_field_for_sits_at_the_top_of_its_form(client, monkeypatch, path, service):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    monkeypatch.setattr(services, service, lambda *a: {"error": "date_too_old", "message": "x", "fix": "y"})
+    data = {"cardio": {"exercise": "Outdoor Run", "minutes": "30"}, "weigh-in": {"kg": "80"},
+            "measurement": {"kind": "waist", "value": "84"}}[path]
+    r = post(client, f"/day/{on}/{path}", **data)
+    assert r.status_code == 400
+    fold = foldouts_of(r.text)[f"add-{path}"]
+    assert "open" in fold.attrs
+    [form] = fold.find_all("form")
+    hidden, first = form.elements()[:2]
+    assert hidden.attrs.get("name") == "csrf_token" and first.is_("div", "error")
+    assert [p.text() for p in first.find_all("p")][0].startswith("That date cannot be used: ")
+    assert not fold.find_all("p", "error") or all(p.inside("div", "error") for p in fold.find_all("p", "error"))
+    assert not any(n.attrs.get("aria-invalid") for n in fold.iter())
+
+
+def test_another_cards_error_leaves_the_side_fold_outs_closed(client):
+    sign_in(client)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/food", description="Rice", kcal="abc")
+    assert r.status_code == 400
+    assert {i for i, d in foldouts_of(r.text).items() if "open" in d.attrs} == {"add-food"}
+
+
+def test_what_was_typed_in_a_side_fold_out_comes_back_escaped(client):
+    sign_in(client)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/weigh-in", kg='<b>"80"</b>')
+    assert r.status_code == 400
+    out = r.text[r.text.index('id="add-weigh-in"'):]
+    assert 'value="&lt;b&gt;&#34;80&#34;&lt;/b&gt;"' in out and "<b>&#34;80" not in out
+
+
+@pytest.mark.parametrize("state", ["empty", "stocked", "fed", "add", "error", "sample", "past"])
+def test_the_side_cards_never_say_claude(client, state):
+    sign_in(client)
+    uid = only_user().id
+    on = today_of(only_user())
+    if state in ("stocked", "add", "past"):
+        stock(only_user())
+    if state in ("fed", "add"):
+        stock_food(only_user(), weigh_in=state == "fed")
+    if state == "sample":
+        services.add_sample_data(uid, "web")
+    address = on.isoformat() + ("?add=cardio&add=weigh-in&add=measurement" if state == "add" else "")
+    if state == "past":
+        address = (on - timedelta(days=1)).isoformat()
+    if state == "error":
+        page = post(client, f"/day/{on.isoformat()}/measurement", kind="waist", value="abc").text
+    else:
+        page = day_of(client, address)
+    for title in ("Lifts", "Cardio", "Weigh-in", "Measurements"):
+        card = side_card(page, title)
+        assert not re.search(r"claude", card.text(), re.I), (state, title)
+        assert not any(re.search(r"claude", v, re.I) for n in card.iter() for k, v in n.attrs.items()
+                       if k in tr.READ_ATTRIBUTES), (state, title)
+
+
+def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
+    """The web reads every measurement name from measurements.kind_word: web.MEASUREMENT_LABELS and its
+    lookup are gone, and no template or web.py carries its own copy of a kind's word or the fallback."""
+    from pathlib import Path  # noqa: PLC0415
+
+    assert not hasattr(web, "MEASUREMENT_LABELS") and not hasattr(web, "measurement_label")
+    templates = sorted((Path(web.__file__).parent / "templates").glob("*.html"))
+    assert len(templates) > 5
+    sources = {p.name: p.read_text(encoding="utf-8") for p in templates}
+    sources["web.py"] = Path(web.__file__).read_text(encoding="utf-8")
+    for name, src in sources.items():
+        for word in rules.KIND_WORDS.values():
+            for literal in (f'"{word}"', f"'{word}'"):
+                assert literal not in src, (name, literal)
+        assert 'replace("_", " ").capitalize()' not in src, name
+    # The edit page and the Goals form read it too.
+    sign_in(client)
+    uid = only_user().id
+    hr = services.log_measurement(uid, {"kind": "resting_hr", "value": "58"}, "claude")
+    edit = client.get(f"/entries/measurement/{hr['id']}/edit").text
+    assert "<p>Resting heart rate (bpm)</p>" in edit
+    goals = client.get("/goals").text
+    assert '<option value="resting_hr">Resting heart rate (bpm)</option>' in goals
