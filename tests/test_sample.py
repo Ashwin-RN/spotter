@@ -200,6 +200,45 @@ def test_get_goals_numbers_for_the_fixed_day(user):
                             "Tue 2 Feb 2027, on track. Outdoor Run 5 km in 27:00 by Tue 5 Jan 2027, on track.")
 
 
+def test_the_plan_line_of_the_three_sample_goals_on_the_fixed_day(user):
+    """Stage 6, E1, worked out a second way: the straight line from each goal's start to its target, read
+    on 2026-11-10, against the goal's now (79.01, 107.92 and 29.5 from the test above)."""
+    added(user)
+    weight, squat, run = services.get_goals(user.id)["goals"]
+    today = NOW.date()
+
+    def line(start, start_on, target, target_on):
+        """The plan line today, by hand: the start plus the change times the share of the days gone."""
+        from datetime import date
+        a, b = date.fromisoformat(start_on), date.fromisoformat(target_on)
+        return start + (target - start) * (today - a).days / (b - a).days, abs(target - start) / (b - a).days
+
+    # Body weight: 79.9 on 14 Oct to 77 on 5 Jan is 83 days; 27 are gone. 79.9 - 2.9 x 27 / 83 = 78.9566.
+    # A down goal: ahead_by = plan - now = 78.9566 - 79.01 = -0.0534, behind. Now and plan both print 79 kg,
+    # and the gap is real at 1 dp: close-call rule 2, so the sentence and ahead_by carry 2 dp. -0.0534 kg
+    # over 2.9 / 83 = 0.0349 kg a day is -1.53 days: -2. The tag says on track: the two disagree (E1).
+    plan, per_day = line(79.9, "2026-10-14", 77.0, "2027-01-05")
+    assert abs(plan - 78.95663) < 1e-5 and abs((plan - 79.01) / per_day - -1.5276) < 1e-4
+    assert {k: weight[k] for k in ("should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line")} == {
+        "should_be_today": 79.0, "ahead_by": -0.05, "days_ahead": -2, "vs_plan": "behind",
+        "plan_line": "79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind."}
+    assert weight["status"] == "on track"
+    # Back Squat: 93.33 on 14 Oct to 120 on 2 Feb is 111 days; 27 gone. 93.33 + 26.67 x 27 / 111 = 99.8173.
+    # Up: 107.92 - 99.8173 = 8.1027 ahead, 8.1 kg; over 26.67 / 111 = 0.2403 kg a day, 33.72 days: 34.
+    plan, per_day = line(93.33, "2026-10-14", 120.0, "2027-02-02")
+    assert abs(plan - 99.81730) < 1e-5 and abs((107.92 - plan) / per_day - 33.7232) < 1e-4
+    assert {k: squat[k] for k in ("should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line")} == {
+        "should_be_today": 99.8, "ahead_by": 8.1, "days_ahead": 34, "vs_plan": "ahead",
+        "plan_line": "107.9 kg now against 99.8 kg on the plan line today: 8.1 kg ahead."}
+    # Outdoor Run, 5 km: 31 min on 17 Oct to 27 on 5 Jan is 80 days; 24 gone. 31 - 4 x 24 / 80 = 29.8 (29:48).
+    # Lower is better: 29.8 - 29.5 = 0.3 min ahead, 18 seconds; at 0.05 min a day, 6 days. Minutes at 2 dp.
+    plan, per_day = line(31.0, "2026-10-17", 27.0, "2027-01-05")
+    assert abs(plan - 29.8) < 1e-9 and abs((plan - 29.5) / per_day - 6) < 1e-9
+    assert {k: run[k] for k in ("should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line")} == {
+        "should_be_today": 29.8, "ahead_by": 0.3, "days_ahead": 6, "vs_plan": "ahead",
+        "plan_line": "29:30 now against 29:48 on the plan line today: 18 seconds ahead."}
+
+
 def test_get_trends_numbers_for_the_fixed_day(user):
     added(user)
     r = services.get_trends(user.id)
@@ -436,3 +475,119 @@ def test_the_seed_and_the_window_are_the_contracts():
     assert sample.SEED == 20261110 and sample.DAYS == 28
     assert sample.TARGETS == {"bodyweight": 77, "lift": 120, "cardio_best": 27.0}
     assert sample.GOAL_DAYS == {"bodyweight": 56, "lift": 84, "cardio_best": 56}
+
+
+def test_goal_charts_says_it_includes_sample_rows(user):
+    """The Goals page's read flags sample rows as get_goals does, with the same note."""
+    added(user)
+    charts, listed = services.goal_charts(user.id), services.get_goals(user.id)
+    assert charts["includes_sample"] is True and charts["note"] == listed["note"]
+    assert [n["now_basis"] for n in charts["goals"]] == ["average_7d", "best_28d", "best_28d"]
+    assert [n["plan_line"] for n in charts["goals"]] == [n["plan_line"] for n in listed["goals"]]
+
+
+# ---------------------------------------------------------------- the 28-day grid and the run's bests (stage 6)
+
+def sample_weights() -> list[float]:
+    """The 28 weigh-ins a second way: the seed's first 28 draws, in plain Python, as the module notes say."""
+    import random
+    rng = random.Random(20261110)
+    return [round(80.0 - 0.3 * i / 7 + rng.uniform(-0.3, 0.3), 1) for i in range(28)]
+
+
+def test_the_grid_of_the_fixed_day(user):
+    """E2 on 2026-11-10, a Tuesday: the 28 days from Wed 14 Oct. Lifts on Monday, Wednesday and Friday; cardio
+    on Tuesday (Treadmill Walk 30), Thursday (Stationary Bike 25) and Saturday (Outdoor Run 31, 30.5, 30, 29.5);
+    nothing trained on Sunday. Food and a weigh-in every day."""
+    added(user)
+    r = services.get_days(user.id)
+    assert (r["today"], r["from"], r["to"]) == ("2026-11-10", "2026-10-14", "2026-11-10")
+    week_of = lambda week: "".join(  # noqa: E731
+        "L" if d["lift_sessions"] else "C" if d["cardio_entries"] else "-" for d in week)
+    rows = [r["days"][n:n + 7] for n in range(0, 28, 7)]
+    # One line a week, Wednesday to Tuesday: L lifts, C cardio, - nothing trained (the Sunday).
+    assert [week_of(w) for w in rows] == ["LCLC-LC"] * 4
+    by_weekday = {}
+    for d in r["days"]:
+        weekday = datetime.fromisoformat(d["date"]).weekday()
+        by_weekday.setdefault(weekday, set()).add((d["lift_sessions"], d["cardio_entries"]))
+    assert by_weekday == {0: {(1, 0)}, 1: {(0, 1)}, 2: {(1, 0)}, 3: {(0, 1)}, 4: {(1, 0)}, 5: {(0, 1)}, 6: {(0, 0)}}
+    assert [d["cardio_minutes"] for d in r["days"] if d["cardio_entries"]] == [
+        25.0, 31.0, 30.0, 25.0, 30.5, 30.0, 25.0, 30.0, 30.0, 25.0, 29.5, 30.0]   # Thu 15 Oct first
+    assert all(d["weighed"] and d["is_sample"] and d["food_entries"] in (8, 9) and 2100 <= d["kcal"] <= 2300
+               for d in r["days"])
+    with db.new_session() as s:
+        kcal = {}
+        for e in s.scalars(select(FoodEntry).where(FoodEntry.user_id == user.id)):
+            kcal[e.date.isoformat()] = kcal.get(e.date.isoformat(), 0) + e.kcal
+    assert {d["date"]: d["kcal"] for d in r["days"]} == kcal
+    assert (r["lift_sessions_28d"], r["lift_days_28d"], r["cardio_days_28d"]) == (12, 12, 12)
+    assert r["includes_sample"] is True and r["note"] == services.common.SAMPLE_NOTE
+
+
+def test_the_weeks_and_the_weight_of_the_fixed_day(user):
+    """E2's weeks and weight on 2026-11-10, worked out a second way. Each week ends on a Tuesday and holds three
+    lift sessions, the walk (30), the bike (25) and one run: 31.0, 30.5, 30.0 and 29.5 in turn."""
+    added(user)
+    r = services.get_days(user.id)
+    assert r["weeks"] == [{"to": to, "lift_sessions": 3, "cardio_minutes": 30 + 25 + run}
+                          for to, run in (("2026-10-20", 31.0), ("2026-10-27", 30.5), ("2026-11-03", 30.0),
+                                          ("2026-11-10", 29.5))]
+    assert [w["cardio_minutes"] for w in r["weeks"]] == [86.0, 85.5, 85.0, 84.5]
+    trends = services.get_trends(user.id)
+    assert r["weeks"][-1]["cardio_minutes"] == trends["cardio"]["minutes_this_week"] == 84.5
+    assert r["weeks"][-1]["lift_sessions"] == trends["sessions"]["this_week"] == 3
+    # The three figures, as literals: latest 78.6 kg on 10 Nov, high 80.1 kg on Fri 16 Oct, low 78.6 kg on 10 Nov.
+    # No tie on this day: test_trends holds the tie rule.
+    assert r["weight"] == {"latest": {"date": "2026-11-10", "kg": 78.6}, "high": {"date": "2026-10-16", "kg": 80.1},
+                           "low": {"date": "2026-11-10", "kg": 78.6}}
+    # A second working from the stored rows, not from the generator: each figure is held by one weigh-in only.
+    with db.new_session() as s:
+        stored = [(b.date.isoformat(), b.kg) for b in s.scalars(select(Bodyweight).where(Bodyweight.user_id == user.id)
+                                                              .order_by(Bodyweight.date))]
+    assert len(stored) == 28 and stored[0] == ("2026-10-14", 79.9) and stored[-1] == ("2026-11-10", 78.6)
+    assert [d for d, kg in stored if kg == max(k for _, k in stored)] == ["2026-10-16"]
+    assert [d for d, kg in stored if kg == min(k for _, k in stored)] == ["2026-11-10"]
+    assert [kg for _, kg in stored] == sample_weights()               # the rows are the seed's draws
+    assert r["weight"]["latest"]["kg"] == trends["bodyweight"]["series"][-1]["kg"]
+
+
+def test_the_outdoor_run_bests_of_the_fixed_day(user):
+    """E3 on 2026-11-10, worked out a second way. Four 5 km runs on the Saturdays: 31.0 on 17 Oct, then 0.5
+    less a week. The fastest is 29.5 / 5 = 5.9 min a km, 5:54, on 7 Nov. All four are 5 km, so the longest
+    is a four-way tie and goes to the earliest, 17 Oct. Best times: 1 km 5.9, 5 km 29.5; 10 km not reached."""
+    added(user)
+    r = services.get_cardio(user.id, "Outdoor Run")
+    by_date = {s["date"]: s for s in r["sessions"]}
+    assert [s["date"] for s in r["sessions"]] == ["2026-11-07", "2026-10-31", "2026-10-24", "2026-10-17"]
+    assert [(s["minutes"], s["pace"], s["pace_min_per_km"]) for s in r["sessions"]] == [
+        (29.5, "5:54", 5.9), (30.0, "6:00", 6.0), (30.5, "6:06", 6.1), (31.0, "6:12", 6.2)]
+    fastest = by_date["2026-11-07"]
+    assert r["bests"] == {
+        "fastest_pace": {"pace": "5:54", "pace_min_per_km": 29.5 / 5, "date": "2026-11-07", "entry_id": fastest["id"]},
+        "longest": {"distance_km": 5.0, "date": "2026-10-17", "entry_id": by_date["2026-10-17"]["id"]},
+        "times": [{"distance_km": 1.0, "minutes": 5.9, "date": "2026-11-07", "entry_id": fastest["id"]},
+                  {"distance_km": 5.0, "minutes": 29.5, "date": "2026-11-07", "entry_id": fastest["id"]}]}
+    assert r["week"] == {"minutes": 84.5, "target_minutes": None}
+    assert r["includes_sample"] is True and all(s["is_sample"] for s in r["sessions"])
+    # The 5 km time is the sample goal's latest: one rule for both.
+    assert services.get_goals(user.id)["goals"][2]["latest"] == r["bests"]["times"][-1]["minutes"]
+    summary = services.get_cardio(user.id)
+    assert summary["activities"] == [
+        {"exercise": "Outdoor Run", "sessions_28d": 4, "minutes_28d": 121.0, "fastest_pace": "5:54",
+         "last_date": "2026-11-07"},
+        {"exercise": "Stationary Bike", "sessions_28d": 4, "minutes_28d": 100.0, "fastest_pace": None,
+         "last_date": "2026-11-05"},
+        {"exercise": "Treadmill Walk", "sessions_28d": 4, "minutes_28d": 120.0, "fastest_pace": None,
+         "last_date": "2026-11-10"}]
+
+
+def test_the_sample_pull_up_is_a_reps_only_lift(user):
+    """G8: the sample's Pull-Up is 3 x 6 at 0 kg in each B session, so no estimated max; reps_only gives 6, on the
+    first B session, Fri 16 Oct (a tie keeps the earliest)."""
+    from app.services import lifts
+    added(user)
+    with db.new_session() as s:
+        h = lifts.history(s, user.id, NOW.date())
+    assert h["reps_only"] == {"Pull-Up": {"reps": 6, "date": "2026-10-16"}}
+    assert "Pull-Up" not in h["best_set"]

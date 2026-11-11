@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>{% block title %}Spotter{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ style_href }}">
 </head>
 <body{% if time_zone_missing %} data-time-zone="missing"{% endif %}>
   <header class="top">

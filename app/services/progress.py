@@ -13,9 +13,10 @@ get_progress(user_id, exercise=None)
     estimated max at 1 dp (a best and the one it beat together, lifts.rounded_best), and the goals
     through goals.rounded_numbers. The numbers worked out from stay unrounded.
 
-lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals, today)
+lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals, today, since=None)
     The data app.charts draws, from the same numbers. Each body weight point carries its smoothed
-    value (metrics.ewma), the line the chart draws, and the 7-day average there, both at 1 dp.
+    value (metrics.ewma over every weigh-in), the line the chart draws, and the 7-day average there,
+    both at 1 dp. since: draw only the weigh-ins from that date on; the smoothed line is unchanged.
 """
 
 from datetime import date
@@ -24,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app import db, formatting, links, metrics, rules, users
-from app.models import CardioEntry, Goal, User
+from app.models import Goal, User
 from app.services import cardio, lifts
 from app.services.common import SAMPLE_NOTE, exercises, no_account
 from app.services.goals import goal_numbers, load_numbers, rounded_numbers
@@ -138,10 +139,9 @@ def _with_sample(out: dict, sample: bool, note: str | None) -> dict:
 
 
 def _cardio(s, user, activity, today) -> dict:
-    """One cardio activity: its sessions, newest first in the one order, and this week's minutes."""
-    rows = sorted(s.scalars(select(CardioEntry).where(
-        CardioEntry.user_id == user.id, CardioEntry.exercise_id == activity.id, CardioEntry.deleted_at.is_(None))),
-        key=lambda c: metrics.order_key(c.date, c.id, today), reverse=True)
+    """One cardio activity: its sessions, newest first in the one order (cardio.sessions_of, the list
+    get_cardio gives too), and this week's minutes."""
+    rows = cardio.sessions_of(s, user, activity, today)
     sessions = [{k: d[k] for k in ("id", "date", "minutes", "distance_km", "pace", "estimate", "machine_kcal")}
                 for d in (cardio.cardio_dict(c) for c in rows)]
     out = {"today": today.isoformat(),
@@ -181,21 +181,25 @@ def _derived(value: float | None) -> float | None:
     return None if value is None else formatting.rounded(value, "bodyweight_derived")
 
 
-def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date) -> dict | None:
+def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date, since: date | None = None) -> dict | None:
     """Data for bodyweight_svg: weigh-ins with their smoothed value, the 7-day average at each, the
-    open bodyweight goal. None with fewer than 2 weigh-ins. Every weigh-in is drawn, whatever its
-    date, in the one order and labelled with its real date. smoothed is metrics.ewma over all of them
-    (the line get_trends reports). Each average is the 7 days ending on that weigh-in's effective
-    date, over effective dates, so the last one is bodyweight_now."""
-    pts = metrics.in_order([(b.date, b.kg) for b in weigh_ins], today)
-    aged = [(metrics.on_or_before(d, today), kg) for d, kg in pts]
-    if len(pts) < 2:
+    open bodyweight goal. Every weigh-in is drawn, whatever its date, in the one order and labelled
+    with its real date; with since, only those whose effective date is on or after it. smoothed is
+    metrics.ewma over every weigh-in, the window's or not (the line get_trends reports). Each average
+    is the 7 days ending on that weigh-in's effective date, over every weigh-in's effective date, so
+    the last one is bodyweight_now. None with fewer than 2 weigh-ins drawn."""
+    every = metrics.in_order([(b.date, b.kg) for b in weigh_ins], today)
+    aged = [(metrics.on_or_before(d, today), kg) for d, kg in every]
+    smoothed = [v for _, v in metrics.ewma(every, today)]
+    drawn = [(p, sm) for p, sm in zip(every, smoothed)
+             if since is None or metrics.on_or_before(p[0], today) >= since]
+    if len(drawn) < 2:
         return None
-    smoothed = [v for _, v in metrics.ewma(pts, today)]
+    pts = [p for p, _ in drawn]
     goal = next((g for g in goals if g.kind == "bodyweight" and g.status == "open" and g.target_value is not None),
                 None)
     return {
-        "points": [{"date": d.isoformat(), "kg": kg, "smoothed": _derived(sm)} for (d, kg), sm in zip(pts, smoothed)],
+        "points": [{"date": d.isoformat(), "kg": kg, "smoothed": _derived(sm)} for (d, kg), sm in drawn],
         "average": [{"date": d.isoformat(),
                      "kg": _derived(metrics.bodyweight_average(aged, metrics.on_or_before(d, today)))}
                     for d, _ in pts],

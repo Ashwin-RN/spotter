@@ -44,6 +44,16 @@ Trends
       The 7-day average ending today, else the latest weigh-in.
   bodyweight_trend(weigh_ins: [(date, kg)], today) -> dict | None
 
+Goals and the plan line
+  goal_now(kind, points, today) -> float | None
+      Where the person is now on a goal of this kind: the one measure a goal starts from, its latest,
+      and its plan line's now.
+  goal_now_series(kind, points, today, since) -> [(date, value)]
+      goal_now as it stood on each date that has a point, from since on, oldest first.
+  goal_path(start_date, start_value, target_date, target_value, actual, today, lower_is_better, quantity,
+            *, now=None) -> {plan, actual, should_be_today, ahead_by, days_ahead, ended, vs_plan}
+      The straight line from the start to the target, and where now sits against it.
+
 Smoothed weight and what it says
   ewma(points: [(date, kg)], today, alpha=0.1) -> [(date, smoothed)]
       The exponentially weighted moving average over the weigh-ins in the one order, 2 dp.
@@ -410,6 +420,92 @@ def bodyweight_trend(weigh_ins: list[tuple[date, float]], today: date) -> dict |
     elif len(pts) >= 2:
         out.update(method="simple change", change_kg=round(pts[-1][1] - pts[0][1], 2))
     return out
+
+
+# ---------------------------------------------------------------- goals and the plan line
+
+def goal_now(kind: str, points: list[tuple[date, float]], today: date) -> float | None:
+    """Where the person is now on a goal of this kind, the one measure a goal starts from and is
+    compared with. A lift: the best session in the last 28 days, else the latest (recent_best). Body
+    weight: the 7-day average, else the latest weigh-in (bodyweight_now). A cardio time: the lowest in
+    the last 28 days, else the latest. A measurement: the latest, in the one order. None with no points."""
+    if kind == "lift":
+        return recent_best(points, today)
+    if kind == "bodyweight":
+        return bodyweight_now(points, today)
+    if kind == "cardio_best":
+        return recent_best(points, today, lower_is_better=True)
+    ordered = in_order(points, today)
+    return ordered[-1][1] if ordered else None
+
+
+def goal_now_series(kind: str, points: list[tuple[date, float]], today: date,
+                    since: date) -> list[tuple[date, float]]:
+    """goal_now as it stood on each date that has a point, from `since` on, oldest first.
+
+    A point's date is its effective date (on_or_before), so one dated after today stands at today. On
+    each date the figure reads that date's points and the earlier ones, as goal_now read them that day:
+    a 7-day average or a 28-day best ending on that date. One (date, value) per date."""
+    ordered = in_order(points, today)
+    dates = sorted({on_or_before(d, today) for d, _ in ordered if on_or_before(d, today) >= since})
+    out = []
+    for day in dates:
+        value = goal_now(kind, [(d, v) for d, v in ordered if on_or_before(d, today) <= day], day)
+        if value is not None:
+            out.append((day, value))
+    return out
+
+
+def goal_path(start_date: date, start_value: float, target_date: date, target_value: float,
+              actual: list[tuple[date, float]], today: date, lower_is_better: bool, quantity: str,
+              *, now: float | None = None) -> dict:
+    """The plan line: the straight line from (start_date, start_value) to (target_date, target_value),
+    and where now sits against it today. Pure: no database, no clock.
+
+    actual: goal_now_series from start_date. now: the goal's now (goal_now today); left out, the last
+    point of actual. quantity: the goal unit's quantity kind (app.formatting), whose shown step decides
+    "on the line": formatting.is_zero(ahead_by, quantity), the page's own rule.
+
+    should_be_today  the line today. The start before the start date; the target after the target date,
+                     and the target when the line has no length (target_date on or before start_date)
+    ahead_by         up: now - should_be_today; lower_is_better: should_be_today - now. Positive is ahead.
+                     Full precision. 0 on the line. None with no now
+    days_ahead       ahead_by over the line's change a day, whole days, halves away from zero. 0 on the
+                     line. None with no now, once the target date has passed, or when the line has no
+                     length (no change a day)
+    vs_plan          "ahead", "on the line" or "behind"; None with no now
+    ended            True when the plan figure is the target: today is after the target date, or the
+                     line has no length. The one place this is worked out
+    plan             [{date, value}]: the start, today when strictly between the ends, the target
+    actual           [{date, value}] from `actual`
+    actual can be [] when now is given: nothing here reads the series but its copy in `actual`.
+    Dates are ISO. Every number but days_ahead is full precision."""
+    length = (target_date - start_date).days
+    ended = today > target_date or length <= 0
+    if ended:
+        should = target_value
+    elif today <= start_date:
+        should = start_value
+    else:
+        should = start_value + (target_value - start_value) * (today - start_date).days / length
+    plan = [{"date": start_date.isoformat(), "value": start_value}]
+    if start_date < today < target_date:
+        plan.append({"date": today.isoformat(), "value": should})
+    plan.append({"date": target_date.isoformat(), "value": target_value})
+    if now is None and actual:
+        now = actual[-1][1]
+    ahead = days = vs = None
+    per_day = abs(target_value - start_value) / length if length > 0 else 0
+    if now is not None:
+        ahead = should - now if lower_is_better else now - should
+        if formatting.is_zero(ahead, quantity):
+            vs, ahead = "on the line", 0.0
+            days = None if ended or not per_day else 0
+        else:
+            vs = "ahead" if ahead > 0 else "behind"
+            days = None if ended or not per_day else int(formatting.rounded(ahead / per_day, "count"))
+    return {"plan": plan, "actual": [{"date": d.isoformat(), "value": v} for d, v in actual],
+            "should_be_today": should, "ahead_by": ahead, "days_ahead": days, "ended": ended, "vs_plan": vs}
 
 
 # ---------------------------------------------------------------- smoothed weight, rate, maintenance

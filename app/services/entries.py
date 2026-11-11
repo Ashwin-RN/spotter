@@ -261,7 +261,7 @@ def _day_taken(s, model, row, on, user_id: int) -> dict | None:
     taken = s.scalar(same_day.order_by(model.id).limit(1))
     if taken is None:
         return None
-    what = "a weigh-in" if model is Bodyweight else f"a {row.kind.replace('_', ' ')} measurement"
+    what = "a weigh-in" if model is Bodyweight else f"a {measurements.kind_word(row.kind).lower()} measurement"
     return error("day_taken", f"{on.isoformat()} already has {what} (id {taken.id}).",
                  f"Edit or delete {taken.id} first, or choose another date. Nothing was changed.",
                  entry_id=taken.id)

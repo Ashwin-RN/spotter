@@ -222,6 +222,11 @@ def test_a_new_date_onto_a_taken_day_is_refused(user):
     assert moved["changed"] == ["date"] and moved["links"]["day"].endswith(f"/day/{back(user, 1)}")
     services.delete_entry(user.id, "bodyweight", first["id"])            # a deleted row does not hold the day
     assert edit(user, "bodyweight", second["id"], date=back(user, 1))["changed"] == ["date"]
+    # The message names the kind by its word (measurements.KIND_WORDS), never its unit.
+    services.log_measurement(user.id, {"kind": "resting_hr", "value": 60, "date": back(user, 1)}, "web")
+    later = services.log_measurement(user.id, {"kind": "resting_hr", "value": 61}, "web")
+    taken = edit(user, "measurement", later["id"], date=back(user, 1))
+    assert taken["error"] == "day_taken" and " already has a resting heart rate measurement (id " in taken["message"]
 
 
 def test_an_edit_re_keys_so_a_repeat_of_the_new_content_is_a_duplicate(user):

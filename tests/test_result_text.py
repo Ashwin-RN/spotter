@@ -7,12 +7,14 @@ and a battery of refused calls gives the messages and fixes.
 
 Surfaces, from the contract's T2 row:
   summary   summary and note, and the other service-built words Claude reads beside them: a new
-            best's text, a goal's label, maintenance_note and usda_note
+            best's text, a goal's label and plan_line, maintenance_note and usda_note; and the pace
+            strings a page shows (a session's pace, get_cardio's fastest_pace), m:ss from the formatter
   message   message and fix (an error's errors[] too), and the text for Claude beside them: warnings
             and time_zone_note
 Text the person entered (descriptions, notes, names, the goal's own text, a refused value echoed
 back) is masked with text_rules.mask_entered first. A widened figure is allowed its trailing zero
-only in the one result that carries a widened pair.
+only in the one result that carries a widened pair, and in a plan_line of close-call rule 2: that
+sentence alone, never the other texts of its result.
 """
 
 import re
@@ -21,15 +23,17 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
-from app import db, services
+from app import db, formatting, services
 from app.models import Bodyweight, CardioEntry, FoodEntry, LiftSession, Measurement, SavedFood
+from app.services import goals as goal_service
 from app.services import lifts, sample
 
 from . import text_rules as tr
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)   # a Tuesday
 TODAY = NOW.date()
-SUMMARY_KEYS = ("summary", "note", "text", "label", "maintenance_note", "usda_note")
+SUMMARY_KEYS = ("summary", "note", "text", "label", "plan_line", "maintenance_note", "usda_note",
+                "pace", "fastest_pace", "min_per_km")
 MESSAGE_KEYS = ("message", "fix", "warnings", "time_zone_note")
 KINDS = ("waist", "hips", "chest", "arm", "thigh", "steps", "sleep_hours", "resting_hr", "water_ml")
 CODE_VALUES = re.compile(r"\b(?:None|True|False|null)\b")
@@ -72,9 +76,12 @@ class Seen:
     def __init__(self):
         self.items: list[tuple[str, str, str, bool, frozenset]] = []
 
-    def add(self, name: str, result, *entered, widened: bool = False):
+    def add(self, name: str, result, *entered, widened: bool | frozenset = False):
+        """widened: True for every text of the result, or a set of the exact texts that carry a widened
+        figure (a rule 2 plan_line), so the other texts beside them are still held to the rule."""
         mine = frozenset(str(e) for e in entered if e is not None)
-        self.items += [(surface, f"{name}: {where}", text, widened, mine) for surface, where, text in texts(result)]
+        wide = (lambda t: t in widened) if isinstance(widened, (set, frozenset)) else (lambda t: widened)
+        self.items += [(surface, f"{name}: {where}", text, wide(text), mine) for surface, where, text in texts(result)]
         return result
 
     def keys(self) -> set[str]:
@@ -170,6 +177,8 @@ def refusals(seen: Seen, user_id: int):
         ("get_log", lambda: services.get_log(user_id, date="2999-01-01", days=15), ()),
         ("get_log days", lambda: services.get_log(user_id, days=15), (15,)),
         ("get_progress", lambda: services.get_progress(user_id, "Bak Squat"), ("Bak Squat",)),
+        ("get_cardio lift", lambda: services.get_cardio(user_id, "Back Squat"), ("Back Squat",)),
+        ("get_cardio unknown", lambda: services.get_cardio(user_id, "treadmil rnu"), ("treadmil rnu",)),
         ("find_food", lambda: services.find_food(user_id, "", limit=30), ()),
         ("find_food limit", lambda: services.find_food(user_id, "dal", limit=30), (30,)),
         ("list_exercises", lambda: services.list_exercises("dance"), ("dance",)),
@@ -180,15 +189,43 @@ def refusals(seen: Seen, user_id: int):
         assert "error" in r, (name, r)
 
 
+def widened_lines(user_id: int) -> frozenset:
+    """The plan_line of every open goal in close-call rule 2 (formatting.widen on the unrounded now and
+    plan figures, from goal_charts): the sentences that carry one more decimal."""
+    return frozenset(n["plan_line"] for n in services.goal_charts(user_id)["goals"]
+                     if n["plan_line"] and n["vs_plan"] != "on the line"
+                     and formatting.widen([n["latest"], n["should_be_today"]],
+                                          goal_service.goal_quantity(n["kind"], n["unit"])))
+
+
+PLAN_FIGURES = re.compile(r"^(?P<now>.+?) now against (?:the target of )?(?P<plan>.+?)(?: on the plan line today)?: ")
+
+
+def assert_plan_lines_part_their_figures(seen: Seen) -> int:
+    """No plan_line shows two equal figures beside a gap: where a sentence has a now figure and a plan
+    figure, the two read differently (close-call rule 2 widens them apart). Returns how many it read."""
+    lines = {text for _, where, text, _, _ in seen.items if where.endswith(".plan_line")}
+    pairs = [m for m in (PLAN_FIGURES.match(line) for line in lines) if m]
+    same = [m.string for m in pairs if m["now"] == m["plan"]]
+    assert not same, same
+    return len(pairs)
+
+
 def every_read(seen: Seen, user_id: int, widened: bool = False):
-    """Every read. widened: the log carries a widened pair (a new best's text)."""
+    """Every read. widened: the log carries a widened pair (a new best's text). A rule 2 plan_line is
+    widened on its own, wherever a goal carries it."""
+    lines = widened_lines(user_id)
     seen.add("whoami", services.whoami(user_id))
     seen.add("get_trends", services.get_trends(user_id))
-    seen.add("get_goals", services.get_goals(user_id, include_closed=True))
-    seen.add("get_progress", services.get_progress(user_id))
+    seen.add("get_goals", services.get_goals(user_id, include_closed=True), widened=lines)
+    seen.add("get_progress", services.get_progress(user_id), widened=lines)
     for name in ("Back Squat", "Deadlift", "Outdoor Run", "Treadmill Walk"):
-        seen.add(f"get_progress {name}", services.get_progress(user_id, name))
+        seen.add(f"get_progress {name}", services.get_progress(user_id, name), widened=lines)
     seen.add("get_log", services.get_log(user_id, days=14), widened=widened)
+    seen.add("get_days", services.get_days(user_id))
+    seen.add("get_cardio", services.get_cardio(user_id))
+    for name in ("Outdoor Run", "Treadmill Walk", "Hiking"):
+        seen.add(f"get_cardio {name}", services.get_cardio(user_id, name))
     seen.add("list_saved_foods", services.list_saved_foods(user_id))
     seen.add("find_food", services.find_food(user_id, "roti"), "roti")
     seen.add("export_data", services.export_data(user_id))
@@ -261,6 +298,11 @@ def test_a_sample_account(make_user):
                for t in seen.texts())   # a real entry lost its link to a sample food
     refusals(seen, user.id)
     assert {"summary", "note", "text", "label", "message", "fix"} <= seen.keys()
+    # The web-only reads are walked too: their notes, and every pace string (stage 6, E2 and E3).
+    assert {"pace", "fastest_pace", "min_per_km"} <= seen.keys()
+    assert {"5:54", "No Hiking logged yet."} <= seen.texts()
+    assert any(where.startswith("get_days: ") and where.endswith(".note") for _, where, *_ in seen.items)
+    assert assert_plan_lines_part_their_figures(seen) >= 3   # the three sample goals, the body weight one rule 2
     seen.assert_clean()
 
 
@@ -285,6 +327,11 @@ def test_an_edge_case_account(make_user):
                                                                      "claude"))
         seen.add(f"log_measurement {kind} again", services.log_measurement(
             user.id, {"kind": kind, "value": VALUES[kind] + 1}, "claude"))
+    # The kind's word from measurements.KIND_WORDS: it never repeats the unit beside the figure.
+    assert {"Water 2,501 ml on Tue 10 Nov. Replaced 2,500 ml.", "Resting heart rate 59 bpm on Tue 10 Nov. Replaced "
+            "58 bpm.", "Sleep 8.5 h on Tue 10 Nov. Replaced 7.5 h.", "Steps 12,346 on Tue 10 Nov. Replaced 12,345."} \
+        <= seen.texts()
+    assert not [t for t in seen.texts() if re.search(r"Water ml|Resting hr|Sleep hours|water ml|resting hr", t)]
     # A cardio time goal, and goals in cm and bpm.
     for minutes, days in ((31.25, 20), (30.5, 13), (29.75, 6), (29.5, 1)):
         seen.add("log_cardio", services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": minutes,
@@ -317,6 +364,7 @@ def test_an_edge_case_account(make_user):
     every_read(seen, user.id, widened=True)
     refusals(seen, user.id)
     assert {"summary", "note", "text", "label", "message", "fix", "warnings"} <= seen.keys()
+    assert_plan_lines_part_their_figures(seen)
     seen.assert_clean()
 
 
@@ -400,11 +448,100 @@ def test_the_other_paths(make_user):
 
 
 def test_the_walk_finds_nested_texts():
-    result = {"summary": "a", "goals": [{"note": "b", "label": "c"}], "errors": [{"message": "d", "fix": "e"}],
-              "warnings": ["f", "g"], "how": "not read"}
+    result = {"summary": "a", "goals": [{"note": "b", "label": "c", "plan_line": "h"}],
+              "errors": [{"message": "d", "fix": "e"}], "warnings": ["f", "g"], "how": "not read"}
     assert sorted((surface, text) for surface, _, text in texts(result)) == [
         (tr.MESSAGE, "d"), (tr.MESSAGE, "e"), (tr.MESSAGE, "f"), (tr.MESSAGE, "g"),
-        (tr.SUMMARY, "a"), (tr.SUMMARY, "b"), (tr.SUMMARY, "c")]
+        (tr.SUMMARY, "a"), (tr.SUMMARY, "b"), (tr.SUMMARY, "c"), (tr.SUMMARY, "h")]
+
+
+def test_a_widened_set_widens_only_its_own_texts():
+    seen = Seen()
+    seen.add("goals", {"summary": "Down 0.10 kg.", "goals": [{"plan_line": "80.10 kg now."}]},
+             widened=frozenset({"80.10 kg now."}))
+    assert [line.split(" [")[0] for line in seen.findings()] == ["goals: result.summary"]
+
+
+def test_every_plan_line_form(make_user, monkeypatch):
+    """Each plan_line template of section E1, from real goals on the fixed day: ahead or behind, on the line,
+    close-call rule 2 (widened, that sentence alone), after the target date (off the line and at the target), and a
+    cardio time in both forms.
+    Each goal is set on its start day, so its plan line today is its start; a second entry then moves now."""
+    user = make_user(time_zone="UTC")
+    seen = Seen()
+    say = lambda name, result, *entered, **kw: seen.add(name, result, *entered, **kw)  # noqa: E731
+    early = NOW - timedelta(days=10)
+    monkeypatch.setattr(db, "utcnow", lambda: early)       # a waist goal whose date passes before the fixed day
+    say("waist", services.log_measurement(user.id, {"kind": "waist", "value": 90}, "claude"))
+    say("waist goal", services.set_goal(user.id, {"kind": "measurement", "measurement_kind": "waist",
+                                                  "target_value": 85, "target_date": ago(5)}, "claude"))
+    say("hips", services.log_measurement(user.id, {"kind": "hips", "value": 95}, "claude"))
+    say("hips goal", services.set_goal(user.id, {"kind": "measurement", "measurement_kind": "hips",
+                                                 "target_value": 90, "target_date": ago(5)}, "claude"))
+    monkeypatch.setattr(db, "utcnow", lambda: NOW)
+    say("waist now", services.log_measurement(user.id, {"kind": "waist", "value": 88}, "claude"))
+    say("hips now", services.log_measurement(user.id, {"kind": "hips", "value": 90.02}, "claude"))  # at the target
+    # Body weight, rule 2: 80.14 now against a start of 80.08, both 80.1 kg at 1 dp, the gap 0.06 kg.
+    say("weigh-in", services.log_bodyweight(user.id, {"kg": 80.08}, "claude"))
+    say("weight goal", services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75,
+                                                   "target_date": "2027-01-31"}, "claude"))
+    say("weigh-in again", services.log_bodyweight(user.id, {"kg": 80.14}, "claude"))
+    # A lift on the line: its start day, nothing since.
+    say("squat", services.log_lifts(user.id, {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]},
+                                    "claude"))
+    say("squat goal", services.set_goal(user.id, {"kind": "lift", "exercise": "Back Squat", "target_value": 130,
+                                                  "target_date": "2027-01-31"}, "claude"))
+    # Resting heart rate, behind: 66 now against a start of 64.
+    say("resting", services.log_measurement(user.id, {"kind": "resting_hr", "value": 64}, "claude"))
+    say("resting goal", services.set_goal(user.id, {"kind": "measurement", "measurement_kind": "resting_hr",
+                                                    "target_value": 58, "target_date": "2027-01-31"}, "claude"))
+    say("resting again", services.log_measurement(user.id, {"kind": "resting_hr", "value": 66}, "claude"))
+    # Two cardio times. Treadmill Run: 30:00 at the start, 29:42 now. Outdoor Run, rule 2: 10.01 km in 60.1 min
+    # is 30.02 min for 5 km (30:01.2), then 15.01 km in 90.1 min is 30.01 (30:00.6): both 30:01 at whole seconds.
+    say("treadmill", services.log_cardio(user.id, {"exercise": "Treadmill Run", "minutes": 30, "distance_km": 5},
+                                         "claude"))
+    say("treadmill goal", services.set_goal(user.id, {"kind": "cardio_best", "exercise": "Treadmill Run",
+                                                      "distance_km": 5, "target_value": 27,
+                                                      "target_date": "2027-01-31"}, "claude"))
+    say("treadmill again", services.log_cardio(user.id, {"exercise": "Treadmill Run", "minutes": 29.7,
+                                                         "distance_km": 5}, "claude"))
+    say("run", services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 60.1, "distance_km": 10.01},
+                                   "claude"))
+    say("run goal", services.set_goal(user.id, {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5,
+                                                "target_value": 27, "target_date": "2027-01-31"}, "claude"))
+    say("run again", services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 90.1, "distance_km": 15.01},
+                                         "claude"))
+    every_read(seen, user.id)
+    lines = [g["plan_line"] for g in services.get_goals(user.id)["goals"]]
+    assert lines == [
+        "88 cm now against the target of 85 cm: 3 cm behind.",
+        "90 cm now, at the target.",
+        "80.14 kg now against 80.08 kg on the plan line today: 0.06 kg behind.",
+        "On the plan line today, at 116.7 kg.",
+        "66 bpm now against 64 bpm on the plan line today: 2 bpm behind.",
+        "29:42 now against 30:00 on the plan line today: 18 seconds ahead.",
+        "30:00.6 now against 30:01.2 on the plan line today: 0.6 seconds ahead."]
+    assert widened_lines(user.id) == {lines[2], lines[6]}   # only the two rule 2 sentences are widened
+    assert set(lines) <= seen.texts()
+    assert assert_plan_lines_part_their_figures(seen) == 5
+    seen.assert_clean()
+
+
+def test_a_bpm_rule_2_sentence_is_widened_alone(make_user, monkeypatch):
+    """Resting heart rate 64 against a plan line of 63.5: both print 64 bpm, the gap is real, so the sentence says
+    "64.0 bpm". Its trailing zero passes only because that sentence alone is widened."""
+    user = make_user(time_zone="UTC")
+    seen = Seen()
+    monkeypatch.setattr(db, "utcnow", lambda: NOW - timedelta(days=10))
+    seen.add("resting", services.log_measurement(user.id, {"kind": "resting_hr", "value": 64}, "claude"))
+    seen.add("resting goal", services.set_goal(user.id, {"kind": "measurement", "measurement_kind": "resting_hr",
+                                                         "target_value": 62, "target_date": ago(-30)}, "claude"))
+    monkeypatch.setattr(db, "utcnow", lambda: NOW)
+    every_read(seen, user.id)
+    line = "64.0 bpm now against 63.5 bpm on the plan line today: 0.5 bpm behind."
+    assert widened_lines(user.id) == {line} and line in seen.texts()
+    assert [f.rule for f in tr.check(line, tr.SUMMARY)] == [tr.TRAILING_ZERO]   # unwidened, "64.0" is caught
+    seen.assert_clean()
 
 
 def test_a_dirty_text_is_caught():

@@ -95,12 +95,13 @@ SETTINGS_ONLY_RULE = (
 )
 
 # How Claude words a reply: Spotter's figures as given, with their units, and no dashes between clauses.
-# Step 3 adds one last sentence, for plan_line, once a goal result carries that field.
+# Its last sentence names plan_line, which every goal's numbers carry from stage 6 step 3 (GoalNumbers).
 REPLY_RULE = (
     "How to reply: plain words, one fact a line. Quote each number as Spotter gives it, with its unit: never add "
     "decimals, never round further, and never recalculate one yourself. Where a summary gives a figure, say the "
     "summary's figure. Say \"about\" as a word, never as a symbol. No dashes between clauses: use a colon, a comma "
-    "or a full stop. Name an estimate as an estimate."
+    "or a full stop. Name an estimate as an estimate. Where a goal carries plan_line, say it as written, "
+    "and do not also quote latest, should_be_today or ahead_by."
 )
 
 INSTRUCTIONS = (
@@ -111,7 +112,7 @@ INSTRUCTIONS = (
     "to a page for it. "
     "Use exercise names exactly as list_exercises gives them. "
     "Leave the date out for something done today: today is the person's own date. "
-    "Quote Spotter's numbers; never estimate your own. "
+    "Quote Spotter's numbers; never estimate your own, except a food's kcal, as the food rule says. "
     "If a call returns an error, read its fix and retry. "
     "duplicate: true means nothing was written: say so, and send allow_repeat: true only when the person "
     "confirms it was a separate entry. "

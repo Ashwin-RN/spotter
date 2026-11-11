@@ -165,3 +165,42 @@ def test_after_a_change_of_zone_the_one_logged_just_now_leads(user, monkeypatch)
     assert now["measurement"]["date"] == "2026-11-09" and now["replaced"] is None
     assert now["recent"] == [{"date": "2026-11-09", "value": 85}, {"date": "2026-11-10", "value": 84}]
     assert measure(user, "waist", 83, date="2026-11-10")["error"] == "date_in_future"
+
+
+def test_one_table_of_kind_words_names_every_kind_without_its_unit():
+    from app.services.measurements import KIND_WORDS, kind_word
+    assert set(KIND_WORDS) == set(rules.MEASUREMENTS)
+    assert KIND_WORDS == {"waist": "Waist", "hips": "Hips", "chest": "Chest", "arm": "Arm", "thigh": "Thigh",
+                          "steps": "Steps", "sleep_hours": "Sleep", "resting_hr": "Resting heart rate",
+                          "water_ml": "Water"}
+    for kind, word in KIND_WORDS.items():
+        unit = rules.MEASUREMENTS[kind][0]
+        assert kind_word(kind) == word and (unit == kind or unit not in word.lower().split()), kind
+
+
+@pytest.mark.parametrize("kind, first, value, summary, note", [
+    ("water_ml", 2500, 2501, "Water 2,501 ml on {d}. Replaced 2,500 ml.", "Replaced the {d} water of 2,500 ml"),
+    ("resting_hr", 58, 59, "Resting heart rate 59 bpm on {d}. Replaced 58 bpm.",
+     "Replaced the {d} resting heart rate of 58 bpm"),
+    ("sleep_hours", 7.5, 8.5, "Sleep 8.5 h on {d}. Replaced 7.5 h.", "Replaced the {d} sleep of 7.5 h"),
+    ("steps", 12345, 12346, "Steps 12,346 on {d}. Replaced 12,345.", "Replaced the {d} steps of 12,345"),
+])
+def test_a_summary_names_the_kind_by_its_word(user, kind, first, value, summary, note):
+    """The kind's word never repeats its unit: "Water 2,501 ml", not "Water ml 2,501 ml"."""
+    d = users.today_for(user)
+    shown = f"{d:%a} {d.day} {d:%b}"
+    assert measure(user, kind, first)["summary"].startswith(summary.split(" ")[0] + " ")
+    r = measure(user, kind, value)
+    assert r["summary"] == summary.format(d=shown) and r["note"].startswith(note.format(d=shown))
+
+
+def test_the_kind_words_are_defined_once_in_rules_and_the_fix_reads_them(user):
+    from app.services import measurements
+    assert measurements.KIND_WORDS is rules.KIND_WORDS
+    fixes = {kind: measure(user, kind, -1)["fix"] for kind in ("water_ml", "sleep_hours", "resting_hr", "steps",
+                                                               "waist")}
+    assert fixes == {"water_ml": "Give water in ml, 0 to 20,000, a whole number.",      # was "water ml in ml"
+                     "sleep_hours": "Give sleep in h, 0 to 24.",                           # was "sleep hours in h"
+                     "resting_hr": "Give resting heart rate in bpm, 20 to 250, a whole number.",   # was "resting hr"
+                     "steps": "Give steps, 0 to 200,000, a whole number.",
+                     "waist": "Give waist in cm, 30 to 300."}

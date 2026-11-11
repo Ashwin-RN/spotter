@@ -1588,7 +1588,10 @@ SITE = "https://spotter.example.app"
 GOAL_NUMBER_KEYS = {"goal_id", "label", "kind", "exercise", "measurement_kind", "distance_km", "unit", "start_value",
                     "start_date", "direction", "target_value", "target_date", "latest", "status", "needed_per_week",
                     "actual_per_week", "projected_date", "projection", "note",
-                    "is_sample"}  # is_sample: beyond the contract's shape, sent by the services for rule 16
+                    "is_sample",  # is_sample: beyond the contract's shape, sent by the services for rule 16
+                    "should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line"}
+# The plan line's five fields (stage 6, E1): optional with a null default, so a result without them validates.
+PLAN_LINE_KEYS = {"should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line"}
 CONTRACT_KEYS = {
     "GetTrendsResult": {"today", "bodyweight", "calories", "sessions", "cardio", "maintenance", "maintenance_note",
                         "includes_sample", "how", "summary", "links", "note"},
@@ -1607,7 +1610,7 @@ CONTRACT_KEYS = {
     "GoalNumbers": GOAL_NUMBER_KEYS,
 }
 # Of the new shapes, only the top-level note is ever left out.
-OPTIONAL_KEYS = {"GetTrendsResult": {"note"}, "GetGoalsResult": {"note"}}
+OPTIONAL_KEYS = {"GetTrendsResult": {"note"}, "GetGoalsResult": {"note"}, "GoalNumbers": PLAN_LINE_KEYS}
 
 
 def numbers(goal_id: int, kind: str, label: str, unit: str, line: bool = True, **which) -> dict:
@@ -1744,6 +1747,119 @@ def test_the_new_fields_are_published(http):
         assert GOAL_NUMBER_KEYS == set(out[name]["$defs"]["GoalNumbers"]["properties"]), name
 
 
+# ---------------------------------------------------------------- stage 6 step 3: the plan line's five fields
+
+def planned(n: dict, should: float, ahead: float | None, days: int | None, vs: str | None, line: str | None) -> dict:
+    """A goal's numbers with the plan line's five fields. Invented figures, in the shapes of section E1."""
+    return {**n, "should_be_today": should, "ahead_by": ahead, "days_ahead": days, "vs_plan": vs, "plan_line": line}
+
+
+PLANNED = [
+    planned(EVERY_KIND[0], 105.2, 2.7, 9, "ahead", "107.9 kg now against 105.2 kg on the plan line today: 2.7 kg ahead."),
+    planned(EVERY_KIND[1], 80.3, 0.0, 0, "on the line", "On the plan line today, at 80.3 kg."),
+    planned(EVERY_KIND[2], 80.1, -0.06, -2, "behind",  # rule 2: one more decimal in the sentence and in ahead_by
+            "80.14 cm now against 80.08 cm on the plan line today: 0.06 cm behind."),
+    planned(EVERY_KIND[3], 28.5, None, None, None, None),  # nothing to compare: only the line today
+    planned({**EVERY_KIND[0], "goal_id": 5}, 120.0, -3.1, None, "behind",  # the target date has passed
+            "116.9 kg now against the target of 120 kg: 3.1 kg behind."),
+    planned({**EVERY_KIND[1], "goal_id": 6}, 78.0, 0.0, None, "on the line",  # ended, and at the target
+            "78 kg now, at the target."),
+    planned({**EVERY_KIND[1], "goal_id": 7}, 75.0, 0.1, 0, "ahead",  # off the line, under half a day's change
+            "74.9 kg now against 75 kg on the plan line today: 0.1 kg ahead."),
+]
+LIFT_DETAIL = {
+    "exercise": "Back Squat", "sessions": 3, "last_trained": "2026-11-10",
+    "estimated_max_over_time": [{"date": "2026-11-10", "estimated_max_kg": 107.9}],
+    "current_estimated_max_kg": 107.9,
+    "best_set": {"weight_kg": 95.0, "reps": 4, "date": "2026-11-10", "estimated_max_kg": 107.9},
+    "bests": [], "trend": None, "goal": PLANNED[0], "goals": [PLANNED[0], PLANNED[4]],
+}
+PLANNED_RESULTS = [
+    *[("set_goal", set_goal_result(n)) for n in PLANNED],
+    ("get_goals", {**GOALS_FULL, "goals": PLANNED}),
+    ("get_progress", {"today": "2026-11-10", "lifts": [], "goals": PLANNED, "includes_sample": False,
+                      "how": "How.", "links": {"progress": f"{SITE}/progress"}}),
+    ("get_progress", {"today": "2026-11-10", "lift": LIFT_DETAIL, "includes_sample": False, "how": "How.",
+                      "links": {"progress_lift": f"{SITE}/progress/Back%20Squat"}}),
+]
+PLANNED_IDS = [*[f"set_goal {n['goal_id']} {n['kind']} {n['vs_plan']}" for n in PLANNED], "get_goals",
+               "get_progress goals",
+               "get_progress lift"]
+
+
+@pytest.mark.parametrize("name, result", PLANNED_RESULTS, ids=PLANNED_IDS)
+def test_the_plan_line_fields_are_modelled_at_every_depth_nulls_and_all(name, result):
+    model = RESULTS[name]
+    assert unmodelled(result, model, name) == set()
+    parsed = model.model_validate(result).model_dump(by_alias=True)
+    goals = {"set_goal": lambda r: [r["progress"]], "get_goals": lambda r: r["goals"],
+             "get_progress": lambda r: r.get("goals") or [r["lift"]["goal"], *r["lift"]["goals"]]}[name]
+    sent, kept = goals(result), goals(parsed)
+    assert sent and [{k: g[k] for k in PLAN_LINE_KEYS} for g in kept] == [
+        {k: g[k] for k in PLAN_LINE_KEYS} for g in sent]  # every depth keeps the five as sent, nulls included
+
+
+def test_goal_numbers_without_the_plan_line_still_validate_and_a_wrong_type_does_not():
+    from app.mcp_schemas import GoalNumbers
+
+    for n in EVERY_KIND:  # today's services: no plan-line keys at all
+        parsed = GoalNumbers.model_validate(n)
+        assert all(getattr(parsed, k) is None for k in PLAN_LINE_KEYS), n["kind"]
+    for key, wrong in (("should_be_today", "80 kg"), ("ahead_by", "ahead"), ("days_ahead", 2.5), ("vs_plan", 1),
+                       ("plan_line", ["a", "b"])):
+        with pytest.raises(ValueError):
+            GoalNumbers.model_validate({**PLANNED[0], key: wrong})
+
+
+def test_the_plan_line_fields_are_published_optional_and_described(http):
+    out = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}
+    for name in ("set_goal", "get_goals", "get_progress"):
+        goal = out[name]["$defs"]["GoalNumbers"]
+        assert PLAN_LINE_KEYS <= set(goal["properties"]), name
+        assert not PLAN_LINE_KEYS & set(goal.get("required", [])), name
+        for key in PLAN_LINE_KEYS:
+            assert goal["properties"][key]["description"], (name, key)
+    words = out["get_goals"]["$defs"]["GoalNumbers"]["properties"]
+    assert all(w in words["vs_plan"]["description"] for w in ("ahead", "on the line", "behind"))
+    assert "say as written" in words["plan_line"]["description"]
+    assert "one more decimal" in words["plan_line"]["description"]
+    assert "0 on the line" in words["ahead_by"]["description"]
+    assert "0 on the line while the line runs" in words["days_ahead"]["description"]
+    # The reviewed cases (stage 6 step 3 fix round): each one a sentence that was missing or false before.
+    assert "the target when target_date is on or before start_date" in words["should_be_today"]["description"]
+    assert "Once the target date has passed, or when the line has no length, it is measured against the target" \
+        in words["ahead_by"]["description"]
+    assert "0 also comes with ahead or behind, when the gap is under half a day's change" \
+        in words["days_ahead"]["description"]
+    assert "for a cardio_best time under half a second" in words["vs_plan"]["description"]
+    assert "or against the target once the target date has passed or when the line has no length" \
+        in words["vs_plan"]["description"]
+    assert "Once the target date has passed, or when the line has no length, it compares latest with the target" \
+        in words["plan_line"]["description"]
+    assert "'78 kg now, at the target.'" in words["plan_line"]["description"]
+
+
+def test_can_and_cant_names_the_plan_line_its_fields_and_the_rounded_cardio_weight():
+    text = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
+    for words in ("a straight line from the goal's start to its target",
+                  "The plan line and the status answer different questions",
+                  "The status compares the trend's projection with the target",
+                  "`estimate_weight_kg` is rounded with `estimate.weight_kg`",
+                  "A goal's `should_be_today` and `ahead_by` round at the goal unit's step: 1 decimal for kg and cm, "
+                  "whole bpm, minutes to 2 decimals.",
+                  "`ahead_by` takes one more decimal when latest and `should_be_today` would otherwise read the "
+                  "same, never for a cardio time.",
+                  *(f"`{key}`" for key in sorted(PLAN_LINE_KEYS))):
+        assert words in text, words
+
+
+@pytest.mark.parametrize("name, result", PLANNED_RESULTS[-3:], ids=PLANNED_IDS[-3:])
+def test_a_goal_read_with_the_plan_line_answers_through_the_wrapper(http, monkeypatch, name, result):
+    monkeypatch.setattr(services, name, lambda *args, **kwargs: result)
+    arguments = {"exercise": "Back Squat"} if "lift" in result else None
+    assert ok(http, sign(), name, arguments) == result  # the wrapper's check and the library's both pass it
+
+
 @pytest.mark.parametrize("name, result", [s for s in NEW_SHAPES if s[0] != "set_goal"],
                          ids=[i for i in NEW_SHAPE_IDS if not i.startswith("set_goal")])
 def test_a_new_read_answers_through_the_wrapper_nulls_and_all(http, monkeypatch, name, result):
@@ -1802,8 +1918,14 @@ REPLY_PARAGRAPH = (
     "How to reply: plain words, one fact a line. Quote each number as Spotter gives it, with its unit: never add "
     "decimals, never round further, and never recalculate one yourself. Where a summary gives a figure, say the "
     "summary's figure. Say \"about\" as a word, never as a symbol. No dashes between clauses: use a colon, a comma "
-    "or a full stop. Name an estimate as an estimate."
+    "or a full stop. Name an estimate as an estimate. Where a goal carries plan_line, say it as written, and do "
+    "not also quote latest, should_be_today or ahead_by."
 )
+# In the rule 2 case plan_line carries one more decimal than latest: a reply must not give two figures for now.
+PLAN_LINE_SENTENCE = ("Where a goal carries plan_line, say it as written, and do not also quote latest, "
+                      "should_be_today or ahead_by.")
+# The estimate sentence, with the one exception the food rule makes (stage 6 step 3).
+ESTIMATE_SENTENCE = "Quote Spotter's numbers; never estimate your own, except a food's kcal, as the food rule says."
 
 
 def test_the_instructions_carry_the_reply_paragraph():
@@ -1811,10 +1933,21 @@ def test_the_instructions_carry_the_reply_paragraph():
     assert REPLY_PARAGRAPH in mcp_server.INSTRUCTIONS
 
 
-def test_the_instructions_name_no_field_a_result_does_not_carry_yet():
-    # Step 3 flips this: once GoalNumbers carries plan_line, REPLY_RULE gains "Where a goal carries plan_line,
-    # say it as written." and this test asserts that sentence instead.
-    assert "plan_line" not in mcp_server.INSTRUCTIONS
+def test_the_plan_line_sentence_ends_the_reply_paragraph_and_names_a_modelled_field():
+    # Step 2 held plan_line out of the instructions; step 3 models it, so the paragraph ends with it.
+    assert mcp_server.REPLY_RULE.endswith(" " + PLAN_LINE_SENTENCE)
+    assert mcp_server.INSTRUCTIONS.endswith(" " + PLAN_LINE_SENTENCE)  # the last sentence of the instructions
+    assert mcp_server.INSTRUCTIONS.count("plan_line") == 1
+    from app.mcp_schemas import GoalNumbers
+
+    assert "plan_line" in GoalNumbers.model_fields  # the instructions never name a field no result carries
+
+
+def test_the_estimate_sentence_leaves_room_for_the_food_rule():
+    text = mcp_server.INSTRUCTIONS
+    assert ESTIMATE_SENTENCE in text
+    assert "never estimate your own. " not in text  # the old sentence, with no exception, is gone
+    assert "you may estimate, and must say so" in mcp_server.FOOD_RULE and mcp_server.FOOD_RULE in text
 
 
 def test_the_descriptions_carry_the_same_sentences(http):
@@ -1908,7 +2041,7 @@ def test_set_goal_of_every_kind_through_mcp(http):
     for arguments, unit, direction in cases:
         result = ok(http, token, "set_goal", {**arguments, "target_date": by})
         progress = result["progress"]
-        assert set(progress) == GOAL_NUMBER_KEYS, arguments["kind"]
+        assert set(progress) == GOAL_NUMBER_KEYS, arguments["kind"]  # the five plan-line keys included
         assert (progress["kind"], progress["unit"], progress["direction"]) == (arguments["kind"], unit, direction)
         assert progress["measurement_kind"] == arguments.get("measurement_kind")
         assert progress["distance_km"] == arguments.get("distance_km")

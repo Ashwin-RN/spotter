@@ -1,6 +1,7 @@
 """What the person reads back: get_progress, whoami and the exercise list."""
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -199,6 +200,46 @@ def test_the_chart_rounds_its_smoothed_and_average_points_and_keeps_each_weigh_i
     assert [p["smoothed"] for p in chart["points"]] == [80.0, 80.1, 80.0]
     assert [p["kg"] for p in chart["average"]] == [80.0, 80.5, 80.2]
     assert [p["kg"] for p in chart["points"]] == [80, 81, 79.45] and chart["latest"]["kg"] == 79.45
+
+
+def chart_of(user, since=None):
+    from app.services import body
+    from app.services.progress import bodyweight_chart
+    today = users.today_for(user)
+    with db.new_session() as s:
+        return bodyweight_chart(body.weigh_ins(s, user.id, today), [], today, since)
+
+
+def test_since_draws_the_window_and_keeps_the_line_over_every_weigh_in(user):
+    """Section D: since draws only the weigh-ins dated on or after it; each smoothed value is still the line over
+    every weigh-in, so the 28-day window is exactly get_trends' series. Without since nothing changes."""
+    for days_ago, kg in ((40, 84), (28, 80), (27, 82), (10, 81), (0, 79)):
+        services.log_bodyweight(user.id, {"kg": kg, "date": day(user, -days_ago)}, "web")
+    since = users.today_for(user) - timedelta(days=27)
+    every, window = chart_of(user), chart_of(user, since)
+    assert len(every["points"]) == 5 and window["points"] == every["points"][-3:]
+    assert window["points"] == services.get_trends(user.id)["bodyweight"]["series"]   # on since: in; the day before: out
+    assert [p["date"] for p in window["points"]] == [day(user, -27), day(user, -10), day(user, 0)]
+    # Smoothed over all five: 84, 83.6, 83.44, 83.196, 82.7764: the window's first is 83.44, 83.4 at 1 dp, not 82.
+    assert window["points"][0]["smoothed"] == 83.4
+    # The 7-day average on since reads every weigh-in in its 7 days, the one the day before included: (80 + 82) / 2.
+    assert window["average"] == every["average"][-3:] and window["average"][0]["kg"] == 81.0
+    assert window["latest"] == every["latest"] == {"date": day(user, 0), "kg": 79}
+    assert chart_of(user, users.today_for(user) - timedelta(days=5)) is None        # one weigh-in in the window
+    assert chart_of(user, None) == every
+
+
+def test_since_counts_a_weigh_in_dated_after_today_as_todays(user, monkeypatch):
+    """A weigh-in left after today by a change of time zone stands at today, inside any window that holds today."""
+    services.log_bodyweight(user.id, {"kg": 80, "date": day(user, -3)}, "web")
+    later = db.utcnow() + timedelta(days=2)
+    monkeypatch.setattr(db, "utcnow", lambda: later)
+    services.log_bodyweight(user.id, {"kg": 79}, "web")                                # two days after the real today
+    monkeypatch.undo()
+    window = chart_of(user, users.today_for(user))
+    assert window is None                                                               # only the later one is today's
+    window = chart_of(user, users.today_for(user) - timedelta(days=3))
+    assert [p["kg"] for p in window["points"]] == [80, 79] and window["latest"]["date"] == day(user, 2)
 
 
 def test_every_result_is_plain_json(user):
@@ -559,5 +600,12 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
     assert not to_a_page, to_a_page[:3]
     assert any("can be brought back later" in t for t in texts)
     for name in NOT_OFFERED:
-        named = [t for t in texts if name in t]
+        # A whole word: target_cardio_minutes_per_week, a settings field, does not name get_cardio.
+        named = [t for t in texts if re.search(rf"\b{name}\b", t)]
         assert not named, f"{name} is named, but Claude cannot call it: {named[:3]}"
+
+
+def test_the_name_check_is_a_whole_word():
+    assert not re.search(r"\bget_cardio\b", "target_cardio_minutes_per_week")
+    assert re.search(r"\bget_cardio\b", "Call get_cardio for the bests.")
+    assert {"get_cardio", "get_days", "goal_charts"} <= set(NOT_OFFERED)   # web-only reads, never offered

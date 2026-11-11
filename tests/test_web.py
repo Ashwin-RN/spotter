@@ -6,6 +6,7 @@ redirects (a redirect to the provider would otherwise be fed back into this app)
 
 import asyncio
 import base64
+import hashlib
 import json
 import re
 import time
@@ -673,6 +674,50 @@ def test_the_stylesheet_is_served(client):
     r = client.get("/static/style.css")
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/css")
     assert r.headers["x-content-type-options"] == "nosniff"
+
+
+def test_static_files_are_cached_for_an_hour_and_pages_never(client):
+    """Stage 6, section H: /static gains one cache line; pages keep no-store; nothing else changes."""
+    static = [client.get(path) for path in ("/static/style.css", "/static/time-zone.js", "/static/icons/today.svg")]
+    pages = [client.get("/"), client.get("/sign-in")]
+    sign_in(client)
+    pages += [client.get("/settings"), client.get("/today")]
+    for r in static:
+        assert r.status_code == 200 and r.headers["cache-control"] == "public, max-age=3600"
+    for r in pages:
+        assert r.headers["cache-control"] == "no-store"
+    for r in static + pages:
+        assert r.headers["content-security-policy"] == web.PAGE_HEADERS["Content-Security-Policy"]
+        assert (r.headers["x-frame-options"], r.headers["x-content-type-options"], r.headers["referrer-policy"]) == \
+            ("DENY", "nosniff", "no-referrer")
+
+
+def test_the_stylesheet_link_carries_the_files_content_version(client):
+    version = hashlib.sha256((web.HERE / "static" / "style.css").read_bytes()).hexdigest()[:12]
+    sign_in(client)
+    for page in (client.get("/").text, client.get("/settings").text, client.get("/progress/no-such-lift").text):
+        assert re.findall(r'<link rel="stylesheet" href="([^"]*)">', page) == [f"/static/style.css?v={version}"]
+    r = client.get(f"/static/style.css?v={version}")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/css")
+
+
+def test_the_stylesheet_version_follows_its_bytes(tmp_path):
+    one, two = tmp_path / "one.css", tmp_path / "two.css"
+    one.write_bytes(b"a { color: var(--text); }\n")
+    two.write_bytes(b"a { color: var(--text-2); }\n")
+    assert web.style_version(one) != web.style_version(two)
+    assert web.style_version(one) == hashlib.sha256(one.read_bytes()).hexdigest()[:12]
+    assert re.fullmatch(r"[0-9a-f]{12}", web.style_version())
+
+
+def test_a_missing_stylesheet_stops_nothing(tmp_path, monkeypatch):
+    """Without the file the link goes plain, with no query, and the app still builds its pages."""
+    missing = tmp_path / "gone.css"
+    assert web.style_version(missing) is None and web.style_href(missing) == "/static/style.css"
+    assert web.style_href() == f"/static/style.css?v={web.style_version()}"
+    monkeypatch.setattr(web, "STYLESHEET", missing)
+    monkeypatch.setattr(web.style_href, "__defaults__", (missing,))
+    assert web._environment().globals["style_href"] == "/static/style.css"
 
 
 def test_names_from_the_provider_are_escaped(client, seam):

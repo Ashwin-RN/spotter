@@ -42,6 +42,7 @@ but / says sign-in is not set up, no session is kept, and MCP is unaffected.
 Database calls are synchronous, so they run in a worker thread, never on the event loop.
 """
 
+import hashlib
 import io
 import json
 import logging
@@ -95,9 +96,30 @@ FILTERS = {"show": show_filter, "day": formatting.day, "day_heading": formatting
            "weekday_letter": formatting.weekday_letter, "field": formatting.field}
 
 
+STYLESHEET = HERE / "static" / "style.css"
+
+
+def style_version(path: Path = STYLESHEET) -> str | None:
+    """The stylesheet's version: the start of the SHA-256 of its bytes. Read once, when the app starts,
+    and carried in the stylesheet link's query, so a deploy never serves an old copy from a cache.
+    None when the file cannot be read: the pages lose their look, nothing else stops."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except OSError:
+        log.warning("The stylesheet could not be read, so its link carries no version.")
+        return None
+
+
+def style_href(path: Path = STYLESHEET) -> str:
+    """The stylesheet's address for every page head: with its version, or plain without one."""
+    version = style_version(path)
+    return "/static/style.css" if version is None else f"/static/style.css?v={version}"
+
+
 def _environment() -> Environment:
     env = Environment(loader=FileSystemLoader(str(HERE / "templates")), autoescape=True)
     env.filters.update(FILTERS)
+    env.globals["style_href"] = style_href()
     return env
 
 
@@ -234,6 +256,9 @@ PAGE_HEADERS = {
     "Cache-Control": "no-store",
 }
 HSTS = {"Strict-Transport-Security": "max-age=31536000"}  # https sites only
+# /static only: an hour in the browser's cache, so the page cross-fade finds the stylesheet there. The
+# stylesheet's address carries its version, so a deploy is never hidden behind a cached copy.
+STATIC_CACHE = "public, max-age=3600"
 
 ZONE_REFUSED = {"message": "That time zone was not recognised, so nothing was changed.",
                 "fix": "Choose your time zone from the list."}
@@ -255,10 +280,11 @@ def problem(settings: Settings) -> str | None:
 
 
 def headers_for(settings: Settings, static: bool = False) -> dict[str, str]:
-    """The fixed headers for web responses; HSTS only when the site is served over https."""
+    """The fixed headers for web responses; HSTS only when the site is served over https. /static is
+    the same but for its cache line: pages are never stored, static files for an hour."""
     values = dict(PAGE_HEADERS)
     if static:
-        del values["Cache-Control"]
+        values["Cache-Control"] = STATIC_CACHE
     if (settings.site_origin or "").startswith("https://"):
         values.update(HSTS)
     return values
@@ -1124,6 +1150,9 @@ async def targets_page(request: Request) -> Response:
 
 # ---------------------------------------------------------------- Progress
 
+BODY_WEIGHT_DAYS = 28  # Progress' Body weight chart: the last 4 weeks
+
+
 def _trend(user_id: int) -> dict:
     """What /progress shows beyond get_progress's rows: each lift's best set (lifts.history, the numbers
     get_progress uses) and the body weight chart. bodyweight_chart takes the weigh-in and goal rows
@@ -1136,7 +1165,8 @@ def _trend(user_id: int) -> dict:
         best_sets = lifts.history(s, user.id, today)["best_set"]
         weighed = body.weigh_ins(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")))
-        chart = progress_data.bodyweight_chart(weighed, goals, today)
+        # The last 28 days, today included (section D): the same points as get_trends' series.
+        chart = progress_data.bodyweight_chart(weighed, goals, today, today - timedelta(days=BODY_WEIGHT_DAYS - 1))
         latest = weighed[-1] if weighed else None
         return {"best_sets": best_sets, "bodyweight": chart, "weigh_ins": len(weighed),
                 "latest_weigh_in": {"date": latest.date.isoformat(), "kg": latest.kg} if latest else None}

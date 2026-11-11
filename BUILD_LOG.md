@@ -92,7 +92,7 @@ The stage is split into four packages with separate files: A (schema and identit
 - Sign-in through the provider's own library. The session is Spotter's signed cookie; no provider token is kept.
 - Five pages, a CSRF token on every form, and security headers on every page.
 - The cookie is attached to the web routes only. The MCP endpoint never reads or sets it.
-- A `.claude/` folder: builder and reviewer agents, a stage-check command, and a hook that runs the suite before a commit.
+- Local assistant tooling for the build: builder and reviewer agents, a stage-check command, and a hook that runs the suite before a commit. It was in the repo until 2026-11-11, and is now kept on the builder's machine only (stage 6).
 
 **The review.** Verdict: sound, no blockers. The reviewer ran the real provider library against a fake provider server, read real access-log lines, and undid 28 behaviours one at a time; 24 turned a test red.
 
@@ -431,7 +431,7 @@ Run live by a browser agent in the person's own signed-in browser, every tool ca
 
 **Goal: every page and every number Spotter shows reads as finished work. One formatter and one set of text rules sit behind every page and every summary, and tests hold them. Then every page is rebuilt on one design.** Contract: `docs/contracts/stage-6.md`.
 
-The stage lands in four steps. Step 1 was the design, agreed on a static build before any template changed. Step 2 is the number and text rules on today's pages, pushed on its own, and is what this entry covers. Steps 3 and 4 (the stylesheet and three new reads, then every page rebuilt) are added below as they land.
+The stage lands in four steps. Step 1 was the design, agreed on a static build before any template changed. Step 2 is the number and text rules on today's pages, pushed on its own. Step 3 is the stylesheet, the charts and the new reads, committed locally and pushed with step 4. Step 4 (every page rebuilt) is added below when it lands.
 
 The contract was reviewed against the code before any builder started: 36 findings on the first draft, 14 of them sentences two builders could have built two ways, then 20 more after the look was merged in. None changed the design. Most were about who hands what to whom, and how a half rounds.
 
@@ -476,9 +476,72 @@ Held for step 3, with nothing hiding behind them today: seven ways the format-sp
 | The full suite is green, plain and with warnings as errors, on a clean export | 2,960 tests, from 1,598 |
 | No page changed shape; the security header, every route and the stylesheet are as they were | Held by the reviewer's read of every template diff and by the existing header tests |
 | The new eval case | Written and unit-tested. Not run: a run is the last item of the stage's exit |
+| Live after the push | Deploy succeeded; `/health` 200, `/mcp` 401 without a token, the landing page 200, the security header unchanged |
+| Live, with data on screen | Done on an empty account: sample data added, every page read, then removed. Dates, headings, day links, commas and run times read as the rules say on every page; no console error and no policy violation. Body weight now, the smoothed weight, the rate, three goals and two day totals matched between the pages and `get_trends`, `get_goals` and `get_log`. The three summaries carried no raw date, semicolon, arrow or id |
+
+The live read also showed what step 2 left for the later steps. The old stylesheet breaks a word in the middle on the Trends card (`word-break: break-all`), a rate's unit words are joined to the number by a plain space, adding and removing sample data show no confirmation line, and a cardio result carries the stored `estimate_weight_kg` at 2 decimals beside the rounded `estimate.weight_kg`.
 
 ### What step 2 taught
 
 - **Review the foundation alone.** Five packages lean on the formatter. Its review found a rounding that depended on global state and a silent wrong value, with no caller yet to rework.
 - **A check that nobody asked for is still a cost.** The text checks arrived with one rule beyond the contract. It was right by a style guide and wrong for the stage, because every page would have been reworded for a rule nobody had agreed.
 - **A summary is an interface.** The word "None" in a sentence passed every type check and every schema. Only a test that reads the sentence as a person would could catch it.
+
+### Beside the steps, 2026-11-11
+
+- **The README became a product page and setup guide for any MCP client.** Why use it, three setup steps that name no assistant, and a table of eight assistants, each "Tried" or "From its docs". The same day, dynamic client registration was switched on at the sign-in provider. Its public metadata now carries a `registration_endpoint`, so a client that registers itself can sign in, as well as one that uses a client ID metadata document.
+- **The local assistant tooling left the repo.** The builder and reviewer agents, the stage-check command and the commit hook are kept on the builder's machine, ignored by git. They remain in the repo's history.
+
+### Step 3: what was built
+
+**The stylesheet, the charts and the new reads. No page changed shape: the one template change is the stylesheet link in `base.html`, which now carries a version. So step 3 is not pushed alone: the new stylesheet goes live with step 4's markup.**
+
+| Lane | What |
+|---|---|
+| Text rules | Went first. The checks tightened on nine points, among them a nested format spec, a bare zero pad, number formatting inside a template, a template held in a constant or a subfolder, literals in `with` blocks and macro defaults, docs read a paragraph at a time, a stale exemption failing a test. The MCP surface is now checked under the rules for text the model reads |
+| MCP | Five plan-line fields on every goal, each optional and described. `REPLY_RULE` gained its last sentence: say `plan_line` as written, and do not also quote the figures it carries. The estimate sentence now allows a food's kcal. `docs/can-and-cant.md` names the plan line and every rounded field |
+| Numbers and services, pass 1 | The plan line: `metrics.goal_path`, one pure function, and five fields on every goal (`should_be_today`, `ahead_by`, `days_ahead`, `vs_plan`, `plan_line`). `goals.goal_charts`, the Goals page's read, adds the path, `now_basis` and `line_ended`. One table of measurement kind words, in `app/rules.py`, so "Water ml 2,501 ml" reads "Water 2,501 ml". A cardio result's `estimate_weight_kg` rounded with `estimate.weight_kg` |
+| Numbers and services, pass 2 | `trends.get_days`, the 28-day grid with four weeks and the window's latest, highest and lowest weigh-in. `cardio.get_cardio`, an activity's sessions and bests, or a row per activity. `cardio.sessions_of` and `cardio.cardio_times`, shared with goals and Progress. `lifts.history` `reps_only`, for a lift never done above 0 kg. `bodyweight_chart`'s `since`. All web only: no MCP result changed |
+| Web | `app/static/style.css`, written whole from the agreed design: 19 colour tokens, dark only, the system font. Eleven icons. `/static` cached for an hour, and the stylesheet link carries a version from the file's content. Eight chart functions in `app/charts.py`, two of them the kept charts restyled, first against hand-made data, then drawn from the real reads on the sample account. `tests/test_css.py` holds tokens, contrast pairs, tap sizes, motion and chart text sizes |
+
+- The sample body weight goal is the close-call case the design expected. Its tag says On track, and its plan line says "79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind." Both are true: one compares the projection with the target, the other where the person is with where the line is today.
+- The order: text rules first; then MCP and web side by side; then numbers and services in two passes in a row, since its two halves share `goals.py`, `progress.py` and `test_sample.py`. One builder was too much for the whole pass. Then a review of each lane, and a fix round for each list of findings: two for numbers and services, one per pass.
+
+**Each builder broke its own behaviours before handing over. Every break turned a test red.**
+
+| Lane and round | Breaks |
+|---|---|
+| Text rules | 37 of 37 |
+| MCP; its fix round | 9 of 9; 7 of 7 |
+| Web; its fix round | 57 of 57; 29 of 29 |
+| Numbers and services, pass 1 | 31 of 31. 28 went red at first; the 3 that stayed green were test gaps, closed before the hand-over |
+| Numbers and services, pass 2 | 38 of 38 |
+| Fix round for pass 1 | 36 of 36, 23 of them the first round's breaks run again on the new code |
+| Fix round for pass 2 | 47 of 47: 9 new, and the 38 of pass 2 run again |
+
+### Step 3: the review
+
+Three reviewers: the web lane's stylesheet and charts; the plan line end to end, across the services and the MCP descriptions; the new reads. The lead read every chart drawn from the real reads.
+
+| Finding | Fix |
+|---|---|
+| Chart labels ran off the canvas: y-axis labels such as "102.5 kg" and "65 bpm" past the left edge, the goal's target label past the right | Every margin worked out from the widest label it holds, at the phone text size, with the unit on the top tick |
+| Chart text showed at about 9.6 px on a 360 px phone, against the design's 11 to 14 px | 15 chart units on a phone, 30 on the compact pair, and a size and a width cap per chart on a laptop. The sizes first ruled for a laptop fell under 11 px at 960 px, so the caps replaced them. A test works each size out from the stylesheet at every width from 360 to 1,600 px |
+| Pace dates were thinned by a fixed gap: the latest ran off the right edge from 9 sessions, and a date with a year never fitted | Labels placed by their estimated width. Those that would meet give way, and the latest keeps its own |
+| A lift with one session wrote its date twice, one copy off the left edge | One date when the two ends meet |
+| Smaller chart faults: a point dated after today drawn past the right edge; 31 grid lines on a wide range; a desc naming a projection that was not drawn; a day of 0 kcal drawn as no food; "1 sessions" | A point after today drawn at today; at most 5 grid lines; the desc follows the drawing; 0 kcal is food; counts through the formatter |
+| `body { overflow-x: hidden }` would have hidden the sideways overflow the 360 px walk is there to find | Removed |
+| A missing stylesheet would have stopped the app at import, `/mcp` included | The version falls back: the pages lose their look, and nothing else stops |
+| The goal chart's desc made its own comparison, "Now 79 kg. The plan line is at 79 kg today. Now is behind it.": two equal figures beside a gap, which the close-call rules forbid | The desc says the goal's `plan_line` word for word |
+| On the line after the target date, `plan_line` read "On the plan line today, at 78 kg." though the line had ended | "78 kg now, at the target." `goal_path` works out `ended` once, and `goal_charts` carries it as `line_ended` |
+| `ended` was worked out in two places, and a line with no length before its target date had no test: two mutants lived, one printing a wrong sentence | One place, and two tests |
+| The chart's series was built on every read, MCP reads included, though only the Goals chart uses it: 0.3 s a goal on four years of daily weigh-ins | Built only for `goal_charts` |
+| Field descriptions a model reads were false in edge cases: `should_be_today` on a line with no length, `days_ahead` 0 off the line, `vs_plan` for a cardio time's half second, `plan_line` after the target date. `can-and-cant` still said every other figure keeps its precision | Each made true in every edge case, and the rounding sentence added |
+| A test pinned a rule the code does not have (`days_ahead` 0 exactly on the line), and in kg only | Dropped; half-step pairs in cm, bpm and a cardio time added |
+| The fastest-pace tie compared raw floats: 20.1 min over 4.02 km and 25 min over 5 km, both 5:00, went to the later session, while the 1 km best named the earlier | Paces compared as exact fractions of what was entered |
+| Seven mutants lived in the new reads, among them a day counted twice for a session dated after today, a sample flag missed for an old run, a machine's kcal dropped | A test for each, and one for a restored row |
+| The new kind words broke the Goals page's error placement, which matched the message's words | Held for step 4: the page places an error by its code or field |
+
+Accepted as they are, and written into the contract: a nearly flat plan line gives a very large `days_ahead`; the fastest pace and the 1 km best can name different sessions when two paces differ by less than a time's 2 decimals of a minute; a sheet's chart draws in again each time the sheet opens.
+
+Found by a reviewer, older than stage 6: `get_progress` for lifts takes 7 to 8 s on three years of daily lifting. It goes to stage 7, to be fixed only with results proven identical.

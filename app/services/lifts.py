@@ -14,7 +14,8 @@ log_lifts(user_id, data, by)
 history(s, user_id, today)
     Every live session, whatever its date, worked through in the one order (effective date, then
     id; see metrics.on_or_before): one point per session per lift (that session's best estimated
-    max), the best set, and the new bests with their dates. today orders; it never drops a row.
+    max), the best set, the most reps of a lift never done above 0 kg (reps_only), and the new bests
+    with their dates. today orders; it never drops a row.
     The best set's estimated max comes back at 1 dp; every other value at the working precision.
 
 rounded_best(best) and best_text(best)
@@ -146,6 +147,10 @@ def history(s: Session, user_id: int, today: date) -> dict:
     logged:    {lift: sessions that include the lift, at any reps}
     last:      {lift: the real date of the latest session (in the one order) that trained it}
     best_set:  {lift: {weight_kg, reps, date, estimated_max_kg}}
+    reps_only: {lift: {reps, date}}  a lift with no set above 0 kg: the most reps in one set, and
+               the real date of its session. A tie keeps the earlier set in the one order, as best_set
+               does. A lift leaves it once any live set of it is above 0 kg. Web only: get_progress does
+               not copy it. It exists because Epley is None at 0 kg, so such a lift has no best_set.
     bests:     {lift: [{date, exercise, kind, value, previous, session_id}]}
     """
     sessions = sorted(s.scalars(
@@ -158,6 +163,8 @@ def history(s: Session, user_id: int, today: date) -> dict:
     best_set: dict[str, dict] = {}
     bests: dict[str, list[dict]] = {}
     prior: dict[str, list[tuple[float, int]]] = {}
+    most_reps: dict[str, dict] = {}   # per lift, the most reps in one set, whatever the weight
+    weighted: set[str] = set()        # lifts with a set above 0 kg
     for t in sessions:
         by_lift: dict[str, list[tuple[float, int]]] = {}
         for x in sorted(t.sets, key=lambda x: x.id):
@@ -167,6 +174,11 @@ def history(s: Session, user_id: int, today: date) -> dict:
             if e is not None and (top is None or e > top["estimated_max_kg"]):
                 best_set[x.exercise.name] = {"weight_kg": x.weight_kg, "reps": x.reps,
                                              "date": t.date.isoformat(), "estimated_max_kg": e}
+            if x.weight_kg is not None and x.weight_kg > 0:
+                weighted.add(x.exercise.name)
+            most = most_reps.get(x.exercise.name)
+            if x.reps is not None and (most is None or x.reps > most["reps"]):
+                most_reps[x.exercise.name] = {"reps": x.reps, "date": t.date.isoformat()}
         for lift, lift_sets in by_lift.items():
             logged[lift] = logged.get(lift, 0) + 1
             last[lift] = t.date
@@ -180,8 +192,9 @@ def history(s: Session, user_id: int, today: date) -> dict:
     # The loop compares the unrounded estimate; the output carries it at 1 dp, in a new dict.
     best_set = {lift: {**b, "estimated_max_kg": formatting.rounded(b["estimated_max_kg"], "estimated_max")}
                 for lift, b in best_set.items()}
+    reps_only = {lift: most for lift, most in most_reps.items() if lift not in weighted}
     return {"sessions": sessions, "points": points, "logged": logged, "last": last, "best_set": best_set,
-            "bests": bests}
+            "reps_only": reps_only, "bests": bests}
 
 
 def log_lifts(user_id: int, data: dict | None, by: str) -> dict:

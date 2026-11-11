@@ -47,6 +47,12 @@ MEASUREMENTS = {
     "resting_hr": ("bpm", 20, 250, True),
     "water_ml": ("ml", 0, 20_000, True),
 }
+# The word for each kind, as a person reads it, defined once (measurements.KIND_WORDS reads it). The unit is
+# never part of it: it stands beside the figure, so "Water 2,501 ml", never "Water ml 2,501 ml".
+KIND_WORDS = {
+    "waist": "Waist", "hips": "Hips", "chest": "Chest", "arm": "Arm", "thigh": "Thigh", "steps": "Steps",
+    "sleep_hours": "Sleep", "resting_hr": "Resting heart rate", "water_ml": "Water",
+}
 
 # Food, cardio and the settings' targets: field -> (lowest, highest, how it is kept). "whole" refuses a
 # fraction; "round" keeps a whole number however it was sent; an int keeps that many decimals.
@@ -236,7 +242,7 @@ def measurement_value(kind: str, value) -> tuple[float | int | None, dict | None
     unit, lo, hi, whole = MEASUREMENTS[kind]
     in_unit = "" if unit == kind else f" in {unit}"
     limits = span(lo, hi, UNIT_QUANTITIES[unit])
-    fix = f"Give {kind.replace('_', ' ')}{in_unit}, {limits}" + (", a whole number." if whole else ".")
+    fix = f"Give {KIND_WORDS[kind].lower()}{in_unit}, {limits}" + (", a whole number." if whole else ".")
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, error("missing_field", "value is missing.", fix)
     number = to_float(value)

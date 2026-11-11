@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 from sqlalchemy import event
 
-from app import db, services, users
+from app import db, formatting, services, users
 from app.metrics import epley
 from app.models import Goal
 from app.services import goals as goal_service
@@ -411,7 +411,8 @@ def test_set_goal_query_count(user):
 
 SHAPE = {"goal_id", "label", "kind", "exercise", "measurement_kind", "distance_km", "unit", "start_value",
          "start_date", "direction", "target_value", "target_date", "latest", "status", "needed_per_week",
-         "actual_per_week", "projected_date", "projection", "note", "is_sample"}
+         "actual_per_week", "projected_date", "projection", "note", "is_sample",
+         "should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line"}   # the plan line's five (E1)
 
 
 def measure(user, days_ago, kind, value):
@@ -698,3 +699,343 @@ def test_points_on_one_day_get_a_note_that_says_so(user):
     r = goal(user, kind="lift", exercise="Back Squat", target_value=100, target_date=day(user, 30))
     assert r["progress"]["projection"] is None
     assert r["progress"]["note"] == "A projection needs points on at least 2 different days."
+
+
+# ---------------------------------------------------------------- stage 6: the plan line (E1)
+
+PLAN = ("should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line")
+
+
+def plan_of(numbers: dict) -> dict:
+    return {k: numbers[k] for k in PLAN}
+
+
+def weight_goal(user, start: float, now: float) -> tuple[dict, dict]:
+    """A body weight goal set today from one weigh-in of `start` (so the plan line today is the start), then
+    today's weigh-in replaced by `now`. Returns (the goal's numbers unrounded, as get_goals gives them)."""
+    weigh(user, 0, start)
+    made = goal(user, kind="bodyweight", target_value=75, target_date=day(user, 60))
+    assert "error" not in made and made["goal"]["start_value"] == formatting.rounded(start, "bodyweight_derived"), made
+    weigh(user, 0, now)
+    raw = next(n for n in services.goal_charts(user.id)["goals"] if n["goal_id"] == made["id"])
+    shown = next(n for n in services.get_goals(user.id)["goals"] if n["goal_id"] == made["id"])
+    assert raw["should_be_today"] == start and raw["latest"] == now
+    return raw, shown
+
+
+def test_every_kind_carries_the_five_fields_unrounded_and_rounded(user):
+    """Each goal set today from what is logged, so its plan line today is its start; then one more entry moves
+    now. Unrounded in goal_numbers (goal_charts), rounded at the unit's step in get_goals, plan_line built from
+    the unrounded figures."""
+    squat(user, 5, 100)                                                   # epley 116.67
+    measure(user, 0, "waist", 90)
+    measure(user, 0, "resting_hr", 64)
+    run(user, 2, 5, 30)
+    for data in ({"kind": "lift", "exercise": "Back Squat", "target_value": 130},
+                 {"kind": "measurement", "measurement_kind": "waist", "target_value": 85},
+                 {"kind": "measurement", "measurement_kind": "resting_hr", "target_value": 58},
+                 {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 27}):
+        assert "error" not in goal(user, target_date=day(user, 60), **data)
+    squat(user, 0, 102.5)                                                 # epley 119.58: the 28-day best
+    measure(user, 0, "waist", 89.5)
+    measure(user, 0, "resting_hr", 66)
+    run(user, 0, 5, 29.7)
+    raw = services.goal_charts(user.id)["goals"]
+    lift, waist, resting, best = raw
+    # Up: 119.58 - 116.67 = 2.91 kg ahead; the line climbs 13.33 / 60 = 0.2222 kg a day: 13.1 days, 13.
+    assert lift["should_be_today"] == 116.67 and lift["ahead_by"] == pytest.approx(2.91) and lift["days_ahead"] == 13
+    # Down: 90 - 89.5 = 0.5 cm ahead at 5 / 60 cm a day: 6 days. 64 - 66 = -2 bpm at 0.1 a day: -20.
+    assert (waist["should_be_today"], waist["ahead_by"], waist["days_ahead"]) == (90, 0.5, 6)
+    assert (resting["should_be_today"], resting["ahead_by"], resting["days_ahead"]) == (64, -2, -20)
+    # A cardio time: 30 - 29.7 = 0.3 minutes, 18 seconds ahead, at 3 / 60 a day: 6 days.
+    assert best["should_be_today"] == 30 and best["ahead_by"] == pytest.approx(0.3) and best["days_ahead"] == 6
+    assert [n["plan_line"] for n in raw] == [
+        "119.6 kg now against 116.7 kg on the plan line today: 2.9 kg ahead.",
+        "89.5 cm now against 90 cm on the plan line today: 0.5 cm ahead.",
+        "66 bpm now against 64 bpm on the plan line today: 2 bpm behind.",
+        "29:42 now against 30:00 on the plan line today: 18 seconds ahead."]
+    shown = services.get_goals(user.id)["goals"]
+    assert [plan_of(n) for n in shown] == [
+        {**plan_of(lift), "should_be_today": 116.7, "ahead_by": 2.9},
+        {**plan_of(waist), "should_be_today": 90.0, "ahead_by": 0.5},
+        {**plan_of(resting), "should_be_today": 64.0, "ahead_by": -2.0},
+        {**plan_of(best), "should_be_today": 30.0, "ahead_by": 0.3}]
+    assert all(isinstance(n["days_ahead"], int) for n in shown)
+    assert [n["vs_plan"] for n in shown] == ["ahead", "ahead", "behind", "ahead"]
+    # The three results that carry a goal's numbers carry the same five, all together.
+    assert shown == services.get_progress(user.id)["goals"]
+    assert services.get_progress(user.id, "Back Squat")["lift"]["goal"] == shown[0]
+    again = goal(user, goal_id=shown[1]["goal_id"], text="a note")["progress"]
+    assert plan_of(again) == plan_of(shown[1])
+
+
+def test_nothing_logged_has_the_line_and_four_nulls(user):
+    r = goal(user, kind="lift", exercise="Deadlift", start_value=100, target_value=150, target_date=day(user, 60))
+    assert plan_of(r["progress"]) == {"should_be_today": 100.0, "ahead_by": None, "days_ahead": None,
+                                      "vs_plan": None, "plan_line": None}
+    raw = services.goal_charts(user.id)["goals"][0]
+    assert raw["now_basis"] is None and raw["path"]["actual"] == []
+    assert raw["path"]["plan"] == [{"date": day(user, 0), "value": 100.0}, {"date": day(user, 60), "value": 150.0}]
+
+
+def test_now_is_the_goals_latest_even_when_the_newest_point_is_old(user):
+    """The 28-day best on the start day is a session 20 days old, and no point is dated since the start: the plan
+    line's now is still latest, never the last point of the series."""
+    squat(user, 40, 110)
+    squat(user, 20, 90)                                                   # epley 105: the best of 28 days
+    r = goal(user, kind="lift", exercise="Back Squat", target_value=130, target_date=day(user, 60))
+    p = r["progress"]
+    assert p["latest"] == 105.0 and p["vs_plan"] == "on the line" and p["plan_line"] == "On the plan line today, at 105 kg."
+    raw = services.goal_charts(user.id)["goals"][0]
+    assert raw["path"]["actual"] == [] and raw["now_basis"] == "best_28d"
+
+
+def test_rule_1_on_the_line_when_the_gap_rounds_to_zero(user):
+    raw, shown = weight_goal(user, 80.08, 80.11)                         # 0.03 kg: 0 at 1 dp
+    assert plan_of(shown) == {"should_be_today": 80.1, "ahead_by": 0.0, "days_ahead": 0, "vs_plan": "on the line",
+                              "plan_line": "On the plan line today, at 80.1 kg."}
+    assert raw["ahead_by"] == 0 and raw["days_ahead"] == 0
+
+
+def test_rule_2_widens_the_sentence_and_ahead_by_never_should_be_today(user):
+    raw, shown = weight_goal(user, 80.08, 80.14)                         # both 80.1 kg; the gap 0.06 kg is real
+    assert formatting.widen([80.14, 80.08], "bodyweight_derived")
+    assert plan_of(shown) == {"should_be_today": 80.1, "ahead_by": -0.06, "days_ahead": -1, "vs_plan": "behind",
+                              "plan_line": "80.14 kg now against 80.08 kg on the plan line today: 0.06 kg behind."}
+    assert shown["latest"] == 80.1                                         # a standalone field never widens
+
+
+def test_rule_3_on_the_line_prints_only_the_now_figure(user):
+    raw, shown = weight_goal(user, 80.16, 80.14)                         # 80.1 and 80.2 kg, the gap 0.02 kg
+    assert formatting.show(80.14, "bodyweight_derived") != formatting.show(80.16, "bodyweight_derived")
+    assert plan_of(shown) == {"should_be_today": 80.2, "ahead_by": 0.0, "days_ahead": 0, "vs_plan": "on the line",
+                              "plan_line": "On the plan line today, at 80.1 kg."}
+
+
+def test_the_printed_gap_is_rounded_from_the_real_gap_not_the_printed_figures(user):
+    """Section D, accepted: 80.26 against 80.14 prints 80.3 kg and 80.1 kg, and the gap 0.12 prints 0.1 kg, not the
+    0.2 the printed figures would give."""
+    raw, shown = weight_goal(user, 80.14, 80.26)
+    assert raw["ahead_by"] == pytest.approx(-0.12)
+    assert shown["plan_line"] == "80.3 kg now against 80.1 kg on the plan line today: 0.1 kg behind."
+    assert (shown["ahead_by"], shown["should_be_today"]) == (-0.1, 80.1)
+
+
+@pytest.mark.parametrize("start, now", [(80.08, 80.13), (80.13, 80.08), (80.03, 80.08), (80.0, 80.05),
+                                        (80.1, 80.15), (80.2, 80.25), (80.35, 80.3), (79.95, 80.0)])
+def test_at_the_half_step_the_four_move_together(make_user, start, now):
+    """A gap of 0.05 kg as floats lands either side of the half step. Whichever side it lands, vs_plan "on the
+    line", ahead_by 0 and the on-the-line sentence are all true or all false, and is_zero of the float gap decides.
+    On the line, days_ahead is 0. Off it, days_ahead can be 0 too (a gap under half a day of the line's change), so
+    nothing is asserted of it there."""
+    user = make_user()
+    raw, shown = weight_goal(user, start, now)
+    on = formatting.is_zero(start - now, "bodyweight_derived")
+    holds_together(raw, shown, on)
+
+
+def holds_together(raw: dict, shown: dict, on: bool) -> None:
+    for n in (raw, shown):
+        assert (n["vs_plan"] == "on the line") is on, n
+        assert (n["ahead_by"] == 0) is on, n
+        assert n["plan_line"].startswith("On the plan line today") is on, n
+        if on:
+            assert n["days_ahead"] == 0, n
+
+
+def half_step_goal(kind: str, start: float, now: float):
+    """An unsaved goal of `kind` on its start day (so its plan line today is `start`), with one point today of
+    `now`, and the `loaded` goal_numbers reads: the same path every read takes, with no database."""
+    from types import SimpleNamespace as Row
+    today = datetime(2026, 11, 10).date()
+    exercise = Row(name="Outdoor Run")
+    measured = {"cm": "waist", "bpm": "resting_hr"}.get(kind)
+    g = Row(id=1, kind="cardio_best" if kind == "time" else "measurement", status="open", is_sample=False,
+            exercise=exercise if kind == "time" else None, exercise_id=7 if kind == "time" else None,
+            measurement_kind=measured, distance_km=5.0 if kind == "time" else None,
+            unit={"cm": "cm", "bpm": "bpm", "time": "min"}[kind], start_value=start, start_date=today,
+            target_value=start - 5, target_date=today + timedelta(days=50), direction="down")
+    loaded = {"lifts": goal_service.NO_LIFTS, "weigh_ins": [], "sample": False,
+              "measurements": {measured: [Row(date=today, value=now, id=1)]} if measured else {},
+              "cardio": {7: [Row(date=today, minutes=now, distance_km=5.0, id=1)]} if kind == "time" else {}}
+    return g, loaded, today
+
+
+# For each unit: half its shown step, and starts either side of it from now. A cardio time's now is read at 2 dp
+# of a minute from its sessions, so the start (the plan line on the first day) is what moves.
+HALF = {"cm": 0.05, "bpm": 0.5, "time": 0.5 / 60}
+HALF_STEP_PAIRS = [(kind, now + sign * HALF[kind] * scale, now)
+                   for kind, now in (("cm", 90.0), ("bpm", 64.0), ("time", 30.0))
+                   for sign in (1, -1) for scale in (0.999, 1.0, 1.001)]
+QUANTITY = {"cm": "cm", "bpm": "bpm", "time": "goal_time"}
+
+
+@pytest.mark.parametrize("kind, start, now", HALF_STEP_PAIRS)
+def test_at_the_half_step_cm_bpm_and_a_cardio_time_move_together(kind, start, now):
+    """The same rule in cm, bpm and a cardio time, through goal_numbers and rounded_numbers: is_zero of the float gap
+    decides on the line, and vs_plan, ahead_by, the sentence and days_ahead move with it."""
+    g, loaded, today = half_step_goal(kind, start, now)
+    raw = goal_service.goal_numbers([g], loaded, today)[0]
+    shown = goal_service.rounded_numbers([raw])[0]
+    assert raw["latest"] == now and raw["should_be_today"] == start
+    holds_together(raw, shown, formatting.is_zero(start - now, QUANTITY[kind]))
+
+
+def test_the_cm_bpm_and_time_cases_land_on_both_sides():
+    for kind in HALF:
+        sides = {formatting.is_zero(start - now, QUANTITY[kind]) for k, start, now in HALF_STEP_PAIRS if k == kind}
+        assert sides == {True, False}, kind
+
+
+def test_the_half_step_cases_land_on_both_sides():
+    """The cases above are worth having only if the floats fall both ways."""
+    sides = {formatting.is_zero(a - b, "bodyweight_derived")
+             for a, b in [(80.08, 80.13), (80.13, 80.08), (80.03, 80.08), (80.0, 80.05), (80.1, 80.15),
+                          (80.2, 80.25), (80.35, 80.3), (79.95, 80.0)]}
+    assert sides == {True, False}
+
+
+def test_after_the_target_date_the_line_has_ended(user, monkeypatch):
+    weigh(user, 0, 80)
+    made = goal(user, kind="bodyweight", target_value=78, target_date=day(user, 5))
+    later = db.utcnow() + timedelta(days=10)
+    monkeypatch.setattr(db, "utcnow", lambda: later)
+    weigh(user, 0, 78.5)
+    shown = services.get_goals(user.id)["goals"][0]
+    assert shown["goal_id"] == made["id"]
+    assert plan_of(shown) == {"should_be_today": 78.0, "ahead_by": -0.5, "days_ahead": None, "vs_plan": "behind",
+                              "plan_line": "78.5 kg now against the target of 78 kg: 0.5 kg behind."}
+    assert services.goal_charts(user.id)["goals"][0]["line_ended"] is True
+    weigh(user, 0, 78.03)                                                 # on the line at the target: no days figure
+    assert plan_of(services.get_goals(user.id)["goals"][0]) == {
+        "should_be_today": 78.0, "ahead_by": 0.0, "days_ahead": None, "vs_plan": "on the line",
+        "plan_line": "78 kg now, at the target."}                         # the line has ended: no "plan line today"
+
+
+def no_length(user, start_offset: int, target_offset: int, now: float) -> dict:
+    """A body weight goal from 80.8 to 78 whose stored dates give a line with no length, as a westward time zone
+    move and an edit can leave it: start_date and target_date moved to the offsets given, today unchanged. Then
+    today's weigh-in replaced by `now`. Returns get_goals' numbers for it."""
+    weigh(user, 0, 80.8)
+    made = goal(user, kind="bodyweight", target_value=78, target_date=day(user, 60))
+    today = users.today_for(user)
+    with db.session_scope() as s:
+        row = s.get(Goal, made["id"])
+        row.start_date, row.target_date = today + timedelta(days=start_offset), today + timedelta(days=target_offset)
+    weigh(user, 0, now)
+    return services.get_goals(user.id)["goals"][0]
+
+
+@pytest.mark.parametrize("start_offset, target_offset", [(1, 1), (1, 0)], ids=["start tomorrow, target tomorrow",
+                                                                               "the target before the start"])
+def test_a_line_with_no_length_before_its_target_date_compares_with_the_target(user, start_offset, target_offset):
+    """The target date has not passed, but the line has no length: the plan figure is the target, there is no days
+    figure, and the sentence names the target (metrics.goal_path's ended, worked out once)."""
+    shown = no_length(user, start_offset, target_offset, 80.8)
+    assert plan_of(shown) == {"should_be_today": 78.0, "ahead_by": -2.8, "days_ahead": None, "vs_plan": "behind",
+                              "plan_line": "80.8 kg now against the target of 78 kg: 2.8 kg behind."}
+    assert services.goal_charts(user.id)["goals"][0]["line_ended"] is True
+    weigh(user, 0, 78.02)                                                 # at the target: on the line, still no days
+    assert plan_of(services.get_goals(user.id)["goals"][0]) == {
+        "should_be_today": 78.0, "ahead_by": 0.0, "days_ahead": None, "vs_plan": "on the line",
+        "plan_line": "78 kg now, at the target."}
+
+
+def test_a_running_line_is_not_ended(user):
+    weigh(user, 0, 80)
+    goal(user, kind="bodyweight", target_value=78, target_date=day(user, 5))
+    assert services.goal_charts(user.id)["goals"][0]["line_ended"] is False
+
+
+def test_the_series_is_built_only_for_goal_charts(user, monkeypatch):
+    """No MCP goal read pays for the chart's actual line: get_goals, set_goal and get_progress never build it."""
+    from app import metrics
+    squat(user, 3, 100)
+    weigh(user, 1, 80)
+    real = metrics.goal_now_series
+    calls = []
+    monkeypatch.setattr(metrics, "goal_now_series", lambda *a, **k: calls.append(a) or real(*a, **k))
+    assert "error" not in goal(user, kind="lift", exercise="Back Squat", target_value=130, target_date=day(user, 60))
+    assert "error" not in goal(user, kind="bodyweight", target_value=75, target_date=day(user, 60))
+    services.get_goals(user.id)
+    services.get_progress(user.id)
+    services.get_progress(user.id, "Back Squat")
+    assert calls == []
+    assert len(services.goal_charts(user.id)["goals"]) == 2 and len(calls) == 2
+
+
+def test_goal_charts_is_get_goals_unrounded_with_path_and_now_basis(user):
+    for days_ago, kg in ((20, 60), (15, 62.5), (10, 65), (5, 67.5)):
+        squat(user, days_ago, kg)
+    weigh(user, 3, 81.08)
+    measure(user, 1, "chest", 100)
+    run(user, 1, 5, 30)
+    for data in ({"kind": "lift", "exercise": "Back Squat", "target_value": 100},
+                 {"kind": "bodyweight", "target_value": 75},
+                 {"kind": "measurement", "measurement_kind": "chest", "target_value": 104},
+                 {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 27}):
+        assert "error" not in goal(user, target_date=day(user, 60), **data)
+    charts = services.goal_charts(user.id)
+    listed = services.get_goals(user.id)
+    assert set(charts) == {"today", "goals", "includes_sample"} and charts["today"] == listed["today"]
+    assert charts["includes_sample"] is False
+    web_only = ("path", "now_basis", "line_ended")
+    bare = [{k: v for k, v in n.items() if k not in web_only} for n in charts["goals"]]
+    assert goal_service.rounded_numbers(bare) == listed["goals"]
+    assert all(set(n) == SHAPE | set(web_only) for n in charts["goals"])
+    assert not any(set(web_only) & set(n) for n in listed["goals"])                # never in an MCP result
+    assert [n["line_ended"] for n in charts["goals"]] == [False] * 4
+    assert [n["now_basis"] for n in charts["goals"]] == ["best_28d", "average_7d", "latest", "best_28d"]
+    lift = charts["goals"][0]
+    assert lift["path"]["plan"] == [{"date": day(user, 0), "value": 78.75}, {"date": day(user, 60), "value": 100.0}]
+    assert services.goal_charts(987654)["error"] == "no_account"
+
+
+def test_now_basis_follows_the_rule_the_messages_use(user):
+    squat(user, 40, 100)
+    weigh(user, 10, 80)
+    run(user, 35, 5, 30)
+    for data in ({"kind": "lift", "exercise": "Back Squat", "target_value": 150},
+                 {"kind": "bodyweight", "target_value": 75},
+                 {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 27}):
+        assert "error" not in goal(user, target_date=day(user, 60), **data)
+    # Nothing in 28 days, nothing in 7: each now is the latest point.
+    assert [n["now_basis"] for n in services.goal_charts(user.id)["goals"]] == ["latest", "latest_weigh_in", "latest"]
+    again = goal(user, kind="bodyweight", target_value=76, start_value=90, target_date=day(user, 60))
+    assert any(w.endswith("(the latest weigh-in, on " + day(user, -10) + ").") for w in again["warnings"])
+
+
+def test_a_measurement_goal_names_its_kind_by_the_one_table(user):
+    assert goal_service.measurement_name("resting_hr") == "Resting heart rate"
+    assert goal_service.measurement_name("water_ml") == "Water"
+    daily = goal(user, kind="measurement", measurement_kind="water_ml", target_value=2000, target_date=day(user, 30))
+    assert daily["message"].startswith("Water cannot be a goal: it is a day's amount")
+
+
+def test_a_cardio_time_in_rule_2_keeps_minutes_at_2_dp_and_widens_only_the_sentence(user):
+    """10.01 km in 60.1 min is 30.02 min for 5 km (30:01.2); then 15.01 km in 90.1 min is 30.01 (30:00.6). Both print
+    30:01 at whole seconds and the gap, 0.6 seconds, is real: rule 2. The fields stay minutes at 2 dp."""
+    run(user, 0, 10.01, 60.1)
+    made = goal(user, kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=27,
+                target_date=day(user, 60))
+    assert made["goal"]["start_value"] == 30.02
+    run(user, 0, 15.01, 90.1)
+    shown = services.get_goals(user.id)["goals"][0]
+    assert plan_of(shown) == {"should_be_today": 30.02, "ahead_by": 0.01, "days_ahead": 0, "vs_plan": "ahead",
+                              "plan_line": "30:00.6 now against 30:01.2 on the plan line today: 0.6 seconds ahead."}
+
+
+def test_a_bpm_goal_in_rule_2_widens_ahead_by_to_1_dp(user, monkeypatch):
+    """64 bpm, a goal of 62 over 40 days, read 10 days on: the plan line is 63.5. Both print 64 bpm and the gap of
+    0.5 bpm is real (it rounds to 1): rule 2. should_be_today stays whole; ahead_by takes 1 dp; 0.5 over 0.05 a day
+    is 10 days behind."""
+    measure(user, 0, "resting_hr", 64)
+    assert "error" not in goal(user, kind="measurement", measurement_kind="resting_hr", target_value=62,
+                               target_date=day(user, 40))
+    later = db.utcnow() + timedelta(days=10)
+    monkeypatch.setattr(db, "utcnow", lambda: later)
+    raw = services.goal_charts(user.id)["goals"][0]
+    assert (raw["latest"], raw["should_be_today"], raw["ahead_by"]) == (64, 63.5, -0.5)
+    assert plan_of(services.get_goals(user.id)["goals"][0]) == {
+        "should_be_today": 64.0, "ahead_by": -0.5, "days_ahead": -10, "vs_plan": "behind",
+        "plan_line": "64.0 bpm now against 63.5 bpm on the plan line today: 0.5 bpm behind."}

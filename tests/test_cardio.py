@@ -5,9 +5,9 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import delete, select
 
-from app import db, exercises, services, users
+from app import db, exercises, formatting, services, users
 from app.metrics import cardio_kcal
-from app.models import CallLog, CardioEntry, Exercise
+from app.models import CallLog, CardioEntry, Exercise, User
 from app.services.cardio import NO_WEIGH_IN
 from app.services.common import WRITE_LIMIT
 
@@ -293,3 +293,300 @@ def test_with_no_weigh_in_the_sibling_note_gives_the_mets(make_user):
     several = move(person, "Outdoor Walk", 30)["note"]
     assert several.endswith("The other outdoor activities are Outdoor Run at MET 9.3 and Outdoor Cycling at MET 7, "
                             "against MET 3.8 for this one. edit_entry changes it.")
+
+
+def carrying_both(result, out=None) -> list[dict]:
+    """Every dict at any depth that carries estimate_weight_kg beside an estimate with a weight_kg."""
+    out = [] if out is None else out
+    if isinstance(result, dict):
+        if "estimate_weight_kg" in result and isinstance(result.get("estimate"), dict):
+            out.append(result)
+        for value in result.values():
+            carrying_both(value, out)
+    elif isinstance(result, list):
+        for value in result:
+            carrying_both(value, out)
+    return out
+
+
+def test_estimate_weight_kg_is_rounded_with_the_estimate_in_every_result(user):
+    """Section D: a cardio result carries the stored weight twice, as estimate_weight_kg and estimate.weight_kg.
+    Both are the same 1 dp figure in every result; the stored column keeps 80.25."""
+    today = users.today_for(user)
+    services.log_bodyweight(user.id, {"kg": 80.2, "date": (today - timedelta(days=2)).isoformat()}, "web")
+    services.log_bodyweight(user.id, {"kg": 80.3}, "web")                      # the 7-day average is 80.25
+    logged = move(user, "Treadmill Walk", 30)
+    entry_id = logged["id"]
+    results = [logged, services.get_entry(user.id, "cardio_entry", entry_id),
+               services.get_log(user.id, days=1),
+               services.edit_entry(user.id, "cardio_entry", entry_id, {"minutes": 35}, "web"),
+               services.delete_entry(user.id, "cardio_entry", entry_id),
+               services.restore_entry(user.id, "cardio_entry", entry_id)]
+    found = [d for r in results for d in carrying_both(r)]
+    assert len(found) >= len(results)
+    assert all(d["estimate_weight_kg"] == d["estimate"]["weight_kg"] == 80.3 for d in found), found
+    assert rows(user.id)[0].estimate_weight_kg == 80.25                        # the stored column is untouched
+
+
+def test_without_an_estimate_estimate_weight_kg_is_null_too(user):
+    r = move(user, "Treadmill Walk", 30)
+    assert r["estimate"] is None and r["entry"]["estimate_weight_kg"] is None
+
+
+# ---------------------------------------------------------------- get_cardio: an activity's bests (stage 6, E3)
+
+ONE_KEYS = {"today", "exercise", "sessions", "bests", "week", "includes_sample"}
+SESSION_KEYS = {"id", "date", "minutes", "distance_km", "pace", "pace_min_per_km", "estimate", "machine_kcal", "notes",
+                "is_sample"}
+SUMMARY_KEYS = {"today", "activities", "includes_sample"}
+
+
+def ago(user, days):
+    return (users.today_for(user) - timedelta(days=days)).isoformat()
+
+
+def ran(user, days_ago, minutes, km=None, exercise="Outdoor Run", **data):
+    sent = {"date": ago(user, days_ago), "allow_repeat": True, **data}
+    if km is not None:
+        sent["distance_km"] = km
+    r = move(user, exercise, minutes, **sent)
+    assert "error" not in r, r
+    return r["id"]
+
+
+def runs(user):
+    """Six live Outdoor Runs, one deleted. By hand: paces 6.2, 6.0, 6.22, 5.0, none, 5.0 min per km."""
+    ids = {"A": ran(user, 20, 31, 5), "B": ran(user, 15, 60, 10), "C": ran(user, 10, 28, 4.5),
+           "D": ran(user, 8, 25, 5, notes="hilly"), "E": ran(user, 5, 40), "F": ran(user, 3, 50, 10)}
+    gone = ran(user, 2, 20, 10)                                  # 2:00 a km, every best: but deleted
+    services.delete_entry(user.id, "cardio_entry", gone)
+    return ids
+
+
+def test_every_best_by_hand_with_its_ties(user, make_user):
+    ids = runs(user)
+    other = make_user()
+    ran(other, 1, 15, 10)                                         # another person's faster run never counts
+    r = services.get_cardio(user.id, "outdoor run")
+    assert set(r) == ONE_KEYS and r["exercise"] == "Outdoor Run" and r["today"] == ago(user, 0)
+    # Fastest pace: D and F both 5:00 a km; the tie goes to D, the earlier in the one order. E has no distance.
+    assert r["bests"]["fastest_pace"] == {"pace": "5:00", "pace_min_per_km": 5.0, "date": ago(user, 8),
+                                          "entry_id": ids["D"]}
+    # Longest: B and F both 10 km; B is earlier.
+    assert r["bests"]["longest"] == {"distance_km": 10.0, "date": ago(user, 15), "entry_id": ids["B"]}
+    # Times, the goal rule: a session at or over the distance, its pace x the distance. 1 km: D and F tie at 5:00,
+    # D first. 5 km: A 31, B 30, D 25, F 25: D first. 10 km: B 60, F 50. C (4.5 km) is in the 1 km best only.
+    assert r["bests"]["times"] == [
+        {"distance_km": 1.0, "minutes": 5.0, "date": ago(user, 8), "entry_id": ids["D"]},
+        {"distance_km": 5.0, "minutes": 25.0, "date": ago(user, 8), "entry_id": ids["D"]},
+        {"distance_km": 10.0, "minutes": 50.0, "date": ago(user, 3), "entry_id": ids["F"]}]
+    assert [s["id"] for s in r["sessions"]] == [ids[k] for k in "FEDCBA"]         # newest first
+    assert all(set(s) == SESSION_KEYS for s in r["sessions"])
+    no_distance = next(s for s in r["sessions"] if s["id"] == ids["E"])
+    assert no_distance["pace"] is None and no_distance["pace_min_per_km"] is None and no_distance["distance_km"] is None
+    hilly = next(s for s in r["sessions"] if s["id"] == ids["D"])
+    assert hilly["notes"] == "hilly" and next(s for s in r["sessions"] if s["id"] == ids["A"])["notes"] == ""
+    # pace is the m:ss of pace_min_per_km, through the formatter's one m:ss function; the float is unrounded.
+    c = next(s for s in r["sessions"] if s["id"] == ids["C"])
+    assert c["pace_min_per_km"] == 28 / 4.5 and c["pace"] == "6:13"
+    assert all(s["pace"] == formatting.show(s["pace_min_per_km"], "pace") for s in r["sessions"] if s["pace"])
+    assert r["includes_sample"] is False and "note" not in r
+
+
+def test_one_session_reaches_only_the_distances_it_covers(user):
+    only = ran(user, 1, 6.5, 1.2)
+    bests = services.get_cardio(user.id, "Outdoor Run")["bests"]
+    assert bests["times"] == [{"distance_km": 1.0, "minutes": 5.42, "date": ago(user, 1), "entry_id": only}]
+    assert bests["longest"] == {"distance_km": 1.2, "date": ago(user, 1), "entry_id": only}
+    ran(user, 0, 30, exercise="Elliptical")                         # no distance: no best at all
+    e = services.get_cardio(user.id, "Elliptical")
+    assert e["bests"] == {"fastest_pace": None, "longest": None, "times": []} and len(e["sessions"]) == 1
+
+
+def test_a_tie_on_one_day_goes_to_the_session_logged_first(user):
+    first = ran(user, 2, 30, 5)
+    ran(user, 2, 30, 5)
+    bests = services.get_cardio(user.id, "Outdoor Run")["bests"]
+    assert bests["fastest_pace"]["entry_id"] == bests["longest"]["entry_id"] == first
+    assert {t["entry_id"] for t in bests["times"]} == {first}
+
+
+def test_an_activity_with_no_sessions_says_so(user):
+    ran(user, 1, 30, 5)
+    r = services.get_cardio(user.id, "Hiking")
+    assert set(r) == ONE_KEYS | {"note"} and r["note"] == "No Hiking logged yet."
+    assert r["sessions"] == [] and r["bests"] == {"fastest_pace": None, "longest": None, "times": []}
+    assert r["note"] == services.get_progress(user.id, "Hiking")["note"]          # the note get_progress gives
+    assert r["week"] == {"minutes": 30.0, "target_minutes": None}                 # every activity's minutes
+
+
+def test_a_lift_name_or_an_unknown_one_is_refused_with_the_cardio_names(user):
+    lift = services.get_cardio(user.id, "Back Squat")
+    assert lift["error"] == "unknown_exercise" and "Back Squat" not in lift["closest"]
+    assert all(name in lift["fix"] for name, *_ in exercises.CARDIO)
+    close = services.get_cardio(user.id, "treadmil run")
+    assert close["error"] == "unknown_exercise" and "Treadmill Run" in close["closest"]
+    assert not set(close["closest"]) & {name for name, *_ in exercises.LIFTS}
+    assert services.get_cardio(987654, "Outdoor Run")["error"] == "no_account"
+    assert services.get_cardio(987654)["error"] == "no_account"
+
+
+def test_get_cardio_agrees_with_get_progress(make_user):
+    person = make_user(target_cardio_minutes_per_week=150)
+    services.log_bodyweight(person.id, {"kg": 70}, "web")
+    ids = runs(person)
+    ran(person, 0, 20, exercise="Elliptical", machine_kcal=180)
+    ran(person, 4, 25, exercise="Elliptical", machine_kcal=210)
+    keys = ("id", "date", "minutes", "distance_km", "estimate", "machine_kcal")
+    # Every activity logged: the runs carry distances and no machine number; the Elliptical carries a machine number.
+    for activity in ("Outdoor Run", "Elliptical"):
+        mine, theirs = services.get_cardio(person.id, activity), services.get_progress(person.id, activity)
+        assert [s["id"] for s in mine["sessions"]] == [s["id"] for s in theirs["cardio"]["sessions"]] != []
+        assert mine["week"] == theirs["cardio"]["week"] == {"minutes": 135.0, "target_minutes": 150}  # E, F, two Ellipticals
+        for a, b in zip(mine["sessions"], theirs["cardio"]["sessions"]):
+            assert {k: a[k] for k in keys} == {k: b[k] for k in keys}
+            assert a["pace"] == (b["pace"]["min_per_km"] if b["pace"] else None)   # the same m:ss, as a string here
+        assert set(theirs["cardio"]["sessions"][0]) == {"id", "date", "minutes", "distance_km", "pace", "estimate",
+                                                       "machine_kcal"}             # get_progress's shape is unchanged
+    elliptical = services.get_cardio(person.id, "Elliptical")["sessions"]
+    assert [s["machine_kcal"] for s in elliptical] == [180, 210] and all(s["estimate"] for s in elliptical)
+    assert ids
+
+
+def test_the_best_times_and_a_cardio_goal_read_one_rule(user):
+    """cardio_times: one rule for a time at a distance, for goals and for bests. A 5 km goal's latest is the best
+    5 km time of the last 28 days, the bests' 5 km time when every session is that recent."""
+    from app.services import cardio, goals
+    ids = runs(user)
+    goal = services.set_goal(user.id, {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5,
+                                       "target_value": 22, "target_date": ago(user, -60)}, "web")
+    five = next(t for t in services.get_cardio(user.id, "Outdoor Run")["bests"]["times"] if t["distance_km"] == 5)
+    assert goal["progress"]["latest"] == five["minutes"] == 25.0
+    with db.new_session() as s:
+        rows = list(reversed(cardio.sessions_of(s, s.get(User, user.id), s.get(Exercise, goal["goal"]["exercise_id"]),
+                                                users.today_for(user))))
+        times = cardio.cardio_times(rows, 5)
+    assert [(d.isoformat(), m, i) for d, m, i in times] == [
+        (ago(user, 20), 31.0, ids["A"]), (ago(user, 15), 30.0, ids["B"]), (ago(user, 8), 25.0, ids["D"]),
+        (ago(user, 3), 25.0, ids["F"])]
+    assert not hasattr(goals, "cardio_times")                                    # moved, not copied
+
+
+def test_the_summary_form_lists_every_activity_with_a_session_by_name(user, make_user):
+    ran(user, 40, 20, 5)                                         # 4:00 a km, older than 28 days: the best ever
+    ran(user, 3, 30, 5)
+    ran(user, 27, 25.5, exercise="Treadmill Walk")
+    ran(user, 1, 30.2, exercise="Treadmill Walk")
+    ran(user, 35, 30, exercise="Elliptical")                     # only an old session: listed, nothing in 28 days
+    gone = ran(user, 2, 30, exercise="Hiking")
+    services.delete_entry(user.id, "cardio_entry", gone)           # only a deleted session: not listed
+    ran(make_user(), 1, 30, exercise="Swimming")                   # another person's activity
+    r = services.get_cardio(user.id)
+    assert set(r) == SUMMARY_KEYS and r["today"] == ago(user, 0) and r["includes_sample"] is False
+    assert r["activities"] == [
+        {"exercise": "Elliptical", "sessions_28d": 0, "minutes_28d": 0.0, "fastest_pace": None,
+         "last_date": ago(user, 35)},
+        {"exercise": "Outdoor Run", "sessions_28d": 1, "minutes_28d": 30.0, "fastest_pace": "4:00",
+         "last_date": ago(user, 3)},
+        {"exercise": "Treadmill Walk", "sessions_28d": 2, "minutes_28d": 55.7, "fastest_pace": None,
+         "last_date": ago(user, 1)}]
+    assert all(isinstance(a["minutes_28d"], float) for a in r["activities"])
+    for a in r["activities"]:
+        best = services.get_cardio(user.id, a["exercise"])["bests"]["fastest_pace"]
+        assert a["fastest_pace"] == (best["pace"] if best else None)
+    assert services.get_cardio(user.id, "") == r
+    empty = services.get_cardio(make_user().id)
+    assert empty == {"today": empty["today"], "activities": [], "includes_sample": False}
+
+
+def test_a_session_dated_after_today_stands_at_today(user, monkeypatch):
+    ran(user, 0, 30, 5)
+    later = db.utcnow() + timedelta(days=2)
+    monkeypatch.setattr(db, "utcnow", lambda: later)
+    after = ran(user, 0, 32, 5)                                    # two days after the real today
+    monkeypatch.undo()
+    ran(user, 0, 31, 5)                                            # today, logged after it
+    r = services.get_cardio(user.id, "Outdoor Run")
+    assert [s["date"] for s in r["sessions"]] == [ago(user, 0), ago(user, -2), ago(user, 0)]
+    assert r["sessions"][1]["id"] == after                         # today's, in the order logged
+    assert r["week"]["minutes"] == 93.0
+    summary = services.get_cardio(user.id)["activities"][0]
+    assert summary["sessions_28d"] == 3 and summary["last_date"] == ago(user, 0)
+
+
+def test_sample_rows_are_said_and_feed_the_charts(user):
+    """includes_sample and the note, on both forms; the real sessions and days draw lane B's charts."""
+    from app import charts
+    from app.services.common import SAMPLE_NOTE
+    ids = runs(user)
+    with db.session_scope() as s:
+        s.get(CardioEntry, ids["A"]).is_sample = True
+    one, every = services.get_cardio(user.id, "Outdoor Run"), services.get_cardio(user.id)
+    assert one["includes_sample"] is every["includes_sample"] is True
+    assert one["note"] == every["note"] == SAMPLE_NOTE
+    assert [s["is_sample"] for s in one["sessions"]] == [False] * 5 + [True]
+    assert services.get_cardio(user.id, "Elliptical")["includes_sample"] is False
+    today = users.today_for(user)
+    # Each chart function draws a non-empty svg from the real read. Lane B pins its own descriptions.
+    services.log_food(user.id, {"entries": [{"description": "dal", "kcal": 450}]}, "web")
+    days = services.get_days(user.id)["days"]
+    for svg in (charts.pace_svg(one["sessions"], one["exercise"], today), charts.eaten_small_svg(days, today, 2000),
+                charts.eaten_sheet_svg(days, today)):
+        assert str(svg).startswith("<svg") and str(svg).rstrip().endswith("</svg>") and len(str(svg)) > 100
+
+
+# ---------------------------------------------------------------- the fix round: exact ties, rounding, old rows
+
+def test_an_exact_pace_tie_goes_to_the_earlier_despite_float_noise(user):
+    """20.1 min over 4.02 km and 25 min over 5 km are both exactly 5:00 a km. As floats they are 5.000000000000001
+    and 5.0, so a float comparison credits the later run. Paces are compared exactly, so the earlier one keeps
+    the tie, and fastest_pace names the session the 1 km time names."""
+    earlier = ran(user, 3, 20.1, 4.02)
+    ran(user, 1, 25, 5)
+    assert 20.1 / 4.02 != 25 / 5                                       # the float noise is real
+    bests = services.get_cardio(user.id, "Outdoor Run")["bests"]
+    assert bests["fastest_pace"]["entry_id"] == earlier and bests["fastest_pace"]["date"] == ago(user, 3)
+    assert bests["fastest_pace"]["pace"] == "5:00" and bests["fastest_pace"]["pace_min_per_km"] == 20.1 / 4.02
+    assert bests["times"][0] == {"distance_km": 1.0, "minutes": 5.0, "date": ago(user, 3), "entry_id": earlier}
+    assert services.get_cardio(user.id)["activities"][0]["fastest_pace"] == "5:00"
+    from app.services import cardio
+    with db.new_session() as s:
+        rows = list(s.scalars(select(CardioEntry).where(CardioEntry.user_id == user.id)))
+    assert cardio.exact_pace(rows[0]) == cardio.exact_pace(rows[1])  # one exact key for the tie
+
+
+def test_pace_min_per_km_is_unrounded(user):
+    """10 min over 1.4 km is 7.142857 min a km, 7:09. At 2 dp it would be 7.14, 7:08: so the field is never
+    rounded, and its m:ss is the pace string."""
+    only = ran(user, 1, 10, 1.4)
+    r = services.get_cardio(user.id, "Outdoor Run")
+    assert formatting.show(round(10 / 1.4, 2), "pace") == "7:08"         # what a rounded field would print
+    assert r["sessions"][0]["pace_min_per_km"] == 10 / 1.4 and r["sessions"][0]["pace"] == "7:09"
+    assert r["bests"]["fastest_pace"] == {"pace": "7:09", "pace_min_per_km": 10 / 1.4, "date": ago(user, 1),
+                                          "entry_id": only}
+    assert formatting.show(r["bests"]["fastest_pace"]["pace_min_per_km"], "pace") == r["bests"]["fastest_pace"]["pace"]
+
+
+def test_a_sample_session_older_than_28_days_still_says_so(user):
+    """The summary form reads every live session ever, for the fastest pace and the last day: an old sample
+    session is in its numbers, so includes_sample is true."""
+    from app.services.common import SAMPLE_NOTE
+    old = ran(user, 40, 30, 5)
+    ran(user, 2, 31, 5)
+    with db.session_scope() as s:
+        s.get(CardioEntry, old).is_sample = True
+    r = services.get_cardio(user.id)
+    assert r["activities"][0]["sessions_28d"] == 1 and r["activities"][0]["fastest_pace"] == "6:00"   # the old one
+    assert r["includes_sample"] is True and r["note"] == SAMPLE_NOTE
+    assert services.get_cardio(user.id, "Outdoor Run")["includes_sample"] is True
+
+
+def test_a_restored_session_comes_back(user):
+    kept = ran(user, 2, 30, 5)
+    gone = ran(user, 1, 25, 5)
+    services.delete_entry(user.id, "cardio_entry", gone)
+    assert [s["id"] for s in services.get_cardio(user.id, "Outdoor Run")["sessions"]] == [kept]
+    assert services.restore_entry(user.id, "cardio_entry", gone)["restored"] is True
+    r = services.get_cardio(user.id, "Outdoor Run")
+    assert [s["id"] for s in r["sessions"]] == [gone, kept] and r["bests"]["fastest_pace"]["entry_id"] == gone
+    assert services.get_cardio(user.id)["activities"][0]["sessions_28d"] == 2

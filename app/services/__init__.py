@@ -9,9 +9,9 @@ One module per area, so each later stage adds its own:
   measurements  log_measurement
   food          log_food, save_food, find_food (usda: the cached FoodData Central lookup),
                 list_saved_foods (the Foods page)
-  cardio        log_cardio
-  goals         set_goal, get_goals
-  trends        get_trends
+  cardio        log_cardio, get_cardio (the web only: an activity's sessions and bests)
+  goals         set_goal, get_goals, goal_charts (the Goals page only)
+  trends        get_trends, get_days (the web only: the 28-day grid)
   progress      get_progress
   log           get_log
   entries       get_entry, edit_entry, delete_entry, restore_entry
@@ -33,21 +33,22 @@ from app.services.common import (
     DUPLICATE_MINUTES, READ_LIMIT, WRITE_FUNCTIONS, WRITE_LIMIT, WRITE_WINDOW_MINUTES,
 )
 from app.services.entries import delete_entry, edit_entry, entry_kinds, get_entry, restore_entry
-from app.services.cardio import log_cardio
+from app.services.cardio import get_cardio, log_cardio
 from app.services.export import export_data
 from app.services.food import find_food, list_saved_foods, log_food, save_food
-from app.services.goals import get_goals, set_goal
+from app.services.goals import get_goals, goal_charts, set_goal
 from app.services.lifts import log_lifts
 from app.services.log import get_log
 from app.services.measurements import log_measurement
 from app.services.progress import get_progress
 from app.services.sample import add_sample_data, remove_sample_data, sample_state
-from app.services.trends import get_trends
+from app.services.trends import get_days, get_trends
 
 __all__ = [
     "DUPLICATE_MINUTES", "READ_LIMIT", "WRITE_FUNCTIONS", "WRITE_LIMIT", "WRITE_WINDOW_MINUTES",
     "add_sample_data", "delete_account", "delete_entry", "edit_entry", "entry_kinds", "export_data", "find_food",
-    "get_entry", "get_goals", "get_log", "get_progress", "get_trends", "list_exercises", "list_saved_foods",
+    "get_cardio", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress", "get_trends",
+    "list_exercises", "list_saved_foods",
     "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "remove_sample_data",
     "restore_entry", "sample_state", "save_food", "set_claude_can", "set_goal", "update_settings", "whoami",
 ]

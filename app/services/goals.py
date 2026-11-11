@@ -16,7 +16,7 @@ set_goal(user_id, data, by)
     A weekly sessions or cardio minutes target is a setting (update_settings), not a goal.
 
     When a goal is created, Spotter stores where it starts and which way it points:
-      start_value  where the person is now (_now_value), the same measure the goal's "latest" uses:
+      start_value  where the person is now (metrics.goal_now), the same measure the goal's "latest" uses:
                    a lift: the best session estimated max in the last 28 days, else the latest
                      (metrics.recent_best).
                    body weight: the 7-day average, else the latest weigh-in (metrics.bodyweight_now).
@@ -45,17 +45,34 @@ load_numbers(s, user_id, today, goals, lift_history=None) -> dict
     of the kinds named, cardio sessions of the activities named. set_goal, get_goals and get_progress
     all read through it, so the three never disagree.
 
-goal_numbers(goals, loaded, today)
+goal_numbers(goals, loaded, today, charts=False)
     For each open goal with a target and a date: where it stands, in one shape for every kind.
     latest is the measure above, and status, needed_per_week, the projection and projected_date all
     read that same value: "reached" once latest is at or past the target, else "on track" or "behind"
     from the line, else "not enough data". Every figure is unrounded: the working precision.
+    The plan line (metrics.goal_path, once per goal), five fields on every goal:
+      should_be_today  the straight line from the start to the target, today
+      ahead_by         latest against it, positive ahead, whichever way the goal points
+      days_ahead       ahead_by in days of the line's change, whole
+      vs_plan          "ahead", "on the line" or "behind"
+      plan_line        one sentence, built here from the unrounded figures through formatting.show
+    charts=True adds path {plan, actual}, now_basis and line_ended, for goal_charts only: no MCP result
+    carries them. The actual series (metrics.goal_now_series) is built only then.
 
 rounded_numbers(numbers)
     The copy set_goal, get_goals and get_progress return: a body weight or lift goal's start_value,
     latest and projection.latest at 1 dp (formatting.rounded), on a copy, the projection copied too. A cm,
     bpm or cardio time goal keeps the precision it has. goal_dict rounds a goal row's start_value the
-    same way, so every result that carries a goal agrees.
+    same way, so every result that carries a goal agrees. should_be_today and ahead_by round at the goal
+    unit's shown step (1 dp for kg and cm, whole bpm), ahead_by one step finer in close-call rule 2; a
+    cardio time goal's two are minutes at 2 dp, never finer.
+
+goal_charts(user_id)
+    The Goals page's read, web only: {today, goals [goal numbers, unrounded, each with path,
+    now_basis and line_ended], includes_sample[, note]}. now_basis names the measure latest is:
+    average_7d, latest_weigh_in, best_28d or latest; null with nothing logged. line_ended is
+    metrics.goal_path's ended: the plan figure is the target, so the page says "the target" as
+    plan_line does.
 
 Every write here locks the user row first (common.lock_user), then checks the write limit
 (common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
@@ -68,7 +85,7 @@ from sqlalchemy.orm import selectinload
 
 from app import db, formatting, links, metrics, rules, users
 from app.models import GOAL_STATUSES, CardioEntry, Goal, Measurement, User
-from app.services import body, cardio, lifts
+from app.services import body, cardio, lifts, measurements
 from app.services.common import (
     SAMPLE_NOTE, check_by, check_data, check_write_limit, exercises, in_range, lock_user, no_account, not_found,
     owned, row_dict, truthy,
@@ -85,10 +102,10 @@ TARGETS = {"lift": (0, LIFT_MAX), "bodyweight": rules.BODYWEIGHT_KG, "cardio_bes
 DISTANCE_KM = (0.1, 300)
 UNITS = {"lift": "kg", "bodyweight": "kg", "cardio_best": "min"}  # a measurement: its kind's own unit
 UNIT = "kg"
-NAMES = {"resting_hr": "Resting heart rate"}
 WITH_EXERCISE = ("lift", "cardio_best")
 # The quantity a kg goal's start, now and projection are rounded and shown at (section D of stage 6).
 ROUNDED = {"bodyweight": "bodyweight_derived", "lift": "estimated_max"}
+TIME_STEP = 0.01  # a cardio time goal's should_be_today and ahead_by: minutes at 2 dp, as its latest
 
 GOALS_HOW = (
     "Where each goal is now (latest), the same measure its start used: a lift, the best session estimated max "
@@ -112,8 +129,18 @@ def unit_for(kind: str, measurement_kind: str | None = None) -> str:
 
 
 def measurement_name(kind: str) -> str:
-    """'Waist', 'Resting heart rate'."""
-    return NAMES.get(kind, kind.replace("_", " ").capitalize())
+    """'Waist', 'Resting heart rate': the kind's word, from measurements.KIND_WORDS."""
+    return measurements.kind_word(kind)
+
+
+def goal_quantity(kind: str, unit: str) -> str:
+    """The quantity (app.formatting) a goal's start, now, plan figure and gap are shown in:
+    bodyweight_derived, estimated_max, cm, bpm or goal_time. Its gap, for a cardio time, is time_gap."""
+    if kind in ROUNDED:
+        return ROUNDED[kind]
+    if kind == "cardio_best":
+        return "goal_time"
+    return rules.UNIT_QUANTITIES[unit]
 
 
 def clock(minutes: float) -> str:
@@ -200,13 +227,6 @@ def load_numbers(s, user_id: int, today: date, goals: list, lift_history: dict |
     return out
 
 
-def cardio_times(rows: list, distance_km: float) -> list[tuple[date, float]]:
-    """(date, minutes for distance_km) for each session at or over that distance: its pace x the
-    distance, 2 dp. A shorter session says nothing about a longer time and is left out."""
-    return [(c.date, round(c.minutes / c.distance_km * distance_km, 2)) for c in rows
-            if c.distance_km and c.distance_km >= distance_km]
-
-
 def _points(g, loaded: dict, today: date) -> list[tuple[date, float]]:
     """The goal's own series, in the one order."""
     if g.kind == "lift":
@@ -215,37 +235,42 @@ def _points(g, loaded: dict, today: date) -> list[tuple[date, float]]:
         return [(b.date, b.kg) for b in loaded["weigh_ins"]]
     if g.kind == "measurement":
         return [(m.date, m.value) for m in loaded["measurements"].get(g.measurement_kind, [])]
-    return cardio_times(loaded["cardio"].get(g.exercise_id, []), g.distance_km)
+    # cardio.cardio_times, the one rule for a time at a distance (bests use it too): date and minutes.
+    return [(d, minutes) for d, minutes, _ in cardio.cardio_times(loaded["cardio"].get(g.exercise_id, []),
+                                                                   g.distance_km)]
 
 
-def _now_value(kind: str, points: list, today: date) -> float | None:
-    """Where the person is now, the one measure a goal starts from and is compared with."""
-    if kind == "lift":
-        return metrics.recent_best(points, today)
+def now_basis(kind: str, points: list, today: date) -> str | None:
+    """Which measure metrics.goal_now took for latest: "best_28d" (a lift or cardio time with a point in
+    the last 28 days), "average_7d" (body weight with a weigh-in in the last 7), "latest_weigh_in", or
+    "latest" (the last point in the one order). None with nothing logged. The one rule, read by
+    _source's words too."""
+    aged = [metrics.on_or_before(d, today) for d, _ in metrics.in_order(points, today)]
+    if not aged:
+        return None
+    if kind in WITH_EXERCISE:
+        recent = any(d >= today - timedelta(days=metrics.RECENT_BEST_DAYS - 1) for d in aged)
+        return "best_28d" if recent else "latest"
     if kind == "bodyweight":
-        return metrics.bodyweight_now(points, today)
-    if kind == "cardio_best":
-        return metrics.recent_best(points, today, lower_is_better=True)
-    ordered = metrics.in_order(points, today)
-    return ordered[-1][1] if ordered else None
+        recent = any(d >= today - timedelta(days=metrics.BODYWEIGHT_AVG_DAYS - 1) for d in aged)
+        return "average_7d" if recent else "latest_weigh_in"
+    return "latest"
 
 
 def _source(g, points: list, today: date) -> str:
-    """Which measure _now_value used, in words, for messages. "Latest" is last in the one order."""
-    past = [d for d, _ in metrics.in_order(points, today)]
-    aged = [metrics.on_or_before(d, today) for d in past]
-    recent = [d for d in aged if d >= today - timedelta(days=metrics.RECENT_BEST_DAYS - 1)]
+    """Which measure metrics.goal_now used, in words, for messages (now_basis). "Latest" is last in the
+    one order."""
+    basis = now_basis(g.kind, points, today)
+    on = metrics.in_order(points, today)[-1][0].isoformat()
     if g.kind == "lift":
-        return (f"the best session in the last {metrics.RECENT_BEST_DAYS} days" if recent
-                else f"the latest session, on {past[-1].isoformat()}")
+        return (f"the best session in the last {metrics.RECENT_BEST_DAYS} days" if basis == "best_28d"
+                else f"the latest session, on {on}")
     if g.kind == "cardio_best":
-        return (f"the best time in the last {metrics.RECENT_BEST_DAYS} days" if recent
-                else f"the latest time, on {past[-1].isoformat()}")
+        return (f"the best time in the last {metrics.RECENT_BEST_DAYS} days" if basis == "best_28d"
+                else f"the latest time, on {on}")
     if g.kind == "measurement":
-        return f"the latest {measurement_name(g.measurement_kind).lower()}, on {past[-1].isoformat()}"
-    if any(d >= today - timedelta(days=metrics.BODYWEIGHT_AVG_DAYS - 1) for d in aged):
-        return "the 7-day average"
-    return f"the latest weigh-in, on {past[-1].isoformat()}"
+        return f"the latest {measurement_name(g.measurement_kind).lower()}, on {on}"
+    return "the 7-day average" if basis == "average_7d" else f"the latest weigh-in, on {on}"
 
 
 # ---------------------------------------------------------------- where a goal stands
@@ -260,6 +285,20 @@ def goal_dict(g: Goal) -> dict:
             "start_value": _rounded(g.start_value, g.kind)}
 
 
+def _rounded_plan(n: dict) -> dict:
+    """should_be_today and ahead_by for a result. should_be_today at the unit's shown step, never finer;
+    ahead_by at the shown step, one step finer in close-call rule 2 (formatting.widen on the unrounded
+    latest and should_be_today). A cardio time goal's two: minutes at 2 dp, never finer."""
+    should, ahead = n["should_be_today"], n["ahead_by"]
+    quantity = goal_quantity(n["kind"], n["unit"])
+    if quantity == "goal_time":
+        return {"should_be_today": formatting.rounded(should, quantity, step=TIME_STEP),
+                "ahead_by": None if ahead is None else formatting.rounded(ahead, quantity, step=TIME_STEP)}
+    wide = ahead is not None and formatting.widen([n["latest"], should], quantity)
+    return {"should_be_today": formatting.rounded(should, quantity),
+            "ahead_by": None if ahead is None else formatting.rounded(ahead, quantity, widened=wide)}
+
+
 def rounded_numbers(numbers: list[dict]) -> list[dict]:
     """goal_numbers, rounded for a result (see the module notes). A copy: the numbers given, and
     their projections, are not changed."""
@@ -268,8 +307,35 @@ def rounded_numbers(numbers: list[dict]) -> list[dict]:
         p = n["projection"]
         out.append({**n, "start_value": _rounded(n["start_value"], n["kind"]),
                     "latest": _rounded(n["latest"], n["kind"]),
-                    "projection": None if p is None else {**p, "latest": _rounded(p["latest"], n["kind"])}})
+                    "projection": None if p is None else {**p, "latest": _rounded(p["latest"], n["kind"])},
+                    **_rounded_plan(n)})
     return out
+
+
+def plan_line(now: float | None, should: float, ahead: float | None, vs_plan: str | None, quantity: str,
+              ended: bool) -> str | None:
+    """The plan line in one sentence, from the unrounded figures, through formatting.show with a plain
+    space. None when there is no ahead_by.
+      ahead or behind  '107.9 kg now against 99.8 kg on the plan line today: 8.1 kg ahead.'
+      on the line      'On the plan line today, at 80.1 kg.' Only the now figure (rules 1 and 3).
+      rule 2           the first form with the three figures one decimal finer (formatting.widen):
+                       '79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind.'
+      ended            the line has ended (after the target date) or has no length
+                       (metrics.goal_path's ended): '76.4 kg now against the target of 75 kg: 1.4 kg
+                       behind.', and on the line '78 kg now, at the target.'
+    A cardio time goal's gap is time_gap: '18 seconds'."""
+    if ahead is None or now is None:
+        return None
+    if vs_plan == "on the line":
+        if ended:
+            return f"{formatting.show(now, quantity)} now, at the target."
+        return f"On the plan line today, at {formatting.show(now, quantity)}."
+    wide = formatting.widen([now, should], quantity)
+    gap = "time_gap" if quantity == "goal_time" else quantity
+    now_text, plan_text = formatting.show(now, quantity, widened=wide), formatting.show(should, quantity, widened=wide)
+    gap_text = formatting.show(abs(ahead), gap, widened=wide)
+    against = f"the target of {plan_text}" if ended else f"{plan_text} on the plan line today"
+    return f"{now_text} now against {against}: {gap_text} {vs_plan}."
 
 
 def label(g) -> str:
@@ -302,17 +368,24 @@ def _counts(g) -> bool:
     return g.kind != "cardio_best" or bool(g.distance_km)
 
 
-def goal_numbers(goals: list, loaded: dict, today: date) -> list[dict]:
+def goal_numbers(goals: list, loaded: dict, today: date, charts: bool = False) -> list[dict]:
     """Where each open goal stands, one shape for every kind. The stored direction says which way is
-    better. loaded: load_numbers for these goals."""
+    better. loaded: load_numbers for these goals. charts: add path and now_basis (goal_charts only)."""
     out = []
     for g in goals:
         if not _counts(g):
             continue
         points = _points(g, loaded, today)
-        # One meaning of "where the person is now" for latest, status, the pace and the projection.
+        # One meaning of "where the person is now" for latest, status, the pace, the projection and the
+        # plan line.
         lower = g.direction == "down"
-        now = _now_value(g.kind, points, today)
+        now = metrics.goal_now(g.kind, points, today)
+        quantity = goal_quantity(g.kind, g.unit)
+        # The series is the chart's actual line alone: built only for goal_charts. now is passed, so the plan
+        # line reads nothing else from it.
+        series = metrics.goal_now_series(g.kind, points, today, g.start_date) if charts else []
+        path = metrics.goal_path(g.start_date, g.start_value, g.target_date, g.target_value, series, today, lower,
+                                 quantity, now=now)
         p = metrics.projection(points, today, g.target_value, g.target_date, lower, current=now)
         if p is not None:
             status, needed = p["status"], p["needed_per_week"]
@@ -320,7 +393,7 @@ def goal_numbers(goals: list, loaded: dict, today: date) -> list[dict]:
             status = "reached" if metrics.reached(now, g.target_value, lower) else "not enough data"
             needed = (None if now is None else
                       metrics.needed_per_week(now, g.target_value, g.target_date, today, lower))
-        out.append({
+        numbers = {
             "goal_id": g.id, "label": label(g), "kind": g.kind,
             "exercise": g.exercise.name if g.kind in WITH_EXERCISE else None,
             "measurement_kind": g.measurement_kind if g.kind == "measurement" else None,
@@ -336,7 +409,16 @@ def goal_numbers(goals: list, loaded: dict, today: date) -> list[dict]:
             "projection": p,
             "note": None if p or status == "reached" else metrics.projection_gap(points, today),
             "is_sample": bool(g.is_sample),
-        })
+            "should_be_today": path["should_be_today"], "ahead_by": path["ahead_by"],
+            "days_ahead": path["days_ahead"], "vs_plan": path["vs_plan"],
+            "plan_line": plan_line(now, path["should_be_today"], path["ahead_by"], path["vs_plan"], quantity,
+                                   path["ended"]),
+        }
+        if charts:
+            numbers["path"] = {"plan": path["plan"], "actual": path["actual"]}
+            numbers["now_basis"] = now_basis(g.kind, points, today)
+            numbers["line_ended"] = path["ended"]
+        out.append(numbers)
     return out
 
 
@@ -371,7 +453,7 @@ def _measurement_kind(value) -> tuple[str | None, dict | None]:
         return None, rules.error("missing_field", "A measurement goal needs measurement_kind.", fix)
     hit, _ = rules.match_kind(value)
     if hit in DAILY_AMOUNTS:
-        what = hit.replace("_", " ")
+        what = measurement_name(hit)
         return None, rules.error("invalid_field", f"{what} cannot be a goal: it is a day's amount, met or missed "
                                  "every day, not a state to reach by a date.", fix)
     if hit is None:
@@ -485,7 +567,7 @@ def _start(g, loaded: dict, given, today: date, warnings: list) -> tuple[float |
     """Where a new goal starts, and where that number came from: the person's own numbers, or
     start_value when nothing is logged yet."""
     points = _points(g, loaded, today)
-    current = _now_value(g.kind, points, today)
+    current = metrics.goal_now(g.kind, points, today)
     if current is not None:
         source = _source(g, points, today)
         if given not in (None, ""):
@@ -712,6 +794,34 @@ def get_goals(user_id: int, include_closed=False) -> dict:
         sample = loaded["sample"] or any(g.is_sample for g in rows if g.id in shown_ids or g in closed_rows)
         out = {"today": today.isoformat(), "goals": numbers, "closed": closed, "includes_sample": sample,
                "how": GOALS_HOW, "summary": _summary(numbers, closed, today), "links": {"goals": links.page("goals")}}
+        if sample:
+            out["note"] = SAMPLE_NOTE
+        return out
+
+
+# ---------------------------------------------------------------- goal_charts, the Goals page's read
+
+def goal_charts(user_id: int) -> dict:
+    """Every open goal's numbers, unrounded, each with path, now_basis and line_ended: the Goals page's
+    chart and plan-line statement. Web only: no MCP function returns it, and the series never reach a
+    result.
+
+    Returns {today, goals [goal numbers + path {plan [{date, value}], actual [{date, value}]},
+    now_basis, line_ended], includes_sample[, note]} or {error, message, fix}. Read through
+    load_numbers and goal_numbers, as get_goals is, so the two never disagree: rounded_numbers of these
+    goals, without path, now_basis and line_ended, is get_goals' goals. A read: no lock, no write limit."""
+    with db.new_session() as s:
+        user = s.get(User, user_id)
+        if user is None:
+            return no_account()
+        today = users.today_for(user)
+        open_goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
+                                    .order_by(Goal.id).options(selectinload(Goal.exercise))))
+        loaded = load_numbers(s, user.id, today, open_goals)
+        numbers = goal_numbers(open_goals, loaded, today, charts=True)
+        shown_ids = {n["goal_id"] for n in numbers}
+        sample = loaded["sample"] or any(g.is_sample for g in open_goals if g.id in shown_ids)
+        out = {"today": today.isoformat(), "goals": numbers, "includes_sample": sample}
         if sample:
             out["note"] = SAMPLE_NOTE
         return out

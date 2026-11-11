@@ -126,6 +126,44 @@ class GoalNumbers(BaseModel):
     projection: Projection | None = Field(description="The trend line's numbers, or null without enough points.")
     note: str | None = Field(description="Why there is no projection; null when there is one or the goal is reached.")
     is_sample: bool = Field(description="True when this is a sample goal, not the person's own.")
+    # The plan line: a straight line from the start (start_value on start_date) to the target (target_value on
+    # target_date). Optional, so a result built before the services carry them still validates.
+    should_be_today: float | None = Field(
+        default=None,
+        description="Where the plan line is today, in unit: the straight line from start_value on start_date to "
+                    "target_value on target_date. The target once the target date has passed, and the target when "
+                    "target_date is on or before start_date (the line has no length). Otherwise the start before "
+                    "the start date. Rounded to the unit's step: 1 decimal for kg or cm, whole bpm, minutes to "
+                    "2 decimals. It never carries an extra decimal.")
+    ahead_by: float | None = Field(
+        default=None,
+        description="How far latest is ahead of the plan line, in unit. Positive is ahead and negative is behind, "
+                    "whichever way the goal points. 0 on the line. Once the target date has passed, or when the "
+                    "line has no length, it is measured against the target. Null when there is nothing logged to "
+                    "compare. Rounded as should_be_today is, with one more decimal when latest and should_be_today "
+                    "would otherwise read the same (never for a cardio_best time).")
+    days_ahead: int | None = Field(
+        default=None,
+        description="ahead_by as days of the plan line's change, in whole days. Positive is ahead, negative is "
+                    "behind. 0 on the line while the line runs. 0 also comes with ahead or behind, when the gap is "
+                    "under half a day's change: read vs_plan, not this field, for whether the goal is on the line. "
+                    "Null when ahead_by is null, once the target date has passed, or when the line has no length.")
+    vs_plan: str | None = Field(
+        default=None,
+        description="ahead, on the line or behind: where latest sits against the plan line, or against the target "
+                    "once the target date has passed or when the line has no length. On the line when the gap "
+                    "rounds to 0 at the unit's step: under 0.05 for kg or cm, under 0.5 bpm, and for a cardio_best "
+                    "time under half a second. It can disagree with status, which compares the projection with the "
+                    "target. Null when ahead_by is null.")
+    plan_line: str | None = Field(
+        default=None,
+        description="Where the goal stands against the plan line, in one sentence ready to say as written: the "
+                    "now figure, the plan figure and the gap, such as '107.9 kg now against 105.2 kg on the plan "
+                    "line today: 2.7 kg ahead.' On the line only the now figure prints: 'On the plan line today, "
+                    "at 80.3 kg.' When the now and plan figures would otherwise read the same, all three carry one "
+                    "more decimal here. Once the target date has passed, or when the line has no length, it "
+                    "compares latest with the target, such as '76.4 kg now against the target of 75 kg: 1.4 kg "
+                    "behind.', and at the target it reads '78 kg now, at the target.' Null when ahead_by is null.")
 
 
 # ---------------------------------------------------------------- whoami

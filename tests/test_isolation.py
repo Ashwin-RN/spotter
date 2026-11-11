@@ -280,6 +280,7 @@ def test_bs_goals_of_every_kind_and_trends_never_reach_a(world):
     assert len(services.get_goals(b.id)["goals"]) == 4
     mine = services.get_goals(a.id, include_closed=True)
     assert mine["goals"] == [] and mine["closed"] == []
+    assert len(services.goal_charts(b.id)["goals"]) == 4 and services.goal_charts(a.id)["goals"] == []
     # A's own goals start from A's own numbers: nothing of B's is logged for A.
     none_yet = services.set_goal(a.id, {"kind": "measurement", "measurement_kind": "waist", "target_value": 85,
                                         "target_date": goal_date}, "claude")
@@ -350,3 +351,24 @@ def test_bs_food_and_cardio_never_reach_as_day(world):
     day = services.get_log(a.id)["days"][0]
     assert day["food"]["total_kcal"] == 0 and day["cardio"] == []
     assert services.get_progress(a.id, "Outdoor Run")["cardio"]["sessions"] == []
+
+
+def test_the_web_only_reads_never_show_bs_rows(world):
+    """get_days, get_cardio and lifts.history's reps_only read only the person's own rows (stage 6)."""
+    from app.services import lifts
+    a, b, _ = world
+    services.log_lifts(b.id, {"sets": [{"exercise": "Pull-Up", "weight_kg": 0, "reps": 9}]}, "web")
+    mine = services.get_days(a.id)
+    counts = (mine["lift_sessions_28d"], mine["lift_days_28d"], mine["cardio_days_28d"])
+    assert mine["weight"] is None and counts == (0, 0, 0)
+    assert all(d["kcal"] is None and not d["weighed"] and not d["food_entries"] for d in mine["days"])
+    theirs = services.get_days(b.id)
+    assert theirs["weight"]["latest"]["kg"] == 90 and theirs["lift_sessions_28d"] == 2
+    assert services.get_cardio(a.id) == {"today": mine["today"], "activities": [], "includes_sample": False}
+    run = services.get_cardio(a.id, "Outdoor Run")
+    assert run["sessions"] == [] and run["bests"] == {"fastest_pace": None, "longest": None, "times": []}
+    assert run["week"]["minutes"] == 0
+    assert len(services.get_cardio(b.id, "Outdoor Run")["sessions"]) == 1
+    with db.new_session() as s:
+        assert lifts.history(s, a.id, users.today_for(a))["reps_only"] == {}
+        assert lifts.history(s, b.id, users.today_for(b))["reps_only"] == {"Pull-Up": {"reps": 9, "date": mine["today"]}}

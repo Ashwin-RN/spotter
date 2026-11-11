@@ -52,6 +52,12 @@ def test_a_banned_character_is_found_on_every_surface(char, rule, surface):
     ("Saved - see Today", tr.DASH),
     ("Saved -- see Today", tr.DASH),
     ("Saved--see Today", tr.DASH),
+    (f"Saved{NBSP}-{NBSP}see Today", tr.DASH),
+    (f"Saved {NBSP}- see Today", tr.DASH),
+    ('"Saved" - see Today', tr.DASH),
+    ("Saved. - See Today", tr.DASH),
+    ("Saved - 'Today'", tr.DASH),
+    ("Wait . . . then log", tr.ELLIPSIS),
     ("kcal -> 300", tr.ARROW),
     ("Today => Progress", tr.ARROW),
     ("Progress <- Today", tr.ARROW),
@@ -212,12 +218,14 @@ def test_a_semicolon_is_found():
     assert tr.check_semicolons("Lunch: roti. Dinner: dal.") == []
 
 
-@pytest.mark.parametrize("text", ["Back Squat 3 x 5 @ 60 kg", "5 reps @60 kg", "Lifts & cardio", "R&D", "& more"])
+@pytest.mark.parametrize("text", ["Back Squat 3 x 5 @ 60 kg", "5 reps @60 kg", "Lifts & cardio", "R&D", "& more",
+                                  "Lifts &cardio", "Lifts& cardio"])
 def test_at_or_ampersand_for_a_word_is_found(text):
     assert rules(tr.check_at_ampersand(text)) == [tr.AT_AMPERSAND]
 
 
-@pytest.mark.parametrize("text", ["Back Squat 3 x 5 at 60 kg", "Lifts and cardio", "person@example.com"])
+@pytest.mark.parametrize("text", ["Back Squat 3 x 5 at 60 kg", "Lifts and cardio", "person@example.com",
+                                  "Foods &amp; more", "80&#160;kg", "a &nbsp; b"])
 def test_at_or_ampersand_inside_an_address_passes(text):
     assert tr.check_at_ampersand(text) == []
 
@@ -405,6 +413,17 @@ def test_html_text_reads_the_attributes_a_person_reads():
     assert texts(pieces, "text") == ["OK", "Go"]
 
 
+def test_html_text_reads_an_optgroup_label_and_the_meta_tags_a_person_reads():
+    html = ('<head><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+            '<meta name="description" content="A record you keep by talking">'
+            '<meta property="og:title" content="Spotter, really"><meta name="twitter:description" content="Logs">'
+            '</head><select><optgroup label="Lifts"><option>Back Squat</option></optgroup></select>')
+    pieces = tr.html_text(html)
+    assert [(p.text, p.tag) for p in pieces if p.kind == "attr"] == [
+        ("A record you keep by talking", "meta"), ("Spotter, really", "meta"), ("Logs", "meta"), ("Lifts", "optgroup")]
+    assert texts(pieces, "text") == ["Back Squat"]
+
+
 def test_html_text_marks_the_document_title_only():
     html = "<head><title>Progress \u00b7 Spotter</title></head><body><svg><title>Weight chart</title></svg></body>"
     pieces = tr.html_text(html)
@@ -455,6 +474,32 @@ def test_template_text_reads_literals_that_reach_the_page():
     assert texts(tr.template_text(src), "literal") == [
         "Replace weigh-in", "Save weigh-in", "Not enough logged yet.", "kg", "/today", "Today",
         "everything you logged, by day.", "hit", "Hit", "none yet", "Body weight"]
+
+
+def test_template_text_reads_with_values_macro_defaults_and_attribute_access():
+    src = """
+{% with heading = "Great start", n = 3 %}<h2>{{ heading }}</h2>{% endwith %}
+{% macro row(label="Just now", count=0) %}<p>{{ label }}</p>{% endmacro %}
+{% for k, v in {"a": "Really good"}.items() %}<dd>{{ v }}</dd>{% endfor %}
+<p>{{ "simply logged".upper() }} {{ ("one", "two")|join(", ") }}</p>
+"""
+    assert texts(tr.template_text(src), "literal") == [
+        "Great start", "Just now", "a", "Really good", "simply logged", "one", "two", ","]
+    found = [x for p in tr.template_text(src) for x in tr.check(p.text, tr.PAGE, rules=tr.T1_TEMPLATE_RULES)]
+    assert sorted(f.match.casefold() for f in found) == ["great", "just", "really", "simply"]
+
+
+def test_template_format_lines_find_number_formatting_in_a_template():
+    src = """<p>{{ x|round(1) }} kg</p>
+<p>{{ "%.1f"|format(x) }}</p>
+<p>{{ "{:,}".format(n) }}</p>
+{% filter format(3) %}%d{% endfilter %}
+<p>{{ x|show("kcal", page=True) }} {{ name|upper }} {{ x|int }}</p>
+{# {{ x|round }} in a comment #}
+<p>{{ "Format your round" }}</p>"""
+    assert tr.template_format_lines(src) == [
+        (1, "<p>{{ x|round(1) }} kg</p>"), (2, '<p>{{ "%.1f"|format(x) }}</p>'), (3, '<p>{{ "{:,}".format(n) }}</p>'),
+        (4, "{% filter format(3) %}%d{% endfilter %}")]
 
 
 def test_template_text_leaves_out_tests_subscripts_names_and_comments():
@@ -562,19 +607,42 @@ def test_a_docstring_is_only_the_first_statement():
     'a = "{:,}".format(x)', 'a = "{0:.2f} kg".format(x)', 'a = "{v:+g}".format(v=x)',
     'a = format(x, ".2f")', 'a = format(x, ",")',
     'a = "%.1f kg" % x', 'a = "%02d:%02d" % (m, s)', 'a = "%g" % x', 'a = "%(v).2f" % d',
+    # a nested field, a zero pad with no type, a precision with no type
+    'a = f"{x:{spec}}"', 'a = f"{s:02}"', 'a = f"{x:.2}"', 'a = f"{name:.80}"', 'a = "{:{w}}".format(x, w=3)',
+    # a spec or template that is not a constant
+    'a = format(x, spec)', 'a = str.format(template, x)', 'a = str.format("{:.1f}", x)',
 ])
 def test_a_numeric_format_spec_is_found(line):
     assert tr.format_spec_lines(line + "\n") == [(1, line)]
 
 
 @pytest.mark.parametrize("line", [
-    'a = f"{x} kg"', 'a = f"{name:>10}"', 'a = f"{name:.80}"', 'a = f"{d:%Y-%m-%d}"', 'a = f"{x!r}"',
-    'a = "{} kg".format(x)', 'a = "{:>4}".format(s)', 'a = "%s kg" % x', 'a = "%d sets" % n', 'a = "50%"',
-    'a = d.strftime("%d %b")', 'a = format(x)', 'a = format(x, "")', 'log.info("%.1f", x)',
+    'a = f"{x} kg"', 'a = f"{name:>10}"', 'a = f"{s:5}"', 'a = f"{s:0>5}"', 'a = f"{d:%Y-%m-%d}"',
+    'a = f"{x!r}"', 'a = "{} kg".format(x)', 'a = "{:>4}".format(s)', 'a = "%s kg" % x', 'a = "%d sets" % n',
+    'a = "50%"', 'a = d.strftime("%d %b")', 'a = format(x)', 'a = format(x, "")', 'log.info("%.1f", x)',
+    'a = str.format("{} kg", x)', 'a = n % 60', 'a = template.format(x)',
     '# a = f"{x:g}"', 'a = 1  # f"{x:.2f}"',
 ])
 def test_other_formatting_passes(line):
     assert tr.format_spec_lines(line + "\n") == []
+
+
+def test_a_template_held_in_a_module_constant_is_read_where_it_is_used():
+    src = ('ONE = "{:.1f} kg"\nTWO = "%02d:%02d"\nPLAIN = "{} kg"\nWORDS = "%s kg"\n'
+           'def f(x, m, s):\n'
+           '    a = ONE.format(x)\n'
+           '    b = TWO % (m, s)\n'
+           '    c = PLAIN.format(x)\n'
+           '    d = WORDS % x\n'
+           '    e = format(x, ONE[1:-4])\n'
+           '    g = str.format(ONE, x)\n'
+           '    h = str.format(PLAIN, x)\n')
+    assert [n for n, _ in tr.format_spec_lines(src)] == [6, 7, 10, 11]
+
+
+def test_a_template_bound_inside_a_function_is_not_held():
+    src = 'def f(x):\n    ONE = "{:.1f}"\n    return ONE.format(x)\n'
+    assert tr.format_spec_lines(src) == []
 
 
 def test_a_format_spec_in_a_docstring_is_not_read():
@@ -589,7 +657,9 @@ def test_format_spec_lines_give_one_stripped_line_each_in_order():
 
 @pytest.mark.parametrize("spec, numeric", [
     ("g", True), (",", True), ("+g", True), (".1f", True), ("02d", True), ("_", True), ("e", True),
-    ("", False), (">10", False), (".80", False), ("d", False), ("s", False), ("%Y", False), ("x", False),
+    ("02", True), (".2", True), (".80", True), ("{w}", True), (">{w}", True),
+    ("", False), (">10", False), ("5", False), ("0>5", False), ("d", False), ("s", False), ("%Y", False),
+    ("x", False),
 ])
 def test_numeric_spec(spec, numeric):
     assert tr.numeric_spec(spec) is numeric
@@ -631,8 +701,17 @@ def test_kept_is_read_from_its_file(tmp_path):
     kept.write_text('"""Lines lane A keeps."""\nKEPT = [\n    ("app/services/goals.py", "  msg = f\'{x:g}\'  "),\n]\n',
                     encoding="utf-8")
     assert tr.load_kept(kept) == (("app/services/goals.py", "msg = f'{x:g}'"),)
-    assert tr.exempt("app/services/goals.py", "msg = f'{x:g}'", kept_path=kept)
-    assert not tr.exempt("app/services/goals.py", "msg = f'{x:g}'", kept_path=tmp_path / "none.py")
+    assert tr.exempt_format("app/services/goals.py", "msg = f'{x:g}'", kept_path=kept)
+    assert not tr.exempt_format("app/services/goals.py", "msg = f'{x:g}'", kept_path=tmp_path / "none.py")
+
+
+def test_a_kept_line_keeps_its_format_spec_only(tmp_path):
+    kept = tmp_path / "kept.py"
+    kept.write_text("KEPT = [('app/services/goals.py', 'msg = f\"{x:g}\"')]\n", encoding="utf-8")
+    assert tr.exempt_format("app/services/goals.py", 'msg = f"{x:g}"', kept_path=kept)
+    assert not tr.exempt("app/services/goals.py", 'msg = f"{x:g}"', kept_path=kept)
+    for e in tr.EXEMPT_LINES:  # a named line is exempt from every rule, its format spec included
+        assert tr.exempt(e.path, e.line) and tr.exempt_format(e.path, e.line, kept_path=kept)
 
 
 @pytest.mark.parametrize("body", ["KEPT = [('a.py',)]\n", "KEPT = 'a.py'\n", "OTHER = []\n", "KEPT = [(1, 'x')]\n"])
@@ -643,8 +722,10 @@ def test_a_malformed_kept_file_is_refused(tmp_path, body):
         tr.load_kept(kept)
 
 
-def test_the_kept_file_is_not_this_lanes():
-    assert tr.KEPT_PATH == Path(tr.__file__).parent / "text_rules_kept.py"
+def test_the_kept_file_is_lane_as_and_reads():
+    assert tr.KEPT_PATH.relative_to(tr.ROOT).as_posix() == "tests/text_rules_kept.py"
+    kept = tr.load_kept()  # the real file, when it exists, is well formed
+    assert all(path.startswith("app/") for path, _ in kept)
 
 
 # ---------------------------------------------------------------- text the person entered
@@ -668,6 +749,24 @@ def test_mask_entered_hides_a_sample_name_and_a_quoted_value():
     assert tr.check(masked, tr.MESSAGE) == []
 
 
+@pytest.mark.parametrize("text, entered, masked", [
+    ("80.5 kg, then 80 kg.", ["80"], f"80.5 kg, then {tr.ENTERED} kg."),
+    ("Logged 2026-11-10 at 11", ["11"], f"Logged 2026-11-10 at {tr.ENTERED}"),
+    ("1,500 kcal or 500", ["500"], f"1,500 kcal or {tr.ENTERED}"),
+    ("At 10:30 and 30", ["30"], f"At 10:30 and {tr.ENTERED}"),
+    ("Set 2.5 or 5.", ["5"], f"Set 2.5 or {tr.ENTERED}."),
+    ("Roti, dal.", ["Roti", "dal"], f"{tr.ENTERED}, {tr.ENTERED}."),
+])
+def test_mask_entered_never_masks_inside_a_number_or_a_date(text, entered, masked):
+    assert tr.mask_entered(text, entered) == masked
+
+
+@pytest.mark.parametrize("value", ["-", "...", "()", "; ;"])
+def test_mask_entered_refuses_a_value_with_no_letter_or_digit(value):
+    with pytest.raises(ValueError):
+        tr.mask_entered("a - b", [value])
+
+
 # ---------------------------------------------------------------- these files
 
 
@@ -678,21 +777,40 @@ def test_these_files_write_every_banned_character_as_an_escape(name):
 
 
 # ================================================================ T1: the sweep over the app
-# Every template's text, every string constant in app/, docs/can-and-cant.md and README.md:
-# the character allowlist, the word lists and the sentence shapes; semicolons in templates too.
-# And no numeric format spec in app/ outside app/formatting.py.
-# EXEMPT_LINES, EXEMPT_CHARACTERS and lane A's KEPT are honoured. An aria-hidden roll is never read.
+# Every template's text (every subfolder), every string constant in app/, docs/can-and-cant.md and
+# README.md: the character allowlist, the word lists and the sentence shapes; semicolons in templates too.
+# The two MCP files are text for Claude: the claude surface's characters. No numeric format spec in app/
+# outside app/formatting.py, and no number formatting in a template.
+# EXEMPT_LINES exempt a line from every rule, EXEMPT_CHARACTERS one character in one file, and lane A's
+# KEPT a line's format spec only. An aria-hidden roll is never read. Docs are read a block at a time.
 
 APP = tr.ROOT / "app"
-TEMPLATES = sorted((APP / "templates").glob("*.html"))
-APP_SOURCES = sorted(p for p in APP.rglob("*.py") if "__pycache__" not in p.parts)
 FORMATTER = APP / "formatting.py"
 DOCS = [tr.ROOT / "README.md", tr.ROOT / "docs" / "can-and-cant.md"]
 
 
+def template_files(folder: Path) -> list[Path]:
+    """Every template under folder, subfolders included."""
+    return sorted(folder.rglob("*.html"))
+
+
+def source_files(folder: Path) -> list[Path]:
+    """Every Python file under folder, subfolders included."""
+    return sorted(p for p in folder.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+TEMPLATES = template_files(APP / "templates")
+APP_SOURCES = source_files(APP)
+
+
+def named_keys() -> set:
+    """The (path, line text) pairs exempt from every T1 rule: EXEMPT_LINES."""
+    return {(e.path, tr.norm_line(e.line)) for e in tr.EXEMPT_LINES}
+
+
 def exempt_keys(kept_path=tr.KEPT_PATH) -> set:
-    """Every exempt (path, line text) pair, read once per test: the named lines and lane A's KEPT."""
-    return {(e.path, tr.norm_line(e.line)) for e in tr.EXEMPT_LINES} | set(tr.load_kept(kept_path))
+    """The pairs that may keep a numeric format spec, read once per test: the named lines and KEPT."""
+    return named_keys() | set(tr.load_kept(kept_path))
 
 
 def _exempt(keys, path, lines, first, last=None) -> bool:
@@ -714,14 +832,15 @@ def template_findings(source: str, path: str, keys) -> list:
 
 def constant_findings(source: str, path: str, keys) -> list:
     """(line, Finding) for a Python file's string constants. A constant is skipped when any line it spans
-    is exempt. The file's EXEMPT_CHARACTERS are allowed."""
+    is exempt. The file's EXEMPT_CHARACTERS are allowed. The MCP files are checked as text for Claude."""
     lines = source.splitlines()
     allow = tr.exempt_characters(path)
+    surface = tr.source_surface(path)
     out = []
     for c in tr.string_constants(source):
         if _exempt(keys, path, lines, c.line, c.end_line):
             continue
-        out += [(c.line, f) for f in tr.check(c.text, tr.SOURCE, rules=tr.T1_SOURCE_RULES, allow=allow)]
+        out += [(c.line, f) for f in tr.check(c.text, surface, rules=tr.T1_SOURCE_RULES, allow=allow)]
     return out
 
 
@@ -733,11 +852,50 @@ def format_findings(source: str, path: str, keys) -> list:
             if (path, tr.norm_line(text)) not in keys]
 
 
+def template_format_findings(source: str, path: str, keys) -> list:
+    """(line, Finding) for each line of a template that formats or rounds a number itself."""
+    return [(n, tr.Finding(tr.FORMAT_SPEC, text, text)) for n, text in tr.template_format_lines(source)
+            if (path, tr.norm_line(text)) not in keys]
+
+
 def doc_findings(text: str, path: str, keys) -> list:
-    """(line, Finding) for a doc, line by line, under the doc rules."""
+    """(line, Finding) for a doc, a block at a time (a paragraph, a list item, a row), so a phrase wrapped
+    across lines is found. Each finding names the line its match starts on."""
     lines = text.splitlines()
-    return [(n, f) for n, line in enumerate(lines, 1) if not _exempt(keys, path, lines, n)
-            for f in tr.check(line, tr.DOC)]
+    out = []
+    for block in tr.doc_blocks(text):
+        flat = block.text.replace("\n", " ")  # the same length: an offset in flat is an offset in block
+        start = {}
+        for f in tr.check(flat, tr.DOC):
+            at = flat.find(f.match, start.get(f.match, 0))
+            start[f.match] = at + 1
+            n = block.line + block.text.count("\n", 0, max(at, 0))
+            if not _exempt(keys, path, lines, n):
+                out.append((n, f))
+    return sorted(out, key=lambda x: x[0])
+
+
+def stale_exemptions(root: Path = tr.ROOT, kept_path=tr.KEPT_PATH, named=tr.EXEMPT_LINES,
+                     characters=tr.EXEMPT_CHARACTERS) -> list[str]:
+    """Every exemption that no longer holds: a named line gone from its file, a KEPT line that is no
+    longer a format spec finding, a character no string constant of its file carries."""
+    def source(path):
+        target = root / path
+        return target.read_text(encoding="utf-8") if target.exists() else ""
+
+    out = []
+    for e in named:
+        if tr.norm_line(e.line) not in {tr.norm_line(x) for x in source(e.path).splitlines()}:
+            out.append(f"named line gone: {e.path}: {ascii(e.line)}")
+    for path, line in tr.load_kept(kept_path):
+        found = {tr.norm_line(t) for _, t in tr.format_spec_lines(source(path))} if source(path) else set()
+        if line not in found:
+            out.append(f"kept line keeps no format spec: {path}: {ascii(line)}")
+    for path, char in characters:
+        text = source(path)
+        if not text or not any(char in c.text for c in tr.string_constants(text)):
+            out.append(f"exempt character not in the file: {path}: {ascii(char)}")
+    return out
 
 
 def report(path: str, found: list) -> str:
@@ -752,14 +910,21 @@ def _read(path: Path) -> str:
 @pytest.mark.parametrize("path", TEMPLATES, ids=tr.norm_path)
 def test_t1_template_text(path):
     name = tr.norm_path(path)
-    found = template_findings(_read(path), name, exempt_keys())
+    found = template_findings(_read(path), name, named_keys())
+    assert not found, "\n" + report(name, found)
+
+
+@pytest.mark.parametrize("path", TEMPLATES, ids=tr.norm_path)
+def test_t1_no_number_format_in_a_template(path):
+    name = tr.norm_path(path)
+    found = template_format_findings(_read(path), name, exempt_keys())
     assert not found, "\n" + report(name, found)
 
 
 @pytest.mark.parametrize("path", APP_SOURCES, ids=tr.norm_path)
 def test_t1_string_constants(path):
     name = tr.norm_path(path)
-    found = constant_findings(_read(path), name, exempt_keys())
+    found = constant_findings(_read(path), name, named_keys())
     assert not found, "\n" + report(name, found)
 
 
@@ -773,7 +938,7 @@ def test_t1_no_number_format_outside_the_formatter(path):
 @pytest.mark.parametrize("path", DOCS, ids=tr.norm_path)
 def test_t1_docs(path):
     name = tr.norm_path(path)
-    found = doc_findings(_read(path), name, exempt_keys())
+    found = doc_findings(_read(path), name, named_keys())
     assert not found, "\n" + report(name, found)
 
 
@@ -785,19 +950,14 @@ def test_t1_sweeps_every_file_it_should():
         assert expected in names
     assert len(TEMPLATES) >= 10 and len(APP_SOURCES) >= 30
     assert FORMATTER.exists()
+    every = {p for p in (APP / "templates").rglob("*") if p.is_file() and p.suffix == ".html"}
+    assert set(TEMPLATES) == every
 
 
-def test_t1_every_exemption_still_names_a_line():
-    """A named or kept line that no longer exists is a stale exemption: delete it or fix its text."""
-    stale = []
-    for path, line in exempt_keys():
-        target = tr.ROOT / path
-        lines = {tr.norm_line(x) for x in _read(target).splitlines()} if target.exists() else set()
-        if line not in lines:
-            stale.append(f"{path}: {ascii(line)}")
+def test_t1_every_exemption_still_holds():
+    """A stale exemption fails: delete it, or fix its text."""
+    stale = stale_exemptions()
     assert not stale, "\n" + "\n".join(stale)
-    for path, _ in tr.EXEMPT_CHARACTERS:
-        assert (tr.ROOT / path).exists()
 
 
 # ---------------------------------------------------------------- T1's helpers, on hand-made files
@@ -861,10 +1021,86 @@ def test_format_findings_honour_kept(tmp_path):
     assert [n for n, _ in format_findings(src, "app/x.py", exempt_keys(kept))] == [1]
 
 
-def test_doc_findings_read_line_by_line():
+def test_doc_findings_name_the_line_each_finding_is_on():
     text = "# Doc\n\nOne line; semicolons pass in a doc.\nThen just log it.\nA " + EM + " dash.\n"
     found = doc_findings(text, "README.md", NO_KEYS)
     assert [(n, f.rule) for n, f in found] == [(4, tr.FILLER), (5, tr.DASH)]
+
+
+def test_doc_findings_find_a_phrase_wrapped_across_lines():
+    text = ("A paragraph that ends a line with note\nthat it wraps, and in order\nto log.\n\n"
+            "- An item, of\n  course wrapped.\n- Another item that says not only\n  this but that.\n")
+    found = doc_findings(text, "README.md", NO_KEYS)
+    assert [(n, f.rule) for n, f in found] == [(1, tr.FILLER), (2, tr.AI_VOCABULARY), (5, tr.CHAT_PHRASE),
+                                                (7, tr.SHAPE)]
+    keys = {("README.md", "that it wraps, and in order")}
+    assert [n for n, _ in doc_findings(text, "README.md", keys)] == [1, 5, 7]
+
+
+def test_doc_findings_keep_blocks_apart():
+    text = "Ends with note\n\nthat starts a paragraph.\n# In\nsummary under a heading\n| a | of |\n| course | b |\n"
+    assert doc_findings(text, "README.md", NO_KEYS) == []
+
+
+def test_doc_blocks_split_paragraphs_items_headings_rows_and_code():
+    text = "# Title\nOne\ntwo\n\n- item\n  wrapped\n1. next\n| a |\n```\ncode\nmore\n```\n> quote\n"
+    assert tr.doc_blocks(text) == [
+        tr.DocBlock(1, "# Title"), tr.DocBlock(2, "One\ntwo"), tr.DocBlock(5, "- item\n  wrapped"),
+        tr.DocBlock(7, "1. next"), tr.DocBlock(8, "| a |"), tr.DocBlock(9, "```"), tr.DocBlock(10, "code"),
+        tr.DocBlock(11, "more"), tr.DocBlock(12, "```"), tr.DocBlock(13, "> quote")]
+
+
+def test_template_files_and_the_guard_reach_a_subfolder(tmp_path):
+    (tmp_path / "sub").mkdir()
+    for name in ("a.html", "sub/b.html", "sub/c.txt"):
+        (tmp_path / name).write_text("<p>x</p>", encoding="utf-8")
+    assert [p.relative_to(tmp_path).as_posix() for p in template_files(tmp_path)] == ["a.html", "sub/b.html"]
+    (tmp_path / "pkg" / "__pycache__").mkdir(parents=True)
+    for name in ("m.py", "pkg/n.py", "pkg/__pycache__/o.py"):
+        (tmp_path / name).write_text("x = 1\n", encoding="utf-8")
+    assert [p.relative_to(tmp_path).as_posix() for p in source_files(tmp_path)] == ["m.py", "pkg/n.py"]
+
+
+def test_template_format_findings_skip_an_exempt_line():
+    src = "<p>{{ x|round }}</p>\n<p>{{ y|format }}</p>"
+    assert [n for n, _ in template_format_findings(src, "app/templates/x.html", NO_KEYS)] == [1, 2]
+    keys = {("app/templates/x.html", "<p>{{ y|format }}</p>")}
+    assert [n for n, _ in template_format_findings(src, "app/templates/x.html", keys)] == [1]
+
+
+def test_the_mcp_files_are_checked_as_text_for_claude():
+    src = f'A = "Roti {TIMES} 2"\nB = "80{NBSP}kg"\nC = "Progress {MIDDOT} Spotter"\n'
+    assert constant_findings(src, "app/web.py", NO_KEYS) == []
+    for path in ("app/mcp_server.py", "app/mcp_schemas.py"):
+        assert [(n, f.rule) for n, f in constant_findings(src, path, NO_KEYS)] == [(2, tr.CHARACTER), (3, tr.CHARACTER)]
+        assert tr.source_surface(path) == tr.CLAUDE
+    assert tr.source_surface("app/web.py") == tr.SOURCE
+    assert tr.source_surface(tr.ROOT / "app" / "mcp_server.py") == tr.CLAUDE
+
+
+def test_stale_exemptions_are_found(tmp_path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "a.py").write_text('x = f"{v:g}"\ny = "plain"\nBOM = "\\ufeff"\n', encoding="utf-8")
+    kept = tmp_path / "kept.py"
+    named = (tr.Exemption("app/a.py", "y = 'plain'", "gone"), tr.Exemption("app/a.py", 'y = "plain"', "here"))
+    kept.write_text("KEPT = [('app/a.py', 'x = f\"{v:g}\"'), ('app/a.py', 'y = \"plain\"'), "
+                    "('app/gone.py', 'z = 1')]\n", encoding="utf-8")
+    chars = (("app/a.py", BOM), ("app/a.py", EM), ("app/gone.py", BOM))
+    assert stale_exemptions(tmp_path, kept, named, chars) == [
+        "named line gone: app/a.py: \"y = 'plain'\"",
+        "kept line keeps no format spec: app/a.py: 'y = \"plain\"'",
+        "kept line keeps no format spec: app/gone.py: 'z = 1'",
+        "exempt character not in the file: app/a.py: '\\u2014'",
+        "exempt character not in the file: app/gone.py: '\\ufeff'"]
+    assert stale_exemptions(tmp_path, tmp_path / "none.py", named[1:], chars[:1]) == []
+
+
+def test_a_kept_line_is_held_to_every_rule_but_its_format_spec(tmp_path):
+    kept = tmp_path / "kept.py"
+    kept.write_text("KEPT = [('app/x.py', 'a = f\"Just {x:g} kg\"')]\n", encoding="utf-8")
+    src = 'a = f"Just {x:g} kg"\n'
+    assert format_findings(src, "app/x.py", exempt_keys(kept)) == []
+    assert found_rules(constant_findings(src, "app/x.py", named_keys())) == [tr.FILLER]
 
 
 def test_report_names_file_line_rule_and_text_in_ascii():
@@ -879,3 +1115,5 @@ def test_exempt_keys_hold_the_named_lines_and_kept(tmp_path):
     kept = tmp_path / "kept.py"
     kept.write_text("KEPT = [('app/y.py', '  x = 1  ')]\n", encoding="utf-8")
     assert ("app/y.py", "x = 1") in exempt_keys(kept)
+    assert ("app/y.py", "x = 1") not in named_keys()
+    assert named_keys() == {(e.path, tr.norm_line(e.line)) for e in tr.EXEMPT_LINES}

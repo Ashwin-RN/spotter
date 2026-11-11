@@ -36,9 +36,12 @@ gives them.
 - **Rounded figures:** the smoothed weight, the 7-day average and the estimated max come back at
   1 decimal place, wherever a result names them. They round whatever they were worked out from, so
   body weight now, the start of a body weight or lift goal and a cardio estimate's body weight round
-  even when they come from a single weigh-in. A weigh-in's own `kg` stays as entered. A best of kind
-  `estimated_max` and the one it beat carry 2 decimal places when 1 would read the same. Every other
-  figure keeps the precision it has.
+  even when they come from a single weigh-in. A cardio entry's `estimate_weight_kg` is rounded with
+  `estimate.weight_kg`, so the two read the same. A weigh-in's own `kg` stays as entered. A best of kind
+  `estimated_max` and the one it beat carry 2 decimal places when 1 would read the same. A goal's
+  `should_be_today` and `ahead_by` round at the goal unit's step: 1 decimal for kg and cm, whole bpm,
+  minutes to 2 decimals. `ahead_by` takes one more decimal when latest and `should_be_today` would
+  otherwise read the same, never for a cardio time. Every other figure keeps the precision it has.
 
 Quote these numbers. Do not work out your own.
 
@@ -66,6 +69,12 @@ Every goal has a start, a target, a date and a direction, and comes back in the 
   reached, on track, behind, or not enough data.
 - **The projected date** is the day the trend line reaches the target, at the pace so far. It is null
   when the line points away from the target, is flat, or reaches it more than 2 years from today.
+- **The plan line** is a straight line from the goal's start to its target, by their dates. Each open
+  goal says where that line is today (`should_be_today`), how far ahead or behind it the person is
+  (`ahead_by`, and `days_ahead` in days), the word for it (`vs_plan`: ahead, on the line or behind),
+  and one sentence to say as written (`plan_line`).
+- **The plan line and the status answer different questions.** The status compares the trend's
+  projection with the target, so a goal can be behind the plan line and still on track, or the reverse.
 
 ## Trends: how the person is doing
 

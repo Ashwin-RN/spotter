@@ -18,6 +18,13 @@ log_measurement(user_id, data, by)
 
 measurements_for(s, user_id, today, kind=None)
     Live measurements, of one kind or all, in the one order (metrics.order_key).
+
+KIND_WORDS, kind_word(kind)
+    The words a person reads for each kind: "Water", "Resting heart rate". The table is
+    rules.KIND_WORDS, defined once beside the units; these are its public names here. A kind's word
+    never repeats its unit, which stands beside the figure: "Water 2,501 ml", not "Water ml 2,501 ml".
+    Every summary and note here, goals.measurement_name and rules.measurement_value's fix read it. The
+    pages keep their own labels until lane B reads kind_word.
 """
 
 from datetime import date
@@ -34,6 +41,13 @@ from app.services.common import (
 
 KIND = "measurement"
 RECENT = 10
+KIND_WORDS = rules.KIND_WORDS  # the word for each kind, defined once in app.rules
+
+
+def kind_word(kind: str) -> str:
+    """'Water', 'Resting heart rate': the kind's word from KIND_WORDS, capitalised. In a sentence after
+    other words, lower it: 'the waist', 'a resting heart rate measurement'."""
+    return KIND_WORDS.get(kind) or kind.replace("_", " ").capitalize()
 
 
 def measurement_key(on: date, kind: str, value: float) -> str:
@@ -62,8 +76,8 @@ def shown_pair(kind: str, old: float, new: float) -> tuple[str, str]:
 
 
 def describe(m: Measurement, today: date) -> str:
-    """'Waist 84 cm on Tue 10 Nov'."""
-    return f"{m.kind.replace('_', ' ').capitalize()} {shown(m.kind, m.value)} on {formatting.day(m.date, today)}"
+    """'Waist 84 cm on Tue 10 Nov', 'Water 2,500 ml on Tue 10 Nov', 'Steps 12,345 on Tue 10 Nov'."""
+    return f"{kind_word(m.kind)} {shown(m.kind, m.value)} on {formatting.day(m.date, today)}"
 
 
 def log_measurement(user_id: int, data: dict | None, by: str) -> dict:
@@ -113,7 +127,7 @@ def log_measurement(user_id: int, data: dict | None, by: str) -> dict:
                 live.deleted_at = db.utcnow()
                 s.flush()  # out of the one-live-per-day index before the new row exists
                 replaced = row_dict(live)
-                note = (f"Replaced the {formatting.day(on, today)} {kind.replace('_', ' ')} of "
+                note = (f"Replaced the {formatting.day(on, today)} {kind_word(kind).lower()} of "
                         f"{shown_pair(kind, live.value, value)[0]}: one a day. restore_entry with the id under replaced swaps them "
                         "back.")
             row = Measurement(user_id=user.id, date=on, kind=kind, value=value, unit=unit, logged_by=by,
@@ -127,8 +141,7 @@ def log_measurement(user_id: int, data: dict | None, by: str) -> dict:
             summary = f"Already logged: {describe(row, today)}."
         elif replaced:
             was, now = shown_pair(kind, replaced["value"], row.value)
-            name = kind.replace("_", " ").capitalize()
-            summary = f"{name} {now} on {formatting.day(row.date, today)}. Replaced {was}."
+            summary = f"{kind_word(kind)} {now} on {formatting.day(row.date, today)}. Replaced {was}."
         else:
             summary = f"{describe(row, today)}."
         out = {"kind": KIND, "id": row.id, "duplicate": first is not None, "measurement": row_dict(row),

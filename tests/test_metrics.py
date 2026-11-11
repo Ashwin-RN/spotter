@@ -486,3 +486,172 @@ def test_pace_goes_through_the_formatter_with_halves_away_from_zero():
     """metrics.pace calls formatting.clock: 12.5 minutes over 60 km is 12.5 seconds a km, so 0:13 (round() gave 0:12)."""
     assert metrics.pace(60, 12.5) == "0:13"
     assert metrics.pace(5, 28) == "5:36" and metrics.pace(4, 300) == "75:00" and metrics.pace(None, 30) is None
+
+
+# ---------------------------------------------------------------- the plan line (stage 6, E1)
+
+def test_goal_now_reads_each_kinds_own_measure():
+    lifts = [(ago(40), 120.0), (ago(20), 105.0), (ago(3), 110.0), (ago(1), 100.0)]
+    assert metrics.goal_now("lift", lifts, TODAY) == 110.0                           # the best of 28 days
+    assert metrics.goal_now("lift", lifts[:1], TODAY) == 120.0                      # none recent: the latest
+    times = [(ago(40), 25.0), (ago(10), 31.0), (ago(2), 29.5), (ago(1), 30.5)]
+    assert metrics.goal_now("cardio_best", times, TODAY) == 29.5                     # the lowest of 28 days
+    weighed = [(ago(10), 70.0), (ago(3), 80.0), (ago(1), 81.0)]
+    assert metrics.goal_now("bodyweight", weighed, TODAY) == 80.5                    # the 7-day average
+    assert metrics.goal_now("bodyweight", weighed[:1], TODAY) == 70.0               # none in 7 days: the latest
+    waist = [(ago(1), 86.0), (ago(3), 88.0), (TODAY + timedelta(days=2), 84.0)]
+    assert metrics.goal_now("measurement", waist, TODAY) == 84.0                    # last in the one order
+    assert all(metrics.goal_now(kind, [], TODAY) is None for kind in ("lift", "bodyweight", "cardio_best",
+                                                                      "measurement"))
+
+
+def test_goal_now_series_is_goal_now_as_it_stood_on_each_date_with_a_point():
+    weighed = [(ago(12), 82.0), (ago(9), 81.0), (ago(5), 80.0), (ago(5), 79.0), (TODAY + timedelta(days=1), 78.0)]
+    series = metrics.goal_now_series("bodyweight", weighed, TODAY, since=ago(9))
+    # ago(12) is before since: it counts in the averages but has no point. Two weigh-ins on one date: one point.
+    # The weigh-in dated after today stands at today.
+    assert series == [(ago(9), 81.5), (ago(5), 80.0), (TODAY, 79.0)]
+    assert series[-1][1] == metrics.goal_now("bodyweight", weighed, TODAY)
+    lifts = [(ago(40), 120.0), (ago(20), 105.0)]
+    assert metrics.goal_now_series("lift", lifts, TODAY, since=ago(40)) == [(ago(40), 120.0), (ago(20), 120.0)]
+    assert metrics.goal_now_series("lift", lifts, TODAY, since=TODAY) == []
+    assert metrics.goal_now_series("lift", [], TODAY, since=ago(40)) == []
+
+
+# A down goal from 80 kg ten days ago to 78 kg in ten days: 0.1 kg a day, 79 kg on the line today.
+DOWN = dict(start_date=ago(10), start_value=80.0, target_date=TODAY + timedelta(days=10), target_value=78.0,
+            today=TODAY, lower_is_better=True, quantity="bodyweight_derived")
+# An up goal from 100 kg ten days ago to 120 kg in ten days: 1 kg a day, 110 kg on the line today.
+UP = dict(start_date=ago(10), start_value=100.0, target_date=TODAY + timedelta(days=10), target_value=120.0,
+          today=TODAY, lower_is_better=False, quantity="estimated_max")
+
+
+def standing(path: dict) -> tuple:
+    return path["should_be_today"], path["ahead_by"], path["days_ahead"], path["vs_plan"]
+
+
+def test_goal_path_nothing_logged_has_the_line_and_nothing_to_compare():
+    path = metrics.goal_path(**DOWN, actual=[])
+    assert standing(path) == (79.0, None, None, None)
+    assert path["plan"] == [{"date": ago(10).isoformat(), "value": 80.0}, {"date": TODAY.isoformat(), "value": 79.0},
+                            {"date": (TODAY + timedelta(days=10)).isoformat(), "value": 78.0}]
+    assert path["actual"] == []
+
+
+def test_goal_path_one_point_is_worked_out_and_now_defaults_to_the_last_point():
+    path = metrics.goal_path(**DOWN, actual=[(TODAY, 79.5)])
+    assert standing(path) == (79.0, -0.5, -5, "behind")       # down: 79 - 79.5
+    assert path["actual"] == [{"date": TODAY.isoformat(), "value": 79.5}]
+    assert standing(metrics.goal_path(**UP, actual=[(TODAY, 112.0)])) == (110.0, 2.0, 2, "ahead")   # up: 112 - 110
+
+
+def test_goal_path_now_is_the_goals_now_not_the_last_point():
+    # A 28-day best can move without a new point: now is given, and the series is left as it stood.
+    path = metrics.goal_path(**UP, actual=[(ago(9), 115.0)], now=108.0)
+    assert standing(path) == (110.0, -2.0, -2, "behind")
+    assert path["actual"] == [{"date": ago(9).isoformat(), "value": 115.0}]
+
+
+def test_goal_path_on_the_first_day_and_before_the_start():
+    first = {**DOWN, "start_date": TODAY, "target_date": TODAY + timedelta(days=20)}
+    path = metrics.goal_path(**first, actual=[(TODAY, 79.8)])
+    assert standing(path) == (80.0, pytest.approx(0.2), 2, "ahead")           # the start itself; 0.1 kg a day
+    assert [p["date"] for p in path["plan"]] == [TODAY.isoformat(), (TODAY + timedelta(days=20)).isoformat()]
+    early = {**DOWN, "start_date": TODAY + timedelta(days=2), "target_date": TODAY + timedelta(days=22)}
+    assert standing(metrics.goal_path(**early, actual=[], now=80.5)) == (80.0, -0.5, -5, "behind")
+
+
+def test_goal_path_after_the_target_date_and_with_no_length():
+    passed = {**DOWN, "start_date": ago(30), "target_date": ago(5)}
+    assert standing(metrics.goal_path(**passed, actual=[], now=78.4)) == (78.0, pytest.approx(-0.4), None, "behind")
+    assert len(metrics.goal_path(**passed, actual=[], now=78.4)["plan"]) == 2   # today is not between the ends
+    flat = {**DOWN, "start_date": ago(1), "target_date": ago(1)}
+    assert standing(metrics.goal_path(**flat, actual=[], now=77.5)) == (78.0, 0.5, None, "ahead")
+    backwards = {**DOWN, "start_date": TODAY, "target_date": ago(1)}
+    assert standing(metrics.goal_path(**backwards, actual=[], now=78.0)) == (78.0, 0.0, None, "on the line")
+
+
+def test_goal_path_a_goal_already_met_is_ahead():
+    assert standing(metrics.goal_path(**DOWN, actual=[], now=77.5)) == (79.0, 1.5, 15, "ahead")
+    assert standing(metrics.goal_path(**UP, actual=[], now=125.0)) == (110.0, 15.0, 15, "ahead")
+
+
+def test_goal_path_on_the_line_is_the_formatters_rule_and_zeroes_both():
+    for now in (79.04, 78.96, 79.0):
+        assert standing(metrics.goal_path(**DOWN, actual=[], now=now)) == (79.0, 0.0, 0, "on the line"), now
+    assert standing(metrics.goal_path(**UP, actual=[], now=110.04)) == (110.0, 0.0, 0, "on the line")
+    assert metrics.goal_path(**DOWN, actual=[], now=79.06)["vs_plan"] == "behind"   # 0.06 rounds to 0.1
+    # A cardio time on its own step: under half a second is on the line, half a second is not.
+    run = dict(start_date=ago(10), start_value=31.0, target_date=TODAY + timedelta(days=10), target_value=29.0,
+               today=TODAY, lower_is_better=True, quantity="goal_time")
+    assert metrics.goal_path(**run, actual=[], now=30.0 + 0.4 / 60)["vs_plan"] == "on the line"
+    assert metrics.goal_path(**run, actual=[], now=30.0 - 0.6 / 60)["vs_plan"] == "ahead"
+
+
+def test_goal_path_days_round_halves_away_from_zero():
+    # 80 kg to 70 kg over 20 days: 0.5 kg a day, 75 kg today. 1.25 kg is 2.5 days either way.
+    steep = {**DOWN, "target_value": 70.0}
+    assert metrics.goal_path(**steep, actual=[], now=76.25)["days_ahead"] == -3
+    assert metrics.goal_path(**steep, actual=[], now=73.75)["days_ahead"] == 3
+    assert isinstance(metrics.goal_path(**steep, actual=[], now=73.75)["days_ahead"], int)
+    assert metrics.goal_path(**steep, actual=[], now=74.9)["days_ahead"] == 0     # 0.1 kg: under a day ahead
+
+
+def test_goal_path_a_point_after_today_counts_as_today():
+    weighed = [(ago(3), 79.4), (TODAY + timedelta(days=1), 78.8)]
+    actual = metrics.goal_now_series("bodyweight", weighed, TODAY, DOWN["start_date"])
+    path = metrics.goal_path(**DOWN, actual=actual, now=metrics.goal_now("bodyweight", weighed, TODAY))
+    assert path["actual"][-1] == {"date": TODAY.isoformat(), "value": 79.1}
+    assert standing(path) == (79.0, pytest.approx(-0.1), -1, "behind")
+
+
+def test_goal_path_says_when_the_line_has_ended():
+    """ended: the plan figure is the target. After the target date, or a line with no length; never while it runs."""
+    assert metrics.goal_path(**DOWN, actual=[], now=79.0)["ended"] is False
+    assert metrics.goal_path(**{**DOWN, "start_date": TODAY, "target_date": TODAY + timedelta(days=1)},
+                             actual=[], now=79.0)["ended"] is False
+    assert metrics.goal_path(**{**DOWN, "target_date": TODAY}, actual=[], now=79.0)["ended"] is False   # its last day
+    assert metrics.goal_path(**{**DOWN, "start_date": ago(30), "target_date": ago(5)}, actual=[], now=79.0)["ended"]
+    assert metrics.goal_path(**{**DOWN, "start_date": ago(1), "target_date": ago(1)}, actual=[], now=79.0)["ended"]
+
+
+@pytest.mark.parametrize("start_date, target_date", [(TODAY + timedelta(days=1), TODAY + timedelta(days=1)),
+                                                     (TODAY + timedelta(days=1), TODAY)],
+                         ids=["start tomorrow, target tomorrow", "the target before the start"])
+def test_goal_path_no_length_before_the_target_date(start_date, target_date):
+    """The target date has not passed, yet the line has no length: the target, no days figure, ended, up and down."""
+    down = {**DOWN, "start_date": start_date, "target_date": target_date}
+    path = metrics.goal_path(**down, actual=[], now=80.8)
+    assert standing(path) == (78.0, pytest.approx(-2.8), None, "behind") and path["ended"] is True
+    assert standing(metrics.goal_path(**down, actual=[], now=78.02)) == (78.0, 0.0, None, "on the line")
+    up = {**UP, "start_date": start_date, "target_date": target_date}
+    path = metrics.goal_path(**up, actual=[], now=118.0)
+    assert standing(path) == (120.0, -2.0, None, "behind") and path["ended"] is True
+    assert standing(metrics.goal_path(**up, actual=[], now=120.03)) == (120.0, 0.0, None, "on the line")
+
+
+def test_goal_path_an_up_goal_after_the_target_with_no_length_and_before_the_start():
+    passed = {**UP, "start_date": ago(30), "target_date": ago(5)}
+    path = metrics.goal_path(**passed, actual=[], now=118.5)
+    assert standing(path) == (120.0, -1.5, None, "behind") and path["ended"] and len(path["plan"]) == 2
+    assert standing(metrics.goal_path(**passed, actual=[], now=121.0)) == (120.0, 1.0, None, "ahead")
+    flat = {**UP, "start_date": ago(1), "target_date": ago(1)}
+    assert standing(metrics.goal_path(**flat, actual=[], now=125.0)) == (120.0, 5.0, None, "ahead")
+    backwards = {**UP, "start_date": TODAY, "target_date": ago(1)}
+    assert standing(metrics.goal_path(**backwards, actual=[], now=120.0)) == (120.0, 0.0, None, "on the line")
+    # Before the start (a time zone change): the start itself, no days elapsed; 1 kg a day over 20 days.
+    early = {**UP, "start_date": TODAY + timedelta(days=2), "target_date": TODAY + timedelta(days=22)}
+    path = metrics.goal_path(**early, actual=[], now=103.0)
+    assert standing(path) == (100.0, 3.0, 3, "ahead") and path["ended"] is False
+    assert [p["date"] for p in path["plan"]] == [(TODAY + timedelta(days=2)).isoformat(),
+                                                 (TODAY + timedelta(days=22)).isoformat()]
+
+
+def test_goal_path_an_up_goal_reads_a_point_after_today_as_today():
+    lifts = [(ago(3), 108.0), (TODAY + timedelta(days=1), 112.5)]
+    actual = metrics.goal_now_series("lift", lifts, TODAY, UP["start_date"])
+    assert actual == [(ago(3), 108.0), (TODAY, 112.5)]
+    path = metrics.goal_path(**UP, actual=actual, now=metrics.goal_now("lift", lifts, TODAY))
+    assert path["actual"][-1] == {"date": TODAY.isoformat(), "value": 112.5}
+    assert standing(path) == (110.0, 2.5, 3, "ahead")                    # 2.5 days at 1 kg a day: halves away, 3
+    assert standing(metrics.goal_path(**UP, actual=actual)) == (110.0, 2.5, 3, "ahead")   # now left out: the last point

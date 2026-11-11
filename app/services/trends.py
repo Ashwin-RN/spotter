@@ -21,6 +21,15 @@ get_trends(user_id)
     any row read is sample data, and the note then says so (common.SAMPLE_NOTE).
     bodyweight.now, smoothed and each series point's smoothed come back at 1 dp (formatting.rounded),
     after the rate is worked out from the unrounded line. A weigh-in's own kg stays as entered.
+
+get_days(user_id)
+    A read, for the web only: the 28 days ending today, from the same rows get_trends reads. Per day:
+    lift sessions, cardio entries and minutes, food entries and kcal (null with no food), whether a
+    weigh-in was logged, and whether any of the day's rows is sample data. Then four weeks, each the 7
+    days ending on its `to`, the last ending today; the latest, highest and lowest weigh-in of the 28
+    days (a tie for high or low goes to the latest in the one order); and the 28 days' counts. Live rows
+    only. An entry dated after today counts as today's. cardio_minutes come back at 1 dp, as get_trends
+    rounds its own.
 """
 
 from datetime import timedelta
@@ -176,4 +185,73 @@ def get_trends(user_id: int) -> dict:
         note = " ".join(t for t in (rate_note, SAMPLE_NOTE if sample else None) if t)
         if note:
             out["note"] = note
+        return out
+
+
+# ---------------------------------------------------------------- the 28-day grid
+
+WEEKS = WINDOW_DAYS // WEEK_DAYS
+
+
+def _weight(weighed: list) -> dict | None:
+    """{latest, high, low}, each {date, kg}, over weigh-ins given in the one order; a tie for high or low
+    goes to the latest in that order. None with none."""
+    if not weighed:
+        return None
+    high = low = weighed[0]
+    for b in weighed[1:]:
+        high = b if b.kg >= high.kg else high
+        low = b if b.kg <= low.kg else low
+    point = lambda b: {"date": b.date.isoformat(), "kg": b.kg}  # noqa: E731
+    return {"latest": point(weighed[-1]), "high": point(high), "low": point(low)}
+
+
+def get_days(user_id: int) -> dict:
+    """The 28-day grid. See the module notes.
+
+    Returns {today, from, to, days [{date, lift_sessions, cardio_entries, cardio_minutes, food_entries,
+    kcal | null, weighed, is_sample}] (28, oldest first), weeks [{to, lift_sessions, cardio_minutes}] (4,
+    oldest first), weight {latest, high, low} | null (each {date, kg}), lift_sessions_28d, lift_days_28d,
+    cardio_days_28d, includes_sample[, note]} or {error, message, fix}. Web only: no MCP function returns
+    it. A read: no lock, no write limit."""
+    with db.new_session() as s:
+        user = s.get(User, user_id)
+        if user is None:
+            return no_account()
+        today = users.today_for(user)
+        start = today - timedelta(days=WINDOW_DAYS - 1)
+        on = lambda row: metrics.on_or_before(row.date, today)  # noqa: E731
+        weighed = [b for b in body.weigh_ins(s, user.id, today) if on(b) >= start]
+        eaten = list(s.scalars(select(FoodEntry).where(
+            FoodEntry.user_id == user.id, FoodEntry.deleted_at.is_(None), FoodEntry.date >= start)))
+        trained = list(s.scalars(select(LiftSession).where(
+            LiftSession.user_id == user.id, LiftSession.deleted_at.is_(None), LiftSession.date >= start)))
+        moved = list(s.scalars(select(CardioEntry).where(
+            CardioEntry.user_id == user.id, CardioEntry.deleted_at.is_(None), CardioEntry.date >= start)))
+
+        days = []
+        for n in range(WINDOW_DAYS):
+            d = start + timedelta(days=n)
+            food = [f for f in eaten if on(f) == d]
+            lifted = [t for t in trained if on(t) == d]
+            cardio = [c for c in moved if on(c) == d]
+            weigh = [b for b in weighed if on(b) == d]
+            days.append({"date": d.isoformat(), "lift_sessions": len(lifted), "cardio_entries": len(cardio),
+                         "cardio_minutes": round(sum((c.minutes for c in cardio), 0.0), 1), "food_entries": len(food),
+                         "kcal": sum(int(f.kcal) for f in food) if food else None, "weighed": bool(weigh),
+                         "is_sample": any(row.is_sample for row in (*food, *lifted, *cardio, *weigh))})
+        weeks = []
+        for n in range(WEEKS):
+            to = today - timedelta(days=WEEK_DAYS * (WEEKS - 1 - n))
+            first = to - timedelta(days=WEEK_DAYS - 1)
+            inside = lambda row: first <= on(row) <= to  # noqa: E731
+            weeks.append({"to": to.isoformat(), "lift_sessions": sum(1 for t in trained if inside(t)),
+                          "cardio_minutes": round(sum((c.minutes for c in moved if inside(c)), 0.0), 1)})
+        sample = any(row.is_sample for row in (*weighed, *eaten, *trained, *moved))
+        out = {"today": today.isoformat(), "from": start.isoformat(), "to": today.isoformat(), "days": days,
+               "weeks": weeks, "weight": _weight(weighed), "lift_sessions_28d": len(trained),
+               "lift_days_28d": len({on(t) for t in trained}), "cardio_days_28d": len({on(c) for c in moved}),
+               "includes_sample": sample}
+        if sample:
+            out["note"] = SAMPLE_NOTE
         return out

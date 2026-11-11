@@ -15,14 +15,18 @@ Surfaces: where a text is read decides which rules hold it.
 check(text, surface) runs every rule RULES[surface] names. Each rule also has its own function.
 
 Readers of source:
-  template_text(source)    the human-read text of a Jinja template, through Jinja's own parser
-  html_text(markup)        the human-read text of rendered HTML, one piece per block
-  string_constants(source) the string constants of a Python file, docstrings skipped
-  format_spec_lines(source) the lines of a Python file that format a number with a format spec
+  template_text(source)      the human-read text of a Jinja template, through Jinja's own parser
+  template_format_lines(source) the lines of a template that format or round a number itself
+  html_text(markup)          the human-read text of rendered HTML, one piece per block
+  string_constants(source)   the string constants of a Python file, docstrings skipped
+  format_spec_lines(source)  the lines of a Python file that format a number with a format spec
+  doc_blocks(text)           a Markdown doc as paragraphs, list items, headings, rows and code lines
+  source_surface(path)       CLAUDE for the two MCP files, else SOURCE
 
-Exemptions are data: EXEMPT_LINES (a path and the line's text), EXEMPT_CHARACTERS (a path and a
-character), and KEPT from tests/text_rules_kept.py when that file exists. exempt(path, line) asks.
-mask_entered(text, entered) hides text the person entered, for T2.
+Exemptions are data: EXEMPT_LINES (a path and the line's text, exempt from every rule),
+EXEMPT_CHARACTERS (a path and a character), and KEPT from tests/text_rules_kept.py when that file
+exists (a line that keeps its format spec, and only that). exempt(path, line) and
+exempt_format(path, line) ask. mask_entered(text, entered) hides text the person entered, for T2.
 
 Banned characters are written as escapes in this file, so a sweep of tests/ stays simple.
 """
@@ -175,9 +179,12 @@ def _char_rule(c: str) -> str:
 
 
 # ASCII forms of the banned marks.
-_SPACED_HYPHEN = re.compile(r"(?<=[\w)}%]) +-{1,2} +(?=[\w({])|(?<=\w)--(?=\w)")
+# A dash between words: spaces or no-break spaces each side, after a word, a bracket, a quote or a full
+# stop, before a word, a bracket or a quote.
+_GAP = "[ " + NBSP + "]+"
+_SPACED_HYPHEN = re.compile(r"(?<=[\w)}%\"'.])" + _GAP + "-{1,2}" + _GAP + r"(?=[\w({\"'])|(?<=\w)--(?=\w)")
 _ASCII_ARROW = re.compile(r"-+>|=>|<-+(?![\d.])")
-_THREE_DOTS = re.compile(r"\.\.\.")
+_THREE_DOTS = re.compile(r"\.\.\.|\.(?: \.){2}")
 _BANG = re.compile(r"(?<![?<])!(?!=)")  # "(?!" and "(?<!" in a regular expression are not marks
 _TILDE_ABOUT = re.compile(r"~\s?[\d.]")
 
@@ -311,7 +318,10 @@ def check_contractions(text: str) -> list[Finding]:
 # ---------------------------------------------------------------- punctuation
 
 _SEMICOLON = re.compile(";")
-_AT_AMP = re.compile(r"(?<!\S)[@&](?!\S)|@(?=\s*\d)|(?<=[A-Za-z])&(?=[A-Za-z])")
+# "&" touching a word on one side counts too ("Lifts &cardio"), but never an HTML entity ("&amp;").
+_NOT_ENTITY = r"(?![A-Za-z]+;|#\d+;)"
+_AT_AMP = re.compile(r"(?<!\S)[@&](?!\S)|@(?=\s*\d)|(?<=[A-Za-z])&" + _NOT_ENTITY + r"(?=[A-Za-z])"
+                     r"|(?<!\S)&" + _NOT_ENTITY + r"(?=[A-Za-z])|(?<=[A-Za-z])&(?!\S)")
 _BRACKETS = re.compile(r"\([^()]*[A-Za-z][^()]*\)|\[[^\[\]]*[A-Za-z][^\[\]]*\]")
 
 
@@ -497,7 +507,10 @@ INLINE = frozenset({"a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn
                     "q", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr"})
 VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
                   "source", "track", "wbr"})
-READ_ATTRIBUTES = ("title", "aria-label", "alt", "placeholder")
+READ_ATTRIBUTES = ("title", "aria-label", "alt", "placeholder", "label")
+# A meta tag whose content a person reads: a description and the link-preview tags.
+META_TEXT = frozenset({"description", "og:title", "og:description", "og:site_name", "og:image:alt",
+                       "twitter:title", "twitter:description", "twitter:image:alt"})
 
 
 def _hidden_roll(attrs: dict) -> bool:
@@ -538,6 +551,8 @@ class _Walker(HTMLParser):
             values = [attrs.get(name, "") for name in READ_ATTRIBUTES]
             if tag == "input" and attrs.get("type") in ("submit", "button", "reset"):
                 values.append(attrs.get("value", ""))
+            if tag == "meta" and (attrs.get("name") in META_TEXT or attrs.get("property") in META_TEXT):
+                values.append(attrs.get("content", ""))
             for value in values:
                 value = squash(value.replace(BREAK, " "))
                 if value.replace(HOLE, "").strip():
@@ -588,8 +603,9 @@ def html_text(markup: str, line_offset: int = 0) -> list[TextPiece]:
     """The text a person reads in HTML, one piece per block element (a cell, a dd, a paragraph, a
     button, an option): inline elements (a, strong, span, code and the like) stay inside their piece. Entities
     are decoded. Script and style are left out, and so is every element with aria-hidden="true" and the
-    class roll. The title, aria-label, alt and placeholder attributes come back as pieces of kind "attr";
-    no other attribute is read. The document title comes back as kind "title"."""
+    class roll. The title, aria-label, alt, placeholder and label attributes, a submit input's value and
+    the content of a meta tag in META_TEXT come back as pieces of kind "attr"; no other attribute is
+    read. The document title comes back as kind "title"."""
     walker = _Walker(line_offset)
     walker.feed(markup)
     walker.close()
@@ -601,16 +617,16 @@ def html_text(markup: str, line_offset: int = 0) -> list[TextPiece]:
 
 def _literals(node) -> list:
     """The string constants in a Jinja expression that can reach the page: through an inline if, an or,
-    a concatenation, a filter's argument, a call's argument, a list. Never from a test, a comparison,
-    a subscript or an attribute name."""
+    a concatenation, a filter's argument, a call's argument, a list, the object of an attribute access
+    ({"a": "Great"}.items(), "x".upper()). Never from a test, a comparison or a subscript."""
     from jinja2 import nodes
     if isinstance(node, nodes.Const):
         return [node] if isinstance(node.value, str) else []
     if isinstance(node, nodes.CondExpr):
         return _literals(node.expr1) + (_literals(node.expr2) if node.expr2 is not None else [])
-    if isinstance(node, (nodes.Compare, nodes.Test, nodes.Not, nodes.Getattr, nodes.Slice)):
+    if isinstance(node, (nodes.Compare, nodes.Test, nodes.Not, nodes.Slice)):
         return []
-    if isinstance(node, nodes.Getitem):
+    if isinstance(node, (nodes.Getitem, nodes.Getattr)):  # the attribute's name is not a node
         return _literals(node.node)
     out = []
     for child in node.iter_child_nodes():
@@ -677,6 +693,12 @@ class _Stream:
         if isinstance(node, nodes.Assign):
             self.literal(_literals(node.node))
             return
+        if isinstance(node, nodes.With):
+            for value in node.values:
+                self.literal(_literals(value))
+        if isinstance(node, nodes.Macro):
+            for default in node.defaults:
+                self.literal(_literals(default))
         if isinstance(node, (nodes.CallBlock, nodes.FilterBlock)):
             self.literal(_literals(node.call if isinstance(node, nodes.CallBlock) else node.filter))
         for child in node.iter_child_nodes():
@@ -689,12 +711,30 @@ def template_text(source: str) -> list[TextPiece]:
     is written out again with a HOLE for each expression, then read by html_text: tags removed, entities
     decoded, an aria-hidden roll element left out. A block named title comes back as kind "title".
     String constants inside expressions that can reach the page ({{ "Replace" if x else "Save" }}, a
-    macro's label argument, the list a for loop walks) come back as pieces of kind "literal"."""
+    macro's label argument or default, the list a for loop walks, a with or set value) come back as
+    pieces of kind "literal"."""
     from jinja2 import Environment
     tree = Environment().parse(source)
     stream = _Stream()
     stream.walk(tree)
     return html_text("".join(stream.parts)) + stream.literals
+
+
+# The Jinja filters that format or round a number. The web gets formatting.show and its kin instead.
+TEMPLATE_NUMBER_FILTERS = ("format", "round")
+
+
+def template_format_lines(source: str) -> list[tuple[int, str]]:
+    """Each line of a Jinja template that formats a number itself: the format or round filter, or a
+    .format() call in an expression. Comments are never read. Returns (line number, the line's text
+    stripped), one per line, in order."""
+    from jinja2 import Environment, nodes
+    tree = Environment().parse(source)
+    lines = source.splitlines()
+    hits = {f.lineno for f in tree.find_all(nodes.Filter) if f.name in TEMPLATE_NUMBER_FILTERS}
+    hits |= {c.lineno for c in tree.find_all(nodes.Call)
+             if isinstance(c.node, nodes.Getattr) and c.node.attr == "format"}
+    return [(n, lines[n - 1].strip()) for n in sorted(hits) if 0 < n <= len(lines)]
 
 
 # ---------------------------------------------------------------- Python source
@@ -752,13 +792,18 @@ _PERCENT = re.compile(r"%(?:\([^)]*\))?(?P<flags>[-+ 0#]*)(?P<width>\d+|\*)?(?:\
 
 
 def numeric_spec(spec: str) -> bool:
-    """Whether a format spec formats a number: ":g", ":,", ":+g", ":.1f", ":02d" and their kin. A string
-    spec (":>10", ":.80" with no type) does not."""
+    """Whether a format spec formats a number: ":g", ":,", ":+g", ":.1f", ":02d" and their kin, a zero pad
+    with no type (":02"), and a precision with no type (":.2", which rounds a float). A nested field
+    ("{x:{spec}}") cannot be told apart, so it counts. Plain width and alignment (":>10", ":5") do not."""
+    if "{" in spec:
+        return True
     m = _SPEC.match(spec)
     if not m or not spec:
         return False
     kind = m.group("type")
     if kind in tuple("eEfFgGn%") or m.group("group") or m.group("sign"):
+        return True
+    if kind is None and (m.group("zero") or m.group("prec")):
         return True
     return kind in tuple("bdoxX") and bool(m.group("zero") or m.group("width"))
 
@@ -773,43 +818,74 @@ def _percent_numeric(template: str) -> bool:
     return False
 
 
-_NESTED = re.compile(r"\{[^{}]*\}")
-
-
 def _format_numeric(template: str) -> bool:
-    """Whether a str.format template has a numeric spec. A nested field ("{:.{n}f}") reads as a 1."""
+    """Whether a str.format template has a numeric spec. A nested field ("{:.{n}f}") counts."""
     try:
         fields = list(string.Formatter().parse(template))
     except ValueError:
         return False
-    return any(numeric_spec(_NESTED.sub("1", spec)) for _, _, spec, _ in fields if spec)
+    return any(numeric_spec(spec) for _, _, spec, _ in fields if spec)
+
+
+def _module_strings(tree: ast.Module) -> dict[str, str]:
+    """The module-level names bound once to a string constant: a template held for later use."""
+    out: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            target, value = node.target, node.value
+        else:
+            continue
+        if isinstance(target, ast.Name) and isinstance(value, ast.Constant) and isinstance(value.value, str):
+            out[target.id] = value.value
+    return out
 
 
 def format_spec_lines(source: str) -> list[tuple[int, str]]:
     """Each line of a Python file that formats a number with a format spec: an f-string's spec, a
-    str.format template, format(x, spec), or a % template. Comments and docstrings are never read.
-    Returns (line number, the line's text stripped), one per line, in order."""
+    str.format template, format(x, spec), or a % template. A template held in a module-level string
+    constant is read where it is used. A spec or template that is not a constant cannot be told apart,
+    so it counts: format(x, spec), str.format(template, x), an f-string spec with a nested field.
+    Comments and docstrings are never read. Returns (line number, the line's text stripped), one per
+    line, in order."""
     tree = ast.parse(source)
     lines = source.splitlines()
+    held = _module_strings(tree)
     hits: set[int] = set()
+
+    def text_of(node) -> str | None:
+        """A string constant's value, or a held template's; None when it is not known."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name) and node.id in held:
+            return held[node.id]
+        return None
+
     for node in ast.walk(tree):
         if isinstance(node, ast.FormattedValue) and node.format_spec is not None:
-            # a nested field ({x:.{n}f}) reads as a 1
-            spec = "".join(v.value if isinstance(v, ast.Constant) else "1" for v in node.format_spec.values)
+            spec = "".join(v.value if isinstance(v, ast.Constant) else "{}" for v in node.format_spec.values)
             if numeric_spec(spec):
                 hits.add(node.lineno)
         elif isinstance(node, ast.Call):
             func = node.func
-            if isinstance(func, ast.Attribute) and func.attr == "format" and isinstance(func.value, ast.Constant) \
-                    and isinstance(func.value.value, str) and _format_numeric(func.value.value):
+            if isinstance(func, ast.Attribute) and func.attr == "format":
+                if isinstance(func.value, ast.Name) and func.value.id == "str":  # str.format(template, x)
+                    template = text_of(node.args[0]) if node.args else None
+                    if template is None or _format_numeric(template):
+                        hits.add(node.lineno)
+                else:
+                    template = text_of(func.value)
+                    if template is not None and _format_numeric(template):
+                        hits.add(node.lineno)
+            elif isinstance(func, ast.Name) and func.id == "format" and len(node.args) >= 2:
+                spec = text_of(node.args[1])
+                if spec is None or numeric_spec(spec):
+                    hits.add(node.lineno)
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            template = text_of(node.left)
+            if template is not None and _percent_numeric(template):
                 hits.add(node.lineno)
-            elif isinstance(func, ast.Name) and func.id == "format" and len(node.args) >= 2 \
-                    and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str) \
-                    and numeric_spec(node.args[1].value):
-                hits.add(node.lineno)
-        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant) \
-                and isinstance(node.left.value, str) and _percent_numeric(node.left.value):
-            hits.add(node.lineno)
     return [(n, lines[n - 1].strip()) for n in sorted(hits)]
 
 
@@ -878,15 +954,76 @@ def load_kept(path=KEPT_PATH) -> tuple[tuple[str, str], ...]:
 
 
 def exempt(path, line: str, kept_path=KEPT_PATH) -> bool:
-    """Whether a line is exempt from T1: named in EXEMPT_LINES, or in KEPT."""
-    key = (norm_path(path), norm_line(line))
-    return key in {(e.path, norm_line(e.line)) for e in EXEMPT_LINES} or key in set(load_kept(kept_path))
+    """Whether a line is exempt from every T1 rule: named in EXEMPT_LINES. A KEPT line is not: it keeps
+    its format spec only (exempt_format). kept_path is read by exempt_format, and kept here so a
+    caller's arguments stay the same."""
+    return (norm_path(path), norm_line(line)) in {(e.path, norm_line(e.line)) for e in EXEMPT_LINES}
+
+
+def exempt_format(path, line: str, kept_path=KEPT_PATH) -> bool:
+    """Whether a line may keep its numeric format spec: named in EXEMPT_LINES, or in KEPT."""
+    return exempt(path, line) or (norm_path(path), norm_line(line)) in set(load_kept(kept_path))
 
 
 def exempt_characters(path) -> frozenset[str]:
     """The characters a file's string constants may carry beyond the allowlist."""
     p = norm_path(path)
     return frozenset(c for q, c in EXEMPT_CHARACTERS if q == p)
+
+
+# The files whose string constants are text for Claude: the server instructions, the function and
+# field descriptions. T1 holds them to the claude surface, not the generic source one.
+CLAUDE_SOURCES = ("app/mcp_server.py", "app/mcp_schemas.py")
+
+
+def source_surface(path) -> str:
+    """The surface T1 checks a Python file's string constants as: CLAUDE for CLAUDE_SOURCES, else SOURCE."""
+    return CLAUDE if norm_path(path) in CLAUDE_SOURCES else SOURCE
+
+
+# ---------------------------------------------------------------- docs
+
+_BLOCK_START = re.compile(r"^\s*(?:#|\||```|~~~|[-*+]\s|\d+[.)]\s|>)")
+
+
+class DocBlock(NamedTuple):
+    line: int   # the line the block starts on
+    text: str   # its lines as written, joined by newlines
+
+
+def doc_blocks(text: str) -> list[DocBlock]:
+    """A Markdown doc as the blocks a reader reads: a paragraph, a list item with its wrapped lines, one
+    heading, one table row, one line of a code block. A blank line ends a block. A check reads a block
+    with its newlines as spaces, so a phrase wrapped across two lines is found."""
+    blocks: list[DocBlock] = []
+    current: list[str] = []
+    start = 0
+    fenced = False
+
+    def end():
+        nonlocal current
+        if current:
+            blocks.append(DocBlock(start, "\n".join(current)))
+        current = []
+
+    for n, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        fence = stripped.startswith(("```", "~~~"))
+        if not stripped:
+            end()
+        elif fenced or fence or stripped.startswith(("#", "|")):
+            end()
+            blocks.append(DocBlock(n, line))
+        else:
+            if _BLOCK_START.match(line):
+                end()
+            if not current:
+                start = n
+            current.append(line)
+        if fence:
+            fenced = not fenced
+    end()
+    return blocks
 
 
 # ---------------------------------------------------------------- text the person entered
@@ -896,16 +1033,21 @@ def mask_entered(text: str, entered: Iterable[str]) -> str:
     """text with every value the person entered put out of reach of the checks: each value as given, the
     value with " (sample)" added (sample.py), and rules.quote of it, cut mark included. Each becomes
     ENTERED. Longest first; blank values are skipped; a value is matched as a whole, never inside a
-    longer word. entered: descriptions, notes, names, anything the person or Claude sent."""
+    longer word, number or date: beside a digit, ".", ",", ":" and "-" end nothing, so ["80"] leaves
+    "80.5 kg" alone and ["11"] leaves "2026-11-10" alone. A value with no letter or digit in it is
+    refused with ValueError: it would mask punctuation. entered: descriptions, notes, names, anything
+    the person or Claude sent."""
     from app.rules import quote
     variants = set()
     for value in entered:
         if value is None or not str(value).strip():
             continue
         value = str(value)
+        if not any(c.isalnum() for c in value):
+            raise ValueError(f"an entered value needs a letter or a digit to be masked: {value!r}")
         variants |= {value, f"{value} (sample)", quote(value)}
     for variant in sorted(variants, key=len, reverse=True):
-        before = r"(?<!\w)" if re.match(r"\w", variant) else ""
-        after = r"(?!\w)" if re.search(r"\w$", variant) else ""
+        before = r"(?<!\w)(?<!\d[.,:-])" if re.match(r"\w", variant) else ""
+        after = r"(?!\w)(?![.,:-]\d)" if re.search(r"\w$", variant) else ""
         text = re.sub(before + re.escape(variant) + after, ENTERED, text)
     return text

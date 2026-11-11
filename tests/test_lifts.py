@@ -1,5 +1,6 @@
 """log_lifts: validation, set numbering, new bests, the duplicate guard, today, and the user-row lock."""
 
+import json
 import math
 import threading
 import time
@@ -74,6 +75,63 @@ def test_the_best_set_is_found_on_the_exact_estimate_and_shown_at_1_dp(user):
     assert best["weight_kg"] == 100.03 and best["estimated_max_kg"] == 116.7
     row = services.get_progress(user.id)["lifts"][0]
     assert row["best_estimated_max_kg"] == 116.7 and row["current_estimated_max_kg"] == 116.7
+
+
+def history_of(user):
+    from app.services import lifts
+    with db.new_session() as s:
+        return lifts.history(s, user.id, users.today_for(user))
+
+
+def on(user, days_ago):
+    return (users.today_for(user) - timedelta(days=days_ago)).isoformat()
+
+
+def test_reps_only_gives_the_real_date_of_a_session_dated_after_today(user, monkeypatch):
+    """A session left after today by a change of time zone counts as today's in the one order, but reps_only
+    names its own real date, as best_set does."""
+    log(user, ("Pull-Up", 0, 5), date=on(user, 1))
+    later = db.utcnow() + timedelta(days=2)
+    monkeypatch.setattr(db, "utcnow", lambda: later)
+    log(user, ("Pull-Up", 0, 9))                                    # two days after the real today
+    monkeypatch.undo()
+    assert history_of(user)["reps_only"] == {"Pull-Up": {"reps": 9, "date": on(user, -2)}}
+
+
+def test_reps_only_holds_a_lift_never_done_above_0_kg(user):
+    """Stage 6, G8: a 0 kg lift has no Epley figure, so no best_set; reps_only gives its most reps in one set and
+    that set's day. A tie keeps the earlier set in the one order, as best_set does."""
+    log(user, ("Pull-Up", 0, 6), ("Pull-Up", 0, 8), date=on(user, 5))
+    log(user, ("Pull-Up", 0, 8), ("Dip", 0, 12), ("Back Squat", 100, 5), date=on(user, 2))
+    log(user, ("Back Squat", 60, 12), ("Deadlift", 80, 12), date=on(user, 1))   # weighted, all over 10 reps
+    h = history_of(user)
+    assert h["reps_only"] == {"Pull-Up": {"reps": 8, "date": on(user, 5)}, "Dip": {"reps": 12, "date": on(user, 2)}}
+    assert "Pull-Up" not in h["best_set"] and "Dip" not in h["best_set"]
+    # A weighted lift is never in reps_only, even with no Epley figure: Deadlift at 12 reps is in neither.
+    assert "Back Squat" in h["best_set"] and "Deadlift" not in h["best_set"] and "Deadlift" not in h["reps_only"]
+
+
+def test_a_lift_leaves_reps_only_once_a_set_is_above_0_kg_and_deleted_rows_never_count(user):
+    log(user, ("Pull-Up", 0, 6), date=on(user, 4))
+    gone = log(user, ("Pull-Up", 0, 15), date=on(user, 3))
+    services.delete_entry(user.id, "lift_session", gone["id"])
+    assert history_of(user)["reps_only"] == {"Pull-Up": {"reps": 6, "date": on(user, 4)}}
+    weighted = log(user, ("Pull-Up", 10, 5), date=on(user, 2))                   # a weighted pull-up
+    h = history_of(user)
+    assert h["reps_only"] == {} and h["best_set"]["Pull-Up"]["weight_kg"] == 10
+    services.delete_entry(user.id, "lift_session", weighted["id"])
+    assert history_of(user)["reps_only"] == {"Pull-Up": {"reps": 6, "date": on(user, 4)}}
+
+
+def test_reps_only_is_web_only_and_the_persons_own(user, make_user):
+    """get_progress does not copy reps_only, so no MCP result changes. Another person's sets never count."""
+    log(user, ("Pull-Up", 0, 6))
+    assert "reps_only" not in json.dumps(services.get_progress(user.id))
+    assert "reps_only" not in json.dumps(services.get_progress(user.id, "Pull-Up"))
+    other = make_user()
+    log(other, ("Pull-Up", 0, 20))
+    assert history_of(user)["reps_only"] == {"Pull-Up": {"reps": 6, "date": on(user, 0)}}
+    assert history_of(other)["reps_only"]["Pull-Up"]["reps"] == 20
 
 
 def test_an_empty_list_joins_to_nothing():
