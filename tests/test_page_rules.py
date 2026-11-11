@@ -29,8 +29,8 @@ from app import services, web
 from app.models import Bodyweight, SavedFood
 
 from .test_pages_text import (ACCOUNTS, BUILT, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
-                              estimate_findings, get_paths, names_of, parse, render_error_page, route_of,
-                              step_4_findings)
+                              entered_text, estimate_findings, get_paths, names_of, page_findings, parse,
+                              render_error_page, route_of, step_4_findings)
 from .test_web import client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
 
 STATIC = Path(web.HERE) / "static"
@@ -483,6 +483,13 @@ def sweep(client, account: str) -> list[Seen]:
     return seen
 
 
+# The error renders whose page still prints a service's own words, held by route until that page's pass.
+# Goals: goals.html prints set_goal's message and fix ("target_value 'abc' is not a number."). The contract
+# gives the fix to the Goals pass: "The Goals page's own error words, in place of the service's message and
+# fix, are step 4, in lane B."
+TEXT_HELD = {"/goals": "goals.html prints the service's message and fix, until the Goals pass"}
+
+
 @pytest.mark.parametrize("account", sorted(ACCOUNTS))
 def test_every_page_keeps_the_frame_and_page_rules(client, account):
     seen = sweep(client, account)
@@ -495,6 +502,19 @@ def test_every_page_keeps_the_frame_and_page_rules(client, account):
         if s.message or s.posted_to:
             findings += step_4_findings(s.address, s.markup, names, notes, message=s.message,
                                         route=s.posted_to or None)
+    # T1's text rules on each form sent back with its error, which the text sweep's GETs never reach. One
+    # route is held, by name, until its own pass (TEXT_HELD): the hold fails once the page passes.
+    entered = entered_text(only_user().id)
+    held = {route: [] for route in TEXT_HELD}
+    for s in seen:
+        if s.posted_to:
+            found = page_findings(s.address, s.markup, entered, only_user().id)
+            if s.posted_to in TEXT_HELD:
+                held[s.posted_to] += found
+            else:
+                findings += found
+    findings += [f"{route}: its error render passes the text rules now, delete its TEXT_HELD line"
+                 for route, found in held.items() if not found]
     assert not findings, "\n".join(findings)
 
 
@@ -825,7 +845,9 @@ def test_the_page_after_every_write_is_calm(client):
     # The person's today is read again now the zone is saved: before it, it was UTC's date, a day behind
     # Asia/Kolkata from 18:30 to 24:00 UTC, so the writes below would land on a past day.
     today = today_of(only_user()).isoformat()
-    write("a weigh-in", f"/day/{today}/weigh-in", kg="80")
+    # It lands on the person's today, read fresh: without the read above it is their yesterday in the window.
+    assert write("a weigh-in", f"/day/{today}/weigh-in", kg="80").startswith(
+        f"/day/{today_of(only_user()).isoformat()}?")
     assert write("the same weigh-in again", f"/day/{today}/weigh-in", kg="80").endswith("?saved=unchanged")
     write("a measurement", f"/day/{today}/measurement", kind="waist", value="84")
     write("a food entry", f"/day/{today}/food", description="Poha", kcal="250")

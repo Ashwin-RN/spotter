@@ -620,6 +620,7 @@ svg.chart.small .goal { stroke-width: 3; stroke-dasharray: 3 8; }
 /* ---------------------------------------------------------------- entries */
 
 .meal + .meal { margin-top: 18px; }
+.session + .session { margin-top: 18px; }
 .meal h3 {
   display: flex;
   justify-content: space-between;

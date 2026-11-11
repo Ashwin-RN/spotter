@@ -163,23 +163,13 @@
   <h2>Lifts</h2>
   {% if day.sessions %}
   {% for session in day.sessions %}
-  {% set weighted = session.sets|selectattr("weight_kg")|list %}
   <div class="session">
     <div class="entry-line">
       <div class="entry-main"><span class="entry-name">Lift session</span></div>
       {% if session.is_sample %}<span class="entry-tags"><span class="tag tag-sample">sample</span></span>{% endif %}
       {{ parts.entry_actions("lift_session", session.id, csrf_token) }}
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Exercise</th><th class="num">Set</th>{% if weighted %}<th class="num">Weight (kg)</th>{% endif %}<th class="num">Reps</th></tr></thead>
-        <tbody>
-        {% for s in session.sets %}
-        <tr><td>{{ s.exercise }}</td><td class="num">{{ s.set_number|show("count") }}</td>{% if weighted %}<td class="num">{% if s.weight_kg %}{{ s.weight_kg|show("weight_kg", unit=False) }}{% endif %}</td>{% endif %}<td class="num">{{ s.reps|show("reps") }}</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {{ parts.sets_table(session.sets) }}
     {% if session.new_bests %}
     <ul class="bests">
       {% for b in session.new_bests %}<li>New best: {{ b.text if b.text else b.exercise ~ " " ~ b.value|show("estimated_max" if b.kind == "estimated_max" else "weight_kg") }}</li>{% endfor %}
@@ -279,7 +269,8 @@
   <ul class="entries">
     {% for m in day.measurements %}
     <li class="entry-line">
-      <div class="entry-main"><span class="entry-name">{{ kind_word(m.kind) }}</span><span class="entry-figures">{{ m.value|show(measurement_quantity(m.kind)) }}</span></div>
+      <div class="entry-main"><span class="entry-name">{{ kind_word(m.kind) }}</span>
+        <span class="entry-figures">{{ m.value|show(measurement_quantity(m.kind)) }}</span></div>
       {% if m.is_sample %}<span class="entry-tags"><span class="tag tag-sample">sample</span></span>{% endif %}
       {{ parts.entry_actions("measurement", m.id, csrf_token) }}
     </li>

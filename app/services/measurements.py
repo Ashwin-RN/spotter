@@ -24,7 +24,7 @@ KIND_WORDS, kind_word(kind)
     rules.KIND_WORDS, defined once beside the units; these are its public names here. A kind's word
     never repeats its unit, which stands beside the figure: "Water 2,501 ml", not "Water ml 2,501 ml".
     Every summary and note here, goals.measurement_name and rules.measurement_value's fix read it. The
-    pages keep their own labels until lane B reads kind_word.
+    web's pages read it too: the day page and its fold-out, the edit page and the Goals form.
 """
 
 from datetime import date

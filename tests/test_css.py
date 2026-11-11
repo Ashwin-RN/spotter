@@ -632,6 +632,14 @@ def test_words_in_the_today_cards_number_slot_wrap_at_the_titles_size(css):
     assert css.value(".big", "white-space") == "nowrap"
 
 
+
+def test_two_lift_sessions_sit_apart_as_two_meals_do(css):
+    """Two sessions on the Lifts card are spaced as two meals on the Food card: the same gap, one rule each."""
+    assert css.value(".session + .session", "margin-top") == css.value(".meal + .meal", "margin-top") == "18px"
+    [rule] = css.find(".session + .session")
+    assert rule.decls == [("margin-top", "18px", False)]
+
+
 # ---------------------------------------------------------------- tiles and sheets without popovers
 
 def test_a_tile_twin_shows_where_popovers_do_not(css):

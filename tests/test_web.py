@@ -1258,6 +1258,9 @@ def test_the_measurement_kinds_carry_the_services_units(client):
     sign_in(client)
     page = day_of(client, today_of(only_user()).isoformat())
     for kind, (unit, _, _, _) in rules.MEASUREMENTS.items():
+        if kind == "steps":  # its unit is its own word: named once, the unit is the word
+            assert '<option value="steps">Steps</option>' in page
+            continue
         assert re.search(rf'<option value="{kind}">[^<]+\({re.escape(unit)}\)</option>', page), kind
 
 
@@ -3880,8 +3883,26 @@ def test_the_measurement_fold_out_names_each_kind_by_kind_word_with_its_unit(cli
     sign_in(client)
     fold = foldouts_of(day_of(client, today_of(only_user()).isoformat()))["add-measurement"]
     choices = [(o.attrs["value"], o.text()) for o in fold.find_all("option")]
-    assert choices == [(k, f"{measurements.kind_word(k)} ({rules.MEASUREMENTS[k][0]})") for k in web.MEASUREMENT_KINDS]
+    assert choices == [(k, web.kind_with_unit(k)) for k in web.MEASUREMENT_KINDS]
+    assert [k for k, _ in choices] == list(web.MEASUREMENT_KINDS)
+    assert all(words.startswith(measurements.kind_word(k)) for k, words in choices)
     assert ("resting_hr", "Resting heart rate (bpm)") in choices and ("water_ml", "Water (ml)") in choices
+    assert ("steps", "Steps") in choices
+
+
+@pytest.mark.parametrize("kind, words", [
+    ("waist", "Waist (cm)"), ("hips", "Hips (cm)"), ("chest", "Chest (cm)"), ("arm", "Arm (cm)"),
+    ("thigh", "Thigh (cm)"), ("steps", "Steps"), ("sleep_hours", "Sleep (h)"),
+    ("resting_hr", "Resting heart rate (bpm)"), ("water_ml", "Water (ml)"),
+])
+def test_a_kind_is_named_with_its_unit_and_once_when_the_unit_is_its_word(kind, words):
+    assert web.kind_with_unit(kind) == words
+    assert kind in rules.MEASUREMENTS
+
+
+def test_every_kind_has_its_case_for_kind_with_unit():
+    assert set(rules.MEASUREMENTS) == {"waist", "hips", "chest", "arm", "thigh", "steps", "sleep_hours",
+                                       "resting_hr", "water_ml"}
 
 
 def test_each_side_fold_out_holds_the_contracts_fields_and_button(client):
@@ -4045,6 +4066,32 @@ def test_the_side_cards_never_say_claude(client, state):
                        if k in tr.READ_ATTRIBUTES), (state, title)
 
 
+
+def glued(node) -> list[str]:
+    """Two inline elements side by side with no whitespace between them, each holding words: read as text
+    with no stylesheet, they run together as one word ("Waist84.5 cm")."""
+    out = []
+    for n in [node, *node.iter()]:
+        kids = n.children
+        for left, right in zip(kids, kids[1:]):
+            if not isinstance(left, str) and not isinstance(right, str) and left.tag in tr.INLINE                     and right.tag in tr.INLINE and left.text() and right.text():
+                out.append(f"{left.text()!r} touches {right.text()!r}")
+    return out
+
+
+def test_each_side_card_reads_as_text_with_a_space_between_a_name_and_its_figure(client, stocked):
+    stock_food(only_user())
+    page = day_of(client, stocked["today"].isoformat())
+    for title in ("Lifts", "Cardio", "Weigh-in", "Measurements"):
+        card = side_card(page, title)
+        assert glued(card) == [], title
+    pieces = [p.text for p in tr.html_text(page[page.index("<h2>Measurements</h2>"):]) if p.kind != "attr"]
+    assert "Waist 84.5 cm" in pieces and "Steps 9,500 steps" in pieces and "Sleep 7.25 h" in pieces
+    assert not any(re.search(r"[A-Za-z]\d", t) for t in pieces), pieces
+    weigh = [p.text for p in tr.html_text(page[page.index("<h2>Weigh-in</h2>"):page.index("<h2>Measurements</h2>")])]
+    assert "80 kg" in weigh  # stock_food's weigh-in replaced the day's 78.4 kg
+
+
 def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
     """The web reads every measurement name from measurements.kind_word: web.MEASUREMENT_LABELS and its
     lookup are gone, and no template or web.py carries its own copy of a kind's word or the fallback."""
@@ -4060,6 +4107,15 @@ def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
             for literal in (f'"{word}"', f"'{word}'"):
                 assert literal not in src, (name, literal)
         assert 'replace("_", " ").capitalize()' not in src, name
+    # Nor as text a person reads: an element's own words, or a word between template tags, read through
+    # Jinja's parser. privacy.html is exempt by name: it lists the kinds in a sentence of prose about what is
+    # stored ("Waist, hips, chest, ..."), which names the data and labels no figure.
+    for name, src in sources.items():
+        if name in ("web.py", "privacy.html"):
+            continue
+        for piece in tr.template_text(src):
+            for word in rules.KIND_WORDS.values():
+                assert not re.search(rf"\b{re.escape(word)}\b", piece.text, re.I), (name, word, piece.text[:80])
     # The edit page and the Goals form read it too.
     sign_in(client)
     uid = only_user().id

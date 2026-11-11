@@ -670,7 +670,9 @@ def units_findings(dom: Node) -> list[str]:
 
 
 ESTIMATE_TAGS = ("tag-estimate", "tag-claude_estimate")
-VALUE_SLOTS = ("num", "tile-value", "big", "giant")
+# The classes of a value's slot, and the elements that hold a value: an estimate tag sits in none of them.
+VALUE_SLOTS = ("num", "tile-value", "big", "giant", "entry-figures", "entry-big")
+VALUE_TAGS = ("dd",)
 
 
 def estimate_findings(dom: Node) -> list[str]:
@@ -680,7 +682,7 @@ def estimate_findings(dom: Node) -> list[str]:
     for tag in (n for n in dom.iter() if set(n.classes) & set(ESTIMATE_TAGS)):
         if tag.text() != "estimate":
             out.append(f"an estimate tag reads {tag.text()!r}")
-        if any(set(a.classes) & set(VALUE_SLOTS) for a in tag.ancestors()):
+        if any(set(a.classes) & set(VALUE_SLOTS) or a.tag in VALUE_TAGS for a in tag.ancestors()):
             out.append(f"an estimate tag sits inside a value: {tag.parent.text()!r}")
         siblings = tag.parent.children
         before = siblings[siblings.index(tag) - 1] if siblings.index(tag) else ""
@@ -956,6 +958,12 @@ def test_the_structure_checks_find_what_they_name():
     assert found('<p>2,510 kcal (<span class="tag tag-estimate">estimate</span>)</p>')
     assert found('<p><span class="tag tag-claude_estimate">about</span></p>')
     assert found('<p>2,000 kcal, of which 300 kcal estimated</p>')
+    # Inside a dd, line two's figures or the large figure, a tag sits in the value too.
+    assert found('<dl><dt>Calories (kcal)</dt><dd>138 <span class="tag tag-estimate">estimate</span></dd></dl>')
+    assert found('<span class="entry-figures">700 kcal <span class="tag tag-claude_estimate">estimate</span></span>')
+    assert found('<span class="entry-big">80 <span class="tag tag-estimate">estimate</span></span>')
+    assert found('<dl><dt>Calories (kcal)</dt><dd>138</dd></dl><span class="entry-tags">'
+                 '<span class="tag tag-estimate">estimate</span></span>') == []
 
 
 # ---------------------------------------------------------------- step 4: the 404 and 500 pages, every message

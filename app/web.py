@@ -833,10 +833,17 @@ async def today_page(request: Request) -> Response:
     return redirect(address)
 
 
+def kind_with_unit(kind: str) -> str:
+    """A measurement kind named for a choice: its word from measurements.kind_word, then its unit in brackets,
+    "Resting heart rate (bpm)". A kind whose unit is its own word, such as steps, is named by the word alone."""
+    word, unit = measurements.kind_word(kind), rules.MEASUREMENTS[kind][0]
+    return word if unit.casefold() == word.casefold() else f"{word} ({unit})"
+
+
 def measurement_kinds() -> list[tuple[str, str]]:
-    """(kind, words) for the Add measurement fold-out's Kind, in the schema's order: the kind's word from
-    measurements.kind_word, then its unit in brackets ("Resting heart rate (bpm)")."""
-    return [(k, f"{measurements.kind_word(k)} ({rules.MEASUREMENTS[k][0]})") for k in MEASUREMENT_KINDS]
+    """(kind, words) for the Add measurement fold-out's Kind, in the schema's order, each named by
+    kind_with_unit."""
+    return [(k, kind_with_unit(k)) for k in MEASUREMENT_KINDS]
 
 
 # The quantity formatting.show takes for a measurement, by the unit rules.MEASUREMENTS gives its kind.
