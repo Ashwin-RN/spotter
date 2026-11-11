@@ -7,6 +7,7 @@ A missing or wrong token gets 403. /mcp is not covered: it is called with bearer
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 """
 
+import inspect
 import secrets
 from collections.abc import Awaitable, Callable
 from functools import wraps
@@ -45,13 +46,15 @@ async def valid(request: Request) -> bool:
     return same(form.get(FIELD), request.session.get(SESSION_KEY))
 
 
-def protect(endpoint: Endpoint, refuse: Callable[[Request], Response]) -> Endpoint:
-    """Wrap a web endpoint so every non-GET request is checked first; `refuse` builds the 403."""
+def protect(endpoint: Endpoint, refuse: Callable[[Request], Response | Awaitable[Response]]) -> Endpoint:
+    """Wrap a web endpoint so every non-GET request is checked first; `refuse` builds the 403. It may be
+    async, so it can look the person up first."""
 
     @wraps(endpoint)
     async def checked(request: Request) -> Response:
         if request.method not in SAFE_METHODS and not await valid(request):
-            return refuse(request)
+            refused = refuse(request)
+            return await refused if inspect.isawaitable(refused) else refused
         return await endpoint(request)
 
     return checked

@@ -449,7 +449,8 @@ def frame(request: Request, name: str, status_code: int, signed_in: bool, contex
     calm = context.pop("calm", is_calm(request, status_code))
     classes = ["page", page_class]
     # A past day, or a day after today: the Today card spans both columns on a laptop.
-    if page_class == "today" and context.get("on") is not None and context.get("on") != context.get("today"):
+    if (page_class == "today" and context.get("on") is not None and context.get("today") is not None
+            and context["on"] != context["today"]):
         classes.append("past")
     classes += [width_class, None if signed_in else "out"]
     return {"main_class": " ".join(c for c in classes if c), "current_tab": tab if signed_in else None,
@@ -518,7 +519,10 @@ def not_set_up(request: Request, reason: str | None = None) -> Response:
                    reason or "The server needs its settings completed. MCP is unaffected.", status_code=503)
 
 
-def refuse(request: Request) -> Response:
+async def refuse(request: Request) -> Response:
+    """The 403 for a form whose token did not match. The person is looked up first, so a signed-in person
+    keeps the signed-in frame."""
+    await current_user(request)
     return message(request, "Form expired", "This form could not be checked, so nothing was changed.",
                    "Go back, reload the page and try again.", status_code=403)
 
@@ -1722,9 +1726,11 @@ def routes(settings: Settings) -> list[BaseRoute]:
 
     built: list[BaseRoute] = []
     for path, endpoint, methods in table:
-        handler = _db_safe(endpoint)
+        handler = endpoint
         if any(m not in csrf.SAFE_METHODS for m in methods):
             handler = csrf.protect(handler, refuse)
+        # Outermost, so a database outage while refusing a form is the not-set-up page, not a 500.
+        handler = _db_safe(handler)
         built.append(Route(path, handler, methods=methods, middleware=stack))
     built.append(Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static",
                        middleware=[Middleware(SecurityHeaders, headers=headers_for(settings, static=True))]))

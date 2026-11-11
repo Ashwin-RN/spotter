@@ -443,6 +443,24 @@ def test_another_sessions_token_is_refused(web_client):
     assert r.status_code == 403
 
 
+def test_form_expired_keeps_the_signed_in_frame_and_a_database_outage_there_is_not_a_500(client, monkeypatch):
+    """The refusal looks the person up first, inside the database guard: signed in, the four tabs, none
+    current; signed out, the signed-out header; the database down, the not-set-up page."""
+    out = client.post("/settings", data={"time_zone": "UTC"})
+    assert out.status_code == 403 and 'class="top-out"' in out.text and 'class="tabs"' not in out.text
+    sign_in(client)
+    r = client.post("/settings", data={"time_zone": "UTC"})
+    assert r.status_code == 403 and "Form expired" in r.text
+    assert '<nav class="tabs"' in r.text and 'class="top-out"' not in r.text and 'aria-current' not in r.text
+
+    def down(user_id):
+        raise OperationalError("SELECT 1", {}, Exception("unable to open database file"))
+
+    monkeypatch.setattr(web, "_load_user", down)
+    r = client.post("/settings", data={"time_zone": "UTC"})
+    assert r.status_code == 503 and "cannot reach its database" in r.text
+
+
 def test_every_non_get_web_route_checks_the_token(client):
     sign_in(client)
     posting = [r for r in web.routes(settings(**WEB)) if getattr(r, "methods", None) and "POST" in r.methods]

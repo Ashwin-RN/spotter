@@ -163,7 +163,27 @@ def edge_account(user_id: int) -> None:
     _ok(services.set_goal(user_id, {"goal_id": closed["id"], "status": "hit"}, "web"))
 
 
-ACCOUNTS = {"empty": empty_account, "sample": sample_account, "edge": edge_account}
+def far_days(user_id: int) -> None:
+    """A day after today that holds an entry, and a day in another year. Logged on Pacific/Kiritimati
+    (UTC+14), then the zone moves to Pacific/Pago_Pago (UTC-11): Kiritimati's today is always at least a day
+    after Pago Pago's. The day page of a later day is a past day, titled by its date."""
+    _ok(services.update_settings(user_id, {"time_zone": "Pacific/Kiritimati"}, "web"))
+    _ok(services.log_measurement(user_id, {"kind": "steps", "value": 4321}, "claude"))
+    _ok(services.update_settings(user_id, {"time_zone": "Pacific/Pago_Pago"}, "web"))
+    with db.session_scope() as s:
+        today = web.users.today_for(s.get(User, user_id))
+    _ok(services.log_measurement(user_id, {"kind": "steps", "value": 1234,
+                                           "date": (today - timedelta(days=366)).isoformat()}, "claude"))
+
+
+def edge_and_far_days(user_id: int) -> None:
+    """The edge account, then far_days: its zone ends on Pacific/Pago_Pago, a zone name with an underscore."""
+    edge_account(user_id)
+    far_days(user_id)
+
+
+# The sweeps' accounts. tests/test_consistency.py takes edge_account alone.
+ACCOUNTS = {"empty": empty_account, "sample": sample_account, "edge": edge_and_far_days}
 
 
 # ---------------------------------------------------------------- the addresses
@@ -421,11 +441,13 @@ def names_of(user_id: int) -> Names:
     return Names(today, {web.links.slug(n): n for n in lifts}, {str(f["id"]): f["name"] for f in foods})
 
 
-def expected_title(address: str, dom: Node, names: Names | None, status: int = 200, message: bool = False) -> str:
-    """Section L's title for the page at this address. An error or message page (a message, status 400 or
-    more, or no route) is its h1."""
-    route, parts = route_of(address), address.split("?")[0].split("/")
-    if message or status >= 400 or route not in ROUTES:
+def expected_title(address: str, dom: Node, names: Names | None, message: bool = False,
+                   route: str | None = None) -> str:
+    """Section L's title for the page at this address. Only a page drawn by the message template (a 404, a
+    500, every message) takes its h1. A form sent back with its error keeps its page's title: `route` names
+    that page when the address is the one the form was posted to."""
+    route, parts = route or route_of(address), address.split("?")[0].split("/")
+    if message:
         h1 = dom.find_all("h1")
         name = h1[0].text() if h1 else "a page with no h1"
     elif route in NAMED:
@@ -445,7 +467,7 @@ def expected_title(address: str, dom: Node, names: Names | None, status: int = 2
 
 
 def furniture_findings(address: str, markup: str, names: Names | None, dom: Node | None = None,
-                       status: int = 200, message: bool = False) -> list[str]:
+                       message: bool = False, route: str | None = None) -> list[str]:
     """The head's title is the page's own, "{Page} · Spotter", and the head carries the three favicon links."""
     dom = dom or parse(markup)
     head = head_of(dom)
@@ -456,7 +478,7 @@ def furniture_findings(address: str, markup: str, names: Names | None, dom: Node
     if len(titles) != 1:
         out.append(f"{address}: {len(titles)} titles in the head")
     else:
-        title, want = titles[0].text(), expected_title(address, dom, names, status, message)
+        title, want = titles[0].text(), expected_title(address, dom, names, message, route)
         if title != want or not TITLE_SHAPE.fullmatch(title) or tr.check_iso_dates(title):
             out.append(f"{address}: the title is {title!r}, not {want!r}")
     links = [n.attrs for n in head.elements() if n.tag == "link"]
@@ -472,18 +494,44 @@ CLAUDE = re.compile(r"\bclaude\b", re.IGNORECASE)
 _ASSISTANTS = re.compile(r'<ul\b[^>]*\bclass="(?:[^"]*\s)?assistants(?:\s[^"]*)?"[^>]*>')
 _UL = re.compile(r"<ul\b|</ul\s*>")
 
-# The routes that still say Claude today, each until its own step 4 pass rebuilds it (a ruling of the
-# lead's). The pass deletes its line: test_no_claude_skip_outlives_its_page fails on a line no page needs.
-CLAUDE_SKIPS = {
-    "/": "home.html: the landing, rebuilt with its list of assistants",
-    "/settings": "settings.html: whoami, the switch's lines and card words",
-    "/day/{date}": "day.html: the empty Lifts line",
-    "/foods": "foods.html: the line under the h1",
-    "/entries/{kind}/{entry_id}/edit": "edit.html: the line on changing sets",
-    "/progress": "progress.html: the empty Lifts line",
-    "/progress/{lift}": "progress_lift.html: the empty line",
-    "/goals": "goals.html: the empty open goals line",
+# The sentences that still say Claude, by route, each until its page's own step 4 pass rebuilds it (a
+# ruling of the lead's). A skip covers its exact sentences on its route and nothing else, so a new line that
+# says Claude fails even on a skipped page. The pass deletes its sentences (and the route once it has none):
+# test_no_claude_skip_outlives_its_page fails on a sentence no page says any more. A route in BUILT has none.
+LIFTS_EMPTY = "Tell Claude what you lifted and it shows here."
+CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
+    "/": (  # home.html, signed in and out: rebuilt with its list of assistants
+        "A personal fitness record you keep by talking to Claude.",
+        "Tell Claude what you lifted, ate or weighed.",
+        "Connect Claude and start",
+        "Connect Claude.",
+        "On claude.ai or the Claude desktop app: Customize, then Connectors, then \"+ Add\", then Add custom "
+        "connector.",
+        "In a new chat, check that the Spotter connector is switched on for that chat: on claude.ai, press "
+        "\"+\" in the message box, then Connectors.",
+        "The first time, Claude may ask you to allow each call.",
+        "In Claude Code, run this once, then type /mcp and pick spotter to sign in.",
+        "claude mcp add --transport http --scope user spotter https://spotter.example.app/mcp",
+        "You decide what Claude may do.",
+        "your targets, what Claude may do, export and delete.",
+    ),
+    "/settings": (  # settings.html: whoami, the switch's card and lines, the data card
+        "Claude's whoami shows the same sign-in id and account id when it is connected to this account.",
+        "What Claude may do",
+        "Only you can change this, here: Claude is never offered this switch.",
+        "Read only: Claude can read what you have logged and change nothing.",
+        "Read and log: Claude can also log, edit and restore entries and set goals, but not delete.",
+        "Read, log and delete: Claude can also delete entries.",
+        "Claude does not do them for you.",
+    ),
+    "/day/{date}": (LIFTS_EMPTY,),  # day.html: the empty Lifts line
+    "/foods": ("Saving one by talking to Claude works too.",),  # foods.html: the line under the h1
+    "/entries/{kind}/{entry_id}/edit": ("Sets are changed through Claude for now: tell it what to fix.",),
+    "/progress": (LIFTS_EMPTY,),  # progress.html: the empty Lifts line
+    "/progress/{lift}": (LIFTS_EMPTY,),  # progress_lift.html: the empty line
+    "/goals": ("Set one below, or tell Claude what you are aiming for.",),  # goals.html: no open goals
 }
+_SENTENCE = re.compile(r"(?<=[.?!])\s+")
 
 
 def without_assistants(markup: str) -> str:
@@ -499,23 +547,32 @@ def without_assistants(markup: str) -> str:
     return markup[:start.start()]
 
 
-def claude_hits(address: str, markup: str) -> list[str]:
-    """Every piece of visible text that says Claude: page text, the title and read attributes. Only the
-    landing's list of assistants may."""
-    shown = without_assistants(markup) if route_of(address) == "/" else markup
-    return [f"{address} line {p.line} <{p.tag}>: {p.text[:80]!r} says Claude" for p in tr.html_text(shown)
-            if CLAUDE.search(p.text)]
+def claude_sentences(address: str, markup: str, route: str | None = None) -> list[tuple[str, str]]:
+    """Every sentence of visible text that says Claude, with its element: page text, the title and read
+    attributes. Only the landing's list of assistants may."""
+    shown = without_assistants(markup) if (route or route_of(address)) == "/" else markup
+    return [(p.tag, sentence) for p in tr.html_text(shown) for sentence in _SENTENCE.split(p.text)
+            if CLAUDE.search(sentence)]
 
 
-def claude_findings(address: str, markup: str, seen: set[str] | None = None) -> list[str]:
-    """claude_hits, less the routes in CLAUDE_SKIPS. `seen` collects the skipped routes that still hit."""
-    hits = claude_hits(address, markup)
-    route = route_of(address)
-    if hits and route in CLAUDE_SKIPS:
-        if seen is not None:
-            seen.add(route)
-        return []
-    return hits
+def claude_hits(address: str, markup: str, route: str | None = None) -> list[str]:
+    return [f"{address} <{tag}>: says Claude: {sentence!r}"
+            for tag, sentence in claude_sentences(address, markup, route)]
+
+
+def claude_findings(address: str, markup: str, seen: set[tuple[str, str]] | None = None,
+                    route: str | None = None) -> list[str]:
+    """claude_hits, less the sentences CLAUDE_SKIPS lists for this route. `seen` collects (route, sentence)
+    for each skipped sentence the page still says."""
+    route = route or route_of(address)
+    out = []
+    for tag, sentence in claude_sentences(address, markup, route):
+        if sentence in CLAUDE_SKIPS.get(route, ()):
+            if seen is not None:
+                seen.add((route, sentence))
+            continue
+        out.append(f"{address} <{tag}>: says Claude: {sentence!r}")
+    return out
 
 
 # ---------------------------------------------------------------- structure (the routes in BUILT)
@@ -680,24 +737,28 @@ def entered_notes(user_id: int) -> list[str]:
 
 
 def step_4_findings(address: str, markup: str, names: Names | None, notes: list[str],
-                    seen: set[str] | None = None) -> list[str]:
-    """T3's step 4 checks on one page: furniture and Claude on every page, structure on the routes in BUILT."""
+                    seen: set[tuple[str, str]] | None = None, message: bool = False,
+                    route: str | None = None) -> list[str]:
+    """T3's step 4 checks on one page: furniture and Claude on every page, structure on the routes in BUILT.
+    `message`: the page is the message template. `route`: the page a form was sent back to, when the
+    address is the one it was posted to."""
     dom = parse(markup)
-    out = furniture_findings(address, markup, names, dom) + claude_findings(address, markup, seen)
-    if route_of(address) in BUILT:
+    out = (furniture_findings(address, markup, names, dom, message, route)
+           + claude_findings(address, markup, seen, route))
+    if not message and (route or route_of(address)) in BUILT:
         out += structure_findings(address, markup, notes, dom)
     return out
 
 
 # ---------------------------------------------------------------- the test
 
-# The skipped routes that still say Claude, by account, gathered as the sweep runs.
-CLAUDE_SEEN: dict[str, set[str]] = {}
+# The skipped sentences each route still says, by account, gathered as the sweep runs.
+CLAUDE_SEEN: dict[str, set[tuple[str, str]]] = {}
 
 
 @pytest.mark.parametrize("account", sorted(ACCOUNTS))
 def test_every_page_passes_the_page_rules(client, account):
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     out = client.get("/")
     assert out.status_code == 200
     findings = page_findings("/", out.text, [], None) + step_4_findings("/", out.text, None, [], seen)
@@ -718,17 +779,27 @@ def test_every_page_passes_the_page_rules(client, account):
             findings += page_findings(path, r.text, entered, user_id)
             findings += step_4_findings(path, r.text, names, notes, seen)
     assert rendered >= 12
+    if account == "edge":  # far_days: a day after today, and a day in another year
+        days = [date.fromisoformat(a.split("/")[2]) for a in get_paths(user_id)["/day/{date}"] if "?" not in a]
+        assert any(d > names.today for d in days) and any(d.year != names.today.year for d in days), days
     assert not findings, "\n".join(findings)
     CLAUDE_SEEN[account] = seen
 
 
 def test_no_claude_skip_outlives_its_page():
-    """Each line of CLAUDE_SKIPS is still needed on at least one account: the pass that rebuilds a page
-    deletes its line. Runs after the sweep above, on what it gathered."""
+    """Each sentence in CLAUDE_SKIPS is still said on its route, on at least one account: the pass that
+    rebuilds a page deletes its sentences. Runs after the sweep above, on what it gathered: run the whole
+    file, since alone it skips."""
     if set(CLAUDE_SEEN) != set(ACCOUNTS):
         pytest.skip("needs the sweep on all three accounts in the same run")
     still = set().union(*CLAUDE_SEEN.values())
-    assert not set(CLAUDE_SKIPS) - still, f"no page needs these skips now: {set(CLAUDE_SKIPS) - still}"
+    listed = {(route, s) for route, sentences in CLAUDE_SKIPS.items() for s in sentences}
+    assert not listed - still, f"no page says these now: {sorted(listed - still)}"
+    assert all(CLAUDE_SKIPS.values()), "a route with no sentence left: delete its line"
+
+
+def test_no_rebuilt_route_keeps_a_claude_skip():
+    assert not BUILT & set(CLAUDE_SKIPS), BUILT & set(CLAUDE_SKIPS)
 
 
 # ---------------------------------------------------------------- the checks themselves
@@ -786,8 +857,18 @@ def test_route_of_names_the_route_an_address_renders():
     ("/settings/delete", "Delete my account · Spotter"), ("/day/abc", "Not found · Spotter"),
 ])
 def test_the_title_is_section_ls(address, title):
-    status = 404 if address == "/day/abc" else 200
-    assert furniture_findings(address, HEAD.format(title=title, body=""), NAMES, status=status) == []
+    message = address == "/day/abc"  # a 404: the message template, titled by its h1
+    assert furniture_findings(address, HEAD.format(title=title, body=""), NAMES, message=message) == []
+
+
+def test_a_form_sent_back_with_its_error_keeps_its_pages_title():
+    page = HEAD.format(title="Today · Spotter", body="").replace("<h1>Not found</h1>", "<h1>Today, Wednesday</h1>")
+    assert furniture_findings("/day/2026-11-11/weigh-in", page, NAMES, route="/day/{date}") == []
+    assert furniture_findings("/settings/targets", page.replace("Today ·", "Settings ·"), NAMES,
+                              route="/settings") == []
+    assert furniture_findings("/day/2026-11-11/weigh-in", page.replace("<title>Today", "<title>Today, Wednesday"),
+                              NAMES, route="/day/{date}")
+    assert furniture_findings("/day/2026-11-11", page.replace("<title>Today", "<title>Not saved"), NAMES)
 
 
 @pytest.mark.parametrize("address, title", [
@@ -820,8 +901,14 @@ def test_claude_is_said_only_in_the_landings_list_of_assistants():
     assert claude_hits("/goals", '<a aria-label="Ask Claude" href="/">x</a>')
     assert claude_hits("/goals", "<head><title>Claude · Spotter</title></head>")
     assert claude_hits("/goals", '<span class="tag tag-claude_estimate">estimate</span>') == []
-    assert claude_findings("/goals?saved=goal", "<p>Ask Claude.</p>") == []  # skipped until its pass
-    assert claude_findings("/privacy", "<p>Ask Claude.</p>")
+    # A skip covers its own sentences on its own route, and nothing else.
+    route, sentence = next((r, s[0]) for r, s in CLAUDE_SKIPS.items() if s and r != "/")
+    address = route.replace("{date}", "2026-11-11").replace("{lift}", "back-squat") + "?saved=goal"
+    address = address.replace("{kind}/{entry_id}", "bodyweight/1")
+    seen: set[tuple[str, str]] = set()
+    assert claude_findings(address, f"<p>{sentence}</p>", seen) == [] and seen == {(route, sentence)}
+    assert claude_findings(address, f"<p>{sentence} Ask Claude.</p>")  # a new sentence on a skipped page
+    assert claude_findings("/privacy", f"<p>{sentence}</p>")  # the sentence on another route
 
 
 def test_the_structure_checks_find_what_they_name():
@@ -971,7 +1058,7 @@ def error_page_findings(page: Rendered) -> list[str]:
     r = page.response
     entered = entered_text(page.user_id) if page.user_id is not None else []
     return (page_findings(page.address, r.text, entered, page.user_id)
-            + furniture_findings(page.address, r.text, None, status=r.status_code, message=True)
+            + furniture_findings(page.address, r.text, None, message=True)
             + claude_findings(page.address, r.text))
 
 

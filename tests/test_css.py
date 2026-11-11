@@ -784,23 +784,127 @@ def test_chart_text_shows_at_11_to_14_px_at_every_width(css, chart):
     assert all(11 <= s <= 14 for s in sizes.values()), {v: s for v, s in sizes.items() if not 11 <= s <= 14}
 
 
-PHONE_CAPS = {"svg.chart": 336.0, "svg.chart.small": 149.0}
+PHONE_CAPS = {"svg": "100%", "svg.chart": "336px", "svg.chart.small": "149px"}  # with the reset img, svg
 # The six named contexts: each sets its own cap from 960 px up (the sheet's is none: 560 px at most).
-NAMED_CAPS = {"#bodyweight-chart": 386.0, "#progress-chart": 690.0, "li.goal svg.chart": 373.0,
-              "#chart-pace": 403.0, ".glance svg.chart.small": 261.0, ".sheet svg.chart": float("inf")}
+NAMED_CAPS = {"#bodyweight-chart": "386px", "#progress-chart": "690px", "li.goal svg.chart": "373px",
+              "#chart-pace": "403px", ".glance svg.chart.small": "261px", ".sheet svg.chart": "none"}
 
 
-def _caps(css: Sheet, context) -> dict[str, float]:
-    return {s: _cap(css, s, context) for r in css.rules if r.context == context and r.get("max-width")
-            for s in r.selectors if "svg.chart" in s or s.startswith("#")}
+# A selector that can size a chart: one naming svg, the class chart (not chart-card), or a chart's id.
+CHART_SELECTOR = re.compile(r"\bsvg\b|\.chart(?![\w-])|#[\w-]*chart\b")
+
+
+def _caps(css: Sheet, context) -> dict[str, str]:
+    """Every max-width a chart selector sets in this context. None of them may be !important."""
+    out = {}
+    for r in css.rules:
+        if r.context != context:
+            continue
+        for prop, value, important in r.decls:
+            if prop != "max-width" or not any(CHART_SELECTOR.search(s) for s in r.selectors):
+                continue
+            assert not important, f"{r.selector} sets an !important max-width"
+            out.update({s: value for s in r.selectors if CHART_SELECTOR.search(s)})
+    return out
 
 
 def test_a_chart_outside_the_named_contexts_keeps_the_phone_cap_on_a_laptop(css):
     """From 960 px up only the six named contexts change a chart's cap, so a chart placed anywhere else
     keeps the base rule's phone cap: drawn as at 959 px, where the chart text test holds it."""
-    assert {s: c for s, c in _caps(css, ()).items() if s in PHONE_CAPS} == PHONE_CAPS
+    assert _caps(css, ()) == PHONE_CAPS
     laptop = _caps(css, (LAPTOP,))
     assert laptop == NAMED_CAPS, laptop
+
+
+# ---------------------------------------------------------------- which cap a chart gets, by the cascade
+
+_COMPOUND = re.compile(r"([a-z][\w-]*)?((?:[.#][\w-]+)*)")
+
+
+def _compound(text: str):
+    """(tag, ids, classes) for a simple compound such as svg.chart.small. A pseudo-class, an attribute or a
+    combinator is not modelled: such a selector never matches here."""
+    m = _COMPOUND.fullmatch(text)
+    if not m or not text:
+        return None
+    parts = re.findall(r"([.#])([\w-]+)", m.group(2))
+    return m.group(1), {v for k, v in parts if k == "#"}, {v for k, v in parts if k == "."}
+
+
+def _fits(compound, element) -> bool:
+    tag, ids, classes = compound
+    return (not tag or tag == element[0]) and ids <= element[1] and classes <= element[2]
+
+
+def _matches(selector: str, path: list) -> bool:
+    """Does a descendant selector match the last element of `path` (root first)?"""
+    compounds = [_compound(c) for c in selector.split()]
+    if not compounds or None in compounds or not _fits(compounds[-1], path[-1]):
+        return False
+    n = len(path) - 2
+    for compound in reversed(compounds[:-1]):
+        while n >= 0 and not _fits(compound, path[n]):
+            n -= 1
+        if n < 0:
+            return False
+        n -= 1
+    return True
+
+
+def _specificity(selector: str) -> tuple[int, int, int]:
+    compounds = [_compound(c) for c in selector.split()]
+    return (sum(len(c[1]) for c in compounds), sum(len(c[2]) for c in compounds),
+            sum(1 for c in compounds if c[0]))
+
+
+def cap_of(css: Sheet, path: list, laptop: bool) -> str:
+    """The max-width the cascade gives the last element of `path`: the most specific matching rule, the
+    later one on a tie, from the top level and, from 960 px up, the laptop block."""
+    contexts = [(), (LAPTOP,)] if laptop else [()]
+    best = None
+    for order, rule in enumerate(css.rules):
+        if rule.context not in contexts or rule.get("max-width") is None:
+            continue
+        for selector in rule.selectors:
+            if _matches(selector, path):
+                key = (_specificity(selector), order)
+                if best is None or key > best[0]:
+                    best = (key, rule.get("max-width"))
+    return best[1] if best else "none"
+
+
+def _el(tag: str, *classes: str, id_: str = "") -> tuple:
+    return (tag, {id_} if id_ else set(), set(classes))
+
+
+# (where the chart sits, root first) -> (its cap below 960 px, its cap from 960 px up)
+PLACED = {
+    "a chart in a plain card": ([_el("div", "card"), _el("svg", "chart")], ("336px", "336px")),
+    "a small chart in a plain card": ([_el("div", "card"), _el("svg", "chart", "small")], ("149px", "149px")),
+    "a chart in a sheet": ([_el("div", "sheet"), _el("svg", "chart")], ("336px", "none")),
+    "a small chart in a sheet": ([_el("div", "sheet"), _el("svg", "chart", "small")], ("149px", "none")),
+    "the Today pair": ([_el("div", "glance"), _el("svg", "chart", "small")], ("149px", "261px")),
+    "a goal chart": ([_el("li", "goal"), _el("svg", "chart")], ("336px", "373px")),
+    "the body weight chart": ([_el("div", "bw-card"), _el("svg", "chart", id_="bodyweight-chart")],
+                              ("336px", "386px")),
+    "the lift chart": ([_el("div", "chart-card"), _el("svg", "chart", id_="progress-chart")], ("336px", "690px")),
+    "the pace chart": ([_el("div", "pace-card"), _el("svg", "chart", id_="chart-pace")], ("336px", "403px")),
+}
+
+
+@pytest.mark.parametrize("place", sorted(PLACED))
+def test_each_chart_gets_its_cap_by_the_cascade(css, place):
+    """The tie included: .sheet svg.chart and svg.chart.small are both (0,2,1), and the laptop rule comes
+    later, so a small chart in a sheet has no cap from 960 px up, as before."""
+    path, (phone, laptop) = PLACED[place]
+    assert (cap_of(css, path, False), cap_of(css, path, True)) == (phone, laptop)
+
+
+def test_the_cascade_model_reads_selectors_as_a_browser_would():
+    assert _matches("li.goal svg.chart", [_el("ul"), _el("li", "goal"), _el("div"), _el("svg", "chart")])
+    assert not _matches("li.goal svg.chart", [_el("li"), _el("svg", "chart")])
+    assert not _matches(".sheet svg.chart:not(.small)", [_el("div", "sheet"), _el("svg", "chart")])
+    assert _specificity("#x svg.chart") == (1, 1, 1) and _specificity(".glance svg.chart.small") == (0, 3, 1)
 
 
 def test_charts_size_their_margins_for_the_stylesheets_phone_text(css):

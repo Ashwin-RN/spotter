@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -27,8 +28,8 @@ import pytest
 from app import services, web
 from app.models import Bodyweight, SavedFood
 
-from .test_pages_text import (ACCOUNTS, BUILT, ERROR_PAGES, Node, _ids, get_paths, parse, render_error_page,
-                              route_of)
+from .test_pages_text import (ACCOUNTS, BUILT, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes, get_paths,
+                              names_of, parse, render_error_page, route_of, step_4_findings)
 from .test_web import client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
 
 STATIC = Path(web.HERE) / "static"
@@ -103,10 +104,11 @@ LOADS = {("script", "src"), ("link", "href"), ("img", "src"), ("img", "srcset"),
 _SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:", re.I)
 
 
-def outside(value: str) -> bool:
-    """True when an address names another site (a scheme, or //host)."""
-    first = value.strip().split(",")[0].strip()
-    return bool(_SCHEME.match(first)) or first.startswith("//")
+def outside(value: str, srcset: bool = False) -> bool:
+    """True when an address names another site (a scheme, or //host). A srcset is a comma-separated list of
+    candidates, each an address and a size: every candidate is read."""
+    candidates = [c.split()[0] for c in value.split(",") if c.strip()] if srcset else [value.strip()]
+    return any(_SCHEME.match(c) or c.startswith("//") for c in candidates)
 
 
 def resource_findings(s: Seen) -> list[str]:
@@ -121,7 +123,7 @@ def resource_findings(s: Seen) -> list[str]:
                 out.append(f"an inline handler {name}= on <{node.tag}>")
             if re.match(r"\s*data:", value, re.I) or re.search(r"url\(\s*['\"]?\s*data:", value, re.I):
                 out.append(f"a data: URL in {name}= on <{node.tag}>")
-            if ((node.tag, name) in LOADS or name.endswith(":href")) and outside(value):
+            if ((node.tag, name) in LOADS or name.endswith(":href")) and outside(value, name == "srcset"):
                 out.append(f"an outside resource {name}={value!r} on <{node.tag}>")
     return out
 
@@ -137,18 +139,33 @@ def script_findings(s: Seen) -> list[str]:
     return out
 
 
+# The head, element for element: the charset, viewport and referrer metas, the two dark-only metas (line
+# 984), the title, the three favicon links (lines 1938 to 1940) and the one stylesheet link (section H), and
+# nothing else. The landing's link-preview tags join it in the landing's own pass.
+HEAD = sorted([("meta", (("charset", "utf-8"),)),
+               ("meta", (("content", "width=device-width, initial-scale=1, viewport-fit=cover"), ("name", "viewport"))),
+               ("meta", (("content", "no-referrer"), ("name", "referrer"))),
+               ("meta", (("content", "dark"), ("name", "color-scheme"))),
+               ("meta", (("content", "#000000"), ("name", "theme-color"))),
+               ("title", ()),
+               ("link", (("href", "STYLESHEET"), ("rel", "stylesheet"))),
+               *(("link", tuple(sorted(link.items()))) for link in FAVICON_LINKS)])
+_STYLESHEET = re.compile(r"/static/style\.css(\?v=[0-9a-f]{12})?")
+
+
 def head_findings(s: Seen) -> list[str]:
-    """Dark only, and the one stylesheet linked once with its version query (section H)."""
-    head = next(iter(s.dom.find_all("head")), None)
-    if head is None:
-        return ["no head"]
-    metas = [n.attrs for n in head.elements() if n.tag == "meta"]
-    out = [f"the head lacks {m}" for m in ({"name": "color-scheme", "content": "dark"},
-                                          {"name": "theme-color", "content": "#000000"}) if m not in metas]
-    sheets = [n.attrs.get("href", "") for n in s.dom.find_all("link") if n.attrs.get("rel") == "stylesheet"]
-    if len(sheets) != 1 or not re.fullmatch(r"/static/style\.css(\?v=[0-9a-f]{12})?", sheets[0]):
-        out.append(f"the stylesheet links are {sheets}")
-    return out
+    """The head holds exactly HEAD: dark only, the favicon set, and the one stylesheet linked once with its
+    version query (section H)."""
+    heads = s.dom.find_all("head")
+    if len(heads) != 1:
+        return [f"{len(heads)} heads"]
+    got = []
+    for n in heads[0].elements():
+        attrs = dict(n.attrs)
+        if n.tag == "link" and attrs.get("rel") == "stylesheet" and _STYLESHEET.fullmatch(attrs.get("href", "")):
+            attrs["href"] = "STYLESHEET"
+        got.append((n.tag, tuple(sorted(attrs.items()))))
+    return [] if sorted(got) == HEAD else [f"the head holds {sorted(got)}, not {HEAD}"]
 
 
 def _tab_shape(node: Node) -> tuple:
@@ -168,17 +185,20 @@ def nav_findings(s: Seen) -> list[str]:
             out.append("a signed-out page carries the tab bar")
         if len(outs) != 1:
             return out + [f"{len(outs)} header.top-out"]
-        links = [(a.classes, a.attrs.get("href"), a.text()) for a in outs[0].find_all("a")]
-        want = [(["brand"], "/", "Spotter")] + ([(["plain-link"], "/sign-in", "Sign in")] if s.web_ready else [])
-        if links != want:
-            out.append(f"the signed-out header holds {links}, not {want}")
+        got = [_element(n) for n in outs[0].elements()]
+        want = [BRAND] + ([("a", {"class": "plain-link", "href": "/sign-in"}, "Sign in")] if s.web_ready else [])
+        if got != want:
+            out.append(f"the signed-out header holds {got}, not {want}")
         return out
     if outs or len(tops) != 1:
         return out + [f"{len(tops)} header.top and {len(outs)} header.top-out on a signed-in page"]
     top = tops[0]
+    # The top bar, child for child: the brand, the tab bar (named, never hidden) and the Sign out form.
+    children = [(n.tag, n.attrs) for n in top.elements()]
+    if children[:1] != [BRAND[:2]] or (top.elements() and top.elements()[0].text() != BRAND[2]) or \
+            children[1:] != [("nav", NAV), ("form", SIGN_OUT)]:
+        out.append(f"the top bar holds {[_element(n) for n in top.elements()]}")
     navs = top.find_all("nav", "tabs")
-    if [a.attrs.get("href") for a in top.find_all("a", "brand")] != ["/"]:
-        out.append("the top bar has no brand linking to /")
     if len(navs) != 1:
         return out + [f"{len(navs)} nav.tabs in the top bar"]
     got = [_tab_shape(a) for a in navs[0].elements()]
@@ -193,12 +213,22 @@ def nav_findings(s: Seen) -> list[str]:
     forms = top.find_all("form", "sign-out")
     if len(forms) != 1 or forms[0].attrs.get("method") != "post" or forms[0].attrs.get("action") != "/sign-out":
         return out + ["the top bar has no Sign out form posting to /sign-out"]
-    tokens = [i.attrs.get("value") for i in forms[0].find_all("input") if i.attrs.get("name") == "csrf_token"]
-    if len(tokens) != 1 or not tokens[0]:
-        out.append("the Sign out form carries no CSRF token")
+    inside = forms[0].elements()
+    if [(n.tag, n.attrs.get("type"), n.attrs.get("name")) for n in inside] != \
+            [("input", "hidden", "csrf_token"), ("button", None, None)] or not inside[0].attrs.get("value"):
+        out.append("the Sign out form is not its CSRF field and its button")
     if [b.text() for b in forms[0].find_all("button")] != ["Sign out"]:
         out.append("the Sign out form has no Sign out button")
     return out
+
+
+BRAND = ("a", {"class": "brand", "href": "/"}, "Spotter")
+NAV = {"class": "tabs", "aria-label": "Main"}
+SIGN_OUT = {"class": "sign-out", "method": "post", "action": "/sign-out"}
+
+
+def _element(n: Node) -> tuple:
+    return (n.tag, n.attrs, n.text())
 
 
 def main_findings(s: Seen) -> list[str]:
@@ -294,8 +324,11 @@ def table_wrap_findings(s: Seen) -> list[str]:
             if not (t.parent.tag == "div" and "table-wrap" in t.parent.classes)]
 
 
-# The inputs that take a number: every number web.page() edits, the goal form's, and any type=number.
-NUMBER_NAMES = web.NUMBER_FIELDS | {"target_value", "start_value", "distance_km", "servings", "grams"}
+# The inputs that take a number, by name, and any type=number: the day forms, the edit pages, Foods, the
+# targets, the goal form. Written out here, not read from web.py.
+NUMBER_NAMES = {"kg", "value", "kcal", "minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal",
+                "kcal_per_serving", "grams_per_serving", "calorie_target_kcal", "target_sessions_per_week",
+                "target_cardio_minutes_per_week", "target_value", "start_value", "servings", "grams"}
 
 
 def inputmode_findings(s: Seen) -> list[str]:
@@ -368,6 +401,9 @@ def sweep(client, account: str) -> list[Seen]:
     """Every page the rules read, on one account: / signed out, every GET page signed in, two 404 pages,
     and each page sent back with its form error."""
     seen = [Seen("/", client.get("/").text, signed_in=False)]
+    expired = client.post("/sign-out")  # no token: Form expired, signed out
+    assert expired.status_code == 403
+    seen.append(Seen("/sign-out", expired.text, False, message=True))
     sign_in(client)
     user = only_user()
     ACCOUNTS[account](user.id)
@@ -385,6 +421,10 @@ def sweep(client, account: str) -> list[Seen]:
         r = client.get(address)
         assert r.status_code == 404, address
         seen.append(Seen(address, r.text, True, zone_missing=zone_missing, message=True, today=today))
+    expired = client.post(f"/day/{today}/weigh-in", data={"kg": "80"})  # no token: Form expired, signed in
+    assert expired.status_code == 403
+    seen.append(Seen(f"/day/{today}/weigh-in", expired.text, True, zone_missing=zone_missing, message=True,
+                     today=today))
     for route, posts in error_posts(today, user.id).items():
         for address, data in posts:
             r = post(client, address, **data)
@@ -399,6 +439,13 @@ def test_every_page_keeps_the_frame_and_page_rules(client, account):
     seen = sweep(client, account)
     assert len(seen) >= 20
     findings = [f for s in seen for f in frame_findings(s) + page_rule_findings(s)]
+    # T3's title and Claude checks on what only this sweep reaches: the 404s, the 403s and each form sent
+    # back with its error.
+    names, notes = names_of(only_user().id), entered_notes(only_user().id)
+    for s in seen:
+        if s.message or s.posted_to:
+            findings += step_4_findings(s.address, s.markup, names, notes, message=s.message,
+                                        route=s.posted_to or None)
     assert not findings, "\n".join(findings)
 
 
@@ -424,7 +471,7 @@ def test_calm_appears_exactly_when_the_page_is_marked(client):
         return next(iter(parse(r.text).find_all("body"))).classes
 
     for address in (day, "/settings", "/goals", "/foods", "/progress", day + "?saving=1", day + "?add_more=1",
-                    day + "?Saved=1", "/goals?kinds=lift"):
+                    day + "?Saved=1", "/goals?kinds=lift", day + "?next=/x?saved=1"):
         assert "calm" not in body_classes(client.get(address)), address
     for mark in MARKS:
         for address in (f"{day}?{mark}=x", f"{day}?{mark}=", f"/goals?{mark}=lift", f"/settings?x=1&{mark}=1"):
@@ -512,10 +559,15 @@ def test_a_dirty_svg_is_caught():
 
 # ---------------------------------------------------------------- the rules themselves, on snippets
 
-PAGE = ('<!doctype html><html><head><meta name="color-scheme" content="dark"><meta name="theme-color" '
-        'content="#000000"><title>Goals · Spotter</title>'
-        '<link rel="stylesheet" href="/static/style.css?v=0123456789ab">'
-        '</head><body><header class="top"><a class="brand" href="/">Spotter</a><nav class="tabs" aria-label="Main">'
+HEAD_HTML = ('<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, '
+             'viewport-fit=cover"><meta name="referrer" content="no-referrer"><meta name="color-scheme" content="dark">'
+             '<meta name="theme-color" content="#000000"><title>Goals · Spotter</title>'
+             '<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">'
+             '<link rel="icon" href="/static/favicon.ico" sizes="32x32">'
+             '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">'
+             '<link rel="stylesheet" href="/static/style.css?v=0123456789ab">')
+PAGE = ('<!doctype html><html><head>' + HEAD_HTML + '</head><body>'
+        '<header class="top"><a class="brand" href="/">Spotter</a><nav class="tabs" aria-label="Main">'
         '<a class="tab tab-today" href="/today">Today</a><a class="tab tab-progress" href="/progress">Progress</a>'
         '<a class="tab tab-goals" href="/goals" aria-current="page">Goals</a>'
         '<a class="tab tab-settings" href="/settings">Settings</a></nav>'
@@ -556,14 +608,42 @@ def test_the_nav_rules_find_a_wrong_tab_bar():
     no_out = PAGE.replace('<form class="sign-out"', '<form class="inline"').replace("{body}", "")
     assert frame_findings(Seen("/goals", no_out, True))
     assert frame_findings(Seen("/goals", PAGE.replace("goals-page", "goals").replace("{body}", ""), True))
-    out = ('<html><head><meta name="color-scheme" content="dark"><meta name="theme-color" content="#000000">'
-           '<link rel="stylesheet" href="/static/style.css"></head><body><header class="top-out">'
+    out = ('<html><head>' + HEAD_HTML + '</head><body><header class="top-out">'
            '<a class="brand" href="/">Spotter</a><a class="plain-link" href="/sign-in">Sign in</a></header>'
            '<main class="page out landing"></main></body></html>')
     assert frame_findings(Seen("/", out, False)) == []
     assert frame_findings(Seen("/", out, False, web_ready=False))
     assert frame_findings(Seen("/", out.replace(' class="plain-link" href="/sign-in">Sign in</a>', ""), False))
     assert frame_findings(Seen("/", out.replace("</header>", '<nav class="tabs"></nav></header>'), False))
+    home = out.replace('class="brand" href="/">Spotter', 'class="brand" href="/">Home')
+    assert frame_findings(Seen("/", home, False))
+
+
+@pytest.mark.parametrize("old, new", [
+    ('<nav class="tabs" aria-label="Main">', '<nav class="tabs">'),
+    ('<nav class="tabs" aria-label="Main">', '<nav class="tabs" aria-label="Main" hidden>'),
+    ('<a class="brand" href="/">Spotter</a>', '<a class="brand" href="/">Home</a>'),
+    ('</nav>', '</nav><a class="plain-link" href="/sign-in">Sign in</a>'),
+    ('<button class="link">Sign out</button>', '<button class="link">Sign out</button><input name="x">'),
+    ('<meta charset="utf-8">', ''), ('<meta name="referrer" content="no-referrer">', ''),
+    (', viewport-fit=cover', ''), ('<meta name="theme-color" content="#000000">', ''),
+    ('<link rel="icon" href="/static/favicon.ico" sizes="32x32">',
+     '<link rel="icon" href="/static/favicon.ico" sizes="32x32">' * 2),
+    ('</head>', '<link rel="manifest" href="/static/x.webmanifest"></head>'),
+    ('<link rel="stylesheet" href="/static/style.css?v=0123456789ab">', '<link rel="stylesheet" href="/static/x.css">'),
+])
+def test_the_head_and_the_top_bar_are_exact(old, new):
+    assert frame_findings(seen()) == []
+    assert PAGE.count(old) == 1, old
+    assert frame_findings(Seen("/goals", PAGE.replace(old, new).replace("{body}", ""), True))
+
+
+def test_every_srcset_candidate_is_read():
+    assert not outside("/static/a.png 1x, /static/b.png 2x", srcset=True)
+    assert outside("/static/a.png 1x, https://example.com/b.png 2x", srcset=True)
+    assert outside("//example.com/a.png 1x", srcset=True)
+    assert frame_findings(seen('<img src="/static/a.png" srcset="/static/a.png 1x, https://example.com/b.png 2x">'))
+    assert not outside("/day/2026-11-09?a=1,2")  # a comma inside one address is not a list
 
 
 def test_calm_follows_the_address_and_the_post():
@@ -634,6 +714,11 @@ def test_a_view_can_override_its_frame_row():
     assert web.frame(_request(), "unlisted.html", 200, True, {})["main_class"] == "page"
     assert web.frame(_request("POST"), "goals.html", 400, True, {})["calm"] is True
     assert web.frame(_request(query="add="), "goals.html", 200, True, {"calm": False})["calm"] is False
+    # past needs both dates: a day page with no today in its context is not a past day.
+    on, today = date(2026, 11, 9), date(2026, 11, 11)
+    assert web.frame(_request(), "day.html", 200, True, {"on": on})["main_class"] == "page today"
+    assert web.frame(_request(), "day.html", 200, True, {"on": on, "today": today})["main_class"] == "page today past"
+    assert web.frame(_request(), "day.html", 200, True, {"on": today, "today": today})["main_class"] == "page today"
 
 
 # ---------------------------------------------------------------- the 404 and 500 pages, every message
