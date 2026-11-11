@@ -7,6 +7,8 @@ database, the user lookup and the link helper all read them). The two halves fai
 - Without the WorkOS values, the web pages say sign-in is not set up and MCP still works.
 
 The session cookie is attached only to the web routes, so /mcp and /.well-known/ never read or set it.
+Last of all, web.fallback at "/": /mcp, /.well-known and anything under them go to the MCP app as before,
+and every other path no route answered gets the designed 404 page with the page header.
 """
 
 import contextlib
@@ -16,7 +18,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
-from starlette.routing import Mount, Route
+from starlette.routing import Mount, Route, Router
 
 from app import config, web
 from app.auth import FetchJson, JwksTokenVerifier, UserinfoClient, fetch_json
@@ -82,10 +84,15 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
     problem = settings.problem
     if problem is not None:
         logging.getLogger("spotter").warning("MCP endpoint disabled: %s", problem)
+        not_configured = _not_configured(problem)
+        # What the fallback hands /mcp/... and /.well-known/... to: they answer as they did with no mount at
+        # "/", a redirect from /mcp/ to /mcp and a plain 404 for the rest.
+        mcp_off = Router(routes=[Route("/mcp", not_configured, methods=ALL_METHODS)])
         return Starlette(routes=[
             Route("/health", health),
             *web.routes(settings),
-            Route("/mcp", _not_configured(problem), methods=ALL_METHODS),
+            Route("/mcp", not_configured, methods=ALL_METHODS),
+            Mount("/", app=web.fallback(settings, mcp_off)),
         ])
 
     server = build_server(settings, JwksTokenVerifier(settings, fetch), UserinfoClient(settings, fetch))
@@ -106,8 +113,9 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
         routes=[
             Route("/health", health),
             *web.routes(settings),
-            # Last: answers /mcp and the protected-resource metadata under /.well-known/.
-            Mount("/", app=mcp_app),
+            # Last: the MCP app answers /mcp and the protected-resource metadata under /.well-known/; every
+            # other path no route answered gets the 404 page.
+            Mount("/", app=web.fallback(settings, mcp_app)),
         ],
         lifespan=lifespan,
     )

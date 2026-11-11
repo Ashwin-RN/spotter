@@ -869,7 +869,7 @@ def test_placeholder_pages_say_not_built_yet_and_never_echo_the_address(client):
     sign_in(client)
     for name in web.PLACEHOLDERS:
         r = client.get(addresses()[name])
-        assert "not built yet" in r.text and "ask Claude to read your numbers back" in r.text
+        assert "not built yet" in r.text and "ask your assistant to read your numbers back" in r.text
         assert "2026-11-09" not in r.text and "back-squat" not in r.text.lower()
     r = client.get("/day/<script>x</script>")
     assert "<script>x" not in r.text
@@ -1413,7 +1413,7 @@ def test_someone_elses_entry_is_a_404_that_leaks_nothing(client, stocked, make_u
 def test_the_weigh_in_form_logs_for_that_day(client, stocked):
     on = stocked["yesterday"]
     r = post(client, f"/day/{on}/weigh-in", kg="79.2")
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}?saved=bodyweight"
     live = [b for b in rows(Bodyweight, only_user().id) if b.deleted_at is None and b.date.isoformat() == on]
     assert [(b.kg, b.logged_by) for b in live] == [(79.2, "web")]
     assert "79.2\u00a0kg" in day_of(client, on)
@@ -1466,7 +1466,7 @@ def test_a_weigh_in_after_today_is_refused_by_date(client):
 def test_editing_a_weigh_in_moves_it_and_returns_to_its_new_day(client, stocked):
     two_days_ago = (stocked["today"] - timedelta(days=2)).isoformat()
     r = post(client, f"/entries/bodyweight/{stocked['weigh_in']}/edit", kg="77.95", date=two_days_ago)
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}?saved=bodyweight"
     row = next(b for b in rows(Bodyweight, only_user().id) if b.id == stocked["weigh_in"])
     assert (row.kg, row.date.isoformat(), row.deleted_at) == (77.95, two_days_ago, None)
     assert "77.95\u00a0kg" in day_of(client, two_days_ago) and "78.4" not in day_of(client, stocked["today"].isoformat())
@@ -1483,7 +1483,7 @@ def test_editing_a_measurement_changes_its_value(client, stocked):
 def test_editing_a_session_changes_its_notes_and_date_and_keeps_its_sets(client, stocked):
     two_days_ago = (stocked["today"] - timedelta(days=2)).isoformat()
     r = post(client, f"/entries/lift_session/{stocked['session']}/edit", notes="heavy day", date=two_days_ago)
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}?saved=lift_session"
     page = day_of(client, two_days_ago)
     assert "heavy day" in page and page.count("<td>65\u00a0kg</td>") == 3
 
@@ -1521,7 +1521,7 @@ def test_delete_then_undo_through_the_pages(client, stocked, which):
                           page, re.S).group(1)
     token = re.search(r'name="csrf_token" value="([^"]+)"', undo_form).group(1)
     back = client.post(f"/entries/{which}/{entry_id}/restore", data={"csrf_token": token})
-    assert back.status_code == 303 and back.headers["location"] == SITE + f"/day/{on}"
+    assert back.status_code == 303 and back.headers["location"] == SITE + f"/day/{on}?restored={which}"
     assert f'href="/entries/{which}/{entry_id}/edit"' in day_of(client, on)
     assert next(e.deleted_at for e in rows(model, only_user().id) if e.id == entry_id) is None
 
@@ -1594,7 +1594,7 @@ def test_settings_says_what_each_setting_allows_and_that_claude_never_gets_the_s
 def test_the_zone_save_returns_to_the_page_it_came_from(client):
     sign_in(client)
     r = post(client, "/settings", time_zone="Asia/Kolkata", next="/day/2026-11-09")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/day/2026-11-09"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/day/2026-11-09?saved=time_zone"
     assert only_user().time_zone == "Asia/Kolkata"
 
 
@@ -1963,7 +1963,7 @@ def test_the_food_form_logs_one_you_said_entry_and_leaves_the_meal_to_the_clock(
     real = services.log_food
     monkeypatch.setattr(services, "log_food", lambda *args: sent.append(args) or real(*args))
     r = post(client, f"/day/{on}/food", description="Poha", kcal="250", meal="")
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}?saved=food_entry"
     assert sent == [(only_user().id, {"entries": [{"description": "Poha", "kcal": "250"}], "date": on}, "web")]
     [entry] = rows(FoodEntry, only_user().id)
     assert (entry.description, entry.kcal, entry.source, entry.estimated, entry.logged_by) == \
@@ -2031,7 +2031,7 @@ def test_the_food_edit_page_says_a_new_kcal_is_a_number_you_said(client, fed):
 def test_editing_a_foods_kcal_makes_it_you_said(client, fed):
     dal = fed["food"][1]
     r = post(client, f"/entries/food_entry/{dal}/edit", description="Dal", kcal="150", meal="lunch", date=fed["today"])
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}?saved=food_entry"
     row = next(e for e in rows(FoodEntry, only_user().id) if e.id == dal)
     assert (row.kcal, row.source, row.estimated) == (150, "you_said", False)
     lunch = re.search(r'<h3>Lunch</h3>(.*?)</ul>', day_of(client, fed["today"]), re.S).group(1)
@@ -2252,7 +2252,7 @@ def test_the_new_forms_refuse_a_missing_csrf_token(client, path, data):
 def test_an_unchanged_food_edit_writes_nothing(client, fed):
     before = calls(only_user().id)
     r = post(client, f"/foods/{fed['roti']}/edit", serving_label="1 roti", kcal_per_serving="120", grams_per_serving="")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=unchanged"
     assert calls(only_user().id) == before
 
 
@@ -2296,7 +2296,7 @@ def test_confirm_makes_an_estimate_the_persons_number(client, fed):
     dal = fed["food"][1]
     start = len(calls(only_user().id))
     r = post(client, f"/entries/food_entry/{dal}/confirm")
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}?saved=confirmed"
     row = next(e for e in rows(FoodEntry, only_user().id) if e.id == dal)
     assert (row.kcal, row.source, row.estimated) == (180, "you_said", False)
     assert calls(only_user().id)[start:] == [("edit_entry", True, None)]
@@ -2349,3 +2349,387 @@ def test_the_rendered_confirm_form_carries_a_token_that_works(client, fed):
     r = client.post(f"/entries/food_entry/{dal}/confirm", data={"csrf_token": token})
     assert r.status_code == 303
     assert next(e.source for e in rows(FoodEntry, only_user().id) if e.id == dal) == "you_said"
+
+
+# ---------------------------------------------------------------- stage 6, step 4: the 404 and 500 pages
+
+# Section H's page header, exactly, on an https site.
+PAGE_HEADER = {"x-frame-options": "DENY", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
+               "content-security-policy": CSP, "cache-control": "no-store",
+               "strict-transport-security": "max-age=31536000"}
+# Section L's two designed pages: (h1, the message, the fix).
+NOT_FOUND = ("Page not found", "There is nothing here.", "Go back to Today and start from there.")
+PROBLEM = ("Something went wrong", "Spotter could not finish this. If you were saving something, it may not be saved.",
+           "Check the page and try again.")
+SIGNED_OUT_LINKS = [("/", "Home"), ("/sign-in", "Sign in")]
+# An address with no hex digit in it, so no stylesheet version can hold it.
+UNROUTED = "/zqwy-nowhere"
+
+
+def assert_page_header(r, hsts: bool = True) -> None:
+    for name, value in PAGE_HEADER.items():
+        want = value if hsts or name != "strict-transport-security" else None
+        assert r.headers.get(name) == want, (name, r.headers.get(name))
+
+
+def card_links(page: str) -> list[tuple[str, str]]:
+    """The message card's links: (address, words), in order."""
+    actions = re.search(r'<div class="form-actions">(.*?)</div>', page, re.S).group(1)
+    return re.findall(r'<a class="button (?:primary|secondary)" href="([^"]+)">([^<]+)</a>', actions)
+
+
+def assert_designed(r, status: int, words: tuple[str, str, str], links_: list[tuple[str, str]],
+                    signed_in: bool, hsts: bool = True) -> None:
+    """The designed page: its status, the page header, one card with the h1, the message and the fix, its
+    links, its title, and the frame it was drawn in."""
+    h1, said, fix = words
+    assert r.status_code == status
+    assert_page_header(r, hsts)
+    main = re.split(r"<main\b[^>]*>", r.text)[1].split("</main>")[0]
+    assert main.count('<div class="card">') == 1
+    assert f'<h1 class="title">{h1}</h1>' in main and f"<p>{said}</p>" in main
+    assert f'<p class="muted">{fix}</p>' in main
+    assert card_links(r.text) == links_
+    assert f"<title>{h1} · Spotter</title>" in r.text
+    assert ('<header class="top">' in r.text) is signed_in
+    assert ('<header class="top-out">' in r.text) is not signed_in
+
+
+@pytest.mark.parametrize("method", ["GET", "POST", "PUT", "DELETE"])
+def test_an_unrouted_path_is_the_designed_404_signed_out_with_the_page_header(client, method):
+    r = client.request(method, UNROUTED)
+    assert_designed(r, 404, NOT_FOUND, SIGNED_OUT_LINKS, signed_in=False)
+    assert "zqwy" not in r.text and "set-cookie" not in r.headers
+    # Signed in it is the same page: an unrouted path carries no session, and leaves the session alone.
+    sign_in(client)
+    r = client.request(method, UNROUTED + "/deeper")
+    assert_designed(r, 404, NOT_FOUND, SIGNED_OUT_LINKS, signed_in=False)
+    assert "zqwy" not in r.text and "deeper" not in r.text and "set-cookie" not in r.headers
+    assert client.get("/settings").status_code == 200
+
+
+def test_a_wrong_method_on_a_page_is_the_404_page(client):
+    for method, path in (("GET", "/sign-out"), ("GET", "/settings/sample"), ("POST", "/progress")):
+        assert_designed(client.request(method, path), 404, NOT_FOUND, SIGNED_OUT_LINKS, signed_in=False)
+
+
+def test_without_web_sign_in_the_unrouted_404_offers_home_only(web_client):
+    client = web_client(workos_client_id=None, workos_api_key=None)
+    assert_designed(client.get(UNROUTED), 404, NOT_FOUND, [("/", "Home")], signed_in=False)
+
+
+def test_a_routed_404_keeps_the_signed_in_frame(client):
+    sign_in(client)
+    for r in (client.get("/day/zqwy"), post(client, "/entries/bodyweight/99999/delete")):
+        assert_designed(r, 404, NOT_FOUND, [("/today", "Today")], signed_in=True)
+        assert "zqwy" not in r.text and "99999" not in r.text
+
+
+def boom(*args, **kwargs):
+    raise RuntimeError("zqwy boom")
+
+
+def test_a_crash_is_the_designed_500_signed_out_and_the_session_survives(web_client, monkeypatch):
+    client = web_client(raise_server_exceptions=False)
+    sign_in(client)
+    monkeypatch.setattr(services, "get_progress", boom)
+    r = client.get("/progress")
+    assert_designed(r, 500, PROBLEM, [("/", "Home")], signed_in=False)
+    assert "zqwy" not in r.text and "RuntimeError" not in r.text and "Traceback" not in r.text
+    assert "set-cookie" not in r.headers and 'name="csrf_token"' not in r.text
+    # The session is as it was: still signed in, with the same token.
+    token = session_of(client)["csrf"]
+    after = client.get("/settings")
+    assert after.status_code == 200 and '<header class="top">' in after.text and session_of(client)["csrf"] == token
+    # A crashing write is the same page.
+    monkeypatch.setattr(services, "log_bodyweight", boom)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/weigh-in", kg="80")
+    assert_designed(r, 500, PROBLEM, [("/", "Home")], signed_in=False)
+    assert client.get("/settings").status_code == 200
+
+
+def test_a_crash_is_still_raised_after_the_page(client, monkeypatch):
+    sign_in(client)
+    monkeypatch.setattr(services, "get_progress", boom)
+    with pytest.raises(RuntimeError, match="zqwy boom"):
+        client.get("/progress")
+
+
+@pytest.mark.parametrize("web_sign_in", [True, False], ids=["sign-in-on", "sign-in-off"])
+def test_a_crash_on_a_signed_out_page_is_the_500_page_too(web_client, monkeypatch, web_sign_in):
+    """Both arms of web.routes carry the 500 page: with web sign-in off there is no session middleware."""
+    client = web_client(raise_server_exceptions=False, **({} if web_sign_in else
+                                                          {"workos_client_id": None, "workos_api_key": None}))
+    monkeypatch.setattr(web, "current_user", boom)
+    assert_designed(client.get("/"), 500, PROBLEM, [("/", "Home")], signed_in=False)
+
+
+def test_a_500_page_that_cannot_be_drawn_leaves_the_plain_500(web_client, monkeypatch, logs):
+    client = web_client(raise_server_exceptions=False)
+    monkeypatch.setattr(web, "problem", boom)  # every page, the 500 page too, asks it
+    r = client.get("/")
+    assert r.status_code == 500 and r.text == "Internal Server Error"
+    assert "The 500 page could not be drawn: RuntimeError" in logs.text
+
+
+def test_a_malformed_form_is_a_400_not_the_500_page(web_client):
+    client = web_client(raise_server_exceptions=False)
+    sign_in(client)
+    r = client.post("/settings", content=b"x", headers={"content-type": "multipart/form-data"})
+    assert r.status_code == 400 and "Something went wrong" not in r.text
+
+
+def test_the_500_wrapper_lets_an_http_exception_pass_and_sends_nothing():
+    from starlette.exceptions import HTTPException
+
+    sent = []
+
+    async def raising(scope, receive, send):
+        raise HTTPException(400)
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "method": "POST", "path": "/settings", "headers": [], "query_string": b""}
+    with pytest.raises(HTTPException):
+        asyncio.run(web.PageErrors(raising)(scope, None, send))
+    assert sent == []
+
+
+def test_the_500_wrapper_sends_nothing_once_a_response_has_started():
+    sent = []
+
+    async def half(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        raise RuntimeError("zqwy late")
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""}
+    with pytest.raises(RuntimeError):
+        asyncio.run(web.PageErrors(half)(scope, None, send))
+    assert [m["type"] for m in sent] == ["http.response.start"]
+
+
+# What /mcp, /.well-known and /static answer in each create_app branch: the same as before the fallback, as
+# read on the tree before it. (method, path, status, content type, location, how the body starts)
+MCP_ON = [
+    ("GET", "/mcp", 401, "application/json", None, '{"error": "invalid_token"'),
+    ("POST", "/mcp", 401, "application/json", None, '{"error": "invalid_token"'),
+    ("GET", "/mcp/", 307, None, SITE + "/mcp", ""),
+    ("GET", "/mcp/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("POST", "/mcp/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", METADATA_PATH, 200, "application/json", None, '{"resource":'),
+    ("GET", "/.well-known/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", "/.well-known", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", "/.well-known/oauth-authorization-server", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", "/static/nope.css", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", "/static/", 404, "text/plain; charset=utf-8", None, "Not Found"),
+]
+MCP_OFF = [
+    ("GET", "/mcp", 503, "application/json", None, '{"error":"not_configured"'),
+    ("POST", "/mcp", 503, "application/json", None, '{"error":"not_configured"'),
+    ("GET", "/mcp/", 307, None, SITE + "/mcp", ""),
+    ("GET", "/mcp/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("POST", "/mcp/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", METADATA_PATH, 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", "/.well-known/x", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", "/.well-known", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", "/static/nope.css", 404, "text/plain; charset=utf-8", None, "Not Found"),
+    ("GET", "/static/", 404, "text/plain; charset=utf-8", None, "Not Found"),
+]
+
+
+def branch_client(provider, mcp: bool, raise_server_exceptions: bool = True) -> TestClient:
+    """A client on create_app's MCP branch (mcp=True) or its no-MCP branch (settings.problem set)."""
+    chosen = settings(**WEB) if mcp else Settings(None, None, database_url=settings().database_url, **WEB)
+    return TestClient(create_app(chosen, fetch=provider.fetch), base_url=SITE, follow_redirects=False,
+                      raise_server_exceptions=raise_server_exceptions)
+
+
+@pytest.mark.parametrize("mcp", [True, False], ids=["mcp-on", "mcp-off"])
+def test_mcp_well_known_and_static_answer_as_before_in_both_branches(provider, seam, mcp):
+    with branch_client(provider, mcp) as client:
+        for method, path, status, kind, where, body in MCP_ON if mcp else MCP_OFF:
+            r = client.request(method, path)
+            assert r.status_code == status, (method, path, r.status_code)
+            assert r.headers.get("content-type") == kind and r.headers.get("location") == where, (method, path)
+            assert r.text.startswith(body), (method, path, r.text[:80])
+            # Never an HTML page, and never the page header the 404 page adds.
+            assert "<html" not in r.text and "x-frame-options" not in r.headers, (method, path)
+            if path.startswith("/static"):
+                assert "cache-control" not in r.headers  # a /static 404 stays exactly as it was
+        assert client.get("/static/style.css").status_code == 200
+
+
+@pytest.mark.parametrize("mcp", [True, False], ids=["mcp-on", "mcp-off"])
+def test_an_unrouted_path_is_the_404_page_in_both_branches(provider, seam, mcp):
+    offered = SIGNED_OUT_LINKS if mcp else [("/", "Home")]  # without MCP settings there is no web sign-in
+    with branch_client(provider, mcp) as client:
+        for method, path in (("GET", UNROUTED), ("POST", UNROUTED), ("GET", "/mcpx"), ("GET", "/.well-knownx")):
+            # Without MCP settings there is no site address, so no HSTS, as on every page there.
+            assert_designed(client.request(method, path), 404, NOT_FOUND, offered, signed_in=False, hsts=mcp)
+
+
+@pytest.mark.parametrize("mcp", [True, False], ids=["mcp-on", "mcp-off"])
+def test_a_crash_is_the_500_page_in_both_branches(provider, seam, monkeypatch, mcp):
+    monkeypatch.setattr(web, "current_user", boom)
+    with branch_client(provider, mcp, raise_server_exceptions=False) as client:
+        assert_designed(client.get("/"), 500, PROBLEM, [("/", "Home")], signed_in=False, hsts=mcp)
+
+
+def test_mcp_without_a_token_is_still_401_and_the_metadata_still_answers(client):
+    r = rpc(client, "initialize")
+    assert r.status_code == 401 and "resource_metadata=" in r.headers["www-authenticate"]
+    meta = client.get(METADATA_PATH)
+    assert meta.status_code == 200 and meta.json()["resource"] == RESOURCE
+
+
+def test_the_404_page_never_repeats_the_address_or_a_query(client):
+    sign_in(client)
+    for r in (client.get(UNROUTED + "?q=zqwyx"), client.get("/day/zqwyx?saved=zqwyy"),
+              client.get("/progress/zqwyx")):
+        assert r.status_code == 404 and "zqwy" not in r.text
+        assert 'name="next"' not in r.text
+
+
+# ---------------------------------------------------------------- stage 6, step 4: every message page
+
+def test_the_not_built_yet_message_says_your_assistant(web_client, monkeypatch):
+    """The one message that named Claude, through a placeholder page switched on for the test."""
+    monkeypatch.setitem(web.PLACEHOLDERS, "zqwy", "/zqwy-placeholder")
+    client = web_client()
+    sign_in(client)
+    r = client.get("/zqwy-placeholder")
+    assert r.status_code == 200 and "Meanwhile, ask your assistant to read your numbers back." in r.text
+    assert "Claude" not in r.text
+
+
+def test_a_message_page_links_to_today_signed_in_and_home_and_sign_in_signed_out(client):
+    expired = client.post("/sign-out")  # signed out, no token
+    assert expired.status_code == 403 and card_links(expired.text) == SIGNED_OUT_LINKS
+    assert '<h1 class="title">Form expired</h1>' in expired.text
+    assert '<p class="muted">Go back, reload the page and try again.</p>' in expired.text
+    sign_in(client)
+    weigh_in = services.log_bodyweight(only_user().id, {"kg": "80"}, "claude")["id"]
+    back = post(client, f"/entries/bodyweight/{weigh_in}/restore")  # not deleted: nothing to undo
+    assert back.status_code == 409 and card_links(back.text) == [("/today", "Today")]
+    assert '<header class="top">' in back.text and '<h1 class="title">Already back</h1>' in back.text
+
+
+# ---------------------------------------------------------------- stage 6, step 4: the marks on every write
+
+def location(r) -> str:
+    assert r.status_code == 303, (r.status_code, r.text[:200])
+    return r.headers["location"]
+
+
+def test_marked_adds_one_mark_before_any_fragment():
+    assert web.marked("https://x.example/day/2026-11-09", "saved", "bodyweight") == \
+        "https://x.example/day/2026-11-09?saved=bodyweight"
+    assert web.marked("/day/2026-11-09?add=food#food", "saved", "time_zone") == \
+        "/day/2026-11-09?add=food&saved=time_zone#food"
+    assert web.marked("/day/x", "deleted", "bodyweight:5") == "/day/x?deleted=bodyweight:5"
+    assert web.marked("/day/x", "saved", "a b&c") == "/day/x?saved=a+b%26c"
+
+
+@pytest.mark.parametrize("path, data, kind", [
+    ("weigh-in", {"kg": "79.2"}, "bodyweight"),
+    ("measurement", {"kind": "waist", "value": "80"}, "measurement"),
+    ("food", {"description": "Poha", "kcal": "250"}, "food_entry"),
+    ("cardio", {"exercise": "Outdoor Walk", "minutes": "30"}, "cardio_entry"),
+])
+def test_each_day_write_is_marked_saved_with_its_kind_and_a_duplicate_is_not(client, path, data, kind):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    assert location(post(client, f"/day/{on}/{path}", **data)) == SITE + f"/day/{on}?saved={kind}"
+    # The same again within minutes is a duplicate: nothing is written, so it is never marked saved.
+    assert location(post(client, f"/day/{on}/{path}", **data)) == SITE + f"/day/{on}?saved=unchanged"
+
+
+def test_an_edit_is_marked_with_its_kind_and_an_unchanged_one_is_not(client, stocked):
+    on = stocked["today"].isoformat()
+    edit = f"/entries/measurement/{stocked['measurements'][0]}/edit"
+    assert location(post(client, edit, value="83", date=on)) == SITE + f"/day/{on}?saved=measurement"
+    assert location(post(client, edit, value="83", date=on)) == SITE + f"/day/{on}?saved=unchanged"
+
+
+def test_an_edit_the_service_finds_unchanged_is_not_marked_saved(client, stocked, monkeypatch):
+    on = stocked["today"].isoformat()
+    monkeypatch.setattr(services, "edit_entry",
+                        lambda *args: {"error": "nothing_to_change", "message": "x", "fix": "y"})
+    r = post(client, f"/entries/bodyweight/{stocked['weigh_in']}/edit", kg="70", date=on)
+    assert location(r) == SITE + f"/day/{on}?saved=unchanged"
+
+
+def test_confirm_is_marked_confirmed_and_a_number_already_yours_is_not(client, fed):
+    roti, dal, tea = fed["food"]
+    day = SITE + f"/day/{fed['today']}"
+    assert location(post(client, f"/entries/food_entry/{dal}/confirm")) == day + "?saved=confirmed"
+    assert location(post(client, f"/entries/food_entry/{tea}/confirm")) == day + "?saved=unchanged"
+
+
+def test_undo_is_marked_restored_with_its_kind(client, fed):
+    run = fed["run"]
+    assert location(post(client, f"/entries/cardio_entry/{run}/delete")) == \
+        SITE + f"/day/{fed['today']}?deleted=cardio_entry:{run}"
+    assert location(post(client, f"/entries/cardio_entry/{run}/restore")) == \
+        SITE + f"/day/{fed['today']}?restored=cardio_entry"
+
+
+def test_unchanged_targets_and_an_unchanged_food_are_never_marked_saved(client, fed):
+    r = post(client, "/settings/targets", calorie_target_kcal="")
+    assert location(r) == SITE + "/settings?saved=unchanged"
+    assert 'class="ok' not in client.get(location(r)).text
+    # A real change keeps its own mark and its words.
+    r = post(client, "/settings/targets", calorie_target_kcal="2000")
+    assert location(r) == SITE + "/settings?saved=targets"
+    assert '<p class="ok">Targets saved.</p>' in client.get(location(r)).text
+    r = post(client, f"/foods/{fed['roti']}/edit", serving_label="1 roti", kcal_per_serving="120")
+    assert location(r) == SITE + "/foods?saved=unchanged"
+    assert 'class="ok' not in client.get(location(r)).text
+
+
+def test_the_marks_pages_have_words_for_stay_as_they_are(client, fed):
+    assert location(post(client, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="40")) == \
+        SITE + "/foods?saved=1"
+    assert location(post(client, f"/foods/{fed['roti']}/delete")) == SITE + f"/foods?deleted={fed['roti']}"
+    assert location(post(client, f"/foods/{fed['roti']}/restore")) == SITE + "/foods?saved=1"
+    assert location(post(client, "/settings/claude-can", claude_can="read")) == SITE + "/settings?saved=claude_can"
+    assert location(post(client, "/settings", time_zone="Asia/Kolkata")) == SITE + "/settings?saved=time_zone"
+
+
+def test_the_automatic_zone_save_is_marked_time_zone_on_the_page_it_returns_to(client):
+    sign_in(client)
+    r = post(client, "/settings", time_zone="Asia/Kolkata", next="/day/2026-11-09?add=food#food")
+    assert location(r) == SITE + "/day/2026-11-09?add=food&saved=time_zone#food"
+    r = post(client, "/settings", time_zone="Asia/Kolkata", next="/progress")
+    assert location(r) == SITE + "/progress?saved=time_zone"
+    assert 'class="ok' not in client.get(location(r)).text
+
+
+@pytest.mark.parametrize("query, passed", [
+    ("saved=sample", "?saved=sample"),
+    ("deleted=sample", "?deleted=sample"),
+    ("restored=bodyweight", "?restored=bodyweight"),
+    ("deleted=bodyweight:5", "?deleted=bodyweight:5"),
+    ("restored=x&deleted=sample&saved=sample", "?saved=sample&deleted=sample&restored=x"),
+    ("add=food&kind=lift&notes=x&q=1", ""),  # only the three marks of a write go on
+    ("", ""),  # a plain visit to Today stays plain, so it is not calm
+])
+def test_today_passes_the_marks_on_to_the_day(client, query, passed):
+    sign_in(client)
+    r = client.get("/today" + ("?" + query if query else ""))
+    assert location(r) == SITE + f"/day/{today_of(only_user()).isoformat()}" + passed
+
+
+def test_sample_data_added_and_removed_land_on_the_marked_day(client):
+    sign_in(client)
+    day = SITE + f"/day/{today_of(only_user()).isoformat()}"
+    added = client.get(location(post(client, "/settings/sample")))
+    assert location(added) == day + "?saved=sample"
+    removed = client.get(location(post(client, "/settings/sample/remove")))
+    assert location(removed) == day + "?deleted=sample"
+    page = client.get(location(removed)).text
+    assert '<div class="ok undo">' not in page and "/restore" not in page  # no Undo for sample data (D15)

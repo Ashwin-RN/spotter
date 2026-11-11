@@ -1,13 +1,17 @@
 {% extends "base.html" %}
 {% block title %}{{ title }} · Spotter{% endblock %}
 {% block main %}
-<div class="card narrow">
-  <h1>{{ title }}</h1>
+<div class="card">
+  <h1 class="title">{{ title }}</h1>
   <p>{{ message }}</p>
   {% if fix %}<p class="muted">{{ fix }}</p>{% endif %}
-  <div class="actions">
-    <a href="/">Home</a>
-    {% if web_ready and not signed_in %}<a href="/sign-in">Sign in</a>{% endif %}
+  <div class="form-actions">
+    {% if signed_in and not home_only %}
+    <a class="button primary" href="/today">Today</a>
+    {% else %}
+    <a class="button primary" href="/">Home</a>
+    {% if web_ready and not home_only %}<a class="button secondary" href="/sign-in">Sign in</a>{% endif %}
+    {% endif %}
   </div>
 </div>
 {% endblock %}

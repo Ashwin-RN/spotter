@@ -25,7 +25,10 @@ Step 4 adds, on the same pages:
   says Claude carries one named skip in CLAUDE_SKIPS until its own pass rebuilds it.
 - Structure (a Notes column, the Trends table's remark column, units in headers, estimate tags in their own
   slot, no column blank in every row): checked only on the routes in BUILT. Each step 4 pass adds its own
-  route there when it rebuilds the page. The 404 and 500 pages are the next pass's.
+  route there when it rebuilds the page.
+- The 404 and 500 pages (an unrouted path, a routed 404, a forced 500) and one render of the message
+  template for each status section L lists, under the same text, furniture and Claude checks
+  (ERROR_PAGES, render_error_page).
 """
 
 from __future__ import annotations
@@ -67,6 +70,11 @@ SKIPS = (
     # Not figures: the names in the one attribution line (rule 15), "2024 Adult Compendium" and "CC BY-NC-ND 4.0".
     Skip("", tr.THOUSANDS, "2024", "a year in the Compendium's name, web.ATTRIBUTION", tag="footer"),
     Skip("", tr.TRAILING_ZERO, "4.0", "the licence's version, web.ATTRIBUTION", tag="footer"),
+    # The Not set up yet page names the setting the server's owner must fill in (web.problem), and
+    # test_web.py holds that it does. Kept as it is in pass B2, for the lead to rule on. T3 renders it at
+    # /sign-in, an address with no page of its own, so the skip excuses no other page.
+    Skip("/sign-in", tr.CODE_WORD, "WORKOS_CLIENT_ID", "web.problem, the setting to fill in", tag="p"),
+    Skip("/sign-in", tr.CODE_WORD, "WORKOS_API_KEY", "web.problem, the setting to fill in", tag="p"),
 )
 # Beyond the page surface's rules: every number on a page has a comma from 1,000 and no trailing zero
 # (contract section C, "Every number, every quantity"). A raw figure from a service trips one of them.
@@ -413,11 +421,11 @@ def names_of(user_id: int) -> Names:
     return Names(today, {web.links.slug(n): n for n in lifts}, {str(f["id"]): f["name"] for f in foods})
 
 
-def expected_title(address: str, dom: Node, names: Names | None, status: int = 200) -> str:
-    """Section L's title for the page at this address. An error or message page (status 400 or more, or no
-    route) is its h1."""
+def expected_title(address: str, dom: Node, names: Names | None, status: int = 200, message: bool = False) -> str:
+    """Section L's title for the page at this address. An error or message page (a message, status 400 or
+    more, or no route) is its h1."""
     route, parts = route_of(address), address.split("?")[0].split("/")
-    if status >= 400 or route not in ROUTES:
+    if message or status >= 400 or route not in ROUTES:
         h1 = dom.find_all("h1")
         name = h1[0].text() if h1 else "a page with no h1"
     elif route in NAMED:
@@ -437,7 +445,7 @@ def expected_title(address: str, dom: Node, names: Names | None, status: int = 2
 
 
 def furniture_findings(address: str, markup: str, names: Names | None, dom: Node | None = None,
-                       status: int = 200) -> list[str]:
+                       status: int = 200, message: bool = False) -> list[str]:
     """The head's title is the page's own, "{Page} · Spotter", and the head carries the three favicon links."""
     dom = dom or parse(markup)
     head = head_of(dom)
@@ -448,7 +456,7 @@ def furniture_findings(address: str, markup: str, names: Names | None, dom: Node
     if len(titles) != 1:
         out.append(f"{address}: {len(titles)} titles in the head")
     else:
-        title, want = titles[0].text(), expected_title(address, dom, names, status)
+        title, want = titles[0].text(), expected_title(address, dom, names, status, message)
         if title != want or not TITLE_SHAPE.fullmatch(title) or tr.check_iso_dates(title):
             out.append(f"{address}: the title is {title!r}, not {want!r}")
     links = [n.attrs for n in head.elements() if n.tag == "link"]
@@ -852,3 +860,147 @@ def test_the_structure_checks_find_what_they_name():
     assert found('<p>2,510 kcal (<span class="tag tag-estimate">estimate</span>)</p>')
     assert found('<p><span class="tag tag-claude_estimate">about</span></p>')
     assert found('<p>2,000 kcal, of which 300 kcal estimated</p>')
+
+
+# ---------------------------------------------------------------- step 4: the 404 and 500 pages, every message
+
+@dataclass
+class Rendered:
+    """One error or message page as a person gets it, and the frame it is drawn in."""
+    address: str
+    response: object
+    signed_in: bool
+    web_ready: bool = True
+    calm: bool = False  # a POST answered 400 is calm (section L, The calm page)
+    user_id: int | None = None
+
+
+# Section L's 404 and 500 pages, and one render of the message template for each status it lists:
+# case -> (status, h1).
+ERROR_PAGES = {
+    "an unrouted path": (404, "Page not found"),
+    "an unrouted post": (404, "Page not found"),
+    "a routed 404": (404, "Page not found"),
+    "a crash": (500, "Something went wrong"),
+    "form expired": (403, "Form expired"),
+    "too many changes": (429, "Too many changes"),
+    "already back": (409, "Already back"),
+    "sample already added": (409, "Already added"),
+    "sample into a full account": (409, "Not added"),
+    "not saved": (400, "Not saved"),
+    "not changed": (400, "Not changed"),
+    "not set up yet": (503, "Not set up yet"),
+    "not set up yet, no database": (503, "Not set up yet"),
+    "account deleted": (200, "Your account is deleted"),
+    "sign-in failed": (400, "Sign-in failed"),
+    "no new accounts today": (403, "No new accounts today"),
+}
+
+
+def render_error_page(case: str, web_client, seam, monkeypatch) -> Rendered:
+    """Ask the app for one of ERROR_PAGES the way a person would reach it."""
+    from .test_web import TOO_MANY, post
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("zqwy boom")
+
+    if case == "not set up yet":
+        client = web_client(workos_client_id=None, workos_api_key=None)
+        return Rendered("/sign-in", client.get("/sign-in"), False, web_ready=False)
+    if case == "no new accounts today":
+        return Rendered("/auth/callback", sign_in(web_client(signups_per_day=0)), False)
+    if case == "sign-in failed":
+        client = web_client()
+        seam.fail = True
+        return Rendered("/auth/callback", sign_in(client), False)
+    client = web_client(raise_server_exceptions=False)
+    if case == "an unrouted path":
+        return Rendered("/zqwy-nowhere", client.get("/zqwy-nowhere"), False)
+    if case == "an unrouted post":
+        return Rendered("/zqwy-nowhere", client.post("/zqwy-nowhere", data={"x": "1"}), False)
+    if case == "form expired":
+        return Rendered("/sign-out", client.post("/sign-out"), False)
+    sign_in(client)
+    user_id = only_user().id
+    _ok(services.update_settings(user_id, {"time_zone": "Asia/Kolkata"}, "web"))
+    today = today_of(only_user())
+    signed = lambda address, r, **kw: Rendered(address, r, True, user_id=user_id, **kw)  # noqa: E731
+    if case == "a routed 404":
+        return signed("/day/zqwy", client.get("/day/zqwy"))
+    if case == "not set up yet, no database":
+        from sqlalchemy.exc import OperationalError
+
+        def down(*args, **kwargs):
+            raise OperationalError("SELECT 1", {}, Exception("unable to open"))
+
+        monkeypatch.setattr(services, "get_progress", down)
+        return signed("/progress", client.get("/progress"))
+    if case == "a crash":  # the 500 page is drawn signed out
+        monkeypatch.setattr(services, "get_progress", boom)
+        return Rendered("/progress", client.get("/progress"), False, user_id=user_id)
+    if case == "too many changes":
+        monkeypatch.setattr(services, "log_bodyweight", lambda *args: dict(TOO_MANY))
+        return signed(f"/day/{today}/weigh-in", post(client, f"/day/{today}/weigh-in", kg="80"))
+    if case == "already back":
+        weigh_in = _ok(services.log_bodyweight(user_id, {"kg": "80"}, "claude"))["id"]
+        return signed("/entries/bodyweight/1/restore", post(client, f"/entries/bodyweight/{weigh_in}/restore"))
+    if case in ("sample already added", "sample into a full account"):
+        code = "already_sample" if case == "sample already added" else "not_empty"
+        monkeypatch.setattr(services, "add_sample_data",
+                            lambda *args: {"error": code, "message": "x", "fix": "y"})
+        return signed("/settings/sample", post(client, "/settings/sample"))
+    if case == "not saved":  # a weigh-in for a day after today, which has no page
+        later = (today + timedelta(days=1)).isoformat()
+        return signed(f"/day/{later}/weigh-in", post(client, f"/day/{later}/weigh-in", kg="80"), calm=True)
+    if case == "not changed":
+        goal = _ok(services.set_goal(user_id, {"kind": "bodyweight", "target_value": 70, "start_value": 80,
+                                               "target_date": (today + timedelta(days=90)).isoformat()}, "web"))
+        r = post(client, f"/goals/{goal['id']}/status", status="zqwy")
+        return signed("/goals/1/status", r, calm=True)
+    if case == "account deleted":
+        async def deleted(subject):
+            return None
+
+        monkeypatch.setattr(web.web_auth, "delete_identity", deleted)
+        return Rendered("/settings/delete", post(client, "/settings/delete"), False, user_id=None)
+    raise AssertionError(f"no way to reach {case}")
+
+
+def error_page_findings(page: Rendered) -> list[str]:
+    """T3 on an error or message page: the text rules, the furniture (its title is its h1) and Claude."""
+    r = page.response
+    entered = entered_text(page.user_id) if page.user_id is not None else []
+    return (page_findings(page.address, r.text, entered, page.user_id)
+            + furniture_findings(page.address, r.text, None, status=r.status_code, message=True)
+            + claude_findings(page.address, r.text))
+
+
+@pytest.mark.parametrize("case", sorted(ERROR_PAGES))
+def test_each_error_and_message_page_passes_the_page_rules(case, web_client, seam, monkeypatch):
+    page = render_error_page(case, web_client, seam, monkeypatch)
+    status, h1 = ERROR_PAGES[case]
+    assert page.response.status_code == status, (case, page.response.status_code, page.response.text[:300])
+    assert [n.text() for n in parse(page.response.text).find_all("h1")] == [h1]
+    findings = error_page_findings(page)
+    assert not findings, "\n".join(findings)
+
+
+def test_the_error_page_checks_find_a_wrong_title_and_claude():
+    good = ('<!doctype html><html><head><title>Page not found · Spotter</title>'
+            '<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">'
+            '<link rel="icon" href="/static/favicon.ico" sizes="32x32">'
+            '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png"></head>'
+            '<body><main class="page"><div class="card"><h1 class="title">Page not found</h1>'
+            '<p>There is nothing here.</p></div></main></body></html>')
+
+    class R:
+        status_code, text = 404, good
+
+    assert error_page_findings(Rendered("/zqwy", R(), False)) == []
+    R.text = good.replace("<title>Page not found", "<title>Not found")
+    assert error_page_findings(Rendered("/zqwy", R(), False))
+    R.text = good.replace("nothing here.", "nothing here. Ask Claude.")
+    assert error_page_findings(Rendered("/zqwy", R(), False))
+    # A message answered 200 still takes its h1 for its title, not its route's.
+    R.status_code, R.text = 200, good
+    assert error_page_findings(Rendered("/settings/delete", R(), False)) == []

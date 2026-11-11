@@ -36,6 +36,10 @@ the provider's session id (for signing out there too) and the sign-in time. No p
 goes into it. A session older than SESSION_DAYS from its sign-in is signed out, however recently the
 cookie was renewed. Every non-GET route checks the CSRF token first.
 
+A path no route answers gets the designed 404 page (fallback, mounted last by main.create_app), and a crash
+in a page route the designed 500 page (PageErrors), both with the page header. Every web write's redirect
+carries a mark (marked), so the page after it is calm.
+
 Web sign-in fails closed: without the provider values, a session key or the site address, every page
 but / says sign-in is not set up, no session is kept, and MCP is unaffected.
 
@@ -53,16 +57,17 @@ import zipfile
 from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote as url_quote, urlsplit
+from urllib.parse import quote as url_quote, urlencode, urlsplit, urlunsplit
 
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.exc import InterfaceError, OperationalError
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
-from starlette.routing import BaseRoute, Mount, Route
+from starlette.routing import BaseRoute, Mount, Route, request_response
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -308,6 +313,50 @@ class SecurityHeaders:
         await self.app(scope, receive, send_with_headers)
 
 
+class PageErrors:
+    """A crash in a page route answers with the designed 500 page, then the error is raised again, so it
+    is still logged and a test client that raises on server errors still raises. The page uses the
+    signed-out frame, since the failure may be in the session itself. It sits inside SecurityHeaders, so
+    the page carries the page header, and outside the session, so no cookie is set on the way out and the
+    session survives. An HTTPException passes untouched: a malformed form is a 400, not a 500. Nothing is
+    sent once a response has started."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def watch(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, watch)
+        except HTTPException:
+            raise
+        except Exception:
+            if not started:
+                await self.send_page(scope, receive, send)
+            raise
+
+    @staticmethod
+    async def send_page(scope: Scope, receive: Receive, send: Send) -> None:
+        # The request without its session and its state: the signed-out frame.
+        bare = {key: value for key, value in scope.items() if key not in ("session", "state")}
+        try:
+            response = server_error_page(Request(bare, receive))
+        except Exception as exc:  # noqa: BLE001 - the page could not be drawn: the plain 500 stands
+            log.warning("The 500 page could not be drawn: %s", type(exc).__name__)
+            return
+        await response(bare, receive, send)
+
+
 # ---------------------------------------------------------------- helpers
 
 class DatabaseUnavailable(Exception):
@@ -432,12 +481,31 @@ def page(request: Request, name: str, status_code: int = 200, **context) -> Resp
     return templates.TemplateResponse(request, name, values, status_code=status_code)
 
 
-def message(request: Request, title: str, text: str, fix: str | None = None, status_code: int = 200) -> Response:
-    return page(request, "message.html", status_code=status_code, title=title, message=text, fix=fix)
+def message(request: Request, title: str, text: str, fix: str | None = None, status_code: int = 200,
+            home_only: bool = False) -> Response:
+    """Every message the web sends, in one template: the title, the message, the fix, and the links (Today
+    signed in; Home, and Sign in when web sign-in is set up, signed out; Home alone with home_only)."""
+    return page(request, "message.html", status_code=status_code, title=title, message=text, fix=fix,
+                home_only=home_only)
 
 
 def redirect(address: str) -> Response:
     return RedirectResponse(address, status_code=303)
+
+
+# The mark a post that changed nothing carries: the page after it is calm, and no page has words for it, so
+# nothing says a thing was saved (section L, The calm page).
+UNCHANGED = ("saved", "unchanged")
+# The marks /today passes on to the day address.
+DAY_MARKS = ("saved", "deleted", "restored")
+
+
+def marked(address: str, mark: str, value: str) -> str:
+    """The address with one mark added to its query, before any fragment. Every web write's redirect
+    carries a mark, so the page after it is calm."""
+    parts = urlsplit(address)
+    query = "&".join(q for q in (parts.query, urlencode({mark: value}, safe=":,")) if q)
+    return urlunsplit(parts._replace(query=query))
 
 
 def sign_in_failed(request: Request) -> Response:
@@ -457,8 +525,42 @@ def refuse(request: Request) -> Response:
 
 def not_found_page(request: Request) -> Response:
     """The one 404: it never says whether the thing exists for someone else, or repeats the address."""
-    return message(request, "Not found", "There is nothing here.", "Go back to Today and start from there.",
+    return message(request, "Page not found", "There is nothing here.", "Go back to Today and start from there.",
                    status_code=404)
+
+
+def server_error_page(request: Request) -> Response:
+    """The designed 500, sent by PageErrors on a crash, in the signed-out frame."""
+    return message(request, "Something went wrong",
+                   "Spotter could not finish this. If you were saving something, it may not be saved.",
+                   "Check the page and try again.", status_code=500, home_only=True)
+
+
+async def unrouted(request: Request) -> Response:
+    """A path no route answers: the 404 page. It carries no session, so it is signed out."""
+    return not_found_page(request)
+
+
+# /mcp and /.well-known, and anything under either, are the MCP app's: never a page.
+MCP_PATHS = ("/mcp", "/.well-known")
+
+
+def mcp_path(path: str) -> bool:
+    return any(path == p or path.startswith(p + "/") for p in MCP_PATHS)
+
+
+def fallback(settings: Settings, mcp_app: ASGIApp) -> ASGIApp:
+    """Mounted at "/", last: /mcp, /.well-known and anything under them go to mcp_app untouched. Every other
+    path no route answered, by any method, gets the designed 404 with the page header."""
+    page_app = SecurityHeaders(PageErrors(request_response(unrouted)), headers_for(settings))
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and not mcp_path(scope["path"]):
+            await page_app(scope, receive, send)
+        else:
+            await mcp_app(scope, receive, send)
+
+    return app
 
 
 def too_many(request: Request, result: dict) -> Response:
@@ -658,7 +760,7 @@ async def settings_page(request: Request) -> Response:
             # The automatic save carries `next`, the page the person was on: they stay there (decision 1).
             back = local_path(form.get("next"))
             if back is not None and urlsplit(back).path != "/settings":
-                return redirect(get_settings().site_origin + back)
+                return redirect(marked(get_settings().site_origin + back, "saved", "time_zone"))
             return redirect(links.page("settings") + "?saved=time_zone")
         # The service's own text is written for Claude; the page says it in its own words.
         error = ZONE_REFUSED
@@ -704,7 +806,12 @@ async def today_page(request: Request) -> Response:
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
-    return redirect(links.page("day", date=users.today_for(user)))
+    # The marks of a write that redirected here (sample data added or removed) go on to the day.
+    address = links.page("day", date=users.today_for(user))
+    for mark in DAY_MARKS:
+        if mark in request.query_params:
+            address = marked(address, mark, request.query_params[mark])
+    return redirect(address)
 
 
 def measurement_kinds() -> list[tuple[str, str, str]]:
@@ -906,7 +1013,9 @@ async def log_on_day(request: Request, kind: str) -> Response:
         if shown.status_code == 404:  # a day that has no page (after today): say why, plainly
             return message(request, "Not saved", " ".join(errors.values()), status_code=400)
         return shown
-    return redirect(links.page("day", date=on))
+    # A duplicate wrote nothing: it is marked, but never as saved.
+    mark = UNCHANGED if result.get("duplicate") is True else ("saved", kind)
+    return redirect(marked(links.page("day", date=on), *mark))
 
 
 async def log_weigh_in(request: Request) -> Response:
@@ -961,7 +1070,7 @@ async def edit_page(request: Request) -> Response:
         form = await request.form()
         changes = edit_changes(kind, entry, form)
         if not changes:  # nothing differs: nothing to write
-            return redirect(links.page("day", date=entry["date"]))
+            return redirect(marked(links.page("day", date=entry["date"]), *UNCHANGED))
         result = await write(user, "edit_entry", services.edit_entry, user.id, kind, entry_id, changes, "web")
         if "too_many_writes" in codes(result):
             return too_many(request, result)
@@ -969,7 +1078,8 @@ async def edit_page(request: Request) -> Response:
             return not_found_page(request)
         if not failed(result) or codes(result) == {"nothing_to_change"}:
             after = result.get("after") or entry
-            return redirect(links.page("day", date=after["date"]))
+            mark = UNCHANGED if failed(result) else ("saved", kind)
+            return redirect(marked(links.page("day", date=after["date"]), *mark))
         errors, status = field_errors(kind, result, entry.get("kind") if kind == "measurement" else None), 400
         entry = {**entry, **{f: str(form.get(f) or "") for f in EDIT_FIELDS[kind]}}  # show what they typed
     activities = await cardio_names() if kind == "cardio_entry" else []
@@ -1020,7 +1130,7 @@ async def confirm_page(request: Request) -> Response:
         return not_found_page(request)
     entry = found["entry"]
     if entry.get("source") != "claude_estimate":  # nothing to confirm: already the person's or the app's number
-        return redirect(links.page("day", date=entry["date"]))
+        return redirect(marked(links.page("day", date=entry["date"]), *UNCHANGED))
     result = await write(user, "edit_entry", services.edit_entry, user.id, "food_entry", entry_id,
                          {"kcal": entry["kcal"]}, "web")
     if "too_many_writes" in codes(result):
@@ -1030,7 +1140,7 @@ async def confirm_page(request: Request) -> Response:
     if failed(result):
         return message(request, "Not confirmed", "That estimate could not be confirmed, so nothing was changed.",
                        "Go back to the day and try again, or edit the entry.", status_code=400)
-    return redirect(links.page("day", date=(result.get("after") or entry)["date"]))
+    return redirect(marked(links.page("day", date=(result.get("after") or entry)["date"]), "saved", "confirmed"))
 
 
 async def delete_page(request: Request) -> Response:
@@ -1063,7 +1173,7 @@ async def restore_page(request: Request) -> Response:
                        "Go back to the day to see it.", status_code=409)
     if failed(result):
         return not_found_page(request)
-    return redirect(links.page("day", date=result["entry"]["date"]))
+    return redirect(marked(links.page("day", date=result["entry"]["date"]), "restored", kind))
 
 
 # ---------------------------------------------------------------- Foods
@@ -1124,7 +1234,7 @@ async def food_edit_page(request: Request) -> Response:
         form = await request.form()
         data = {**food_form(form), "name": food["name"]}
         if not changed_fields(FOOD_FIELDS[1:], food, form):
-            return redirect(links.page("foods"))
+            return redirect(marked(links.page("foods"), *UNCHANGED))
         saved = await write(user, "save_food", services.save_food, user.id, data, "web")
         if "too_many_writes" in codes(saved):
             return too_many(request, saved)
@@ -1184,8 +1294,8 @@ async def targets_page(request: Request) -> Response:
         return redirect(links.page("sign_in"))
     form = await request.form()
     data = targets_from_form(form, user)
-    if not data:
-        return redirect(links.page("settings") + "?saved=targets")
+    if not data:  # nothing differs: marked, but never as saved
+        return redirect(marked(links.page("settings"), *UNCHANGED))
     result = await write(user, "update_settings", services.update_settings, user.id, data, "web")
     if "too_many_writes" in codes(result):
         return too_many(request, result)
@@ -1464,7 +1574,7 @@ async def sample_add_page(request: Request) -> Response:
     if failed(result):
         return message(request, "Not added", "Sample data could not be added, so nothing was changed.",
                        "Go back to Today and try again.", status_code=400)
-    return redirect(links.page("today"))
+    return redirect(marked(links.page("today"), "saved", "sample"))
 
 
 async def sample_remove_page(request: Request) -> Response:
@@ -1478,7 +1588,7 @@ async def sample_remove_page(request: Request) -> Response:
     if failed(result):
         return message(request, "Not removed", "The sample data could not be removed, so nothing was changed.",
                        "Go back to Settings and try again.", status_code=400)
-    return redirect(links.page("today"))
+    return redirect(marked(links.page("today"), "deleted", "sample"))
 
 
 def export_zip(files: dict) -> bytes:
@@ -1545,7 +1655,7 @@ async def placeholder(request: Request) -> Response:
     if await current_user(request) is None:
         return redirect(links.page("sign_in"))
     return message(request, "Not built yet", "This page is not built yet. What you logged is saved.",
-                   "Meanwhile, ask Claude to read your numbers back.")
+                   "Meanwhile, ask your assistant to read your numbers back.")
 
 
 # ---------------------------------------------------------------- routes
@@ -1590,7 +1700,7 @@ PAGES = [
 def routes(settings: Settings) -> list[BaseRoute]:
     """The web routes. Each carries its own middleware, so /mcp and /.well-known never see the cookie."""
     reason = problem(settings)
-    stack = [Middleware(SecurityHeaders, headers=headers_for(settings))]
+    stack = [Middleware(SecurityHeaders, headers=headers_for(settings)), Middleware(PageErrors)]
     if reason is None:
         stack.append(Middleware(SessionMiddleware, secret_key=settings.session_key,
                                 session_cookie=SESSION_COOKIE, max_age=SESSION_SECONDS,

@@ -25,9 +25,10 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from app import services, web
-from app.models import Bodyweight
+from app.models import Bodyweight, SavedFood
 
-from .test_pages_text import ACCOUNTS, BUILT, Node, _ids, get_paths, parse, route_of
+from .test_pages_text import (ACCOUNTS, BUILT, ERROR_PAGES, Node, _ids, get_paths, parse, render_error_page,
+                              route_of)
 from .test_web import client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
 
 STATIC = Path(web.HERE) / "static"
@@ -633,3 +634,111 @@ def test_a_view_can_override_its_frame_row():
     assert web.frame(_request(), "unlisted.html", 200, True, {})["main_class"] == "page"
     assert web.frame(_request("POST"), "goals.html", 400, True, {})["calm"] is True
     assert web.frame(_request(query="add="), "goals.html", 200, True, {"calm": False})["calm"] is False
+
+
+# ---------------------------------------------------------------- the 404 and 500 pages, every message
+
+@pytest.mark.parametrize("case", sorted(ERROR_PAGES))
+def test_each_error_and_message_page_keeps_the_frame(case, web_client, seam, monkeypatch):
+    """Section L's message frame on the 404 and 500 pages and on each message status: no tab, notice-page,
+    the signed-out frame for an unrouted path and a crash, calm only on a POST answered 400."""
+    page = render_error_page(case, web_client, seam, monkeypatch)
+    assert page.response.status_code == ERROR_PAGES[case][0], case
+    s = Seen(page.address, page.response.text, page.signed_in, web_ready=page.web_ready, message=True,
+             calm=page.calm)
+    findings = frame_findings(s) + page_rule_findings(s)
+    assert not findings, "\n".join(findings)
+
+
+# ---------------------------------------------------------------- the page after each write is calm
+
+def follow(client, r) -> tuple[str, str]:
+    """Follow a write's redirects (through /today) to the page a person lands on: (its address, its markup)."""
+    for _ in range(3):
+        assert r.status_code == 303, (r.status_code, r.text[:200])
+        parts = urlsplit(r.headers["location"])
+        address = parts.path + (f"?{parts.query}" if parts.query else "")
+        r = client.get(address)
+        if r.status_code == 200:
+            return address, r.text
+    raise AssertionError(f"no page after {address}")
+
+
+def test_the_page_after_every_write_is_calm(client):
+    """Every web write's redirect carries a mark (section L, The calm page), so the page it lands on is calm.
+    A write that changed nothing lands calm too, with no strip."""
+    sign_in(client)
+    user = only_user()
+    today = today_of(user).isoformat()
+    landed = []  # (the write, its page's address, its markup, whether the person had no zone yet)
+
+    def write(label: str, path: str, **data):
+        address, markup = follow(client, post(client, path, **data))
+        landed.append((label, address, markup, not only_user().time_zone))
+        return address
+
+    # Sample data first: it goes only into an empty account.
+    assert write("add sample data", "/settings/sample").endswith("?saved=sample")
+    assert write("remove sample data", "/settings/sample/remove").endswith("?deleted=sample")
+    assert write("the automatic zone save", "/settings", time_zone="Asia/Kolkata", next="/progress") == \
+        "/progress?saved=time_zone"
+    write("a weigh-in", f"/day/{today}/weigh-in", kg="80")
+    assert write("the same weigh-in again", f"/day/{today}/weigh-in", kg="80").endswith("?saved=unchanged")
+    write("a measurement", f"/day/{today}/measurement", kind="waist", value="84")
+    write("a food entry", f"/day/{today}/food", description="Poha", kcal="250")
+    write("a cardio session", f"/day/{today}/cardio", exercise="Outdoor Walk", minutes="30")
+    weigh_in = _ids(Bodyweight, user.id)[0]
+    write("an edit", f"/entries/bodyweight/{weigh_in}/edit", kg="79", date=today)
+    assert write("an unchanged edit", f"/entries/bodyweight/{weigh_in}/edit", kg="79", date=today) \
+        .endswith("?saved=unchanged")
+    estimate = services.log_food(user.id, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True}]},
+                                 "claude")["ids"][0]
+    write("confirm", f"/entries/food_entry/{estimate}/confirm")
+    assert write("confirm a number already yours", f"/entries/food_entry/{estimate}/confirm") \
+        .endswith("?saved=unchanged")
+    write("delete", f"/entries/bodyweight/{weigh_in}/delete")
+    assert write("undo", f"/entries/bodyweight/{weigh_in}/restore").endswith("?restored=bodyweight")
+    write("a saved food", "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="40")
+    food = _ids(SavedFood, user.id)[0]
+    assert write("an unchanged saved food", f"/foods/{food}/edit", serving_label="1 idli",
+                 kcal_per_serving="40") == "/foods?saved=unchanged"
+    write("delete a saved food", f"/foods/{food}/delete")
+    write("restore a saved food", f"/foods/{food}/restore")
+    write("the targets", "/settings/targets", calorie_target_kcal="2000")
+    assert write("unchanged targets", "/settings/targets", calorie_target_kcal="2000") == "/settings?saved=unchanged"
+    write("the switch", "/settings/claude-can", claude_can="read")
+    write("the zone", "/settings", time_zone="Asia/Kolkata")
+    write("a goal", "/goals", kind="bodyweight", target_value="70", target_date="2099-01-01")
+    goal = services.get_goals(user.id)["goals"][0]["goal_id"]
+    write("drop a goal", f"/goals/{goal}/status", status="dropped")
+
+    findings = []
+    for name, address, markup, zone_missing in landed:
+        s = Seen(address, markup, True, zone_missing=zone_missing, today=today)
+        if not s.expected_calm():
+            findings.append(f"{name}: {address} carries no mark")
+        findings += [f"{name}: {f}" for f in frame_findings(s)]
+        if address.endswith("saved=unchanged") and (s.dom.find_all("p", "ok") or s.dom.find_all("div", "ok")):
+            findings.append(f"{name}: {address} shows a strip though nothing changed")
+    assert len(landed) == 24
+    assert not findings, "\n".join(findings)
+
+
+@pytest.mark.parametrize("address", ["/day/{today}?saved=bodyweight", "/day/{today}?saved=confirmed",
+                                     "/day/{today}?restored=cardio_entry", "/day/{today}?saved=sample",
+                                     "/day/{today}?deleted=sample", "/day/{today}?saved=time_zone",
+                                     "/day/{today}?saved=unchanged", "/foods?saved=unchanged",
+                                     "/settings?saved=unchanged", "/goals?saved=unchanged",
+                                     "/progress?saved=time_zone"])
+def test_each_new_mark_makes_its_page_calm_with_no_strip(client, address):
+    """The marks pass B2 adds: each page is calm. The two that must never have words show no strip."""
+    sign_in(client)
+    services.update_settings(only_user().id, {"time_zone": "Asia/Kolkata"}, "web")
+    today = today_of(only_user()).isoformat()
+    address = address.format(today=today)
+    r = client.get(address)
+    assert r.status_code == 200
+    s = Seen(address, r.text, True, today=today)
+    assert s.expected_calm() and frame_findings(s) == []
+    if address.endswith(("saved=unchanged", "saved=time_zone")):
+        assert not s.dom.find_all("p", "ok") and not s.dom.find_all("div", "ok")

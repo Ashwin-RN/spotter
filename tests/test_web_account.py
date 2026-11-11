@@ -79,7 +79,7 @@ def test_sample_data_is_offered_only_on_an_empty_accounts_today(signed, sample_s
 def test_add_sample_data_goes_through_the_write_path_then_today(signed, monkeypatch):
     sent = recorder(monkeypatch, "add_sample_data", {"added": {}, "from": "", "to": "", "summary": "", "links": {}})
     r = post(signed, "/settings/sample")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/today"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/today?saved=sample"
     assert sent == [(only_user().id, "web")]
     assert calls(only_user().id) == [("add_sample_data", True, None)]
 
@@ -107,7 +107,7 @@ def test_settings_offers_remove_only_with_sample_rows(signed, sample_state):
 def test_remove_sample_data_goes_through_the_write_path_then_today(signed, monkeypatch):
     sent = recorder(monkeypatch, "remove_sample_data", {"removed": {}, "summary": "", "links": {}})
     r = post(signed, "/settings/sample/remove")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/today"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/today?deleted=sample"
     assert sent == [(only_user().id, "web")] and calls(only_user().id) == [("remove_sample_data", True, None)]
 
 
@@ -365,7 +365,7 @@ def test_delete_removes_the_sign_in_first_then_the_rows_then_the_session(signed,
     monkeypatch.setattr(services, "delete_account", contract_delete(events), raising=False)
     stock(only_user())
     r = post(signed, "/settings/delete")
-    assert r.status_code == 200 and "<h1>Your account is deleted</h1>" in r.text
+    assert r.status_code == 200 and '<h1 class="title">Your account is deleted</h1>' in r.text
     assert "Signing in again starts a new, empty account." in r.text
     assert events == ["provider", "local"] and provider_delete["subjects"] == ["user_01WEB"]
     assert user_count() == 0
