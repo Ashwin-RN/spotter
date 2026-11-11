@@ -1,6 +1,5 @@
 """app/charts.py, and the chart data app.services.progress builds for it."""
 
-import inspect
 import re
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
@@ -209,9 +208,7 @@ def test_no_bodyweight_chart_under_two_weigh_ins(make_user):
 
 def test_the_bodyweight_chart_takes_its_window(make_user):
     """Stage 6, section D: bodyweight_chart's since draws only the weigh-ins from that date on, while the
-    smoothed value stays the line over every weigh-in. Lane A adds since in its step 3 pass, after this one."""
-    if "since" not in inspect.signature(bodyweight_chart).parameters:
-        pytest.skip("progress.bodyweight_chart has no since yet: lane A, step 3")
+    smoothed value stays the line over every weigh-in."""
     user = make_user()
     for days_ago, kg in ((40, 88), (30, 87.2), (20, 86.5), (10, 86), (3, 85.5), (0, 85.5)):
         services.log_bodyweight(user.id, {"kg": kg, "date": day(user, -days_ago)}, "claude")
@@ -260,14 +257,26 @@ SMALL_UNITS = float(_CSS.value("svg.chart.small .axis", "font-size").removesuffi
 LABEL_UNITS = float(_CSS.value("svg.chart .goal-label", "font-size").removesuffix("px"))
 # A character's width in ems, by kind: near Segoe UI's own advance widths (digits 0.55).
 EMS = {"digit": 0.55, "narrow": 0.27, "upper": 0.64, "lower": 0.5}
+# M, W, m and w are far wider than the rest: at least Segoe UI's own advance widths (segoeui.ttf,
+# 0.898, 0.934, 0.861 and 0.723 em), so a label holding them is caught if it leaves the canvas.
+WIDE_EMS = {"M": 0.9, "W": 0.94, "m": 0.87, "w": 0.73}
 BOLDER = 1.04
 
 
 def em(ch: str) -> float:
+    if ch in WIDE_EMS:
+        return WIDE_EMS[ch]
     kind = ("digit" if ch.isdigit() else "narrow" if ch in " ,.:;'-" else
             "upper" if ch.isupper() else "lower")
     return EMS[kind]
 BOLD = {"value", "goal-label", "today-label", "is-today"}
+
+
+def test_the_width_estimate_is_on_the_wide_side_for_m_and_w():
+    """charts.text_width counts M, W, m and w at least as wide as the real glyphs, so a date such as
+    "Wed 27 May" or a "65 bpm" tick is given the room it takes."""
+    for ch, real in WIDE_EMS.items():
+        assert charts.text_width(ch, 1) >= real, ch
 
 
 def extent(el, small: bool) -> tuple[float, float, float, float]:
@@ -675,6 +684,10 @@ def test_ticks_are_capped_and_never_outside_the_plot():
     assert all(len(charts._ticks(lo, hi, steps)) <= charts.MOST_TICKS for lo, hi, steps in (
         (3, 600, charts.SECOND_STEPS), (1, 900, charts.LIFT_STEPS), (210, 330, charts.SECOND_STEPS),
         (0.5, 9000, charts.KG_STEPS), (20, 400, charts.WHOLE_STEPS)))
+    # Past the end of its table the step grows (times 2, 5 and 10), so the marks stay scale marks.
+    assert charts._ticks(0.5, 9000, charts.KG_STEPS) == [0, 5000, 10000]
+    assert charts._ticks(1, 900, charts.LIFT_STEPS) == [0, 500, 1000]
+    assert charts._three_ticks(40, 300, charts.KG_STEPS) == [0, 200, 400]
     walks = [{**SESSIONS[0], "date": (TODAY - timedelta(days=n)).isoformat(), "pace_min_per_km": p}
              for n, p in enumerate((3.0, 600.0, 9.0))]
     root = parsed(charts.pace_svg(walks, "Treadmill Walk", TODAY))
@@ -707,6 +720,16 @@ WIDE_LABELS = {
         TODAY),
     "eaten sheet over 10,000 kcal": lambda: charts.eaten_sheet_svg(
         [{**d, "kcal": 12345 - n} for n, d in enumerate(DAYS)], TODAY),
+    # The pace chart holds its latest date against the canvas edge itself, the tightest place a date sits.
+    "Wed 27 May at the right edge": lambda: charts.pace_svg(
+        [{**SESSIONS[0], "date": (date(2026, 5, 27) - timedelta(days=7 * n)).isoformat(),
+          "pace_min_per_km": 6.0 + n / 20} for n in range(12)], "Outdoor Run", TODAY),
+    "a 65 bpm goal": lambda: charts.goal_svg(goal_like(
+        label="Resting heart rate 55 bpm", kind="measurement", unit="bpm", start_value=65.0, target_value=55.0,
+        latest=63.0, needed_per_week=-1.0, actual_per_week=-0.5, projected_date=None, projection=None,
+        vs_plan="ahead", should_be_today=64.0,
+        path={"plan": [{"date": "2026-10-14", "value": 65.0}, {"date": "2027-01-05", "value": 55.0}],
+              "actual": [{"date": "2026-10-14", "value": 65.0}, {"date": "2026-11-10", "value": 63.0}]}), TODAY),
 }
 
 
@@ -714,6 +737,13 @@ WIDE_LABELS = {
 def test_the_widest_labels_stay_inside_their_chart(name):
     root = parsed(WIDE_LABELS[name]())  # parsed holds every label's extent inside the viewBox
     page_text_is_clean(root)
+    # The wide cases must draw the label they are for, so the canvas check is not passed by its absence.
+    if name == "Wed 27 May at the right edge":
+        bottom = [t for t in of_class(root, "text", "axis") if float(t.get("y")) == charts.PACE_H - 8]
+        held = charts.PACE_W - charts.ROOM / 2 - charts.text_width("Wed 27 May")  # against the edge
+        assert bottom[-1].text == "Wed 27 May" and float(bottom[-1].get("x")) == pytest.approx(held, abs=0.01)
+    if name == "a 65 bpm goal":
+        assert "65 bpm" in texts(root) and texts(root, "goal-label") == ["55 bpm"]
 
 
 def test_a_lift_with_one_session_writes_its_date_once():
@@ -761,6 +791,22 @@ def test_a_point_dated_after_today_counts_as_today():
     root = parsed(charts.goal_svg(goal, TODAY))
     [today_line] = of_class(root, "line", "today-line")
     assert max(_drawn_xs(root)) == float(today_line.get("x1"))
+
+
+def test_the_weight_sheet_labels_its_end_dates_by_the_drawn_date_as_the_others_do():
+    """A point dated after today is drawn at today, so the weight sheet, body weight and lift charts
+    label it with today's date. Its real date stays in the desc."""
+    weighed = [{"date": "2026-11-05", "kg": 80.0, "smoothed": 80.0}, {"date": "2026-11-12", "kg": 79.6, "smoothed": 79.8}]
+    lift = {**CHART, "points": [{"date": "2026-11-05", "value": 50.0}, {"date": "2026-11-12", "value": 52.0}],
+            "latest": {"date": "2026-11-12", "value": 52.0}, "goal": None}
+    for svg, bottom_y in ((charts.weight_sheet_svg(weighed, TODAY), charts.SHEET_WEIGHT_H - 6),
+                          (bodyweight_svg({"points": weighed, "latest": weighed[-1], "goal": None}, today=TODAY),
+                           charts.BW_H - 8),
+                          (chart_svg(lift, today=TODAY), charts.LIFT_H - 8)):
+        root = parsed(svg)
+        bottom = [t.text for t in of_class(root, "text", "axis") if float(t.get("y")) == bottom_y]
+        assert bottom == ["Thu 5 Nov", "Tue 10 Nov"], bottom
+        assert "Thu 12 Nov" in desc_of(root)
 
 
 ZERO = [{**d, "kcal": 0} for d in DAYS]

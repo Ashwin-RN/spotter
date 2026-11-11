@@ -40,8 +40,10 @@ SVG_NS = "http://www.w3.org/2000/svg"
 AXIS = 15
 SMALL_AXIS = 30
 # A character's width in ems, by kind, on the wide side of the system fonts (Segoe UI, Roboto, SF):
-# figures are tabular. Text set at 600 and up is a little wider.
-EMS = {"digit": 0.58, "narrow": 0.3, "upper": 0.68, "lower": 0.54}
+# figures are tabular. M, W, m and w are wider than other letters (Segoe UI's W is 0.934 em), so they
+# take their own width. Text set at 600 and up is a little wider.
+EMS = {"digit": 0.58, "narrow": 0.3, "upper": 0.68, "lower": 0.54, "wide": 0.94}
+WIDE = frozenset("MWmw")
 BOLDER = 1.06
 ROOM = 4  # headroom beyond a label's estimated width
 GAP = 6   # between a label and what it labels, and between two labels
@@ -83,6 +85,8 @@ def _em(ch: str) -> float:
         return EMS["digit"]
     if ch in " ,.:;'-":
         return EMS["narrow"]
+    if ch in WIDE:
+        return EMS["wide"]
     return EMS["upper"] if ch.isupper() else EMS["lower"]
 
 
@@ -417,7 +421,7 @@ def weight_sheet_svg(series: list | None, today: date, element_id: str = "chart-
     xy = [(x(d), y(v)) for d, v, _ in line]
     out = _svg_open(element_id, "Weight, last 4 weeks", _weight_desc(line, today), SHEET_W, SHEET_WEIGHT_H)
     _grid(out, ticks, labels, y, left, right)
-    _end_dates(out, (line[0][2], xy[0][0]), (line[-1][2], xy[-1][0]), SHEET_WEIGHT_H - 6, SHEET_W, today)
+    _end_dates(out, (line[0][0], xy[0][0]), (line[-1][0], xy[-1][0]), SHEET_WEIGHT_H - 6, SHEET_W, today)
     out.append(f'<path class="area" d="{_area(xy, SHEET_BOTTOM)}" />')
     out.append(f'<polyline class="series smoothed" pathLength="1" points="{_points(xy)}" />')
     out.append(f'<circle class="dot end-dot" cx="{_c(xy[-1][0])}" cy="{_c(xy[-1][1])}" r="4" />')
