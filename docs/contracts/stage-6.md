@@ -721,7 +721,7 @@ cardio.get_cardio(user_id, exercise=None)
 |---|---|---|
 | 1 | The design is agreed | Done: the owner agreed the look on 2026-11-11 |
 | 2 | The number and text rules land on today's pages: the formatter, every summary through it, the named fields rounded, D18 and the two back links, the reply paragraph, T1, T2, T3's text part, T4 and T6 to T9, the eval case written. No card or table on today's pages changes shape | Done, 2026-11-11 (commit `7acaeb1`): the suite passed plain and with `-W error` on a clean export, pushed on its own, today's pages checked live |
-| 3 | The stylesheet and its tokens, the icons, the charts, the three new reads (with E2's `weeks` and `weight`, E3's summary form and `notes`, E1's `now_basis`), the five goal fields, `lifts.history` `reps_only`, `bodyweight_chart`'s `since`; T5's stylesheet part. First, lane D's tightened text checks. Lane C's two instruction changes. Lane A's one table of measurement kind words (section D) | Done, 2026-11-11: the suite passed both ways on the combined tree. Committed locally, not pushed on its own: it goes live with step 4 |
+| 3 | The stylesheet and its tokens, the icons, the charts, the three new reads (with E2's `weeks` and `weight`, E3's summary form and `notes`, E1's `now_basis`), the five goal fields, `lifts.history` `reps_only`, `bodyweight_chart`'s `since`; T5's stylesheet part. First, lane D's tightened text checks. Lane C's two instruction changes. Lane A's one table of measurement kind words (section D) | Done, 2026-11-11 (commit `b0ac9b6`, local): the suite passed both ways on the combined tree. Not pushed on its own: it goes live with step 4. The re-check left one must-fix and six smaller items, all carried into step 4 (the table below) |
 | 4 | Every page rebuilt as section L lays it out, with D20, the Notes columns and remarks out of value cells, the Goals page's own error words, the address marks on every write, the landing page, the privacy page, the 404 and 500 pages, the favicon and the titles; T3's structure and furniture part and T5's template part (`test_page_rules.py` among it). The pages say "your assistant" where they say Claude today (section L). The Goals page takes its sentence from `plan_line` (section L, Goals). The web reads measurement names from `measurements.kind_word`. A lift with no weighted set shows its `reps_only` figure. The held small fixes below | The exit (section I) |
 
 **Held small fixes for step 4**, each found in step 2's or step 3's live read.
@@ -734,6 +734,18 @@ cardio.get_cardio(user_id, exercise=None)
 | Remove sample data shows no line after it. It shows "Sample data removed." with no Undo (D15) | Today, the strips |
 | Delete my account says "Cardio entries". It takes its words from the one table: "Cardio sessions" (`web.DELETE_COUNTS`) | Delete my account |
 | A rate line's unit words follow the number after a plain space. A no-break space goes before them (section C) | Today, Progress, Goals |
+
+**Carried into step 4 from step 3's re-check.** None is live, since step 3 is not pushed. The first is a must-fix and comes before any other page work.
+
+| Fix | Where |
+|---|---|
+| Must fix. `web._trend` passes `since`, but the body weight card kept step 2's words. With fewer than two weigh-ins in the last 28 days it says "The chart appears from the second weigh-in.", which is false for someone with older weigh-ins, and the 7-day average line goes. The card takes section L's words (Progress, body weight card), keyed on the 28 days. The 7-day average line shows whenever there is a weigh-in. A `test_web` case with weigh-ins older than 28 days holds it | Progress, body weight card (`app/web.py`, `app/templates/progress.html`) |
+| No test holds the growth of the tick steps. Pin three outputs: `_ticks(0.5, 9000, KG_STEPS) == [0, 5000, 10000]`, `_ticks(1, 900, LIFT_STEPS) == [0, 500, 1000]`, `_three_ticks(40, 300, KG_STEPS) == [0, 200, 400]` | `tests/test_charts.py` |
+| The width estimate is narrow for M, W, m and w, so a "Wed" date or a bpm tick can pass the canvas edge by about 2 units. They get their own width, about 0.9 em, in `_em`. "Wed 27 May" at the right edge and a bpm goal join `WIDE_LABELS` | `app/charts.py`, `tests/test_charts.py` |
+| From 960 px up, `svg.chart, svg.chart.small { max-width: none }` removes every cap, so a chart outside the six named contexts has none. Every chart step 4 places sits in a named context, or the rule keeps a base cap | `app/static/style.css` |
+| The weight sheet labels its end dates by their real dates, and the other charts by the drawn date. One rule for all: the drawn date | `app/charts.py` |
+| A leftover skip guard for `since`, and its docstring line, go | `tests/test_charts.py` |
+| "Sleep cannot be a goal" and "Water cannot be a goal" land on `form`, not beside the kind. They are placed by code or field, with the Goals page's other errors | Goals |
 
 **Step 2 carries only words from section L:** the "Body weight" label, D18 and the two back links.
 

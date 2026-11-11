@@ -545,3 +545,20 @@ Three reviewers: the web lane's stylesheet and charts; the plan line end to end,
 Accepted as they are, and written into the contract: a nearly flat plan line gives a very large `days_ahead`; the fastest pace and the 1 km best can name different sessions when two paces differ by less than a time's 2 decimals of a minute; a sheet's chart draws in again each time the sheet opens.
 
 Found by a reviewer, older than stage 6: `get_progress` for lifts takes 7 to 8 s on three years of daily lifting. It goes to stage 7, to be fixed only with results proven identical.
+
+### Step 3: the re-check
+
+A fourth reviewer read every fix round as new code, on a frozen copy, and broke it 42 ways. 39 breaks turned a test red. The suite passed on that copy both ways, 3,286 tests, and plain on a clean export of the commit (`b0ac9b6`).
+
+Every finding on a fix list is fixed. The re-check found seven new things. None is live, because step 3 is not pushed. All seven are carried into step 4, which rebuilds the page the first one is on.
+
+| Finding | Carried as |
+|---|---|
+| Must fix. The body weight card on Progress kept its old words after its chart took the last 28 days. Someone with weigh-ins, but fewer than two in the last 28 days, reads "The chart appears from the second weigh-in." and loses the 7-day average line | The card takes the contract's words, keyed on the 28 days, shows the average whenever there is a weigh-in, and gains a test with old weigh-ins |
+| No test holds the growth of the tick steps: the three breaks that stayed green | Three pinned outputs |
+| The width estimate is narrow for M, W, m and w: a "Wed" date or a bpm tick can pass the canvas edge by about 2 units | A width of their own, and two more wide labels in the test |
+| Four notes: a chart outside the named contexts has no laptop cap; the weight sheet labels a date after today its own way; a leftover skip guard in a chart test; the sleep and water goal errors land on the form | Fixed with the pages |
+
+Step 3 has no exit of its own. It goes live with step 4, and step 4's exit covers both.
+
+**A change of method, 2026-11-11, the owner's call.** The whole suite no longer runs on every push. A docs-only push runs the docs tests. A small change runs the tests for the files it touches. The whole suite runs on a big push, such as a stage step, or about once in every four or five pushes.
