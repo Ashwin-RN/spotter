@@ -25,26 +25,29 @@ Live: https://spotter-production-0c0f.up.railway.app
 Signing in from the assistant first also creates the account. To see it full before you log anything, press "Add sample data" on Today. One click on Settings removes it.
 
 The client must support remote MCP over streamable HTTP with OAuth sign-in.
-Today the sign-in accepts clients that identify themselves with a client ID metadata document, so clients that can only register dynamically are not supported yet.
 
 ## Your assistant
 
 | Assistant | How to add Spotter | Status |
 |---|---|---|
-| [Claude apps](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp): web, desktop, mobile | Customize, then Connectors, then "+ Add", then "Add custom connector". Enter a name and the address, then follow the form to "Add". In a chat, press "+", then Connectors, and switch Spotter on. | Tried on the web. Desktop and mobile: from its docs. Free plans get one custom connector. On Team and Enterprise an owner adds it. |
+| [Claude apps](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp): web and desktop | Customize, then Connectors, then "+ Add", then "Add custom connector". Enter a name and the address, then follow the form to "Add". In a chat, press "+", then Connectors, and switch Spotter on. | Tried on the web. Desktop: from its docs. Free plans get one custom connector. On Team and Enterprise an owner adds it. |
 | [Claude Code](https://code.claude.com/docs/en/mcp) | Run the command below, then type `/mcp`, pick spotter and sign in. | Tried |
 | [ChatGPT](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt) | On the web: Plugins, then the plus button, then "Add custom MCP server". Enter the address, set up OAuth, then "Create as a plugin". Install it, then type @ in a chat and pick it. | From its docs. Full access needs Business, Enterprise or Edu. Pro can read only. |
+| [Cursor](https://cursor.com/docs/context/mcp) | In `~/.cursor/mcp.json`, add a server under `mcpServers` with its `url` set to the address, then sign in. | From its docs |
+| [VS Code with Copilot](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) | Run "MCP: Add Server", choose HTTP, and enter the address. | From its docs |
+| [Gemini app](https://support.google.com/gemini/answer/17209137) | On the web: Settings, then "Connected Apps". Under "Custom apps", enter the address, then "Next". | From its docs. US only, 18 or over, personal account, Keep Activity on. |
+| [Mistral](https://docs.mistral.ai/le-chat/knowledge-integrations/connectors/mcp-connectors) | Connectors, then "+ Add Connector", then the "Custom MCP Connector" tab. Enter a name and the address, then "Connect". | From its docs. An administrator adds it. |
 | [goose](https://goose-docs.ai/docs/getting-started/using-extensions) | Run `goose configure`, then "Add Extension", then "Remote Extension (Streamable HTTP)", and give it the address. | From its docs |
 
 "From its docs" means the steps follow that client's own documentation and have not been tried with Spotter yet.
+
+Any other MCP client that supports remote servers with OAuth sign-in is added the same way, with the address. A client that only speaks stdio can go through the [mcp-remote](https://github.com/geelen/mcp-remote) bridge, by its README: `npx mcp-remote` followed by the address.
 
 Claude Code, run once:
 
 ```
 claude mcp add --transport http --scope user spotter https://spotter-production-0c0f.up.railway.app/mcp
 ```
-
-Claude apps: at the form's OAuth client step, keep "Use Claude's published identity". Do not pick "Register automatically".
 
 ## What to say
 
@@ -64,7 +67,7 @@ Claude apps: at the form's OAuth client step, keep "Use Claude's published ident
 - Python 3.12, Starlette, SQLAlchemy, Alembic, the `mcp` library and Postgres. Sign-in goes through an outside provider (WorkOS AuthKit) for the web and the assistant, so both reach one account.
 - Every write locks the person's row first, counts against a write limit, and passes the same checks whether it came from the assistant or a form.
 - The test suite runs plain and with warnings as errors on a clean export before every push.
-- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 17 cases, 3 runs each. At stage 5, with one case fewer, 48 of 48 runs passed, on `claude-fable-5-2`. The newest case, from stage 6, has not been run yet. The runner now pins `claude-opus-5-5`. See `docs/evals.md`.
+- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 17 cases, 3 runs each. At stage 5, with one case fewer, 48 of 48 runs passed, on `claude-fable-5-2`. The newest case, from stage 6, has not been run yet. The runner now pins `claude-opus-5-5`. The result is recorded in `BUILD_LOG.md`; how the evals run is in `docs/evals.md`.
 
 ## Read more
 
