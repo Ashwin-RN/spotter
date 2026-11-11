@@ -1186,8 +1186,9 @@ dl.facts-list dd { padding-left: 16px; color: var(--text-2); }
   .chart-card .tile-value { font-size: 30px; }
 
   /* Chart text at 11 to 14 px from 960 px up: each chart's units for its narrowest drawing (at 960 px),
-     its width capped where the text would pass 14 px. A sheet is always 560 px wide. */
-  svg.chart, svg.chart.small { max-width: none; }
+     its width capped where the text would pass 14 px. A sheet is always 560 px wide, so its chart has no
+     cap. A chart outside the named contexts keeps the phone cap, the base rule's. */
+  .sheet svg.chart { max-width: none; }
   .sheet svg.chart .axis, .sheet svg.chart .goal-label { font-size: 10px; }
   #bodyweight-chart { max-width: 386px; }
   #bodyweight-chart .axis, #bodyweight-chart .goal-label { font-size: 13px; }

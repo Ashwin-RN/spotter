@@ -361,10 +361,58 @@ async def current_user(request: Request) -> User | None:
     return user
 
 
+# The page frame (section L, Navigation and Hooks). The four tabs, in order: (tab, path, label).
+TABS = (("today", "/today", "Today"), ("progress", "/progress", "Progress"), ("goals", "/goals", "Goals"),
+        ("settings", "/settings", "Settings"))
+# Each template's hooks on main.page: (page class, width class, current tab). A view can pass page_class,
+# width_class or current_tab itself to override its row. A template not listed gets none of the three.
+FRAMES = {
+    "home.html": ("landing", None, None),
+    "day.html": ("today", None, "today"),
+    "edit.html": (None, "form-page", "today"),
+    "progress.html": ("progress", None, "progress"),
+    "progress_lift.html": ("lift-page", None, "progress"),
+    "goals.html": ("goals-page", None, "goals"),
+    "foods.html": ("foods-page", None, "settings"),
+    "food_edit.html": (None, "form-page", "settings"),
+    "settings.html": ("settings-page", None, "settings"),
+    "delete_account.html": (None, "notice-page", "settings"),
+    "message.html": (None, "notice-page", None),
+}
+# The address marks of a page after a write (section L, The calm page): any of these, whatever its value,
+# makes the page calm, and so does a form sent back with its error.
+CALM_MARKS = ("saved", "deleted", "restored", "notes", "kind", "add")
+
+
+def is_calm(request: Request, status_code: int) -> bool:
+    """True on a page after a write: a POST answered with its form error (400), or an address mark."""
+    if request.method == "POST" and status_code == 400:
+        return True
+    return any(mark in request.query_params for mark in CALM_MARKS)
+
+
+def frame(request: Request, name: str, status_code: int, signed_in: bool, context: dict) -> dict:
+    """The frame's context keys: main_class for main.page, current_tab for aria-current, calm for the body."""
+    page_class, width_class, tab = FRAMES.get(name, (None, None, None))
+    page_class = context.pop("page_class", page_class)
+    width_class = context.pop("width_class", width_class)
+    tab = context.pop("current_tab", tab)
+    calm = context.pop("calm", is_calm(request, status_code))
+    classes = ["page", page_class]
+    # A past day, or a day after today: the Today card spans both columns on a laptop.
+    if page_class == "today" and context.get("on") is not None and context.get("on") != context.get("today"):
+        classes.append("past")
+    classes += [width_class, None if signed_in else "out"]
+    return {"main_class": " ".join(c for c in classes if c), "current_tab": tab if signed_in else None,
+            "tabs": TABS, "calm": calm}
+
+
 def page(request: Request, name: str, status_code: int = 200, **context) -> Response:
     settings = get_settings()
     user = getattr(request.state, "user", None)
+    shown = frame(request, name, status_code, user is not None, context)
     values = {
+        **shown,
         "signed_in": user is not None,
         "web_ready": problem(settings) is None,
         "mcp_url": settings.mcp_resource_url if settings.configured else None,

@@ -2,30 +2,37 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#000000">
   <title>{% block title %}Spotter{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="stylesheet" href="{{ style_href }}">
 </head>
-<body{% if time_zone_missing %} data-time-zone="missing"{% endif %}>
+<body{% if calm %} class="calm"{% endif %}{% if time_zone_missing %} data-time-zone="missing"{% endif %}>
+  {% if signed_in %}
   <header class="top">
     <a class="brand" href="/">Spotter</a>
-    {% if signed_in %}
-    <nav>
-      <a href="/today">Today</a>
-      <a href="/progress">Progress</a>
-      <a href="/goals">Goals</a>
-      <a href="/settings">Settings</a>
-      <form method="post" action="/sign-out" class="inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button class="link">Sign out</button>
-      </form>
+    <nav class="tabs" aria-label="Main">
+      {% for tab, path, label in tabs %}
+      <a class="tab tab-{{ tab }}" href="{{ path }}"{% if tab == current_tab %} aria-current="page"{% endif %}>{{ label }}</a>
+      {% endfor %}
     </nav>
-    {% elif web_ready %}
-    <nav><a href="/sign-in">Sign in</a></nav>
-    {% endif %}
+    <form class="sign-out" method="post" action="/sign-out">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="link">Sign out</button>
+    </form>
   </header>
-  <main>{% block main %}{% endblock %}</main>
+  {% else %}
+  <header class="top-out">
+    <a class="brand" href="/">Spotter</a>
+    {% if web_ready %}<a class="plain-link" href="/sign-in">Sign in</a>{% endif %}
+  </header>
+  {% endif %}
+  <main class="{{ main_class }}">{% block main %}{% endblock %}</main>
   {% if attribution %}<footer class="attribution">{{ attribution }}</footer>{% endif %}
   {% if time_zone_missing %}
   <form id="auto-time-zone" method="post" action="/settings" hidden>

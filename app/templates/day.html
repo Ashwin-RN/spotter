@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ on|day(today) }} · Spotter{% endblock %}
+{% block title %}{% if on == today %}Today{% else %}{{ on|day(today) }}{% endif %} · Spotter{% endblock %}
 {% block main %}
 <div class="day-head">
   {% if prev_day %}<a href="/day/{{ prev_day.isoformat() }}" rel="prev">Previous day</a>{% else %}<span></span>{% endif %}

@@ -751,7 +751,7 @@ CHART_TEXT = {
     "lift": (charts.LIFT_W, ("svg.chart", "svg.chart"), ("#progress-chart", "#progress-chart")),
     "goal": (charts.GOAL_W, ("svg.chart", "svg.chart"), ("li.goal svg.chart", "li.goal svg.chart")),
     "pace": (charts.PACE_W, ("svg.chart", "svg.chart"), ("#chart-pace", "#chart-pace")),
-    "sheet": (charts.SHEET_W, ("svg.chart", "svg.chart"), (".sheet svg.chart", "svg.chart")),
+    "sheet": (charts.SHEET_W, ("svg.chart", "svg.chart"), (".sheet svg.chart", ".sheet svg.chart")),
     "small": (charts.SMALL_W, ("svg.chart.small", "svg.chart.small"),
               (".glance svg.chart.small", ".glance svg.chart.small")),
 }
@@ -782,6 +782,25 @@ def test_chart_text_shows_at_11_to_14_px_at_every_width(css, chart):
     layout = Layout(css)
     sizes = {v: round(on_screen(css, layout, chart, v), 2) for v in (*VIEWPORTS, *range(360, 1601, 13))}
     assert all(11 <= s <= 14 for s in sizes.values()), {v: s for v, s in sizes.items() if not 11 <= s <= 14}
+
+
+PHONE_CAPS = {"svg.chart": 336.0, "svg.chart.small": 149.0}
+# The six named contexts: each sets its own cap from 960 px up (the sheet's is none: 560 px at most).
+NAMED_CAPS = {"#bodyweight-chart": 386.0, "#progress-chart": 690.0, "li.goal svg.chart": 373.0,
+              "#chart-pace": 403.0, ".glance svg.chart.small": 261.0, ".sheet svg.chart": float("inf")}
+
+
+def _caps(css: Sheet, context) -> dict[str, float]:
+    return {s: _cap(css, s, context) for r in css.rules if r.context == context and r.get("max-width")
+            for s in r.selectors if "svg.chart" in s or s.startswith("#")}
+
+
+def test_a_chart_outside_the_named_contexts_keeps_the_phone_cap_on_a_laptop(css):
+    """From 960 px up only the six named contexts change a chart's cap, so a chart placed anywhere else
+    keeps the base rule's phone cap: drawn as at 959 px, where the chart text test holds it."""
+    assert {s: c for s, c in _caps(css, ()).items() if s in PHONE_CAPS} == PHONE_CAPS
+    laptop = _caps(css, (LAPTOP,))
+    assert laptop == NAMED_CAPS, laptop
 
 
 def test_charts_size_their_margins_for_the_stylesheets_phone_text(css):

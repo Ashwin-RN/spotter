@@ -156,7 +156,7 @@ def test_goals_page_needs_sign_in_and_has_no_script(client, fake_goals):
     r = client.get("/goals")
     assert r.headers["content-security-policy"] == CSP and "<script" not in r.text
     assert re.search(r"<[^>]+\son[a-z]+\s*=", r.text, re.I) is None and "style=" not in r.text
-    assert '<a href="/goals">Goals</a>' in r.text  # in the navigation
+    assert '<a class="tab tab-goals" href="/goals" aria-current="page">Goals</a>' in r.text  # in the navigation
 
 
 def test_a_get_goals_failure_is_a_404_page(signed, monkeypatch):

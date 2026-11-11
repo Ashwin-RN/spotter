@@ -18,20 +18,27 @@ Two cases need care.
 Confirmations (the line after a write, class "ok") name their subject: a bare word such as "Deleted." fails.
 Every number on a page has a comma from 1,000 and no trailing zero, so a figure that skipped the formatter fails.
 
-The structure and furniture part of T3 (Notes columns, units in headers, estimate tags in their own slot,
-remark columns, blank columns, the 404 and 500 pages) is step 4, and is not checked here.
+Step 4 adds, on the same pages:
+- Furniture, on every page now: the head's title is exactly the page's title from section L's table,
+  "{Page} · Spotter", and the head carries the three favicon links.
+- No visible text says Claude outside the landing's list of assistants (ul.assistants). A page that still
+  says Claude carries one named skip in CLAUDE_SKIPS until its own pass rebuilds it.
+- Structure (a Notes column, the Trends table's remark column, units in headers, estimate tags in their own
+  slot, no column blank in every row): checked only on the routes in BUILT. Each step 4 pass adds its own
+  route there when it rebuilds the page. The 404 and 500 pages are the next pass's.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from html.parser import HTMLParser
 
 import pytest
 from sqlalchemy import select
 
-from app import db, services, web
+from app import db, formatting, services, web
 from app.models import Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User
 
 from . import text_rules as tr
@@ -264,17 +271,433 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
     return out
 
 
+# ---------------------------------------------------------------- step 4: which pages are rebuilt
+
+# The routes whose page a step 4 pass has rebuilt: "/" or a GET path template from web.PAGES, such as
+# "/day/{date}". The structure checks below and the page rules in tests/test_page_rules.py run on these
+# routes only. A pass adds its own route here when its page lands.
+BUILT: frozenset[str] = frozenset()
+
+ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
+
+
+def route_of(address: str) -> str:
+    """The route an address renders: "/day/2026-11-09?saved=x" gives "/day/{date}". An address no GET
+    route matches comes back bare."""
+    bare = address.split("?")[0].split("#")[0]
+    for route in ROUTES:
+        if re.fullmatch(re.sub(r"\{[^}]+\}", "[^/]+", route), bare):
+            return route
+    return bare
+
+
+# ---------------------------------------------------------------- a small tree of the page
+
+@dataclass(eq=False)
+class Node:
+    """One element of a rendered page: its tag, attributes, parent and children (elements and text)."""
+    tag: str
+    attrs: dict
+    parent: Node | None = None
+    children: list = field(default_factory=list)
+
+    @property
+    def classes(self) -> list[str]:
+        return (self.attrs.get("class") or "").split()
+
+    def is_(self, tag: str = "", cls: str = "") -> bool:
+        return (not tag or self.tag == tag) and (not cls or cls in self.classes)
+
+    def iter(self):
+        """Every element under this one, in document order."""
+        for child in self.children:
+            if isinstance(child, Node):
+                yield child
+                yield from child.iter()
+
+    def find_all(self, tag: str = "", cls: str = "") -> list[Node]:
+        return [n for n in self.iter() if n.is_(tag, cls)]
+
+    def elements(self) -> list[Node]:
+        return [c for c in self.children if isinstance(c, Node)]
+
+    def ancestors(self):
+        node = self.parent
+        while node is not None:
+            yield node
+            node = node.parent
+
+    def inside(self, tag: str = "", cls: str = "") -> bool:
+        return any(a.is_(tag, cls) for a in self.ancestors())
+
+    def text(self) -> str:
+        parts = []
+
+        def walk(node):
+            for child in node.children:
+                if isinstance(child, str):
+                    parts.append(child)
+                else:
+                    walk(child)
+        walk(self)
+        return tr.squash("".join(parts))
+
+
+class _Tree(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = Node("#document", {})
+        self.open = self.root
+
+    def handle_starttag(self, tag, attrs):
+        node = Node(tag, {k: (v if v is not None else "") for k, v in attrs}, self.open)
+        self.open.children.append(node)
+        if tag not in tr.VOID:
+            self.open = node
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in tr.VOID:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        node = self.open
+        while node is not self.root and node.tag != tag:
+            node = node.parent
+        if node is not self.root:  # close it and every element left open inside it
+            self.open = node.parent
+
+    def handle_data(self, data):
+        self.open.children.append(data)
+
+
+def parse(markup: str) -> Node:
+    tree = _Tree()
+    tree.feed(markup)
+    tree.close()
+    return tree.root
+
+
+def head_of(dom: Node) -> Node | None:
+    return next(iter(dom.find_all("head")), None)
+
+
+# ---------------------------------------------------------------- furniture: the title and the favicon
+
+# Section L, Favicon and titles: the three links every page head carries, attribute for attribute.
+FAVICON_LINKS = ({"rel": "icon", "href": "/static/favicon.svg", "type": "image/svg+xml"},
+                 {"rel": "icon", "href": "/static/favicon.ico", "sizes": "32x32"},
+                 {"rel": "apple-touch-icon", "href": "/static/apple-touch-icon.png"})
+SEPARATOR = " · Spotter"
+TITLE_SHAPE = re.compile(r"\S(?:.*\S)?" + re.escape(SEPARATOR))
+LANDING = "A fitness log you keep by talking to your assistant"
+# Section L's titles table, for the pages named by a fixed word.
+NAMED = {"/": LANDING, "/progress": "Progress", "/goals": "Goals", "/foods": "Foods", "/settings": "Settings",
+         "/settings/delete": "Delete my account"}
+EDIT_KINDS = {"bodyweight": "weigh-in", "measurement": "measurement", "lift_session": "lift session",
+              "food_entry": "food entry", "cardio_entry": "cardio session"}
+
+
+@dataclass
+class Names:
+    """What one account's titles are made of: its date, its lifts by slug, its saved foods by id."""
+    today: date
+    lifts: dict[str, str]
+    foods: dict[str, str]
+
+
+def names_of(user_id: int) -> Names:
+    today = today_of(only_user())
+    lifts = {row["exercise"] for row in services.get_progress(user_id)["lifts"]} | {"Back Squat"}
+    foods = services.list_saved_foods(user_id)["foods"]
+    return Names(today, {web.links.slug(n): n for n in lifts}, {str(f["id"]): f["name"] for f in foods})
+
+
+def expected_title(address: str, dom: Node, names: Names | None, status: int = 200) -> str:
+    """Section L's title for the page at this address. An error or message page (status 400 or more, or no
+    route) is its h1."""
+    route, parts = route_of(address), address.split("?")[0].split("/")
+    if status >= 400 or route not in ROUTES:
+        h1 = dom.find_all("h1")
+        name = h1[0].text() if h1 else "a page with no h1"
+    elif route in NAMED:
+        name = NAMED[route]
+    elif route == "/day/{date}":
+        on = date.fromisoformat(parts[2])
+        name = "Today" if on == names.today else formatting.day(on, names.today)
+    elif route == "/progress/{lift}":
+        name = names.lifts[parts[2]]
+    elif route == "/entries/{kind}/{entry_id}/edit":
+        name = "Edit " + EDIT_KINDS[parts[2]]
+    elif route == "/foods/{food_id}/edit":
+        name = "Edit " + names.foods[parts[2]]
+    else:
+        raise AssertionError(f"no title is known for {route}: add it to expected_title")
+    return name + SEPARATOR
+
+
+def furniture_findings(address: str, markup: str, names: Names | None, dom: Node | None = None,
+                       status: int = 200) -> list[str]:
+    """The head's title is the page's own, "{Page} · Spotter", and the head carries the three favicon links."""
+    dom = dom or parse(markup)
+    head = head_of(dom)
+    if head is None:
+        return [f"{address}: no head"]
+    out = []
+    titles = [n for n in head.elements() if n.tag == "title"]
+    if len(titles) != 1:
+        out.append(f"{address}: {len(titles)} titles in the head")
+    else:
+        title, want = titles[0].text(), expected_title(address, dom, names, status)
+        if title != want or not TITLE_SHAPE.fullmatch(title) or tr.check_iso_dates(title):
+            out.append(f"{address}: the title is {title!r}, not {want!r}")
+    links = [n.attrs for n in head.elements() if n.tag == "link"]
+    for link in FAVICON_LINKS:
+        if link not in links:
+            out.append(f"{address}: the head lacks the favicon link {link}")
+    return out
+
+
+# ---------------------------------------------------------------- "your assistant", never Claude
+
+CLAUDE = re.compile(r"\bclaude\b", re.IGNORECASE)
+_ASSISTANTS = re.compile(r'<ul\b[^>]*\bclass="(?:[^"]*\s)?assistants(?:\s[^"]*)?"[^>]*>')
+_UL = re.compile(r"<ul\b|</ul\s*>")
+
+# The routes that still say Claude today, each until its own step 4 pass rebuilds it (a ruling of the
+# lead's). The pass deletes its line: test_no_claude_skip_outlives_its_page fails on a line no page needs.
+CLAUDE_SKIPS = {
+    "/": "home.html: the landing, rebuilt with its list of assistants",
+    "/settings": "settings.html: whoami, the switch's lines and card words",
+    "/day/{date}": "day.html: the empty Lifts line",
+    "/foods": "foods.html: the line under the h1",
+    "/entries/{kind}/{entry_id}/edit": "edit.html: the line on changing sets",
+    "/progress": "progress.html: the empty Lifts line",
+    "/progress/{lift}": "progress_lift.html: the empty line",
+    "/goals": "goals.html: the empty open goals line",
+}
+
+
+def without_assistants(markup: str) -> str:
+    """The page with the landing's list of assistants (ul.assistants, nested lists included) cut out."""
+    start = _ASSISTANTS.search(markup)
+    if start is None:
+        return markup
+    depth = 0
+    for tag in _UL.finditer(markup, start.start()):
+        depth += -1 if tag.group().startswith("</") else 1
+        if depth == 0:
+            return markup[:start.start()] + without_assistants(markup[tag.end():])
+    return markup[:start.start()]
+
+
+def claude_hits(address: str, markup: str) -> list[str]:
+    """Every piece of visible text that says Claude: page text, the title and read attributes. Only the
+    landing's list of assistants may."""
+    shown = without_assistants(markup) if route_of(address) == "/" else markup
+    return [f"{address} line {p.line} <{p.tag}>: {p.text[:80]!r} says Claude" for p in tr.html_text(shown)
+            if CLAUDE.search(p.text)]
+
+
+def claude_findings(address: str, markup: str, seen: set[str] | None = None) -> list[str]:
+    """claude_hits, less the routes in CLAUDE_SKIPS. `seen` collects the skipped routes that still hit."""
+    hits = claude_hits(address, markup)
+    route = route_of(address)
+    if hits and route in CLAUDE_SKIPS:
+        if seen is not None:
+            seen.add(route)
+        return []
+    return hits
+
+
+# ---------------------------------------------------------------- structure (the routes in BUILT)
+
+@dataclass
+class Table:
+    node: Node
+    headers: list[str]
+    rows: list[list[Node]]
+
+    def column(self, header: str) -> int | None:
+        return self.headers.index(header) if header in self.headers else None
+
+    def headed(self) -> dict[Node, str]:
+        """Each body cell and its column's header."""
+        return {cell: self.headers[n] if n < len(self.headers) else ""
+                for row in self.rows for n, cell in enumerate(row)}
+
+
+def tables(dom: Node) -> list[Table]:
+    """Each table: its column headers (the cells of its first all-th row) and its body rows. A colspan
+    is not read: each cell is one column."""
+    out = []
+    for table in dom.find_all("table"):
+        trs = [r for r in table.find_all("tr") if next(a for a in r.ancestors() if a.tag == "table") is table]
+        heads = [r for r in trs if r.elements() and all(c.tag == "th" for c in r.elements())]
+        headers = [c.text() for c in heads[0].elements()] if heads else []
+        rows = [[c for c in r.elements() if c.tag in ("td", "th")] for r in trs if r not in heads]
+        out.append(Table(table, headers, rows))
+    return out
+
+
+def _blank(cell: Node) -> bool:
+    return not cell.text() and not cell.elements()
+
+
+def blank_column_findings(dom: Node) -> list[str]:
+    """A column blank in every row is not shown (section C, an empty figure)."""
+    out = []
+    for t in tables(dom):
+        if not t.rows:
+            continue
+        for n, header in enumerate(t.headers):
+            if all(n >= len(row) or _blank(row[n]) for row in t.rows):
+                out.append(f"the column {header!r} is blank in every row")
+    return out
+
+
+def remark_findings(dom: Node) -> list[str]:
+    """D20: the Trends card is a table with a Remark column, each of its cells a remark cell."""
+    out = []
+    for card in dom.find_all(cls="trends"):
+        held = [t for t in tables(dom) if t.node is card or card in t.node.ancestors()]
+        if not held:
+            out.append("the Trends card holds no table")
+        for t in held:
+            n = t.column("Remark")
+            if n is None:
+                out.append(f"the Trends table has no Remark column: {t.headers}")
+                continue
+            for row in t.rows:
+                if n >= len(row) or "remark" not in row[n].classes:
+                    out.append(f"a Trends row's Remark cell is not a remark cell: {[c.text() for c in row]}")
+    return out
+
+
+_BRACKETED = re.compile(r"\(([^()]+)\)")
+_BARE_FRACTION = re.compile(r"-?[\d,]*\d[.:]\d+")
+
+
+def units_findings(dom: Node) -> list[str]:
+    """Units in headers: a column whose header names its unit in brackets never repeats it in a cell, and a
+    value cell holding a bare figure that is not a whole count has a unit in its header."""
+    out = []
+    for t in tables(dom):
+        for row in t.rows:
+            for n, cell in enumerate(row):
+                header = t.headers[n] if n < len(t.headers) else ""
+                unit = _BRACKETED.search(header)
+                text = cell.text()
+                if unit and re.search(r"\d\s*" + re.escape(unit.group(1)) + r"(?![\w/])", text):
+                    out.append(f"the cell {text!r} repeats its header's unit {header!r}")
+                if "num" in cell.classes and _BARE_FRACTION.fullmatch(text) and not unit:
+                    out.append(f"the figure {text!r} has no unit in its cell or its header {header!r}")
+    return out
+
+
+ESTIMATE_TAGS = ("tag-estimate", "tag-claude_estimate")
+VALUE_SLOTS = ("num", "tile-value", "big", "giant")
+
+
+def estimate_findings(dom: Node) -> list[str]:
+    """An estimate is a tag in its own slot: the word "estimate", never inside a value, never in brackets,
+    never "of which"."""
+    out = []
+    for tag in (n for n in dom.iter() if set(n.classes) & set(ESTIMATE_TAGS)):
+        if tag.text() != "estimate":
+            out.append(f"an estimate tag reads {tag.text()!r}")
+        if any(set(a.classes) & set(VALUE_SLOTS) for a in tag.ancestors()):
+            out.append(f"an estimate tag sits inside a value: {tag.parent.text()!r}")
+        siblings = tag.parent.children
+        before = siblings[siblings.index(tag) - 1] if siblings.index(tag) else ""
+        if isinstance(before, str) and before.rstrip().endswith("("):
+            out.append(f"an estimate tag in brackets: {tag.parent.text()!r}")
+    if re.search(r"\bof which\b", dom.text(), re.IGNORECASE):
+        out.append('the page says "of which"')
+    return out
+
+
+FORM_TEXT = ("textarea", "option", "select", "script", "style")
+
+
+def own_text(node: Node) -> str:
+    """A block's own words: its text and its inline elements' text, not the blocks inside it."""
+    parts = []
+
+    def walk(n):
+        for child in n.children:
+            if isinstance(child, str):
+                parts.append(child)
+            elif child.tag in tr.INLINE:
+                walk(child)
+    walk(node)
+    return tr.squash("".join(parts))
+
+
+def notes_findings(dom: Node, notes: list[str]) -> list[str]:
+    """A note sits in its own column or line: a cell under a Notes header, a dd after a Notes dt, or a line
+    that holds only the label Notes and the note. A form field holding a note to edit is not a line."""
+    out = []
+    headed = {cell: header for t in tables(dom) for cell, header in t.headed().items()}
+    blocks = [n for n in dom.iter() if n.tag not in tr.INLINE and n.tag not in FORM_TEXT
+              and not any(a.tag in FORM_TEXT for a in n.ancestors())]
+    for note in {tr.squash(n) for n in notes if n and n.strip()}:
+        for node in (b for b in blocks if note in own_text(b)):
+            if headed.get(node) == "Notes":
+                continue
+            if node.tag == "dd":
+                terms = [e for e in node.parent.elements() if e.tag in ("dt", "dd")]
+                dt = next((e for e in reversed(terms[:terms.index(node)]) if e.tag == "dt"), None)
+                if dt is not None and dt.text() == "Notes":
+                    continue
+            if own_text(node).replace(note, "", 1).strip(" :") == "Notes":
+                continue
+            out.append(f"the note {note!r} is not in a Notes column or line: <{node.tag}> {own_text(node)[:60]!r}")
+    return out
+
+
+def structure_findings(address: str, markup: str, notes: list[str], dom: Node | None = None) -> list[str]:
+    dom = dom or parse(markup)
+    found = (blank_column_findings(dom) + remark_findings(dom) + units_findings(dom) + estimate_findings(dom)
+             + notes_findings(dom, notes))
+    return [f"{address}: {f}" for f in found]
+
+
+def entered_notes(user_id: int) -> list[str]:
+    """The notes a person gave their lift sessions and cardio sessions."""
+    with db.session_scope() as s:
+        out = list(s.scalars(select(LiftSession.notes).where(LiftSession.user_id == user_id)))
+        out += list(s.scalars(select(CardioEntry.notes).where(CardioEntry.user_id == user_id)))
+    return [n for n in out if n]
+
+
+def step_4_findings(address: str, markup: str, names: Names | None, notes: list[str],
+                    seen: set[str] | None = None) -> list[str]:
+    """T3's step 4 checks on one page: furniture and Claude on every page, structure on the routes in BUILT."""
+    dom = parse(markup)
+    out = furniture_findings(address, markup, names, dom) + claude_findings(address, markup, seen)
+    if route_of(address) in BUILT:
+        out += structure_findings(address, markup, notes, dom)
+    return out
+
+
 # ---------------------------------------------------------------- the test
+
+# The skipped routes that still say Claude, by account, gathered as the sweep runs.
+CLAUDE_SEEN: dict[str, set[str]] = {}
+
 
 @pytest.mark.parametrize("account", sorted(ACCOUNTS))
 def test_every_page_passes_the_page_rules(client, account):
+    seen: set[str] = set()
     out = client.get("/")
     assert out.status_code == 200
-    findings = page_findings("/", out.text, [], None)
+    findings = page_findings("/", out.text, [], None) + step_4_findings("/", out.text, None, [], seen)
     sign_in(client)
     user_id = only_user().id
     ACCOUNTS[account](user_id)
     entered = entered_text(user_id)
+    names, notes = names_of(user_id), entered_notes(user_id)
     rendered = 0
     for template, addresses in get_paths(user_id).items():
         for path in ["/"] + addresses if template == "/settings" else addresses:
@@ -285,8 +708,19 @@ def test_every_page_passes_the_page_rules(client, account):
             assert r.status_code == 200, (path, r.status_code)
             rendered += 1
             findings += page_findings(path, r.text, entered, user_id)
+            findings += step_4_findings(path, r.text, names, notes, seen)
     assert rendered >= 12
     assert not findings, "\n".join(findings)
+    CLAUDE_SEEN[account] = seen
+
+
+def test_no_claude_skip_outlives_its_page():
+    """Each line of CLAUDE_SKIPS is still needed on at least one account: the pass that rebuilds a page
+    deletes its line. Runs after the sweep above, on what it gathered."""
+    if set(CLAUDE_SEEN) != set(ACCOUNTS):
+        pytest.skip("needs the sweep on all three accounts in the same run")
+    still = set().union(*CLAUDE_SEEN.values())
+    assert not set(CLAUDE_SKIPS) - still, f"no page needs these skips now: {set(CLAUDE_SKIPS) - still}"
 
 
 # ---------------------------------------------------------------- the checks themselves
@@ -317,3 +751,104 @@ def test_a_zone_name_is_masked_and_a_bare_confirmation_fails(client):
     bare = '<div class="ok undo">\n  Deleted.\n  <form></form></div>'
     assert any("does not name its subject" in f for f in page_findings("/day/x", bare, [], user_id))
     assert page_findings("/foods", '<p class="ok">Saved.</p>', [], user_id) == []
+
+
+# ---------------------------------------------------------------- the step 4 checks themselves
+
+HEAD = ('<!doctype html><html><head><title>{title}</title>'
+        '<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">'
+        '<link rel="icon" href="/static/favicon.ico" sizes="32x32">'
+        '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png"></head>'
+        '<body><main class="page"><h1>Not found</h1>{body}</main></body></html>')
+NAMES = Names(date(2026, 11, 11), {"back-squat": "Back Squat"}, {"7": "Paneer tikka"})
+
+
+def test_route_of_names_the_route_an_address_renders():
+    assert route_of("/day/2026-11-09?saved=x") == "/day/{date}"
+    assert route_of("/progress/back-squat") == "/progress/{lift}" and route_of("/progress") == "/progress"
+    assert route_of("/settings/delete") == "/settings/delete" and route_of("/foods/3/edit") == "/foods/{food_id}/edit"
+    assert route_of("/") == "/" and route_of("/nowhere") == "/nowhere"
+
+
+@pytest.mark.parametrize("address, title", [
+    ("/", "A fitness log you keep by talking to your assistant · Spotter"),
+    ("/day/2026-11-11", "Today · Spotter"), ("/day/2026-11-09", "Mon 9 Nov · Spotter"),
+    ("/day/2025-11-09", "Sun 9 Nov 2025 · Spotter"), ("/progress/back-squat", "Back Squat · Spotter"),
+    ("/entries/bodyweight/3/edit", "Edit weigh-in · Spotter"), ("/foods/7/edit", "Edit Paneer tikka · Spotter"),
+    ("/settings/delete", "Delete my account · Spotter"), ("/day/abc", "Not found · Spotter"),
+])
+def test_the_title_is_section_ls(address, title):
+    status = 404 if address == "/day/abc" else 200
+    assert furniture_findings(address, HEAD.format(title=title, body=""), NAMES, status=status) == []
+
+
+@pytest.mark.parametrize("address, title", [
+    ("/progress", "Progress - Spotter"), ("/progress", "Progress ·Spotter"), ("/progress", "Progress"),
+    ("/progress", "Goals · Spotter"), ("/day/2026-11-11", "Wed 11 Nov · Spotter"),
+    ("/day/2026-11-09", "2026-11-09 · Spotter"), ("/foods/7/edit", "Paneer tikka · Spotter"),
+])
+def test_a_wrong_title_is_a_finding(address, title):
+    assert furniture_findings(address, HEAD.format(title=title, body=""), NAMES)
+
+
+def test_a_missing_favicon_link_or_a_second_title_is_a_finding():
+    good = HEAD.format(title="Progress · Spotter", body="")
+    assert furniture_findings("/progress", good, NAMES) == []
+    for link in ('<link rel="icon" href="/static/favicon.ico" sizes="32x32">',
+                 '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">'):
+        assert furniture_findings("/progress", good.replace(link, ""), NAMES)
+    assert furniture_findings("/progress", good.replace("</head>", "<title>x</title></head>"), NAMES)
+    # A chart's own title in the body is not the page's title.
+    assert furniture_findings("/progress", good.replace("<h1>", "<svg><title>Weight</title></svg><h1>"), NAMES) == []
+
+
+def test_claude_is_said_only_in_the_landings_list_of_assistants():
+    listed = ('<ul class="assistants"><li><a href="#">Claude apps</a></li>'
+              '<li>Claude Code<ul><li>Run this once</li></ul><code>claude mcp add</code></li></ul>')
+    assert claude_hits("/", f"<p>Tell your assistant.</p>{listed}<p>Any other client.</p>") == []
+    assert claude_hits("/", f"<p>Ask Claude.</p>{listed}")
+    assert claude_hits("/", f"{listed}<p>Ask Claude.</p>")
+    assert claude_hits("/settings", listed)  # the list is the landing's only
+    assert claude_hits("/goals", '<a aria-label="Ask Claude" href="/">x</a>')
+    assert claude_hits("/goals", "<head><title>Claude · Spotter</title></head>")
+    assert claude_hits("/goals", '<span class="tag tag-claude_estimate">estimate</span>') == []
+    assert claude_findings("/goals?saved=goal", "<p>Ask Claude.</p>") == []  # skipped until its pass
+    assert claude_findings("/privacy", "<p>Ask Claude.</p>")
+
+
+def test_the_structure_checks_find_what_they_name():
+    def found(body, notes=()):
+        return structure_findings("/x", f"<main>{body}</main>", list(notes))
+
+    table = ('<table><thead><tr><th>Date</th><th class="num">Time (min)</th><th>Notes</th></tr></thead>'
+             '<tbody>{rows}</tbody></table>')
+    good = table.format(rows='<tr><td>Mon</td><td class="num">31.5</td><td>Felt good</td></tr>'
+                             '<tr><td>Tue</td><td class="num">30</td><td></td></tr>')
+    assert found(good, ["Felt good"]) == []
+    assert found(table.format(rows='<tr><td>Mon</td><td class="num">31.5</td><td></td></tr>'))  # blank Notes column
+    assert found(table.format(rows='<tr><td>Mon</td><td class="num">31.5 min</td><td>x</td></tr>'))  # unit twice
+    assert found('<table><tr><th>Lift</th><th class="num">Max</th></tr>'
+                 '<tr><td>Squat</td><td class="num">102.5</td></tr></table>')  # a bare figure, no unit
+    assert found('<table><tr><th>Lift</th><th class="num">Sessions</th></tr>'
+                 '<tr><td>Squat</td><td class="num">3</td></tr></table>') == []  # a whole count needs none
+    # Notes: a cell under Notes, a dd after a Notes dt, or a line of its own labelled Notes.
+    assert found('<dl><dt>Notes</dt><dd>Felt good</dd></dl>', ["Felt good"]) == []
+    assert found('<p class="notes"><span>Notes</span> Felt good</p>', ["Felt good"]) == []
+    assert found('<textarea name="notes">Felt good</textarea>', ["Felt good"]) == []
+    assert found('<p>Back Squat, 3 sets. Felt good</p>', ["Felt good"])
+    assert found('<dl><dt>Date</dt><dd>Felt good</dd></dl>', ["Felt good"])
+    # The Trends table and its Remark column.
+    trends = ('<section class="card trends"><div class="table-wrap"><table><thead><tr><th>Quantity</th>'
+              '<th class="num">Value</th><th>Remark</th></tr></thead><tbody>{rows}</tbody></table></div></section>')
+    assert found(trends.format(rows='<tr><td>Weigh-ins</td><td class="num">28</td>'
+                                    '<td class="remark">Last 28 days</td></tr>')) == []
+    assert found(trends.format(rows='<tr><td>Weigh-ins</td><td class="num">28</td><td>Last 28 days</td></tr>'))
+    assert found(trends.replace("<th>Remark</th>", "<th>Window</th>").format(
+        rows='<tr><td>Weigh-ins</td><td class="num">28</td><td class="remark">Last 28 days</td></tr>'))
+    assert found('<div class="card trends"><dl class="facts"><dt>Body weight</dt><dd>80 kg</dd></dl></div>')
+    # Estimate tags.
+    assert found('<p>2,510 kcal</p><span class="tag tag-estimate">estimate</span>') == []
+    assert found('<p class="big">2,510 <span class="tag tag-estimate">estimate</span></p>')
+    assert found('<p>2,510 kcal (<span class="tag tag-estimate">estimate</span>)</p>')
+    assert found('<p><span class="tag tag-claude_estimate">about</span></p>')
+    assert found('<p>2,000 kcal, of which 300 kcal estimated</p>')

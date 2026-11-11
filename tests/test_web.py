@@ -1387,7 +1387,7 @@ def test_an_unknown_lift_a_bad_date_and_an_unknown_kind_are_404_pages(client, st
                  "/entries/bodyweight/99999/edit", "/entries/call_log/1/edit"):
         r = client.get(path)
         assert r.status_code == 404 and "There is nothing here." in r.text, path
-        assert "not-a-lift" not in r.text and "abc" not in r.text.split("<main>")[1], path
+        assert "not-a-lift" not in r.text and "abc" not in re.split(r"<main\b[^>]*>", r.text)[1], path
     for path in ("/entries/goal/1/delete", "/entries/bodyweight/99999/delete", "/entries/bodyweight/1x/restore"):
         assert post(client, path).status_code == 404, path
 
