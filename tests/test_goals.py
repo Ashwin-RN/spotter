@@ -90,8 +90,7 @@ def test_failures_come_back_together(user):
                 status="hit")["error"] == "invalid_field"
     assert goal(user, kind="lift", exercise="Deadlift", target_value=100, target_date="soon")["error"] \
         == "invalid_date"
-    assert goal(user, goal_id=999999, status="hit") == {**services.get_entry(user.id, "goal", 999999),
-                                                        "field": "goal_id"}
+    assert goal(user, goal_id=999999, status="hit") == services.get_entry(user.id, "goal", 999999)
     gid = goal(user, kind="bodyweight", target_value=70, start_value=80, target_date=day(user, 9))["id"]
     assert goal(user, goal_id=gid)["error"] == "nothing_to_change"
     assert goal(user, goal_id=gid, kind="lift")["error"] == "cannot_change_kind"
@@ -1150,7 +1149,7 @@ FIELD_CASES = {
                                                   lambda: by_date(u, kind="lift", exercise="Back Squat",
                                                                   target_value=650)),
                             [("wrong_direction", "target_value")]),
-    "edit_unknown_goal": (lambda u: goal(u, goal_id=999999, status="hit"), [("not_found", "goal_id")]),
+    "edit_unknown_goal": (lambda u: goal(u, goal_id=999999, status="hit"), [("not_found", None)]),
     "edit_kind": (lambda u: goal(u, goal_id=weight_goal_id(u), kind="lift"), [("cannot_change_kind", "kind")]),
     "edit_exercise": (lambda u: goal(u, goal_id=run_goal_id(u), exercise="Treadmill Run"),
                       [("cannot_change_kind", "exercise")]),
@@ -1158,6 +1157,17 @@ FIELD_CASES = {
                               [("cannot_change_kind", "measurement_kind")]),
     "edit_distance": (lambda u: goal(u, goal_id=run_goal_id(u), distance_km=10),
                       [("cannot_change_kind", "distance_km")]),
+    # Two identity fields changed: the first in the order kind, exercise, measurement_kind, distance_km.
+    "edit_two_identity": (lambda u: goal(u, goal_id=run_goal_id(u), exercise="Treadmill Run", distance_km=10),
+                          [("cannot_change_kind", "exercise")]),
+    "edit_kind_and_exercise": (lambda u: goal(u, goal_id=run_goal_id(u), kind="lift", exercise="Treadmill Run"),
+                               [("cannot_change_kind", "kind")]),
+    "edit_exercise_and_measurement": (lambda u: goal(u, goal_id=run_goal_id(u), exercise="Treadmill Run",
+                                                     measurement_kind="waist"),
+                                      [("cannot_change_kind", "exercise")]),
+    "edit_measurement_and_distance": (lambda u: goal(u, goal_id=waist_goal_id(u), measurement_kind="hips",
+                                                     distance_km=5),
+                                      [("cannot_change_kind", "measurement_kind")]),
     "edit_target_the_wrong_way": (lambda u: goal(u, goal_id=weight_goal_id(u), target_value=85),
                                   [("wrong_direction", "target_value")]),
     # A bad value on an edit changes nothing, so nothing_to_change, with no field, comes beside it.
@@ -1198,6 +1208,12 @@ def test_problems_together_each_name_their_own_field(user):
     assert r["field"] == "exercise"
     both = goal(user, kind="bodyweight")
     assert [e["field"] for e in both["errors"]] == ["target_value", "target_date"]
+
+
+def test_the_services_notes_say_a_goal_refusal_names_its_field():
+    """app.services says what a refusal carries: field beside error, message and fix for set_goal."""
+    notes = " ".join(services.__doc__.split())
+    assert "or {error, message, fix}" in notes and "A set_goal refusal about one input also names it in field." in notes
 
 
 @pytest.mark.parametrize("daily, word", [("steps", "Steps"), ("sleep_hours", "Sleep"), ("water_ml", "Water")])

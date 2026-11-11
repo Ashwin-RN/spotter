@@ -169,10 +169,10 @@ def _what(kind: str, measurement_kind: str | None) -> str:
     return f"a {kind} goal"
 
 
-def _at(err: dict | None, field: str) -> dict | None:
+def _at(err: dict, field: str) -> dict:
     """A refusal built outside this module, with `field`: the set_goal input it is about, so the Goals
-    page places it by that and never by its words. None stays None."""
-    return None if err is None else {**err, "field": field}
+    page places it by that and never by its words."""
+    return {**err, "field": field}
 
 
 def _value(value, field: str, kind: str, measurement_kind: str | None) -> tuple[float | None, dict | None]:
@@ -626,9 +626,10 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
     goal's entry from goal_numbers (status "reached", "on track", "behind" or "not enough data"), or None for a goal
     that is not open. Every validation failure comes back at once.
     A refusal about one input carries field, that input's name (kind, exercise, measurement_kind,
-    distance_km, target_value, target_date, start_value, text, status or goal_id), so the Goals page
-    places it by that. A refusal about the whole request (data, by, the account, the write limit,
-    nothing to change) carries none. rules.combine puts the first problem's field at the top.
+    distance_km, target_value, target_date, start_value, text or status), so the Goals page places it
+    by that. A refusal about the whole request (data, by, the account, the write limit, nothing to
+    change) carries none, and so does not_found, which is get_entry's own. rules.combine puts the
+    first problem's field at the top.
     """
     data, err = check_data(data)
     err = err or check_by(by)
@@ -661,7 +662,7 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
         if data.get("goal_id") not in (None, ""):
             goal = owned(s, Goal, user.id, data["goal_id"])
             if goal is None:
-                return _at(not_found(KIND), "goal_id")
+                return not_found(KIND)  # get_entry's own: an unknown goal and another person's look the same
             kind, measurement_kind = goal.kind, goal.measurement_kind
             renamed = _changes_identity(goal, data)
             if renamed:

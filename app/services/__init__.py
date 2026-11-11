@@ -21,7 +21,8 @@ One module per area, so each later stage adds its own:
 
 Every public function takes the signed-in person's user_id (the account row id) first, and writes
 take `by` ("web" or "claude"), stored as logged_by. Each returns a plain JSON-ready dict: the result,
-or {error, message, fix}, where the fix says what to send instead. Nothing here takes a request or a
+or {error, message, fix}, where the fix says what to send instead. A set_goal refusal about one input
+also names it in field. Nothing here takes a request or a
 site address: links come from app.links. Dates come from users.today_for, times from db.utcnow.
 Every write locks the user row first, then checks the write limit (common.WRITE_FUNCTIONS).
 Every read whose numbers include sample rows says so: includes_sample, and a note (rule 16).
