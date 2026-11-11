@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Privacy · Spotter{% endblock %}
+{% block main %}
+<div class="page-head">
+  <h1>Privacy</h1>
+  <p class="lede">What Spotter stores, where it is kept, who can see it, and how to export or delete it.</p>
+</div>
+
+<section class="card" aria-labelledby="privacy-short">
+  <h2 id="privacy-short">In short</h2>
+  <p>Spotter stores what you log so it can show it back to you and to your assistant.</p>
+  <p>It shows no ads and runs no analytics.</p>
+  <p>You can export everything you logged and delete your account, both on Settings.</p>
+  <p class="muted">This is one person's project. This page is not checked by a lawyer.</p>
+</section>
+
+<section class="card" aria-labelledby="privacy-stores">
+  <h2 id="privacy-stores">What Spotter stores</h2>
+  <ul class="plain-list">
+    <li><b>Your account.</b> Your name and email, from the sign-in provider, and the id it gives you. When the account was made and when you last used it.</li>
+    <li><b>Your settings.</b> Your time zone, your targets and the switch for what your assistant may do.</li>
+    <li><b>Lifts.</b> Each session with its sets and your notes.</li>
+    <li><b>Weigh-ins.</b> Your weight on each day you log it.</li>
+    <li><b>Measurements.</b> Waist, hips, chest, arm, thigh, steps, sleep, resting heart rate and water.</li>
+    <li><b>Food.</b> Food entries and saved foods.</li>
+    <li><b>Cardio.</b> Time, distance, speed, incline, calories and your notes, with heart rate when you give it.</li>
+    <li><b>Goals.</b> Each goal with its target and its date.</li>
+  </ul>
+  <p class="muted">Each entry also notes when it was made and changed, and whether you or your assistant logged it.</p>
+</section>
+
+<section class="card" aria-labelledby="privacy-health">
+  <h2 id="privacy-health">Some of it is health data</h2>
+  <p>Weight, body measurements, resting heart rate, sleep, heart rate in cardio and food are about your health.</p>
+  <p>Spotter stores them to show them back to you. It works out your weight and calorie trends and your goal pace from them.</p>
+</section>
+
+<section class="card" aria-labelledby="privacy-calls">
+  <h2 id="privacy-calls">A log of calls</h2>
+  <p>Spotter keeps a row for each call your assistant makes, and for each change you make on a page.</p>
+  <p>A row holds which function ran, when, how long it took, whether it worked, the size of the answer and whose account it was.</p>
+  <p>When a call fails, the row also holds the kind of error.</p>
+  <p>It never holds what you said and never what came back.</p>
+</section>
+
+<section class="card" aria-labelledby="privacy-where">
+  <h2 id="privacy-where">Where it is kept</h2>
+  <p>Spotter runs on Railway, which holds the server and its database.</p>
+  <p>WorkOS runs your sign-in. It holds your sign-in, with your name and email.</p>
+</section>
+
+<section class="card" aria-labelledby="privacy-who">
+  <h2 id="privacy-who">Who can see it</h2>
+  <ul class="plain-list">
+    <li><b>You.</b></li>
+    <li><b>Your assistant, when you connect it.</b> It gets what each function returns. It can always read. What else it may do is your choice on Settings.</li>
+    <li><b>The person who runs Spotter.</b> They can reach the database to keep it running.</li>
+  </ul>
+</section>
+
+<section class="card" aria-labelledby="privacy-food">
+  <h2 id="privacy-food">Food lookups</h2>
+  <p>When USDA lookup is switched on, Spotter can look up a food at USDA FoodData Central.</p>
+  <p>Spotter's server sends the words of the search, or the number of a food you chose, with nothing about you.</p>
+  <p>Spotter keeps each search and what it found in a shared store with no account on it. A search it already holds is answered from there.</p>
+</section>
+
+<section class="card" aria-labelledby="privacy-export">
+  <h2 id="privacy-export">Export</h2>
+  <p>On Settings, Export my data gives you a zip of CSV files.</p>
+  <p>It holds your account details and everything you logged, deleted entries included. The log of calls is not in it.</p>
+</section>
+
+<section class="card" aria-labelledby="privacy-delete">
+  <h2 id="privacy-delete">Delete</h2>
+  <p>Deleting one entry hides it. It stays stored, and Undo brings it back.</p>
+  <p>Delete my account, on Settings, removes your account, every entry and your sign-in. It cannot be undone.</p>
+  <p>The log of calls keeps its rows, with no account on them.</p>
+</section>
+
+<section class="card" aria-labelledby="privacy-cookies">
+  <h2 id="privacy-cookies">Cookies</h2>
+  <p>One cookie keeps you signed in, for at most 14 days.</p>
+  <p>Until your time zone is set, your browser's own time zone is sent once and saved. One flag in your browser, kept until you close the tab, stops that check repeating.</p>
+  <p>Spotter sets nothing else in your browser.</p>
+</section>
+
+<section class="card" aria-labelledby="privacy-contact">
+  <h2 id="privacy-contact">Contact</h2>
+  {% if repository %}
+  <p>Questions and problems go on the project's issues page.</p>
+  <p><a class="plain-link" href="{{ repository }}/issues">Open the issues page</a></p>
+  {% else %}
+  <p>Questions and problems go on the issues page of Spotter's project on GitHub.</p>
+  {% endif %}
+</section>
+
+<section class="card" aria-labelledby="privacy-version">
+  <h2 id="privacy-version">This page</h2>
+  <p>This version is dated <time datetime="2026-11-11">Wed 11 Nov 2026</time>.</p>
+</section>
+{% endblock %}
