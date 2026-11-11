@@ -876,7 +876,6 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     day = next((d for d in result["days"] if d["date"] == on.isoformat()), None)
     if day is None:
         return not_found_page(request)
-    undo = undo_target(request.query_params.get("deleted"))
     # Prev and next only ever name a day that has a page: up to today, every day; after it, only the
     # later days that hold an entry.
     if on > today:
@@ -890,12 +889,15 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     state = await _db(services.sample_state, user.id)
     return page(request, "day.html", status_code=status_code, day=day, on=on, today=today,
                 prev_day=prev_day, next_day=next_day,
-                kinds=measurement_kinds(), undo=undo, form_error=form_error or {},
-                kind_names=KIND_NAMES, entry_words=ENTRY_WORDS, labels=MEASUREMENT_LABELS, meals=MEALS,
+                kinds=measurement_kinds(), strip=day_strip(request.query_params), form_error=form_error or {},
+                kind_names=KIND_NAMES, labels=MEASUREMENT_LABELS, meals=MEALS,
                 source_words=SOURCE_WORDS, measurement_quantity=measurement_quantity,
                 food=food, cardio=cardio, activities=activities,
                 serving_text=serving_text, same_name=same_name,
-                sample_rows=state["sample_rows"], offer_sample=state["empty"] and on == today,
+                # The Today card's state: a new account (today's page, sample_state empty), or the day's
+                # food, by whether any meal holds an entry (a day can total 0 kcal with food logged).
+                sample_rows=state["sample_rows"], new_account=state["empty"] and on == today,
+                has_food=bool(food) and any((food.get("meals") or {}).values()),
                 shows_estimate=any(c.get("estimate") for c in cardio))
 
 
@@ -943,6 +945,29 @@ async def cardio_names() -> list[str]:
     """The cardio activities, as list_exercises gives them."""
     result = await _db(services.list_exercises, "cardio")
     return [e["name"] for e in result.get("exercises", [])]
+
+
+# The day page's strips after a write, by mark and value (section L, the strips table). A mark with no row
+# here shows no strip: saved=unchanged and saved=time_zone only make the page calm, and so does any value
+# the table does not name. deleted={kind}:{id} is the Undo strip, read by undo_target.
+DAY_STRIPS = {("deleted", "sample"): "Sample data removed.", ("saved", "sample"): "Sample data added.",
+              ("saved", "confirmed"): "Estimate confirmed.",
+              **{("saved", kind): f"{words} saved." for kind, words in ENTRY_WORDS.items()},
+              **{("restored", kind): f"{words} restored." for kind, words in ENTRY_WORDS.items()}}
+
+
+def day_strip(params) -> dict | None:
+    """The one strip a day page shows after a write: {"words", "undo"}, where undo is the (kind, id) its Undo
+    form restores, or None. The Undo strip first, then deleted, saved and restored. The words come from the
+    tables, never from the address."""
+    undo = undo_target(params.get("deleted"))
+    if undo is not None:
+        return {"words": f"{ENTRY_WORDS[undo[0]]} deleted.", "undo": undo}
+    for mark in ("deleted", "saved", "restored"):
+        words = DAY_STRIPS.get((mark, params.get(mark)))
+        if words is not None:
+            return {"words": words, "undo": None}
+    return None
 
 
 def undo_target(value: object) -> tuple[str, str] | None:

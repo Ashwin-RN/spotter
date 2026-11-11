@@ -26,6 +26,7 @@ from app.config import Settings
 from app.main import create_app
 from app.models import Bodyweight, CallLog, CardioEntry, FoodEntry, LiftSession, Measurement, SavedFood, User
 
+from . import text_rules as tr
 from .conftest import RESOURCE, TEST_DIR, rpc, settings
 
 SITE = "https://spotter.example.app"
@@ -1181,6 +1182,12 @@ def day_of(client, on) -> str:
     return r.text
 
 
+def h1_text(page: str) -> str:
+    """The page's h1 as it reads aloud: its text with the tags taken out, the spaces squashed."""
+    h1 = re.search(r"<h1>(.*?)</h1>", page, re.S).group(1)
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", h1)).strip()
+
+
 def rows(model, user_id: int) -> list:
     with db.session_scope() as session:
         return list(session.scalars(select(model).where(model.user_id == user_id).order_by(model.id)))
@@ -1221,7 +1228,7 @@ def test_every_page_renders_for_a_person_with_no_entries(client):
     sign_in(client)
     today = today_of(only_user()).isoformat()
     page = day_of(client, today)
-    assert formatting.day_heading(today, today) in page and "No lifts logged on this day" in page
+    assert h1_text(page) == formatting.day_heading(today, today) and "No lifts logged on this day" in page
     assert "No weigh-in on this day" in page and "No measurements on this day" in page
     assert f'action="/day/{today}/weigh-in"' in page and f'action="/day/{today}/measurement"' in page
     kinds = re.search(r'<select id="measurement-kind" name="kind" required>(.*?)</select>', page, re.S).group(1)
@@ -1243,7 +1250,7 @@ def test_the_day_heading_names_the_day_in_full(client, monkeypatch, on, heading)
     sign_in(client)
     monkeypatch.setattr(db, "utcnow", lambda: datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc))
     page = day_of(client, on)
-    assert f"<h1>{heading}</h1>" in page
+    assert h1_text(page) == heading
 
 
 def test_the_measurement_kinds_carry_the_services_units(client):
@@ -1852,7 +1859,8 @@ def fed(client):
 
 
 def section(page: str, title: str) -> str:
-    return re.search(rf'<h2>{title}</h2>(.*?)</div>\s*(?=<div class="card">|$)', page, re.S).group(1)
+    return re.search(rf'<h2>{title}</h2>(.*?)</div>\s*(?=<div class="card">|</div>\s*<div class="col-side">|$)',
+                     page, re.S).group(1)
 
 
 # ---------------------------------------------------------------- the day page
@@ -2877,3 +2885,301 @@ def test_a_crash_while_drawing_the_unrouted_404_is_the_500_page(web_client, monk
     client = web_client(raise_server_exceptions=False)
     monkeypatch.setattr(web, "not_found_page", boom)
     assert_designed(client.get(UNROUTED), 500, PROBLEM, [("/", "Home")], signed_in=False)
+
+
+# ---------------------------------------------------------------- stage 6, step 4: the top of Today
+
+def hero_of(page: str) -> str:
+    """The Today card's markup."""
+    return re.search(r'<section class="card hero".*?</section>', page, re.S).group(0)
+
+
+def hero_lines(page: str) -> list[str]:
+    """The Today card's text as a person reads it, one line per block, the rolling digits left out."""
+    return [p.text for p in tr.html_text(hero_of(page)) if p.kind != "attr"]
+
+
+def chips_of(page: str) -> list[tuple[str, str]]:
+    """Each chip on the Today card: its classes after "chip", and its words."""
+    return [(cls, tr.squash(re.sub(r"<[^>]+>", "", inner)))
+            for cls, inner in re.findall(r'<li class="chip ([^"]+)">(.*?)</li>', hero_of(page), re.S)]
+
+
+def kg(value) -> str:
+    return formatting.show(value, "weigh_in", page=True)
+
+
+def strips_of(page: str) -> list[str]:
+    """The words of each strip after a write (class "ok"), up to its first tag."""
+    return re.findall(r'<(?:p|div) class="ok[^"]*">\s*([^<]*?)\s*<', page)
+
+
+def test_a_new_accounts_today_card_offers_sample_data(client):
+    sign_in(client)
+    page = day_of(client, today_of(only_user()).isoformat())
+    hero = hero_of(page)
+    assert hero.startswith('<section class="card hero" aria-labelledby="today-card-title">')
+    assert '<h2 class="hero-title" id="today-card-title">Nothing logged yet</h2>' in hero
+    assert hero_lines(page)[:2] == ["Today", "Nothing logged yet"]
+    assert hero_lines(page)[2] == ("To see Spotter full before you log anything, add sample data: four weeks of "
+                                   "lifts, weigh-ins, meals, cardio, measurements and three goals. Every sample row "
+                                   "is marked, and one button on Settings removes it all.")
+    assert chips_of(page) == [("chip-food is-missing", "No food yet"), ("chip-weight is-missing", "No weigh-in yet"),
+                              ("chip-lifts is-missing", "No lifts yet")]
+    form = re.search(r'<form method="post" action="/settings/sample">(.*?)</form>', hero, re.S).group(1)
+    assert '<button class="primary wide">Add sample data</button>' in form and 'name="csrf_token"' in form
+    assert "Add food" not in hero and 'class="big"' not in hero and "Eaten" not in hero
+
+
+def test_a_new_account_on_another_day_shows_the_food_state_without_yet(client):
+    sign_in(client)
+    yesterday = (today_of(only_user()) - timedelta(days=1)).isoformat()
+    page = day_of(client, yesterday)
+    assert hero_of(page).startswith('<section class="card hero" aria-labelledby="today-card-label">')
+    assert hero_lines(page) == ["Eaten", "No food yet", "No calorie target set", "No weigh-in", "No lifts",
+                                "No cardio", "Add food"]
+    assert [cls for cls, _ in chips_of(page)] == ["chip-weight is-missing", "chip-lifts is-missing",
+                                                  "chip-cardio is-missing"]
+    assert f'<a class="button primary wide" href="/day/{yesterday}?add=food#add-food">Add food</a>' in page
+    assert 'action="/settings/sample"' not in page and 'aria-label="Logged on this day"' in hero_of(page)
+
+
+def test_a_day_with_food_shows_the_days_kcal_big_with_its_unit(client, fed):
+    page = day_of(client, fed["today"])
+    assert hero_lines(page) == ["Eaten today", "460 kcal", "No calorie target set", f"Weigh-in {kg(80)}",
+                                "No lifts yet", "Treadmill Run " + formatting.show(30, "session_time"), "Add food"]
+    assert re.search(r'<p class="big">.*?460.*?&nbsp;<span class="unit">kcal</span></p>', hero_of(page), re.S)
+    assert f'href="/day/{fed["today"]}?add=food#add-food"' in page and 'id="add-food"' in page
+    assert 'aria-label="Logged today"' in hero_of(page) and "tag-sample" not in hero_of(page)
+
+
+def test_food_that_totals_zero_is_a_day_with_food(client):
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.log_food(uid, {"entries": [{"description": "Black coffee", "kcal": 0}]}, "claude")
+    lines = hero_lines(day_of(client, today_of(only_user()).isoformat()))
+    assert lines[:2] == ["Eaten today", "0 kcal"] and "No food yet" not in lines
+
+
+@pytest.mark.parametrize("target, eaten, line", [
+    (None, 460, "No calorie target set"),
+    (2000, 460, "2,000 kcal target, 1,540 kcal left"),
+    (1000, 1160, "1,000 kcal target, 160 kcal over"),
+    (1200, 1200, "1,200 kcal target, 0 kcal left"),
+])
+def test_the_line_under_the_number_is_the_target_and_what_is_left(client, target, eaten, line):
+    sign_in(client)
+    uid = only_user().id
+    if target is not None:
+        assert "error" not in services.update_settings(uid, {"calorie_target_kcal": target}, "web")
+    assert "error" not in services.log_food(uid, {"entries": [{"description": "Thali", "kcal": eaten}]}, "claude")
+    page = day_of(client, today_of(only_user()).isoformat())
+    assert hero_lines(page)[2] == line
+    assert f'<p class="figure-label">{line}</p>' in hero_of(page)
+
+
+def test_the_target_line_shows_on_a_day_with_no_food_too(client):
+    sign_in(client)
+    services.update_settings(only_user().id, {"calorie_target_kcal": 2000}, "web")
+    yesterday = (today_of(only_user()) - timedelta(days=1)).isoformat()
+    assert hero_lines(day_of(client, yesterday))[1:3] == ["No food yet", "2,000 kcal target, 2,000 kcal left"]
+
+
+def test_each_chip_present_on_another_day_and_missing_today_with_yet(client):
+    sign_in(client)
+    uid = only_user().id
+    today = today_of(only_user())
+    yesterday = (today - timedelta(days=1)).isoformat()
+    squat = [{"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]
+    for result in (services.log_bodyweight(uid, {"kg": "79", "date": yesterday}, "claude"),
+                   services.log_lifts(uid, {"date": yesterday, "sets": squat}, "claude"),
+                   services.log_cardio(uid, {"exercise": "Outdoor Walk", "minutes": 45, "date": yesterday}, "claude"),
+                   services.log_food(uid, {"entries": [{"description": "Poha", "kcal": 250}]}, "claude")):
+        assert "error" not in result, result
+    on_today = day_of(client, today.isoformat())
+    assert hero_lines(on_today)[3:6] == ["No weigh-in yet", "No lifts yet", "No cardio yet"]
+    assert [c for c, _ in chips_of(on_today)] == ["chip-weight is-missing", "chip-lifts is-missing",
+                                                  "chip-cardio is-missing"]
+    before = day_of(client, yesterday)
+    assert hero_lines(before)[:2] == ["Eaten", "No food yet"]
+    assert chips_of(before) == [("chip-weight", f"Weigh-in {kg(79)}"), ("chip-lifts", "Lifts logged"),
+                                ("chip-cardio", "Outdoor Walk " + formatting.show(45, "session_time"))]
+    assert f"<b>{kg(79)}</b>" in hero_of(before)
+
+
+def test_each_chip_present_today_and_missing_on_another_day_without_yet(client):
+    sign_in(client)
+    uid = only_user().id
+    today = today_of(only_user())
+    bench = [{"exercise": "Bench Press", "weight_kg": 40, "reps": 8}]
+    for result in (services.log_bodyweight(uid, {"kg": "80.25"}, "claude"),
+                   services.log_lifts(uid, {"sets": bench}, "claude"),
+                   services.log_cardio(uid, {"exercise": "Treadmill Run", "minutes": 75, "distance_km": 12}, "claude"),
+                   services.log_cardio(uid, {"exercise": "Outdoor Walk", "minutes": 20}, "claude")):
+        assert "error" not in result, result
+    page = day_of(client, today.isoformat())
+    # The day's first cardio entry. The chips add nothing up: the weigh-in as logged, one line for lifts.
+    assert chips_of(page) == [("chip-weight", f"Weigh-in {kg(80.25)}"), ("chip-lifts", "Lifts logged"),
+                              ("chip-cardio", "Treadmill Run " + formatting.show(75, "session_time"))]
+    assert hero_lines(page)[:2] == ["Eaten today", "No food yet"]
+    two_ago = (today - timedelta(days=2)).isoformat()
+    assert hero_lines(day_of(client, two_ago))[3:6] == ["No weigh-in", "No lifts", "No cardio"]
+
+
+DAY_STRIP_CASES = [
+    ("saved=bodyweight", "Weigh-in saved."),
+    ("saved=measurement", "Measurement saved."),
+    ("saved=lift_session", "Lift session saved."),
+    ("saved=food_entry", "Food entry saved."),
+    ("saved=cardio_entry", "Cardio session saved."),
+    ("saved=confirmed", "Estimate confirmed."),
+    ("restored=bodyweight", "Weigh-in restored."),
+    ("restored=lift_session", "Lift session restored."),
+    ("saved=sample", "Sample data added."),
+    ("deleted=sample", "Sample data removed."),
+    # One strip only: the Undo strip first, then deleted, saved and restored.
+    ("saved=bodyweight&restored=measurement", "Weigh-in saved."),
+    ("restored=measurement&deleted=sample", "Sample data removed."),
+    ("saved=unchanged&restored=cardio_entry", "Cardio session restored."),
+]
+
+
+@pytest.mark.parametrize("query, words", DAY_STRIP_CASES)
+def test_each_strip_says_its_words_by_its_address(client, query, words):
+    sign_in(client)
+    page = day_of(client, f"{today_of(only_user()).isoformat()}?{query}")
+    assert strips_of(page) == [words]
+    assert f'<p class="ok">{words}</p>' in page
+    assert '<div class="ok undo">' not in page and "/restore" not in page  # no Undo, deleted=sample included
+
+
+def test_the_undo_strip_names_the_kind_and_carries_its_form(client, stocked):
+    on = stocked["today"].isoformat()
+    page = day_of(client, f"{on}?deleted=bodyweight:{stocked['weigh_in']}&saved=measurement")
+    assert strips_of(page) == ["Weigh-in deleted."]
+    strip = re.search(r'<div class="ok undo">(.*?)</div>', page, re.S).group(1)
+    assert f'<form method="post" action="/entries/bodyweight/{stocked["weigh_in"]}/restore" class="inline">' in strip
+    assert f'value="{session_of(client)["csrf"]}"' in strip and '<button class="link">Undo</button>' in strip
+
+
+@pytest.mark.parametrize("query", ["saved=unchanged", "saved=time_zone", "saved=x", "saved=goal", "saved=1",
+                                   "restored=goal", "restored=sample", "restored=confirmed", "deleted=bodyweight",
+                                   "saved=Bodyweight", "saved=%3Cb%3Eweigh%3C%2Fb%3E", "add=food", "saved=",
+                                   "saved=unchanged&add=food", "saved=time_zone&add=food"])
+def test_no_strip_for_unchanged_the_zone_or_a_value_the_table_does_not_name(client, query):
+    sign_in(client)
+    page = day_of(client, f"{today_of(only_user()).isoformat()}?{query}")
+    assert 'class="ok' not in page and "/restore" not in page
+    assert "<b>weigh" not in page and "&lt;b&gt;" not in page  # the address is never echoed
+
+
+def test_day_strip_reads_only_the_tables():
+    assert web.day_strip({}) is None
+    assert web.day_strip({"saved": "unchanged"}) is None and web.day_strip({"saved": "time_zone"}) is None
+    assert web.day_strip({"deleted": "food_entry:7"}) == {"words": "Food entry deleted.", "undo": ("food_entry", "7")}
+    assert web.day_strip({"deleted": "sample"}) == {"words": "Sample data removed.", "undo": None}
+    for kind, words in web.ENTRY_WORDS.items():
+        assert web.day_strip({"saved": kind})["words"] == f"{words} saved."
+        assert web.day_strip({"restored": kind})["words"] == f"{words} restored."
+
+
+def test_the_top_of_today_runs_head_banner_strip_card_then_the_columns(client, monkeypatch):
+    sign_in(client)
+    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3}, raising=False)
+    page = day_of(client, f"{today_of(only_user()).isoformat()}?saved=sample")
+    order = ['<div class="page-head">', '<p class="notice sample-banner">', '<p class="ok">Sample data added.</p>',
+             '<section class="card hero"', '<div class="col-main">', "<h2>Food</h2>", '<div class="col-side">',
+             "<h2>Lifts</h2>", "<h2>Cardio</h2>", "<h2>Weigh-in</h2>", "<h2>Measurements</h2>"]
+    at = [page.index(mark) for mark in order]
+    assert at == sorted(at) and all(page.count(mark) == 1 for mark in order)
+    head = re.search(r'<div class="page-head">.*?</div>', page, re.S).group(0)
+    assert '<nav class="day-nav" aria-label="Days">' in head and "Next day" not in head
+    assert re.search(r'<a class="back" href="/day/[\d-]+" rel="prev">Previous day</a>', head)
+
+
+def test_todays_h1_is_today_with_the_day_under_it(client, monkeypatch):
+    sign_in(client)
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc))
+    page = day_of(client, "2026-11-10")
+    assert '<h1>Today<span class="sr">,</span> <span class="h1-date">Tuesday 10 November</span></h1>' in page
+    assert "<h1>Sunday 1 November</h1>" in day_of(client, "2026-11-01")
+
+
+def test_a_past_day_has_both_links_the_past_class_and_eaten(client, stocked):
+    page = day_of(client, stocked["yesterday"])
+    assert '<main class="page today past">' in page
+    head = re.search(r'<div class="page-head">.*?</div>', page, re.S).group(0)
+    before = (date.fromisoformat(stocked["yesterday"]) - timedelta(days=1)).isoformat()
+    assert re.findall(r'<a class="back" href="/day/([\d-]+)" rel="(prev|next)">', head) == [
+        (before, "prev"), (stocked["today"].isoformat(), "next")]
+    assert hero_lines(page)[0] == "Eaten" and "Eaten today" not in page
+    assert '<main class="page today">' in day_of(client, stocked["today"].isoformat())
+
+
+def test_a_day_after_today_is_a_past_day(client):
+    sign_in(client)
+    user = only_user()
+    services.update_settings(user.id, {"time_zone": "Pacific/Kiritimati"}, "web")  # UTC+14
+    services.log_bodyweight(user.id, {"kg": "70"}, "claude")
+    later = today_of(user).isoformat()
+    services.update_settings(user.id, {"time_zone": "Pacific/Pago_Pago"}, "web")  # UTC-11
+    today = today_of(user).isoformat()
+    page = day_of(client, later)
+    assert '<main class="page today past">' in page and hero_lines(page)[0] == "Eaten"
+    assert chips_of(page)[0] == ("chip-weight", f"Weigh-in {kg(70)}") and chips_of(page)[1][1] == "No lifts"
+    assert 'rel="prev">Previous day</a>' in page and h1_text(page) == formatting.day_heading(later, today)
+    assert "Nothing logged yet" not in page
+
+
+def test_the_sample_banner_sits_above_the_today_card(client):
+    sign_in(client)
+    assert post(client, "/settings/sample").status_code == 303
+    page = day_of(client, today_of(only_user()).isoformat())
+    banner = page.index('<p class="notice sample-banner">Sample data is on this account. Remove it on '
+                        '<a href="/settings">Settings</a>.</p>')
+    assert page.index('<div class="page-head">') < banner < page.index('<section class="card hero"')
+    assert "tag-sample" not in hero_of(page) and "Nothing logged yet" not in page
+
+
+REEL = "<span class=\"strip\">" + "".join(f"<span>{n}</span>" for n in range(10)) + "</span>"
+
+
+@pytest.mark.parametrize("kcal, shown", [(1234, "1,234"), (460, "460"), (0, "0"), (5000, "5,000")])
+def test_the_rolling_number_sits_over_the_plain_number_hidden_from_reading(client, kcal, shown):
+    sign_in(client)
+    assert "error" not in services.log_food(only_user().id, {"entries": [{"description": "Thali", "kcal": kcal}]},
+                                            "claude")
+    page = day_of(client, today_of(only_user()).isoformat())
+    assert formatting.show(kcal, "kcal", unit=False) == shown
+    columns = "".join(f'<span class="reel d{c}">{REEL}</span>' if c.isdigit() else f"<span>{c}</span>" for c in shown)
+    big = (f'<p class="big"><span class="rolling"><span class="rolling-text">{shown}</span>'
+           f'<span class="roll" aria-hidden="true" hidden>{columns}</span></span>&nbsp;<span class="unit">kcal</span></p>')
+    assert big in hero_of(page)
+    assert page.count('class="roll"') == 1 and page.count('class="rolling"') == 1  # the one big number only
+    assert hero_lines(page)[1] == f"{shown} kcal"  # read once, as plain text
+
+
+def test_no_rolling_number_without_a_number(client):
+    sign_in(client)
+    assert 'class="roll' not in day_of(client, today_of(only_user()).isoformat())  # a new account
+    yesterday = (today_of(only_user()) - timedelta(days=1)).isoformat()
+    assert 'class="roll' not in day_of(client, yesterday)  # No food yet
+
+
+@pytest.mark.parametrize("state", ["new", "food", "none", "past", "strip"])
+def test_the_top_of_today_never_says_claude(client, state):
+    sign_in(client)
+    today = today_of(only_user())
+    address = today.isoformat()
+    if state in ("food", "strip"):
+        stock_food(only_user())
+    if state == "none":
+        services.log_bodyweight(only_user().id, {"kg": "80"}, "claude")
+    if state == "past":
+        address = (today - timedelta(days=3)).isoformat()
+    if state == "strip":
+        address += "?saved=confirmed"
+    page = day_of(client, address)
+    top = page[page.index("<main"):page.index('<div class="col-main">')]
+    assert "Today" in top or "Eaten" in top
+    assert not re.search(r"claude", " ".join(p.text for p in tr.html_text(top)), re.I)

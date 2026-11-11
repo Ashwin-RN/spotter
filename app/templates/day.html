@@ -1,35 +1,82 @@
 {% extends "base.html" %}
 {% block title %}{% if on == today %}Today{% else %}{{ on|day(today) }}{% endif %} · Spotter{% endblock %}
 {% block main %}
-<div class="day-head">
-  {% if prev_day %}<a href="/day/{{ prev_day.isoformat() }}" rel="prev">Previous day</a>{% else %}<span></span>{% endif %}
-  <h1>{{ on|day_heading(today) }}</h1>
-  {% if next_day %}<a href="/day/{{ next_day.isoformat() }}" rel="next">Next day</a>{% else %}<span></span>{% endif %}
+{% import "_parts.html" as parts %}
+{% from "_parts.html" import sample_tag %}
+{% set on_today = on == today %}
+{# The h1 is day_heading's words: "Today, Tuesday 10 November" reads as one line, shown as Today with the
+   day under it. A day with no lead word ("Sunday 8 November") is its date alone. #}
+{% set heading = on|day_heading(today) %}
+{% set lead, comma, date_words = heading.partition(", ") %}
+<div class="page-head">
+  <h1>{% if date_words %}{{ lead }}<span class="sr">,</span> <span class="h1-date">{{ date_words }}</span>{% else %}{{ heading }}{% endif %}</h1>
+  {% if prev_day or next_day %}
+  <nav class="day-nav" aria-label="Days">
+    {% if prev_day %}<a class="back" href="/day/{{ prev_day.isoformat() }}" rel="prev">Previous day</a>{% endif %}
+    {% if next_day %}<a class="back" href="/day/{{ next_day.isoformat() }}" rel="next">Next day</a>{% endif %}
+  </nav>
+  {% endif %}
 </div>
 {% include "sample_banner.html" %}
 
-{% if offer_sample %}
-<div class="card accent-border">
-  <h2>Nothing logged yet</h2>
-  <p>To see Spotter full before you log anything, add sample data: four weeks of lifts, weigh-ins, meals,
-    cardio, measurements and three goals. Every sample row is marked, and one button on Settings removes it all.</p>
-  <form method="post" action="/settings/sample">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button class="primary">Add sample data</button>
-  </form>
-</div>
+{% if strip and strip.undo %}
+{{ parts.undo_strip(strip.words, "/entries/" ~ strip.undo[0] ~ "/" ~ strip.undo[1] ~ "/restore", csrf_token) }}
+{% elif strip %}
+{{ parts.saved_line(strip.words) }}
 {% endif %}
 
-{% macro sample_tag(row) %}{% if row.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}{% endmacro %}
+{# The rolling number, on the Today card's one big number only: the plain number stays in flow, and over it
+   sit the digit columns, one per digit, each moved by its class d0 to d9. The columns are hidden from reading
+   and shown by the stylesheet only when motion is allowed and the page is not calm. A comma stays a comma. #}
+{% macro rolling(text) %}<span class="rolling"><span class="rolling-text">{{ text }}</span><span class="roll" aria-hidden="true" hidden>{% for c in text %}{% if c.isdigit() %}<span class="reel d{{ c }}"><span class="strip">{% for n in range(10) %}<span>{{ n }}</span>{% endfor %}</span></span>{% else %}<span>{{ c }}</span>{% endif %}{% endfor %}</span></span>{% endmacro %}
 
-{% if undo %}
-<div class="ok undo">
-  {{ entry_words.get(undo[0], "Entry") }} deleted.
-  <form method="post" action="/entries/{{ undo[0] }}/{{ undo[1] }}/restore" class="inline">
+{# The Today card: a new account's offer of sample data, or the day's food with its chips. It shows entries
+   and adds nothing up, and it carries no sample tag: the tags sit on the entries below. #}
+{% if new_account %}
+<section class="card hero" aria-labelledby="today-card-title">
+  <p class="eyebrow">Today</p>
+  <h2 class="hero-title" id="today-card-title">Nothing logged yet</h2>
+  <p class="muted">To see Spotter full before you log anything, add sample data: four weeks of lifts, weigh-ins, meals,
+    cardio, measurements and three goals. Every sample row is marked, and one button on Settings removes it all.</p>
+  <ul class="chips" aria-label="Logged today">
+    <li class="chip chip-food is-missing">No food yet</li>
+    <li class="chip chip-weight is-missing">No weigh-in yet</li>
+    <li class="chip chip-lifts is-missing">No lifts yet</li>
+  </ul>
+  <form method="post" action="/settings/sample">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button class="link">Undo</button>
+    <button class="primary wide">Add sample data</button>
   </form>
-</div>
+</section>
+{% else %}
+{% set yet = " yet" if on_today else "" %}
+<section class="card hero" aria-labelledby="today-card-label">
+  <p class="eyebrow" id="today-card-label">{{ "Eaten today" if on_today else "Eaten" }}</p>
+  {% if has_food %}
+  <p class="big">{{ rolling(food.total_kcal|show("kcal", unit=False)) }}&nbsp;<span class="unit">kcal</span></p>
+  {% else %}
+  <p class="big">No food yet</p>
+  {% endif %}
+  <p class="figure-label">{% if not food or food.target_kcal is none %}No calorie target set{% else %}{{ food.target_kcal|show("kcal") }} target, {{ food.remaining_kcal|show("kcal_left") }}{% endif %}</p>
+  <ul class="chips" aria-label="{{ "Logged today" if on_today else "Logged on this day" }}">
+    {% if day.weigh_in %}
+    <li class="chip chip-weight"><span class="chip-label">Weigh-in</span> <b>{{ day.weigh_in.kg|show("weigh_in") }}</b></li>
+    {% else %}
+    <li class="chip chip-weight is-missing">No weigh-in{{ yet }}</li>
+    {% endif %}
+    {% if day.sessions %}
+    <li class="chip chip-lifts">Lifts logged</li>
+    {% else %}
+    <li class="chip chip-lifts is-missing">No lifts{{ yet }}</li>
+    {% endif %}
+    {% if cardio %}
+    <li class="chip chip-cardio"><span class="chip-label">{{ cardio[0].exercise }}</span> <b>{{ cardio[0].minutes|show("session_time") }}</b></li>
+    {% else %}
+    <li class="chip chip-cardio is-missing">No cardio{{ yet }}</li>
+    {% endif %}
+  </ul>
+  <a class="button primary wide" href="/day/{{ on.isoformat() }}?add=food#add-food">Add food</a>
+</section>
 {% endif %}
 
 {% macro actions(kind, id) %}
@@ -42,6 +89,9 @@
 </span>
 {% endmacro %}
 
+{# The laptop's two columns place whole wrappers: col-main holds Food, col-side the four cards after it. The
+   glance block goes between the Today card and col-main, on today's page only. #}
+<div class="col-main">
 <div class="card">
   <h2>Food</h2>
   {% if food %}
@@ -88,7 +138,7 @@
   <p class="muted">No food logged on this day.</p>
   {% endif %}
   {% set errors = form_error.get("food_entry", {}) %}
-  <form method="post" action="/day/{{ on.isoformat() }}/food" class="one-line">
+  <form id="add-food" method="post" action="/day/{{ on.isoformat() }}/food" class="one-line">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label for="food-description">Food</label>
     <input id="food-description" name="description" required maxlength="200" autocomplete="off">
@@ -103,7 +153,9 @@
   </form>
   {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
 </div>
+</div>
 
+<div class="col-side">
 <div class="card">
   <h2>Lifts</h2>
   {% for session in day.sessions %}
@@ -218,5 +270,6 @@
     <button class="primary">Save measurement</button>
   </form>
   {% for field, text in errors.items() %}<p class="error">{{ text }}</p>{% endfor %}
+</div>
 </div>
 {% endblock %}

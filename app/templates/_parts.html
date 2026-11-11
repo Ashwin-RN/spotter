@@ -1,0 +1,17 @@
+{# Parts more than one card or page draws. Import with {% import "_parts.html" as parts %}: a part sees only
+   its arguments, never the page's context, so the form token is passed in. #}
+
+{# The saved line after a write: its words, after a green dot. #}
+{% macro saved_line(words) %}<p class="ok">{{ words }}</p>{% endmacro %}
+
+{# The Undo strip after a delete: its words, then the one-button form that brings the entry back. #}
+{% macro undo_strip(words, action, csrf_token) %}<div class="ok undo">
+  {{ words }}
+  <form method="post" action="{{ action }}" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="link">Undo</button>
+  </form>
+</div>{% endmacro %}
+
+{# The sample mark after a row from sample data: a space, then the tag. Nothing on a row of the person's own. #}
+{% macro sample_tag(row) %}{% if row.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}{% endmacro %}

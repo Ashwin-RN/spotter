@@ -219,13 +219,19 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
     # The undo line for every kind, for one of its entries (or any id: the line names the kind, not the entry).
     undo = [f"/day/{today.isoformat()}?deleted={kind}:{next(iter(_ids(model, user_id)), 1)}"
             for kind, model in ENTRY_MODELS]
+    # Each strip the day page has words for after a write (section L, the strips table), and the two marks
+    # that only make it calm. One on a past day too.
+    marks = ["saved=confirmed", "saved=sample", "deleted=sample", "saved=unchanged", "saved=time_zone",
+             *(f"{mark}={kind}" for mark in ("saved", "restored") for kind, _ in ENTRY_MODELS)]
+    strips = [f"/day/{today.isoformat()}?{mark}" for mark in marks] + \
+        [f"/day/{(today - timedelta(days=1)).isoformat()}?saved=bodyweight"]
     goal_marks = [f"/goals?saved={s}" for s in web.GOAL_SAVED] + \
         ["/goals?saved=goal&notes=" + ",".join(code for code, _, _ in web.GOAL_NOTES)]
     return {
         "/settings": ["/settings", "/settings?saved=time_zone", "/settings?saved=claude_can",
                       "/settings?saved=targets"],
         "/today": ["/today"],
-        "/day/{date}": [f"/day/{d}" for d in dates] + undo,
+        "/day/{date}": [f"/day/{d}" for d in dates] + undo + strips,
         "/foods": ["/foods", "/foods?saved=1"] + [f"/foods?deleted={i}" for i in foods[:1]],
         "/foods/{food_id}/edit": [f"/foods/{i}/edit" for i in foods],
         "/entries/{kind}/{entry_id}/edit": entries,
