@@ -90,7 +90,8 @@ def test_failures_come_back_together(user):
                 status="hit")["error"] == "invalid_field"
     assert goal(user, kind="lift", exercise="Deadlift", target_value=100, target_date="soon")["error"] \
         == "invalid_date"
-    assert goal(user, goal_id=999999, status="hit") == services.get_entry(user.id, "goal", 999999)
+    assert goal(user, goal_id=999999, status="hit") == {**services.get_entry(user.id, "goal", 999999),
+                                                        "field": "goal_id"}
     gid = goal(user, kind="bodyweight", target_value=70, start_value=80, target_date=day(user, 9))["id"]
     assert goal(user, goal_id=gid)["error"] == "nothing_to_change"
     assert goal(user, goal_id=gid, kind="lift")["error"] == "cannot_change_kind"
@@ -1039,3 +1040,169 @@ def test_a_bpm_goal_in_rule_2_widens_ahead_by_to_1_dp(user, monkeypatch):
     assert plan_of(services.get_goals(user.id)["goals"][0]) == {
         "should_be_today": 64.0, "ahead_by": -0.5, "days_ahead": -10, "vs_plan": "behind",
         "plan_line": "64.0 bpm now against 63.5 bpm on the plan line today: 0.5 bpm behind."}
+
+
+# ---------------------------------------------------------------- each refusal names its field
+
+def weight_goal_id(user) -> int:
+    return goal(user, kind="bodyweight", target_value=70, start_value=80, target_date=day(user, 30))["id"]
+
+
+def waist_goal_id(user) -> int:
+    measure(user, 1, "waist", 90)
+    return goal(user, kind="measurement", measurement_kind="waist", target_value=85, target_date=day(user, 30))["id"]
+
+
+def run_goal_id(user) -> int:
+    run(user, 1, 5, 30)
+    return goal(user, kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=28,
+                target_date=day(user, 30))["id"]
+
+
+def by_date(user, **data):
+    return goal(user, target_date=day(user, 30), **data)
+
+
+def over_the_write_limit(user) -> int:
+    """A goal's id, then more write rows in the window than the limit allows."""
+    from app.models import CallLog
+    from app.services.common import WRITE_LIMIT
+    goal_id = weight_goal_id(user)
+    with db.session_scope() as s:
+        s.add_all(CallLog(user_id=user.id, function="set_goal", started_at=db.utcnow(), ms=1, ok=True,
+                          result_bytes=1) for _ in range(WRITE_LIMIT + 1))
+    return goal_id
+
+
+def logged_then(first, then):
+    """Log something, then make the call: one lambda for a case that needs a start logged."""
+    first()
+    return then()
+
+
+LIFT = {"kind": "lift", "exercise": "Deadlift"}
+RUN = {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5}
+RESTING = {"kind": "measurement", "measurement_kind": "resting_hr"}
+WEIGHT = {"kind": "bodyweight", "target_value": 70, "start_value": 80}
+
+# Every refusal set_goal returns: the call, then each problem's (error, field). None: no field key at all, a
+# refusal about the whole request. The Goals page places each one by its field, never by its words.
+FIELD_CASES = {
+    "kind_missing": (lambda u: goal(u), [("missing_field", "kind")]),
+    "kind_a_setting": (lambda u: goal(u, kind="calories"), [("invalid_field", "kind")]),
+    "kind_unknown": (lambda u: goal(u, kind="vibes"), [("invalid_field", "kind")]),
+    "lift_no_exercise": (lambda u: by_date(u, kind="lift", target_value=100, start_value=80),
+                         [("missing_field", "exercise")]),
+    "lift_unknown_exercise": (lambda u: by_date(u, kind="lift", exercise="Bak Squat", target_value=100,
+                                                start_value=80), [("unknown_exercise", "exercise")]),
+    "lift_given_cardio": (lambda u: by_date(u, kind="lift", exercise="outdoor run", target_value=100,
+                                            start_value=80), [("invalid_field", "exercise")]),
+    "cardio_no_activity": (lambda u: by_date(u, **{**RUN, "exercise": None}, target_value=25, start_value=30),
+                           [("missing_field", "exercise")]),
+    "cardio_unknown_activity": (lambda u: by_date(u, **{**RUN, "exercise": "Bak Squat"}, target_value=25,
+                                                  start_value=30), [("unknown_exercise", "exercise")]),
+    "cardio_given_lift": (lambda u: by_date(u, **{**RUN, "exercise": "back squat"}, target_value=25,
+                                            start_value=30), [("invalid_field", "exercise")]),
+    "cardio_no_distance": (lambda u: by_date(u, **{**RUN, "distance_km": None}, target_value=25, start_value=30),
+                           [("missing_field", "distance_km")]),
+    "cardio_distance_out_of_range": (lambda u: by_date(u, **{**RUN, "distance_km": 0.05}, target_value=25,
+                                                       start_value=30), [("invalid_field", "distance_km")]),
+    "measurement_no_kind": (lambda u: by_date(u, kind="measurement", target_value=80),
+                            [("missing_field", "measurement_kind")]),
+    "measurement_steps": (lambda u: by_date(u, kind="measurement", measurement_kind="steps", target_value=10),
+                          [("invalid_field", "measurement_kind")]),
+    "measurement_sleep": (lambda u: by_date(u, kind="measurement", measurement_kind="sleep_hours", target_value=8),
+                          [("invalid_field", "measurement_kind")]),
+    "measurement_water": (lambda u: by_date(u, kind="measurement", measurement_kind="water_ml", target_value=2000),
+                          [("invalid_field", "measurement_kind")]),
+    "measurement_unknown": (lambda u: by_date(u, kind="measurement", measurement_kind="wrist", target_value=80),
+                            [("invalid_kind", "measurement_kind")]),
+    "target_out_of_range": (lambda u: by_date(u, **{**WEIGHT, "target_value": 500}),
+                            [("invalid_field", "target_value")]),
+    "target_not_a_number": (lambda u: by_date(u, **{**WEIGHT, "target_value": "heavy"}),
+                            [("invalid_field", "target_value")]),
+    "target_not_whole": (lambda u: by_date(u, **RESTING, target_value=55.5, start_value=60),
+                         [("invalid_field", "target_value")]),
+    "target_missing": (lambda u: by_date(u, kind="bodyweight", start_value=80), [("missing_field", "target_value")]),
+    "date_missing": (lambda u: goal(u, **WEIGHT), [("missing_field", "target_date")]),
+    "date_not_a_date": (lambda u: goal(u, **WEIGHT, target_date="soon"), [("invalid_date", "target_date")]),
+    "date_today": (lambda u: goal(u, **WEIGHT, target_date=day(u, 0)), [("date_not_in_future", "target_date")]),
+    "status_not_one": (lambda u: by_date(u, **WEIGHT, status="won"), [("invalid_field", "status")]),
+    "status_on_a_new_goal": (lambda u: by_date(u, **WEIGHT, status="hit"), [("invalid_field", "status")]),
+    "text_control_character": (lambda u: by_date(u, **WEIGHT, text="a\x00b"), [("invalid_field", "text")]),
+    "start_out_of_range": (lambda u: by_date(u, **LIFT, target_value=150, start_value=-5),
+                           [("invalid_field", "start_value")]),
+    "start_not_whole": (lambda u: by_date(u, **RESTING, target_value=55, start_value=60.5),
+                        [("invalid_field", "start_value")]),
+    "no_start_lift": (lambda u: by_date(u, **LIFT, target_value=150), [("missing_field", "start_value")]),
+    "no_start_weight": (lambda u: by_date(u, kind="bodyweight", target_value=75), [("missing_field", "start_value")]),
+    "no_start_measurement": (lambda u: by_date(u, kind="measurement", measurement_kind="hips", target_value=95),
+                             [("missing_field", "start_value")]),
+    "no_start_cardio": (lambda u: by_date(u, **RUN, target_value=25), [("missing_field", "start_value")]),
+    "target_is_start": (lambda u: logged_then(lambda: weigh(u, 1, 90),
+                                              lambda: by_date(u, kind="bodyweight", target_value=90)),
+                        [("target_is_start", "target_value")]),
+    "target_the_wrong_way": (lambda u: logged_then(lambda: squat(u, 2, 450, reps=10),
+                                                   lambda: by_date(u, kind="lift", exercise="Back Squat",
+                                                                   target_value=590)),
+                             [("wrong_direction", "target_value")]),
+    "target_past_the_top": (lambda u: logged_then(lambda: squat(u, 1, 500, reps=10),
+                                                  lambda: by_date(u, kind="lift", exercise="Back Squat",
+                                                                  target_value=650)),
+                            [("wrong_direction", "target_value")]),
+    "edit_unknown_goal": (lambda u: goal(u, goal_id=999999, status="hit"), [("not_found", "goal_id")]),
+    "edit_kind": (lambda u: goal(u, goal_id=weight_goal_id(u), kind="lift"), [("cannot_change_kind", "kind")]),
+    "edit_exercise": (lambda u: goal(u, goal_id=run_goal_id(u), exercise="Treadmill Run"),
+                      [("cannot_change_kind", "exercise")]),
+    "edit_measurement_kind": (lambda u: goal(u, goal_id=waist_goal_id(u), measurement_kind="hips"),
+                              [("cannot_change_kind", "measurement_kind")]),
+    "edit_distance": (lambda u: goal(u, goal_id=run_goal_id(u), distance_km=10),
+                      [("cannot_change_kind", "distance_km")]),
+    "edit_target_the_wrong_way": (lambda u: goal(u, goal_id=weight_goal_id(u), target_value=85),
+                                  [("wrong_direction", "target_value")]),
+    # A bad value on an edit changes nothing, so nothing_to_change, with no field, comes beside it.
+    "edit_target_out_of_range": (lambda u: goal(u, goal_id=weight_goal_id(u), target_value=500),
+                                 [("invalid_field", "target_value"), ("nothing_to_change", None)]),
+    "edit_date_today": (lambda u: goal(u, goal_id=weight_goal_id(u), target_date=day(u, 0)),
+                        [("date_not_in_future", "target_date"), ("nothing_to_change", None)]),
+    "edit_status_not_one": (lambda u: goal(u, goal_id=weight_goal_id(u), status="finished"),
+                            [("invalid_field", "status")]),
+    "edit_text_control_character": (lambda u: goal(u, goal_id=weight_goal_id(u), text="a\x00b"),
+                                    [("invalid_field", "text"), ("nothing_to_change", None)]),
+    "whole_data_not_an_object": (lambda u: services.set_goal(u.id, ["kind"], "claude"), [("invalid_field", None)]),
+    "whole_by_unknown": (lambda u: goal(u, by="robot", **WEIGHT), [("invalid_by", None)]),
+    "whole_no_account": (lambda u: services.set_goal(u.id + 999999, {"kind": "bodyweight"}, "claude"),
+                         [("no_account", None)]),
+    "whole_write_limit": (lambda u: goal(u, goal_id=over_the_write_limit(u), status="hit"),
+                          [("too_many_writes", None)]),
+    "whole_nothing_to_change": (lambda u: goal(u, goal_id=weight_goal_id(u)), [("nothing_to_change", None)]),
+}
+
+
+@pytest.mark.parametrize("case", list(FIELD_CASES), ids=list(FIELD_CASES))
+def test_each_refusal_names_the_input_it_is_about(user, case):
+    call, expected = FIELD_CASES[case]
+    r = call(user)
+    problems = r.get("errors") or [r]
+    assert [(p["error"], p.get("field")) for p in problems] == expected, r
+    for p in problems:
+        assert ("field" in p) == (p.get("field") is not None), p  # a whole-request refusal has no field key
+    assert r.get("field") == problems[0].get("field") and ("field" in r) == ("field" in problems[0])
+
+
+def test_problems_together_each_name_their_own_field(user):
+    """rules.combine keeps every problem's field in errors. The top level carries the first one's."""
+    r = goal(user, kind="lift", exercise="Bak Squat", target_value=0, target_date=day(user, -1))
+    assert [(e["error"], e["field"]) for e in r["errors"]] == [
+        ("unknown_exercise", "exercise"), ("invalid_field", "target_value"), ("date_not_in_future", "target_date")]
+    assert r["field"] == "exercise"
+    both = goal(user, kind="bodyweight")
+    assert [e["field"] for e in both["errors"]] == ["target_value", "target_date"]
+
+
+@pytest.mark.parametrize("daily, word", [("steps", "Steps"), ("sleep_hours", "Sleep"), ("water_ml", "Water")])
+def test_a_days_amount_names_the_measurement_kind_field_whatever_its_word(user, daily, word):
+    """The message starts with the kind's word ("Sleep cannot be a goal"), which names no field. The
+    field key carries it."""
+    r = goal(user, kind="measurement", measurement_kind=daily, target_value=10, target_date=day(user, 30))
+    assert r["message"].startswith(f"{word} cannot be a goal") and r["field"] == "measurement_kind"

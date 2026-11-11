@@ -169,8 +169,14 @@ def _what(kind: str, measurement_kind: str | None) -> str:
     return f"a {kind} goal"
 
 
+def _at(err: dict | None, field: str) -> dict | None:
+    """A refusal built outside this module, with `field`: the set_goal input it is about, so the Goals
+    page places it by that and never by its words. None stays None."""
+    return None if err is None else {**err, "field": field}
+
+
 def _value(value, field: str, kind: str, measurement_kind: str | None) -> tuple[float | None, dict | None]:
-    """target_value or start_value, in the goal's unit and range."""
+    """target_value or start_value, in the goal's unit and range. A refusal carries `field`."""
     lo, hi, low_open, whole, places = _limits(kind, measurement_kind)
     unit = unit_for(kind, measurement_kind)
     limits = rules.span(lo, hi, "goal_target")
@@ -181,10 +187,10 @@ def _value(value, field: str, kind: str, measurement_kind: str | None) -> tuple[
         fix = f"Give {field} as the minutes for the goal's distance, {span}, for a cardio_best goal."
     number, err = in_range(value, field, lo, hi, fix, low_open=low_open)
     if err:
-        return None, err
+        return None, _at(err, field)
     if whole and number != int(number):
         return None, rules.error("invalid_field", f"{field} must be a whole number, not {rules.as_sent(value)}.",
-                                 fix)
+                                 fix, field=field)
     return round(number, places) + 0.0, None
 
 
@@ -428,37 +434,39 @@ def _future_date(value, today: date) -> tuple[date | None, dict | None]:
     parsed = rules.to_date(value)
     if parsed is None:
         return None, rules.error("invalid_date", f"target_date '{rules.quote(value)}' is not a date.",
-                                 "Give the date as YYYY-MM-DD.")
+                                 "Give the date as YYYY-MM-DD.", field="target_date")
     if parsed <= today:
         return None, rules.error("date_not_in_future", f"target_date {parsed.isoformat()} is not after today "
-                                 f"({today.isoformat()}).", f"Give a target date after today. {rules.TODAY_NOTE}")
+                                 f"({today.isoformat()}).", f"Give a target date after today. {rules.TODAY_NOTE}",
+                                 field="target_date")
     return parsed, None
 
 
 def _kind_error(given) -> dict:
     fix = f"Use one of: {', '.join(KINDS_NOW)}."
     if given is None:
-        return rules.error("missing_field", "kind is missing.", fix)
+        return rules.error("missing_field", "kind is missing.", fix, field="kind")
     if isinstance(given, str) and given in SETTINGS_KINDS:
         return rules.error("invalid_field", f"kind '{given}' is not a goal: a weekly or daily amount is a setting.",
                            f"{fix} A weekly sessions, weekly cardio minutes or daily calorie target is set with "
-                           "update_settings.")
-    return rules.error("invalid_field", f"kind '{rules.quote(given)}' is not a kind of goal.", fix)
+                           "update_settings.", field="kind")
+    return rules.error("invalid_field", f"kind '{rules.quote(given)}' is not a kind of goal.", fix, field="kind")
 
 
 def _measurement_kind(value) -> tuple[str | None, dict | None]:
     """A measurement goal's kind: waist, hips, chest, arm, thigh or resting_hr. A day's amount is refused."""
     fix = f"Use one of: {', '.join(GOAL_MEASUREMENTS)}."
     if value in (None, ""):
-        return None, rules.error("missing_field", "A measurement goal needs measurement_kind.", fix)
+        return None, rules.error("missing_field", "A measurement goal needs measurement_kind.", fix,
+                                 field="measurement_kind")
     hit, _ = rules.match_kind(value)
     if hit in DAILY_AMOUNTS:
         what = measurement_name(hit)
         return None, rules.error("invalid_field", f"{what} cannot be a goal: it is a day's amount, met or missed "
-                                 "every day, not a state to reach by a date.", fix)
+                                 "every day, not a state to reach by a date.", fix, field="measurement_kind")
     if hit is None:
         return None, rules.error("invalid_kind", f"measurement_kind '{rules.quote(value)}' is not a measurement.",
-                                 fix)
+                                 fix, field="measurement_kind")
     return hit, None
 
 
@@ -471,10 +479,10 @@ def _wrong_kind(s, name, other: str) -> dict | None:
     if other == "cardio":
         return rules.error("invalid_field", f"{hit} is a cardio activity; a lift goal needs a lift.",
                            "Use a lift from list_exercises with kind lift. For a time over a distance in "
-                           f"{hit}, set kind cardio_best with distance_km.")
+                           f"{hit}, set kind cardio_best with distance_km.", field="exercise")
     return rules.error("invalid_field", f"{hit} is a lift; a cardio_best goal needs a cardio activity.",
                        "Use an activity from list_exercises with kind cardio. For an estimated max in "
-                       f"{hit}, set kind lift.")
+                       f"{hit}, set kind lift.", field="exercise")
 
 
 def _identity(s, kind: str, data: dict, errors: list, warnings: list):
@@ -486,31 +494,31 @@ def _identity(s, kind: str, data: dict, errors: list, warnings: list):
         by_name = {e.name: e for e in exercises(s, "lift")}
         if not present("exercise"):
             errors.append(rules.error("missing_field", "A lift goal needs an exercise.",
-                                      "Give the exercise name as list_exercises gives it."))
+                                      "Give the exercise name as list_exercises gives it.", field="exercise"))
         else:
             hit, _ = rules.match_exercise(data["exercise"], list(by_name))
             if hit is None:
                 errors.append(_wrong_kind(s, data["exercise"], "cardio")
-                              or rules.unknown_exercise(data["exercise"], list(by_name)))
+                              or _at(rules.unknown_exercise(data["exercise"], list(by_name)), "exercise"))
             else:
                 exercise = by_name[hit]
     elif kind == "cardio_best":
         exercise, err = cardio.match_cardio(s, data.get("exercise"))
         if err and err["error"] == "missing_field":
-            err = {**err, "message": "A cardio_best goal needs an activity: " + err["message"]}
+            err = {**err, "message": "A cardio_best goal needs an activity: " + err["message"], "field": "exercise"}
         elif err:
-            err = _wrong_kind(s, data["exercise"], "lift") or err
+            err = _wrong_kind(s, data["exercise"], "lift") or _at(err, "exercise")
         errors += [err] if err else []
         if not present("distance_km"):
             errors.append(rules.error("missing_field", "A cardio_best goal needs distance_km.",
                                       f"Give distance_km, {rules.span(*DISTANCE_KM, 'km')}: the distance the time "
-                                      "is for."))
+                                      "is for.", field="distance_km"))
         else:
             lo, hi = DISTANCE_KM
             distance, err = in_range(data["distance_km"], "distance_km", lo, hi,
                                      f"Give distance_km, {rules.span(lo, hi, 'km')}: the distance the time is for.",
                                      quantity="km")
-            errors += [err] if err else []
+            errors += [_at(err, "distance_km")] if err else []
     elif present("exercise"):
         warnings.append(f"exercise '{rules.quote(data['exercise'])}' was ignored: only a lift or cardio_best goal "
                         "has an exercise.")
@@ -526,20 +534,22 @@ def _identity(s, kind: str, data: dict, errors: list, warnings: list):
     return exercise, measurement_kind, distance
 
 
-def _changes_identity(goal: Goal, data: dict) -> bool:
-    """True when an edit names a different kind, exercise, measurement kind or distance."""
+def _changes_identity(goal: Goal, data: dict) -> str | None:
+    """The first of kind, exercise, measurement_kind and distance_km that an edit names differently:
+    the field cannot_change_kind carries. None when the edit names none of them differently."""
     if data.get("kind") not in (None, "", goal.kind):
-        return True
+        return "kind"
     if data.get("exercise") and goal.exercise and rules.match_exercise(data["exercise"], [goal.exercise.name])[0] \
             is None:
-        return True
+        return "exercise"
     if data.get("measurement_kind") not in (None, "") and rules.match_kind(data["measurement_kind"])[0] \
             != goal.measurement_kind:
-        return True
+        return "measurement_kind"
     if data.get("distance_km") not in (None, ""):
         number = rules.to_float(data["distance_km"])
-        return number is None or goal.distance_km is None or round(number, 2) != goal.distance_km
-    return False
+        if number is None or goal.distance_km is None or round(number, 2) != goal.distance_km:
+            return "distance_km"
+    return None
 
 
 def _no_start(g) -> dict:
@@ -547,20 +557,21 @@ def _no_start(g) -> dict:
     if g.kind == "lift":
         return rules.error("missing_field", f"There is no logged {g.exercise.name} to start this goal from.",
                            f"Log a session with {g.exercise.name} first (log_lifts), or give start_value: the "
-                           "person's current one-rep max in kg.")
+                           "person's current one-rep max in kg.", field="start_value")
     if g.kind == "bodyweight":
         return rules.error("missing_field", "There is no weigh-in to start this goal from.",
-                           "Log a weigh-in first (log_bodyweight), or give start_value: today's body weight in kg.")
+                           "Log a weigh-in first (log_bodyweight), or give start_value: today's body weight in kg.",
+                           field="start_value")
     if g.kind == "measurement":
         name = measurement_name(g.measurement_kind).lower()
         return rules.error("missing_field", f"There is no {name} measurement to start this goal from.",
                            f"Log one first (log_measurement), or give start_value: the person's {name} now, in "
-                           f"{g.unit}.")
+                           f"{g.unit}.", field="start_value")
     distance = formatting.show(g.distance_km, "km")
     return rules.error("missing_field", f"There is no {g.exercise.name} session of {distance} or more to "
                        "start this goal from.",
                        f"Log one first (log_cardio with distance_km), or give start_value: the person's time for "
-                       f"{distance} now, in minutes.")
+                       f"{distance} now, in minutes.", field="start_value")
 
 
 def _start(g, loaded: dict, given, today: date, warnings: list) -> tuple[float | None, str | None, dict | None]:
@@ -597,12 +608,13 @@ def _wrong_way(kind: str, measurement_kind: str | None, direction: str, start: f
                            f"No target {side} {said(start, unit)} can be set: "
                            f"{said(hi if direction == 'up' else lo, unit)} "
                            f"is the {'most' if direction == 'up' else 'least'} {_what(kind, measurement_kind)} takes. "
-                           "Mark this goal dropped, or set another goal.")
+                           "Mark this goal dropped, or set another goal.", field="target_value")
     shown = formatting.field(start, "goal_target")
     span = (f"above {shown} and at most {said(hi, unit)}" if direction == "up"
             else f"below {shown} and at least {said(lo, unit)}")
     return rules.error("wrong_direction", message,
-                       f"Give a target {span}. To aim the other way, mark this goal dropped and set a new one.")
+                       f"Give a target {span}. To aim the other way, mark this goal dropped and set a new one.",
+                       field="target_value")
 
 
 # ---------------------------------------------------------------- set_goal
@@ -613,6 +625,10 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
     Returns {kind, id, goal, progress, warnings, links[, note]} or {error, message, fix}. progress is the
     goal's entry from goal_numbers (status "reached", "on track", "behind" or "not enough data"), or None for a goal
     that is not open. Every validation failure comes back at once.
+    A refusal about one input carries field, that input's name (kind, exercise, measurement_kind,
+    distance_km, target_value, target_date, start_value, text, status or goal_id), so the Goals page
+    places it by that. A refusal about the whole request (data, by, the account, the write limit,
+    nothing to change) carries none. rules.combine puts the first problem's field at the top.
     """
     data, err = check_data(data)
     err = err or check_by(by)
@@ -633,25 +649,26 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
             errors.append(rules.error("invalid_field",
                                       f"status '{rules.quote(status)}' is not one of {', '.join(GOAL_STATUSES)}.",
                                       "Use hit, dropped or open: hit is the person's own mark that a goal is "
-                                      "done."))
+                                      "done.", field="status"))
         text = None
         if data.get("text") is not None:  # left out: an edit keeps the text it has
             text, err = rules.text(data["text"], "text")
-            errors += [err] if err else []
+            errors += [_at(err, "text")] if err else []
 
         goal = None
         exercise = measurement_kind = distance = None
-        renamed = False  # an edit that names another kind, exercise, measurement or distance
+        renamed = None  # the identity field an edit names differently: kind, exercise, measurement or distance
         if data.get("goal_id") not in (None, ""):
             goal = owned(s, Goal, user.id, data["goal_id"])
             if goal is None:
-                return not_found(KIND)
+                return _at(not_found(KIND), "goal_id")
             kind, measurement_kind = goal.kind, goal.measurement_kind
             renamed = _changes_identity(goal, data)
             if renamed:
                 errors.append(rules.error("cannot_change_kind",
                                           "A goal's kind, exercise, measurement kind and distance cannot change.",
-                                          "Mark this goal dropped (goal_id and status dropped) and set a new one."))
+                                          "Mark this goal dropped (goal_id and status dropped) and set a new one.",
+                                          field=renamed))
             if data.get("start_value") not in (None, ""):
                 warnings.append("start_value was ignored: a goal keeps the start it was set with.")
         else:
@@ -663,7 +680,8 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
                 exercise, measurement_kind, distance = _identity(s, kind, data, errors, warnings)
             if status_ok and status not in (None, "open"):
                 errors.append(rules.error("invalid_field", f"A new goal starts open; status '{status}' needs goal_id.",
-                                          "Leave status out to set a goal, or give goal_id to close one."))
+                                          "Leave status out to set a goal, or give goal_id to close one.",
+                                          field="status"))
 
         # A value can be checked once its range is known: the kind, and for a measurement, which one.
         ranged = kind in KINDS_NOW and (kind != "measurement" or measurement_kind is not None)
@@ -680,7 +698,8 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
                     how = (" (YYYY-MM-DD, after today)." if field == "target_date"
                            else " in minutes for the distance." if kind == "cardio_best"
                            else f" in {unit_for(kind, measurement_kind)}." if ranged else ".")
-                    errors.append(rules.error("missing_field", f"A {kind} goal needs {field}.", f"Give {field}{how}"))
+                    errors.append(rules.error("missing_field", f"A {kind} goal needs {field}.", f"Give {field}{how}",
+                                              field=field))
         # cannot_change_kind already says what to do; "nothing to change" beside it would contradict it.
         if goal is not None and not renamed and status is None and target is None and target_date is None \
                 and text is None:
@@ -705,7 +724,8 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
                 direction = "down"
             elif target == start:
                 return rules.error("target_is_start", f"target_value {said(target, goal.unit)} is the start "
-                                   f"itself ({source}).", f"Give a target above or below {said(start, goal.unit)}.")
+                                   f"itself ({source}).", f"Give a target above or below {said(start, goal.unit)}.",
+                                   field="target_value")
             else:
                 direction = "down" if target < start else "up"
             err = _wrong_way(kind, measurement_kind, direction, start, target)
