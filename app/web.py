@@ -69,7 +69,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from sqlalchemy import func, select
 
-from app import calllog, charts, csrf, db, formatting, links, rules, services, users, web_auth
+from app import calllog, charts, csrf, db, formatting, links, metrics, rules, services, users, web_auth
 from app.config import Settings, get_settings
 from app.models import (
     CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
@@ -1156,19 +1156,29 @@ BODY_WEIGHT_DAYS = 28  # Progress' Body weight chart: the last 4 weeks
 def _trend(user_id: int) -> dict:
     """What /progress shows beyond get_progress's rows: each lift's best set (lifts.history, the numbers
     get_progress uses) and the body weight chart. bodyweight_chart takes the weigh-in and goal rows
-    themselves, so this reads them. Nothing is written."""
+    themselves, so this reads them. Nothing is written.
+
+    weigh_ins_28d counts the weigh-ins in the chart's 28 days, the card's words key on it. average_7d is
+    the 7-day average ending today, None with no weigh-in in the last 7 days: get_trends' bodyweight.now
+    when it is an average, so the card and the Trends card agree."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
-            return {"best_sets": {}, "bodyweight": None, "weigh_ins": 0, "latest_weigh_in": None}
+            return {"best_sets": {}, "bodyweight": None, "weigh_ins": 0, "weigh_ins_28d": 0,
+                    "average_7d": None, "latest_weigh_in": None}
         today = users.today_for(user)
         best_sets = lifts.history(s, user.id, today)["best_set"]
         weighed = body.weigh_ins(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")))
         # The last 28 days, today included (section D): the same points as get_trends' series.
-        chart = progress_data.bodyweight_chart(weighed, goals, today, today - timedelta(days=BODY_WEIGHT_DAYS - 1))
+        since = today - timedelta(days=BODY_WEIGHT_DAYS - 1)
+        chart = progress_data.bodyweight_chart(weighed, goals, today, since)
+        # A weigh-in after today counts as today's (metrics.on_or_before), so b.date >= since is the chart's rule.
+        in_window = sum(1 for b in weighed if b.date >= since)
+        average = metrics.bodyweight_average([(metrics.on_or_before(b.date, today), b.kg) for b in weighed], today)
         latest = weighed[-1] if weighed else None
-        return {"best_sets": best_sets, "bodyweight": chart, "weigh_ins": len(weighed),
+        return {"best_sets": best_sets, "bodyweight": chart, "weigh_ins": len(weighed), "weigh_ins_28d": in_window,
+                "average_7d": average,
                 "latest_weigh_in": {"date": latest.date.isoformat(), "kg": latest.kg} if latest else None}
 
 

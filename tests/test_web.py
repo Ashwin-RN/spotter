@@ -1281,6 +1281,77 @@ def test_progress_shows_each_lift_and_the_body_weight_trend(client, stocked):
     assert '<svg class="chart" id="bodyweight-chart"' in page and "<title" in page
 
 
+BODY_WEIGHT_WORDS = ("No weigh-ins yet.", "No weigh-ins in the last 28 days.", "The chart starts from the second weigh-in.")
+
+
+def weigh_card(client, *weigh_ins: tuple[int, str]) -> str:
+    """Log each (days back, kg) through the service Claude uses, then return Progress' Body weight card."""
+    sign_in(client)
+    user = only_user()
+    today = today_of(user)
+    for back, kg in weigh_ins:
+        result = services.log_bodyweight(user.id, {"kg": kg, "date": (today - timedelta(days=back)).isoformat()},
+                                         "claude")
+        assert "error" not in result, result
+    page = client.get("/progress").text
+    return re.search(r"<h2>Body weight</h2>(.*?)</div>", page, re.S).group(1)
+
+
+def assert_weight_line(card: str, line: str) -> None:
+    """The 7-day average line, or the latest weigh-in in its place: shown whenever there is a weigh-in,
+    labelled by the Trends card's own rule (web.weight_now_label), with the Trends card's figure."""
+    assert line in card
+    trends = services.get_trends(only_user().id)
+    label = web.weight_now_label(trends)
+    assert line.startswith(label[0].upper() + label[1:] + ": <strong>"), (label, line)
+    if label == "7-day average":
+        assert formatting.show(trends["bodyweight"]["now"], "bodyweight_derived", page=True) in line
+        assert "Latest weigh-in:" not in card
+    else:
+        assert "7-day average" not in card
+
+
+def test_body_weight_with_every_weigh_in_older_than_28_days_says_so(client):
+    card = weigh_card(client, (60, "81.2"), (50, "80.9"), (40, "80.6"))
+    assert "No weigh-ins in the last 28 days." in card
+    assert "The chart starts from the second weigh-in." not in card and "appears from the second" not in card
+    assert 'id="bodyweight-chart"' not in card and "Dots are weigh-ins" not in card
+    assert "Latest: <strong>80.6 kg</strong>" in card
+    assert_weight_line(card, "Latest weigh-in: <strong>80.6 kg</strong>.")
+
+
+@pytest.mark.parametrize("weigh_ins, line", [
+    # day 28 back is outside the 28 days, day 27 inside
+    (((60, "81.2"), (28, "80.9"), (27, "80.6")), "Latest weigh-in: <strong>80.6 kg</strong>."),
+    (((50, "81.2"), (40, "80.9"), (0, "80.2")), "7-day average: <strong>80.2 kg</strong>."),
+])
+def test_body_weight_with_one_weigh_in_in_the_28_days_waits_for_the_second(client, weigh_ins, line):
+    card = weigh_card(client, *weigh_ins)
+    assert "The chart starts from the second weigh-in." in card
+    assert "No weigh-ins in the last 28 days." not in card and 'id="bodyweight-chart"' not in card
+    assert f"Latest: <strong>{weigh_ins[-1][1]} kg</strong>" in card
+    assert_weight_line(card, line)
+
+
+@pytest.mark.parametrize("weigh_ins, line", [
+    (((3, "81.0"), (0, "80.0")), "7-day average: <strong>80.5 kg</strong>."),
+    # drawn, but none in the last 7 days
+    (((60, "82.0"), (20, "81.0"), (10, "80.4")), "Latest weigh-in: <strong>80.4 kg</strong>."),
+])
+def test_body_weight_with_two_in_the_28_days_draws_the_chart(client, weigh_ins, line):
+    card = weigh_card(client, *weigh_ins)
+    assert '<svg class="chart" id="bodyweight-chart"' in card and "Dots are weigh-ins" in card
+    assert not [words for words in BODY_WEIGHT_WORDS if words in card]
+    assert_weight_line(card, line)
+
+
+def test_body_weight_with_no_weigh_in_points_to_today(client):
+    card = weigh_card(client)
+    assert 'No weigh-ins yet. Add one on <a href="/today">Today</a>.' in card
+    assert not [words for words in BODY_WEIGHT_WORDS[1:] if words in card]
+    assert "Latest" not in card and "7-day average" not in card and 'id="bodyweight-chart"' not in card
+
+
 def test_one_lifts_progress_shows_its_chart_bests_and_sessions(client, stocked):
     r = client.get("/progress/back-squat")
     assert r.status_code == 200

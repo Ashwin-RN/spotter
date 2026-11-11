@@ -59,10 +59,12 @@
   {% if trend.latest_weigh_in %}
   <p>Latest: <strong>{{ trend.latest_weigh_in.kg|show("weigh_in") }}</strong> on
     <a href="/day/{{ trend.latest_weigh_in.date }}">{{ trend.latest_weigh_in.date|day(today) }}</a>.
-    {% if trend.bodyweight %}7-day average: <strong>{{ trend.bodyweight.average[-1].kg|show("bodyweight_derived") }}</strong>.{% endif %}</p>
-  {% if chart %}{{ chart }}
-  <p class="muted small">Dots are weigh-ins. The line is the smoothed trend, which steadies day-to-day swings.</p>
-  {% else %}<p class="muted">The chart appears from the second weigh-in.</p>{% endif %}
+    {% if trend.average_7d is not none %}7-day average: <strong>{{ trend.average_7d|show("bodyweight_derived") }}</strong>.
+    {% else %}Latest weigh-in: <strong>{{ trend.latest_weigh_in.kg|show("weigh_in") }}</strong>.{% endif %}</p>
+  {% if trend.weigh_ins_28d == 0 %}<p class="muted">No weigh-ins in the last 28 days.</p>
+  {% elif trend.weigh_ins_28d == 1 %}<p class="muted">The chart starts from the second weigh-in.</p>
+  {% else %}{{ chart }}
+  <p class="muted small">Dots are weigh-ins. The line is the smoothed trend, which steadies day-to-day swings.</p>{% endif %}
   {% else %}
   <p class="muted">No weigh-ins yet. Add one on <a href="/today">Today</a>.</p>
   {% endif %}
