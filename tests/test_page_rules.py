@@ -28,7 +28,7 @@ import pytest
 from app import services, web
 from app.models import Bodyweight, SavedFood
 
-from .test_pages_text import (ACCOUNTS, BUILT, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
+from .test_pages_text import (ACCOUNTS, BUILT, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
                               estimate_findings, get_paths, names_of, parse, render_error_page, route_of,
                               step_4_findings)
 from .test_web import client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
@@ -408,7 +408,6 @@ def page_rule_findings(s: Seen) -> list[str]:
 def error_posts(today: str, user_id: int) -> dict[str, list[tuple[str, dict]]]:
     """By route: the POSTs that send the page back with a form error, status 400."""
     foods = [f["id"] for f in services.list_saved_foods(user_id)["foods"]]
-    weigh_in = next(iter(_ids(Bodyweight, user_id)), None)
     out = {
         "/day/{date}": [(f"/day/{today}/weigh-in", {"kg": "abc"}),
                         (f"/day/{today}/food", {"description": "Rice", "kcal": "abc"}),
@@ -426,8 +425,22 @@ def error_posts(today: str, user_id: int) -> dict[str, list[tuple[str, dict]]]:
     if foods:
         out["/foods/{food_id}/edit"] = [(f"/foods/{foods[0]}/edit",
                                          {"serving_label": "1 bowl", "kcal_per_serving": "abc"})]
-    if weigh_in is not None:
-        out["/entries/{kind}/{entry_id}/edit"] = [(f"/entries/bodyweight/{weigh_in}/edit", {"kg": "abc"})]
+    # Each kind's edit page sent back with its error, on the first entry of each kind the account holds: an
+    # input's error, a typed 0, a select's, a textarea's and a date's.
+    edits = {"bodyweight": [{"kg": "abc"}, {"kg": "0"}],
+             "measurement": [{"value": "abc"}],
+             "lift_session": [{"notes": "x" * 2001, "date": "2099-01-01"}],
+             "food_entry": [{"description": "Rice", "kcal": "abc", "meal": "lunch"},
+                            {"description": "Rice", "kcal": "100", "meal": "brunch"}],
+             "cardio_entry": [{"exercise": "Outdoor Run", "minutes": "0"}, {"exercise": "Back Squat", "minutes": "30"},
+                              {"exercise": "Outdoor Run", "minutes": "30", "notes": "x" * 2001}]}
+    posts = []
+    for kind, model in ENTRY_MODELS:
+        first = next(iter(_ids(model, user_id)), None)
+        if first is not None:
+            posts += [(f"/entries/{kind}/{first}/edit", data) for data in edits[kind]]
+    if posts:
+        out["/entries/{kind}/{entry_id}/edit"] = posts
     return out
 
 
@@ -1010,3 +1023,29 @@ def test_the_token_rule_reads_every_form_on_a_full_day_page(client):
                     r'<input type="hidden" name="csrf_token" value="[^"]+">', page)
     broken = page.replace(one.group(0), one.group(1), 1)
     assert [f for f in token_findings(Seen(f"/day/{today}", broken, True, today=today)) if "food_entry" in f]
+
+
+EDIT_ROUTE = "/entries/{kind}/{entry_id}/edit"
+
+
+def test_the_sweeps_reach_each_kinds_edit_page_and_its_errors(client):
+    """The edit pages are in BUILT, so every rule runs on them. The sweeps' own addresses must reach each kind's
+    edit page, and each kind's page sent back with an error, on an input, a select and a textarea, or the rules
+    never read them."""
+    from .test_pages_text import CLAUDE_SKIPS  # noqa: PLC0415
+
+    assert EDIT_ROUTE in BUILT and EDIT_ROUTE not in CLAUDE_SKIPS
+    sign_in(client)
+    user = only_user()
+    ACCOUNTS["sample"](user.id)
+    today = today_of(user).isoformat()
+    kinds = {kind for kind, _ in ENTRY_MODELS}
+    assert {a.split("/")[2] for a in get_paths(user.id)[EDIT_ROUTE]} == kinds
+    invalid: dict[str, set[str]] = {}
+    for address, data in error_posts(today, user.id)[EDIT_ROUTE]:
+        r = post(client, address, **data)
+        assert r.status_code == 400, address
+        invalid.setdefault(address.split("/")[2], set()).update(
+            n.tag for n in parse(r.text).iter() if n.attrs.get("aria-invalid") == "true")
+    assert set(invalid) == kinds and all(invalid.values()), invalid
+    assert set().union(*invalid.values()) == {"input", "select", "textarea"}

@@ -1,75 +1,59 @@
 {% extends "base.html" %}
 {% block title %}Edit {{ kind_name }} · Spotter{% endblock %}
 {% block main %}
-<h1>Edit {{ kind_name }}</h1>
+{% import "_parts.html" as parts %}
+{# An edit page: the head with its link back to the day, then one card holding the form, its fields stacked with
+   each label naming its unit. Each value is the stored one through formatting.field, or what was typed when the
+   form comes back with an error. A lift session adds a read-only Sets card. #}
+<div class="page-head">
+  <h1>Edit {{ kind_name }}</h1>
+  <nav class="day-nav" aria-label="Back">
+    <a class="back" href="{{ day_href }}">{{ day_words }}</a>
+  </nav>
+</div>
 <div class="card">
-  <form method="post" action="/entries/{{ kind }}/{{ entry_id }}/edit">
+  {% if kind == "food_entry" %}
+  <p class="small">This number is <span class="tag tag-{{ entry.source }}">{{ source_words.get(entry.source, entry.source) }}</span>. If you change the kcal, it becomes a number you said.</p>
+  {% endif %}
+  <form class="stack" method="post" action="/entries/{{ kind }}/{{ entry_id }}/edit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if loose %}<div class="error">{% for words in loose %}<p>{{ words }}</p>{% endfor %}</div>{% endif %}
     {% if kind == "bodyweight" %}
-    <label for="edit-kg">Weight (kg)</label>
-    <input id="edit-kg" name="kg" value="{{ entry.kg|field("weigh_in") if entry.kg is number else entry.kg }}" inputmode="decimal" required autocomplete="off">
-    {% if errors.kg %}<p class="error">{{ errors.kg }}</p>{% endif %}
+    {{ parts.field("edit-kg", "kg", "Weight (kg)", errors.get("kg"), values.kg, inputmode="decimal", required=true) }}
     {% elif kind == "measurement" %}
     <p>{{ kind_word(entry.kind) }}{% if entry.unit %} ({{ entry.unit }}){% endif %}</p>
-    <label for="edit-value">Value</label>
-    <input id="edit-value" name="value" value="{{ entry.value|field(measurement_quantity(entry.kind)) if entry.value is number else entry.value }}" inputmode="decimal" required autocomplete="off">
-    {% if errors.value %}<p class="error">{{ errors.value }}</p>{% endif %}
+    {{ parts.field("edit-value", "value", "Value", errors.get("value"), values.value, inputmode="decimal", required=true) }}
     {% elif kind == "food_entry" %}
-    <p class="muted small">This number is
-      <span class="tag tag-{{ entry.source }}">{{ source_words.get(entry.source, entry.source) }}</span>.
-      If you change the kcal, it becomes a number you said.</p>
-    <label for="edit-description">Food</label>
-    <input id="edit-description" name="description" value="{{ entry.description }}" maxlength="200" required autocomplete="off">
-    {% if errors.description %}<p class="error">{{ errors.description }}</p>{% endif %}
-    <label for="edit-kcal">kcal</label>
-    <input id="edit-kcal" name="kcal" value="{{ entry.kcal|field("kcal") if entry.kcal is number else entry.kcal }}" inputmode="numeric" required autocomplete="off">
-    {% if errors.kcal %}<p class="error">{{ errors.kcal }}</p>{% endif %}
-    <label for="edit-meal">Meal</label>
-    <select id="edit-meal" name="meal">
-      {% for meal in meals %}<option value="{{ meal }}"{% if entry.meal == meal %} selected{% endif %}>{{ meal.capitalize() }}</option>{% endfor %}
-    </select>
-    {% if errors.meal %}<p class="error">{{ errors.meal }}</p>{% endif %}
+    {{ parts.field("edit-description", "description", "Food", errors.get("description"), values.description, required=true, maxlength=200) }}
+    {{ parts.field("edit-kcal", "kcal", "Calories (kcal)", errors.get("kcal"), values.kcal, inputmode="numeric", required=true) }}
+    {{ parts.field("edit-meal", "meal", "Meal", errors.get("meal"), values.meal, choices=meal_choices) }}
     {% elif kind == "cardio_entry" %}
-    <label for="edit-exercise">Activity</label>
-    <select id="edit-exercise" name="exercise">
-      {% for name in activities %}<option value="{{ name }}"{% if entry.exercise == name %} selected{% endif %}>{{ name }}</option>{% endfor %}
-    </select>
-    {% if errors.exercise %}<p class="error">{{ errors.exercise }}</p>{% endif %}
-    {% for field, label in [("minutes", "Minutes"), ("distance_km", "Distance (km)"), ("incline_pct", "Incline (%)"),
-                            ("speed_kmh", "Speed (km/h)"), ("avg_hr", "Average heart rate"),
-                            ("machine_kcal", "The machine's kcal")] %}
-    <label for="edit-{{ field }}">{{ label }}</label>
-    <input id="edit-{{ field }}" name="{{ field }}" value="{{ (entry[field]|field(field_quantities[field]) if entry[field] is number else entry[field]) if entry[field] is not none else '' }}" inputmode="decimal" autocomplete="off"{% if field == "minutes" %} required{% endif %}>
-    {% if errors[field] %}<p class="error">{{ errors[field] }}</p>{% endif %}
-    {% endfor %}
-    <label for="edit-notes">Notes</label>
-    <textarea id="edit-notes" name="notes" rows="2">{{ entry.notes or "" }}</textarea>
-    {% if errors.notes %}<p class="error">{{ errors.notes }}</p>{% endif %}
-    {% if entry.estimated_kcal is not none %}<p class="muted small">Calorie estimate now: {{ entry.estimated_kcal|show("kcal") }}. It is worked out again when you save.</p>{% endif %}
+    {{ parts.field("edit-exercise", "exercise", "Activity", errors.get("exercise"), values.exercise, choices=activity_choices) }}
+    {{ parts.field("edit-minutes", "minutes", "Time (min)", errors.get("minutes"), values.minutes, inputmode="decimal", required=true) }}
+    {{ parts.field("edit-distance_km", "distance_km", "Distance (km)", errors.get("distance_km"), values.distance_km, inputmode="decimal") }}
+    {{ parts.field("edit-incline_pct", "incline_pct", "Incline (%)", errors.get("incline_pct"), values.incline_pct, inputmode="decimal") }}
+    {{ parts.field("edit-speed_kmh", "speed_kmh", "Speed (km/h)", errors.get("speed_kmh"), values.speed_kmh, inputmode="decimal") }}
+    {{ parts.field("edit-avg_hr", "avg_hr", "Average heart rate (bpm)", errors.get("avg_hr"), values.avg_hr, inputmode="numeric") }}
+    {{ parts.field("edit-machine_kcal", "machine_kcal", "Machine's calories (kcal)", errors.get("machine_kcal"), values.machine_kcal, inputmode="numeric") }}
+    {{ parts.field("edit-notes", "notes", "Notes", errors.get("notes"), values.notes, rows=2) }}
     {% else %}
-    <label for="edit-notes">Notes</label>
-    <textarea id="edit-notes" name="notes" rows="3">{{ entry.notes or "" }}</textarea>
-    {% if errors.notes %}<p class="error">{{ errors.notes }}</p>{% endif %}
+    {{ parts.field("edit-notes", "notes", "Notes", errors.get("notes"), values.notes, rows=3) }}
     {% endif %}
-    <label for="edit-date">Date</label>
-    <input id="edit-date" name="date" type="date" value="{{ entry.date }}" required>
-    {% if errors.date %}<p class="error">{{ errors.date }}</p>{% endif %}
-    <div class="actions">
+    {{ parts.field("edit-date", "date", "Date", errors.get("date"), values.date, type="date", required=true) }}
+    <div class="form-actions">
       <button class="primary">Save</button>
-      <a href="/day/{{ entry.date }}">Cancel</a>
+      <a class="action" href="{{ day_href }}">Cancel</a>
     </div>
   </form>
+  {% if estimate_kcal is not none %}
+  <p class="small">Calorie estimate now: {{ estimate_kcal|show("kcal") }}. It is worked out again when you save.</p>
+  {% endif %}
 </div>
 {% if kind == "lift_session" %}
-<div class="card">
-  <h2>Sets</h2>
-  <table class="sets">
-    <thead><tr><th>Exercise</th><th>Set</th><th>Weight</th><th>Reps</th></tr></thead>
-    <tbody>
-    {% for s in entry.sets %}<tr><td>{{ s.exercise }}</td><td>{{ s.set_number|show("count") }}</td><td>{{ s.weight_kg|show("weight_kg") }}</td><td>{{ s.reps|show("reps") }}</td></tr>{% endfor %}
-    </tbody>
-  </table>
-  <p class="muted">Sets are changed through Claude for now: tell it what to fix.</p>
-</div>
+<section class="card" aria-labelledby="sets-title">
+  <h2 id="sets-title">Sets</h2>
+  {{ parts.sets_table(entry.sets) }}
+  <p class="small">Sets are changed through your assistant for now: tell it what to fix.</p>
+</section>
 {% endif %}
 {% endblock %}

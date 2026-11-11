@@ -35,8 +35,9 @@
   {{ caller() }}
 </details>{% endmacro %}
 
-{# A labelled field: an input, or a select when choices are (value, words) pairs, its error then its hint under it, both tied to it. #}
-{% macro field(id, name, label, error=none, value="", inputmode=none, choices=none, empty=none, required=false, maxlength=none, hint=none) %}
+{# A labelled field: an input, a select when choices are (value, words) pairs, or a textarea when rows are given,
+   its error then its hint under it, both tied to it. type gives an input its type, such as date. #}
+{% macro field(id, name, label, error=none, value="", inputmode=none, choices=none, empty=none, required=false, maxlength=none, hint=none, type=none, rows=none) %}
 {%- set given = value is not none and value|string != "" -%}
 {%- set described = ((id ~ "-error") if error else "") ~ (" " if error and hint else "") ~ ((id ~ "-hint") if hint else "") -%}
 <div class="field{% if error %} has-error{% endif %}">
@@ -45,7 +46,22 @@
     {% if empty is not none %}<option value="">{{ empty }}</option>{% endif %}
     {% for choice, words in choices %}<option value="{{ choice }}"{% if given and choice|string == value|string %} selected{% endif %}>{{ words }}</option>{% endfor %}
   </select>
-  {% else %}<input id="{{ id }}" name="{{ name }}"{% if given %} value="{{ value }}"{% endif %}{% if inputmode %} inputmode="{{ inputmode }}"{% endif %}{% if required %} required{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %} autocomplete="off"{% if error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described }}"{% endif %}>
+  {% elif rows %}<textarea id="{{ id }}" name="{{ name }}" rows="{{ rows }}"{% if required %} required{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %}{% if error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described }}"{% endif %}>{% if given %}{{ value }}{% endif %}</textarea>
+  {% else %}<input id="{{ id }}" name="{{ name }}"{% if type %} type="{{ type }}"{% endif %}{% if given %} value="{{ value }}"{% endif %}{% if inputmode %} inputmode="{{ inputmode }}"{% endif %}{% if required %} required{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %} autocomplete="off"{% if error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described }}"{% endif %}>
   {% endif %}{% if error %}<p class="error" id="{{ id }}-error">{{ error }}</p>
   {% endif %}{% if hint %}<p class="hint" id="{{ id }}-hint">{{ hint }}</p>
   {% endif %}</div>{% endmacro %}
+
+{# A lift session's sets in a table, in its scrolling wrap: Exercise, Set, Weight (kg), Reps. The kg sits in the
+   header, so each weight is a bare figure. A set at 0 kg leaves its weight cell blank, and sets with no weight
+   above 0 kg show no Weight column at all. #}
+{% macro sets_table(sets) %}{% set weighted = sets|selectattr("weight_kg")|list %}<div class="table-wrap">
+  <table>
+    <thead><tr><th>Exercise</th><th class="num">Set</th>{% if weighted %}<th class="num">Weight (kg)</th>{% endif %}<th class="num">Reps</th></tr></thead>
+    <tbody>
+    {% for s in sets %}
+    <tr><td>{{ s.exercise }}</td><td class="num">{{ s.set_number|show("count") }}</td>{% if weighted %}<td class="num">{% if s.weight_kg %}{{ s.weight_kg|show("weight_kg", unit=False) }}{% endif %}</td>{% endif %}<td class="num">{{ s.reps|show("reps") }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>{% endmacro %}

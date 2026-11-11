@@ -1172,6 +1172,7 @@ async def edit_page(request: Request) -> Response:
     if failed(found):
         return not_found_page(request)
     entry, errors, status = found["entry"], {}, 200
+    values = edit_values(kind, entry)
     if request.method == "POST":
         form = await request.form()
         changes = edit_changes(kind, entry, form)
@@ -1187,13 +1188,37 @@ async def edit_page(request: Request) -> Response:
             mark = UNCHANGED if failed(result) else ("saved", kind)
             return redirect(marked(links.page("day", date=after["date"]), *mark))
         errors, status = field_errors(kind, result, entry.get("kind") if kind == "measurement" else None), 400
-        entry = {**entry, **{f: str(form.get(f) or "") for f in EDIT_FIELDS[kind]}}  # show what they typed
+        values = {f: str(form.get(f) or "") for f in EDIT_FIELDS[kind]}  # what they typed, as typed
     activities = await cardio_names() if kind == "cardio_entry" else []
+    # The day the entry is on, as stored: the back link and Cancel go there, whatever date was typed.
+    on, today = date.fromisoformat(entry["date"]), users.today_for(user)
+    estimate = entry.get("estimate") if kind == "cardio_entry" else None
     return page(request, "edit.html", status_code=status, kind=kind, kind_name=KIND_NAMES[kind],
-                entry_id=found["id"], entry=entry, errors=errors, kind_word=measurements.kind_word,
-                meals=MEALS, source_words=SOURCE_WORDS, activities=activities, measurement_quantity=measurement_quantity,
-                field_quantities=FIELD_QUANTITIES,
-                shows_estimate=kind == "cardio_entry" and entry.get("estimated_kcal") is not None)
+                entry_id=found["id"], entry=entry, values=values, errors=errors,
+                # A refusal about a field the form does not draw goes at the top of the form.
+                loose=[words for field, words in errors.items() if field not in EDIT_FIELDS[kind]],
+                day_href=f"/day/{on.isoformat()}",
+                day_words="Today" if on == today else formatting.day(on, today),
+                kind_word=measurements.kind_word, meal_choices=MEAL_CHOICES,
+                activity_choices=[(name, name) for name in activities],
+                source_words=SOURCE_WORDS, estimate_kcal=estimate["kcal"] if estimate else None,
+                shows_estimate=estimate is not None)
+
+
+def edit_values(kind: str, entry: dict) -> dict:
+    """Each field's value in an edit form, as stored: a number at the decimals the store keeps, through
+    formatting.field, other words as they are, nothing for a field with no value."""
+    out = {}
+    for field in EDIT_FIELDS[kind]:
+        value = entry.get(field)
+        if value is None:
+            out[field] = ""
+        elif field in NUMBER_FIELDS and isinstance(value, (int, float)) and not isinstance(value, bool):
+            quantity = measurement_quantity(entry["kind"]) if field == "value" else FIELD_QUANTITIES[field]
+            out[field] = formatting.field(value, quantity)
+        else:
+            out[field] = str(value)
+    return out
 
 
 def changed_fields(fields, current: dict, form) -> dict:

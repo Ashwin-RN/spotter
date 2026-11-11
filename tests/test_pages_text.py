@@ -315,7 +315,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # The routes whose page a step 4 pass has rebuilt: "/" or a GET path template from web.PAGES, such as
 # "/day/{date}". The structure checks below and the page rules in tests/test_page_rules.py run on these
 # routes only. A pass adds its own route here when its page lands.
-BUILT: frozenset[str] = frozenset({"/day/{date}"})
+BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 
@@ -536,7 +536,6 @@ CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
         "Claude does not do them for you.",
     ),
     "/foods": ("Saving one by talking to Claude works too.",),  # foods.html: the line under the h1
-    "/entries/{kind}/{entry_id}/edit": ("Sets are changed through Claude for now: tell it what to fix.",),
     "/progress": (LIFTS_EMPTY,),  # progress.html: the empty Lifts line
     "/progress/{lift}": (LIFTS_EMPTY,),  # progress_lift.html: the empty line
     "/goals": ("Set one below, or tell Claude what you are aiming for.",),  # goals.html: no open goals

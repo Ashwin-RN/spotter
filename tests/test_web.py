@@ -1293,7 +1293,8 @@ def test_the_edit_page_renders_for_each_kind(client, stocked):
     assert measured.status_code == 200 and 'name="value" value="84.5"' in measured.text and "(cm)" in measured.text
     session = client.get(f"/entries/lift_session/{stocked['session']}/edit")
     assert session.status_code == 200 and ">felt strong</textarea>" in session.text
-    assert "Sets are changed through Claude" in session.text and session.text.count("<td>Back Squat</td>") == 3
+    assert "Sets are changed through your assistant for now: tell it what to fix." in session.text
+    assert session.text.count("<td>Back Squat</td>") == 3
     for r in (weigh_in, measured, session):
         assert f'name="date" type="date" value="{stocked["today"].isoformat()}"' in r.text
 
@@ -4185,3 +4186,453 @@ def test_the_fields_select_carries_required_when_asked(required):
 def test_the_unused_actions_macro_is_gone():
     day = (web.HERE / "templates" / "day.html").read_text(encoding="utf-8")
     assert "macro actions" not in day and not re.search(r"\{\{\s*actions\(", day)
+
+
+# ---------------------------------------------------------------- stage 6, step 4: the edit pages
+
+def stock_every_kind(user: User) -> dict:
+    """One entry of each kind, today, with figures where formatting.field, show and str() each differ: a whole
+    80.0 kg, a 1,250 kcal estimate, 75.5 minutes (1:15:30 on the day page), 1,100 machine kcal, 10.25 km/h."""
+    today = today_of(user).isoformat()
+    weigh_in = services.log_bodyweight(user.id, {"kg": 80.0}, "claude")
+    waist = services.log_measurement(user.id, {"kind": "waist", "value": 84.55}, "claude")
+    session = services.log_lifts(user.id, {"notes": "felt strong", "sets": [
+        {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}, {"exercise": "Pull-Up", "weight_kg": 0, "reps": 8}]},
+        "claude")
+    food = services.log_food(user.id, {"entries": [
+        {"description": "Biryani", "kcal": 1250, "estimated": True, "meal": "lunch"},
+        {"description": "Tea", "kcal": 40, "meal": "breakfast"}]}, "claude")
+    run = services.log_cardio(user.id, {"exercise": "Treadmill Run", "minutes": 75.5, "distance_km": 12.5,
+                                        "incline_pct": 2.5, "speed_kmh": 10.25, "avg_hr": 140, "machine_kcal": 1100,
+                                        "notes": "Long one"}, "claude")
+    for result in (weigh_in, waist, session, food, run):
+        assert "error" not in result, result
+    return {"today": today, "bodyweight": weigh_in["id"], "measurement": waist["id"], "lift_session": session["id"],
+            "food_entry": food["ids"][0], "you_said": food["ids"][1], "cardio_entry": run["id"],
+            "estimate": run["estimate"]}
+
+
+@pytest.fixture
+def every_kind(client):
+    sign_in(client)
+    return stock_every_kind(only_user())
+
+
+def edit_of(client, kind: str, entry_id) -> str:
+    r = client.get(f"/entries/{kind}/{entry_id}/edit")
+    assert r.status_code == 200, r.text
+    return r.text
+
+
+def edit_form(page: str):
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    [form] = parse(page).find_all("form", "stack")
+    return form
+
+
+def edit_card(page: str):
+    """The edit page's one plain card: the div.card directly inside main."""
+    from .test_pages_text import parse  # noqa: PLC0415
+
+    [main] = parse(page).find_all("main")
+    [card] = [c for c in main.elements() if c.is_("div", "card")]
+    return card
+
+
+def controls_of(page: str) -> list[dict]:
+    """Each field of the edit form, in order: its label, its control's tag and name, the value it holds (an
+    input's value, a select's chosen option, a textarea's text), and its inputmode, type and required."""
+    out = []
+    for field in edit_form(page).find_all("div", "field"):
+        [label] = field.find_all("label")
+        [control] = [n for n in field.elements() if n.tag in ("input", "select", "textarea")]
+        assert label.attrs["for"] == control.attrs["id"]
+        if control.tag == "select":
+            chosen = [o.attrs["value"] for o in control.find_all("option") if "selected" in o.attrs]
+            value = chosen[0] if chosen else None
+        elif control.tag == "textarea":
+            value = "".join(c for c in control.children if isinstance(c, str))
+        else:
+            value = control.attrs.get("value")
+        out.append({"label": label.text(), "tag": control.tag, "name": control.attrs["name"], "value": value,
+                    "inputmode": control.attrs.get("inputmode"), "type": control.attrs.get("type"),
+                    "required": "required" in control.attrs, "maxlength": control.attrs.get("maxlength"),
+                    "rows": control.attrs.get("rows"),
+                    "options": [(o.attrs["value"], o.text()) for o in control.find_all("option")]})
+    return out
+
+
+def title_of(page: str) -> str:
+    return re.search(r"<title>(.*?)</title>", page).group(1)
+
+
+# Section L's labels for each kind, in order, each naming its unit (a measurement's under its name).
+EDIT_LABELS = {
+    "bodyweight": ["Weight (kg)", "Date"],
+    "measurement": ["Value", "Date"],
+    "lift_session": ["Notes", "Date"],
+    "food_entry": ["Food", "Calories (kcal)", "Meal", "Date"],
+    "cardio_entry": ["Activity", "Time (min)", "Distance (km)", "Incline (%)", "Speed (km/h)",
+                     "Average heart rate (bpm)", "Machine's calories (kcal)", "Notes", "Date"],
+}
+# The values the form holds as drawn, through formatting.field: none is what show or str() would give.
+EDIT_VALUES = {
+    "bodyweight": {"kg": "80"},
+    "measurement": {"value": "84.55"},
+    "lift_session": {"notes": "felt strong"},
+    "food_entry": {"description": "Biryani", "kcal": "1250", "meal": "lunch"},
+    "cardio_entry": {"exercise": "Treadmill Run", "minutes": "75.5", "distance_km": "12.5", "incline_pct": "2.5",
+                     "speed_kmh": "10.25", "avg_hr": "140", "machine_kcal": "1100", "notes": "Long one"},
+}
+EDIT_QUANTITIES = {"kg": "weigh_in", "value": "cm", "kcal": "kcal", "minutes": "session_time", "distance_km": "km",
+                   "incline_pct": "incline", "speed_kmh": "speed", "avg_hr": "bpm", "machine_kcal": "kcal"}
+EDIT_MODELS = {"bodyweight": Bodyweight, "measurement": Measurement, "lift_session": LiftSession,
+               "food_entry": FoodEntry, "cardio_entry": CardioEntry}
+
+
+@pytest.mark.parametrize("kind", list(EDIT_LABELS))
+def test_each_edit_page_has_its_head_one_card_its_fields_and_save_and_cancel(client, every_kind, kind):
+    from .test_pages_text import claude_findings, parse  # noqa: PLC0415
+
+    today, entry_id = every_kind["today"], every_kind[kind]
+    page = edit_of(client, kind, entry_id)
+    words = web.ENTRY_WORDS[kind].lower()
+    assert title_of(page) == f"Edit {words} · Spotter"
+    [main] = parse(page).find_all("main")
+    assert main.classes == ["page", "form-page"]
+    # The head: the h1 in sentence case, then the link back to the day, named as the day page is.
+    head = main.elements()[0]
+    assert head.is_("div", "page-head")
+    h1, nav = head.elements()
+    assert h1.tag == "h1" and h1.text() == f"Edit {words}" and h1.elements() == []
+    assert nav.is_("nav", "day-nav") and nav.attrs["aria-label"] == "Back"
+    [back] = nav.elements()
+    assert back.is_("a", "back") and back.attrs["href"] == f"/day/{today}" and back.text() == "Today"
+    # One plain card holding the form, then the Sets card on a lift session only.
+    cards = main.elements()[1:]
+    assert cards[0].is_("div", "card") and "aria-labelledby" not in cards[0].attrs
+    assert [c.tag for c in cards] == (["div", "section"] if kind == "lift_session" else ["div"])
+    [form] = [n for n in main.find_all("form") if "stack" in n.classes]
+    assert form.parent is cards[0]
+    assert form.classes == ["stack"] and form.attrs["method"] == "post"
+    assert form.attrs["action"] == f"/entries/{kind}/{entry_id}/edit"
+    # The fields, stacked (no field-row), each label naming its unit, each value through formatting.field.
+    assert not form.find_all(cls="field-row")
+    fields = controls_of(page)
+    assert [f["label"] for f in fields] == EDIT_LABELS[kind]
+    assert {f["name"]: f["value"] for f in fields if f["name"] != "date"} == EDIT_VALUES[kind]
+    assert fields[-1] == {"label": "Date", "tag": "input", "name": "date", "value": today, "inputmode": None,
+                          "type": "date", "required": True, "maxlength": None, "rows": None, "options": []}
+    row = next(r for r in rows(EDIT_MODELS[kind], only_user().id) if r.id == entry_id)
+    for f in fields:
+        if f["name"] in EDIT_QUANTITIES:
+            assert f["value"] == formatting.field(getattr(row, f["name"]), EDIT_QUANTITIES[f["name"]]), f
+            assert f["inputmode"] in ("decimal", "numeric"), f
+    # Save (white), then Cancel, a link to the day, the form's last row.
+    [actions] = form.find_all("div", "form-actions")
+    save, cancel = actions.elements()
+    assert save.is_("button", "primary") and save.text() == "Save"
+    assert cancel.is_("a", "action") and cancel.attrs["href"] == f"/day/{today}" and cancel.text() == "Cancel"
+    assert form.elements()[-1] is actions
+    assert claude_findings(f"/entries/{kind}/{entry_id}/edit", page) == []
+    assert "claude" not in re.sub(r"<[^>]+>", " ", page).casefold()
+
+
+def test_the_measurement_value_sits_under_its_name_and_unit(client, every_kind):
+    form = edit_form(edit_of(client, "measurement", every_kind["measurement"]))
+    named = form.elements()[1]
+    assert named.tag == "p" and named.text() == "Waist (cm)"
+    assert form.elements()[2].find_all("label")[0].text() == "Value"
+
+
+def test_the_back_link_and_cancel_name_a_past_day_by_its_date(client):
+    sign_in(client)
+    user = only_user()
+    today = today_of(user)
+    yesterday = (today - timedelta(days=1)).isoformat()
+    made = services.log_bodyweight(user.id, {"kg": "79.2", "date": yesterday}, "claude")
+    page = edit_of(client, "bodyweight", made["id"])
+    assert f'<a class="back" href="/day/{yesterday}">{formatting.day(yesterday, today)}</a>' in page
+    assert f'<a class="action" href="/day/{yesterday}">Cancel</a>' in page
+    assert ">Today<" not in page.split("<main", 1)[1]
+
+
+def test_the_back_link_and_cancel_keep_the_stored_day_when_a_date_was_typed_wrong(client, every_kind):
+    for typed in ("2099-01-01", "abc", ""):
+        r = post(client, f"/entries/bodyweight/{every_kind['bodyweight']}/edit", kg="80", date=typed)
+        assert r.status_code == 400, typed
+        assert f'<a class="back" href="/day/{every_kind["today"]}">Today</a>' in r.text
+        assert f'<a class="action" href="/day/{every_kind["today"]}">Cancel</a>' in r.text
+        assert next(f["value"] for f in controls_of(r.text) if f["name"] == "date") == (typed or None)
+
+
+@pytest.mark.parametrize("which, tag, words", [("food_entry", "tag-claude_estimate", "estimate"),
+                                               ("you_said", "tag-you_said", "you said")])
+def test_the_food_edit_card_opens_with_its_source_tag_and_the_you_said_line(client, every_kind, which, tag, words):
+    card = edit_card(edit_of(client, "food_entry", every_kind[which]))
+    first = card.elements()[0]
+    assert first.is_("p", "small")
+    assert first.text() == f"This number is {words}. If you change the kcal, it becomes a number you said."
+    [shown] = first.elements()
+    assert shown.tag == "span" and shown.classes == ["tag", tag] and shown.text() == words
+    assert card.elements()[1].tag == "form"
+
+
+def test_no_other_edit_page_carries_a_source_tag(client, every_kind):
+    for kind in ("bodyweight", "measurement", "lift_session", "cardio_entry"):
+        page = edit_of(client, kind, every_kind[kind])
+        assert 'class="tag' not in page and "number you said" not in page, kind
+
+
+def test_the_cardio_edit_card_ends_with_the_estimate_now_and_the_page_shows_the_footer(client, every_kind):
+    run = every_kind["cardio_entry"]
+    line = (f"Calorie estimate now: {formatting.show(every_kind['estimate']['kcal'], 'kcal', page=True)}. "
+            "It is worked out again when you save.")
+    refused = post(client, f"/entries/cardio_entry/{run}/edit", exercise="Treadmill Run", minutes="0",
+                   date=every_kind["today"])
+    assert refused.status_code == 400
+    for page in (edit_of(client, "cardio_entry", run), refused.text):
+        card = edit_card(page)
+        last = card.elements()[-1]
+        assert last.is_("p", "small") and last.text() == line
+        assert card.elements()[-2].tag == "form"
+        assert page.count(ATTRIBUTION) == 1 and '<footer class="attribution">' in page
+    for kind in ("bodyweight", "measurement", "lift_session", "food_entry"):
+        page = edit_of(client, kind, every_kind[kind])
+        assert "Calorie estimate now" not in page and ATTRIBUTION not in page, kind
+
+
+def test_a_cardio_entry_with_no_estimate_shows_no_estimate_line_and_no_footer(client):
+    sign_in(client)
+    run = services.log_cardio(only_user().id, {"exercise": "Outdoor Walk", "minutes": 40}, "claude")
+    assert run["estimate"] is None
+    page = edit_of(client, "cardio_entry", run["id"])
+    assert "Calorie estimate now" not in page and ATTRIBUTION not in page and "<footer" not in page
+    assert edit_card(page).elements()[-1].tag == "form"
+    # The figures the entry lacks draw no value at all.
+    assert {f["name"]: f["value"] for f in controls_of(page)} == {
+        "exercise": "Outdoor Walk", "minutes": "40", "distance_km": None, "incline_pct": None, "speed_kmh": None,
+        "avg_hr": None, "machine_kcal": None, "notes": "", "date": today_of(only_user()).isoformat()}
+    refused = post(client, f"/entries/cardio_entry/{run['id']}/edit", exercise="Outdoor Walk", minutes="0")
+    assert refused.status_code == 400 and "Calorie estimate now" not in refused.text and "<footer" not in refused.text
+
+
+def sets_card_of(page: str):
+    from .test_pages_text import parse, tables  # noqa: PLC0415
+
+    dom = parse(page)
+    [card] = dom.find_all("section", "card")
+    return dom, card, tables(card)
+
+
+def test_the_lift_edit_page_adds_a_read_only_sets_card(client, every_kind):
+    page = edit_of(client, "lift_session", every_kind["lift_session"])
+    dom, card, [table] = sets_card_of(page)
+    h2 = card.elements()[0]
+    assert h2.tag == "h2" and h2.text() == "Sets" and card.attrs["aria-labelledby"] == h2.attrs["id"]
+    assert [n for n in dom.iter() if n.attrs.get("id") == h2.attrs["id"]] == [h2]
+    wrap = card.elements()[1]
+    assert wrap.is_("div", "table-wrap") and wrap.elements() == [table.node]
+    assert table.headers == ["Exercise", "Set", "Weight (kg)", "Reps"]
+    assert [[c.text() for c in r] for r in table.rows] == [["Back Squat", "1", "60", "5"], ["Pull-Up", "1", "", "8"]]
+    assert [c.classes for c in table.rows[0]] == [[], ["num"], ["num"], ["num"]]
+    line = card.elements()[2]
+    assert line.is_("p", "small")
+    assert line.text() == "Sets are changed through your assistant for now: tell it what to fix."
+    assert len(card.elements()) == 3
+    # Read-only: nothing in it can be pressed or typed into.
+    assert not [n for n in card.iter() if n.tag in ("form", "input", "select", "textarea", "button", "a")]
+
+
+def test_a_session_with_no_weighted_set_shows_no_weight_column_on_its_edit_page(client):
+    sign_in(client)
+    made = services.log_lifts(only_user().id, {"sets": [{"exercise": "Pull-Up", "weight_kg": 0, "reps": 8},
+                                                         {"exercise": "Pull-Up", "weight_kg": 0, "reps": 6}]}, "claude")
+    _, _, [table] = sets_card_of(edit_of(client, "lift_session", made["id"]))
+    assert table.headers == ["Exercise", "Set", "Reps"]
+    assert [[c.text() for c in r] for r in table.rows] == [["Pull-Up", "1", "8"], ["Pull-Up", "2", "6"]]
+
+
+def test_the_sets_card_reads_as_todays_lifts_card(client, every_kind):
+    """The edit page draws its sets through parts.sets_table. Today's Lifts card, drawn by its own copy until a
+    later pass moves it onto the macro, reads the same."""
+    from .test_pages_text import tables  # noqa: PLC0415
+
+    _, _, [edited] = sets_card_of(edit_of(client, "lift_session", every_kind["lift_session"]))
+    [today] = tables(side_card(day_of(client, every_kind["today"]), "Lifts"))
+    assert edited.headers == today.headers
+    assert [[(c.text(), c.classes) for c in r] for r in edited.rows] == \
+        [[(c.text(), c.classes) for c in r] for r in today.rows]
+
+
+def test_the_sets_table_macro_drops_the_weight_column_and_blanks_a_zero():
+    module = web.templates.env.get_template("_parts.html").module
+    weighted = str(module.sets_table([{"exercise": "Back Squat", "set_number": 1, "weight_kg": 102.5, "reps": 5},
+                                      {"exercise": "Pull-Up", "set_number": 1, "weight_kg": 0, "reps": 8}]))
+    assert weighted.startswith('<div class="table-wrap">\n  <table>') and weighted.endswith("</table>\n</div>")
+    assert '<th class="num">Weight (kg)</th>' in weighted
+    assert '<tr><td>Back Squat</td><td class="num">1</td><td class="num">102.5</td><td class="num">5</td></tr>' \
+        in weighted
+    assert '<tr><td>Pull-Up</td><td class="num">1</td><td class="num"></td><td class="num">8</td></tr>' in weighted
+    bare = str(module.sets_table([{"exercise": "Pull-Up", "set_number": 1, "weight_kg": 0, "reps": 8}]))
+    assert "Weight" not in bare and bare.count("<td") == 3
+
+
+# One refused edit per kind of control: an input, a typed 0, a select, a textarea and a date. The field it lands
+# on, the page's own words there, and what comes back in the control (a select keeps no choice off its list).
+EDIT_ERRORS = [
+    ("bodyweight", {"kg": "abc"}, "kg", "That weight was not saved: give it in kg, from 20 to 400.", "abc"),
+    ("bodyweight", {"kg": "0"}, "kg", "That weight was not saved: give it in kg, from 20 to 400.", "0"),
+    ("measurement", {"value": "500"}, "value", "That value was not saved: give waist in cm, from 30 to 300.", "500"),
+    ("lift_session", {"notes": "x" * 2001}, "notes", "Those notes were not saved: keep them under 2,000 characters.",
+     "x" * 2001),
+    ("food_entry", {"description": "Biryani", "kcal": "abc", "meal": "lunch"}, "kcal",
+     "That kcal was not saved: give a whole number from 0 to 5,000.", "abc"),
+    ("food_entry", {"description": "Biryani", "kcal": "1250", "meal": "brunch"}, "meal",
+     "Choose breakfast, lunch, dinner or snack.", None),
+    ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "0"}, "minutes", "Give the minutes, from 1 to 600.", "0"),
+    ("cardio_entry", {"exercise": "Back Squat", "minutes": "30"}, "exercise", "Choose an activity from the list.", None),
+    ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "30", "notes": "x" * 2001}, "notes",
+     "Keep the notes under 2,000 characters.", "x" * 2001),
+    ("food_entry", {"description": "", "kcal": "1250", "meal": "lunch"}, "description",
+     "Give a description, up to 200 characters.", None),
+    ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "30", "distance_km": "500"}, "distance_km",
+     "Give the distance in km, from 0.01 to 300, or leave it empty.", "500"),
+    ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "30", "incline_pct": "50"}, "incline_pct",
+     "Give the incline in %, from 0 to 40, or leave it empty.", "50"),
+    ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "30", "speed_kmh": "100"}, "speed_kmh",
+     "Give the speed in km/h, from 0.1 to 60, or leave it empty.", "100"),
+    ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "30", "avg_hr": "300"}, "avg_hr",
+     "Give the average heart rate, 30 to 240, as a whole number, or leave it empty.", "300"),
+    ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "30", "machine_kcal": "9000"}, "machine_kcal",
+     "Give the machine's number, 1 to 5,000, as a whole number, or leave it empty.", "9000"),
+    ("bodyweight", {"kg": "80", "date": "2099-01-01"}, "date",
+     "That date cannot be used: choose a day up to today, from the last two years, with nothing else on it.",
+     "2099-01-01"),
+]
+
+
+@pytest.mark.parametrize("kind, data, name, words, typed", EDIT_ERRORS,
+                         ids=[f"{k}-{n}-{(t or 'none')[:8]}" for k, _, n, _, t in EDIT_ERRORS])
+def test_each_edit_error_sits_under_its_field_tied_to_it_and_keeps_what_was_typed(client, every_kind, kind, data,
+                                                                                   name, words, typed):
+    entry_id = every_kind[kind]
+    before = next(r for r in rows(EDIT_MODELS[kind], only_user().id) if r.id == entry_id)
+    r = post(client, f"/entries/{kind}/{entry_id}/edit", **{"date": every_kind["today"], **data})
+    assert r.status_code == 400
+    assert title_of(r.text) == f"Edit {web.ENTRY_WORDS[kind].lower()} · Spotter"
+    assert '<body class="calm"' in r.text
+    form = edit_form(r.text)
+    [field] = [f for f in form.find_all("div", "field") if [c for c in f.elements() if c.attrs.get("name") == name]]
+    assert field.classes == ["field", "has-error"]
+    label, control, error = field.elements()
+    assert label.tag == "label" and control.attrs["name"] == name
+    assert control.attrs["aria-invalid"] == "true"
+    assert control.attrs["aria-describedby"] == f"{control.attrs['id']}-error"
+    assert error.is_("p", "error") and error.attrs["id"] == f"{control.attrs['id']}-error" and error.text() == words
+    assert next(f for f in controls_of(r.text) if f["name"] == name)["value"] == typed
+    # Only the refused field is marked, nothing sits at the top of the form, and nothing was written.
+    assert [c.attrs["name"] for c in form.iter() if c.attrs.get("aria-invalid") == "true"] == [name]
+    assert not form.find_all("div", "error")
+    after = next(x for x in rows(EDIT_MODELS[kind], only_user().id) if x.id == entry_id)
+    assert (after.date, after.deleted_at) == (before.date, before.deleted_at)
+    assert "claude" not in re.sub(r"<[^>]+>", " ", r.text).casefold()
+
+
+def test_what_was_typed_into_an_edit_comes_back_escaped(client, every_kind):
+    r = post(client, f"/entries/food_entry/{every_kind['food_entry']}/edit", description='<b>"x"</b>', kcal="abc",
+             meal="lunch", date=every_kind["today"])
+    assert r.status_code == 400
+    assert 'value="&lt;b&gt;&#34;x&#34;&lt;/b&gt;"' in r.text and '<b>"x"</b>' not in r.text
+
+
+def test_an_edit_refusal_with_no_field_of_its_own_sits_at_the_top_of_the_form(client, every_kind, monkeypatch):
+    monkeypatch.setattr(services, "edit_entry", lambda *args: {"error": "invalid_kind", "message": "x", "fix": "y"})
+    r = post(client, f"/entries/measurement/{every_kind['measurement']}/edit", value="83", date=every_kind["today"])
+    assert r.status_code == 400 and title_of(r.text) == "Edit measurement · Spotter"
+    form = edit_form(r.text)
+    token, strip = form.elements()[:2]
+    assert token.attrs == {"type": "hidden", "name": "csrf_token", "value": token.attrs["value"]}
+    assert strip.is_("div", "error") and [p.tag for p in strip.elements()] == ["p"]
+    assert strip.text() == "Choose a kind from the list."
+    assert not form.find_all("p", "error") and "aria-invalid" not in r.text and "has-error" not in r.text
+
+
+@pytest.mark.parametrize("kind, change", [("bodyweight", {"kg": "79.5"}), ("measurement", {"value": "83"}),
+                                          ("lift_session", {"notes": "heavy day"}),
+                                          ("food_entry", {"kcal": "1200"}), ("cardio_entry", {"minutes": "60"})])
+def test_an_edit_lands_on_the_day_marked_saved_and_the_form_as_drawn_is_unchanged(client, every_kind, kind, change):
+    on, entry_id = every_kind["today"], every_kind[kind]
+    edit = f"/entries/{kind}/{entry_id}/edit"
+    drawn = {f["name"]: f["value"] or "" for f in controls_of(edit_of(client, kind, entry_id))}
+    before = calls(only_user().id)
+    assert location(post(client, edit, **drawn)) == SITE + f"/day/{on}?saved=unchanged"
+    assert calls(only_user().id) == before  # the form sent back as drawn writes nothing
+    assert location(post(client, edit, **{**drawn, **change})) == SITE + f"/day/{on}?saved={kind}"
+    redrawn = {f["name"]: f["value"] or "" for f in controls_of(edit_of(client, kind, entry_id))}
+    assert redrawn == {**drawn, **change}
+
+
+@pytest.mark.parametrize("kind", list(EDIT_LABELS))
+def test_another_persons_entry_and_a_deleted_one_answer_404_on_the_edit_page(client, every_kind, make_user, kind):
+    other = make_user()
+    theirs = stock_every_kind(other)
+    for r in (client.get(f"/entries/{kind}/{theirs[kind]}/edit"),
+              post(client, f"/entries/{kind}/{theirs[kind]}/edit", date=every_kind["today"])):
+        assert r.status_code == 404 and "There is nothing here." in r.text
+        assert "Biryani" not in r.text and "Long one" not in r.text and "felt strong" not in r.text
+    mine = every_kind[kind]
+    assert post(client, f"/entries/{kind}/{mine}/delete").status_code == 303
+    for r in (client.get(f"/entries/{kind}/{mine}/edit"), post(client, f"/entries/{kind}/{mine}/edit", date="")):
+        assert r.status_code == 404 and "There is nothing here." in r.text
+
+
+def test_the_field_draws_a_date_input_and_a_textarea_when_asked():
+    date_input = parts_field("edit-date", "date", "Date", None, "2026-11-10", type="date", required=True)
+    assert '<input id="edit-date" name="date" type="date" value="2026-11-10" required autocomplete="off">' in date_input
+    notes = parts_field("edit-notes", "notes", "Notes", None, "a <b> note", rows=3)
+    assert '<textarea id="edit-notes" name="notes" rows="3">a &lt;b&gt; note</textarea>' in notes
+    assert "<input" not in notes
+    empty = parts_field("edit-notes", "notes", "Notes", None, "", rows=2)
+    assert '<textarea id="edit-notes" name="notes" rows="2"></textarea>' in empty
+    refused = parts_field("edit-notes", "notes", "Notes", "Too long.", "x", rows=2, maxlength=2000)
+    assert ('<textarea id="edit-notes" name="notes" rows="2" maxlength="2000" aria-invalid="true" '
+            'aria-describedby="edit-notes-error">x</textarea>\n  <p class="error" id="edit-notes-error">Too long.</p>') \
+        in refused
+    assert "type=" not in parts_field("kg", "kg", "Weight (kg)", None, "72")
+    asked = parts_field("edit-notes", "notes", "Notes", None, "", rows=2, required=True)
+    assert '<textarea id="edit-notes" name="notes" rows="2" required></textarea>' in asked
+
+
+# Each control's attributes as section L and the old page set them: (name, tag, inputmode, required, maxlength,
+# rows). Every number input has an inputmode: numeric where only a whole number is taken.
+EDIT_ATTRS = {
+    "bodyweight": [("kg", "input", "decimal", True, None, None)],
+    "measurement": [("value", "input", "decimal", True, None, None)],
+    "lift_session": [("notes", "textarea", None, False, None, "3")],
+    "food_entry": [("description", "input", None, True, "200", None), ("kcal", "input", "numeric", True, None, None),
+                   ("meal", "select", None, False, None, None)],
+    "cardio_entry": [("exercise", "select", None, False, None, None), ("minutes", "input", "decimal", True, None, None),
+                     ("distance_km", "input", "decimal", False, None, None),
+                     ("incline_pct", "input", "decimal", False, None, None),
+                     ("speed_kmh", "input", "decimal", False, None, None),
+                     ("avg_hr", "input", "numeric", False, None, None),
+                     ("machine_kcal", "input", "numeric", False, None, None),
+                     ("notes", "textarea", None, False, None, "2")],
+}
+
+
+@pytest.mark.parametrize("kind", list(EDIT_ATTRS))
+def test_each_edit_control_carries_its_inputmode_required_and_limits(client, every_kind, kind):
+    fields = controls_of(edit_of(client, kind, every_kind[kind]))[:-1]  # the Date field is held above
+    assert [(f["name"], f["tag"], f["inputmode"], f["required"], f["maxlength"], f["rows"]) for f in fields]         == EDIT_ATTRS[kind]
+
+
+def test_the_edit_selects_offer_every_meal_and_every_activity(client, every_kind):
+    [meal] = [f for f in controls_of(edit_of(client, "food_entry", every_kind["food_entry"])) if f["name"] == "meal"]
+    assert meal["options"] == [("breakfast", "Breakfast"), ("lunch", "Lunch"), ("dinner", "Dinner"), ("snack", "Snack")]
+    [activity] = [f for f in controls_of(edit_of(client, "cardio_entry", every_kind["cardio_entry"]))
+                  if f["name"] == "exercise"]
+    names = [e["name"] for e in services.list_exercises("cardio")["exercises"]]
+    assert activity["options"] == [(name, name) for name in names] and len(names) >= 15
