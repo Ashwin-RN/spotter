@@ -2,6 +2,9 @@
 PLAN.md
 private/
 
+# Local assistant tooling: kept on the machine, not in the repo.
+.claude/
+
 # Secrets and local state
 .env
 .env.*
