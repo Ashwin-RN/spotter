@@ -5288,21 +5288,30 @@ def test_a_day_with_a_lift_and_cardio_is_a_lift_day_and_cardio_alone_is_cardio_o
     assert sum("is-none" in p["classes"] for p in pills) == 25
 
 
-@pytest.mark.parametrize("shift", range(7))
-def test_the_weekday_row_starts_at_the_weekday_of_the_first_day_shown(client, monkeypatch, shift):
-    """Seven days in a row, so the row starts on each weekday once. Each letter is page text the sweeps read,
-    so the page's text rules run on each."""
+WEEKDAY_PINS = [FIXED_NOW + timedelta(days=n) for n in range(7)] + [datetime(2027, 1, 2, 12, 0, tzinfo=timezone.utc)]
+
+
+@pytest.mark.parametrize("now", WEEKDAY_PINS, ids=lambda t: t.date().isoformat())
+def test_the_weekday_row_starts_at_the_weekday_of_the_first_day_shown(client, monkeypatch, now):
+    """Seven days in a row, so the row starts on each weekday once, and 2 January, when the first days shown
+    are in the year before and their words carry it. Each letter is page text the sweeps read, so the page's
+    text rules run on each. A new account with no zone: today is the UTC date."""
     from .test_pages_text import page_findings  # noqa: PLC0415
 
     sign_in(client)
-    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW + timedelta(days=shift))
-    today = date(2026, 11, 10) + timedelta(days=shift)
+    monkeypatch.setattr(db, "utcnow", lambda: now)
+    today = now.date()
     page = day_of(client, today.isoformat())
     grid = daygrid_of(page)
     first = today - timedelta(days=27)
     assert grid["pills"][0]["href"] == f"/day/{first.isoformat()}"
     assert grid["letters"] == [formatting.weekday_letter(first + timedelta(days=n)) for n in range(7)]
     assert grid["letters"][0] == formatting.weekday(first)[0]
+    assert grid["pills"][0]["words"] == f"{formatting.day(first, today)}: nothing trained"
+    assert grid["pills"][-1]["words"] == f"{formatting.day(today, today)}, today: nothing trained"
+    if first.year != today.year:  # across a year end: the year shows on the days before it, never on today
+        assert grid["pills"][0]["words"] == "Sun 6 Dec 2026: nothing trained"
+        assert grid["pills"][-1]["words"] == "Sat 2 Jan, today: nothing trained"
     assert glued(grid["node"]) == []
     assert page_findings(f"/day/{today.isoformat()}", page, [], only_user().id) == []
 
@@ -5590,3 +5599,71 @@ def test_the_field_names_more_ids_after_its_error_and_its_hint():
     assert 'aria-describedby="v-name"' in parts_field("v", "value", "Value", None, "x", describedby="v-name")
     assert 'aria-describedby="v-error v-name"' in parts_field("v", "value", "Value", "Bad.", "x", describedby="v-name")
     assert "aria-describedby" not in parts_field("v", "value", "Value", None, "x")
+
+
+# ---------------------------------------------------------------- the glance's two reads across midnight (B7 fix)
+
+BEFORE_MIDNIGHT = datetime(2026, 11, 10, 23, 59, 59, tzinfo=timezone.utc)  # a person with no zone: UTC's date
+AFTER_MIDNIGHT = datetime(2026, 11, 11, 0, 0, 1, tzinfo=timezone.utc)
+
+
+def reads_across_midnight(monkeypatch, trends_at, days_at) -> dict:
+    """get_trends and get_days, each read with the clock at the time trends_at() and days_at() name, and a count
+    of each one's calls. calls["restart"]() puts the clock back before midnight, where the page's own date is
+    read, and zeroes the counts."""
+    clock = {"now": BEFORE_MIDNIGHT}
+    calls = {"trends": 0, "days": 0}
+    real_trends, real_days = services.get_trends, services.get_days
+
+    def trends(uid):
+        calls["trends"] += 1
+        clock["now"] = trends_at(calls["trends"])
+        return real_trends(uid)
+
+    def days(uid):
+        calls["days"] += 1
+        clock["now"] = days_at(calls["days"])
+        return real_days(uid)
+
+    monkeypatch.setattr(db, "utcnow", lambda: clock["now"])
+    monkeypatch.setattr(services, "get_trends", trends)
+    monkeypatch.setattr(services, "get_days", days)
+
+    def restart():
+        clock["now"] = BEFORE_MIDNIGHT
+        calls.update(trends=0, days=0)
+    return calls, restart
+
+
+def test_two_reads_on_two_dates_are_read_again_and_the_glance_shows_one_date(client, monkeypatch):
+    """get_trends reads at 23:59:59, get_days at 00:00:01: two dates. Both are read once more, after midnight,
+    and the glance draws the one date they agree on."""
+    sign_in(client)
+    uid = only_user().id
+    calls, restart = reads_across_midnight(monkeypatch, lambda n: BEFORE_MIDNIGHT if n == 1 else AFTER_MIDNIGHT,
+                                           lambda n: AFTER_MIDNIGHT)
+    glance = asyncio.run(web.glance_of(uid))
+    assert calls == {"trends": 2, "days": 2}
+    assert glance["trends"]["today"] == glance["days"]["today"] == "2026-11-11"
+    restart()
+    r = client.get("/day/2026-11-10")  # the page's own date is read before midnight
+    assert r.status_code == 200 and calls == {"trends": 2, "days": 2}
+    pills = daygrid_of(r.text)["pills"]
+    assert pills[-1]["href"] == "/day/2026-11-11" and pills[-1]["words"] == "Wed 11 Nov, today: nothing trained"
+    assert "is-today" in pills[-1]["classes"] and pills[0]["href"] == "/day/2026-10-15"
+
+
+def test_two_reads_that_still_differ_draw_no_glance_and_the_page_still_answers(client, monkeypatch):
+    sign_in(client)
+    calls, restart = reads_across_midnight(monkeypatch, lambda n: BEFORE_MIDNIGHT, lambda n: AFTER_MIDNIGHT)
+    assert asyncio.run(web.glance_of(only_user().id)) is None and calls == {"trends": 2, "days": 2}
+    restart()
+    r = client.get("/day/2026-11-10")
+    assert r.status_code == 200 and glance_node(r.text) is None and '<div class="col-main">' in r.text
+    assert calls == {"trends": 2, "days": 2}
+
+
+def test_two_reads_on_one_date_are_read_once(client, monkeypatch):
+    sign_in(client)
+    calls, _ = reads_across_midnight(monkeypatch, lambda n: AFTER_MIDNIGHT, lambda n: AFTER_MIDNIGHT)
+    assert asyncio.run(web.glance_of(only_user().id)) is not None and calls == {"trends": 1, "days": 1}

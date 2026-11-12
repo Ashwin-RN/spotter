@@ -1272,6 +1272,12 @@ def test_the_glance_zeros_pass_only_inside_the_glance_block(client):
     assert any("empty_figure" in f for f in page_findings(address, swapped, [], user_id))
     stray = page.replace(food, food + "<p>0</p>")
     assert any("empty_figure" in f for f in page_findings(address, stray, [], user_id))
+    # Just before the glance block: a stray 0 at the end of the Today card is an empty figure too, though the
+    # glance starts a few lines later.
+    hero_end = page.index("</section>", page.index('<section class="card hero"'))
+    before = page[:hero_end] + "<p>0</p>" + page[hero_end:]
+    assert 0 < first - (before.count("\n", 0, hero_end) + 1) <= 40
+    assert any("empty_figure" in f for f in page_findings(address, before, [], user_id))
     past = client.get(f"/day/{(today - timedelta(days=1)).isoformat()}").text
     assert glance_lines(past) is None and not placed("/day/{date}", 1, {"/day/{date}": None})
     assert placed("/foods", 1, {"/day/{date}": None})  # Foods keeps its allowance anywhere on its page

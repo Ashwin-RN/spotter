@@ -25,13 +25,13 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from app import services, web
+from app import db, formatting, services, web
 from app.models import Bodyweight, SavedFood
 
 from .test_pages_text import (ACCOUNTS, BUILT, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
                               entered_text, estimate_findings, get_paths, names_of, page_findings, parse,
                               render_error_page, route_of, step_4_findings)
-from .test_web import client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
+from .test_web import FIXED_NOW, client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
 
 STATIC = Path(web.HERE) / "static"
 
@@ -1227,33 +1227,69 @@ def test_the_sweeps_reach_todays_glance_and_past_days_without_it(client, account
 
 # ---------------------------------------------------------------- Today's titled cards and day pills (pass B7)
 
+def _home(node: Node):
+    """The nearest card or sheet holding a node, or None."""
+    return next((a for a in node.ancestors() if a.is_(cls="card") or a.is_(cls="sheet")), None)
+
+
 def titled_card_findings(s: Seen) -> list[str]:
-    """Section L's card rule on one page: a card with an h2 is a section.card named by aria-labelledby, each but
-    the Today card by its own first h2, and a card with no title is a bare div.card. No id repeats."""
+    """Section L's card rule on one page. A card with an h2 is a section.card named by aria-labelledby, each but
+    the Today card by its own h2, which is its only one and sits as its child or in its own div.card-head. A
+    card with no title is a bare div.card named by nothing. No card sits in a card. Every section in main is a
+    card, and every h2 in main sits in a card or a sheet. No id repeats."""
     out = []
+    for main in s.dom.find_all("main"):
+        out += [f"a <section> in main is not a card: {n.attrs}" for n in main.find_all("section") if "card" not in n.classes]
+        out += [f"the h2 {h.text()!r} sits in no card or sheet" for h in main.find_all("h2") if _home(h) is None]
     for card in s.dom.find_all(cls="card"):
-        heads = card.find_all("h2")
         named = card.attrs.get("aria-labelledby", "")
+        if any(a.is_(cls="card") for a in card.ancestors()):
+            out.append(f"a card sits inside a card: {card.attrs}")
+        heads = [h for h in card.find_all("h2") if _home(h) is card]  # its own, not a nested card's
         if "hero" in card.classes:
             if card.tag != "section" or named not in {n.attrs.get("id") for n in card.iter()}:
                 out.append("the Today card is not a section named by an element inside it")
-        elif not heads:
-            if card.tag != "div":
-                out.append(f"a card with no title is a <{card.tag}>")
-        elif card.tag != "section" or not named or named != heads[0].attrs.get("id"):
-            out.append(f"the {heads[0].text()!r} card is a <{card.tag}> named by {named!r}, not by its own h2")
+            continue
+        if not heads:
+            if card.tag != "div" or named:
+                out.append(f"a card with no title is a <{card.tag}> named by {named!r}")
+            continue
+        title = heads[0].text()
+        if card.tag != "section" or not named or named != heads[0].attrs.get("id"):
+            out.append(f"the {title!r} card is a <{card.tag}> named by {named!r}, not by its own h2")
+        if len(heads) > 1:
+            out.append(f"the {title!r} card holds {len(heads)} h2s")
+        head = [k for k in card.elements() if k.is_("div", "card-head")]
+        parent = heads[0].parent
+        if not (parent is card and not head or head and parent is head[0]):
+            out.append(f"the {title!r} card's h2 is not its own child or in its own card-head")
     ids = [n.attrs["id"] for n in s.dom.iter() if n.attrs.get("id")]
     out += [f"the id {i!r} is on the page {ids.count(i)} times" for i in sorted(set(ids)) if ids.count(i) > 1]
     return out
 
 
+PILL_WORDS = {"is-lift": "lift session", "is-cardio": "cardio only", "is-none": "nothing trained"}
+
+
+def pill_state(day: dict) -> str:
+    """The state a get_days day calls for: a lift session, else cardio, else nothing trained."""
+    return "is-lift" if day["lift_sessions"] else ("is-cardio" if day["cardio_entries"] else "is-none")
+
+
 def pill_findings(s: Seen, grid: dict) -> list[str]:
-    """Today's ol.days against get_days: one li a day, oldest first, each one a.pill to its day with the one
-    state class the day calls for, is-today on the last only, and hidden words naming the day."""
+    """Today's grid against get_days. The weekday row: hidden, seven letters from the first day shown. ol.days:
+    one li a day, oldest first, each one a.pill to its day with the one state class the day calls for,
+    is-today on the last only, and in it only its hidden words: the day as formatting.day writes it,
+    ", today" on the last, then the state's words."""
     lists = s.dom.find_all("ol", "days")
     if len(lists) != 1:
         return [f"{len(lists)} day grids"]
     out = []
+    weeks = s.dom.find_all("div", "week-head")
+    letters = [formatting.weekday_letter(d["date"]) for d in grid["days"][:7]]
+    if len(weeks) != 1 or weeks[0].attrs.get("aria-hidden") != "true" \
+            or [k.text() for k in weeks[0].elements()] != letters:
+        out.append(f"the weekday row is not one hidden row of {letters}")
     items = lists[0].elements()
     if len(items) != len(grid["days"]):
         out.append(f"{len(items)} pills for {len(grid['days'])} days")
@@ -1262,16 +1298,19 @@ def pill_findings(s: Seen, grid: dict) -> list[str]:
         if li.tag != "li" or len(links) != 1 or not links[0].is_("a", "pill"):
             out.append(f"{day['date']}: not one a.pill in its li")
             continue
-        a = links[0]
-        state = "is-lift" if day["lift_sessions"] else ("is-cardio" if day["cardio_entries"] else "is-none")
-        want = ["pill", state] + (["is-today"] if n == len(items) - 1 else [])
+        a, last = links[0], n == len(items) - 1
+        state = pill_state(day)
+        want = ["pill", state] + (["is-today"] if last else [])
         if a.classes != want:
             out.append(f"{day['date']}: classes {a.classes}, not {want}")
         if a.attrs.get("href") != f"/day/{day['date']}":
             out.append(f"{day['date']}: links to {a.attrs.get('href')!r}")
-        words = a.find_all("span", "sr")
-        if len(words) != 1 or not words[0].text() or a.text() != words[0].text():
-            out.append(f"{day['date']}: no hidden words, or words outside them")
+        said = f"{formatting.day(day['date'], grid['today'])}{', today' if last else ''}: {PILL_WORDS[state]}"
+        inside = a.elements()
+        if len(inside) != 1 or not inside[0].is_("span", "sr") or a.text() != inside[0].text():
+            out.append(f"{day['date']}: the pill holds more than its hidden words")
+        elif inside[0].text() != said:
+            out.append(f"{day['date']}: the hidden words say {inside[0].text()!r}, not {said!r}")
     return out
 
 
@@ -1300,11 +1339,14 @@ def test_every_day_page_names_its_titled_cards_and_today_draws_its_pills(client,
     assert not findings, "\n".join(findings)
 
 
-def test_the_card_and_pill_checks_catch_each_break_on_the_real_page(client):
-    """Both checks pass the real page, and find each break in it."""
+def test_the_card_and_pill_checks_catch_each_break_on_the_real_page(client, monkeypatch):
+    """Both checks pass the real page, and find each break in it. The clock is the fixed day's, so the first and
+    last pills' states are known, and each pill string is built from its day's own state."""
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
     address, page = glance_page(client)
     today = address.split("/")[2]
     grid = services.get_days(only_user().id)
+    assert today == grid["today"] == "2026-11-10"
 
     def found(markup: str) -> list[str]:
         s = Seen(address, markup, True, today=today)
@@ -1324,9 +1366,47 @@ def test_the_card_and_pill_checks_catch_each_break_on_the_real_page(client):
     twice = broken('<h2 id="cardio-title">Cardio</h2>', '<h2 id="cardio-title">Cardio</h2><span id="food-title"></span>')
     assert twice == ["the id 'food-title' is on the page 2 times"]
     assert broken('class="card daygrid" aria-labelledby="days-title"', 'class="card daygrid"')
-    first = f'<a class="pill {"is-lift" if grid["days"][0]["lift_sessions"] else "is-cardio"}" href="/day/{grid["days"][0]["date"]}">'
+    head, tail = grid["days"][0], grid["days"][-1]
+    first = f'<a class="pill {pill_state(head)}" href="/day/{head["date"]}">'
+    last = f'<a class="pill {pill_state(tail)} is-today" href="/day/{tail["date"]}">'
     assert broken(first, first.replace('class="pill ', 'class="pill is-today '))  # today on the first
-    assert broken(first, first.replace(grid["days"][0]["date"], grid["days"][1]["date"]))  # the wrong day
-    last = 'class="pill is-cardio is-today"' if 'class="pill is-cardio is-today"' in page else 'is-today"'
+    assert broken(first, first.replace(head["date"], grid["days"][1]["date"]))  # the wrong day
     assert broken(last, last.replace(" is-today", ""))  # no today
     assert found(page.replace('<span class="sr">', '<span>'))  # the words no longer hidden
+    # The reviewer's probe C cases: each wrong page gives a finding.
+    lifts_card = '<section class="card" aria-labelledby="lifts-title">\n  <h2 id="lifts-title">Lifts</h2>'
+    words = f"{formatting.day(tail['date'], today)}, today: {PILL_WORDS[pill_state(tail)]}"
+    assert words == "Tue 10 Nov, today: cardio only"
+    # (the edit, the finding it must give): each case is caught by its own clause, not only by a neighbour's.
+    cases = {
+        "two h2s": (lifts_card, lifts_card + '\n  <h2 id="lifts-extra">More lifts</h2>', "card holds 2 h2s"),
+        "a titled section without card": (lifts, '<section aria-labelledby="lifts-title">', "in main is not a card"),
+        "a titled div without card": (lifts, "<div>", "sits in no card or sheet"),
+        "a nested untitled card": (lifts_card, lifts_card + '\n  <div class="card"><p>x</p></div>',
+                                   "a card sits inside a card"),
+        "a nested titled card": (lifts_card, lifts_card + '\n  <section class="card" aria-labelledby="n-t">'
+                                             '<h2 id="n-t">N</h2></section>', "a card sits inside a card"),
+        "an untitled card named": (lifts_card, lifts_card + '\n  <div class="card" aria-labelledby="nowhere"><p>x</p></div>',
+                                   "named by 'nowhere'"),
+        "two state classes": (last, last.replace(" is-today", " is-lift is-today"), ": classes ["),
+        "an empty span beside the words": (f'<span class="sr">{words}</span>',
+                                           f'<span class="sr">{words}</span><span class="x"></span>',
+                                           "holds more than its hidden words"),
+        "the wrong state's words": (words, words.replace("cardio only", "lift session"), "the hidden words say"),
+        "no ', today'": (words, words.replace(", today", ""), "the hidden words say"),
+        "the wrong day": (words, words.replace("Tue 10 Nov", "Mon 9 Nov"), "the hidden words say"),
+        "the Today card named from outside": ('aria-labelledby="today-card-label"', 'aria-labelledby="days-title"',
+                                              "the Today card is not"),
+        "an h2 one level down": ('<h2 id="lifts-title">Lifts</h2>', '<div><h2 id="lifts-title">Lifts</h2></div>',
+                                 "not its own child or in its own card-head"),
+        "the grid's h2 out of its card-head": ('<div class="card-head">\n      <h2 id="days-title">Last 28 days</h2>',
+                                               '<h2 id="days-title">Last 28 days</h2><div class="card-head">',
+                                               "not its own child or in its own card-head"),
+        "the weekday row unhidden": ('<div class="week-head" aria-hidden="true">', '<div class="week-head">',
+                                     "the weekday row"),
+    }
+    missed = {name: broken(old, new) for name, (old, new, said) in cases.items()
+              if not any(said in f for f in broken(old, new))}
+    assert not missed, missed
+    assert broken(words, words.replace(", today", "")) == [
+        f"{tail['date']}: the hidden words say 'Tue 10 Nov: cardio only', not {words!r}"]

@@ -919,10 +919,18 @@ async def glance_of(user_id: int) -> dict | None:
     """What Today's glance block shows: get_trends and get_days as they come back, the words for what
     bodyweight.now is and for a missing rate, the two sheets' charts, and the chart pair's two compact
     charts, the Eaten a day one with the calorie target's line when one is set. The web works out no figure.
-    None when either read fails: the page then draws no glance block."""
-    trends = await _db(services.get_trends, user_id)
-    days = await _db(services.get_days, user_id)
-    if failed(trends) or failed(days):
+    None when either read fails: the page then draws no glance block.
+
+    Each read takes the person's date from the clock. Read across their midnight, the two can name two dates,
+    so both are read once more. If they still differ, the page draws no glance block for that one render."""
+    for _ in range(2):
+        trends = await _db(services.get_trends, user_id)
+        days = await _db(services.get_days, user_id)
+        if failed(trends) or failed(days):
+            return None
+        if trends["today"] == days["today"]:
+            break
+    else:
         return None
     today = date.fromisoformat(trends["today"])
     series = (trends.get("bodyweight") or {}).get("series")
