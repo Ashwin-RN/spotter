@@ -907,8 +907,11 @@ PLACED = {
                                           _el("section", "card", "chart-card"), _el("svg", "chart", "small")],
                                          ("149px", "261px")),
     "a goal chart": ([_el("li", "goal"), _el("svg", "chart")], ("336px", "373px")),
-    "the body weight chart": ([_el("div", "bw-card"), _el("svg", "chart", id_="bodyweight-chart")],
+    "the body weight chart": ([_el("main", "page", "progress"), _el("section", "card", "bw-card", id_="body-weight"),
+                               _el("div", "bw-wrap"), _el("svg", "chart", id_="bodyweight-chart")],
                               ("336px", "386px")),
+    "a Progress sheet's chart": ([_el("main", "page", "progress"), _el("div", "glance"), _el("div", "sheet"),
+                                  _el("div", "panel"), _el("svg", "chart")], ("336px", "none")),
     "the lift chart": ([_el("div", "chart-card"), _el("svg", "chart", id_="progress-chart")], ("336px", "690px")),
     "the pace chart": ([_el("div", "pace-card"), _el("svg", "chart", id_="chart-pace")], ("336px", "403px")),
 }

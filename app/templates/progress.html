@@ -1,12 +1,81 @@
 {% extends "base.html" %}
 {% block title %}Progress · Spotter{% endblock %}
 {% block main %}
-<h1>Progress</h1>
+{% import "_parts.html" as parts %}
+<div class="page-head">
+  <h1>Progress</h1>
+</div>
 {% include "sample_banner.html" %}
+
+{# The tiles and their sheets: Weight, Calories and Training drawn by the parts Today draws, from the same
+   glance, each twin to its own part of this page. Then Maintenance, Progress' own. A Progress sheet has no
+   Open Progress link. Every figure is get_trends' or get_days' own, through the filters. #}
+{% if glance %}
+{% set m, grid = glance.trends.maintenance, glance.days %}
+{% set bw = glance.trends.bodyweight %}
+<div class="glance">
+  <div class="tiles four">
+    {{ parts.glance_tiles(glance, "#body-weight", "#trends") }}
+    {% if m %}
+    {{ parts.tile("maintenance", "Maintenance: ", m.kcal|show("maintenance", unit=False), "kcal to maintain", tag=("estimate", "estimate"), sheet="sheet-maintenance", href="#trends") }}
+    {% else %}
+    {{ parts.tile("maintenance", "Maintenance: ", "Not enough logged yet", empty=true) }}
+    {% endif %}
+  </div>
+  {{ parts.glance_sheets(glance, today) }}
+  {% if m %}
+  {% call parts.sheet("sheet-maintenance", m.from|days(m.to, today), m.kcal|show("maintenance", unit=False), "Maintenance, a day", unit="kcal", tag=("estimate", "estimate")) %}
+  <p class="sentence">About {{ m.kcal|show("maintenance") }} a day, worked out from {{ m.days_logged|show("count") }} logged days. Over that window intake averaged {{ m.intake_avg_kcal|show("kcal") }} a day and the 7-day average weight moved {{ m.weight_change_kg|show("weight_change") }}.</p>
+  <p class="sentence">An estimate from your intake and weight change. Your calorie target stays yours to set.</p>
+  {% endcall %}
+  {% endif %}
+</div>
+
+{# The Body weight card: the chart over the last 28 days, then four callouts, High, Latest, Trend and Low. High,
+   Latest and Low are get_days' weigh-ins of the 28 days, each as entered, with its date. Trend is get_trends'
+   smoothed weight, the boxed one. The chart is drawn when there is one to draw. With none, one line says why,
+   by get_trends' count of the 28 days' weigh-ins. No weigh-in at all: the card is empty. #}
+{% set w = grid.weight %}
+<section class="card bw-card{% if not bw %} is-empty{% endif %}" id="body-weight" aria-labelledby="body-weight-title">
+  <div class="card-head">
+    <h2 id="body-weight-title">Body weight</h2>
+    <span class="aside">4 weeks</span>
+  </div>
+  {% if bw %}
+  <div class="bw-wrap">
+    {% if chart %}{{ chart }}
+    {% elif bw.weigh_ins_28d == 1 %}<p class="empty-line">One weigh-in in the last 28 days. The chart starts from the second one.</p>
+    {% else %}<p class="empty-line">No weigh-ins in the last 28 days.</p>
+    {% endif %}
+    <dl class="callouts">
+      {% if w %}
+      <div><dt>High</dt><dd>{{ w.high.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span> <span class="when">{{ w.high.date|day(today) }}</span></dd></div>
+      <div><dt>Latest</dt><dd>{{ w.latest.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span> <span class="when">{{ w.latest.date|day(today) }}</span></dd></div>
+      {% endif %}
+      <div class="is-key"><dt>Trend</dt><dd>{{ bw.smoothed|show("bodyweight_derived", unit=False) }}&nbsp;<span class="unit">kg</span> <span class="when">Smoothed</span></dd></div>
+      {% if w %}
+      <div><dt>Low</dt><dd>{{ w.low.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span> <span class="when">{{ w.low.date|day(today) }}</span></dd></div>
+      {% endif %}
+    </dl>
+  </div>
+  {% if chart %}
+  <ul class="legend" aria-label="Key">
+    <li><span class="key dot-key" aria-hidden="true"></span>Weigh-in</li>
+    <li><span class="key line" aria-hidden="true"></span>Smoothed trend</li>
+    {% if bodyweight.goal %}<li><span class="key line goal" aria-hidden="true"></span>Goal {{ bodyweight.goal.target_kg|show("goal_target") }}&nbsp;kg</li>
+    {% endif %}
+  </ul>
+  <p class="small">Dots are weigh-ins. The line is the smoothed trend, which evens out day-to-day swings.</p>
+  {% endif %}
+  {% else %}
+  <p class="empty-line">No weigh-ins yet. Add one on <a href="/today">Today</a>.</p>
+  {% endif %}
+</section>
+{% endif %}
 
 {% if trends %}
 {% set bw, cal, ses, car = trends.bodyweight, trends.calories, trends.sessions, trends.cardio %}
-<div class="card trends">
+<div class="card trends" id="trends">
   <h2>Trends</h2>
   <dl class="facts">
     <dt>Body weight</dt>
@@ -51,22 +120,6 @@
   </table>
   {% else %}
   <p class="muted">No lifts logged yet. Tell Claude what you lifted and it shows here.</p>
-  {% endif %}
-</div>
-
-<div class="card">
-  <h2>Body weight</h2>
-  {% if trend.latest_weigh_in %}
-  <p>Latest: <strong>{{ trend.latest_weigh_in.kg|show("weigh_in") }}</strong> on
-    <a href="/day/{{ trend.latest_weigh_in.date }}">{{ trend.latest_weigh_in.date|day(today) }}</a>.
-    {% if trend.average_7d is not none %}7-day average: <strong>{{ trend.average_7d|show("bodyweight_derived") }}</strong>.
-    {% else %}Latest weigh-in: <strong>{{ trend.latest_weigh_in.kg|show("weigh_in") }}</strong>.{% endif %}</p>
-  {% if trend.weigh_ins_28d == 0 %}<p class="muted">No weigh-ins in the last 28 days.</p>
-  {% elif trend.weigh_ins_28d == 1 %}<p class="muted">The chart starts from the second weigh-in.</p>
-  {% else %}{{ chart }}
-  <p class="muted small">Dots are weigh-ins. The line is the smoothed trend, which steadies day-to-day swings.</p>{% endif %}
-  {% else %}
-  <p class="muted">No weigh-ins yet. Add one on <a href="/today">Today</a>.</p>
   {% endif %}
 </div>
 {% endblock %}

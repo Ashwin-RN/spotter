@@ -73,8 +73,8 @@
 {{ inner }}
 </div>{% endif %}{% endmacro %}
 
-{# A sheet: a popover dialog named by its title. The close button first, then the period, the number, the title, the caller's sentences, panel and table, and an Open Progress link when link is given. #}
-{% macro sheet(id, period, number, title, unit=none, link=none) %}<div class="sheet" popover id="{{ id }}" role="dialog" aria-labelledby="{{ id }}-title">
+{# A sheet: a popover dialog named by its title. The close button first, then the period, the number, the title, the caller's sentences, panel and table, and an Open Progress link when link is given. tag is a (variant, words) pair drawn as its own element right after the number, never inside it. #}
+{% macro sheet(id, period, number, title, unit=none, link=none, tag=none) %}<div class="sheet" popover id="{{ id }}" role="dialog" aria-labelledby="{{ id }}-title">
   <div class="sheet-head">
     <div class="grab" aria-hidden="true"></div>
     <div class="sheet-bar">
@@ -83,10 +83,100 @@
     </div>
   </div>
   <p class="giant">{{ number }}{% if unit %}&nbsp;<span class="unit">{{ unit }}</span>{% endif %}</p>
-  <h2 class="noun" id="{{ id }}-title">{{ title }}</h2>
+  {% if tag %}<span class="tag tag-{{ tag[0] }}">{{ tag[1] }}</span>
+  {% endif %}<h2 class="noun" id="{{ id }}-title">{{ title }}</h2>
   {{ caller() }}
   {% if link %}<p class="sheet-link"><a class="button secondary" href="{{ link }}">Open Progress</a></p>
   {% endif %}</div>{% endmacro %}
+
+{# The Weight, Calories and Training tiles, drawn by Today and by Progress from one glance (web.glance_of):
+   get_trends' and get_days' own figures, through the filters. A tile with a sheet is a button and its twin
+   link, weight_href for Weight's, trends_href for the other two. The caller draws the tiles' grid. #}
+{% macro glance_tiles(glance, weight_href, trends_href) %}
+{%- set bw, cal, ses = glance.trends.bodyweight, glance.trends.calories, glance.trends.sessions -%}
+{%- set rated = bw and bw.rate_per_week is not none -%}
+{%- set eaten_week = cal and cal.avg_7d is not none -%}
+    {% if bw %}
+    {% set weight_note %}{% if rated %}{{ bw.rate_per_week|show("rate") }}&nbsp;kg a week{% else %}No weekly rate yet{% endif %}{% endset %}
+    {{ tile("weight", "Weight: ", bw.smoothed|show("bodyweight_derived", unit=False), "kg trend", weight_note, sheet="sheet-weight", href=weight_href) }}
+    {% else %}
+    {% set no_weight %}No <span class="nowrap">weigh-ins</span> yet{% endset %}
+    {{ tile("weight", "Weight: ", no_weight, empty=true) }}
+    {% endif %}
+    {% if eaten_week %}
+    {{ tile("calories", "Eaten a day: ", cal.avg_7d|show("kcal", unit=False), "kcal eaten a day", "last 7 days", sheet="sheet-calories", href=trends_href) }}
+    {% else %}
+    {{ tile("calories", "Eaten a day: ", "No food in the last 7 days" if cal else "No food in the last 28 days", empty=true) }}
+    {% endif %}
+    {{ tile("training", "Training: ", ses.this_week|show("count"), "lift sessions", "last 7 days", sheet="sheet-training", href=trends_href) }}
+{%- endmacro %}
+
+{# The Weight, Calories and Training sheets, from the same glance. today is the page's date, for the dates'
+   words. Each sheet ends with Open Progress to weight_link or trends_link when given: a Progress sheet has
+   none. Weight's sheet is drawn with any weigh-in, Calories' with food in the last 7 days, Training's always. #}
+{% macro glance_sheets(glance, today, weight_link=none, trends_link=none) %}
+{%- set trends, grid = glance.trends, glance.days -%}
+{%- set bw, cal, ses, car = trends.bodyweight, trends.calories, trends.sessions, trends.cardio -%}
+{%- set rated = bw and bw.rate_per_week is not none -%}
+{%- set eaten_week = cal and cal.avg_7d is not none -%}
+  {% if bw %}
+  {% call sheet("sheet-weight", "Last 4 weeks", bw.smoothed|show("bodyweight_derived", unit=False), "Weight trend", unit="kg", link=weight_link) %}
+  <p class="sentence">{% if rated %}The trend moved {{ bw.rate_per_week|show("rate") }}&nbsp;kg a week from {{ bw.rate_window.from|days(bw.rate_window.to, today) }}.{% else %}{{ glance.rate_words }}{% endif %}{% if bw.now is not none %} The {{ glance.basis }} is {{ bw.now|show("bodyweight_derived") }}{% if bw.weigh_ins_28d == 0 %}. No weigh-ins in the last 28 days.{% else %}, from {{ bw.weigh_ins_28d|show("count") }} {{ "weigh-in" if bw.weigh_ins_28d == 1 else "weigh-ins" }} in 28 days.{% endif %}{% endif %}</p>
+  <div class="panel">
+    <p class="panel-title">Smoothed weight</p>
+    {% if glance.weight_chart %}{{ glance.weight_chart }}
+    {% elif bw.weigh_ins_28d == 1 %}<p class="muted">One weigh-in in the last 28 days. The chart starts from the second one.</p>
+    {% else %}<p class="muted">No weigh-ins in the last 28 days.</p>
+    {% endif %}
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Quantity</th><th scope="col" class="num">Value</th><th scope="col">Remark</th></tr></thead>
+      <tbody>
+        <tr><td>Smoothed trend</td><td class="num">{{ bw.smoothed|show("bodyweight_derived") }}</td><td class="remark">Evens out day-to-day swings</td></tr>
+        {% if bw.now is not none %}<tr><td>{{ glance.basis|capitalize }}</td><td class="num">{{ bw.now|show("bodyweight_derived") }}</td><td class="remark">{{ "Last 7 days" if glance.basis == "7-day average" else "No weigh-in in the last 7 days" }}</td></tr>
+        {% endif %}
+        <tr><td>Rate</td><td class="num">{% if rated %}{{ bw.rate_per_week|show("rate") }}&nbsp;kg a week{% endif %}</td><td class="remark">{% if rated %}{{ bw.rate_window.from|days(bw.rate_window.to, today) }}{% else %}No weekly rate yet{% endif %}</td></tr>
+        <tr><td>Weigh-ins</td><td class="num">{{ bw.weigh_ins_28d|show("count") }}</td><td class="remark">In the last 28 days</td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% endcall %}
+  {% endif %}
+  {% if eaten_week %}
+  {% call sheet("sheet-calories", "Last 7 days", cal.avg_7d|show("kcal", unit=False), "Eaten a day, on average", unit="kcal", link=trends_link) %}
+  <p class="sentence">Over the last 28 days it is {{ cal.avg_28d|show("kcal") }} a day, and {{ cal.estimated_share_pct_28d|show("percent") }} of it is estimates. {% if cal.target_kcal is not none %}The calorie target is {{ cal.target_kcal|show("kcal") }} a day.{% else %}No calorie target is set.{% endif %}</p>
+  <div class="panel">
+    <p class="panel-title">Each day</p>
+    {% if glance.eaten_chart %}{{ glance.eaten_chart }}{% else %}<p class="muted">No food logged in the last 7 days.</p>{% endif %}
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Quantity</th><th scope="col" class="num">Value</th><th scope="col">Remark</th></tr></thead>
+      <tbody>
+        <tr><td>Eaten a day</td><td class="num">{{ cal.avg_7d|show("kcal") }}</td><td class="remark">Last 7 days, {{ cal.days_logged_7d|show("count") }} logged</td></tr>
+        <tr><td>Eaten a day</td><td class="num">{{ cal.avg_28d|show("kcal") }}</td><td class="remark">Last 28 days, {{ cal.days_logged_28d|show("count") }} logged</td></tr>
+        <tr><td>From estimates</td><td class="num">{{ cal.estimated_share_pct_28d|show("percent") }}</td><td class="remark">Last 28 days</td></tr>
+        <tr><td>Calorie target</td><td class="num">{% if cal.target_kcal is not none %}{{ cal.target_kcal|show("kcal") }}{% endif %}</td><td class="remark">{% if cal.target_kcal is none %}Not set. Set one on <a href="/settings">Settings</a>.{% endif %}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% endcall %}
+  {% endif %}
+  {% call sheet("sheet-training", "Last 7 days", ses.this_week|show("count"), "Lift sessions", link=trends_link) %}
+  <p class="sentence">{{ ses.per_week_4w|show("count_avg") }} a week over the last 4 weeks. Cardio came to {{ car.minutes_this_week|show("week_minutes") }} in the last 7 days, and {{ car.minutes_per_week_4w|show("week_minutes") }} a week over 4 weeks.{% if ses.target_per_week is not none %} The session target is {{ ses.target_per_week|show("count") }} a week.{% endif %}{% if car.target_minutes is not none %} The cardio target is {{ car.target_minutes|show("week_minutes") }} a week.{% endif %}{% if ses.target_per_week is none and car.target_minutes is none %} No session or cardio target is set.{% endif %}</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Week ending</th><th scope="col" class="num">Lift sessions</th><th scope="col" class="num">Cardio (min)</th></tr></thead>
+      <tbody>
+        {% for w in grid.weeks %}
+        <tr><td>{{ w.to|day(today) }}</td><td class="num">{{ w.lift_sessions|show("count") }}</td><td class="num">{{ w.cardio_minutes|show("week_minutes", unit=False) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endcall %}
+{%- endmacro %}
 
 {# A chart card: a section named by its label, which carries the variant class for its icon, then the sub line.
    With a chart: the figure, its unit after a no-break space, then the chart. Without one: is-empty, and the

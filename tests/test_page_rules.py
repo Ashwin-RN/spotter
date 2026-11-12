@@ -1410,3 +1410,42 @@ def test_the_card_and_pill_checks_catch_each_break_on_the_real_page(client, monk
     assert not missed, missed
     assert broken(words, words.replace(", today", "")) == [
         f"{tail['date']}: the hidden words say 'Tue 10 Nov: cardio only', not {words!r}"]
+
+
+# ---------------------------------------------------------------- Progress' top (pass B8)
+
+# What /progress still fails under the card rule after B8: the two cards B9 rebuilds, each still a bare div.card
+# with an h2 of its own. Nothing else on the page may fail it.
+PROGRESS_OLD_CARDS = ["the 'Trends' card is a <div> named by '', not by its own h2",
+                      "the 'Lifts' card is a <div> named by '', not by its own h2"]
+
+
+@pytest.mark.parametrize("account", sorted(ACCOUNTS))
+def test_progress_names_the_cards_b8_built_and_only_the_two_old_cards_wait(client, account):
+    """On each account: the tiles' sheets and the Body weight card keep the card rule, no id repeats, and the
+    only findings are the Trends and Lifts cards that B9 rebuilds."""
+    sign_in(client)
+    ACCOUNTS[account](only_user().id)
+    r = client.get("/progress")
+    assert r.status_code == 200 and '<section class="card bw-card' in r.text
+    s = Seen("/progress", r.text, True, today=today_of(only_user()).isoformat())
+    assert titled_card_findings(s) == PROGRESS_OLD_CARDS
+
+
+@pytest.mark.parametrize("state", list(GLANCE_STATES), ids=lambda f: f.__name__.strip("_"))
+def test_progress_in_the_states_the_sweeps_never_reach_keeps_every_rule_it_holds(client, state):
+    """The glance states on Progress, where its Body weight card shows one weigh-in, none in 28 days, a chart with
+    no rate, and the Calories chart's 0: the frame rules, the page rules every page keeps, T1's text rules and
+    T3's step 4 checks hold, and the card rule finds only the two old cards."""
+    sign_in(client)
+    user = only_user()
+    today = today_of(user)
+    state(user.id, today)
+    r = client.get("/progress")
+    assert r.status_code == 200 and '<div class="glance">' in r.text
+    s = Seen("/progress", r.text, True, zone_missing=not only_user().time_zone, today=today.isoformat())
+    findings = frame_findings(s) + page_rule_findings(s)
+    findings += page_findings("/progress", r.text, entered_text(user.id), user.id)
+    findings += step_4_findings("/progress", r.text, names_of(user.id), entered_notes(user.id))
+    assert not findings, "\n".join(findings)
+    assert titled_card_findings(s) == PROGRESS_OLD_CARDS

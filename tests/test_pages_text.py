@@ -90,9 +90,10 @@ def glance_zeros(user_id: int, address: str, tag: str) -> int:
     (each a td), and the Calories sheet chart's figure over each of the last 7 days logged at 0 kcal (a text),
     counted where they show as "0". The chart's count is at most: crowded figures give way. Its sheet is drawn
     only with food in the last 7 days. Today's page and its error renders only: a past day has no glance
-    block, so it allows none."""
+    block, so it allows none. Progress draws the same three sheets from the same reads at its one address
+    (its Maintenance sheet shows no bare figure), so it holds the same zeros."""
     trends, grid = services.get_trends(user_id), services.get_days(user_id)
-    if address.split("?")[0].split("/")[2:3] != [trends["today"]]:
+    if route_of(address) != "/progress" and address.split("?")[0].split("/")[2:3] != [trends["today"]]:
         return 0
     zero = lambda value, quantity: formatting.show(value, quantity, unit=False) == "0"  # noqa: E731
     if tag == "p":
@@ -117,12 +118,16 @@ TRUE_ZEROS = {
     ("/day/{date}", "p"): lambda user_id, address: glance_zeros(user_id, address, "p"),
     ("/day/{date}", "td"): lambda user_id, address: glance_zeros(user_id, address, "td"),
     ("/day/{date}", "text"): lambda user_id, address: glance_zeros(user_id, address, "text"),
+    # Progress' Weight, Calories and Training sheets are Today's, drawn by the same parts from the same reads.
+    ("/progress", "p"): lambda user_id, address: glance_zeros(user_id, address, "p"),
+    ("/progress", "td"): lambda user_id, address: glance_zeros(user_id, address, "td"),
+    ("/progress", "text"): lambda user_id, address: glance_zeros(user_id, address, "text"),
 }
 
 
 def glance_lines(markup: str) -> tuple[int, int] | None:
-    """The first and last line of Today's div.glance in the markup, by counting div tags from its start. None
-    when the page draws no glance block."""
+    """The first and last line of Today's div.glance in the markup, or of Progress' (its tiles and sheets), by
+    counting div tags from its start. None when the page draws no glance block."""
     start = markup.find('<div class="glance">')
     if start < 0:
         return None
@@ -134,9 +139,9 @@ def glance_lines(markup: str) -> tuple[int, int] | None:
     return None
 
 
-# Where a route's true zeros may sit: the day page's only in its glance block. A bare 0 anywhere else on the
-# page is an empty figure, whatever the glance's own count allows.
-ZERO_PLACES = {"/day/{date}": glance_lines}
+# Where a route's true zeros may sit: the day page's and Progress' only in its glance block. A bare 0 anywhere
+# else on the page is an empty figure, whatever the glance's own count allows.
+ZERO_PLACES = {"/day/{date}": glance_lines, "/progress": glance_lines}
 
 
 def placed(route: str, line: int, places: dict) -> bool:
@@ -1296,3 +1301,29 @@ def test_the_glance_zeros_are_none_on_an_account_whose_figures_are_all_above_0(c
     giant = re.search(r'<p class="giant">\d+</p>', page).group(0)
     broken = page.replace(giant, '<p class="giant">0</p>', 1)
     assert any("true zeros" in f for f in page_findings(address, broken, entered_text(user_id), user_id))
+
+
+def test_progress_holds_the_glance_zeros_inside_its_glance_block_only(client):
+    """Progress draws Today's Training sheet, so a new account's Progress shows its 0 and the four weeks' eight
+    0s, counted from the reads as Today's are. They pass inside Progress' glance block only: one more fails, a
+    stray 0 in the Body weight card fails, and a page with no glance block allows none."""
+    sign_in(client)
+    user_id = only_user().id
+    page = client.get("/progress").text
+    assert page.count('<p class="giant">0</p>') == 1 and page.count('<td class="num">0</td>') == 8
+    assert [glance_zeros(user_id, "/progress", tag) for tag in ("p", "td", "text")] == [1, 8, 0]
+    assert page_findings("/progress", page, [], user_id) == []
+    first, last = glance_lines(page)
+    lines = page.splitlines()
+    assert lines[first - 1].strip() == '<div class="glance">' and lines[last - 1].strip() == "</div>"
+    assert all("bw-card" not in line for line in lines[first - 1:last])
+    extra = page.replace('<p class="giant">0</p>', '<p class="giant">0</p><p>0</p>')
+    assert any("true zeros" in f for f in page_findings("/progress", extra, [], user_id))
+    card = '<section class="card bw-card is-empty" id="body-weight" aria-labelledby="body-weight-title">'
+    assert page.count(card) == 1
+    swapped = page.replace('<td class="num">0</td>', '<td class="num">1</td>', 1).replace(
+        card, card + "<table><tr><td>0</td></tr></table>")
+    assert any("empty_figure" in f for f in page_findings("/progress", swapped, [], user_id))
+    without = page[:page.index('<div class="glance">')] + page[page.index(card):]
+    assert glance_lines(without) is None
+    assert any("empty_figure" in f for f in page_findings("/progress", without + "<p>0</p>", [], user_id))

@@ -15,8 +15,8 @@ from app.models import Goal
 from app.services.common import SAMPLE_NOTE
 
 from .test_web import (  # noqa: F401 - fixtures
-    CSP, SITE, TOO_MANY, FakeSeam, calls, client, only_user, post, rows, seam, session_of, sign_in,
-    today_of, web_client,
+    CSP, SITE, TOO_MANY, FakeSeam, body_weight_card, callouts_of, calls, client, only_user, post, rows, seam,
+    session_of, sign_in, today_of, web_client,
 )
 
 
@@ -428,7 +428,7 @@ EMPTY_TRENDS = {**TRENDS, "bodyweight": None, "calories": None, "maintenance": N
 def trends_card(client, monkeypatch, trends) -> str:
     monkeypatch.setattr(services, "get_trends", lambda *args: trends, raising=False)
     page = client.get("/progress").text
-    found = re.search(r'<div class="card trends">(.*?)</dl>', page, re.S)
+    found = re.search(r'<div class="card trends"[^>]*>(.*?)</dl>', page, re.S)
     return found.group(1) if found else ""
 
 
@@ -485,8 +485,11 @@ def test_the_progress_chart_draws_the_smoothed_line_and_keeps_the_average_in_the
     monkeypatch.setattr(web.progress_data, "bodyweight_chart", with_smoothed)
     page = signed.get("/progress").text
     assert '<polyline class="series smoothed"' in page and "The line is the smoothed trend, now 80 kg." in page
-    assert "7-day average: <strong>80\u00a0kg</strong>" in page  # the number in the text stays the 7-day average
-    assert "The line is the smoothed trend, which steadies day-to-day swings." in page
+    # The card's own figure is the read's: the Trend callout is get_trends' smoothed weight, not the chart's.
+    smoothed = formatting.show(services.get_trends(uid)["bodyweight"]["smoothed"], "bodyweight_derived", unit=False)
+    assert callouts_of(body_weight_card(page))[2] == (["is-key"], "Trend", f"{smoothed}\u00a0kg", "Smoothed")
+    assert "7-day average" not in body_weight_card(page)
+    assert "The line is the smoothed trend, which evens out day-to-day swings." in page
 
 
 def test_the_real_trends_card(signed):

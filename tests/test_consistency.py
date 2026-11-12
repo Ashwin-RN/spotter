@@ -22,7 +22,7 @@ from app.formatting import day, day_utc, days, show
 
 from . import text_rules as tr
 from .test_pages_text import edge_account, sample_account
-from .test_web import client, only_user, seam, sign_in, web_client  # noqa: F401 - fixtures
+from .test_web import body_weight_card, client, only_user, seam, sign_in, web_client  # noqa: F401 - fixtures
 
 ACCOUNTS = {"sample": sample_account, "edge": edge_account}
 # A goal's figures take the goal unit's quantity (contract section C).
@@ -62,7 +62,7 @@ def account(request, client):
 def test_the_trends_card_holds_get_trends_figures(client, account):
     trends = services.get_trends(account)
     page = client.get("/progress").text
-    card = facts(re.search(r'<div class="card trends">(.*?)</div>', page, re.S).group(1))
+    card = facts(re.search(r'<div class="card trends"[^>]*>(.*?)</div>', page, re.S).group(1))
     bw, cal, ses, car, m = (trends["bodyweight"], trends["calories"], trends["sessions"], trends["cardio"],
                             trends["maintenance"])
     assert bw is not None
@@ -100,11 +100,13 @@ def test_the_trends_card_holds_get_trends_figures(client, account):
 def test_the_body_weight_card_and_chart_hold_the_same_figures(client, account):
     trends = services.get_trends(account)
     page = client.get("/progress").text
-    card = re.search(r"<h2>Body weight</h2>(.*?)</div>", page, re.S).group(1)
+    card = body_weight_card(page)
     latest = trends["bodyweight"]["series"][-1]
-    callout = text_of(re.search(r"<p>Latest:(.*?)</p>", card, re.S).group(1))
+    callout = text_of(re.search(r"<div><dt>Latest</dt><dd>(.*?)</dd></div>", card, re.S).group(1))
     figure(callout, latest["kg"], "weigh_in")  # a weigh-in, as entered: the Trends row is the derived figure
     assert holds(callout, day(latest["date"], trends["today"]))
+    trend = text_of(re.search(r'<div class="is-key"><dt>Trend</dt><dd>(.*?)</dd></div>', card, re.S).group(1))
+    figure(trend, trends["bodyweight"]["smoothed"], "bodyweight_derived")  # the derived figure, at 1 dp
     desc = html.unescape(re.search(r'<desc id="bodyweight-chart-desc">(.*?)</desc>', page, re.S).group(1))
     figure(desc, trends["bodyweight"]["smoothed"], "bodyweight_derived", page=False)  # never widened
     figure(desc, latest["kg"], "weigh_in", page=False)

@@ -1308,11 +1308,13 @@ def test_progress_shows_each_lift_and_the_body_weight_trend(client, stocked):
     current = services.get_progress(only_user().id)["lifts"][0]["current_estimated_max_kg"]
     assert formatting.show(current, "estimated_max", page=True) in row and "65\u00a0kg × 5" in row
     assert f'<a href="/day/{stocked["today"].isoformat()}">' in row
-    assert "Latest: <strong>78.4\u00a0kg</strong>" in page
+    latest = ([], "Latest", "78.4\u00a0kg", formatting.day(stocked["today"], stocked["today"]))
+    assert latest in callouts_of(body_weight_card(page))
     assert '<svg class="chart" id="bodyweight-chart"' in page and "<title" in page
 
 
-BODY_WEIGHT_WORDS = ("No weigh-ins yet.", "No weigh-ins in the last 28 days.", "The chart starts from the second weigh-in.")
+BODY_WEIGHT_WORDS = ("No weigh-ins yet.", "No weigh-ins in the last 28 days.",
+                     "One weigh-in in the last 28 days. The chart starts from the second one.")
 
 
 def weigh_card(client, *weigh_ins: tuple[int, str]) -> str:
@@ -1324,56 +1326,90 @@ def weigh_card(client, *weigh_ins: tuple[int, str]) -> str:
         result = services.log_bodyweight(user.id, {"kg": kg, "date": (today - timedelta(days=back)).isoformat()},
                                          "claude")
         assert "error" not in result, result
-    page = client.get("/progress").text
-    return re.search(r"<h2>Body weight</h2>(.*?)</div>", page, re.S).group(1)
+    return body_weight_card(client.get("/progress").text)
 
 
-def assert_weight_line(card: str, line: str) -> None:
-    """The 7-day average line, or the latest weigh-in in its place: shown whenever there is a weigh-in,
-    labelled by the Trends card's own rule (web.weight_now_label), with the Trends card's figure."""
-    assert line in card
-    trends = services.get_trends(only_user().id)
-    label = web.weight_now_label(trends)
-    assert line.startswith(label[0].upper() + label[1:] + ": <strong>"), (label, line)
-    if label == "7-day average":
-        assert formatting.show(trends["bodyweight"]["now"], "bodyweight_derived", page=True) in line
-        assert "Latest weigh-in:" not in card
-    else:
-        assert "7-day average" not in card
+# The next card on a page, or the end of main: where a card read by its title stops.
+_NEXT_CARD = re.compile(r'<(?:div|section) class="card[ "]|</main>')
+
+
+def body_weight_card(page: str) -> str:
+    """Progress' Body weight card: its markup from its h2, with or without an id, up to the next card or the
+    end of main. It reads a card whatever its tag and whatever divs it holds."""
+    start = re.search(r"<h2(?: [^>]*)?>Body weight</h2>", page)
+    assert start, "no Body weight card"
+    end = _NEXT_CARD.search(page, start.end())
+    return page[start.end():end.start() if end else len(page)]
+
+
+def callouts_of(card: str) -> list[tuple]:
+    """Each callout in the card's dl.callouts, in order: (its classes, its label, its figure, the words under it)."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    out = []
+    for dl in parse(card).find_all("dl", "callouts"):
+        for box in dl.elements():
+            dt, dd = box.elements()
+            when = slot(dd, "when")
+            out.append((box.classes, dt.text(), dd.text()[:-len(when)].strip() if when else dd.text(), when))
+    return out
+
+
+def expected_callouts(user_id: int) -> list[tuple]:
+    """Section L's four callouts, from the reads: High, Latest and Low from get_days' weight, each as entered
+    with its date, and Trend, the boxed one, get_trends' smoothed weight. With no weigh-in in the 28 days,
+    Trend alone."""
+    trends, grid = services.get_trends(user_id), services.get_days(user_id)
+    weight, today = grid["weight"], grid["today"]
+    trend = (["is-key"], "Trend", formatting.show(trends["bodyweight"]["smoothed"], "bodyweight_derived", page=True),
+             "Smoothed")
+    if weight is None:
+        return [trend]
+    box = lambda label, point: ([], label, formatting.show(point["kg"], "weigh_in", page=True),  # noqa: E731
+                                formatting.day(point["date"], today))
+    return [box("High", weight["high"]), box("Latest", weight["latest"]), trend, box("Low", weight["low"])]
 
 
 def test_body_weight_with_every_weigh_in_older_than_28_days_says_so(client):
     card = weigh_card(client, (60, "81.2"), (50, "80.9"), (40, "80.6"))
     assert "No weigh-ins in the last 28 days." in card
-    assert "The chart starts from the second weigh-in." not in card and "appears from the second" not in card
+    assert "The chart starts from the second" not in card and "appears from the second" not in card
     assert 'id="bodyweight-chart"' not in card and "Dots are weigh-ins" not in card
-    assert "Latest: <strong>80.6 kg</strong>" in card
-    assert_weight_line(card, "Latest weigh-in: <strong>80.6 kg</strong>.")
+    # The Trend callout alone: no weigh-in of the 28 days to call High, Latest or Low.
+    assert callouts_of(card) == expected_callouts(only_user().id) == [(["is-key"], "Trend", "81.1\u00a0kg", "Smoothed")]
+    assert "7-day average" not in card and "Latest weigh-in" not in card
 
 
-@pytest.mark.parametrize("weigh_ins, line", [
+@pytest.mark.parametrize("weigh_ins", [
     # day 28 back is outside the 28 days, day 27 inside
-    (((60, "81.2"), (28, "80.9"), (27, "80.6")), "Latest weigh-in: <strong>80.6 kg</strong>."),
-    (((50, "81.2"), (40, "80.9"), (0, "80.2")), "7-day average: <strong>80.2 kg</strong>."),
+    ((60, "81.2"), (28, "80.9"), (27, "80.6")),
+    ((50, "81.2"), (40, "80.9"), (0, "80.2")),
 ])
-def test_body_weight_with_one_weigh_in_in_the_28_days_waits_for_the_second(client, weigh_ins, line):
+def test_body_weight_with_one_weigh_in_in_the_28_days_waits_for_the_second(client, weigh_ins):
     card = weigh_card(client, *weigh_ins)
-    assert "The chart starts from the second weigh-in." in card
+    assert "<p class=\"empty-line\">One weigh-in in the last 28 days. The chart starts from the second one.</p>" in card
     assert "No weigh-ins in the last 28 days." not in card and 'id="bodyweight-chart"' not in card
-    assert f"Latest: <strong>{weigh_ins[-1][1]} kg</strong>" in card
-    assert_weight_line(card, line)
+    # The callouts all show: the one weigh-in is High, Latest and Low.
+    shown = callouts_of(card)
+    assert shown == expected_callouts(only_user().id)
+    assert [c[1] for c in shown] == ["High", "Latest", "Trend", "Low"]
+    one = (f"{weigh_ins[-1][1]}\u00a0kg", formatting.day(today_of(only_user()) - timedelta(days=weigh_ins[-1][0]),
+                                                         today_of(only_user())))
+    assert [c[2:] for c in shown if c[1] != "Trend"] == [one] * 3
+    assert "7-day average" not in card and "Latest weigh-in" not in card and "Dots are weigh-ins" not in card
 
 
-@pytest.mark.parametrize("weigh_ins, line", [
-    (((3, "81.0"), (0, "80.0")), "7-day average: <strong>80.5 kg</strong>."),
+@pytest.mark.parametrize("weigh_ins", [
+    ((3, "81.0"), (0, "80.0")),
     # drawn, but none in the last 7 days
-    (((60, "82.0"), (20, "81.0"), (10, "80.4")), "Latest weigh-in: <strong>80.4 kg</strong>."),
+    ((60, "82.0"), (20, "81.0"), (10, "80.4")),
 ])
-def test_body_weight_with_two_in_the_28_days_draws_the_chart(client, weigh_ins, line):
+def test_body_weight_with_two_in_the_28_days_draws_the_chart(client, weigh_ins):
     card = weigh_card(client, *weigh_ins)
     assert '<svg class="chart" id="bodyweight-chart"' in card and "Dots are weigh-ins" in card
     assert not [words for words in BODY_WEIGHT_WORDS if words in card]
-    assert_weight_line(card, line)
+    assert callouts_of(card) == expected_callouts(only_user().id)
+    assert "7-day average" not in card and "Latest weigh-in" not in card
 
 
 def test_body_weight_with_no_weigh_in_points_to_today(client):
@@ -4778,10 +4814,12 @@ def sheets_of(page: str) -> dict:
     return out
 
 
-def sheet_frame_findings(sheet: dict, sid: str, link: str) -> list[str]:
+def sheet_frame_findings(sheet: dict, sid: str, link: str | None, tag: tuple[str, str] | None = None) -> list[str]:
     """The sheet's frame (section L, the components and Today): a popover dialog named by its title, the head
     with the grab and the bar, the close button the first control with its two attributes, the number and the
-    title, then the caller's part, the Open Progress link last. No form, every table in its wrap."""
+    title, then the caller's part, the Open Progress link last. No form, every table in its wrap.
+    link None: a Progress sheet, which has no Open Progress link. tag: a (variant, words) tag of its own right
+    after the number, as the Maintenance sheet's estimate tag."""
     node, out = sheet["node"], []
     if (node.attrs.get("popover"), node.attrs.get("role"), node.attrs.get("aria-labelledby")) != (
             "", "dialog", f"{sid}-title"):
@@ -4800,11 +4838,19 @@ def sheet_frame_findings(sheet: dict, sid: str, link: str) -> list[str]:
     controls = [n for n in node.iter() if n.tag in CONTROLS]
     if not controls or not bar or controls[0] is not bar[0]:
         out.append("the close button is not the sheet's first control")
-    if [shape(k) for k in kids[1:3]] != [("p", "giant"), ("h2", "noun")] or kids[2].attrs.get("id") != f"{sid}-title":
+    tagged = [("span", "tag", f"tag-{tag[0]}")] if tag else []
+    title = kids[2 + len(tagged)] if len(kids) > 2 + len(tagged) else kids[-1]
+    if [shape(k) for k in kids[1:3 + len(tagged)]] != [("p", "giant"), *tagged, ("h2", "noun")] \
+            or title.attrs.get("id") != f"{sid}-title":
         out.append("no number then its title")
+    if tag and kids[2].text() != tag[1]:
+        out.append(f"the tag after the number reads {kids[2].text()!r}")
     last = kids[-1]
     anchor = last.elements()
-    if shape(last) != ("p", "sheet-link") or len(anchor) != 1 \
+    if link is None:
+        if node.find_all(cls="sheet-link") or any(a.text() == "Open Progress" for a in node.find_all("a")):
+            out.append("a Progress sheet holds an Open Progress link")
+    elif shape(last) != ("p", "sheet-link") or len(anchor) != 1 \
             or anchor[0].attrs != {"class": "button secondary", "href": link} or anchor[0].text() != "Open Progress":
         out.append("the sheet does not end with its secondary Open Progress link")
     if node.find_all("form") or node.find_all("input"):
@@ -5667,3 +5713,451 @@ def test_two_reads_on_one_date_are_read_once(client, monkeypatch):
     sign_in(client)
     calls, _ = reads_across_midnight(monkeypatch, lambda n: AFTER_MIDNIGHT, lambda n: AFTER_MIDNIGHT)
     assert asyncio.run(web.glance_of(only_user().id)) is not None and calls == {"trends": 1, "days": 1}
+
+
+# ---------------------------------------------------------------- stage 6, step 4: Progress' tiles, sheets and Body weight (B8)
+
+@pytest.fixture
+def pinned(monkeypatch):
+    """The clock at the contract's fixed day: every test below reads dates, so none reads the real clock."""
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+
+
+@pytest.fixture
+def progress_fixed(client, pinned):
+    """Progress on the contract's fixed day: sample data, the clock pinned to Tuesday 10 November 2026."""
+    sign_in(client)
+    assert "error" not in services.add_sample_data(only_user().id, "web")
+    return client.get("/progress").text
+
+
+def tile_words(page: str) -> list[tuple]:
+    """Each tile and twin in the page's tiles grid: its tag, classes, hidden name, figure, label, note and tags."""
+    return [(t["tag"], t["classes"], t["name"], t["value"], t["label"], t["note"], [g.text() for g in t["tags"]])
+            for t in tiles_of(page)]
+
+
+WEIGHT_FIXED = ("Weight:", "79.2", "kg trend", "-0.24 kg a week", [])
+CALORIES_FIXED = ("Eaten a day:", "2,216", "kcal eaten a day", "last 7 days", [])
+TRAINING_FIXED = ("Training:", "3", "lift sessions", "last 7 days", [])
+MAINTENANCE_FIXED = ("Maintenance:", "2,510", "kcal to maintain", None, ["estimate"])
+
+
+def test_progress_draws_four_tiles_on_the_fixed_day(progress_fixed):
+    """Section L, Progress' tiles: Weight, Calories and Training as on Today, then Maintenance: 2,513 shown "2,510"
+    through the maintenance filter, "kcal to maintain", its estimate tag in its own slot under the label. Each
+    is a button and its twin, in div.tiles.four."""
+    assert '<div class="tiles four">' in progress_fixed
+    assert tile_words(progress_fixed) == [
+        ("button", ["tile", "tile-weight"], *WEIGHT_FIXED), ("a", ["tile", "tile-weight", "tile-link"], *WEIGHT_FIXED),
+        ("button", ["tile", "tile-calories"], *CALORIES_FIXED),
+        ("a", ["tile", "tile-calories", "tile-link"], *CALORIES_FIXED),
+        ("button", ["tile", "tile-training"], *TRAINING_FIXED),
+        ("a", ["tile", "tile-training", "tile-link"], *TRAINING_FIXED),
+        ("button", ["tile", "tile-maintenance"], *MAINTENANCE_FIXED),
+        ("a", ["tile", "tile-maintenance", "tile-link"], *MAINTENANCE_FIXED)]
+    assert services.get_trends(only_user().id)["maintenance"]["kcal"] == 2513
+    # Each reads in section L's order: its hidden name, the figure, the label, then the note or the tag.
+    assert [[e.classes for e in t["node"].elements()] for t in tiles_of(progress_fixed)] == [
+        [["sr"], ["tile-value"], ["tile-label"], ["tile-note"]]] * 6 + [
+        [["sr"], ["tile-value"], ["tile-label"], ["tag", "tag-estimate"]]] * 2
+
+
+def test_progress_twins_point_at_this_page_and_todays_are_unchanged(progress_fixed, client):
+    """Contract line 1382: on Progress the twins are #body-weight and #trends, and both targets are on the page.
+    Today's twins still go to /progress#body-weight and /progress#trends."""
+    shown = tiles_of(progress_fixed)
+    assert [t["attrs"] for t in shown] == [
+        {"class": "tile tile-weight", "type": "button", "popovertarget": "sheet-weight"},
+        {"class": "tile tile-weight tile-link", "href": "#body-weight"},
+        {"class": "tile tile-calories", "type": "button", "popovertarget": "sheet-calories"},
+        {"class": "tile tile-calories tile-link", "href": "#trends"},
+        {"class": "tile tile-training", "type": "button", "popovertarget": "sheet-training"},
+        {"class": "tile tile-training tile-link", "href": "#trends"},
+        {"class": "tile tile-maintenance", "type": "button", "popovertarget": "sheet-maintenance"},
+        {"class": "tile tile-maintenance tile-link", "href": "#trends"}]
+    for button, twin in zip(shown[0::2], shown[1::2]):
+        assert twin["text"] == button["text"] and twin["text"]
+    assert progress_fixed.count('id="body-weight"') == 1 and progress_fixed.count('id="trends"') == 1
+    assert '<section class="card bw-card" id="body-weight"' in progress_fixed
+    assert '<div class="card trends" id="trends">' in progress_fixed
+    today = tiles_of(day_of(client, "2026-11-10"))
+    assert [t["attrs"].get("href") for t in today if t["tag"] == "a"] == [
+        "/progress#body-weight", "/progress#trends", "/progress#trends"]
+
+
+def test_progress_sheets_carry_no_open_progress_link(progress_fixed):
+    """Contract line 1385: a Today sheet ends with Open Progress, a Progress sheet has none."""
+    sheets = sheets_of(progress_fixed)
+    assert list(sheets) == ["sheet-weight", "sheet-calories", "sheet-training", "sheet-maintenance"]
+    for sid, sheet in sheets.items():
+        tag = ("estimate", "estimate") if sid == "sheet-maintenance" else None
+        assert sheet_frame_findings(sheet, sid, None, tag) == [], sid
+    assert "Open Progress" not in progress_fixed and "sheet-link" not in progress_fixed
+
+
+def test_the_maintenance_sheet_on_the_fixed_day(progress_fixed):
+    """Contract line 1389: period "{from} to {to}", the figure with an estimate tag of its own right after it,
+    "Maintenance, a day", then the two sentences. No panel and no table. Fixed day: 2,513 shown "2,510", 2,198,
+    -0.86, 21, 21 Oct to 10 Nov."""
+    from .test_pages_text import estimate_findings, parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    sheet = sheets_of(progress_fixed)["sheet-maintenance"]
+    assert (sheet["period"], sheet["giant"], sheet["title"]) == ("21 Oct to 10 Nov", "2,510 kcal",
+                                                                 "Maintenance, a day")
+    kids = sheet["node"].elements()
+    assert [shape(k) for k in kids] == [("div", "sheet-head"), ("p", "giant"), ("span", "tag", "tag-estimate"),
+                                        ("h2", "noun"), ("p", "sentence"), ("p", "sentence")]
+    assert [k.text() for k in kids[-2:]] == [
+        "About 2,510 kcal a day, worked out from 21 logged days. Over that window intake averaged "
+        "2,198 kcal a day and the 7-day average weight moved -0.86 kg.",
+        "An estimate from your intake and weight change. Your calorie target stays yours to set."]
+    assert sheet["svg"] == [] and not sheet["node"].find_all("table") and not sheet["node"].find_all(cls="panel")
+    # The tag is never inside a figure: T3's own estimate rule, on the whole page.
+    assert estimate_findings(parse(progress_fixed)) == []
+    assert '<p class="giant">2,510&nbsp;<span class="unit">kcal</span></p>\n  <span class="tag tag-estimate">' \
+           'estimate</span>' in progress_fixed
+
+
+def test_with_no_estimate_the_maintenance_tile_is_empty_and_no_sheet_is_drawn(client, pinned):
+    """Without an estimate the Maintenance tile is empty, "Not enough logged yet", dashed, not a control, and its
+    sheet is not in the markup. Two states: a new account, and weigh-ins with no food."""
+    sign_in(client)
+    for state in ("new", "weighed"):
+        if state == "weighed":
+            for n in (21, 14, 0):
+                services.log_bodyweight(only_user().id, {"kg": "80", "date": (date(2026, 11, 10) - timedelta(days=n))
+                                                         .isoformat()}, "claude")
+        page = client.get("/progress").text
+        assert services.get_trends(only_user().id)["maintenance"] is None, state
+        [tile] = [t for t in tiles_of(page) if "tile-maintenance" in t["classes"]]
+        assert (tile["tag"], tile["attrs"], tile["value"], tile["label"], tile["note"], tile["tags"]) == (
+            "div", {"class": "tile tile-maintenance is-empty"}, "Not enough logged yet", None, None, []), state
+        assert [e.classes for e in tile["node"].elements()] == [["sr"], ["tile-value"]]
+        assert "sheet-maintenance" not in page and "Maintenance, a day" not in page, state
+
+
+PROGRESS_STATES = ("new", "food today", "a weigh-in today", "old food and an old weigh-in", "food in 28 not 7",
+                   "the fixed day", "targets and a zero rate")
+
+
+def progress_state(state: str) -> None:
+    """Log what the state names for the one signed-in person, on the pinned fixed day."""
+    uid, today = only_user().id, date(2026, 11, 10)
+    ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
+    if state == "food today":
+        services.log_food(uid, {"entries": [{"description": "Dal", "kcal": 400}]}, "claude")
+    if state == "a weigh-in today":
+        services.log_bodyweight(uid, {"kg": "80"}, "claude")
+    if state == "old food and an old weigh-in":
+        services.log_food(uid, {"date": ago(10), "entries": [{"description": "Dal", "kcal": 400}]}, "claude")
+        services.log_bodyweight(uid, {"kg": "80", "date": ago(40)}, "claude")
+    if state == "food in 28 not 7":
+        services.log_food(uid, {"date": ago(10), "entries": [{"description": "Dal", "kcal": 400}]}, "claude")
+    if state == "the fixed day":
+        assert "error" not in services.add_sample_data(uid, "web")
+    if state == "targets and a zero rate":
+        services.update_settings(uid, {"calorie_target_kcal": 2000, "target_sessions_per_week": 0,
+                                       "target_cardio_minutes_per_week": 150}, "web")
+        for n in (21, 14, 7, 0):
+            services.log_bodyweight(uid, {"kg": "80", "date": ago(n)}, "claude")
+        services.log_food(uid, {"entries": [{"description": "Thali", "kcal": 1000}]}, "claude")
+
+
+@pytest.mark.parametrize("state", PROGRESS_STATES)
+def test_progress_draws_todays_three_tiles_and_sheets_from_the_same_parts(client, pinned, state):
+    """One source for both pages: in every state, Progress' Weight, Calories and Training tiles carry Today's
+    words, and their sheets Today's period, number, title, sentences, panel and table. Only the twins'
+    addresses differ (#body-weight for /progress#body-weight), and only Today's sheets end with Open Progress."""
+    sign_in(client)
+    progress_state(state)
+    today, progress = day_of(client, "2026-11-10"), client.get("/progress").text
+    words = lambda t: (t["tag"], t["classes"], t["name"], t["value"], t["label"], t["note"], t["text"])  # noqa: E731
+    on_today = tiles_of(today)
+    shared = [t for t in tiles_of(progress) if "tile-maintenance" not in t["classes"]]
+    assert [words(t) for t in shared] == [words(t) for t in on_today]
+    assert [t["attrs"] for t in shared] == [
+        {k: (v.replace("/progress#", "#") if k == "href" else v) for k, v in t["attrs"].items()} for t in on_today]
+    today_sheets, progress_sheets = sheets_of(today), sheets_of(progress)
+    assert list(progress_sheets)[:len(today_sheets)] == list(today_sheets)
+    keys = ("period", "giant", "title", "sentence", "panel", "head", "rows")
+    for sid, sheet in today_sheets.items():
+        assert {k: progress_sheets[sid][k] for k in keys} == {k: sheet[k] for k in keys}, sid
+        assert [shape(e) for e in progress_sheets[sid]["node"].elements()] == \
+            [shape(e) for e in sheet["node"].elements()][:-1], sid  # the same, less Open Progress
+        assert sheet_frame_findings(progress_sheets[sid], sid, None) == [], sid
+    assert set(progress_sheets) - set(today_sheets) <= {"sheet-maintenance"}
+
+
+EMPTY_WEIGHT = ("div", ["tile", "tile-weight", "is-empty"], "Weight:", "No weigh-ins yet", None, None, [])
+NO_FOOD_28 = ("div", ["tile", "tile-calories", "is-empty"], "Eaten a day:", "No food in the last 28 days", None, None, [])
+TRAINING_0 = [("button", ["tile", "tile-training"], "Training:", "0", "lift sessions", "last 7 days", []),
+              ("a", ["tile", "tile-training", "tile-link"], "Training:", "0", "lift sessions", "last 7 days", [])]
+NO_MAINTENANCE = ("div", ["tile", "tile-maintenance", "is-empty"], "Maintenance:", "Not enough logged yet", None, None,
+                  [])
+
+
+@pytest.mark.parametrize("state, shown", [
+    ("new", [EMPTY_WEIGHT, NO_FOOD_28, *TRAINING_0, NO_MAINTENANCE]),
+    ("food in 28 not 7", [
+        EMPTY_WEIGHT,
+        ("div", ["tile", "tile-calories", "is-empty"], "Eaten a day:", "No food in the last 7 days", None, None, []),
+        *TRAINING_0, NO_MAINTENANCE]),
+    ("a weigh-in today", [
+        ("button", ["tile", "tile-weight"], "Weight:", "80", "kg trend", "No weekly rate yet", []),
+        ("a", ["tile", "tile-weight", "tile-link"], "Weight:", "80", "kg trend", "No weekly rate yet", []),
+        NO_FOOD_28, *TRAINING_0, NO_MAINTENANCE]),
+    ("food today", [
+        EMPTY_WEIGHT,
+        ("button", ["tile", "tile-calories"], "Eaten a day:", "400", "kcal eaten a day", "last 7 days", []),
+        ("a", ["tile", "tile-calories", "tile-link"], "Eaten a day:", "400", "kcal eaten a day", "last 7 days", []),
+        *TRAINING_0, NO_MAINTENANCE]),
+])
+def test_each_progress_tile_says_its_words_in_each_state(client, pinned, state, shown):
+    """The text sweep reads a tile as one piece, so it never sees a tile's own words: these pins are their guard.
+    A tile without a sheet is a div, never a control, and opens nothing."""
+    sign_in(client)
+    progress_state(state)
+    page = client.get("/progress").text
+    assert tile_words(page) == shown
+    assert [t["attrs"].get("popovertarget") for t in tiles_of(page) if t["tag"] == "button"] == list(sheets_of(page))
+
+
+def bw_node(page: str):
+    """The Body weight card read as a tree."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    [card] = parse(page).find_all("section", "bw-card")
+    return card
+
+
+def test_the_body_weight_card_on_the_fixed_day(progress_fixed):
+    """Section L, the Body weight card: a section named by its own h2, the head "Body weight" and "4 weeks", the
+    chart over 28 days beside four callouts in .bw-wrap (High, Latest, Trend boxed, Low), the legend with the open
+    goal's target, then the small line in its new words."""
+    card = bw_node(progress_fixed)
+    assert card.attrs == {"class": "card bw-card", "id": "body-weight", "aria-labelledby": "body-weight-title"}
+    assert [shape(k) for k in card.elements()] == [("div", "card-head"), ("div", "bw-wrap"), ("ul", "legend"),
+                                                   ("p", "small")]
+    head = card.elements()[0].elements()
+    assert [(shape(h), h.attrs.get("id"), h.text()) for h in head] == [
+        (("h2",), "body-weight-title", "Body weight"), (("span", "aside"), None, "4 weeks")]
+    wrap = card.elements()[1].elements()
+    assert [(e.tag, e.attrs.get("id")) for e in wrap] == [("svg", "bodyweight-chart"), ("dl", None)]
+    assert callouts_of(body_weight_card(progress_fixed)) == [
+        ([], "High", "80.1 kg", "Fri 16 Oct"), ([], "Latest", "78.6 kg", "Tue 10 Nov"),
+        (["is-key"], "Trend", "79.2 kg", "Smoothed"), ([], "Low", "78.6 kg", "Tue 10 Nov")]
+    assert callouts_of(body_weight_card(progress_fixed)) == expected_callouts(only_user().id)
+    legend = card.elements()[2]
+    assert legend.attrs == {"class": "legend", "aria-label": "Key"}
+    assert [([k.classes for k in li.elements()], [k.attrs.get("aria-hidden") for k in li.elements()], li.text())
+            for li in legend.elements()] == [
+        ([["key", "dot-key"]], ["true"], "Weigh-in"), ([["key", "line"]], ["true"], "Smoothed trend"),
+        ([["key", "line", "goal"]], ["true"], "Goal 77 kg")]
+    assert card.elements()[3].text() == \
+        "Dots are weigh-ins. The line is the smoothed trend, which evens out day-to-day swings."
+    assert "steadies" not in progress_fixed and "7-day average:" not in progress_fixed
+    assert glued(card) == []  # a figure never touches the words under it
+
+
+def bw_state(state: str) -> None:
+    """Weigh-ins for a Body weight card state, on the pinned fixed day."""
+    uid, today = only_user().id, date(2026, 11, 10)
+
+    def weigh(n, kg):
+        assert "error" not in services.log_bodyweight(uid, {"kg": kg, "date": (today - timedelta(days=n)).isoformat()},
+                                                      "claude")
+    if state == "none in 28 days":
+        weigh(40, "80")
+        weigh(45, "80")
+    if state == "one in 28 days":
+        weigh(40, "81")
+        weigh(3, "80.2")
+    if state == "two in 28 days":
+        weigh(40, "81")
+        weigh(3, "80.6")
+        weigh(0, "80.2")
+
+
+@pytest.mark.parametrize("state, wrap, calls, tail", [
+    ("no weigh-ins", None, [], [("p", "empty-line")]),
+    ("none in 28 days", [("p", "empty-line"), ("dl", "callouts")],
+     [(["is-key"], "Trend", "80 kg", "Smoothed")], [("div", "bw-wrap")]),
+    ("one in 28 days", [("p", "empty-line"), ("dl", "callouts")],
+     [([], "High", "80.2 kg", "Sat 7 Nov"), ([], "Latest", "80.2 kg", "Sat 7 Nov"),
+      (["is-key"], "Trend", "80.9 kg", "Smoothed"), ([], "Low", "80.2 kg", "Sat 7 Nov")],
+     [("div", "bw-wrap")]),
+    ("two in 28 days", [("svg", "chart"), ("dl", "callouts")],
+     [([], "High", "80.6 kg", "Sat 7 Nov"), ([], "Latest", "80.2 kg", "Tue 10 Nov"),
+      (["is-key"], "Trend", "80.9 kg", "Smoothed"), ([], "Low", "80.2 kg", "Tue 10 Nov")],
+     [("div", "bw-wrap"), ("ul", "legend"), ("p", "small")]),
+])
+def test_the_body_weight_card_in_each_state(client, pinned, state, wrap, calls, tail):
+    """No weigh-in: the card is empty and points to Today. None in the 28 days: their words in the chart's place
+    and the Trend callout alone. One: the four callouts, and the ruled words in the chart's place. Two or more:
+    the chart, the legend and the small line. No Goal key without an open body weight goal."""
+    sign_in(client)
+    bw_state(state)
+    page = client.get("/progress").text
+    card = bw_node(page)
+    assert [shape(k) for k in card.elements()] == [("div", "card-head"), *tail]
+    assert ("is-empty" in card.classes) == (state == "no weigh-ins")
+    words = {"no weigh-ins": "No weigh-ins yet. Add one on Today.", "none in 28 days": "No weigh-ins in the last 28 days.",
+             "one in 28 days": "One weigh-in in the last 28 days. The chart starts from the second one."}
+    if wrap is None:
+        assert card.elements()[1].text() == words[state]
+        assert [(a.attrs, a.text()) for a in card.find_all("a")] == [({"href": "/today"}, "Today")]
+    else:
+        bw_wrap = card.elements()[1]
+        assert [shape(e)[:2] for e in bw_wrap.elements()] == wrap
+        if state in words:
+            assert bw_wrap.elements()[0].text() == words[state]
+    assert callouts_of(body_weight_card(page)) == calls
+    if calls:
+        assert calls == expected_callouts(only_user().id)
+    assert ('id="bodyweight-chart"' in page) == (state == "two in 28 days")
+    assert "Goal" not in card.text() and "7-day average" not in card.text()
+    weight = services.get_trends(only_user().id)["bodyweight"]
+    assert (weight or {}).get("weigh_ins_28d", 0) == {"none in 28 days": 0, "one in 28 days": 1,
+                                                      "two in 28 days": 2}.get(state, 0)
+
+
+def test_the_chart_branch_keys_on_the_chart_and_the_words_on_get_trends_count(client, pinned, monkeypatch):
+    """Ruled: the card draws the chart whenever there is a chart to draw, and its words in the chart's place key
+    on get_trends' weigh_ins_28d, never on a count the web makes. With the count stood in for, the words follow
+    it. With a chart stood in for, it is drawn."""
+    from markupsafe import Markup  # noqa: PLC0415
+
+    sign_in(client)
+    bw_state("one in 28 days")
+    real = services.get_trends
+
+    def counted(n):
+        def read(uid):
+            out = real(uid)
+            out["bodyweight"] = {**out["bodyweight"], "weigh_ins_28d": n}
+            return out
+        return read
+    monkeypatch.setattr(services, "get_trends", counted(0))
+    assert "No weigh-ins in the last 28 days." in body_weight_card(client.get("/progress").text)
+    monkeypatch.setattr(services, "get_trends", counted(1))
+    assert "One weigh-in in the last 28 days." in body_weight_card(client.get("/progress").text)
+    monkeypatch.setattr(services, "get_trends", real)
+    drawn = Markup('<svg class="chart" id="bodyweight-chart" role="img"><title>t</title><desc>d</desc></svg>')
+    monkeypatch.setattr(web.charts, "bodyweight_svg", lambda *a, **k: drawn)
+    card = body_weight_card(client.get("/progress").text)
+    assert 'id="bodyweight-chart"' in card and "One weigh-in" not in card and "Dots are weigh-ins" in card
+
+
+def test_an_open_body_weight_goal_puts_its_target_in_the_legend(client, pinned):
+    sign_in(client)
+    bw_state("two in 28 days")
+    assert "error" not in services.set_goal(only_user().id, {"kind": "bodyweight", "target_value": 75.5,
+                                                             "target_date": "2027-02-01"}, "web")
+    legend = [li.text() for li in bw_node(client.get("/progress").text).find_all("ul", "legend")[0].elements()]
+    assert legend == ["Weigh-in", "Smoothed trend", "Goal 75.5 kg"]
+
+
+def test_a_weigh_in_dated_after_today_is_the_cards_one_weigh_in_under_its_own_date(client, pinned):
+    """Carried from an earlier review. Logged today in Pacific/Kiritimati (UTC+14), then the zone moves to
+    Pacific/Pago_Pago (UTC-11), and one more 40 days back. The later weigh-in counts as today's: it is the one
+    weigh-in of the 28 days, so High, Latest and Low show it, under its own date, a day after today."""
+    sign_in(client)
+    uid = only_user().id
+    services.update_settings(uid, {"time_zone": "Pacific/Kiritimati"}, "web")
+    assert "error" not in services.log_bodyweight(uid, {"kg": "70"}, "claude")
+    services.update_settings(uid, {"time_zone": "Pacific/Pago_Pago"}, "web")
+    assert today_of(only_user()) == date(2026, 11, 10)
+    assert "error" not in services.log_bodyweight(uid, {"kg": "72", "date": "2026-10-01"}, "claude")
+    r = client.get("/progress")
+    assert r.status_code == 200
+    card = body_weight_card(r.text)
+    assert "One weigh-in in the last 28 days. The chart starts from the second one." in card
+    assert callouts_of(card) == expected_callouts(uid) == [
+        ([], "High", "70 kg", "Wed 11 Nov"), ([], "Latest", "70 kg", "Wed 11 Nov"),
+        (["is-key"], "Trend", "71.8 kg", "Smoothed"), ([], "Low", "70 kg", "Wed 11 Nov")]
+    assert 'id="bodyweight-chart"' not in card
+
+
+def test_the_card_reads_the_persons_own_date_not_the_utc_date(client, monkeypatch):
+    """Carried from an earlier review. At 20:00 UTC on Tuesday 10 November it is 01:30 on Wednesday 11 November in
+    Asia/Kolkata. A weigh-in logged now is that Wednesday's: the latest and the low, with the chart's 28 days
+    ending on it."""
+    sign_in(client)
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2026, 11, 10, 20, 0, tzinfo=timezone.utc))
+    uid = only_user().id
+    services.update_settings(uid, {"time_zone": "Asia/Kolkata"}, "web")
+    assert today_of(only_user()) == date(2026, 11, 11)
+    assert "error" not in services.log_bodyweight(uid, {"kg": "81", "date": "2026-11-08"}, "claude")
+    assert "error" not in services.log_bodyweight(uid, {"kg": "80"}, "claude")
+    page = client.get("/progress").text
+    card = body_weight_card(page)
+    assert callouts_of(card) == expected_callouts(uid) == [
+        ([], "High", "81 kg", "Sun 8 Nov"), ([], "Latest", "80 kg", "Wed 11 Nov"),
+        (["is-key"], "Trend", "80.9 kg", "Smoothed"), ([], "Low", "80 kg", "Wed 11 Nov")]
+    desc = re.search(r'<desc id="bodyweight-chart-desc">(.*?)</desc>', card, re.S).group(1)
+    assert desc.startswith("2 weigh-ins from Sun 8 Nov to Wed 11 Nov.")
+    assert tiles_of(page)[0]["value"] == "80.9"
+
+
+def test_progress_runs_head_banner_tiles_body_weight_trends_then_lifts(client, pinned):
+    """Contract lines 1480 to 1488, as they stand after B8: the page head, the sample banner, the tiles and their
+    sheets, Body weight, Trends, Lifts. No Cardio card yet."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    sign_in(client)
+    progress_state("the fixed day")
+    main = next(iter(parse(client.get("/progress").text).find_all("main")))
+    assert [shape(c) for c in main.elements()] == [
+        ("div", "page-head"), ("p", "notice", "sample-banner"), ("div", "glance"), ("section", "card", "bw-card"),
+        ("div", "card", "trends"), ("div", "card")]
+    assert [e.text() for e in main.elements()[0].elements()] == ["Progress"]
+    glance = main.elements()[2]
+    assert [shape(c) for c in glance.elements()] == [("div", "tiles", "four"), *[("div", "sheet")] * 4]
+    assert [c.attrs["id"] for c in glance.elements()[1:]] == ["sheet-weight", "sheet-calories", "sheet-training",
+                                                              "sheet-maintenance"]
+
+
+def test_progress_reads_the_glance_and_gives_its_date_to_the_chart(client, pinned, monkeypatch):
+    """Progress draws its tiles, sheets and Body weight card from web.glance_of, and the chart's 28 days end on
+    the date that glance names. With no glance (a read failed, or two reads on two dates), none of them is drawn,
+    and Trends and Lifts still are."""
+    sign_in(client)
+    progress_state("the fixed day")
+    seen, glances, real_trend, real_glance = [], [], web._trend, web.glance_of
+
+    def spy(user_id, today=None):
+        seen.append(today)
+        return real_trend(user_id, today)
+
+    async def counted(user_id):
+        glances.append(user_id)
+        return await real_glance(user_id)
+    monkeypatch.setattr(web, "_trend", spy)
+    monkeypatch.setattr(web, "glance_of", counted)
+    # get_progress names another date: the chart still takes the glance's.
+    real_progress = services.get_progress
+    monkeypatch.setattr(services, "get_progress", lambda uid, *a: {**real_progress(uid, *a), "today": "2026-10-01"})
+    assert client.get("/progress").status_code == 200
+    assert glances == [only_user().id] and seen == [date(2026, 11, 10)]
+    monkeypatch.setattr(services, "get_progress", real_progress)
+
+    async def none(user_id):
+        return None
+    monkeypatch.setattr(web, "glance_of", none)
+    r = client.get("/progress")
+    assert r.status_code == 200 and glance_node(r.text) is None and "bw-card" not in r.text and "popover" not in r.text
+    assert '<div class="card trends" id="trends">' in r.text and "<h2>Lifts</h2>" in r.text
+
+
+def test_trend_draws_the_28_days_ending_on_the_date_it_is_given(client, pinned):
+    """_trend's chart covers the 28 days ending on the date Progress hands it, not the clock's: two weigh-ins 0 and
+    3 days back draw on the fixed day, and none of them falls in the 28 days ending 28 days later."""
+    sign_in(client)
+    uid = only_user().id
+    for n in (3, 0):
+        assert "error" not in services.log_bodyweight(
+            uid, {"kg": "80", "date": (date(2026, 11, 10) - timedelta(days=n)).isoformat()}, "claude")
+    assert len(web._trend(uid, date(2026, 11, 10))["bodyweight"]["points"]) == 2
+    assert web._trend(uid, date(2026, 12, 8))["bodyweight"] is None
+    assert len(web._trend(uid)["bodyweight"]["points"]) == 2  # no date: the person's own, the pinned fixed day
