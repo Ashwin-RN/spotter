@@ -7,6 +7,7 @@ end to end.
 """
 
 import asyncio
+import html
 import inspect
 import io
 import re
@@ -18,12 +19,14 @@ import workos
 from sqlalchemy import select
 from workos.user_management._resource import AsyncUserManagement
 
-from app import db, services, web, web_auth
-from app.models import Bodyweight, CallLog, User
+from app import db, formatting, services, web, web_auth
+from app.formatting import show
+from app.models import Bodyweight, CallLog, SavedFood, User
 
 from .conftest import settings
+from .test_pages_text import Node, parse, tables
 from .test_web import (  # noqa: F401 - fixtures
-    CSP, SITE, TOO_MANY, WEB, FakeSeam, calls, client, only_user, post, seam, session_of, sign_in,
+    CSP, SITE, TOO_MANY, WEB, FakeSeam, calls, client, only_user, post, rows, seam, session_of, sign_in,
     entries_of, meal_of, side_card, stock, stock_food, today_of, user_count, web_client,
 )
 
@@ -258,6 +261,430 @@ def test_foods_reads_list_saved_foods_and_shows_live_ones(signed, monkeypatch):
     assert dal and re.findall(r"<td>(.*?)</td>", dal.group(1), re.S)[:3] == ["1 bowl", "180", "7"]
     assert "<td>Roti</td>" in page and "Gone stew" not in page
     assert signed.get("/foods/12/edit").status_code == 200 and signed.get("/foods/13/edit").status_code == 404
+
+
+# ---------------------------------------------------------------- Foods, rebuilt (pass B15)
+
+LEDE = ("Foods you save are logged by name and amount: Spotter works out the kcal. Saving one by talking to your "
+        "assistant works too.")
+EMPTY_FOODS = ("No saved foods yet. Tell your assistant a food you eat often and its number, and ask it to save the "
+               "food.")
+COLUMNS = ["Food", "Serving", "kcal", "Times logged", "Grams (g)", "Edit", "Delete"]
+FOLD_FIELDS = ["name", "serving_label", "kcal_per_serving", "grams_per_serving"]
+EDIT_FIELDS = FOLD_FIELDS[1:]
+FIGURES = {"foods": [
+    {"id": 21, "name": "Ghee rice", "serving_label": "1 plate", "kcal_per_serving": 412.25,
+     "grams_per_serving": 1250.75, "times_logged": 1234, "last_logged": "2026-11-09", "is_sample": False,
+     "deleted_at": None},
+    {"id": 22, "name": "Black coffee", "serving_label": "1 cup", "kcal_per_serving": 0, "grams_per_serving": None,
+     "times_logged": 0, "last_logged": None, "is_sample": True, "deleted_at": None},
+    {"id": 23, "name": "Gone stew", "serving_label": "1 bowl", "kcal_per_serving": 300, "grams_per_serving": 10,
+     "times_logged": 2, "last_logged": "2026-10-01", "is_sample": False, "deleted_at": "2026-11-01T00:00:00+00:00"},
+], "summary": ""}
+
+
+def foods_table(page: str) -> tuple[list[str], list[list[str]]]:
+    """The Saved foods card's one table: its headers, then each row's cells, each as a person reads it."""
+    [card] = parse(page).find_all("section", "saved-foods")
+    [table] = tables(card)
+    assert table.node.parent.is_("div", "table-wrap") and table.node.attrs.get("aria-labelledby") == "saved-foods-title"
+    return table.headers, [[cell.text() for cell in row] for row in table.rows]
+
+
+def main_parts(page: str) -> list[tuple[str, list[str]]]:
+    """Each element in main, in markup order: its tag and classes."""
+    [main] = parse(page).find_all("main")
+    return [(n.tag, n.classes) for n in main.elements()]
+
+
+def save_fold(page: str) -> Node:
+    [details] = [d for d in parse(page).find_all("details", "add") if d.attrs.get("id") == "save-food"]
+    return details
+
+
+def strips(page: str) -> list[str]:
+    """Every strip after a write: a p.ok or a div.ok, its words."""
+    dom = parse(page)
+    return [n.text().replace(" Undo", "") for n in dom.find_all("p", "ok") + dom.find_all("div", "ok")]
+
+
+def control(page: str, name: str) -> Node:
+    [found] = [n for n in parse(page).iter()
+               if n.tag in ("input", "select", "textarea") and n.attrs.get("name") == name]
+    return found
+
+
+def field_lines(page: str, prefix: str) -> dict[str, str]:
+    """Each field error under its field, by the field's name: the p.error its input names, the input invalid."""
+    out = {}
+    for error in parse(page).find_all("p", "error"):
+        field = error.attrs["id"].removeprefix(prefix + "-").removesuffix("-error")
+        tied = control(page, field)
+        assert tied.attrs.get("aria-invalid") == "true", field
+        assert error.attrs["id"] in tied.attrs.get("aria-describedby", "").split(), field
+        out[field] = error.text()
+    return out
+
+
+def top_lines(page: str) -> list[str]:
+    return [p.text() for d in parse(page).find_all("div", "error") for p in d.find_all("p")]
+
+
+def saved_foods(user_id: int) -> list[tuple]:
+    return [(f.name, f.serving_label, f.kcal_per_serving, f.grams_per_serving, f.deleted_at is None)
+            for f in rows(SavedFood, user_id)]
+
+
+@pytest.fixture
+def real_save_food(monkeypatch):
+    """Every answer save_food really gives through the page, in order."""
+    answers, real = [], services.save_food
+    monkeypatch.setattr(services, "save_food", lambda *args: answers.append(real(*args)) or answers[-1])
+    return answers
+
+
+def test_foods_in_the_contracts_order(signed, sample_state):
+    """Page head with its h1 and grey line, the sample banner, one strip, Saved foods, Save a food."""
+    services.save_food(only_user().id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    sample_state(empty=False, rows=3)
+    page = signed.get("/foods?saved=saved_food").text
+    assert main_parts(page) == [("div", ["page-head"]), ("p", ["notice", "sample-banner"]), ("p", ["ok"]),
+                                ("section", ["card", "saved-foods"]), ("div", ["card", "save-food"])]
+    [head] = parse(page).find_all("div", "page-head")
+    assert [(n.tag, n.classes, n.text()) for n in head.elements()] == [("h1", [], "Foods"), ("p", ["lede"], LEDE)]
+    assert '<main class="page foods-page">' in page and "<title>Foods · Spotter</title>" in page
+
+
+def test_the_saved_foods_columns_and_their_order_with_and_without_grams(signed, monkeypatch):
+    recorder(monkeypatch, "list_saved_foods", FIGURES)
+    headers, cells = foods_table(signed.get("/foods").text)
+    assert headers == COLUMNS and len(cells) == 2  # the deleted food is not shown
+    no_grams = {**FIGURES, "foods": [{**f, "grams_per_serving": None} for f in FIGURES["foods"]]}
+    recorder(monkeypatch, "list_saved_foods", no_grams)
+    page = signed.get("/foods").text
+    headers, cells = foods_table(page)
+    assert headers == [c for c in COLUMNS if c != "Grams (g)"] and {len(row) for row in cells} == {6}
+    assert "Grams" not in page.split('id="saved-foods-title"')[1].split("</section>")[0]
+
+
+def test_each_cell_is_its_reads_own_field_through_its_filter(signed, monkeypatch):
+    """Cell by cell, against list_saved_foods: the name and its sample tag, the serving as written, kcal_per_serving,
+    times_logged (count) and grams through show, a food with no grams an empty cell: no dash, no 0."""
+    recorder(monkeypatch, "list_saved_foods", FIGURES)
+    page = signed.get("/foods").text
+    _, cells = foods_table(page)
+    live = [f for f in FIGURES["foods"] if f["deleted_at"] is None]
+    want = [[f["name"] + (" sample" if f["is_sample"] else ""), f["serving_label"],
+             show(f["kcal_per_serving"], "kcal_per_serving", page=True, unit=False),
+             show(f["times_logged"], "count", page=True),
+             "" if f["grams_per_serving"] is None else show(f["grams_per_serving"], "grams", page=True, unit=False),
+             "Edit", "Delete"] for f in live]
+    assert cells == want
+    assert want[0][2:5] == ["412", "1,234", "1,250.75"] and want[1][2:5] == ["0", "0", ""]
+    assert '<td>Black coffee <span class="tag tag-sample">sample</span></td>' in page
+    assert "<td>Ghee rice</td>" in page  # a food of the person's own: no tag
+    row = re.search(r"<tr><td>Black coffee .*?</tr>", page, re.S).group(0)
+    assert "<td></td>" in row and "–" not in row and "-" not in re.sub(r'<[^>]+>', "", row)
+    assert '<a class="action" href="/foods/22/edit">Edit</a>' in row
+    assert re.search(r'<form method="post" action="/foods/22/delete" class="inline">\s*<input type="hidden" '
+                     r'name="csrf_token" value="[^"]+">\s*<button class="link">Delete</button>\s*</form>', row)
+
+
+def test_no_saved_foods_is_a_dashed_card_and_the_fold_out_open(signed):
+    page = signed.get("/foods").text
+    assert main_parts(page) == [("div", ["page-head"]), ("div", ["card", "saved-foods", "is-empty"]),
+                                ("div", ["card", "save-food"])]
+    assert f'<div class="card saved-foods is-empty">\n  <p class="empty-line">{EMPTY_FOODS}</p>\n</div>' in \
+        page.replace("\r\n", "\n")
+    assert "<table" not in page and "open" in save_fold(page).attrs
+
+
+def test_the_fold_out_is_closed_with_saved_foods_and_open_after_a_refusal(signed, real_save_food):
+    services.save_food(only_user().id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    for address in ("/foods", "/foods?saved=saved_food", "/foods?deleted=saved_food:1", "/foods?add=food"):
+        assert "open" not in save_fold(signed.get(address).text).attrs, address
+    r = post(signed, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="lots")
+    assert r.status_code == 400 and "error" in real_save_food[-1] and "open" in save_fold(r.text).attrs
+
+
+def test_the_save_a_food_form_holds_its_fields_in_order(signed):
+    page = signed.get("/foods").text
+    fold = save_fold(page)
+    assert [n.text() for n in fold.elements() if n.tag == "summary"] == ["Save a food"]
+    [form] = fold.find_all("form")
+    assert (form.attrs["method"], form.attrs["action"]) == ("post", "/foods")
+    fields = [(f.find_all("label")[0].text(), f.find_all("input")[0].attrs) for f in form.find_all("div", "field")]
+    assert [(label, attrs["name"]) for label, attrs in fields] == [
+        ("Name", "name"), ("One serving is", "serving_label"), ("Calories in one serving (kcal)", "kcal_per_serving"),
+        ("Grams in one serving (g)", "grams_per_serving")]
+    assert [attrs.get("inputmode") for _, attrs in fields] == [None, None, "decimal", "decimal"]
+    assert [p.text() for p in form.find_all("p", "hint")] == ["Optional"]
+    assert control(page, "grams_per_serving").attrs["aria-describedby"] == "food-grams_per_serving-hint"
+    [button] = form.find_all("button")
+    assert (button.classes, button.text()) == (["primary"], "Save food")
+    assert [p.text() for p in form.find_all("p", "small")] == ["Saving a name you already have updates it."]
+    assert [n.tag for n in form.elements()][-2:] == ["div", "p"]  # the button, then the grey line
+
+
+@pytest.mark.parametrize("address, words", [
+    ("/foods?saved=saved_food", ["Saved food saved."]), ("/foods?restored=saved_food", ["Saved food restored."]),
+    ("/foods?deleted=saved_food:{id}", ["Saved food deleted."]),
+    ("/foods?saved=unchanged", []), ("/foods?saved=1", []), ("/foods?deleted={id}", []),
+    ("/foods?deleted=saved_food:0{id}", []), ("/foods?deleted=bodyweight:{id}", []), ("/foods?restored=1", []),
+    ("/foods", []),
+])
+def test_each_mark_shows_its_one_strip_or_none(signed, address, words):
+    food = services.save_food(only_user().id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120},
+                              "claude")["id"]
+    page = signed.get(address.format(id=food)).text
+    assert strips(page) == words
+    if "deleted=saved_food:" in address and words:
+        undo = re.search(r'<div class="ok undo">\s*Saved food deleted\.\s*<form method="post" '
+                         rf'action="/foods/{food}/restore" class="inline">\s*<input type="hidden" name="csrf_token" '
+                         r'value="([^"]+)">\s*<button class="link">Undo</button>\s*</form>\s*</div>', page)
+        assert undo and undo.group(1) == session_of(signed)["csrf"]
+
+
+def test_a_save_a_delete_and_an_undo_land_on_their_strips(signed):
+    uid = only_user().id
+    r = post(signed, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="58", grams_per_serving="")
+    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert strips(signed.get(r.headers["location"]).text) == ["Saved food saved."]
+    [food] = rows(SavedFood, uid)
+    r = post(signed, f"/foods/{food.id}/delete")
+    assert r.headers["location"] == SITE + f"/foods?deleted=saved_food:{food.id}"
+    page = signed.get(r.headers["location"]).text
+    assert strips(page) == ["Saved food deleted."] and "<table" not in page  # the only food is gone
+    r = post(signed, f"/foods/{food.id}/restore")
+    assert r.headers["location"] == SITE + "/foods?restored=saved_food"
+    page = signed.get(r.headers["location"]).text
+    assert strips(page) == ["Saved food restored."] and foods_table(page)[1][0][0] == "Idli"
+    assert calls(uid) == [("save_food", True, None), ("delete_entry", True, None), ("restore_entry", True, None)]
+
+
+def test_a_food_saved_again_as_it_is_writes_nothing_and_says_nothing(signed):
+    uid = only_user().id
+    services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                             "grams_per_serving": 40}, "claude")
+    before = calls(uid)
+    for data in ({"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": "120", "grams_per_serving": "40"},
+                 {"name": " Roti ", "serving_label": " 1 roti ", "kcal_per_serving": "120.0",
+                  "grams_per_serving": "40.00"}):
+        r = post(signed, "/foods", **data)
+        assert r.headers["location"] == SITE + "/foods?saved=unchanged", data
+        assert strips(signed.get(r.headers["location"]).text) == []
+    assert calls(uid) == before and saved_foods(uid) == [("Roti", "1 roti", 120, 40, True)]
+
+
+def test_a_save_save_food_finds_unchanged_is_marked_unchanged(signed, real_save_food):
+    """120.001 is stored as 120: the web cannot tell before the write, so it reads save_food's own food after it."""
+    uid = only_user().id
+    services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    real_save_food.clear()
+    r = post(signed, "/foods", name="Roti", serving_label="1 roti", kcal_per_serving="120.001")
+    assert r.headers["location"] == SITE + "/foods?saved=unchanged"
+    assert [a["food"]["kcal_per_serving"] for a in real_save_food] == [120]
+    assert calls(uid)[-1] == ("save_food", True, None)
+
+
+@pytest.mark.parametrize("data, stored", [
+    ({"kcal_per_serving": "130"}, ("Roti", "1 roti", 130, None, True)),
+    ({"grams_per_serving": "40"}, ("Roti", "1 roti", 120, 40, True)),
+    ({"name": "roti"}, ("roti", "1 roti", 120, None, True)),  # the name as typed is stored
+    ({"serving_label": "1 large roti"}, ("Roti", "1 large roti", 120, None, True)),
+])
+def test_a_food_saved_again_with_one_change_is_saved(signed, data, stored):
+    uid = only_user().id
+    services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    r = post(signed, "/foods", **{"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": "120", **data})
+    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert saved_foods(uid) == [stored]
+
+
+def test_a_deleted_food_saved_again_as_it_was_comes_back_and_is_saved(signed):
+    uid = only_user().id
+    food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    services.delete_entry(uid, "saved_food", food["id"])
+    r = post(signed, "/foods", name="Roti", serving_label="1 roti", kcal_per_serving="120")
+    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert saved_foods(uid) == [("Roti", "1 roti", 120, None, True)]
+
+
+# Each refusal save_food gives the fold-out, driven through the form: (row id, what is typed over a good food, the
+# codes save_food answers with, the fields refused).
+GOOD_FOOD = {"name": "Idli", "serving_label": "1 idli", "kcal_per_serving": "58", "grams_per_serving": ""}
+FOLD_ROWS = [
+    ("name missing", {"name": ""}, ["missing_field"], ["name"]),
+    ("name too long", {"name": "x" * 129}, ["invalid_field"], ["name"]),
+    ("name with a control character", {"name": "Idli\x07"}, ["invalid_field"], ["name"]),
+    ("serving missing", {"serving_label": "  "}, ["missing_field"], ["serving_label"]),
+    ("serving too long", {"serving_label": "y" * 65}, ["invalid_field"], ["serving_label"]),
+    ("serving with a control character", {"serving_label": "1\x07idli"}, ["invalid_field"], ["serving_label"]),
+    ("kcal missing", {"kcal_per_serving": ""}, ["missing_field"], ["kcal_per_serving"]),
+    ("kcal not a number", {"kcal_per_serving": "lots"}, ["invalid_field"], ["kcal_per_serving"]),
+    ("kcal above 5000", {"kcal_per_serving": "5001"}, ["invalid_field"], ["kcal_per_serving"]),
+    ("kcal below 0", {"kcal_per_serving": "-1"}, ["invalid_field"], ["kcal_per_serving"]),
+    ("grams not a number", {"grams_per_serving": "some"}, ["invalid_field"], ["grams_per_serving"]),
+    ("grams below 1", {"grams_per_serving": "0.5"}, ["invalid_field"], ["grams_per_serving"]),
+    ("grams above 5000", {"grams_per_serving": "5001"}, ["invalid_field"], ["grams_per_serving"]),
+    ("three at once", {"name": "", "kcal_per_serving": "lots", "grams_per_serving": "0"},
+     ["missing_field", "invalid_field", "invalid_field"], ["name", "kcal_per_serving", "grams_per_serving"]),
+]
+FOOD_LINES = {
+    "name": "Give the food a name, up to 128 characters.",
+    "serving_label": "Say what one serving is, such as 1 roti, up to 64 characters.",
+    "kcal_per_serving": "Give the kcal in one serving, from 0 to 5,000.",
+    "grams_per_serving": "Give the grams in one serving, from 1 to 5,000, or leave it empty.",
+}
+
+
+def service_words(answer: dict) -> list[str]:
+    """Every message and fix of a refusal, the combined one and each problem's."""
+    found = [answer] + [e for e in answer.get("errors") or []]
+    return sorted({w for e in found for w in (e.get("message"), e.get("fix")) if w})
+
+
+def assert_none_of_the_services_words(page: str, answer: dict) -> None:
+    for words in service_words(answer):
+        assert words not in page and html.escape(words) not in page, words
+
+
+def assert_typed_kept(page: str, typed: dict) -> None:
+    for name, value in typed.items():
+        assert control(page, name).attrs.get("value", "") == value, name
+
+
+@pytest.mark.parametrize("data, codes, fields", [row[1:] for row in FOLD_ROWS], ids=[row[0] for row in FOLD_ROWS])
+def test_each_fold_out_refusal_shows_the_pages_own_line_under_its_field(signed, real_save_food, data, codes, fields):
+    typed = {**GOOD_FOOD, **data}
+    r = post(signed, "/foods", **typed)
+    assert r.status_code == 400 and rows(SavedFood, only_user().id) == []
+    [answer] = real_save_food
+    assert [e["error"] for e in answer["errors"]] == codes
+    assert [e["message"].split()[0] for e in answer["errors"]] == fields  # what the placement reads
+    assert field_lines(r.text, "food") == {f: FOOD_LINES[f] for f in fields}
+    assert top_lines(r.text) == [] and strips(r.text) == []
+    assert_none_of_the_services_words(r.text, answer)
+    assert_typed_kept(r.text, typed)
+    assert "open" in save_fold(r.text).attrs and '<body class="calm"' in r.text
+    assert "<title>Foods · Spotter</title>" in r.text
+
+
+EDIT_ROWS = [row for row in FOLD_ROWS if not row[0].startswith(("name", "three"))] + [
+    ("two at once", {"serving_label": "", "grams_per_serving": "some"}, ["missing_field", "invalid_field"],
+     ["serving_label", "grams_per_serving"]),
+]
+ROTI = {"serving_label": "1 roti", "kcal_per_serving": "120", "grams_per_serving": ""}
+
+
+@pytest.mark.parametrize("data, codes, fields", [row[1:] for row in EDIT_ROWS], ids=[row[0] for row in EDIT_ROWS])
+def test_each_edit_refusal_shows_the_pages_own_line_under_its_field(signed, real_save_food, data, codes, fields):
+    uid = only_user().id
+    food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    real_save_food.clear()
+    typed = {**ROTI, **data}
+    r = post(signed, f"/foods/{food['id']}/edit", **typed)
+    assert r.status_code == 400 and saved_foods(uid) == [("Roti", "1 roti", 120, None, True)]
+    [answer] = real_save_food
+    assert [e["error"] for e in answer["errors"]] == codes
+    assert [e["message"].split()[0] for e in answer["errors"]] == fields
+    assert field_lines(r.text, "edit") == {f: FOOD_LINES[f] for f in fields}
+    assert top_lines(r.text) == []
+    assert_none_of_the_services_words(r.text, answer)
+    assert_typed_kept(r.text, typed)
+    assert "<title>Edit Roti · Spotter</title>" in r.text and '<body class="calm"' in r.text
+
+
+def test_a_refusal_with_no_field_of_its_own_goes_at_the_top_of_each_form(signed, real_save_food, monkeypatch):
+    """save_food refuses a field the forms never send. Handed one, through the page, its real refusal sits at the
+    top of the form in the page's own words, beside a field's own line when there is one."""
+    real_form = web.food_form
+    monkeypatch.setattr(web, "food_form", lambda form: {**real_form(form), "colour": "red"})
+    uid = only_user().id
+    r = post(signed, "/foods", **GOOD_FOOD)
+    assert r.status_code == 400 and rows(SavedFood, uid) == []
+    assert real_save_food[-1]["error"] == "invalid_field" and "'colour'" in real_save_food[-1]["message"]
+    assert top_lines(r.text) == [web.FOOD_ERROR_GENERAL] and field_lines(r.text, "food") == {}
+    assert "open" in save_fold(r.text).attrs
+    assert_none_of_the_services_words(r.text, real_save_food[-1])
+    r = post(signed, "/foods", **{**GOOD_FOOD, "kcal_per_serving": "lots"})
+    assert top_lines(r.text) == [web.FOOD_ERROR_GENERAL]
+    assert field_lines(r.text, "food") == {"kcal_per_serving": FOOD_LINES["kcal_per_serving"]}
+    food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    r = post(signed, f"/foods/{food['id']}/edit", **{**ROTI, "kcal_per_serving": "130"})
+    assert r.status_code == 400 and real_save_food[-1]["error"] == "invalid_field"
+    assert top_lines(r.text) == [web.FOOD_ERROR_GENERAL] and field_lines(r.text, "edit") == {}
+    assert_none_of_the_services_words(r.text, real_save_food[-1])
+    assert saved_foods(uid) == [("Roti", "1 roti", 120, None, True)]
+
+
+def test_the_edit_page_head_card_and_fields(signed):
+    uid = only_user().id
+    food = services.save_food(uid, {"name": "Ghee rice", "serving_label": "1 plate", "kcal_per_serving": 412.25,
+                                    "grams_per_serving": 250}, "claude")
+    page = signed.get(f"/foods/{food['id']}/edit").text
+    assert "<title>Edit Ghee rice · Spotter</title>" in page and '<main class="page form-page">' in page
+    assert main_parts(page) == [("div", ["page-head"]), ("div", ["card"])]
+    [head] = parse(page).find_all("div", "page-head")
+    assert [(n.tag, n.text()) for n in head.elements()] == [("h1", "Edit Ghee rice"), ("nav", "Foods")]
+    assert '<a class="back" href="/foods">Foods</a>' in page
+    [card] = parse(page).find_all("div", "card")
+    [form] = card.find_all("form")
+    assert (form.attrs["method"], form.attrs["action"]) == ("post", f"/foods/{food['id']}/edit")
+    fields = [(f.find_all("label")[0].text(), f.find_all("input")[0].attrs) for f in form.find_all("div", "field")]
+    assert [(label, attrs["name"]) for label, attrs in fields] == [
+        ("One serving is", "serving_label"), ("Calories in one serving (kcal)", "kcal_per_serving"),
+        ("Grams in one serving (g)", "grams_per_serving")]
+    stored = services.list_saved_foods(uid)["foods"][0]
+    assert [attrs.get("value") for _, attrs in fields] == [
+        stored["serving_label"], formatting.field(stored["kcal_per_serving"], "kcal_per_serving"),
+        formatting.field(stored["grams_per_serving"], "grams")] == ["1 plate", "412.25", "250"]
+    assert 'name="name"' not in page
+    [actions] = form.find_all("div", "form-actions")
+    assert [(n.tag, n.classes, n.text()) for n in actions.elements()] == [("button", ["primary"], "Save"),
+                                                                       ("a", ["action"], "Cancel")]
+    assert actions.elements()[1].attrs["href"] == "/foods"
+
+
+def test_an_edit_that_changes_one_field_saves_it_and_one_that_changes_none_writes_nothing(signed, real_save_food):
+    uid = only_user().id
+    food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    real_save_food.clear()
+    r = post(signed, f"/foods/{food['id']}/edit", **{**ROTI, "grams_per_serving": "40"})
+    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert saved_foods(uid) == [("Roti", "1 roti", 120, 40, True)]
+    assert strips(signed.get(r.headers["location"]).text) == ["Saved food saved."]
+    before = calls(uid)
+    r = post(signed, f"/foods/{food['id']}/edit", serving_label=" 1 roti ", kcal_per_serving="120.00",
+             grams_per_serving="40")
+    assert r.headers["location"] == SITE + "/foods?saved=unchanged" and calls(uid) == before
+    assert strips(signed.get(r.headers["location"]).text) == []
+    # 120.004 is stored as 120: written, and save_food's own food says nothing changed.
+    r = post(signed, f"/foods/{food['id']}/edit", serving_label="1 roti", kcal_per_serving="120.004",
+             grams_per_serving="40")
+    assert r.headers["location"] == SITE + "/foods?saved=unchanged" and len(calls(uid)) == len(before) + 1
+    assert len(real_save_food) == 2 and saved_foods(uid) == [("Roti", "1 roti", 120, 40, True)]
+    # Emptying the grams clears them.
+    r = post(signed, f"/foods/{food['id']}/edit", serving_label="1 roti", kcal_per_serving="120", grams_per_serving="")
+    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert saved_foods(uid) == [("Roti", "1 roti", 120, None, True)]
+
+
+def test_another_persons_food_is_a_404_on_every_address_and_nothing_of_it_shows(signed, make_user):
+    mine = only_user().id
+    other = make_user()
+    theirs = services.save_food(other.id, {"name": "Secret stew", "serving_label": "1 bowl",
+                                           "kcal_per_serving": 321}, "claude")["id"]
+    services.delete_entry(other.id, "saved_food", theirs)
+    gone = [signed.get(f"/foods/{theirs}/edit"), post(signed, f"/foods/{theirs}/edit", **ROTI),
+            post(signed, f"/foods/{theirs}/delete"), post(signed, f"/foods/{theirs}/restore")]
+    assert [r.status_code for r in gone] == [404] * 4
+    assert all("Secret stew" not in r.text and "321" not in r.text for r in gone)
+    # Their deleted food named in the Undo mark: the strip shows, its form posts to an address that answers 404.
+    page = signed.get(f"/foods?deleted=saved_food:{theirs}").text
+    assert "Secret stew" not in page and post(signed, f"/foods/{theirs}/restore").status_code == 404
+    assert [(f.deleted_at is None) for f in rows(SavedFood, other.id)] == [False]
+    assert rows(SavedFood, mine) == []
 
 
 # ---------------------------------------------------------------- Export my data

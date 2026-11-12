@@ -63,7 +63,6 @@ CONFIRMATION = "confirmation"  # this file's own rule: a confirmation names its 
 
 # What today's pages keep through step 2 (contract section C, "Step 2 does not reshape today's pages").
 SKIPS = (
-    Skip("/foods", CONFIRMATION, "Saved.", "foods.html:7, the bare Saved., replaced in step 4"),
     Skip("/settings", CONFIRMATION, "Saved.", "settings.html:72, the bare Saved., replaced in step 4"),
     Skip("/", tr.CODE_WORD, "whoami", "home.html:37, the first sentence offered, replaced in step 4"),
     Skip("/settings", tr.CODE_WORD, "whoami", "settings.html:15, replaced in step 4"),
@@ -136,13 +135,28 @@ def cardio_zeros(user_id: int, address: str, tag: str, label: str | None = None)
     return sum(held.values()) if label is None else held[label]
 
 
+def foods_zeros(user_id: int, address: str, tag: str, column: str | None = None) -> int:
+    """The true zeros Foods' Saved foods table shows, read from list_saved_foods: a live food's kcal (kcal_per_serving)
+    and its Times logged (times_logged), each a td, counted where they show as "0". Grams are 1 or more, never 0.
+    column: the one column's, "kcal" or "Times logged"; None, both."""
+    if tag != "td":
+        return 0
+    zero = lambda value, quantity: formatting.show(value, quantity, unit=False) == "0"  # noqa: E731
+    live = [f for f in services.list_saved_foods(user_id)["foods"] if f.get("deleted_at") is None]
+    held = {"kcal": sum(zero(f["kcal_per_serving"], "kcal_per_serving") for f in live),
+            "Times logged": sum(zero(f["times_logged"], "count") for f in live)}
+    return sum(held.values()) if column is None else held[column]
+
+
 # Where a bare "0" is a true count the page reads from the data, and how many the account holds there: by
 # route, the piece's tag and, on a route with places (ZERO_PLACES), the place it sits in, a function of the
 # account and the address. Training's 0 is a true zero (section L, "Training always shows a number").
 TRUE_ZEROS = {
-    ("/foods", "td"): lambda user_id, address: sum(
-        (f["times_logged"] == 0) + (f["kcal_per_serving"] == 0)
-        for f in services.list_saved_foods(user_id)["foods"] if f.get("deleted_at") is None),
+    # Foods' Saved foods table, held cell by cell since pass B15: a zero only in a cell of its own column (kcal, Times
+    # logged), counted from list_saved_foods column by column.
+    ("/foods", "td", "saved-foods", "kcal"): lambda user_id, address: foods_zeros(user_id, address, "td", "kcal"),
+    ("/foods", "td", "saved-foods", "Times logged"): lambda user_id, address: foods_zeros(user_id, address, "td",
+                                                                                         "Times logged"),
     ("/day/{date}", "p", "glance"): lambda user_id, address: glance_zeros(user_id, address, "p"),
     ("/day/{date}", "td", "glance"): lambda user_id, address: glance_zeros(user_id, address, "td"),
     ("/day/{date}", "text", "glance"): lambda user_id, address: glance_zeros(user_id, address, "text"),
@@ -252,6 +266,25 @@ def cardio_cells(markup: str) -> dict[int, list[str]] | None:
     return _zero_cells(markup, '<section class="card cardio-card"', named)
 
 
+# The Saved foods columns whose cells may hold a true zero, by their headers.
+FOODS_ZERO_COLUMNS = ("kcal", "Times logged")
+SAVED_FOODS_CARD = '<section class="card saved-foods"'
+
+
+def foods_cells(markup: str) -> dict[int, list[str]] | None:
+    """Foods' Saved foods card's places for a true zero: a cell under the kcal or Times logged header (its cells are
+    bare td, so the column is read by its place in the row against the table's own headers), where it holds a bare
+    0. Its Food, Serving and Grams cells, its actions and its closing line hold none."""
+    span = _block(markup, SAVED_FOODS_CARD, "section")
+    card = markup[span[0]:span[1]] if span else ""
+    headers = [tr.squash(re.sub(r"<[^>]+>", "", h)) for h in re.findall(r"<th\b[^>]*>(.*?)</th>", card, re.S)]
+
+    def named(row):
+        yield from ((cell, headers[n]) for n, cell in enumerate(row)
+                    if n < len(headers) and headers[n] in FOODS_ZERO_COLUMNS)
+    return _zero_cells(markup, SAVED_FOODS_CARD, named)
+
+
 def glance_lines(markup: str) -> tuple[int, int] | None:
     """The first and last line of Today's div.glance in the markup, or of Progress' (its tiles and sheets), by
     counting div tags from its start. None when the page draws no glance block."""
@@ -270,10 +303,12 @@ def cardio_lines(markup: str) -> tuple[int, int] | None:
 
 # Where a route's true zeros may sit, by place, each place with its own allowance: the day page's only in its
 # glance block; Progress' in its glance block, and in its Trends and Cardio cards cell by cell (trends_cells,
-# cardio_cells), each cell's name with its own allowance. A bare 0 anywhere else on the page is an empty figure,
+# cardio_cells), each cell's name with its own allowance; Foods' in its Saved foods card, cell by cell by column
+# (foods_cells). A bare 0 anywhere else on the page is an empty figure,
 # and a zero lost in one place, row or column never pays for a stray one in another.
 ZERO_PLACES = {"/day/{date}": {"glance": glance_lines},
-               "/progress": {"glance": glance_lines, "trends": trends_cells, "cardio": cardio_cells}}
+               "/progress": {"glance": glance_lines, "trends": trends_cells, "cardio": cardio_cells},
+               "/foods": {"saved-foods": foods_cells}}
 
 
 def _holds_line(span, line: int) -> bool:
@@ -446,7 +481,9 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
                       "/settings?saved=targets"],
         "/today": ["/today"],
         "/day/{date}": [f"/day/{d}" for d in dates] + undo + strips,
-        "/foods": ["/foods", "/foods?saved=1"] + [f"/foods?deleted={i}" for i in foods[:1]],
+        # Foods: each strip it has words for, the mark that only makes it calm, and the old mark it no longer reads.
+        "/foods": ["/foods", "/foods?saved=saved_food", "/foods?restored=saved_food", "/foods?saved=unchanged",
+                   "/foods?saved=1"] + [f"/foods?deleted=saved_food:{i}" for i in foods[:1]],
         "/foods/{food_id}/edit": [f"/foods/{i}/edit" for i in foods],
         "/entries/{kind}/{entry_id}/edit": entries,
         "/progress": ["/progress"],
@@ -536,7 +573,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # "/day/{date}". The structure checks below and the page rules in tests/test_page_rules.py run on these
 # routes only. A pass adds its own route here when its page lands.
 BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress", "/progress/{lift}",
-                                   "/goals"})
+                                   "/goals", "/foods", "/foods/{food_id}/edit"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 
@@ -755,7 +792,6 @@ CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
         "Read, log and delete: Claude can also delete entries.",
         "Claude does not do them for you.",
     ),
-    "/foods": ("Saving one by talking to Claude works too.",),  # foods.html: the line under the h1
 }
 _SENTENCE = re.compile(r"(?<=[.?!])\s+")
 
@@ -1068,7 +1104,7 @@ def test_the_glance_zeros_pass_on_todays_page_only_and_only_as_many_as_the_data_
     assert any("true zeros" in f for f in page_findings(yesterday, page, [], user_id))
     # Without its route, a form sent back is read by the address it was posted to, which allows no zero.
     assert any("empty_figure" in f for f in page_findings(f"{address}/weigh-in", page, [], user_id))
-    # Foods reads its zeros as it did before.
+    # Foods holds its zeros in its own card's columns: a 0 in a table outside it counts nowhere.
     assert page_findings("/foods?saved=1", '<table><tr><td>0</td></tr></table>', [], user_id)
 
 
@@ -1094,7 +1130,10 @@ def test_a_zone_name_is_masked_and_a_bare_confirmation_fails(client):
     assert any("New_York" in f for f in page_findings("/settings", page, [], user_id))
     bare = '<div class="ok undo">\n  Deleted.\n  <form></form></div>'
     assert any("does not name its subject" in f for f in page_findings("/day/x", bare, [], user_id))
-    assert page_findings("/foods", '<p class="ok">Saved.</p>', [], user_id) == []
+    # Foods' bare "Saved." had a skip until pass B15: now it fails as any bare confirmation does.
+    bare_saved = page_findings("/foods", '<p class="ok">Saved.</p>', [], user_id)
+    assert any("does not name its subject" in f for f in bare_saved)
+    assert page_findings("/foods", '<p class="ok">Saved food saved.</p>', [], user_id) == []
 
 
 # ---------------------------------------------------------------- the step 4 checks themselves
@@ -1438,7 +1477,10 @@ def test_the_glance_zeros_pass_only_inside_the_glance_block(client):
     assert any("empty_figure" in f for f in page_findings(address, before, [], user_id))
     past = client.get(f"/day/{(today - timedelta(days=1)).isoformat()}").text
     assert glance_lines(past) is None and not placed("/day/{date}", 1, {"/day/{date}": {"glance": None}})
-    assert placed("/foods", 1, {"/day/{date}": {"glance": None}})  # Foods keeps its allowance anywhere on its page
+    # A route with no places keeps its allowance anywhere on its page. Foods has its place since pass B15: a 0 on a
+    # line with no Saved foods cell left counts nowhere.
+    assert placed("/nowhere", 1, {"/day/{date}": {"glance": None}})
+    assert not placed("/foods", 1, {"/foods": {"saved-foods": {}}})
 
 
 def test_the_glance_zeros_are_none_on_an_account_whose_figures_are_all_above_0(client):
@@ -1638,3 +1680,53 @@ def test_the_weekly_average_is_never_a_true_zero(client, monkeypatch):
     assert week + "&nbsp;a week</td>" in page and page_findings("/progress", page, [], user_id) == []
     assert any("empty_figure" in f for f in page_findings("/progress", page.replace(
         week + "&nbsp;a week</td>", '<td>Lift sessions a week</td><td class="num">0</td>'), [], user_id))
+
+
+def test_foods_holds_each_true_zero_to_its_own_column(client):
+    """Foods' bare 0s (pass B15): a live food's kcal and its Times logged, counted from list_saved_foods column by
+    column, pass only in a cell of their own column in the Saved foods card. Before, the allowance was the page's:
+    ("/foods", "td") counted kcal and times logged together, anywhere on the page. A 0 moved into Serving, Grams or the
+    Food cell fails, and so does one moved from one column to the other, though the page's count is the same. A 0
+    outside the card fails, and a second row of a zero food is more than the read holds."""
+    sign_in(client)
+    user_id = only_user().id
+    _ok(services.save_food(user_id, {"name": "Black coffee", "serving_label": "1 cup", "kcal_per_serving": 0}, "web"))
+    roti = _ok(services.save_food(user_id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                                            "grams_per_serving": 40}, "web"))
+    _ok(services.log_food(user_id, {"entries": [{"saved_food_id": roti["id"], "servings": 1}]}, "claude"))
+    page = client.get("/foods").text
+    assert page_findings("/foods", page, [], user_id) == []
+    assert [foods_zeros(user_id, "/foods", "td", c) for c in FOODS_ZERO_COLUMNS] == [1, 1]
+    assert foods_zeros(user_id, "/foods", "p") == 0
+    assert sorted(n for names in foods_cells(page).values() for n in names) == ["Times logged", "kcal"]
+
+    def once(markup: str, old: str, new: str) -> str:
+        assert markup.count(old) == 1, old
+        return markup.replace(old, new)
+
+    coffee = "<td>Black coffee</td><td>1 cup</td><td>0</td><td>0</td><td></td>"
+    roti_row = "<td>Roti</td><td>1 roti</td><td>120</td><td>1</td><td>40</td>"
+    assert page.count(coffee) == page.count(roti_row) == 1
+    cases = {  # name: (the page, the words its finding must hold)
+        "into Grams": (once(page, coffee, coffee.replace("<td>0</td><td>0</td><td></td>",
+                                                         "<td>5</td><td>0</td><td>0</td>")), "empty_figure"),
+        "into Serving": (once(page, coffee, coffee.replace("<td>1 cup</td><td>0</td>", "<td>0</td><td>5</td>")),
+                         "empty_figure"),
+        "into the Food cell": (once(page, coffee, coffee.replace("<td>Black coffee</td><td>1 cup</td><td>0</td>",
+                                                                 "<td>0</td><td>1 cup</td><td>5</td>")),
+                               "empty_figure"),
+        "from kcal to Times logged": (once(once(page, coffee, coffee.replace("<td>1 cup</td><td>0</td>",
+                                                                             "<td>1 cup</td><td>5</td>")),
+                                           roti_row, roti_row.replace("<td>1</td>", "<td>0</td>")),
+                                      "in its saved-foods, Times logged, but the data holds 1 true zeros"),
+        "outside the card": (page.replace('<p class="lede">', '<p>0</p><p class="lede">'), "empty_figure"),
+        "a second row": (once(page, coffee, coffee + "</tr><tr>" + coffee), "true zeros"),
+    }
+    missed = {name: page_findings("/foods", markup, [], user_id) for name, (markup, said) in cases.items()
+              if not any(said in f for f in page_findings("/foods", markup, [], user_id))}
+    assert not missed, missed
+    # A card that never closes holds no place: its two zeros fail.
+    close = page.index("</section>", page.index(SAVED_FOODS_CARD)) + len("</section>")
+    unclosed = page[:close - len("</section>")] + page[close:]
+    assert foods_cells(unclosed) is None
+    assert sum("empty_figure" in f for f in page_findings("/foods", unclosed, [], user_id)) == 2

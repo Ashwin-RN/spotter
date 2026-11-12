@@ -371,6 +371,40 @@ def test_each_goal_card_holds_goal_charts_figures_cell_by_cell(client, monkeypat
         assert len(cells["heading"]) == len(cells["means"]) == len(cells["now_words"]) == 1
 
 
+# ---------------------------------------------------------------- Foods and list_saved_foods (pass B15)
+
+def saved_food_rows(page: str) -> tuple[list[str], list[list[str]]]:
+    """Foods' Saved foods table: its headers, then each row's cells in order, each cell's text as a person reads it."""
+    card = re.search(r'<section class="card saved-foods"[^>]*>(.*?)</section>', page, re.S).group(1)
+    headers = [text_of(h) for h in re.findall(r"<th[^>]*>(.*?)</th>", card, re.S)]
+    body = re.search(r"<tbody>(.*?)</tbody>", card, re.S).group(1)
+    return headers, [[text_of(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
+                     for row in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S)]
+
+
+def test_each_saved_food_row_holds_list_saved_foods_figures_cell_by_cell(client, account):
+    """Every live saved food, in list_saved_foods' order, cell by cell under its header: the name and its sample tag,
+    the serving as written, kcal_per_serving, times_logged as a count and grams_per_serving, each through show, a food
+    with no grams an empty cell, and the Grams column only when some food has grams. So two columns swapped, a figure
+    off the formatter, or a deleted food shown, fail."""
+    live = [f for f in services.list_saved_foods(account)["foods"] if f["deleted_at"] is None]
+    assert live
+    weighed = any(f["grams_per_serving"] is not None for f in live)
+    headers, rows = saved_food_rows(client.get("/foods").text)
+    assert headers == ["Food", "Serving", "kcal", "Times logged"] + (["Grams (g)"] if weighed else []) + \
+        ["Edit", "Delete"]
+    want = []
+    for f in live:
+        cells = {"Food": f["name"] + (" sample" if f["is_sample"] else ""), "Serving": f["serving_label"],
+                 "kcal": show(f["kcal_per_serving"], "kcal_per_serving", page=True, unit=False),
+                 "Times logged": show(f["times_logged"], "count", page=True),
+                 "Grams (g)": "" if f["grams_per_serving"] is None else show(f["grams_per_serving"], "grams", page=True,
+                                                                              unit=False),
+                 "Edit": "Edit", "Delete": "Delete"}
+        want.append([cells[h] for h in headers])
+    assert rows == want
+
+
 def test_the_edge_account_has_a_cardio_time_goal_and_a_closed_goal(client):
     sign_in(client)
     user_id = only_user().id

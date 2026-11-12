@@ -2252,10 +2252,10 @@ def test_foods_lists_name_serving_kcal_and_times_logged(client, fed):
 def test_adding_a_food_from_the_page(client):
     sign_in(client)
     r = post(client, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="58", grams_per_serving="")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=1"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=saved_food"
     [food] = rows(SavedFood, only_user().id)
     assert (food.name, food.serving_label, food.kcal_per_serving, food.grams_per_serving) == ("Idli", "1 idli", 58, None)
-    assert "Saved." in client.get(r.headers["location"]).text
+    assert '<p class="ok">Saved food saved.</p>' in client.get(r.headers["location"]).text
 
 
 @pytest.mark.parametrize("data, field_says", [
@@ -2274,7 +2274,7 @@ def test_editing_a_food_updates_it_and_keeps_what_was_logged(client, fed):
     page = client.get(f"/foods/{fed['roti']}/edit").text
     assert 'name="kcal_per_serving" value="120"' in page and 'name="name"' not in page
     r = post(client, f"/foods/{fed['roti']}/edit", serving_label="1 roti", kcal_per_serving="110", grams_per_serving="40")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=1"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=saved_food"
     [food] = rows(SavedFood, only_user().id)
     assert (food.kcal_per_serving, food.grams_per_serving) == (110, 40)
     assert next(e.kcal for e in rows(FoodEntry, only_user().id) if e.id == fed["food"][0]) == 240  # history kept
@@ -2282,13 +2282,14 @@ def test_editing_a_food_updates_it_and_keeps_what_was_logged(client, fed):
 
 def test_deleting_a_food_then_undo(client, fed):
     r = post(client, f"/foods/{fed['roti']}/delete")
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/foods?deleted={fed['roti']}"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/foods?deleted=saved_food:{fed['roti']}"
     page = client.get(r.headers["location"]).text
     assert "Saved food deleted." in page and "<td>Roti</td>" not in page
     token = re.search(rf'action="/foods/{fed["roti"]}/restore" class="inline">\s*'
                       r'<input type="hidden" name="csrf_token" value="([^"]+)">', page).group(1)
     back = client.post(f"/foods/{fed['roti']}/restore", data={"csrf_token": token})
-    assert back.status_code == 303 and "<td>Roti</td>" in client.get("/foods").text
+    assert back.status_code == 303 and back.headers["location"] == SITE + "/foods?restored=saved_food"
+    assert "<td>Roti</td>" in client.get("/foods").text
     assert post(client, f"/foods/{fed['roti']}/restore").status_code == 409
 
 
@@ -2914,10 +2915,11 @@ def test_unchanged_targets_and_an_unchanged_food_are_never_marked_saved(client, 
 
 
 def test_the_marks_pages_have_words_for_stay_as_they_are(client, fed):
+    # Foods' marks are the rebuilt pages' since pass B15: saved, deleted and restored, each naming its kind.
     assert location(post(client, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="40")) == \
-        SITE + "/foods?saved=1"
-    assert location(post(client, f"/foods/{fed['roti']}/delete")) == SITE + f"/foods?deleted={fed['roti']}"
-    assert location(post(client, f"/foods/{fed['roti']}/restore")) == SITE + "/foods?saved=1"
+        SITE + "/foods?saved=saved_food"
+    assert location(post(client, f"/foods/{fed['roti']}/delete")) == SITE + f"/foods?deleted=saved_food:{fed['roti']}"
+    assert location(post(client, f"/foods/{fed['roti']}/restore")) == SITE + "/foods?restored=saved_food"
     assert location(post(client, "/settings/claude-can", claude_can="read")) == SITE + "/settings?saved=claude_can"
     assert location(post(client, "/settings", time_zone="Asia/Kolkata")) == SITE + "/settings?saved=time_zone"
 

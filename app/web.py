@@ -19,6 +19,9 @@ and Settings.
                                    closed ones (get_goals);
                                    Hit, Drop and Reopen POST to /goals/{goal_id}/status; one form for a new
                                    goal (POST), one kind at a time (?kind=)
+    /foods                         the saved foods as a table (list_saved_foods), a fold-out that saves one
+                                   (POST, save_food); delete and Undo POST to /foods/{id}/delete and /restore
+    /foods/{id}/edit               one saved food's serving, kcal and grams (GET, POST)
     /settings                      the account, the time zone, and the switch for what Claude may do
                                    (the switch POSTs to /settings/claude-can); export, sample data, delete
     /settings/sample               POST: sample data into an empty account, then Today
@@ -195,10 +198,15 @@ FIELD_HELP = {
     ("cardio_entry", "avg_hr"): "Give the average heart rate, 30 to 240, as a whole number, or leave it empty.",
     ("cardio_entry", "machine_kcal"): "Give the machine's number, 1 to 5,000, as a whole number, or leave it empty.",
     ("cardio_entry", "notes"): "Keep the notes under 2,000 characters.",
-    ("saved_food", "name"): "Give the food a name, up to 128 characters.",
-    ("saved_food", "serving_label"): "Say what one serving is, such as 1 roti, up to 64 characters.",
-    ("saved_food", "kcal_per_serving"): "Give the kcal in one serving, from 0 to 5,000.",
-    ("saved_food", "grams_per_serving"): "Give the grams in one serving, or leave it empty.",
+    # Foods' two forms: the limits are save_food's own (rules.TEXT_LIMITS, rules.NUMBERS).
+    ("saved_food", "name"): f"Give the food a name, up to {rules.TEXT_LIMITS['name']} characters.",
+    ("saved_food", "serving_label"): (f"Say what one serving is, such as 1 roti, up to "
+                                      f"{rules.TEXT_LIMITS['serving_label']} characters."),
+    ("saved_food", "kcal_per_serving"): ("Give the kcal in one serving, from "
+                                         f"{rules.span(*rules.NUMBERS['kcal_per_serving'][:2], 'kcal_per_serving')}."),
+    ("saved_food", "grams_per_serving"): ("Give the grams in one serving, from "
+                                          f"{rules.span(*rules.NUMBERS['grams_per_serving'][:2], 'grams')}, "
+                                          "or leave it empty."),
     ("settings", "calorie_target_kcal"): "Give a daily target from 800 to 10,000 kcal, as a whole number, or leave it empty.",
     ("settings", "target_sessions_per_week"): "Give sessions a week from 0 to 14, or leave it empty.",
     ("settings", "target_cardio_minutes_per_week"): "Give cardio minutes a week from 0 to 3,000, or leave it empty.",
@@ -1131,10 +1139,14 @@ def undo_target(value: object) -> tuple[str, str] | None:
     if not isinstance(value, str) or ":" not in value:
         return None
     kind, _, entry_id = value.partition(":")
-    if kind not in EDIT_FIELDS or not (entry_id.isascii() and entry_id.isdigit()) or len(entry_id) > 10 \
-            or entry_id.startswith("0"):
+    if kind not in EDIT_FIELDS or not plain_id(entry_id):
         return None
     return kind, entry_id
+
+
+def plain_id(text: str) -> bool:
+    """An id as an address mark carries it: ASCII digits, 1 to 10 of them, with no leading zero."""
+    return text.isascii() and text.isdigit() and len(text) <= 10 and not text.startswith("0")
 
 
 def form_message(kind: str, field: str, measured: str | None = None) -> str:
@@ -1440,11 +1452,77 @@ async def restore_page(request: Request) -> Response:
 
 # ---------------------------------------------------------------- Foods
 
+# The kind save_food, delete_entry and restore_entry name a saved food by, and its one spelling on the page.
+SAVED_FOOD = "saved_food"
+SAVED_FOOD_WORDS = "Saved food"
+# Foods' strips after a write, by mark and value (section L, Foods). A mark with no row here shows no strip:
+# saved=unchanged only makes the page calm, and so does any value the table does not name. deleted=saved_food:{id}
+# is the Undo strip, read by food_strip.
+FOOD_STRIPS = {("saved", SAVED_FOOD): f"{SAVED_FOOD_WORDS} saved.",
+               ("restored", SAVED_FOOD): f"{SAVED_FOOD_WORDS} restored."}
+# A refusal of a field the form does not draw, or of none, sits at the top of the form in these words.
+FOOD_ERROR_GENERAL = "That food was not saved. Check each field and try again."
+# The fields the edit page draws: the name stays, since it is how save_food finds the food.
+FOOD_EDIT_FIELDS = FOOD_FIELDS[1:]
+
+
 def food_form(form) -> dict:
     data = {f: str(form.get(f) or "") for f in FOOD_FIELDS}
     if not data["grams_per_serving"].strip():
         del data["grams_per_serving"]
     return data
+
+
+def food_key(name: object) -> str:
+    """A saved food's name as save_food matches it (its name_key): its words, one space apart, casefolded."""
+    return " ".join(str(name or "").split()).casefold()
+
+
+def same_food(before: dict | None, result: dict) -> bool:
+    """Whether a save left the food as it was: the live food save_food answered with (by its id) held the same name,
+    serving, kcal and grams before as save_food's own food after. save_food answers such a save as a success, so
+    the web read the food first."""
+    after = result.get("food") or {}
+    return before is not None and all(before.get(f) == after.get(f) for f in FOOD_FIELDS)
+
+
+def food_errors(result: dict, drawn) -> tuple[dict[str, str], list[str]]:
+    """A refused save in the page's own words, never save_food's: {field: line} for each refused field the form
+    draws (its message starts with the field's name, as save_food's checks write it), and the one general line at
+    the top for any other refusal. Every problem of a combined refusal is placed."""
+    errors, loose = {}, []
+    for err in [e for e in result.get("errors") or [] if isinstance(e, dict)] or [result]:
+        words = str(err.get("message") or "").split()
+        field = words[0] if words else ""
+        if field in drawn:
+            errors[field] = FIELD_HELP[(SAVED_FOOD, field)]
+        elif FOOD_ERROR_GENERAL not in loose:
+            loose.append(FOOD_ERROR_GENERAL)
+    return errors, loose
+
+
+def food_values(food: dict) -> dict:
+    """A saved food's edit fields as stored: the serving as written, the kcal and grams at the decimals the store
+    keeps (formatting.field), nothing for no grams."""
+    out = {"serving_label": str(food.get("serving_label") or "")}
+    for field in ("kcal_per_serving", "grams_per_serving"):
+        value = food.get(field)
+        out[field] = "" if value is None else formatting.field(value, FIELD_QUANTITIES[field])
+    return out
+
+
+def food_strip(params) -> dict | None:
+    """The one strip Foods shows after a write: {"words", "undo"}, where undo is the id of the food its Undo form
+    restores, or None. The Undo strip first, then saved and restored. The words come from the table, never from the
+    address."""
+    kind, _, food_id = str(params.get("deleted") or "").partition(":")
+    if kind == SAVED_FOOD and plain_id(food_id):
+        return {"words": f"{SAVED_FOOD_WORDS} deleted.", "undo": food_id}
+    for mark in ("saved", "restored"):
+        words = FOOD_STRIPS.get((mark, params.get(mark)))
+        if words is not None:
+            return {"words": words, "undo": None}
+    return None
 
 
 async def live_foods(user: User) -> list[dict]:
@@ -1454,36 +1532,46 @@ async def live_foods(user: User) -> list[dict]:
     return [f for f in result.get("foods", []) if f.get("deleted_at") is None]
 
 
-async def foods_view(request: Request, user: User, errors: dict | None = None, typed: dict | None = None,
-                     status_code: int = 200) -> Response:
+async def foods_view(request: Request, user: User, errors: dict | None = None, loose: list | None = None,
+                     typed: dict | None = None, status_code: int = 200) -> Response:
+    """Foods: the Saved foods card and the Save a food fold-out. After a refusal, each line under its field or at
+    the top (loose), what was typed kept, and the fold-out open. The strip only on a page after a write."""
     saved = await live_foods(user)
     state = await _db(services.sample_state, user.id)
-    deleted = request.query_params.get("deleted")
-    return page(request, "foods.html", status_code=status_code, foods=saved, errors=errors or {},
-                sample_rows=sample_rows_of(state),
-                typed=typed or {}, saved=request.query_params.get("saved") == "1",
-                undo=deleted if isinstance(deleted, str) and deleted.isdigit() and len(deleted) <= 10 else None)
+    return page(request, "foods.html", status_code=status_code, foods=saved, errors=errors or {}, loose=loose or [],
+                typed=typed or {}, sample_rows=sample_rows_of(state), limits=rules.TEXT_LIMITS,
+                strip=food_strip(request.query_params) if status_code == 200 else None)
 
 
 async def foods_page(request: Request) -> Response:
-    """GET: the saved foods. POST: save one; the same name updates it (save_food's rule)."""
+    """GET: the saved foods. POST: save one; the same name updates it (save_food's rule). A save that would change
+    nothing writes nothing, and one save_food finds unchanged is marked so: neither says a food was saved."""
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
     if request.method == "GET":
         return await foods_view(request, user)
     form = await request.form()
-    result = await write(user, "save_food", services.save_food, user.id, food_form(form), "web")
+    data = food_form(form)
+    live = await live_foods(user)
+    known = next((f for f in live if food_key(f["name"]) == food_key(data["name"])), None)
+    if known is not None and not changed_fields(FOOD_FIELDS, known, form):
+        return redirect(marked(links.page("foods"), *UNCHANGED))
+    result = await write(user, "save_food", services.save_food, user.id, data, "web")
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if failed(result):
-        return await foods_view(request, user, errors=field_errors("saved_food", result), typed=food_form(form),
-                                status_code=400)
-    return redirect(links.page("foods") + "?saved=1")
+        errors, loose = food_errors(result, FOOD_FIELDS)
+        return await foods_view(request, user, errors=errors, loose=loose,
+                                typed={f: str(form.get(f) or "") for f in FOOD_FIELDS}, status_code=400)
+    before = next((f for f in live if f["id"] == result.get("id")), None)
+    mark = UNCHANGED if same_food(before, result) else ("saved", SAVED_FOOD)
+    return redirect(marked(links.page("foods"), *mark))
 
 
 async def food_edit_page(request: Request) -> Response:
-    """One saved food: change its serving or kcal. The name is how save_food finds it, so it stays."""
+    """One saved food: change its serving, kcal or grams. The name is how save_food finds it, so it stays. An edit
+    that changes nothing writes nothing and says nothing was saved."""
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
@@ -1491,21 +1579,22 @@ async def food_edit_page(request: Request) -> Response:
     food = next((f for f in await live_foods(user) if str(f["id"]) == food_id), None)
     if food is None:
         return not_found_page(request)
-    errors, status = {}, 200
+    errors, loose, status, values = {}, [], 200, food_values(food)
     if request.method == "POST":
         form = await request.form()
-        data = {**food_form(form), "name": food["name"]}
-        if not changed_fields(FOOD_FIELDS[1:], food, form):
+        if not changed_fields(FOOD_EDIT_FIELDS, food, form):
             return redirect(marked(links.page("foods"), *UNCHANGED))
-        saved = await write(user, "save_food", services.save_food, user.id, data, "web")
+        saved = await write(user, "save_food", services.save_food, user.id, {**food_form(form), "name": food["name"]},
+                            "web")
         if "too_many_writes" in codes(saved):
             return too_many(request, saved)
         if not failed(saved):
-            return redirect(links.page("foods") + "?saved=1")
-        errors, status = field_errors("saved_food", saved), 400
-        food = {**food, **{f: str(form.get(f) or "") for f in FOOD_FIELDS[1:]}}
-    return page(request, "food_edit.html", status_code=status, food=food, errors=errors,
-                field_quantities=FIELD_QUANTITIES)
+            mark = UNCHANGED if same_food(food, saved) else ("saved", SAVED_FOOD)
+            return redirect(marked(links.page("foods"), *mark))
+        (errors, loose), status = food_errors(saved, FOOD_EDIT_FIELDS), 400
+        values = {f: str(form.get(f) or "") for f in FOOD_EDIT_FIELDS}  # what they typed, as typed
+    return page(request, "food_edit.html", status_code=status, food=food, values=values, errors=errors, loose=loose,
+                limits=rules.TEXT_LIMITS)
 
 
 async def food_delete_page(request: Request) -> Response:
@@ -1513,20 +1602,21 @@ async def food_delete_page(request: Request) -> Response:
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
-    result = await write(user, "delete_entry", services.delete_entry, user.id, "saved_food",
+    result = await write(user, "delete_entry", services.delete_entry, user.id, SAVED_FOOD,
                          request.path_params["food_id"])
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if failed(result):
         return not_found_page(request)
-    return redirect(links.page("foods") + f"?deleted={result['id']}")
+    return redirect(marked(links.page("foods"), "deleted", f"{SAVED_FOOD}:{result['id']}"))
 
 
 async def food_restore_page(request: Request) -> Response:
+    """POST: Undo after a delete, back to Foods, which says the food is restored."""
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
-    result = await write(user, "restore_entry", services.restore_entry, user.id, "saved_food",
+    result = await write(user, "restore_entry", services.restore_entry, user.id, SAVED_FOOD,
                          request.path_params["food_id"])
     if "too_many_writes" in codes(result):
         return too_many(request, result)
@@ -1535,7 +1625,7 @@ async def food_restore_page(request: Request) -> Response:
                        "Go back to Foods to see it.", status_code=409)
     if failed(result):
         return not_found_page(request)
-    return redirect(links.page("foods") + "?saved=1")
+    return redirect(marked(links.page("foods"), "restored", SAVED_FOOD))
 
 
 # ---------------------------------------------------------------- the targets on Settings

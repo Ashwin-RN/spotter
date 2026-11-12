@@ -1,59 +1,63 @@
 {% extends "base.html" %}
 {% block title %}Foods · Spotter{% endblock %}
 {% block main %}
-<h1>Foods</h1>
-<p class="muted">Foods you save are logged by name and amount: Spotter works out the kcal. Saving one by talking to Claude works too.</p>
+{% import "_parts.html" as parts %}
+{# Foods (section L): the page head with its grey line, the sample banner, one strip after a write, then the Saved
+   foods card in columns 1 to 8 and the Save a food card in 9 to 12. Every figure is list_saved_foods' own field
+   through its filter: kcal_per_serving, grams_per_serving (grams), times_logged (count). The Food cell holds the name
+   and its sample tag. Grams sit in their own column after Times logged, a food with none leaving its cell empty, and
+   with no grams on any food the column is not drawn. No saved foods: a dashed card, and the fold-out open. #}
+<div class="page-head">
+  <h1>Foods</h1>
+  <p class="lede">Foods you save are logged by name and amount: Spotter works out the kcal. Saving one by talking to your assistant works too.</p>
+</div>
 {% include "sample_banner.html" %}
-{% if saved %}<p class="ok">Saved.</p>{% endif %}
-{% if undo %}
-<div class="ok undo">
-  Saved food deleted.
-  <form method="post" action="/foods/{{ undo }}/restore" class="inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button class="link">Undo</button>
-  </form>
+
+{% if strip and strip.undo %}
+{{ parts.undo_strip(strip.words, "/foods/" ~ strip.undo ~ "/restore", csrf_token) }}
+{% elif strip %}
+{{ parts.saved_line(strip.words) }}
+{% endif %}
+
+{% if foods %}
+{% set weighed = foods|rejectattr("grams_per_serving", "none")|list %}
+<section class="card saved-foods" aria-labelledby="saved-foods-title">
+  <h2 id="saved-foods-title">Saved foods</h2>
+  <div class="table-wrap">
+    <table aria-labelledby="saved-foods-title">
+      <thead><tr><th scope="col">Food</th><th scope="col">Serving</th><th scope="col">kcal</th><th scope="col">Times logged</th>{% if weighed %}<th scope="col">Grams (g)</th>{% endif %}<th scope="col"><span class="sr">Edit</span></th><th scope="col"><span class="sr">Delete</span></th></tr></thead>
+      <tbody>
+        {% for f in foods %}
+        <tr><td>{{ f.name }}{{ parts.sample_tag(f) }}</td><td>{{ f.serving_label }}</td><td>{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td><td>{{ f.times_logged|show("count") }}</td>{% if weighed %}<td>{% if f.grams_per_serving is not none %}{{ f.grams_per_serving|show("grams", unit=False) }}{% endif %}</td>{% endif %}<td><a class="action" href="/foods/{{ f.id }}/edit">Edit</a></td><td><form method="post" action="/foods/{{ f.id }}/delete" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="link">Delete</button>
+        </form></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<div class="card saved-foods is-empty">
+  <p class="empty-line">No saved foods yet. Tell your assistant a food you eat often and its number, and ask it to save the food.</p>
 </div>
 {% endif %}
 
-<div class="card">
-  <h2>Saved foods</h2>
-  {% if foods %}
-  <table class="foods">
-    <thead><tr><th>Food</th><th>Serving</th><th>kcal</th><th>Times logged</th><th></th></tr></thead>
-    <tbody>
-    {% for f in foods %}
-    <tr>
-      <td>{{ f.name }}{% if f.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}</td>
-      <td>{{ f.serving_label }}{% if f.grams_per_serving %} <span class="muted">({{ f.grams_per_serving|show("grams") }})</span>{% endif %}</td>
-      <td>{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td>
-      <td>{{ f.times_logged|show("count") }}</td>
-      <td><span class="entry-actions"><a href="/foods/{{ f.id }}/edit">Edit</a>
-        <form method="post" action="/foods/{{ f.id }}/delete" class="inline">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button class="link">Delete</button>
-        </form></span></td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="muted">No saved foods yet.</p>
-  {% endif %}
-</div>
-
-<div class="card">
-  <h2>Save a food</h2>
-  <p class="muted small">Saving a name you already have updates it.</p>
+{# Save a food: closed by default, open after a refusal and when there are no saved foods. Each refusal sits under
+   its field in the page's own words (web.food_errors), and one tied to no field the form draws at the top. What
+   was typed stays. #}
+<div class="card save-food">
+  {% call parts.foldout("save-food", "Save a food", errors or loose or not foods) %}
   <form method="post" action="/foods">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    {% for field, label, required in [("name", "Name", true), ("serving_label", "One serving is", true),
-                                      ("kcal_per_serving", "kcal in one serving", true),
-                                      ("grams_per_serving", "Grams in one serving (optional)", false)] %}
-    <label for="food-{{ field }}">{{ label }}</label>
-    <input id="food-{{ field }}" name="{{ field }}" value="{{ typed.get(field, '') }}"{% if required %} required{% endif %} autocomplete="off">
-    {% if errors[field] %}<p class="error">{{ errors[field] }}</p>{% endif %}
-    {% endfor %}
-    <button class="primary">Save food</button>
+    {% if loose %}<div class="error">{% for words in loose %}<p>{{ words }}</p>{% endfor %}</div>{% endif %}
+    {{ parts.field("food-name", "name", "Name", errors.get("name"), typed.get("name"), required=true, maxlength=limits.name) }}
+    {{ parts.field("food-serving_label", "serving_label", "One serving is", errors.get("serving_label"), typed.get("serving_label"), required=true, maxlength=limits.serving_label) }}
+    {{ parts.field("food-kcal_per_serving", "kcal_per_serving", "Calories in one serving (kcal)", errors.get("kcal_per_serving"), typed.get("kcal_per_serving"), inputmode="decimal", required=true) }}
+    {{ parts.field("food-grams_per_serving", "grams_per_serving", "Grams in one serving (g)", errors.get("grams_per_serving"), typed.get("grams_per_serving"), inputmode="decimal", hint="Optional") }}
+    <div class="form-actions"><button class="primary">Save food</button></div>
+    <p class="small">Saving a name you already have updates it.</p>
   </form>
+  {% endcall %}
 </div>
 {% endblock %}

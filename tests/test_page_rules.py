@@ -432,14 +432,19 @@ def error_posts(today: str, user_id: int) -> dict[str, list[tuple[str, dict]]]:
                         (f"/day/{today}/cardio", {"exercise": "Back Squat", "minutes": "30"}),
                         (f"/day/{today}/measurement", {"kind": "waist", "value": "abc"}),
                         (f"/day/{today}/measurement", {"kind": "wrist", "value": "17"})],
-        "/foods": [("/foods", {"name": "", "serving_label": "1 bowl", "kcal_per_serving": "abc"})],
+        # The Save a food fold-out: two problems, then one under each of the other two fields with what was typed.
+        "/foods": [("/foods", {"name": "", "serving_label": "1 bowl", "kcal_per_serving": "abc"}),
+                   ("/foods", {"name": "Idli", "serving_label": "", "kcal_per_serving": "58",
+                               "grams_per_serving": "0"})],
         "/settings": [("/settings", {"time_zone": "Not/AZone"}),
                       ("/settings/targets", {"calorie_target_kcal": "abc"})],
         "/goals": goal_error_posts(today),
     }
     if foods:
         out["/foods/{food_id}/edit"] = [(f"/foods/{foods[0]}/edit",
-                                         {"serving_label": "1 bowl", "kcal_per_serving": "abc"})]
+                                         {"serving_label": "1 bowl", "kcal_per_serving": "abc"}),
+                                        (f"/foods/{foods[0]}/edit",
+                                         {"serving_label": "", "kcal_per_serving": "58", "grams_per_serving": "some"})]
     # Each kind's edit page sent back with its error, on the first entry of each kind the account holds: an
     # input's error, a typed 0, a select's, a textarea's and a date's.
     edits = {"bodyweight": [{"kg": "abc"}, {"kg": "0"}],
@@ -877,6 +882,8 @@ def test_the_page_after_every_write_is_calm(client):
     write("delete", f"/entries/bodyweight/{weigh_in}/delete")
     assert write("undo", f"/entries/bodyweight/{weigh_in}/restore").endswith("?restored=bodyweight")
     write("a saved food", "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="40")
+    assert write("the same saved food again", "/foods", name="Idli", serving_label="1 idli",
+                 kcal_per_serving="40") == "/foods?saved=unchanged"
     food = _ids(SavedFood, user.id)[0]
     assert write("an unchanged saved food", f"/foods/{food}/edit", serving_label="1 idli",
                  kcal_per_serving="40") == "/foods?saved=unchanged"
@@ -898,7 +905,7 @@ def test_the_page_after_every_write_is_calm(client):
         findings += [f"{name}: {f}" for f in frame_findings(s)]
         if address.endswith("saved=unchanged") and (s.dom.find_all("p", "ok") or s.dom.find_all("div", "ok")):
             findings.append(f"{name}: {address} shows a strip though nothing changed")
-    assert len(landed) == 24
+    assert len(landed) == 25
     assert not findings, "\n".join(findings)
 
 
@@ -1849,6 +1856,117 @@ def test_the_pill_check_holds_each_days_year_and_the_weekday_letters(client, mon
     bad_row = row.replace(f"<span>{letters[0]}</span>", f"<span>{wrong}</span>", 1)
     assert bad_row != row
     assert any("the weekday row" in f for f in found(page.replace(row, bad_row)))
+
+
+# ---------------------------------------------------------------- Foods and a saved food's edit page (pass B15)
+
+def _own_foods(user_id: int) -> None:
+    """The person's own foods, none from sample data: one with grams and logged, one without, one at 0 kcal never
+    logged."""
+    roti = services.save_food(user_id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                                        "grams_per_serving": 40}, "web")
+    services.save_food(user_id, {"name": "Dal", "serving_label": "1 bowl", "kcal_per_serving": 180.5}, "web")
+    services.save_food(user_id, {"name": "Black coffee", "serving_label": "1 cup", "kcal_per_serving": 0}, "web")
+    assert "error" not in services.log_food(user_id, {"entries": [{"saved_food_id": roti["id"], "servings": 2}]},
+                                            "claude")
+
+
+FOOD_STATES = {"no saved foods": ACCOUNTS["empty"], "sample": ACCOUNTS["sample"], "edge": ACCOUNTS["edge"],
+               "own, with and without grams": _own_foods}
+FOOD_CARDS = [("section", ["card", "saved-foods"]), ("div", ["card", "save-food"])]
+NO_FOOD_CARDS = [("div", ["card", "saved-foods", "is-empty"]), ("div", ["card", "save-food"])]
+
+
+def food_cards(s: Seen) -> list[tuple[str, list[str]]]:
+    [main] = s.dom.find_all("main")
+    return [(card.tag, card.classes) for card in main.elements() if card.is_(cls="card")]
+
+
+def foods_renders(client, monkeypatch, uid: int, today: str) -> list[Seen]:
+    """Every Foods and edit page render of one state: each address get_paths gives the two routes (each strip and
+    mark, each food's edit page), each form sent back with its errors (the sweep's posts, then a refusal tied to no
+    field of each form, as save_food really gives it), then a real save, the same save again, a delete and its Undo,
+    each followed to the page it lands on."""
+    zone = not only_user().time_zone
+    paths = get_paths(uid)
+    out = []
+    for address in paths["/foods"] + paths["/foods/{food_id}/edit"]:
+        r = client.get(address)
+        assert r.status_code == 200, address
+        out.append(Seen(address, r.text, True, zone_missing=zone, today=today))
+    posts = error_posts(today, uid)
+    sent = [(route, address, data) for route in ("/foods", "/foods/{food_id}/edit") for address, data in
+            posts.get(route, [])]
+    foods = _ids(SavedFood, uid)
+    with monkeypatch.context() as m:  # a field the forms never send: save_food's refusal has no field of the form's
+        real_form = web.food_form
+        m.setattr(web, "food_form", lambda form: {**real_form(form), "colour": "red"})
+        for route, address, data in [("/foods", "/foods", {"name": "Upma", "serving_label": "1 bowl",
+                                                           "kcal_per_serving": "250"})] + \
+                [("/foods/{food_id}/edit", f"/foods/{i}/edit", {"serving_label": "2 cups", "kcal_per_serving": "99"})
+                 for i in foods[:1]]:
+            r = post(client, address, **data)
+            assert r.status_code == 400 and '<div class="error"><p>' + web.FOOD_ERROR_GENERAL in r.text, address
+            out.append(Seen(address, r.text, True, zone_missing=zone, calm=True, today=today, posted_to=route))
+    for route, address, data in sent:
+        r = post(client, address, **data)
+        assert r.status_code == 400, (address, data)
+        out.append(Seen(address, r.text, True, zone_missing=zone, calm=True, today=today, posted_to=route))
+    upma = {"name": "Upma", "serving_label": "1 bowl", "kcal_per_serving": "250"}
+    landed = [follow(client, post(client, "/foods", **upma)), follow(client, post(client, "/foods", **upma))]
+    made = max(_ids(SavedFood, uid))
+    landed += [follow(client, post(client, f"/foods/{made}/delete")),
+               follow(client, post(client, f"/foods/{made}/restore"))]
+    assert [address for address, _ in landed] == ["/foods?saved=saved_food", "/foods?saved=unchanged",
+                                                  f"/foods?deleted=saved_food:{made}", "/foods?restored=saved_food"]
+    out += [Seen(address, markup, True, zone_missing=zone, today=today) for address, markup in landed]
+    return out
+
+
+@pytest.mark.parametrize("state", sorted(FOOD_STATES))
+def test_foods_and_the_edit_page_in_each_state_keep_every_rule_a_built_route_keeps(client, monkeypatch, state):
+    """/foods and /foods/{food_id}/edit are in BUILT (pass B15). In each state, every render: the frame rules, the
+    page rules, T1's text rules, T3's step 4 checks, the card rule and every rule a route in BUILT keeps find
+    nothing. Foods' cards are Saved foods then Save a food, Saved foods the dashed one with no food."""
+    assert {"/foods", "/foods/{food_id}/edit"} <= BUILT and not {"/foods", "/foods/{food_id}/edit"} & set(CLAUDE_SKIPS)
+    sign_in(client)
+    uid = only_user().id
+    FOOD_STATES[state](uid)
+    had_foods = bool(_ids(SavedFood, uid))
+    today = today_of(only_user()).isoformat()
+    seen = foods_renders(client, monkeypatch, uid, today)
+    entered, names, notes = entered_text(uid), names_of(uid), entered_notes(uid)
+    findings = []
+    for s in seen:
+        findings += frame_findings(s) + page_rule_findings(s) + titled_card_findings(s) + built_findings(s, uid)
+        findings += page_findings(s.address, s.markup, entered, uid, route=s.posted_to or None)
+        findings += step_4_findings(s.address, s.markup, names, notes, route=s.posted_to or None)
+    assert not findings, "\n".join(findings)
+    first = seen[0]
+    assert first.address == "/foods" and food_cards(first) == (FOOD_CARDS if had_foods else NO_FOOD_CARDS)
+    edits = [s for s in seen if s.route == "/foods/{food_id}/edit"]
+    assert all(food_cards(s) == [("div", ["card"])] for s in edits) and (bool(edits) == had_foods)
+    assert len(seen) == (15 + len(_ids(SavedFood, uid)) if had_foods else 12)
+
+
+def test_the_save_a_food_fold_out_keeps_its_rule_on_the_real_page(client):
+    """Open with no saved foods; closed once there is one, on every address; open after its error. Forced open with
+    a food and no error, or closed over its error, the rule finds it."""
+    sign_in(client)
+    uid = only_user().id
+    opening, closed_tag = '<details class="add" id="save-food" open>', '<details class="add" id="save-food">'
+    empty = client.get("/foods").text
+    assert opening in empty and foldout_findings(Seen("/foods", empty, True)) == []
+    services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "web")
+    for address in ("/foods", "/foods?saved=saved_food", "/foods?add=food", "/foods?add=save-food"):
+        page = client.get(address).text
+        assert closed_tag in page and foldout_findings(Seen(address, page, True)) == [], address
+    page = client.get("/foods").text
+    assert foldout_findings(Seen("/foods", page.replace(closed_tag, opening), True))
+    refused = post(client, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="lots")
+    assert refused.status_code == 400 and opening in refused.text
+    assert foldout_findings(Seen("/foods", refused.text, True, posted_to="/foods")) == []
+    assert foldout_findings(Seen("/foods", refused.text.replace(opening, closed_tag), True, posted_to="/foods"))
 
 
 # Every |safe in a template, by template and the count it holds: none. A new one needs a ruling and a line here.

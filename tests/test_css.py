@@ -992,3 +992,23 @@ def test_the_set_a_goal_forms_parts_each_have_their_rule(css):
     assert css.value("p.error", "margin-top") == "6px" and css.value(".error", "color") == "var(--err)"
     assert css.value('[aria-invalid="true"]', "border") == "1.5px solid var(--err)"
     assert css.value("div.error", "border") == "1.5px solid var(--err)"
+
+
+def test_the_foods_pages_parts_each_have_their_rule(css):
+    """Foods (pass B15): on a laptop Saved foods takes columns 1 to 8 and Save a food 9 to 12, under the page head,
+    the banner and the strip, which span both; the grey line under the h1 in --text-2; the table in its sideways
+    scrolling wrap; the empty card dashed; the fold-out's plus turns when open; the strips and the edit page's back
+    link and form are the edit pages' own. Each part the two pages draw is already styled, so pass B15 adds no rule."""
+    assert css.value(".foods-page .saved-foods", "grid-column", (LAPTOP,)) == "1 / span 8"
+    assert css.value(".foods-page .save-food", "grid-column", (LAPTOP,)) == "9 / -1"
+    assert css.value(".page > *", "grid-column", (LAPTOP,)) == "1 / -1"
+    assert css.value(".page-head .lede", "color") == "var(--text-2)"
+    assert css.value(".page-head .lede", "flex-basis") == "100%"
+    assert css.value("div.table-wrap", "overflow-x") == "auto"
+    assert css.value(".card.is-empty", "border") == "1.5px dashed var(--line-strong)"
+    assert css.value("p.empty-line", "color") == "var(--text-2)"
+    assert css.value("details.add[open] > summary::before", "rotate") == "45deg"
+    assert css.value("div.ok.undo form", "margin-left") == "auto" and css.value("p.ok", "display") == "flex"
+    assert css.value(".back", "min-height") == "44px" and css.value(".form-page > *", "max-width") == "640px"
+    assert css.value("form.stack", "display") == css.value("details.add > form", "display") == "grid"
+    assert css.value(".field .hint", "color") == "var(--text-3)"
