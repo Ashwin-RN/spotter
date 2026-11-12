@@ -60,14 +60,15 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 | "Squat 100 by June" | A goal with a start, a target and the pace it needs |
 | "How am I doing?" | Your weight trend, average calories, sessions and cardio minutes |
 | "Am I on track?" | Each open goal's needed pace, its pace so far and its projected date |
+| "Bring my weigh-ins over from my old app", with its export | A preview first, which writes nothing: what would go in, what is already there, what was refused. The assistant is told to write only when you say yes |
 
 ## Under the hood
 
-- 18 MCP functions and two resources, over streamable HTTP.
+- 19 MCP functions and two resources, over streamable HTTP.
 - Python 3.12, Starlette, SQLAlchemy, Alembic, the `mcp` library and Postgres. Sign-in goes through an outside provider (WorkOS AuthKit) for the web and the assistant, so both reach one account.
 - Every write locks the person's row first, counts against a write limit, and passes the same checks whether it came from the assistant or a form.
 - A docs-only change runs the docs tests, and a small code change runs the tests for the code it touches. The whole suite runs with warnings as errors on a clean export before a big push, and about once in every four or five pushes otherwise.
-- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 17 cases, 3 runs each. At stage 5, with one case fewer, 48 of 48 runs passed, on `claude-fable-5-2`. The newest case, from stage 6, has not been run yet. The runner now pins `claude-opus-5-5`. The result is recorded in `BUILD_LOG.md`; how the evals run is in `docs/evals.md`.
+- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 20 cases, 3 runs each. At stage 5, before stage 6 added four, 48 of 48 runs passed, on `claude-fable-5-2`. The four newest, from stage 6, have not been run yet. The runner now pins `claude-opus-5-5`. The result is recorded in `BUILD_LOG.md`; how the evals run is in `docs/evals.md`.
 
 ## Read more
 

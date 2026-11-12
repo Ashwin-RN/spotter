@@ -1,4 +1,4 @@
-"""Spotter's MCP server: eighteen functions and two resources.
+"""Spotter's MCP server: nineteen functions and two resources.
 
 The MCP library does the sign-in work: it serves the protected-resource metadata, answers 401 with
 `resource_metadata`, and runs every call through the token verifier. Functions read the verified token
@@ -37,7 +37,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.applications import Starlette
@@ -47,10 +47,10 @@ from app import calllog, db, links, services, users
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings
 from app.mcp_schemas import (
-    FOOD_NAME_RULE, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn, GetGoalsResult,
-    GetLogResult, GetProgressResult, GetTrendsResult, LogBodyweightResult, LogCardioResult, LogFoodResult,
-    LogLiftsResult, LogMeasurementResult, RestoreEntryResult, SaveFoodResult, SetGoalResult, SetIn,
-    UpdateSettingsResult, WhoamiResult,
+    FOOD_NAME_RULE, IMPORT_ROWS, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn,
+    GetGoalsResult, GetLogResult, GetProgressResult, GetTrendsResult, ImportEntriesResult, ImportRowIn,
+    LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult, RestoreEntryResult,
+    SaveFoodResult, SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
 )
 from app.models import User
 
@@ -63,6 +63,55 @@ CARDIO_RULE = (
     "point to: a pace, speed or distance that means more than 7 km/h is a run, otherwise a walk; with nothing "
     "to go on, the walk, the lower estimate. Say in your reply which one was taken; the person can correct it "
     "with edit_entry. Never ask first."
+)
+
+# Bringing history over from another app's export: only what guards the person's data before the function is chosen.
+# Everything else is in import_entries' own description (IMPORT_DESCRIPTION), which the model reads when it calls it:
+# Claude Code cuts server instructions past 4,096 characters, so the instructions carry only these five guards.
+IMPORT_RULE = (
+    "To bring history over from another app, read its export and send it with import_entries, after reading that "
+    "function's description. The first call is a preview: show the person what would be written, what is already "
+    "there and what was refused. Write, with dry_run false, only when the person says yes. Send numbers as the "
+    "export writes them and name the unit of each: never convert one, never assume one. Use names only from "
+    "list_exercises. Ask the person about any other name: never guess."
+)
+
+# import_entries' description: what the long import rule said before, beside what the function does. Its promises
+# are the service as built (app.services.imports), and the known limit is in can-and-cant.
+IMPORT_DESCRIPTION = (
+    "Brings history over from another app's export: lift sessions, weigh-ins, measurements, food and cardio. Each "
+    "row is dated, and takes kind, date and the named fields of its kind. "
+    "A preview first. With dry_run true or left out, nothing is written: the result says what would be written, "
+    "what is already there, what falls on a day Spotter already holds, and what was refused and why. Show the "
+    "person that, and the units the preview names, and send the same rows with dry_run false only when they say "
+    "yes. "
+    "Units. Send weights, distances, speeds and body sizes as the export writes them: never convert them "
+    "yourself. Send the unit of every weight, distance and body size the rows hold, in weight_unit, "
+    "distance_unit and length_unit. Spotter converts them and never assumes a unit: a call whose rows hold a "
+    "weight, a distance, a speed or a body size without its unit is refused, a preview too. When the export does "
+    "not say which unit it uses, ask the person: never guess. One call names one unit for each quantity: rows in "
+    "another unit go in a separate call. A row's speed is in the call's distance unit an hour. "
+    "Size. Up to 200 rows and up to 1,000 sets and food entries a call, oldest first, with one day's rows of a "
+    "kind in the same call. Send the rest in the next call. For food at six entries a day, and for lifting with "
+    "one item a set and more than 5 sets a session, the 1,000 sets and food entries run out before the 200 rows: "
+    "send times for sets that repeat. At most 10,000 imported rows in any 24 hours. "
+    "Dates. Send each row's timestamp with its offset when the export gives one, or its date. Leave out rows "
+    "more than 2 years old, and say how many were left out. "
+    "Names. Use exercise and activity names only from list_exercises, exactly as it gives them. When a name in "
+    "the export is not on the list, ask the person once per name which listed name it is, or whether to leave it "
+    "out. The closest names the result gives can be wrong. Never pick one on a guess, and never leave a lift out "
+    "without saying so. "
+    "Health stores and food. From a phone's health store, send one value a day: the day's total steps, the "
+    "night's total sleep, the day's resting heart rate as the app gives it, and the day's first weigh-in. Send "
+    "each food entry's meal as the export names it. Send a food entry's calories only as the export gives them: "
+    "never estimate one for an import. A food entry with no calories is left out: tell the person how many. "
+    "When the export gives only a meal's or a day's total, send it as one entry described as that total, such as "
+    "Breakfast from the old app. For an import only, when the export gives only a day's total, ask the person "
+    "once which meal such totals go under, and use it for every such row: logging food still never asks. "
+    "Sending again. An import never replaces an entry. Sent again with the same time zone set, the same rows "
+    "write nothing that is already there, and an imported entry the person edited, moved or deleted counts as "
+    "already there. Two cases are the exception, both named in the can-and-cant resource: one food case, and "
+    "rows stamped in UTC after the person's time zone changed."
 )
 
 # Which entry to delete. Unlike the activity, a delete is never a guess.
@@ -122,6 +171,7 @@ INSTRUCTIONS = (
     "Food: " + FOOD_RULE + " " + FOOD_NAME_RULE + " "
     "Leave the meal out unless the person named it: Spotter picks it from their clock. Never ask which meal. "
     "Cardio: " + CARDIO_RULE + " "
+    "Importing: " + IMPORT_RULE + " "
     "Deleting: " + DELETE_RULE + " "
     + SETTINGS_ONLY_RULE + " "
     "If a call returns not_allowed, tell the person what this account lets Claude do, and do not retry: "
@@ -152,6 +202,7 @@ NEEDS = {
     "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
     "delete_entry": "log_delete",
     "get_trends": "read", "get_goals": "read",
+    "import_entries": "log",
 }
 NOT_ALLOWED_MESSAGES = {"read": "This account lets Claude read only.",
                         "log": "This account lets Claude read and log, not delete."}
@@ -842,6 +893,42 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     ) -> Annotated[CallToolResult, GetGoalsResult]:
         sent = _sent(include_closed=include_closed or None)
         return await wrapper.call("get_goals", GetGoalsResult, lambda account: services.get_goals(account, **sent))
+
+    @server.tool(
+        name="import_entries",
+        title="Import entries",
+        description=IMPORT_DESCRIPTION,
+        # A write, as the log functions are: up to 200 rows with no undo, a re-run can write again in the documented
+        # cases, and every real call counts against the write limit. Not a setting.
+        annotations=WRITE,
+    )
+    async def import_entries(
+        rows: Annotated[list[ImportRowIn], Field(
+            description="The rows to bring over, oldest first: 1 to 200 a call, holding at most 1,000 sets and food "
+                        "entries together. Keep one day's rows of a kind in the same call. Send the rest in the "
+                        "next call.",
+            json_schema_extra={"minItems": IMPORT_ROWS[0], "maxItems": IMPORT_ROWS[1]})],
+        # Strict: true, false or left out. A loose value ("no", "off", 0) is refused here, never read as false.
+        dry_run: Annotated[StrictBool, Field(
+            description="true, or left out, checks every row and writes nothing. false writes them. Send false only "
+                        "after the person has seen a preview and said yes.")] = not_sent(),
+        # No unit has a default: one a row needs and the call left out is the service's missing_unit refusal.
+        weight_unit: Annotated[str | None, Field(
+            description="kg or lb: the unit of every weight in these rows, a weigh-in's or a set's, as the export "
+                        "writes it. Needed when a row holds a weight: a call without it is refused.")] = None,
+        distance_unit: Annotated[str | None, Field(
+            description="km or mi: the unit of every distance in these rows, as the export writes it, and of every "
+                        "speed an hour. Needed when a row holds a distance or a speed: a call without it is "
+                        "refused.")] = None,
+        length_unit: Annotated[str | None, Field(
+            description="cm or in: the unit of every body size (waist, hips, chest, arm, thigh) in these rows. "
+                        "Needed when a row holds a body size: a call without it is refused.")] = None,
+    ) -> Annotated[CallToolResult, ImportEntriesResult]:
+        # The five fields the service takes and nothing else: it refuses any other. A row's fields go as sent.
+        data = _sent(rows=[r.model_dump(exclude_none=True) for r in rows], dry_run=dry_run, weight_unit=weight_unit,
+                     distance_unit=distance_unit, length_unit=length_unit)
+        return await wrapper.call("import_entries", ImportEntriesResult,
+                                  lambda account: services.import_entries(account, data, "claude"))
 
     @server.resource(
         CAN_AND_CANT_URI,

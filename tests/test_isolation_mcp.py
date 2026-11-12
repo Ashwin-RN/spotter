@@ -221,3 +221,53 @@ def test_bs_goal_of_any_kind_gets_a_the_same_not_found(http, bob, bobs_goals, ki
     missing = failed(http, t, "set_goal", {"goal_id": MISSING_ID, **changes})
     assert theirs["error"] == "not_found" and theirs == missing
     assert snapshot(bob["account"], "goal", bobs_goals[kind]) == before
+
+# ---------------------------------------------------------------- import pass B: an import through MCP
+
+def test_as_import_of_bs_own_entries_on_bs_days_writes_as_and_leaves_bs_alone(http, bob):
+    """A sends, through MCP, the very entries B logged, on B's days. None of B's rows is already there for A or
+    takes A's day: every row is A's to write. B's rows, his deleted measurement too, are unchanged."""
+    t = token(A)
+    ok(http, t, "update_settings", {"time_zone": "UTC"})  # B has none set: his today is the UTC date
+    today = date.fromisoformat(ok(http, t, "whoami")["today"])
+    on, two_back = today.isoformat(), (today - timedelta(days=2)).isoformat()
+    rows = [{"kind": "bodyweight", "date": on, "weight": 91.5},
+            {"kind": "measurement", "date": on, "measurement_kind": "waist", "value": 97.25},
+            {"kind": "measurement", "date": on, "measurement_kind": "hips", "value": 103.75},  # B deleted his
+            {"kind": "lift_session", "date": two_back, "notes": "Bob's squat",
+             "sets": [{"exercise": "Back Squat", "weight": 120, "reps": 5, "times": 3}]},
+            {"kind": "food_entry", "date": on, "entries": [{"description": "Bob's dal", "kcal": 321, "meal": "lunch"}]},
+            {"kind": "cardio_entry", "date": on, "exercise": "Treadmill Walk", "minutes": 47, "notes": "Bob's walk"}]
+    kinds = (*ENTRY_KINDS, "deleted_measurement")
+    before = {k: snapshot(bob["account"], "measurement" if k == "deleted_measurement" else k, bob[k]) for k in kinds}
+    totals = ok(http, token(B), "get_log", {"days": 14})["totals"]
+    for dry in (True, False):
+        r = ok(http, t, "import_entries", {"rows": rows, "dry_run": dry, "weight_unit": "kg", "length_unit": "cm"})
+        assert r["row_outcomes"] == {"written": 6, "already_there": 0, "day_taken": 0, "failed": 0}, dry
+        assert r["day_taken"] == [] and r["imported_last_24h"] == 0
+    assert {k: snapshot(bob["account"], "measurement" if k == "deleted_measurement" else k, bob[k])
+            for k in kinds} == before
+    assert ok(http, token(B), "get_log", {"days": 14})["totals"] == totals
+    mine = ok(http, t, "get_log", {"days": 14})["totals"]
+    assert mine == {"sessions": 1, "weigh_ins": 1, "measurements": 2, "food_entries": 1, "cardio_entries": 1}
+
+
+def test_bs_imported_row_held_by_its_key_is_never_held_for_a_through_mcp(http, bob):
+    """Fix round 3: the key lookup across people, through MCP. B imports a waist and moves it, so only its key holds
+    it. A sends the same row: written for A. B sends it again: already there for B."""
+    allow_everything(http, A)
+    t, tb = token(A), token(B)
+    ok(http, t, "update_settings", {"time_zone": "UTC"})
+    ok(http, tb, "update_settings", {"time_zone": "UTC"})
+    today = date.fromisoformat(ok(http, tb, "whoami")["today"])
+    row = {"kind": "measurement", "date": (today - timedelta(days=5)).isoformat(), "measurement_kind": "thigh",
+           "value": 61.25}
+    sent = {"rows": [row], "length_unit": "cm", "dry_run": False}
+    assert ok(http, tb, "import_entries", sent)["row_outcomes"]["written"] == 1
+    day = ok(http, tb, "get_log", {"date": row["date"]})["days"][0]
+    [thigh] = [m for m in day["measurements"] if m["kind"] == "thigh"]
+    moved = (today - timedelta(days=6)).isoformat()
+    ok(http, tb, "edit_entry", {"kind": "measurement", "entry_id": thigh["id"], "date": moved})  # held by key alone
+    mine = ok(http, t, "import_entries", sent)
+    assert mine["row_outcomes"] == {"written": 1, "already_there": 0, "day_taken": 0, "failed": 0}
+    assert ok(http, tb, "import_entries", sent)["row_outcomes"]["already_there"] == 1

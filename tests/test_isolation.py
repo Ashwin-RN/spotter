@@ -372,3 +372,75 @@ def test_the_web_only_reads_never_show_bs_rows(world):
     with db.new_session() as s:
         assert lifts.history(s, a.id, users.today_for(a))["reps_only"] == {}
         assert lifts.history(s, b.id, users.today_for(b))["reps_only"] == {"Pull-Up": {"reps": 9, "date": mine["today"]}}
+
+
+# ---------------------------------------------------------------- importing
+
+def _zoned(user):
+    """An import needs the person's time zone: UTC, as B's today is read until one is set."""
+    from app.models import User
+    with db.session_scope() as s:
+        s.get(User, user.id).time_zone = "UTC"
+
+
+def test_as_import_never_matches_blocks_or_touches_bs_rows_on_the_same_days(world):
+    """A sends, on B's own day, exactly what B holds. Nothing of B's is already there or takes the day for A,
+    and every column of B's rows is as it was."""
+    a, b, ids = world
+    _zoned(a)
+    before = {kind: snapshot(model, ids[kind]) for kind, (model, _) in CASES.items()}
+    on = before["bodyweight"]["date"].isoformat()
+    meal = before["food_entry"]
+    rows = [{"kind": "lift_session", "date": on, "notes": "B only",
+             "sets": [{"exercise": "Deadlift", "weight": 140, "reps": 5, "times": 2}]},
+            {"kind": "bodyweight", "date": on, "weight": 90},
+            {"kind": "measurement", "date": on, "measurement_kind": "waist", "value": 90},
+            {"kind": "food_entry", "date": on, "entries": [
+                {"description": meal["description"], "kcal": meal["kcal"], "meal": meal["meal"]}]},
+            {"kind": "cardio_entry", "date": on, "exercise": "Outdoor Run", "minutes": 30, "distance": 5}]
+    for dry in (True, False):
+        r = services.import_entries(a.id, {"rows": rows, "dry_run": dry, "weight_unit": "kg", "distance_unit": "km", "length_unit": "cm"}, "claude")
+        assert r["row_outcomes"] == {"written": 5, "already_there": 0, "day_taken": 0, "failed": 0}, r
+        assert r["day_taken"] == []
+    assert {kind: snapshot(model, ids[kind]) for kind, (model, _) in CASES.items()} == before
+    assert services.get_log(b.id)["totals"] == {"sessions": 1, "weigh_ins": 1, "measurements": 1,
+                                                "food_entries": 1, "cardio_entries": 1}
+    # B's own import of the same rows: B's held entries are already there or take the day, A's never count.
+    _zoned(b)
+    mine = services.import_entries(b.id, {"rows": rows, "dry_run": True, "weight_unit": "kg", "distance_unit": "km", "length_unit": "cm"},
+                                   "web")["row_outcomes"]
+    assert mine["written"] == 0 and mine["already_there"] + mine["day_taken"] == 5
+
+
+def test_as_import_limit_counts_only_as_own_imported_rows(world):
+    from sqlalchemy import insert
+
+    from app.models import IMPORTED
+    a, b, _ = world
+    _zoned(a)
+    at = db.utcnow()
+    with db.session_scope() as s:
+        s.execute(insert(FoodEntry), [
+            {"user_id": b.id, "date": users.today_for(b), "meal": "snack", "description": "x", "kcal": 1,
+             "source": "you_said", "estimated": False, "logged_by": IMPORTED, "dedupe_key": "k", "created_at": at,
+             "updated_at": at, "is_sample": False} for _ in range(services.imports.IMPORT_LIMIT)])
+    r = services.import_entries(a.id, {"rows": [{"kind": "bodyweight", "date": users.today_for(a).isoformat(),
+                                                 "weight": 70}], "dry_run": False, "weight_unit": "kg"}, "claude")
+    assert r["imported_last_24h"] == 0 and r["within_import_limit"] is True and r["row_outcomes"]["written"] == 1
+
+
+def test_bs_imported_rows_never_hold_their_key_for_a(world):
+    """An imported row keeps its key when edited; the import looks it up by key on any date. Only the person's own."""
+    a, b, _ = world
+    _zoned(a)
+    _zoned(b)
+    on = users.today_for(b).isoformat()
+    row = {"kind": "measurement", "date": on, "measurement_kind": "hips", "value": 99}
+    services.import_entries(b.id, {"rows": [row], "dry_run": False, "length_unit": "cm"}, "web")
+    with db.new_session() as s:
+        hips = s.scalars(select(Measurement).where(Measurement.user_id == b.id, Measurement.kind == "hips")).one()
+    moved = (users.today_for(b) - timedelta(days=1)).isoformat()
+    assert services.edit_entry(b.id, "measurement", hips.id, {"date": moved}, "web")["changed"]  # held by key alone
+    r = services.import_entries(a.id, {"rows": [row], "dry_run": False, "length_unit": "cm"}, "claude")
+    assert r["row_outcomes"]["written"] == 1
+    assert services.import_entries(b.id, {"rows": [row], "length_unit": "cm"}, "web")["row_outcomes"]["already_there"] == 1

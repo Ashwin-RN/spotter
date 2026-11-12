@@ -443,10 +443,11 @@ def test_list_exercises_and_filters():
 
 # ---------------------------------------------------------------- texts name only functions Claude has
 
-# The eighteen functions Claude is offered in stage 5. A later stage extends this list.
+# The nineteen functions Claude is offered: stage 5's eighteen and stage 6's import_entries. A later stage
+# extends this list.
 OFFERED = ("whoami", "list_exercises", "get_progress", "get_log", "log_lifts", "log_bodyweight", "set_goal",
            "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
-           "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals")
+           "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries")
 # Functions that exist but Claude cannot call: every other public service function (get_entry,
 # set_claude_can, which is the Settings page's alone, entry_kinds, and stage 5's web-only ones:
 # sample data, export, delete account, the Foods page's list).
@@ -593,6 +594,18 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
     results += [settings({}), settings({"time_zone": "EST"}), settings({"time_zone": "Kolkata"}),
                 settings({"claude_can": "log_delete"}), settings({"colour": "blue"}),
                 settings({"time_zone": "UTC"}), settings({"time_zone": "UTC"}), settings({"time_zone": "Asia/Kolkata"})]
+    # The import, now offered: a preview with a refused row and a cardio note, a whole-call refusal, and the
+    # sample person's refusal.
+    # A day the person logged nothing on: 300 days before their own today, in the zone just set.
+    on = (datetime.fromisoformat(services.whoami(user.id)["today"]) - timedelta(days=300)).date().isoformat()
+    results += [services.import_entries(user.id, {"rows": [
+                    {"kind": "bodyweight", "date": on, "weight": 80},
+                    {"kind": "lift_session", "date": on, "sets": [{"exercise": "Squat (Barbell)", "weight": 100, "reps": 5}]},
+                    {"kind": "cardio_entry", "date": on, "exercise": "Outdoor Run", "minutes": 30, "distance": 5}],
+                    "weight_unit": "kg", "distance_unit": "km"}, "claude"),
+                services.import_entries(user.id, {"rows": [], "weight_units": "lb"}, "claude"),
+                services.import_entries(fresh_id, {"rows": [{"kind": "bodyweight", "date": on, "weight": 80}]}, "claude")]
+    assert results[-3]["kind"] == "import" and results[-3]["failed"] and results[-3]["note"]
     texts = [t for r in results for t in strings_in(r)]
     # Nothing sends the person to a page to set a time zone: Claude sets it with update_settings.
     to_a_page = [t for t in texts if "time zone" in t.casefold()

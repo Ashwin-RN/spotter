@@ -171,6 +171,146 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
   `includes_sample` is true and a note says they are sample data. Say so when quoting them.
 - The Remove sample data button on Settings removes every sample row at once.
 
+## Importing from another app
+
+`import_entries` brings history over from another app's export: weigh-ins, measurements, lift sessions,
+food and cardio. Claude reads the export and sends it as dated rows, each with its kind and the named
+fields of that kind. Every row it writes is marked `import` in `logged_by`, whoever sent it.
+
+- **A preview first.** With `dry_run` true or left out, nothing is written. The result says what would
+  be written, what is already there, what falls on a day Spotter already holds, and what was refused
+  and why. Claude shows the person, and sends the same rows with `dry_run` false only when they say
+  yes. `dry_run` is true, false or left out: any other value is refused.
+- **Units.** Weights, distances, speeds and body sizes go as the export writes them, with `weight_unit`
+  (kg or lb), `distance_unit` (km or mi) and `length_unit` (cm or in). Spotter converts them: lb x
+  0.45359237, mi x 1.609344, in x 2.54, kept at 2 decimal places. A row's `speed` is in the call's
+  distance unit an hour. The preview gives the lowest and highest numbers after conversion, so a wrong
+  unit shows before anything is written.
+- **A unit is never assumed.** A call whose rows hold a weight (a weigh-in's or a set's) needs
+  `weight_unit`. A distance or a speed needs `distance_unit`. A body size (waist, hips, chest, arm or
+  thigh) needs `length_unit`. A call that holds one of them without its unit is refused whole with
+  `missing_unit`, a preview too, and nothing is written: the refusal names each missing unit. Rows that
+  hold none of a quantity need no unit for it: food alone needs none, and so do resting heart rate,
+  steps, sleep and water. A unit sent that no row needs is taken. The result's `units` shows only the
+  units the call named.
+- **Refused rows and refused calls.** A row the rules refuse fails alone, and the other rows go in. A
+  call that does not fit the function's shape, such as a set with 2.5 reps, is refused whole before
+  Spotter reads it: nothing is written, and it is not counted as a write.
+- **Names.** A name not on the exercise list fails its row, and is never guessed. `unknown_names` gives
+  each such name once, with the closest listed names Spotter found. They can be wrong: for
+  "Squat (Barbell)" the closest is Barbell Row.
+- **Food** comes in as the other app's own numbers: tagged `you_said`, estimated false, and never among
+  the recent entries `find_food` offers. Each entry needs its meal.
+- **Cardio** gets its calorie estimate from body weight now, as every earlier-dated entry's does. With no
+  weigh-in, imported cardio has no estimate.
+- **Bests** are worked out from the whole history at read time: `get_progress` shows them after an import.
+- **Sample data.** An account that holds sample data takes no import until the sample rows are removed.
+
+### How Claude sends an export
+
+The server instructions carry only the guards: read the function's description first, preview first,
+write only on a yes, every number as the export writes it with its unit named, and no name guessed. The
+rest is in `import_entries`' own description:
+
+- Rows go oldest first, with one day's rows of a kind in the same call, and the rest in the next call.
+- Each row's timestamp goes with its offset when the export gives one, or its date. Rows more than 2
+  years old are left out, and Claude says how many.
+- When a name is not on the exercise list, Claude asks the person once per name which listed name it
+  is, or whether to leave it out. It never leaves a lift out without saying so.
+- From a phone's health store, one value a day: the day's total steps, the night's total sleep, the
+  day's resting heart rate as the app gives it, and the day's first weigh-in.
+- Each food entry goes with its meal as the export names it. When the export gives only a meal's or a
+  day's total, it goes as one entry described as that total, such as Breakfast from the old app.
+- For an import only, when the export gives only a day's total, Claude asks the person once which meal
+  such totals go under. Logging food never asks which meal.
+- A food entry's calories go only as the export gives them, never estimated for an import. A food entry
+  with no calories is left out, and Claude tells the person how many.
+- When the export does not say which unit it uses, Claude asks the person. One call names one unit for
+  each quantity: rows in another unit go in a separate call.
+
+### Dates
+
+| `date` sent | Stored date |
+|---|---|
+| YYYY-MM-DD | That date |
+| A timestamp with a non-zero offset, such as 2026-03-01T23:30:00+05:30 | Its own date as written: 1 March |
+| A timestamp in UTC, ending Z or +00:00 | Turned into the person's time zone, then its date |
+| A timestamp with no offset | Refused |
+
+Then the usual rule: never after today, at most 2 years back. An import needs the person's time zone set.
+
+### Caps
+
+| Cap | Limit |
+|---|---|
+| Rows a call | 1 to 200 |
+| Sets and food entries a call | 1,000 at most, together |
+| Imported rows in any 24 hours | 10,000, deleted ones counted. A preview says whether the real run would pass. |
+| The write limit | One call is one write of the 120, a preview too |
+
+- The 1,000 sets and food entries run out before the 200 rows for food at six entries a day: 166 days
+  is the most one call takes. They also run out first for lifting sent with one item a set and more
+  than 5 sets a session.
+- `times` on a set counts repeats: 3 sets of 5 at 100 kg is one item. A session holds at most 60 sets
+  once `times` is counted.
+- A call over a cap is refused whole, and nothing is written.
+
+### Already there, and day taken
+
+Each row is judged against what the person held before the call. Held means the person's entries on
+the call's dates (live ones, and deleted ones that were imported), and the person's imported rows on any
+date that an earlier import stored for this same row.
+
+| Kind | Already there when | Day taken when, with no match, the day holds |
+|---|---|---|
+| Weigh-in | an entry has the date and the kg at 2 decimal places, or an earlier import stored it | a live weigh-in |
+| Measurement | an entry has the date, the kind and the value, or an earlier import stored it | a live measurement of the same kind |
+| Lift session | an earlier import stored it, or a session has the date and the same sets: exercise, set number, kg at 2 decimal places, reps. Notes do not count | a live session, held before the call |
+| Food | per entry: an earlier import stored it, or an entry has the date, the meal, the description in any case and the whole kcal | a live food entry, held before the call. The matched entries are already there, the rest day taken |
+| Cardio | an earlier import stored it, or an entry has the date, the activity, the minutes at 1 decimal place and the km at 2 | a live entry of the same activity, held before the call |
+
+- A day-taken row is never added to and never replaces anything. The result names the entry that holds
+  the day.
+- Two identical sessions, food rows or cardio rows in one call both go in, and both match when the
+  rows are sent again. `repeated_rows` counts them.
+- Two weigh-ins on one day in one call, or two measurements of one kind: the first holds the day. A
+  second with the same value is already there, and one with another value is day taken.
+
+### Sending the same rows again
+
+Each answer holds with the same time zone set at both runs. The last row is the exception.
+
+| Between the runs, the person | The rows sent again |
+|---|---|
+| Changed nothing | Already there |
+| Edited an imported row | Already there: the edit stands |
+| Moved an imported row to another date | Already there: not written again on its first date |
+| Deleted an imported row, edited or moved first or not | Already there: it stays deleted |
+| Deleted rows imported in the wrong unit, then sent the file with the right unit | Written: the numbers differ |
+| Logged a new entry by hand on an imported day | Day taken |
+| Edited or deleted a row they logged by hand | Matched by its value on its date only. A deleted one is not held |
+| Changed their time zone, and the rows carry timestamps in UTC | Can be written again, on another date: a known limit, below |
+
+### Known limits
+
+- Version 1 has no undo. An imported row is deleted like any other entry, one at a time, and
+  `restore_entry` brings it back.
+- A food entry imported beside entries the person had deleted is remembered by its own content and
+  date, not by the whole day it came with. If the person moves it to another day and the same file is
+  sent again, it comes back on its first day. If they edit it, delete it, and the same file is sent
+  again, it comes back too.
+- With the same time zone set, the same file brings back no other imported entry the person moved,
+  edited or deleted. A food day imported whole is one of these.
+- A row stamped in UTC, ending Z or +00:00, takes the person's own date in the time zone set when it is
+  imported. If the person changes their time zone and the same rows are sent again, such a row can land
+  on another date. It is then written again there, beside the first copy. A timestamp with its own
+  offset, such as +05:30, keeps its own date, and so does a plain date: neither moves.
+- If the person moves an imported food day's entries to another day, and a later export holds fewer
+  entries for that first day, the entries it still holds are written again on the first day, unless
+  that day holds a food entry. This is a different file, not the same rows sent again.
+- What Claude reads does not mark an imported food entry as imported: no food result carries
+  `logged_by`. The export does: `food_entries.csv` says `import`.
+
 ## Export and delete: the person's own clicks
 
 - Exporting the data (a zip of CSV files) and deleting the account are the person's own clicks on
@@ -195,7 +335,7 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 
 ## What Claude may do
 
-Eighteen functions, nothing else:
+Nineteen functions, nothing else:
 
 | Function | What it does |
 |---|---|
@@ -217,13 +357,14 @@ Eighteen functions, nothing else:
 | `log_cardio` | Records one cardio session, with a calorie estimate. |
 | `get_trends` | How the person is doing: the weight trend and its rate, calories, sessions, cardio, maintenance. |
 | `get_goals` | Whether the person is on track: every open goal, its pace and its projected date. |
+| `import_entries` | Brings history over from another app's export, as dated rows: a preview first, then the rows. |
 
 `whoami` reports `claude_can`, the person's setting for what Claude may do:
 
 | Setting | Claude may |
 |---|---|
 | `read` | Read only: `whoami`, `list_exercises`, `get_progress`, `get_log`, `find_food`, `get_trends`, `get_goals`. |
-| `log` (the default) | Read, and every write except `delete_entry`. |
+| `log` (the default) | Read, and every write except `delete_entry`. `import_entries` is one of the writes. |
 | `log_delete` | Everything, `delete_entry` too. |
 
 A function the setting does not allow answers `not_allowed`, and nothing is written. Claude cannot

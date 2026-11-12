@@ -25,7 +25,9 @@ from app import db
 
 # ---------------------------------------------------------------- allowed values
 
-LOGGED_BY = ("web", "claude")
+IMPORTED = "import"  # logged_by of every row import_entries writes, whoever called it
+LOGGED_BY = ("web", "claude", IMPORTED)
+CALLERS = ("web", "claude")  # who a write's `by` may name: the import's mark is never a caller
 CLAUDE_CAN = ("read", "log", "log_delete")
 EXERCISE_KINDS = ("lift", "cardio")
 GOAL_KINDS = ("bodyweight", "lift", "measurement", "cardio_best", "cardio_weekly", "calories", "sessions")

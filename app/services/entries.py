@@ -23,7 +23,8 @@ restore_entry(user_id, kind, entry_id)   -> {kind, id, restored: true, entry, re
   weigh-in's date or kg; a measurement's date or value. Every value passes the same check a log
   would, so an edit can never store what logging refuses. A new date that already holds a live
   weigh-in (or a measurement of that kind) is refused with day_taken; nothing is replaced. The
-  dedupe_key is worked out again, so a repeat of the new content is a duplicate.
+  dedupe_key is worked out again, so a repeat of the new content is a duplicate. An imported row
+  (logged_by "import") keeps the key it was imported under, so the same import never writes it again.
 - Edit, delete and restore are writes: lock_user first, then common.check_write_limit.
 - An edit's summary names each change in words, every value through app.formatting: "Weigh-in
   changed: kg from 74.8 to 78.4." The entry's id is the result's id, never in the summary.
@@ -33,7 +34,7 @@ from sqlalchemy import Index, select
 
 from app import db, formatting, links, metrics, rules, users
 from app.models import (
-    Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, entry_models,
+    IMPORTED, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, entry_models,
 )
 from app.rules import error, quote
 from app.services import body, cardio, food, lifts, measurements
@@ -401,7 +402,9 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
             row.estimated_kcal = est["kcal"] if est else None
             row.estimate_weight_kg = est["weight_kg"] if est else None
             note = REESTIMATE_NOTE if est else cardio.NO_WEIGH_IN
-        if isinstance(row, LiftSession):
+        if row.logged_by == IMPORTED:
+            pass  # it keeps the key it was imported under: app.services.imports reads it on every re-run
+        elif isinstance(row, LiftSession):
             row.dedupe_key = lifts.session_key(row.date, row.notes, new.get("sets", current["sets"]))
         elif isinstance(row, Bodyweight):
             row.dedupe_key = body.weigh_in_key(row.date, row.kg)

@@ -74,6 +74,11 @@ WRITES = {
     "restore_entry": lambda u, ids: services.restore_entry(u.id, "bodyweight", ids[1]),
     "add_sample_data": lambda u, ids: services.add_sample_data(u.id, "web"),
     "remove_sample_data": lambda u, ids: services.remove_sample_data(u.id, "web"),
+    # One call is one write, however many rows it carries: a weigh-in and a session here.
+    "import_entries": lambda u, ids: services.import_entries(u.id, {"dry_run": False, "rows": [
+        {"kind": "bodyweight", "date": "2026-11-09", "weight": 79},
+        {"kind": "lift_session", "date": "2026-11-09", "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 5}]}],
+        "weight_unit": "kg"}, "claude"),   # the unit these weights need since the fix round on 7e95ee9
 }
 
 
@@ -82,8 +87,14 @@ def setup_sample(user):
     assert "error" not in services.add_sample_data(user.id, "web")
 
 
-# What each write needs first. Sample data goes only into an empty account.
-SETUPS = {"add_sample_data": lambda user: None, "remove_sample_data": setup_sample}
+def setup_zone(user):
+    """An import needs the person's time zone: set it in the row, so no write is spent on it."""
+    with db.session_scope() as s:
+        s.get(User, user.id).time_zone = "UTC"
+
+
+# What each write needs first. Sample data goes only into an empty account; an import needs a time zone.
+SETUPS = {"add_sample_data": lambda user: None, "remove_sample_data": setup_sample, "import_entries": setup_zone}
 
 
 def prepare(user, name):

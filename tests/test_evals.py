@@ -3,6 +3,7 @@ the call recorder. Nothing here calls the model or starts the Claude CLI."""
 
 import datetime as dt
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -22,10 +23,10 @@ from tests.conftest import HEADERS, settings
 CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_asked", "yesterday", "treadmill_once",
                   "repeat_sent", "delete_ambiguous", "delete_explicit", "unknown_exercise",
                   "goal_date", "how_am_i_doing", "on_track", "export_is_a_click", "delete_is_a_click", "drop_goal",
-                  "decimals_and_dashes"}
+                  "decimals_and_dashes", "import_preview_first", "import_again", "import_unknown_lift"}
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
-          "update_settings", "edit_entry", "restore_entry", "delete_entry"}
+          "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries"}
 
 
 def call(name, arguments=None, is_error=False):
@@ -36,7 +37,7 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert len(cases) == 17
+    assert len(cases) == 20  # was 17: import pass B adds the three import cases
     assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)
@@ -573,6 +574,124 @@ def test_new_person_seeds_goals_and_sample_data(app_settings):
 
     goal_id, _, _ = server.new_person(zone, cases["goal_date"]["seed"])
     assert len(person_rows(goal_id)["bodyweight"]) == 2 and person_rows(goal_id)["goal"] == []
+
+
+# ---------------------------------------------------------------- import pass B: the three import cases
+
+IMPORT_CASES = ("import_preview_first", "import_again", "import_unknown_lift")
+CSV_ROW = re.compile(r"(\d{4}-\d{2}-\d{2}),(\d+(?:\.\d+)?)(?=\s|$)")  # "2026-10-05,176.4" in the say
+
+
+def _import_cases() -> dict:
+    return {c["id"]: c for c in judge.load_cases() if c["id"] in IMPORT_CASES}
+
+
+def _sent_rows(say: str) -> list[dict]:
+    return [{"kind": "bodyweight", "date": d, "weight": float(w)} for d, w in CSV_ROW.findall(say)]
+
+
+def test_the_import_cases_are_well_formed_with_fixed_dates():
+    cases = _import_cases()
+    assert set(cases) == set(IMPORT_CASES)
+    for case_id, case in cases.items():
+        assert judge.case_problems(case) == [], case_id
+        assert "{{" not in json.dumps(case), case_id  # a placeholder does not work in say: the dates are fixed
+    preview, again, lift = (cases[c] for c in IMPORT_CASES)
+    seed = again["seed"][0]
+    assert seed["service"] == "import_entries" and "as" not in seed  # an import returns no one id
+    assert (seed["data"]["dry_run"], seed["data"]["weight_unit"]) == (False, "lb")
+    # The seed is the same five rows the person pastes, in both cases: the export's header says lb.
+    assert _sent_rows(again["say"]) == _sent_rows(preview["say"]) == seed["data"]["rows"]
+    assert len(seed["data"]["rows"]) == 5 and all(r["date"].startswith("2026-10-") for r in seed["data"]["rows"])
+    assert "Date,Weight (lb)" in preview["say"] and "Date,Weight (lb)" in again["say"]
+    assert lift["say"].count("Zorbinator Press") == 3 and lift["say"].count(",20,8") == 3
+    assert "Weight (kg)" in lift["say"]
+
+
+def test_the_import_cases_judge_as_designed():
+    cases = _import_cases()
+    rows = cases["import_again"]["seed"][0]["data"]["rows"]
+    preview = cases["import_preview_first"]
+    expect = preview["expect"]
+    assert judge.judge_calls(expect, [call("list_exercises"), call("import_entries", {"rows": rows, "weight_unit": "lb"})],
+                             "Write these 5 weigh-ins?") == []  # dry_run left out is a preview
+    assert judge.judge_calls(expect, [call("import_entries", {"rows": rows, "dry_run": True, "weight_unit": "lb"})],
+                             "Shall I write them?") == []
+    assert judge.judge_calls(expect, [call("import_entries", {"rows": rows, "dry_run": False, "weight_unit": "lb"})],
+                             "Written. Anything else?") == ["import_entries sent dry_run = false"]
+    # Was {"rows": rows}: the call now names its unit, so the reply is the one fault, as before (fix round 3).
+    assert judge.judge_calls(expect, [call("import_entries", {"rows": rows, "weight_unit": "lb"})],
+                             "Here is the preview.") == ["the reply asks nothing"]
+    # Fix round 3: a model that converts the pounds itself, or reads them as kg, fails.
+    converted = [{**r, "weight": round(r["weight"] * 0.45359237, 2)} for r in rows]
+    assert judge.judge_calls(expect, [call("import_entries", {"rows": converted, "weight_unit": "kg"})],
+                             "Write these 5 weigh-ins?") == [
+        f"no import_entries call sent {json.dumps({'weight_unit': 'lb'})} "
+        f"(sent: {json.dumps({'rows': converted, 'weight_unit': 'kg'})})"]
+    assert judge.judge_calls(expect, [call("import_entries", {"rows": rows})], "Write these 5 weigh-ins?")
+    assert judge.judge_calls(expect, [call("log_bodyweight", {"kg": 80})], "Logged?")
+    assert judge.judge_db(preview["db"], {"bodyweight": []}) == []
+    assert judge.judge_db(preview["db"], {"bodyweight": [{"id": 1, "kg": 80.01, "deleted_at": None}]})
+
+    again = cases["import_again"]
+    sent = {"rows": rows, "dry_run": False, "weight_unit": "lb"}
+    assert judge.judge_calls(again["expect"], [call("import_entries", sent)], "All 5 are already there.") == []
+    assert judge.judge_calls(again["expect"], [call("import_entries", {**sent, "weight_unit": "kg"})],
+                             "Already there.")  # read as kg
+    assert judge.judge_calls(again["expect"], [call("import_entries", sent)], "Imported 5 weigh-ins.")
+    five = [{"id": n, "kg": 80.0, "logged_by": "import", "deleted_at": None} for n in range(5)]
+    assert judge.judge_db(again["db"], {"bodyweight": five}) == []
+    assert judge.judge_db(again["db"], {"bodyweight": five + [{"id": 9, "kg": 80.0, "logged_by": "claude",
+                                                                "deleted_at": None}]})
+    assert judge.judge_db(again["db"], {"bodyweight": five[:4] + [{**five[4], "deleted_at": "2026-11-12T09:00:00+00:00"},
+                                                                   {**five[4], "id": 9}]})
+
+    lift = cases["import_unknown_lift"]
+    assert judge.judge_calls(lift["expect"], [call("list_exercises")], "Which listed lift is Zorbinator Press?") == []
+    # Was "Is it the Chest Press, or leave it out?": the reply now names the lift it asks about (fix round 3).
+    assert judge.judge_calls(lift["expect"], [call("import_entries")],
+                             "Is Zorbinator Press the Chest Press, or leave it out?") == []
+    # Fix round 3: a model that guesses a listed name and asks only for approval fails.
+    assert judge.judge_calls(lift["expect"], [call("import_entries")], "Shall I import these as Chest Press?") == [
+        "the reply does not say 'Zorbinator'"]
+    assert judge.judge_calls(lift["expect"], [], "Which lift is that?")  # neither function called
+    assert judge.judge_calls(lift["expect"], [call("list_exercises")], "Imported it as Chest Press.")  # asked nothing
+    assert judge.judge_db(lift["db"], {"lift_session": []}) == []
+    assert judge.judge_db(lift["db"], {"lift_session": [{"id": 1, "deleted_at": None}]})
+
+
+def test_the_evals_doc_says_the_import_cases_checks():
+    """Fix round 3: docs/evals.md says what the two strengthened cases now check, and each check is in the case."""
+    doc = " ".join((Path(__file__).resolve().parent.parent / "docs" / "evals.md").read_text(encoding="utf-8").split())
+    assert "`import_entries` called with `weight_unit` lb, never with `dry_run` false" in doc
+    assert "the reply asks and names Zorbinator" in doc
+    cases = _import_cases()
+    assert cases["import_preview_first"]["expect"]["inputs_include"] == {"weight_unit": "lb"}
+    assert cases["import_unknown_lift"]["expect"]["reply_has"] == ["Zorbinator"]
+
+
+def test_the_import_again_seed_writes_the_five_rows_as_an_import(app_settings, monkeypatch):
+    # The cases' dates are fixed in October 2026: the clock is pinned, so the test holds on any real day.
+    monkeypatch.setattr(db, "utcnow", lambda: dt.datetime(2026, 11, 12, 9, 0, tzinfo=dt.timezone.utc))
+    server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
+    server.settings = app_settings
+    case = _import_cases()["import_again"]
+    user_id, _, seeded = server.new_person("Asia/Kolkata", case["seed"])
+    assert seeded == {}
+    rows = person_rows(user_id)
+    assert judge.judge_db(case["db"], rows) == []
+    assert sorted((r["date"], r["kg"]) for r in rows["bodyweight"]) == [
+        (r["date"], round(r["weight"] * 0.45359237, 2)) for r in case["seed"][0]["data"]["rows"]]
+    # The rows the person pastes, sent as the seed sent them, are already there: nothing new.
+    again = services.import_entries(user_id, case["seed"][0]["data"], "claude")
+    assert again["row_outcomes"] == {"written": 0, "already_there": 5, "day_taken": 0, "failed": 0}
+    assert again["summary"] == "Nothing new: all 5 rows from 5 to 9 Oct are already there."
+    assert judge.judge_db(case["db"], person_rows(user_id)) == []
+    # The preview case's person starts empty, and a preview of the same rows writes nothing.
+    empty_id, _, _ = server.new_person("Asia/Kolkata", [])
+    preview = services.import_entries(empty_id, {"rows": case["seed"][0]["data"]["rows"], "weight_unit": "lb"}, "claude")
+    assert preview["dry_run"] is True and preview["row_outcomes"]["written"] == 5
+    assert judge.judge_db(_import_cases()["import_preview_first"]["db"], person_rows(empty_id)) == []
 
 
 # ---------------------------------------------------------------- the CLI's output
