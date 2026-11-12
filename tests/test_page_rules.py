@@ -1469,3 +1469,65 @@ def test_progress_in_the_states_the_sweeps_never_reach_keeps_every_rule_it_holds
     assert not findings, "\n".join(findings)
     assert titled_card_findings(s) == []
     assert built_findings(s, user.id) == []
+
+
+# ---------------------------------------------------------------- a lift's page (pass B10)
+
+# The cards in a lift page's main, in markup order: (classes less is-empty, the id its aria-labelledby names, its
+# h2's words). With nothing logged, one card with no title.
+LIFT_CARDS = [(["card", "chart-card"], "max-title", "Estimated max"), (["card", "bests-card"], "bests-title", "Bests"),
+              (["card"], "sessions-title", "Sessions")]
+LIFT_NOTHING = [(["card"], None, None)]
+
+
+def lift_cards(s: Seen) -> list[tuple]:
+    """Each card in a lift page's main, in order, as LIFT_CARDS reads it."""
+    [main] = s.dom.find_all("main")
+    return [([c for c in card.classes if c != "is-empty"], card.attrs.get("aria-labelledby"),
+             next((h.text() for h in card.find_all("h2")), None)) for card in main.elements() if card.is_(cls="card")]
+
+
+@pytest.mark.parametrize("account", sorted(ACCOUNTS))
+def test_each_lift_page_keeps_the_card_rule_and_every_built_rule(client, account):
+    """On each account, every lift page the sweeps render: the card rule (a titled card is a section named by its own
+    h2, a card with no title a bare div, no card in a card, every h2 in a card) and no id repeats, with every rule a
+    route in BUILT keeps. The cards run Estimated max, Bests, Sessions, or one card with nothing logged."""
+    sign_in(client)
+    ACCOUNTS[account](only_user().id)
+    uid, today = only_user().id, today_of(only_user()).isoformat()
+    assert "/progress/{lift}" in BUILT and "/progress/{lift}" not in CLAUDE_SKIPS
+    findings, kinds = [], set()
+    for address in get_paths(uid)["/progress/{lift}"]:
+        r = client.get(address)
+        assert r.status_code == 200, address
+        s = Seen(address, r.text, True, today=today)
+        findings += [f"{address}: {f}" for f in titled_card_findings(s)] + built_findings(s, uid)
+        cards = lift_cards(s)
+        assert cards in (LIFT_CARDS, LIFT_NOTHING), (address, cards)
+        kinds.add(cards == LIFT_CARDS)
+    assert kinds == ({False} if account == "empty" else {True})
+    assert not findings, "\n".join(findings)
+
+
+@pytest.mark.parametrize("state", ["weighted, with bests", "no added weight", "no set of 1 to 10 reps",
+                                   "one session only", "no bests beyond the first", "nothing logged"])
+def test_the_lift_page_in_the_states_the_sweeps_never_reach_keeps_every_rule(client, monkeypatch, state):
+    """Each lift page state on the fixed day: the frame rules, the page rules, T1's text rules, T3's step 4 checks and
+    the card rule find nothing."""
+    from .test_web import lift_page_state  # noqa: PLC0415
+
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    sign_in(client)
+    lift_page_state(state)
+    user = only_user()
+    slug = {"no added weight": "pull-up", "no set of 1 to 10 reps": "bench-press", "one session only": "deadlift"}.get(
+        state, "back-squat")
+    address = f"/progress/{slug}"
+    r = client.get(address)
+    assert r.status_code == 200
+    s = Seen(address, r.text, True, zone_missing=not user.time_zone, today="2026-11-10")
+    findings = frame_findings(s) + page_rule_findings(s) + titled_card_findings(s) + built_findings(s, user.id)
+    findings += page_findings(address, r.text, entered_text(user.id), user.id)
+    findings += step_4_findings(address, r.text, names_of(user.id), entered_notes(user.id))
+    assert not findings, "\n".join(findings)
+    assert lift_cards(s) == (LIFT_NOTHING if state == "nothing logged" else LIFT_CARDS)

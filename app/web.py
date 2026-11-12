@@ -1578,6 +1578,14 @@ async def lift_names() -> dict[str, str]:
     return {links.slug(e["name"]): e["name"] for e in result.get("exercises", [])}
 
 
+def _reps_only(user_id: int, lift: str, today: date) -> dict | None:
+    """One lift's entry in lifts.history's reps_only, read as _trend reads it: {reps, date} for a lift never done
+    above 0 kg, else None. get_progress does not copy it. today: the date get_progress named, so both reads are
+    of one day."""
+    with db.new_session() as s:
+        return lifts.history(s, user_id, today)["reps_only"].get(lift)
+
+
 async def progress_lift_page(request: Request) -> Response:
     user = await current_user(request)
     if user is None:
@@ -1588,11 +1596,15 @@ async def progress_lift_page(request: Request) -> Response:
     result = await _db(services.get_progress, user.id, name)
     if failed(result):
         return not_found_page(request)
+    # The page's one date is get_progress' today. The reps_only read takes that date, so it never names another.
     lift = result["lift"]
-    chart = progress_data.lift_chart(_lift_points(lift), lift["goals"], lift["exercise"])
     today = date.fromisoformat(result["today"])
+    bare = await _db(_reps_only, user.id, lift["exercise"], today)
+    state = await _db(services.sample_state, user.id)
+    chart = progress_data.lift_chart(_lift_points(lift), lift["goals"], lift["exercise"])
     return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart, today=today), today=today,
-                sessions=list(reversed(lift["estimated_max_over_time"])), best_widened=best_widened)
+                bare=bare, sessions=list(reversed(lift["estimated_max_over_time"])), best_widened=best_widened,
+                best_labels=lifts.BEST_LABELS, sample_rows=state["sample_rows"])
 
 
 def best_widened(best: dict) -> bool:

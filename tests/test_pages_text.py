@@ -431,7 +431,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # The routes whose page a step 4 pass has rebuilt: "/" or a GET path template from web.PAGES, such as
 # "/day/{date}". The structure checks below and the page rules in tests/test_page_rules.py run on these
 # routes only. A pass adds its own route here when its page lands.
-BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress"})
+BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress", "/progress/{lift}"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 
@@ -625,7 +625,6 @@ _UL = re.compile(r"<ul\b|</ul\s*>")
 # ruling of the lead's). A skip covers its exact sentences on its route and nothing else, so a new line that
 # says Claude fails even on a skipped page. The pass deletes its sentences (and the route once it has none):
 # test_no_claude_skip_outlives_its_page fails on a sentence no page says any more. A route in BUILT has none.
-LIFTS_EMPTY = "Tell Claude what you lifted and it shows here."
 CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
     "/": (  # home.html, signed in and out: rebuilt with its list of assistants
         "A personal fitness record you keep by talking to Claude.",
@@ -652,7 +651,6 @@ CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
         "Claude does not do them for you.",
     ),
     "/foods": ("Saving one by talking to Claude works too.",),  # foods.html: the line under the h1
-    "/progress/{lift}": (LIFTS_EMPTY,),  # progress_lift.html: the empty line
     "/goals": ("Set one below, or tell Claude what you are aiming for.",),  # goals.html: no open goals
 }
 _SENTENCE = re.compile(r"(?<=[.?!])\s+")

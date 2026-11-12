@@ -1,45 +1,77 @@
 {% extends "base.html" %}
 {% block title %}{{ lift.exercise }} · Spotter{% endblock %}
 {% block main %}
-<p><a href="/progress">Progress</a></p>
-<h1>{{ lift.exercise }}</h1>
+{% import "_parts.html" as parts %}
+{# A lift's page: the head with its link back to Progress, the sample banner, then three tiles that are not
+   controls, the Estimated max chart card beside the Bests card, and the Sessions card across. Every figure is
+   get_progress' own, or lifts.history's reps_only for a lift never done above 0 kg, through the filters. Every
+   day is worded against get_progress' today. A lift with no estimated max says why, in the Lifts card's words:
+   reps_only holding the lift means it needs added weight, else a set of 1 to 10 reps. No figure reads 0 kg. #}
+<div class="page-head">
+  <h1>{{ lift.exercise }}</h1>
+  <nav class="day-nav" aria-label="Back">
+    <a class="back" href="/progress">Progress</a>
+  </nav>
+</div>
+{% include "sample_banner.html" %}
 
 {% if lift.sessions %}
-<div class="card">
-  <dl class="facts">
-    <dt>Estimated max now</dt><dd>{% if lift.current_estimated_max_kg is not none %}{{ lift.current_estimated_max_kg|show("estimated_max") }}{% else %}No estimated max yet{% endif %}</dd>
-    <dt>Best set</dt><dd>{% if lift.best_set %}{{ lift.best_set.weight_kg|show("weight_kg") }} × {{ lift.best_set.reps|show("reps") }} on <a href="/day/{{ lift.best_set.date }}">{{ lift.best_set.date|day(today) }}</a>{% else %}No best set yet{% endif %}</dd>
-    <dt>Sessions</dt><dd>{{ lift.sessions|show("count") }}</dd>
-    <dt>Last trained</dt><dd>{% if lift.last_trained %}<a href="/day/{{ lift.last_trained }}">{{ lift.last_trained|day(today) }}</a>{% endif %}</dd>
-  </dl>
-  {{ chart }}
+{% set best, estimated = lift.best_set, lift.current_estimated_max_kg is not none %}
+{% set reason = "Needs added weight" if bare else "Needs a set of 1 to 10 reps" %}
+<div class="tiles">
+  {% if estimated %}
+  {{ parts.tile("max", "Estimated max now: ", lift.current_estimated_max_kg|show("estimated_max", unit=False), "kg, estimated max now") }}
+  {% else %}
+  {{ parts.tile("max", "Estimated max now: ", reason, empty=true) }}
+  {% endif %}
+  {% if best %}
+  {{ parts.tile("best", "Best set: ", best.weight_kg|show("weight_kg", unit=False), "kg × " ~ best.reps|show("reps") ~ ", best set", best.date|day(today)) }}
+  {% elif bare %}
+  {{ parts.tile("best", "Best set: ", bare.reps|show("reps"), "reps, best set", bare.date|day(today)) }}
+  {% else %}
+  {{ parts.tile("best", "Best set: ", "No set of 1 to 10 reps yet", empty=true) }}
+  {% endif %}
+  {{ parts.tile("sessions", "Sessions: ", lift.sessions|show("count"), "session" if lift.sessions == 1 else "sessions", "last " ~ lift.last_trained|day(today)) }}
 </div>
 
-<div class="card">
-  <h2>Bests</h2>
+{# The chart card: the lift chart, with the estimated max now as its figure. No session of 1 to 10 reps with
+   added weight: no chart, and the card says why. #}
+{{ parts.chart_card("max", "max-title", "Estimated max", "Each session, worked out from your sets",
+                    chart if chart else none,
+                    lift.current_estimated_max_kg|show("estimated_max", unit=False) if chart and estimated else none, "kg",
+                    "The chart starts from a set with added weight." if bare
+                    else "The chart starts from a set of 1 to 10 reps.") }}
+
+{# The Bests card: each new best, newest first, in the service's words (lifts.BEST_LABELS), the day a link. A
+   pair that prints the same shows widened, together. A best with no previous shows its value only. #}
+<section class="card bests-card{% if not lift.bests %} is-empty{% endif %}" aria-labelledby="bests-title">
+  <h2 id="bests-title">Bests</h2>
   {% if lift.bests %}
-  <ul class="entries">
+  <ul class="bests">
     {% for b in lift.bests|reverse %}
     {% set q, wide = ("estimated_max" if b.kind == "estimated_max" else "weight_kg"), best_widened(b) %}
-    <li><a href="/day/{{ b.date }}">{{ b.date|day(today) }}</a>: {{ "estimated max" if b.kind == "estimated_max" else "heaviest weight" }} {{ b.value|show(q, wide) }}{% if b.previous is not none %} (was {{ b.previous|show(q, wide) }}){% endif %}</li>
+    <li><span><a href="/day/{{ b.date }}">{{ b.date|day(today) }}</a>: {{ best_labels.get(b.kind, b.kind) }} {{ b.value|show(q, wide) }}{% if b.previous is not none %}, up from {{ b.previous|show(q, wide) }}{% endif %}</span></li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="muted">No new bests beyond the first session yet.</p>
+  <p class="empty-line">No new bests beyond the first session yet.</p>
   {% endif %}
-</div>
+</section>
 
-<div class="card">
-  <h2>Sessions</h2>
+{# The Sessions card: each session with an estimated max, newest first, the day a link. #}
+<section class="card{% if not sessions %} is-empty{% endif %}" aria-labelledby="sessions-title">
+  <h2 id="sessions-title">Sessions</h2>
   {% if sessions %}
   <ul class="entries">
-    {% for p in sessions %}<li><a href="/day/{{ p.date }}">{{ p.date|day(today) }}</a>: estimated max {{ p.estimated_max_kg|show("estimated_max") }}</li>{% endfor %}
+    {% for p in sessions %}
+    <li class="entry-line"><span><a href="/day/{{ p.date }}">{{ p.date|day(today) }}</a>: estimated max {{ p.estimated_max_kg|show("estimated_max") }}</span></li>
+    {% endfor %}
   </ul>
   {% else %}
-  <p class="muted">No session with a set of 1 to 10 reps, so no estimated max yet.</p>
+  <p class="empty-line">No session has an estimated max yet.</p>
   {% endif %}
-</div>
+</section>
 {% else %}
-<div class="card"><p class="muted">No sets of {{ lift.exercise }} logged yet. Tell Claude what you lifted and it shows here.</p></div>
+<div class="card is-empty"><p class="empty-line">No sets of {{ lift.exercise }} logged yet. Tell your assistant what you lifted and it shows here.</p></div>
 {% endif %}
 {% endblock %}

@@ -24,7 +24,7 @@ from app.services import lifts
 
 from . import text_rules as tr
 from .test_pages_text import edge_account, sample_account
-from .test_web import body_weight_card, client, only_user, seam, sign_in, web_client  # noqa: F401 - fixtures
+from .test_web import FIXED_NOW, body_weight_card, client, only_user, seam, sign_in, web_client  # noqa: F401 - fixtures
 
 ACCOUNTS = {"sample": sample_account, "edge": edge_account}
 # A goal's figures take the goal unit's quantity (contract section C).
@@ -179,18 +179,60 @@ def test_the_cardio_rows_hold_get_cardio_figures(client, account):
         assert f'href="/day/{a["last_date"]}"' in cells
 
 
-def test_a_lifts_page_holds_its_figures(client, account):
-    name = services.get_progress(account)["lifts"][0]["exercise"]
-    result = services.get_progress(account, name)
-    lift, today = result["lift"], result["today"]
-    page = client.get(f"/progress/{links.slug(name)}").text
-    card = facts(page)
-    if lift["current_estimated_max_kg"] is not None:
-        figure(card["Estimated max now"], lift["current_estimated_max_kg"], "estimated_max")
-    figure(card["Sessions"], lift["sessions"], "count")
-    sessions = text_of(re.search(r"<h2>Sessions</h2>(.*?)</div>", page, re.S).group(1))
-    for p in lift["estimated_max_over_time"]:
-        assert holds(sessions, f"{day(p['date'], today)}: estimated max {show(p['estimated_max_kg'], 'estimated_max', page=True)}")
+def lift_tile(page: str, variant: str) -> str:
+    """A lift page's tile of that variant, its text as a person reads it."""
+    return text_of(re.search(rf'<div class="tile tile-{variant}(?: is-empty)?">(.*?)</div>', page, re.S).group(1))
+
+
+def lift_list(page: str, title_id: str) -> list[str]:
+    """Each line of the lift page's card named by that h2 id, its text as a person reads it."""
+    card = re.search(rf'aria-labelledby="{title_id}">(.*?)</section>', page, re.S).group(1)
+    return [text_of(li) for li in re.findall(r"<li[^>]*>(.*?)</li>", card, re.S)]
+
+
+@pytest.mark.parametrize("name", sorted(ACCOUNTS))
+def test_a_lifts_page_holds_its_figures(client, monkeypatch, name):
+    """Every lift's page, on both accounts at the fixed day: each tile, the chart card's figure, each best and each
+    session, against get_progress with the lift and lifts.history's reps_only, each through its own filter, every day
+    worded against get_progress' today. A lift with no estimated max says why, and never 0 kg."""
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    sign_in(client)
+    account = only_user().id
+    ACCOUNTS[name](account)
+    rows = services.get_progress(account)["lifts"]
+    assert rows
+    for row in rows:
+        result = services.get_progress(account, row["exercise"])
+        lift, today = result["lift"], result["today"]
+        page = client.get(f"/progress/{links.slug(row['exercise'])}").text
+        top, best, sessions = (lift_tile(page, v) for v in ("max", "best", "sessions"))
+        bare = reps_only(account).get(row["exercise"])
+        if lift["current_estimated_max_kg"] is not None:
+            figure(top, lift["current_estimated_max_kg"], "estimated_max", unit=False)
+            chart = text_of(re.search(r'<p class="figure">(.*?)</p>', page, re.S).group(1))
+            figure(chart, lift["current_estimated_max_kg"], "estimated_max")
+        else:  # the Lifts card's two reasons, told apart by reps_only
+            assert top.endswith("Needs added weight" if bare else "Needs a set of 1 to 10 reps")
+            assert '<p class="figure">' not in page
+        assert not re.search(r"(?<![\d.,])0\s?kg", text_of(page))
+        if lift["best_set"]:
+            b = lift["best_set"]
+            figure(best, b["weight_kg"], "weight_kg", unit=False)
+            assert holds(best, f"kg \u00d7 {show(b['reps'], 'reps')}") and holds(best, day(b["date"], today))
+        elif bare:
+            assert holds(best, f"{show(bare['reps'], 'reps')} reps") and holds(best, day(bare["date"], today))
+        figure(sessions, lift["sessions"], "count")
+        assert holds(sessions, f"last {day(lift['last_trained'], today)}")
+        want = []
+        for p in reversed(lift["bests"]):
+            q = "estimated_max" if p["kind"] == "estimated_max" else "weight_kg"
+            wide = q == "estimated_max" and show(p["value"], q) == show(p["previous"], q)
+            want.append(f"{day(p['date'], today)}: {lifts.BEST_LABELS[p['kind']]} {show(p['value'], q, page=True, widened=wide)}, "
+                        f"up from {show(p['previous'], q, page=True, widened=wide)}")
+        assert lift_list(page, "bests-title") == want
+        assert lift_list(page, "sessions-title") == [
+            f"{day(p['date'], today)}: estimated max {show(p['estimated_max_kg'], 'estimated_max', page=True)}"
+            for p in reversed(lift["estimated_max_over_time"])]
 
 
 # ---------------------------------------------------------------- Goals and get_goals

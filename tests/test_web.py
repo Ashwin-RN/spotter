@@ -1423,7 +1423,9 @@ def test_one_lifts_progress_shows_its_chart_bests_and_sessions(client, stocked):
     r = client.get("/progress/back-squat")
     assert r.status_code == 200
     assert '<svg class="chart" id="progress-chart"' in r.text and "Estimated max over time: Back Squat" in r.text
-    assert "65\u00a0kg × 5" in r.text and "estimated max" in r.text and "(was 70\u00a0kg)" in r.text
+    best = [t for t in lift_tiles(r.text) if t[1] == ["tile", "tile-best"]]
+    assert [t[3:5] for t in best] == [("65", "kg × 5, best set")]
+    assert "estimated max" in r.text and ", up from 70\u00a0kg" in r.text and "(was" not in r.text
     assert r.text.count("estimated max 70\u00a0kg") == 1 and "estimated max 75.8\u00a0kg" in r.text
 
 
@@ -1431,8 +1433,9 @@ def test_a_best_and_the_one_it_beat_widen_together_only_when_they_print_the_same
     """D5 on the lift page: an estimated max pair that prints the same at 1 dp shows both at 2 dp, together.
     A pair that prints apart stays at 1 dp, and a heaviest weight is as entered."""
     sign_in(client)
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
     bests = [{"date": "2026-11-09", "kind": "estimated_max", "value": 80.04, "previous": 80.01},
-             {"date": "2026-11-09", "kind": "heaviest_weight", "value": 80.25, "previous": 80.2},
+             {"date": "2026-11-09", "kind": "weight", "value": 80.25, "previous": 80.2},
              {"date": "2026-11-02", "kind": "estimated_max", "value": 81.7, "previous": 80.0}]
     lift = {"exercise": "Back Squat", "sessions": 2, "current_estimated_max_kg": 80.04, "last_trained": "2026-11-09",
             "best_set": {"date": "2026-11-09", "weight_kg": 70.0, "reps": 4, "estimated_max_kg": 80.04},
@@ -1441,10 +1444,10 @@ def test_a_best_and_the_one_it_beat_widen_together_only_when_they_print_the_same
             "bests": bests, "goals": []}
     monkeypatch.setattr(services, "get_progress", lambda *args: {"today": "2026-11-10", "lift": lift})
     page = client.get("/progress/back-squat").text
-    shown = re.search(r"<h2>Bests</h2>(.*?)</div>", page, re.S).group(1)
-    assert "estimated max 80.04\u00a0kg (was 80.01\u00a0kg)" in shown
-    assert "heaviest weight 80.25\u00a0kg (was 80.2\u00a0kg)" in shown
-    assert "estimated max 81.7\u00a0kg (was 80\u00a0kg)" in shown
+    shown = re.search(r'<h2 id="bests-title">Bests</h2>(.*?)</section>', page, re.S).group(1)
+    assert "estimated max 80.04\u00a0kg, up from 80.01\u00a0kg" in shown
+    assert "heaviest weight 80.25\u00a0kg, up from 80.2\u00a0kg" in shown
+    assert "estimated max 81.7\u00a0kg, up from 80\u00a0kg" in shown
     assert [web.best_widened(b) for b in bests] == [True, False, False]
 
 
@@ -6586,3 +6589,278 @@ def test_with_weigh_ins_in_the_28_days_and_no_chart_nothing_stands_in_the_charts
     assert services.get_trends(only_user().id)["bodyweight"]["weigh_ins_28d"] == 2
     assert [shape(e)[:2] for e in card.elements()[1].elements()] == [("dl", "callouts")]
     assert "No weigh-ins" not in card.text() and "One weigh-in" not in card.text()
+
+
+# ---------------------------------------------------------------- stage 6, step 4: a lift's page (B10)
+
+def lift_main(page: str):
+    """A lift's page's main, read as a tree."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    [main] = parse(page).find_all("main")
+    return main
+
+
+def lift_tiles(page: str) -> list[tuple]:
+    """Each tile on a lift's page, in order: (tag, classes, hidden name, figure, label, note)."""
+    [grid] = lift_main(page).find_all("div", "tiles")
+    return [(t.tag, t.classes, slot(t, "sr"), slot(t, "tile-value"), slot(t, "tile-label"), slot(t, "tile-note"))
+            for t in grid.elements()]
+
+
+def lift_card(page: str, title: str):
+    """The card in a lift page's main named by an h2 with these words."""
+    [card] = [c for c in lift_main(page).elements() if c.is_(cls="card") and c.find_all("h2")
+              and c.find_all("h2")[0].text() == title]
+    return card
+
+
+def card_shape(node) -> tuple[str, ...]:
+    """An element's tag and classes, less is-empty: a card's place on the page, whatever its state."""
+    return tuple(c for c in shape(node) if c != "is-empty")
+
+
+def lift_lines(page: str, title: str) -> list[tuple[str, list[str]]]:
+    """Each line of a lift page's Bests or Sessions card: its words as a person reads them, and its links."""
+    return [(li.text(), [a.attrs["href"] for a in li.find_all("a")]) for li in lift_card(page, title).find_all("li")]
+
+
+# A lift's page in main, top to bottom (contract lines 1559 to 1568).
+LIFT_PAGE = [("div", "page-head"), ("p", "notice", "sample-banner"), ("div", "tiles"), ("section", "card", "chart-card"),
+             ("section", "card", "bests-card"), ("section", "card")]
+LIFT_EMPTY = "No sets of Back Squat logged yet. Tell your assistant what you lifted and it shows here."
+NO_BESTS = "No new bests beyond the first session yet."
+NO_SESSIONS = "No session has an estimated max yet."
+
+
+def test_the_lift_page_on_the_fixed_day(client, progress_fixed):
+    """Back Squat on the fixed day: the head and its back link, the banner, three tiles that are not controls, the
+    Estimated max chart card, Bests newest first in the new best's own words, Sessions newest first. Every figure is
+    get_progress' own through its filter, every day worded against get_progress' today."""
+    page = client.get("/progress/back-squat").text
+    main = lift_main(page)
+    assert [shape(c) for c in main.elements()] == LIFT_PAGE
+    head = main.elements()[0]
+    assert [shape(e) for e in head.elements()] == [("h1",), ("nav", "day-nav")]
+    assert head.elements()[0].text() == "Back Squat"
+    assert [(a.attrs, a.text()) for a in head.find_all("a")] == [({"class": "back", "href": "/progress"}, "Progress")]
+    assert lift_tiles(page) == [
+        ("div", ["tile", "tile-max"], "Estimated max now:", "107.9", "kg, estimated max now", None),
+        ("div", ["tile", "tile-best"], "Best set:", "92.5", "kg × 5, best set", "Fri 6 Nov"),
+        ("div", ["tile", "tile-sessions"], "Sessions:", "6", "sessions", "last Fri 6 Nov")]
+    assert not main.elements()[2].find_all("a") and not main.elements()[2].find_all("button")
+    chart = main.elements()[3]
+    assert chart.attrs == {"class": "card chart-card", "aria-labelledby": "max-title"}
+    assert [shape(e) for e in chart.elements()] == [("h2", "card-label", "tile-max"), ("p", "card-sub"),
+                                                    ("p", "figure"), ("svg", "chart")]
+    assert chart.elements()[0].attrs["id"] == "max-title" and chart.elements()[0].text() == "Estimated max"
+    assert chart.elements()[2].text() == f"107.9{NB}kg" and chart.elements()[3].attrs["id"] == "progress-chart"
+    assert main.elements()[4].attrs == {"class": "card bests-card", "aria-labelledby": "bests-title"}
+    assert main.elements()[5].attrs == {"class": "card", "aria-labelledby": "sessions-title"}
+    bests, sessions = lift_lines(page, "Bests"), lift_lines(page, "Sessions")
+    assert bests[:2] == [(f"Fri 6 Nov: heaviest weight 92.5{NB}kg, up from 90{NB}kg", ["/day/2026-11-06"]),
+                         (f"Fri 6 Nov: estimated max 107.9{NB}kg, up from 105{NB}kg", ["/day/2026-11-06"])]
+    assert sessions[0] == (f"Fri 6 Nov: estimated max 107.9{NB}kg", ["/day/2026-11-06"])
+    # Against the read: get_progress with the lift, and its today.
+    read = services.get_progress(only_user().id, "Back Squat")
+    lift, today = read["lift"], read["today"]
+    assert today == "2026-11-10"
+    show = lambda v, q, wide=False: formatting.show(v, q, page=True, widened=wide)  # noqa: E731
+    best = lift["best_set"]
+    assert [t[3:] for t in lift_tiles(page)] == [
+        (formatting.show(lift["current_estimated_max_kg"], "estimated_max", unit=False), "kg, estimated max now", None),
+        (formatting.show(best["weight_kg"], "weight_kg", unit=False), f"kg × {formatting.show(best['reps'], 'reps')}, best set",
+         formatting.day(best["date"], today)),
+        (formatting.show(lift["sessions"], "count"), "sessions", "last " + formatting.day(lift["last_trained"], today))]
+    want = []
+    for b in reversed(lift["bests"]):
+        q = "estimated_max" if b["kind"] == "estimated_max" else "weight_kg"
+        wide = q == "estimated_max" and formatting.show(b["value"], q) == formatting.show(b["previous"], q)
+        want.append((f"{formatting.day(b['date'], today)}: {web.lifts.BEST_LABELS[b['kind']]} {show(b['value'], q, wide)}, "
+                     f"up from {show(b['previous'], q, wide)}", [f"/day/{b['date']}"]))
+    assert bests == want and len(bests) == 10
+    assert sessions == [(f"{formatting.day(p['date'], today)}: estimated max {show(p['estimated_max_kg'], 'estimated_max')}",
+                         [f"/day/{p['date']}"]) for p in reversed(lift["estimated_max_over_time"])]
+    assert "(" not in lift_card(page, "Bests").text() and "was" not in lift_card(page, "Bests").text()
+    assert not ZERO_KG.search(main.text()) and "Claude" not in main.text()
+
+
+def lift_page_state(state: str) -> None:
+    """Lift sessions for a lift page state, on the pinned fixed day."""
+    uid, today = only_user().id, date(2026, 11, 10)
+
+    def log(n, *sets):
+        assert "error" not in services.log_lifts(uid, {"date": (today - timedelta(days=n)).isoformat(), "sets": [
+            {"exercise": name, "weight_kg": kg, "reps": reps} for name, kg, reps in sets]}, "claude")
+    if state == "weighted, with bests":
+        for n, kg in ((21, 90), (14, 95), (7, 100), (0, 105)):
+            log(n, ("Back Squat", kg, 5))
+    if state == "no added weight":
+        log(5, ("Pull-Up", 0, 10))
+        log(1, ("Pull-Up", 0, 8), ("Pull-Up", 0, 6))
+    if state == "no set of 1 to 10 reps":
+        log(2, ("Bench Press", 40, 15))
+    if state == "one session only":
+        log(0, ("Deadlift", 101.25, 5))  # a weight at 2 dp: weight_kg keeps it
+    if state == "no bests beyond the first":
+        log(7, ("Back Squat", 100, 5))
+        log(0, ("Back Squat", 95, 5))
+
+
+# (state, the lift's address, its tiles as (classes, figure, label, note), the chart card's figure or its words,
+# the Bests lines or their words, the Sessions lines or their words)
+LIFT_STATES = [
+    ("weighted, with bests", "back-squat",
+     [(["tile", "tile-max"], "122.5", "kg, estimated max now", None),
+      (["tile", "tile-best"], "105", "kg × 5, best set", "Tue 10 Nov"),
+      (["tile", "tile-sessions"], "4", "sessions", "last Tue 10 Nov")],
+     f"122.5{NB}kg",
+     [f"Tue 10 Nov: heaviest weight 105{NB}kg, up from 100{NB}kg", f"Tue 10 Nov: estimated max 122.5{NB}kg, up from 116.7{NB}kg",
+      f"Tue 3 Nov: heaviest weight 100{NB}kg, up from 95{NB}kg", f"Tue 3 Nov: estimated max 116.7{NB}kg, up from 110.8{NB}kg",
+      f"Tue 27 Oct: heaviest weight 95{NB}kg, up from 90{NB}kg", f"Tue 27 Oct: estimated max 110.8{NB}kg, up from 105{NB}kg"],
+     [f"Tue 10 Nov: estimated max 122.5{NB}kg", f"Tue 3 Nov: estimated max 116.7{NB}kg",
+      f"Tue 27 Oct: estimated max 110.8{NB}kg", f"Tue 20 Oct: estimated max 105{NB}kg"]),
+    ("no added weight", "pull-up",
+     [(["tile", "tile-max", "is-empty"], "Needs added weight", None, None),
+      (["tile", "tile-best"], "10", "reps, best set", "Thu 5 Nov"),
+      (["tile", "tile-sessions"], "2", "sessions", "last Mon 9 Nov")],
+     "The chart starts from a set with added weight.", NO_BESTS, NO_SESSIONS),
+    ("no set of 1 to 10 reps", "bench-press",
+     [(["tile", "tile-max", "is-empty"], "Needs a set of 1 to 10 reps", None, None),
+      (["tile", "tile-best", "is-empty"], "No set of 1 to 10 reps yet", None, None),
+      (["tile", "tile-sessions"], "1", "session", "last Sun 8 Nov")],
+     "The chart starts from a set of 1 to 10 reps.", NO_BESTS, NO_SESSIONS),
+    ("one session only", "deadlift",
+     [(["tile", "tile-max"], "118.1", "kg, estimated max now", None),
+      (["tile", "tile-best"], "101.25", "kg × 5, best set", "Tue 10 Nov"),
+      (["tile", "tile-sessions"], "1", "session", "last Tue 10 Nov")],
+     f"118.1{NB}kg", NO_BESTS, [f"Tue 10 Nov: estimated max 118.1{NB}kg"]),
+    ("no bests beyond the first", "back-squat",
+     [(["tile", "tile-max"], "116.7", "kg, estimated max now", None),
+      (["tile", "tile-best"], "100", "kg × 5, best set", "Tue 3 Nov"),
+      (["tile", "tile-sessions"], "2", "sessions", "last Tue 10 Nov")],
+     f"116.7{NB}kg", NO_BESTS, [f"Tue 10 Nov: estimated max 110.8{NB}kg", f"Tue 3 Nov: estimated max 116.7{NB}kg"]),
+]
+
+
+@pytest.mark.parametrize("state, slug, tiles, chart, bests, sessions", LIFT_STATES, ids=[s[0] for s in LIFT_STATES])
+def test_the_lift_page_in_each_state(client, pinned, state, slug, tiles, chart, bests, sessions):
+    """A weighted lift with bests; one never above 0 kg ("Needs added weight", its most reps with their day); a
+    weighted lift with no set of 1 to 10 reps; one session; no best beyond the first. The tiles are never controls,
+    a state with no figure is an empty tile with its words, the chart card and the two lists say what they hold or
+    why there is none. Never 0 kg."""
+    sign_in(client)
+    lift_page_state(state)
+    page = client.get(f"/progress/{slug}").text
+    main = lift_main(page)
+    assert [card_shape(c) for c in main.elements()] == [s for s in LIFT_PAGE if s[1] != "notice"]
+    assert [t[1] for t in lift_tiles(page)] == [t[0] for t in tiles] and all(t[0] == "div" for t in lift_tiles(page))
+    assert [t[3:] for t in lift_tiles(page)] == [t[1:] for t in tiles]
+    card = lift_card(page, "Estimated max")
+    if chart.endswith("kg"):
+        assert "is-empty" not in card.classes and card.find_all("svg") and card.find_all("p", "figure")[0].text() == chart
+    else:
+        assert card.classes == ["card", "chart-card", "is-empty"] and not card.find_all("svg")
+        assert [e.text() for e in card.find_all("p", "empty-line")] == [chart]
+    for title, want in (("Bests", bests), ("Sessions", sessions)):
+        shown = lift_card(page, title)
+        if isinstance(want, str):
+            assert "is-empty" in shown.classes and [e.text() for e in shown.find_all("p", "empty-line")] == [want]
+            assert not shown.find_all("li")
+        else:
+            assert "is-empty" not in shown.classes and [line for line, _ in lift_lines(page, title)] == want
+            assert all(len(links_) == 1 and links_[0].startswith("/day/") for _, links_ in lift_lines(page, title))
+    assert not ZERO_KG.search(main.text()) and "No estimated max yet" not in page and "No best set yet" not in page
+
+
+def test_with_nothing_logged_the_lift_page_is_one_card_saying_what_to_do(client, pinned):
+    """No sets of the lift: the head, then one card with no title and the line saying "your assistant". An unknown lift
+    is still the 404 page."""
+    sign_in(client)
+    page = client.get("/progress/back-squat").text
+    main = lift_main(page)
+    assert [shape(c) for c in main.elements()] == [("div", "page-head"), ("div", "card", "is-empty")]
+    card = main.elements()[1]
+    assert card.attrs == {"class": "card is-empty"}
+    assert [(shape(e), e.text()) for e in card.elements()] == [(("p", "empty-line"), LIFT_EMPTY)]
+    assert "Claude" not in main.text()
+    missing = client.get("/progress/not-a-lift")
+    assert missing.status_code == 404 and "There is nothing here." in missing.text and "lift-page" not in missing.text
+
+
+def test_the_lift_page_carries_the_sample_banner_as_progress_does(client, pinned, monkeypatch):
+    """The banner from sample_state, between the page head and the tiles; none without sample rows."""
+    sign_in(client)
+    lift_page_state("one session only")
+    assert [card_shape(c) for c in lift_main(client.get("/progress/deadlift").text).elements()][:2] == [
+        ("div", "page-head"), ("div", "tiles")]
+    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3})
+    main = lift_main(client.get("/progress/deadlift").text)
+    assert [card_shape(c) for c in main.elements()] == LIFT_PAGE
+    assert main.elements()[1].text() == "Sample data is on this account. Remove it on Settings."
+
+
+def test_a_best_with_no_previous_shows_its_value_only(client, pinned, monkeypatch):
+    """metrics.prs always gives a previous, so the read is stood in for: a best with none shows its value alone, no
+    "up from", no brackets."""
+    sign_in(client)
+    lift_page_state("one session only")
+    real = services.get_progress
+
+    def lone(uid, *args):
+        out = real(uid, *args)
+        bests = [{"date": "2026-11-10", "kind": "estimated_max", "value": 118.1, "previous": None},
+                 {"date": "2026-11-10", "kind": "weight", "value": 101.25, "previous": None}]
+        return {**out, "lift": {**out["lift"], "bests": bests}} if args else out
+    monkeypatch.setattr(services, "get_progress", lone)
+    assert lift_lines(client.get("/progress/deadlift").text, "Bests") == [
+        (f"Tue 10 Nov: heaviest weight 101.25{NB}kg", ["/day/2026-11-10"]),
+        (f"Tue 10 Nov: estimated max 118.1{NB}kg", ["/day/2026-11-10"])]
+
+
+def test_the_lift_page_reads_reps_only_on_get_progress_date(client, monkeypatch):
+    """One date for the page: get_progress' today. The clock moves a day once get_progress has answered, and the
+    reps_only read still names get_progress' date, never the next day's. The tile's day is worded against it."""
+    from app.services import lifts as lift_service  # noqa: PLC0415
+
+    clock = {"now": FIXED_NOW}
+    monkeypatch.setattr(db, "utcnow", lambda: clock["now"])
+    sign_in(client)
+    lift_page_state("no added weight")
+    real_progress, real_history, named = services.get_progress, lift_service.history, []
+
+    def then_midnight(*args):
+        out = real_progress(*args)
+        clock["now"] = FIXED_NOW + timedelta(days=1)
+        return out
+
+    def history(s, user_id, today):
+        named.append(today)
+        return real_history(s, user_id, today)
+    monkeypatch.setattr(services, "get_progress", then_midnight)
+    monkeypatch.setattr(lift_service, "history", history)
+    page = client.get("/progress/pull-up").text
+    assert len(named) >= 2 and set(named) == {date(2026, 11, 10)}
+    assert [t[3:] for t in lift_tiles(page)][1] == ("10", "reps, best set", "Thu 5 Nov")
+    assert users.today_for(only_user()) == date(2026, 11, 11)  # the next day's read would have named the 11th
+
+
+def test_the_lift_pages_estimated_max_goes_through_its_own_filter(client, pinned, monkeypatch):
+    """get_progress rounds each estimated max to 1 dp already, so the filter shows only on a read at 2 dp: stood in for,
+    107.92 shows "107.9" on the tile and the chart card, and each session's estimated max at 1 dp. weight_kg would keep
+    every decimal."""
+    sign_in(client)
+    lift_page_state("one session only")
+    real = services.get_progress
+
+    def unrounded(uid, *args):
+        out = real(uid, *args)
+        points = [{"date": "2026-11-03", "estimated_max_kg": 80.04}, {"date": "2026-11-10", "estimated_max_kg": 118.13}]
+        return {**out, "lift": {**out["lift"], "current_estimated_max_kg": 107.92,
+                                "estimated_max_over_time": points}} if args else out
+    monkeypatch.setattr(services, "get_progress", unrounded)
+    page = client.get("/progress/deadlift").text
+    assert lift_tiles(page)[0][3:5] == ("107.9", "kg, estimated max now")
+    assert lift_card(page, "Estimated max").find_all("p", "figure")[0].text() == f"107.9{NB}kg"
+    assert [line for line, _ in lift_lines(page, "Sessions")] == [
+        f"Tue 10 Nov: estimated max 118.1{NB}kg", f"Tue 3 Nov: estimated max 80{NB}kg"]
