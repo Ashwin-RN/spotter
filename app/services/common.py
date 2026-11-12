@@ -24,6 +24,9 @@ always be able to leave, and to turn Claude down. A call that reaches the servic
 direct service call, as in the tests) therefore gets one more allowed write than a call through MCP
 or the web.
 
+An import call (import_entries) is one write, whatever it carries. Its rows have their own cap, IMPORT_LIMIT
+imported rows created in any IMPORT_WINDOW_HOURS, which app.services.imports checks.
+
 The read throttle. check_read_limit() counts one read function's rows the same way (find_food: more
 than READ_LIMIT in WRITE_WINDOW_MINUTES is too_many_reads). It takes no lock: a read writes nothing.
 
@@ -44,7 +47,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app import db, formatting
-from app.models import LOGGED_BY, CallLog, Exercise, User
+from app.models import CALLERS, CallLog, Exercise, User
 from app.rules import as_sent, error, quote, span, to_float
 
 DUPLICATE_MINUTES = 10
@@ -66,10 +69,15 @@ KIND_LABELS = {
 # and set_claude_can. Their call-log rows are written but do not count, and they are never refused.
 WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                    "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
-                   "add_sample_data", "remove_sample_data")
+                   "add_sample_data", "remove_sample_data", "import_entries")
 WRITE_LIMIT = 120
 WRITE_WINDOW_MINUTES = 10
 READ_LIMIT = 120  # a throttled read (find_food): its own rows in the same 10 minutes
+# The import's own cap, beside the write limit: one import_entries call is one call-log row, so one write of the
+# 120 however many rows it carries, a dry run too. So the rows themselves are capped here: at most IMPORT_LIMIT
+# rows with logged_by "import" created in any IMPORT_WINDOW_HOURS (app.services.imports).
+IMPORT_LIMIT = 10_000
+IMPORT_WINDOW_HOURS = 24
 
 # Rule 16: what a read says when sample rows are in its numbers. It names the button, not a function.
 SAMPLE_NOTE = ("Some of these numbers come from sample data, not the person's own logs. The person can clear it "
@@ -89,8 +97,8 @@ def no_account() -> dict:
 
 
 def check_by(by) -> dict | None:
-    if by not in LOGGED_BY:
-        return error("invalid_by", f"by must be one of {', '.join(LOGGED_BY)}.",
+    if by not in CALLERS:
+        return error("invalid_by", f"by must be one of {', '.join(CALLERS)}.",
                      "This is a server problem, not something to retry differently.")
     return None
 

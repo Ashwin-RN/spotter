@@ -26,7 +26,8 @@ save_food(user_id, data, by)
 find_food(user_id, query, limit=8)
     A read. The person's saved foods whose name holds the query, most logged first, then by name;
     their own you_said and claude_estimate entries whose description holds it, grouped by the
-    casefolded description, most frequent first; then USDA when the key is set.
+    casefolded description, most frequent first (an imported entry never: logged_by "import");
+    then USDA when the key is set.
     Throttled (decision 13): more than 120 find_food calls in 10 minutes, counted on the person's own
     call-log rows as the write limit counts, is too_many_reads, before any other work.
 
@@ -48,7 +49,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 
 from app import db, formatting, links, rules, users
-from app.models import CardioEntry, FoodEntry, SavedFood, User
+from app.models import IMPORTED, CardioEntry, FoodEntry, SavedFood, User
 from app.services import usda
 from app.services.common import (
     DUPLICATE_MINUTES, check_by, check_data, check_read_limit, check_write_limit, dedupe_key, duplicate_note,
@@ -405,8 +406,9 @@ def find_food(user_id: int, query, limit=8) -> dict:
                   "last_logged": used[f.id][1].isoformat() if f.id in used else None} for f in foods[:count]]
 
         groups: dict[str, dict] = {}
+        # An imported entry is the other app's record, often a meal's or a day's total: never offered back.
         for e in s.scalars(select(FoodEntry).where(
-                FoodEntry.user_id == user_id, FoodEntry.deleted_at.is_(None),
+                FoodEntry.user_id == user_id, FoodEntry.deleted_at.is_(None), FoodEntry.logged_by != IMPORTED,
                 FoodEntry.source.in_(("you_said", "claude_estimate"))).order_by(FoodEntry.date, FoodEntry.id)):
             folded = " ".join(e.description.split()).casefold()
             if needle not in folded:

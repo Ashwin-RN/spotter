@@ -17,10 +17,11 @@ One module per area, so each later stage adds its own:
   entries       get_entry, edit_entry, delete_entry, restore_entry
   sample        sample_state, add_sample_data, remove_sample_data (an empty account's Today, Settings)
   export        export_data (the Settings page's download)
+  imports       import_entries (history from another app, many dated rows a call)
   common        the by-id lookup, the user-row lock, the write limit, the read throttle, the duplicate guard
 
 Every public function takes the signed-in person's user_id (the account row id) first, and writes
-take `by` ("web" or "claude"), stored as logged_by. Each returns a plain JSON-ready dict: the result,
+take `by` ("web" or "claude"), stored as logged_by (an import stores "import"). Each returns a plain JSON-ready dict: the result,
 or {error, message, fix}, where the fix says what to send instead. A set_goal refusal about one input
 also names it in field. Nothing here takes a request or a
 site address: links come from app.links. Dates come from users.today_for, times from db.utcnow.
@@ -38,6 +39,7 @@ from app.services.cardio import get_cardio, log_cardio
 from app.services.export import export_data
 from app.services.food import find_food, list_saved_foods, log_food, save_food
 from app.services.goals import get_goals, goal_charts, set_goal
+from app.services.imports import import_entries
 from app.services.lifts import log_lifts
 from app.services.log import get_log
 from app.services.measurements import log_measurement
@@ -49,7 +51,7 @@ __all__ = [
     "DUPLICATE_MINUTES", "READ_LIMIT", "WRITE_FUNCTIONS", "WRITE_LIMIT", "WRITE_WINDOW_MINUTES",
     "add_sample_data", "delete_account", "delete_entry", "edit_entry", "entry_kinds", "export_data", "find_food",
     "get_cardio", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress", "get_trends",
-    "list_exercises", "list_saved_foods",
+    "import_entries", "list_exercises", "list_saved_foods",
     "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "remove_sample_data",
     "restore_entry", "sample_state", "save_food", "set_claude_can", "set_goal", "update_settings", "whoami",
 ]
