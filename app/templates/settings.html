@@ -1,106 +1,125 @@
 {% extends "base.html" %}
 {% block title %}Settings · Spotter{% endblock %}
 {% block main %}
-<h1>Settings</h1>
+{% import "_parts.html" as parts %}
+{# Settings (section L): the page head, the sample banner, then six titled cards in this order, which is the markup
+   order: Your account, Time zone, Targets, What your assistant may do, Your data, More. On a laptop they sit two to a
+   row (.settings-page > .card). Each of the three forms posts to its own card's anchor (web.SETTINGS_CARDS), and its
+   saved line sits in that card alone, one at most on the page. A refusal is said in the page's own words: in the card
+   for the time zone and the switch, under its field for a target, or at the top of the targets form for one tied to
+   none of its fields. What was typed stays. No field is required: the page speaks, not the browser. #}
+<div class="page-head">
+  <h1>Settings</h1>
+</div>
+{% include "sample_banner.html" %}
 
-<div class="card">
-  <h2>Your account</h2>
+{# The user row's own words: name, email, zone, the sign-in provider's id and the account's own. #}
+<section class="card" id="account" aria-labelledby="account-title">
+  <h2 id="account-title">Your account</h2>
   <dl class="facts">
     <dt>Name</dt><dd>{{ user.name or "Not given" }}</dd>
     <dt>Email</dt><dd>{{ user.email or "Not given" }}</dd>
+    <dt>Time zone</dt><dd>{{ user.time_zone or "Not chosen yet: today is counted in UTC" }}</dd>
     <dt>Sign-in id</dt><dd><code>{{ user.subject }}</code></dd>
     <dt>Account id</dt><dd><code>{{ user.id }}</code></dd>
-    <dt>Time zone</dt><dd>{{ user.time_zone or "Not chosen yet: today is counted in UTC" }}</dd>
   </dl>
-  <p class="muted small">Claude's <code>whoami</code> shows the same sign-in id and account id when it is
-  connected to this account.</p>
-</div>
+  <p class="small">When your assistant is connected to this account, asking it who you are shows the same two ids.</p>
+</section>
 
-<div class="card">
-  <h2>Time zone</h2>
-  {% if saved %}<p class="ok">Time zone saved.</p>{% endif %}
-  {% if error %}
-  <div class="error">
-    <p>{{ error.message }}</p>
-    <p>{{ error.fix }}</p>
-  </div>
-  {% endif %}
+<section class="card" id="{{ cards.time_zone }}" aria-labelledby="zone-title">
+  <h2 id="zone-title">Time zone</h2>
+  {% if saved_card == cards.time_zone %}{{ parts.saved_line(saved_words) }}{% endif %}
   {% if user.time_zone %}
-  <p>Your time zone is set. If it is wrong, choose yours here.</p>
+  <p class="muted">Your time zone is set. If it is wrong, choose yours here.</p>
   {% else %}
-  <p>No time zone yet, so today is counted in UTC. Choose yours from the list.</p>
+  <p class="muted">No time zone yet, so today is counted in UTC. Choose yours from the list.</p>
   {% endif %}
-  <form method="post" action="/settings">
+  <form class="stack" method="post" action="/settings#{{ cards.time_zone }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label for="time-zone">Time zone</label>
-    <select id="time-zone" name="time_zone" required>
-      {% if not selected_zone %}<option value="" selected>Choose your time zone</option>{% endif %}
-      {% for region, zones in zone_groups %}
-      <optgroup label="{{ region }}">
-        {% for name, label in zones %}<option value="{{ name }}"{% if name == selected_zone %} selected{% endif %}>{{ label }}</option>{% endfor %}
-      </optgroup>
-      {% endfor %}
-    </select>
-    <button class="primary">Save time zone</button>
+    {% if zone_error %}<div class="error"><p class="error" id="time-zone-error">{{ zone_error }}</p></div>{% endif %}
+    <div class="field{% if zone_error %} has-error{% endif %}">
+      <label for="time-zone">Time zone</label>
+      <select id="time-zone" name="time_zone"{% if zone_error %} aria-invalid="true" aria-describedby="time-zone-error"{% endif %}>
+        {% if not selected_zone %}<option value="" selected>Choose your time zone</option>{% endif %}
+        {% for region, zones in zone_groups %}
+        <optgroup label="{{ region }}">
+          {% for name, label in zones %}<option value="{{ name }}"{% if name == selected_zone %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-actions"><button class="primary">Save time zone</button></div>
   </form>
-</div>
-<div class="card">
-  <h2>Targets</h2>
-  {% if targets_saved %}<p class="ok">Targets saved.</p>{% endif %}
+</section>
+
+{# Each target is the stored value through formatting.field, or what was typed when the form comes back. #}
+<section class="card" id="{{ cards.targets }}" aria-labelledby="targets-title">
+  <h2 id="targets-title">Targets</h2>
+  {% if saved_card == cards.targets %}{{ parts.saved_line(saved_words) }}{% endif %}
   <p class="muted">Leave a target empty to have none: totals then show with nothing to compare against.</p>
-  <form method="post" action="/settings/targets">
+  <form class="stack" method="post" action="/settings/targets#{{ cards.targets }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if targets_loose %}<div class="error">{% for words in targets_loose %}<p>{{ words }}</p>{% endfor %}</div>{% endif %}
     {% for field, label in [("calorie_target_kcal", "Calories a day (kcal)"),
-                            ("target_sessions_per_week", "Training sessions a week"),
-                            ("target_cardio_minutes_per_week", "Cardio minutes a week")] %}
-    <label for="{{ field }}">{{ label }}</label>
-    <input id="{{ field }}" name="{{ field }}" value="{{ targets[field] }}" inputmode="numeric" autocomplete="off">
-    {% if target_errors[field] %}<p class="error">{{ target_errors[field] }}</p>{% endif %}
+                            ("target_sessions_per_week", "Lift sessions a week"),
+                            ("target_cardio_minutes_per_week", "Cardio a week (min)")] %}
+    {{ parts.field(field, field, label, target_errors.get(field), targets[field], inputmode="numeric") }}
     {% endfor %}
     <label class="choice">
-      <input type="checkbox" name="add_back_exercise_kcal"{% if user.add_back_exercise_kcal %} checked{% endif %}>
+      <input type="checkbox" name="add_back_exercise_kcal"{% if add_back %} checked{% endif %}>
       <span>Add cardio back: show a net total, food minus cardio calories</span>
     </label>
-    {% if target_errors.add_back_exercise_kcal %}<p class="error">{{ target_errors.add_back_exercise_kcal }}</p>{% endif %}
-    <button class="primary">Save targets</button>
+    <div class="form-actions"><button class="primary">Save targets</button></div>
   </form>
-</div>
+</section>
 
-<div class="card">
-  <h2>What Claude may do</h2>
-  <p class="muted">Only you can change this, here: Claude is never offered this switch.</p>
-  {% if switch_saved %}<p class="ok">Saved.</p>{% endif %}
-  {% if switch_error %}<p class="error">Choose one of the three settings below.</p>{% endif %}
-  <form method="post" action="/settings/claude-can">
+{# The switch: its stored values as they are, its words from web.CLAUDE_CAN_LABELS and CLAUDE_CAN_LINES. #}
+<section class="card" id="{{ cards.claude_can }}" aria-labelledby="assistant-title">
+  <h2 id="assistant-title">What your assistant may do</h2>
+  {% if saved_card == cards.claude_can %}{{ parts.saved_line(saved_words) }}{% endif %}
+  <p class="muted">Only you can change this, here: your assistant is never offered this switch.</p>
+  <form class="stack" method="post" action="/settings/claude-can#{{ cards.claude_can }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if switch_error %}<div class="error"><p class="error" id="claude-can-error">{{ switch_error }}</p></div>{% endif %}
     <fieldset class="choices">
-      <legend class="sr">What Claude may do</legend>
+      <legend class="sr">What your assistant may do</legend>
       {% for value, label, line in choices %}
       <label class="choice">
-        <input type="radio" name="claude_can" value="{{ value }}"{% if user.claude_can == value %} checked{% endif %} required>
-        <span><strong>{{ label }}</strong><br><span class="muted">{{ line }}</span></span>
+        <input type="radio" name="claude_can" value="{{ value }}"{% if user.claude_can == value %} checked{% endif %}{% if switch_error %} aria-invalid="true" aria-describedby="claude-can-error"{% endif %}>
+        <span><strong>{{ label }}</strong> {{ line }}</span>
       </label>
       {% endfor %}
     </fieldset>
-    <button class="primary">Save</button>
+    <div class="form-actions"><button class="primary">Save</button></div>
   </form>
-</div>
+</section>
 
-<div class="card">
-  <h2>Your data</h2>
-  <p class="muted">These are yours to do, here. Claude does not do them for you.</p>
+<section class="card" aria-labelledby="data-title">
+  <h2 id="data-title">Your data</h2>
   <form method="post" action="/settings/export">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <p>A zip of CSV files: everything you have logged, deleted entries included.</p>
-    <button class="primary">Export my data</button>
+    <button class="secondary">Export my data</button>
   </form>
+  <p class="small">A zip of CSV files: everything you have logged, deleted entries included.</p>
   {% if sample_rows %}
   <form method="post" action="/settings/sample/remove">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <p>Sample data is on this account. Removing it leaves your own entries as they are.</p>
-    <button class="primary">Remove sample data</button>
+    <button class="secondary">Remove sample data</button>
   </form>
+  <p class="small">Sample data is on this account. Removing it leaves your own entries as they are.</p>
   {% endif %}
-  <p><a href="/settings/delete">Delete my account</a> <span class="muted small">You see what goes before anything is deleted.</span></p>
-</div>
+  <p><a class="action is-danger" href="/settings/delete">Delete my account</a></p>
+  <p class="small">You see what goes before anything is deleted.</p>
+</section>
+
+{# More: Saved foods, and a second copy of the top bar's Sign out form. The stylesheet shows this one on a phone
+   only (.card .sign-out) and the top bar's on a laptop only (.top .sign-out). #}
+<section class="card" aria-labelledby="more-title">
+  <h2 id="more-title">More</h2>
+  <p><a class="action" href="{{ foods_href }}">Saved foods</a></p>
+  <form class="sign-out" method="post" action="/sign-out">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary">Sign out</button>
+  </form>
+</section>
 {% endblock %}

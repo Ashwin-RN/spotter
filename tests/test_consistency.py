@@ -17,10 +17,11 @@ import re
 from datetime import date
 
 import pytest
+from sqlalchemy import func, select
 
 from app import db, links, services, users
-from app.formatting import day, day_utc, days, show, widen
-from app.models import User
+from app.formatting import day, day_utc, days, field, show, widen
+from app.models import Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User
 from app.services import lifts
 
 from . import text_rules as tr
@@ -412,3 +413,47 @@ def test_the_edge_account_has_a_cardio_time_goal_and_a_closed_goal(client):
     result = services.get_goals(user_id, True)
     assert any(g["kind"] == "cardio_best" for g in result["goals"]) and result["closed"]
     assert date.fromisoformat(result["today"])
+
+
+# ---------------------------------------------------------------- Settings and Delete my account (pass B16)
+
+# Each target's input and the quantity formatting.field takes it in (the contract's figure table, line 2124).
+TARGET_FIELDS = (("calorie_target_kcal", "kcal"), ("target_sessions_per_week", "count"),
+                 ("target_cardio_minutes_per_week", "week_minutes"))
+# Delete my account's lines, by the one table's words, and the table each counts, deleted rows included.
+DELETE_LINES = (("Lift sessions", LiftSession), ("Weigh-ins", Bodyweight), ("Measurements", Measurement),
+                ("Food entries", FoodEntry), ("Cardio sessions", CardioEntry), ("Saved foods", SavedFood),
+                ("Goals", Goal))
+
+
+def test_settings_holds_the_user_rows_own_values_figure_by_figure(client, account):
+    """The account facts are the user row's name, email, time_zone, subject and id. Each target's input is its stored
+    value through formatting.field, empty when none is set. The add-back box and the checked switch are the row's."""
+    page = client.get("/settings").text
+    with db.session_scope() as s:
+        user = s.get(User, account)
+        row = {c.key: getattr(user, c.key) for c in User.__table__.columns}
+    assert facts(page) == {"Name": row["name"] or "Not given", "Email": row["email"] or "Not given",
+                           "Time zone": row["time_zone"], "Sign-in id": row["subject"], "Account id": str(row["id"])}
+    for name, quantity in TARGET_FIELDS:
+        [tag] = re.findall(rf'<input id="{name}" name="{name}"[^>]*>', page)
+        value = re.search(r' value="([^"]*)"', tag)
+        want = None if row[name] is None else field(row[name], quantity)
+        assert (value.group(1) if value else None) == want, (name, tag)
+    assert bool(re.search(r'name="add_back_exercise_kcal" checked', page)) == bool(row["add_back_exercise_kcal"])
+    assert re.findall(r'name="claude_can" value="([a-z_]+)" checked', page) == [row["claude_can"]]
+
+
+def test_delete_my_account_holds_each_count_line_by_line(client, account, make_user):
+    """Each line of Delete my account is its table's count of the person's rows, deleted ones included, through show
+    as a count, in the one table's words and order. Another person's rows are not counted."""
+    spare_id = make_user().id
+    assert "error" not in services.log_bodyweight(spare_id, {"kg": "90"}, "claude")
+    lines = re.findall(r'<li class="entry-line"><span>([^<]+)</span><strong>([^<]+)</strong></li>',
+                       client.get("/settings/delete").text)
+    want = []
+    with db.session_scope() as s:
+        for label, model in DELETE_LINES:
+            n = s.scalar(select(func.count()).select_from(model).where(model.user_id == account))
+            want.append((label, show(n, "count", page=True)))
+    assert lines == want and any(n != "0" for _, n in lines)

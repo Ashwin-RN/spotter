@@ -437,7 +437,8 @@ def error_posts(today: str, user_id: int) -> dict[str, list[tuple[str, dict]]]:
                    ("/foods", {"name": "Idli", "serving_label": "", "kcal_per_serving": "58",
                                "grams_per_serving": "0"})],
         "/settings": [("/settings", {"time_zone": "Not/AZone"}),
-                      ("/settings/targets", {"calorie_target_kcal": "abc"})],
+                      ("/settings/targets", {"calorie_target_kcal": "abc"}),
+                      ("/settings/claude-can", {"claude_can": "admin"})],
         "/goals": goal_error_posts(today),
     }
     if foods:
@@ -1967,6 +1968,106 @@ def test_the_save_a_food_fold_out_keeps_its_rule_on_the_real_page(client):
     assert refused.status_code == 400 and opening in refused.text
     assert foldout_findings(Seen("/foods", refused.text, True, posted_to="/foods")) == []
     assert foldout_findings(Seen("/foods", refused.text.replace(opening, closed_tag), True, posted_to="/foods"))
+
+
+# ---------------------------------------------------------------- Settings and Delete my account (pass B16)
+
+SETTINGS_STATES = {"no zone, nothing logged": ACCOUNTS["empty"], "sample": ACCOUNTS["sample"], "edge": ACCOUNTS["edge"]}
+SETTINGS_CARD_SHAPES = [("section", ["card"], card_id, f"{name}-title") for card_id, name in
+                        [("account", "account"), ("zone", "zone"), ("targets", "targets"), ("assistant", "assistant"),
+                         (None, "data"), (None, "more")]]
+
+
+def settings_card_shapes(s: Seen) -> list[tuple]:
+    [main] = s.dom.find_all("main")
+    return [(card.tag, card.classes, card.attrs.get("id"), card.attrs.get("aria-labelledby"))
+            for card in main.elements() if card.is_(cls="card")]
+
+
+def settings_renders(client, monkeypatch, uid: int, today: str) -> list[Seen]:
+    """Every Settings and Delete my account render of one state: each address get_paths gives the two routes (each
+    saved line and the unchanged mark), every refusal row tests/test_web_account.py drives (each zone, each target,
+    each switch value), each card's general line from a real refusal with a code the card has no line for, then a
+    save and a post that changes nothing through each of the three forms, each followed to the page it lands on."""
+    from .test_web_account import SWITCH_ROWS, TARGET_ROWS, ZONE_ROWS
+
+    zone = lambda: not only_user().time_zone  # noqa: E731
+    paths = get_paths(uid)
+    out = []
+    for address in paths["/settings"] + paths["/settings/delete"]:
+        r = client.get(address)
+        assert r.status_code == 200, address
+        out.append(Seen(address, r.text, True, zone_missing=zone(), today=today))
+    posts = [("/settings", data) for _, data, _ in ZONE_ROWS] + \
+        [("/settings/targets", data) for _, data, _ in TARGET_ROWS] + \
+        [("/settings/claude-can", data) for _, data in SWITCH_ROWS]
+    for address, data in posts:
+        r = post(client, address, **data)
+        assert r.status_code == 400, (address, data, r.status_code)
+        out.append(Seen(address, r.text, True, zone_missing=zone(), calm=True, today=today, posted_to="/settings"))
+    general = []
+    with monkeypatch.context() as m:  # update_settings refuses claude_can sent with the zone: not_allowed
+        real = services.update_settings
+        m.setattr(services, "update_settings", lambda u, data, by: real(u, {**data, "claude_can": "read"}, by))
+        general.append(("/settings", post(client, "/settings", time_zone="Asia/Kolkata"), web.ZONE_ERROR_GENERAL))
+    with monkeypatch.context() as m:  # a field the form never sends: update_settings refuses it, tied to no field
+        real_form = web.targets_from_form
+        m.setattr(web, "targets_from_form", lambda form, user: {**real_form(form, user), "colour": "red"})
+        general.append(("/settings/targets", post(client, "/settings/targets", target_sessions_per_week="5"),
+                        web.TARGETS_ERROR_GENERAL))
+    with monkeypatch.context() as m:  # set_claude_can for an account that is not there: no_account
+        real_switch = services.set_claude_can
+        m.setattr(services, "set_claude_can", lambda u, value: real_switch(u + 10**6, value))
+        general.append(("/settings/claude-can", post(client, "/settings/claude-can", claude_can="read"),
+                        web.SWITCH_ERROR_GENERAL))
+    for address, r, line in general:
+        assert r.status_code == 400 and line in r.text, address
+        out.append(Seen(address, r.text, True, zone_missing=zone(), calm=True, today=today, posted_to="/settings"))
+    other = "Europe/London" if only_user().time_zone != "Europe/London" else "Asia/Kolkata"
+    switch = "read" if only_user().claude_can != "read" else "log"
+    landed = [follow(client, post(client, "/settings", time_zone=other)),
+              follow(client, post(client, "/settings", time_zone=other)),
+              follow(client, post(client, "/settings/targets", target_sessions_per_week="6")),
+              follow(client, post(client, "/settings/targets", target_sessions_per_week="6")),
+              follow(client, post(client, "/settings/claude-can", claude_can=switch)),
+              follow(client, post(client, "/settings/claude-can", claude_can=switch))]
+    assert [address for address, _ in landed] == ["/settings?saved=time_zone", "/settings?saved=unchanged",
+                                                  "/settings?saved=targets", "/settings?saved=unchanged",
+                                                  "/settings?saved=claude_can", "/settings?saved=unchanged"]
+    out += [Seen(address, markup, True, zone_missing=zone(), today=today_of(only_user()).isoformat())
+            for address, markup in landed]
+    return out
+
+
+@pytest.mark.parametrize("state", sorted(SETTINGS_STATES))
+def test_settings_and_delete_my_account_in_each_state_keep_every_rule_a_built_route_keeps(client, monkeypatch, state):
+    """/settings and /settings/delete are in BUILT (pass B16). In each state, every render, every refusal's among them:
+    the frame rules, the page rules, T1's text rules, T3's step 4 checks, the card rule and every rule a route in BUILT
+    keeps find nothing. Settings' cards are its six titled sections in order, Delete my account's its one bare card."""
+    assert {"/settings", "/settings/delete"} <= BUILT and not {"/settings", "/settings/delete"} & set(CLAUDE_SKIPS)
+    sign_in(client)
+    uid = only_user().id
+    SETTINGS_STATES[state](uid)
+    today = today_of(only_user()).isoformat()
+    before = entered_text(uid)  # the zone the renders show before the last ones change it
+    seen = settings_renders(client, monkeypatch, uid, today)
+    entered, names, notes = before + entered_text(uid), names_of(uid), entered_notes(uid)
+    findings = []
+    for s in seen:
+        findings += frame_findings(s) + page_rule_findings(s) + titled_card_findings(s) + built_findings(s, uid)
+        findings += page_findings(s.address, s.markup, entered, uid, route=s.posted_to or None)
+        findings += step_4_findings(s.address, s.markup, names, notes, route=s.posted_to or None)
+        if s.route == "/settings":
+            if settings_card_shapes(s) != SETTINGS_CARD_SHAPES:
+                findings.append(f"{s.address}: the cards are {settings_card_shapes(s)}")
+            if " required" in s.markup or "autofocus" in s.markup:
+                findings.append(f"{s.address}: a required or autofocus attribute")
+        elif settings_card_shapes(s) != [("div", ["card"], None, None)]:
+            findings.append(f"{s.address}: the cards are {settings_card_shapes(s)}")
+    assert not findings, "\n".join(findings)
+    errors = [s for s in seen if s.posted_to]
+    assert len(errors) == 30 and all(s.dom.find_all(cls="error") for s in errors)
+    assert len(seen) == 42
 
 
 # Every |safe in a template, by template and the count it holds: none. A new one needs a ruling and a line here.

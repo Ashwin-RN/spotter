@@ -754,7 +754,7 @@ def test_the_confirm_page_says_what_goes_by_count(signed, make_user):
     page = signed.get("/settings/delete").text
     counts = dict(re.findall(r'<li class="entry-line"><span>([^<]+)</span><strong>(\d+)</strong></li>', page))
     assert counts == {"Lift sessions": "2", "Weigh-ins": "2", "Measurements": "3", "Food entries": "3",
-                      "Cardio entries": "1", "Saved foods": "1", "Goals": "1"}
+                      "Cardio sessions": "1", "Saved foods": "1", "Goals": "1"}
     assert "so does your sign-in" in page and "This cannot be undone." in page
     form = re.search(r'<form method="post" action="/settings/delete">(.*?)</form>', page, re.S).group(1)
     assert f'value="{session_of(signed)["csrf"]}"' in form and "Delete my account" in form
@@ -880,6 +880,461 @@ def test_delete_needs_the_csrf_token_and_a_post(signed, provider_delete, monkeyp
     for data in ({}, {"csrf_token": "wrong"}):
         assert signed.post("/settings/delete", data=data).status_code == 403
     assert provider_delete["subjects"] == [] and sent == [] and user_count() == 1
+
+
+# ---------------------------------------------------------------- Settings, rebuilt (pass B16)
+
+SETTINGS_CARDS = [("account", "account-title", "Your account"), ("zone", "zone-title", "Time zone"),
+                  ("targets", "targets-title", "Targets"),
+                  ("assistant", "assistant-title", "What your assistant may do"),
+                  (None, "data-title", "Your data"), (None, "more-title", "More")]
+SETTINGS_LINES = {"zone": "Time zone saved.", "targets": "Targets saved.", "assistant": "Your assistant's access saved."}
+SETTINGS_MARKS = {"zone": "time_zone", "targets": "targets", "assistant": "claude_can"}
+
+
+def settings_cards(page: str) -> list[Node]:
+    """Each card in Settings' main, in markup order."""
+    [main] = parse(page).find_all("main")
+    return [card for card in main.elements() if card.is_(cls="card")]
+
+
+def card_by_title(page: str, title: str) -> Node:
+    [card] = [c for c in settings_cards(page) if c.find_all("h2") and c.find_all("h2")[0].text() == title]
+    return card
+
+
+def shown(node: Node) -> str:
+    """A node's words, as a person reads them."""
+    return re.sub(r"\s+", " ", node.text()).strip()
+
+
+def test_settings_in_the_contracts_order(signed, sample_state):
+    """The head, the banner, then the six titled cards in the contract's order, each a section named by its own one
+    h2. No code word, no function's name, no required and no autofocus anywhere on the page."""
+    sample_state(empty=False, rows=3)
+    page = signed.get("/settings").text
+    [main] = parse(page).find_all("main")
+    kids = main.elements()
+    assert kids[0].is_("div", "page-head") and [h.text() for h in kids[0].find_all("h1")] == ["Settings"]
+    assert kids[1].is_("p", "sample-banner")
+    cards = kids[2:]
+    assert all(c.is_(cls="card") for c in cards)
+    assert [(c.tag, c.classes, c.attrs.get("id"), c.attrs.get("aria-labelledby"), [h.text() for h in c.find_all("h2")])
+            for c in cards] == [("section", ["card"], cid, hid, [title]) for cid, hid, title in SETTINGS_CARDS]
+    assert all(c.find_all("h2")[0].attrs["id"] == hid for c, (_, hid, _) in zip(cards, SETTINGS_CARDS))
+    words = plain(page)
+    for code in ("whoami", "claude_can", "update_settings", "set_claude_can", "log_delete", "Claude"):
+        assert code not in words, code
+    assert " required" not in page and "autofocus" not in page
+
+
+def test_settings_on_a_laptop_takes_two_columns_by_its_page_class(signed):
+    assert '<main class="page settings-page">' in signed.get("/settings").text
+
+
+@pytest.mark.parametrize("name, email", [("<b>Asha</b> & co", "a<i>@example.com"), (None, None)],
+                         ids=["markup-like", "none given"])
+def test_the_account_facts_are_the_user_row_value_by_value(signed, name, email):
+    """Name, Email, Time zone, Sign-in id, Account id, each the user row's own value, escaped, in that order. Then the
+    grey line, which names no function."""
+    with db.session_scope() as s:
+        user = s.get(User, only_user().id)
+        user.name, user.email = name, email
+    page = signed.get("/settings").text
+    card = card_by_title(page, "Your account")
+    [facts] = card.find_all("dl", "facts")
+    pairs = [(dt.text(), dd.text()) for dt, dd in zip(facts.find_all("dt"), facts.find_all("dd"))]
+    user = only_user()
+    assert pairs == [("Name", name or "Not given"), ("Email", email or "Not given"),
+                     ("Time zone", "Not chosen yet: today is counted in UTC"),
+                     ("Sign-in id", user.subject), ("Account id", str(user.id))]
+    assert f"<code>{user.id}</code>" in page and f"<code>{user.subject}</code>" in page
+    if name:
+        assert "<b>Asha</b>" not in page and html.escape(name, quote=True) in page and "a<i>" not in page
+    assert [shown(p) for p in card.find_all("p", "small")] == [
+        "When your assistant is connected to this account, asking it who you are shows the same two ids."]
+    services.update_settings(user.id, {"time_zone": "Asia/Kolkata"}, "web")
+    card = card_by_title(signed.get("/settings").text, "Your account")
+    assert [dd.text() for dd in card.find_all("dd")][2] == "Asia/Kolkata"
+
+
+@pytest.mark.parametrize("card", sorted(SETTINGS_LINES))
+def test_each_saved_line_sits_in_its_own_card_and_only_there(signed, card):
+    """One saved line at most on the page, in the card whose mark the address carries, after its h2."""
+    page = signed.get(f"/settings?saved={SETTINGS_MARKS[card]}").text
+    oks = parse(page).find_all("p", "ok")
+    assert [html.unescape(o.text()) for o in oks] == [SETTINGS_LINES[card]]
+    home = next(a for a in oks[0].ancestors() if a.is_(cls="card"))
+    assert home.attrs.get("id") == card and home.elements()[1] is oks[0]
+    assert page.count('class="ok') == 1
+
+
+@pytest.mark.parametrize("query", ["saved=unchanged", "saved=1", "saved=", "saved=Targets", "deleted=targets",
+                                   "saved=saved_food"])
+def test_a_mark_settings_has_no_words_for_shows_no_saved_line(signed, query):
+    page = signed.get(f"/settings?{query}").text
+    assert 'class="ok' not in page and "saved." not in plain(page)
+
+
+def location_of(r) -> str:
+    assert r.status_code == 303, (r.status_code, r.text[:300])
+    return r.headers["location"]
+
+
+def test_each_post_that_changes_nothing_lands_on_its_card_marked_unchanged_with_no_line(signed):
+    """The zone set to the zone it is (in another spelling too), the targets posted as they are (as typed, and in
+    another spelling of the same number), and the switch set to its own value: each lands on saved=unchanged at its
+    card, writes nothing, and the page there says nothing was saved."""
+    uid = only_user().id
+    assert "error" not in services.update_settings(uid, {"time_zone": "Asia/Kolkata", "calorie_target_kcal": 2000,
+                                                         "add_back_exercise_kcal": True}, "web")
+    before = (only_user().updated_at, len(calls(uid)))
+    landed = [location_of(post(signed, "/settings", time_zone="Asia/Kolkata")),
+              location_of(post(signed, "/settings", time_zone="Asia/Calcutta")),
+              location_of(post(signed, "/settings/targets", calorie_target_kcal="2000", add_back_exercise_kcal="on")),
+              location_of(post(signed, "/settings/targets", calorie_target_kcal=" 2000.0 ",
+                               add_back_exercise_kcal="on")),
+              location_of(post(signed, "/settings/claude-can", claude_can="log"))]
+    assert landed == [SITE + "/settings?saved=unchanged#zone"] * 2 + [SITE + "/settings?saved=unchanged#targets"] * 2 \
+        + [SITE + "/settings?saved=unchanged#assistant"]
+    assert only_user().updated_at == before[0]
+    assert [c[:2] for c in calls(uid)[before[1]:]] == [("update_settings", True)] * 2 + [("set_claude_can", True)]
+    assert 'class="ok' not in signed.get("/settings?saved=unchanged").text
+
+
+def test_targets_update_settings_finds_unchanged_are_marked_unchanged(signed, monkeypatch):
+    """When the web's own compare lets a value through that update_settings finds already stored (changed: []), the
+    post is still marked unchanged, never saved: the service's own answer decides."""
+    uid = only_user().id
+    assert "error" not in services.update_settings(uid, {"calorie_target_kcal": 2000}, "web")
+    monkeypatch.setattr(web, "targets_from_form", lambda form, user: {"calorie_target_kcal": "2000"})
+    assert location_of(post(signed, "/settings/targets", calorie_target_kcal="2000")) == \
+        SITE + "/settings?saved=unchanged#targets"
+    assert calls(uid)[-1] == ("update_settings", True, None)
+
+
+def test_each_form_posts_to_its_cards_anchor_and_each_redirect_names_it(signed):
+    """The three forms' actions end in their card's id, which is on the page. Export, Remove sample data and Sign out
+    carry none, and neither does the automatic zone form. Each redirect that answers one of the three names the same
+    card. The automatic save (it carries next) lands as it always did."""
+    services.add_sample_data(only_user().id, "web")
+    page = signed.get("/settings").text
+    dom = parse(page)
+    actions = [f.attrs.get("action") for f in dom.find_all("form")]
+    assert actions == ["/sign-out", "/settings#zone", "/settings/targets#targets", "/settings/claude-can#assistant",
+                       "/settings/export", "/settings/sample/remove", "/sign-out", "/settings"]
+    ids = {n.attrs.get("id") for n in dom.iter()}
+    assert {"zone", "targets", "assistant"} <= ids
+    assert re.search(r'<form id="auto-time-zone" method="post" action="/settings" hidden>', page)
+    assert "autofocus" not in page
+    assert location_of(post(signed, "/settings", time_zone="Europe/London")) == SITE + "/settings?saved=time_zone#zone"
+    assert location_of(post(signed, "/settings/targets", target_sessions_per_week="3")) == \
+        SITE + "/settings?saved=targets#targets"
+    assert location_of(post(signed, "/settings/claude-can", claude_can="read")) == \
+        SITE + "/settings?saved=claude_can#assistant"
+    # The automatic save, as before: next=/settings and a next that is not local land on Settings with no anchor.
+    assert location_of(post(signed, "/settings", time_zone="Asia/Kolkata", next="/settings")) == \
+        SITE + "/settings?saved=time_zone"
+    assert location_of(post(signed, "/settings", time_zone="Asia/Kolkata", next="//evil")) == \
+        SITE + "/settings?saved=unchanged"
+
+
+# The refusals each card can meet, every one a real refusal from the service: (id, card, the post, the code
+# update_settings or set_claude_can gives, {field: the page's line} or the card's line).
+ZONE_LINE = "That time zone was not recognised, so nothing was changed. Choose your time zone from the list."
+ZONE_ROWS = [("not a zone", {"time_zone": "Mars/Olympus"}, "unknown_time_zone"),
+             ("an abbreviation", {"time_zone": "EST"}, "unknown_time_zone"),
+             ("a bare city", {"time_zone": "Kolkata"}, "unknown_time_zone"),
+             ("empty", {"time_zone": ""}, "unknown_time_zone"),
+             ("too long", {"time_zone": "x" * 100}, "invalid_field"),
+             ("a control character", {"time_zone": "Asia/Kolkata\u0007"}, "invalid_field"),
+             ("markup", {"time_zone": "<b>Mars</b>"}, "unknown_time_zone")]
+CALORIE = "Give a daily target from 800 to 10,000 kcal, as a whole number, or leave it empty."
+SESSIONS = "Give sessions a week from 0 to 14, as a whole number, or leave it empty."
+CARDIO = "Give cardio minutes a week from 0 to 3,000, as a whole number, or leave it empty."
+TARGET_ROWS = [
+    ("calories below 800", {"calorie_target_kcal": "799"}, {"calorie_target_kcal": CALORIE}),
+    ("calories above 10000", {"calorie_target_kcal": "10001"}, {"calorie_target_kcal": CALORIE}),
+    ("calories not a number", {"calorie_target_kcal": "lots"}, {"calorie_target_kcal": CALORIE}),
+    ("calories not whole", {"calorie_target_kcal": "2000.5"}, {"calorie_target_kcal": CALORIE}),
+    ("sessions below 0", {"target_sessions_per_week": "-1"}, {"target_sessions_per_week": SESSIONS}),
+    ("sessions above 14", {"target_sessions_per_week": "15"}, {"target_sessions_per_week": SESSIONS}),
+    ("sessions not a number", {"target_sessions_per_week": "four"}, {"target_sessions_per_week": SESSIONS}),
+    ("sessions not whole", {"target_sessions_per_week": "2.5"}, {"target_sessions_per_week": SESSIONS}),
+    ("cardio below 0", {"target_cardio_minutes_per_week": "-5"}, {"target_cardio_minutes_per_week": CARDIO}),
+    ("cardio above 3000", {"target_cardio_minutes_per_week": "3001"}, {"target_cardio_minutes_per_week": CARDIO}),
+    ("cardio not a number", {"target_cardio_minutes_per_week": "<b>x</b>"}, {"target_cardio_minutes_per_week": CARDIO}),
+    ("cardio not whole", {"target_cardio_minutes_per_week": "150.5"}, {"target_cardio_minutes_per_week": CARDIO}),
+    ("three at once", {"calorie_target_kcal": "100", "target_sessions_per_week": "99",
+                       "target_cardio_minutes_per_week": "abc", "add_back_exercise_kcal": "on"},
+     {"calorie_target_kcal": CALORIE, "target_sessions_per_week": SESSIONS, "target_cardio_minutes_per_week": CARDIO}),
+    ("one of two", {"calorie_target_kcal": "2100", "target_sessions_per_week": "99"},
+     {"target_sessions_per_week": SESSIONS}),
+]
+SWITCH_LINE = "Choose one of the three settings below."
+SWITCH_ROWS = [("another word", {"claude_can": "admin"}), ("empty", {"claude_can": ""}), ("none sent", {}),
+               ("another case", {"claude_can": "LOG"}), ("a space after", {"claude_can": "log_delete "}),
+               ("markup", {"claude_can": "<b>read</b>"})]
+
+
+def service_messages(result: dict) -> list[str]:
+    """Every message and fix a refusal carries, each problem's too, as sent and as a page escapes it."""
+    found = [result] + [e for e in result.get("errors") or [] if isinstance(e, dict)]
+    texts = {t for e in found for t in (e.get("message"), e.get("fix")) if t}
+    return sorted(texts | {html.escape(t, quote=True) for t in texts})
+
+
+def real_refusal(function, *args) -> dict:
+    """The service's own answer to the same values, called directly on the person's account: a refusal writes
+    nothing, so the page's post after it meets the same answer."""
+    return function(only_user().id, *args)
+
+
+@pytest.mark.parametrize("data, code", [row[1:] for row in ZONE_ROWS], ids=[row[0] for row in ZONE_ROWS])
+def test_each_zone_refusal_says_the_pages_line_in_its_card(signed, data, code):
+    """The line in a div.error at the top of the Time zone card's form, tied to the select. Never update_settings'
+    message or fix. 400, nothing saved, the call log holds the refusal's code, and no saved line shows."""
+    result = real_refusal(services.update_settings, dict(data), "web")
+    assert result["error"] == code and "field" not in result
+    r = post(signed, "/settings", **data)
+    assert r.status_code == 400 and only_user().time_zone is None
+    assert calls(only_user().id)[-1] == ("update_settings", False, code)
+    card = card_by_title(r.text, "Time zone")
+    [box] = card.find_all("div", "error")
+    assert [(p.classes, p.attrs.get("id"), p.text()) for p in box.elements()] == [(["error"], "time-zone-error",
+                                                                                     ZONE_LINE)]
+    [select] = card.find_all("select")
+    assert (select.attrs.get("aria-invalid"), select.attrs.get("aria-describedby")) == ("true", "time-zone-error")
+    assert [p.text() for p in parse(r.text).find_all(cls="error")] == [ZONE_LINE] * 2  # the box and its line only
+    for text in service_messages(result):
+        assert text not in r.text, text
+    assert "<b>Mars</b>" not in r.text and 'class="ok' not in r.text
+
+
+def test_a_zone_refusal_with_another_code_says_the_cards_general_line(signed, monkeypatch):
+    """A code the card has no line for (here not_allowed, update_settings' real answer when claude_can comes with the
+    zone) takes the card's general line, never the service's words."""
+    real = services.update_settings
+    monkeypatch.setattr(services, "update_settings", lambda uid, data, by: real(uid, {**data, "claude_can": "read"}, by))
+    r = post(signed, "/settings", time_zone="Asia/Kolkata")
+    result = real_refusal(real, {"time_zone": "Asia/Kolkata", "claude_can": "read"}, "web")
+    assert r.status_code == 400 and result["error"] == "not_allowed" and only_user().time_zone is None
+    assert calls(only_user().id)[-1] == ("update_settings", False, "not_allowed")
+    [box] = card_by_title(r.text, "Time zone").find_all("div", "error")
+    assert box.text() == web.ZONE_ERROR_GENERAL
+    for text in service_messages(result):
+        assert text not in r.text, text
+
+
+@pytest.mark.parametrize("data, lines", [row[1:] for row in TARGET_ROWS], ids=[row[0] for row in TARGET_ROWS])
+def test_each_target_refusal_says_the_pages_line_under_its_field(signed, data, lines):
+    """Each refused target's line under its field, tied to its input, what was typed kept in every field and the
+    add-back box as posted. update_settings names no field: each row asserts that its codes are invalid_field, the
+    code the page's lines are keyed by. Never its message or fix. 400, nothing saved, the call log row."""
+    sent = {k: v for k, v in data.items() if k != "add_back_exercise_kcal"}
+    result = real_refusal(services.update_settings, dict(sent, add_back_exercise_kcal="add_back_exercise_kcal" in data),
+                          "web")
+    problems = result.get("errors") or [result]
+    assert [p["error"] for p in problems] == ["invalid_field"] * len(lines) and all("field" not in p for p in problems)
+    r = post(signed, "/settings/targets", **data)
+    assert r.status_code == 400
+    user = only_user()
+    assert (user.calorie_target_kcal, user.target_sessions_per_week, user.target_cardio_minutes_per_week,
+            user.add_back_exercise_kcal) == (None, None, None, False)
+    assert calls(user.id)[-1] == ("update_settings", False, "invalid_field")
+    card = card_by_title(r.text, "Targets")
+    assert not card.find_all("div", "error")
+    errors = {p.attrs["id"].removesuffix("-error"): html.unescape(p.text()) for p in card.find_all("p", "error")}
+    assert errors == lines
+    for field in web.TARGET_FIELDS:
+        [box] = [i for i in card.find_all("input") if i.attrs.get("name") == field]
+        assert box.attrs.get("value", "") == data.get(field, "")
+        if field in lines:
+            assert (box.attrs.get("aria-invalid"), box.attrs.get("aria-describedby")) == ("true", f"{field}-error")
+        else:
+            assert "aria-invalid" not in box.attrs
+    [check] = [i for i in card.find_all("input") if i.attrs.get("type") == "checkbox"]
+    assert ("checked" in check.attrs) == ("add_back_exercise_kcal" in data)
+    for text in service_messages(result):
+        assert text not in r.text, text
+    assert "<b>x</b>" not in r.text and 'class="ok' not in r.text
+
+
+def test_a_targets_refusal_tied_to_no_field_goes_at_the_top_of_the_form(signed, monkeypatch):
+    """A field the form never sends (update_settings really refuses it: invalid_field, 'colour' is not a setting)
+    is placed under none of the fields: the general line sits in a div.error at the top of the targets form."""
+    real = web.targets_from_form
+    monkeypatch.setattr(web, "targets_from_form", lambda form, user: {**real(form, user), "colour": "red"})
+    r = post(signed, "/settings/targets", calorie_target_kcal="2100")
+    result = real_refusal(services.update_settings, {"calorie_target_kcal": "2100", "colour": "red"}, "web")
+    assert r.status_code == 400 and result["error"] == "invalid_field" and only_user().calorie_target_kcal is None
+    card = card_by_title(r.text, "Targets")
+    [form] = card.find_all("form")
+    [box] = form.find_all("div", "error")
+    assert form.elements()[1] is box and box.text() == web.TARGETS_ERROR_GENERAL
+    assert not card.find_all("p", "error") and 'value="2100"' in r.text
+    for text in service_messages(result):
+        assert text not in r.text, text
+
+
+@pytest.mark.parametrize("data", [row[1] for row in SWITCH_ROWS], ids=[row[0] for row in SWITCH_ROWS])
+def test_each_switch_refusal_says_the_pages_line_in_its_card(signed, data):
+    """The line in a div.error at the top of the switch's form, tied to each radio, the stored setting still checked,
+    nothing changed. Never set_claude_can's message or fix."""
+    result = real_refusal(services.set_claude_can, data.get("claude_can"))
+    assert result["error"] == "invalid_field" and "field" not in result
+    r = post(signed, "/settings/claude-can", **data)
+    assert r.status_code == 400 and only_user().claude_can == "log"
+    assert calls(only_user().id)[-1] == ("set_claude_can", False, "invalid_field")
+    card = card_by_title(r.text, "What your assistant may do")
+    [box] = card.find_all("div", "error")
+    assert [(p.attrs.get("id"), p.text()) for p in box.elements()] == [("claude-can-error", SWITCH_LINE)]
+    radios = [i for i in card.find_all("input") if i.attrs.get("type") == "radio"]
+    assert [(i.attrs.get("aria-invalid"), i.attrs.get("aria-describedby")) for i in radios] == \
+        [("true", "claude-can-error")] * 3
+    assert [i.attrs["value"] for i in radios if "checked" in i.attrs] == ["log"]
+    for text in service_messages(result):
+        assert text not in r.text, text
+    assert "<b>read</b>" not in r.text and 'class="ok' not in r.text
+
+
+def test_a_switch_refusal_with_another_code_says_the_cards_general_line(signed, monkeypatch):
+    """set_claude_can's other refusal, no_account (the account gone between the read and the write), drawn for an
+    account that does not exist, takes the card's general line."""
+    real = services.set_claude_can
+    monkeypatch.setattr(services, "set_claude_can", lambda uid, value: real(uid + 10**6, value))
+    r = post(signed, "/settings/claude-can", claude_can="read")
+    result = real(only_user().id + 10**6, "read")
+    assert r.status_code == 400 and result["error"] == "no_account" and only_user().claude_can == "log"
+    [box] = card_by_title(r.text, "What your assistant may do").find_all("div", "error")
+    assert box.text() == web.SWITCH_ERROR_GENERAL
+    for text in service_messages(result):
+        assert text not in r.text, text
+
+
+@pytest.mark.parametrize("value", ["read", "log", "log_delete"])
+def test_the_switch_shows_three_labelled_radio_cards_and_checks_the_stored_one(signed, value):
+    """The three settings by their stored values, in order, each a label.choice in fieldset.choices with its legend:
+    the label in bold, its line after it, saying your assistant. The current one is checked."""
+    services.set_claude_can(only_user().id, value)
+    card = card_by_title(signed.get("/settings").text, "What your assistant may do")
+    assert [shown(p) for p in card.find_all("p", "muted")] == [
+        "Only you can change this, here: your assistant is never offered this switch."]
+    [fieldset] = card.find_all("fieldset", "choices")
+    assert [lg.text() for lg in fieldset.find_all("legend")] == ["What your assistant may do"]
+    choices = fieldset.find_all("label", "choice")
+    got = []
+    for choice in choices:
+        [radio] = choice.find_all("input")
+        [bold] = choice.find_all("strong")
+        got.append((radio.attrs["type"], radio.attrs["name"], radio.attrs["value"], "checked" in radio.attrs,
+                    bold.text(), shown(choice).removeprefix(bold.text()).strip()))
+    assert got == [("radio", "claude_can", v, v == value, label, line) for v, label, line in [
+        ("read", "Read only", "Read only: your assistant can read what you have logged and change nothing."),
+        ("log", "Read and log", "Read and log: your assistant can also log, edit and restore entries and set goals, "
+                                "but not delete."),
+        ("log_delete", "Read, log and delete", "Read, log and delete: your assistant can also delete entries. A deleted "
+                                               "entry can always be restored.")]]
+    assert [b.text() for b in card.find_all("button")] == ["Save"]
+
+
+def test_the_targets_card_holds_its_three_fields_the_add_back_row_and_save(signed):
+    assert "error" not in services.update_settings(only_user().id, {"calorie_target_kcal": 2200,
+                                                                    "target_sessions_per_week": 0,
+                                                                    "add_back_exercise_kcal": True}, "web")
+    card = card_by_title(signed.get("/settings").text, "Targets")
+    fields = card.find_all("div", "field")
+    assert [(f.find_all("label")[0].text(), f.find_all("input")[0].attrs.get("name"),
+             f.find_all("input")[0].attrs.get("value"), f.find_all("input")[0].attrs.get("inputmode")) for f in fields] \
+        == [("Calories a day (kcal)", "calorie_target_kcal", "2200", "numeric"),
+            ("Lift sessions a week", "target_sessions_per_week", "0", "numeric"),
+            ("Cardio a week (min)", "target_cardio_minutes_per_week", None, "numeric")]
+    [row] = card.find_all("label", "choice")
+    [check] = row.find_all("input")
+    assert check.attrs.get("type") == "checkbox" and "checked" in check.attrs
+    assert shown(row) == "Add cardio back: show a net total, food minus cardio calories"
+    assert [b.text() for b in card.find_all("button")] == ["Save targets"]
+
+
+def test_the_time_zone_card_holds_the_grouped_list_and_save(signed):
+    card = card_by_title(signed.get("/settings").text, "Time zone")
+    [select] = card.find_all("select")
+    assert select.attrs == {"id": "time-zone", "name": "time_zone"} and len(select.find_all("optgroup")) > 5
+    assert [b.text() for b in card.find_all("button")] == ["Save time zone"]
+
+
+def test_your_data_offers_export_remove_only_with_sample_rows_and_the_delete_link(signed, sample_state):
+    """Export my data, a secondary button, with its line. Remove sample data, secondary, only with sample rows, with
+    its line. Delete my account, a link in the error colour, with its line."""
+    for rows in (0, 4):
+        sample_state(empty=False, rows=rows)
+        card = card_by_title(signed.get("/settings").text, "Your data")
+        buttons = [(b.classes, b.text()) for b in card.find_all("button")]
+        assert buttons == [(["secondary"], "Export my data")] + ([(["secondary"], "Remove sample data")] if rows else [])
+        [link] = card.find_all("a")
+        assert (link.attrs, link.text()) == ({"class": "action is-danger", "href": "/settings/delete"},
+                                             "Delete my account")
+        lines = [shown(p) for p in card.find_all("p", "small")]
+        assert lines == ["A zip of CSV files: everything you have logged, deleted entries included."] + \
+            (["Sample data is on this account. Removing it leaves your own entries as they are."] if rows else []) + \
+            ["You see what goes before anything is deleted."]
+
+
+def test_the_more_card_links_saved_foods_and_carries_a_sign_out_that_signs_out(signed):
+    """More: Saved foods to /foods, and a second Sign out form (the CSRF field, class sign-out, which the stylesheet
+    shows on a phone only), which signs the person out. No Privacy link."""
+    page = signed.get("/settings").text
+    card = card_by_title(page, "More")
+    assert [(a.attrs, a.text()) for a in card.find_all("a")] == [({"class": "action", "href": "/foods"}, "Saved foods")]
+    [form] = card.find_all("form")
+    assert form.attrs == {"class": "sign-out", "method": "post", "action": "/sign-out"}
+    token = session_of(signed)["csrf"]
+    assert [(i.tag, i.attrs) for i in form.elements()] == [
+        ("input", {"type": "hidden", "name": "csrf_token", "value": token}), ("button", {"class": "secondary"})]
+    assert form.find_all("button")[0].text() == "Sign out" and "Privacy" not in page
+    r = signed.post(form.attrs["action"], data={"csrf_token": form.find_all("input")[0].attrs["value"]})
+    assert r.status_code == 303 and session_of(signed) == {}
+    assert signed.get("/settings").headers["location"] == SITE + "/sign-in"
+
+
+# ---------------------------------------------------------------- Delete my account, rebuilt (pass B16)
+
+def test_the_delete_page_in_the_contracts_order_with_none_logged(signed):
+    """The head, then one card: the bold line, the counts by the one table's names in its order, each 0 on its own
+    line, the two lines, and the two controls."""
+    page = signed.get("/settings/delete").text
+    assert '<main class="page notice-page">' in page
+    [main] = parse(page).find_all("main")
+    head, card = main.elements()
+    assert head.is_("div", "page-head") and [h.text() for h in head.find_all("h1")] == ["Delete my account"]
+    assert card.tag == "div" and card.classes == ["card"] and not card.find_all("h2")
+    assert [(e.tag, shown(e)) for e in card.elements()] == [
+        ("p", "This cannot be undone. Everything below is deleted, deleted entries included."),
+        ("ul", " ".join(f"{label}0" for _, label in web.DELETE_COUNTS)),
+        ("p", "Your settings go too, and so does your sign-in: signing in again starts a new, empty account."),
+        ("p", "To keep a copy, use Export my data on Settings first."),
+        ("form", "Delete my account Keep my account")]
+    assert card.find_all("strong")[0].text() == "This cannot be undone."
+    lines = re.findall(r'<li class="entry-line"><span>([^<]+)</span><strong>(\d+)</strong></li>', page)
+    assert lines == [(label, "0") for _, label in web.DELETE_COUNTS]
+    assert [label for _, label in web.DELETE_COUNTS] == ["Lift sessions", "Weigh-ins", "Measurements", "Food entries",
+                                                         "Cardio sessions", "Saved foods", "Goals"]
+    [form] = card.find_all("form")
+    assert form.attrs == {"method": "post", "action": "/settings/delete"}
+    assert [(b.classes, b.text()) for b in form.find_all("button")] == [(["danger"], "Delete my account")]
+    assert [(a.attrs, a.text()) for a in form.find_all("a")] == [({"class": "action", "href": "/settings"},
+                                                                  "Keep my account")]
+    assert " required" not in page and "autofocus" not in page
+
+
+def test_signed_out_the_delete_page_and_its_post_delete_nothing(client, make_user, provider_delete):
+    """Signed out, the page goes to sign-in and its post, with or without a token, is refused: nothing is deleted at
+    the provider or here."""
+    make_user()
+    assert client.get("/settings/delete").headers["location"] == SITE + "/sign-in"
+    for data in ({}, {"csrf_token": "x"}):
+        assert client.post("/settings/delete", data=data).status_code == 403
+    assert provider_delete["subjects"] == [] and user_count() == 1
 
 
 # ---------------------------------------------------------------- the write limit and CSRF on every new route

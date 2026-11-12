@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Delete my account · Spotter{% endblock %}
 {% block main %}
-<h1>Delete my account</h1>
-<div class="card narrow">
+{# Delete my account (section L): the page head, then one card, at most 480 px wide and centred on a laptop
+   (main.notice-page). The counts are web._delete_counts through the count filter, their words from the one table
+   (web.DELETE_COUNTS), deleted rows included. Delete my account posts, and Keep my account goes back to Settings. #}
+<div class="page-head">
+  <h1>Delete my account</h1>
+</div>
+<div class="card">
   <p><strong>This cannot be undone.</strong> Everything below is deleted, deleted entries included.</p>
   <ul class="entries delete-counts">
     {% for label, count in counts %}
@@ -10,12 +15,12 @@
     {% endfor %}
   </ul>
   <p>Your settings go too, and so does your sign-in: signing in again starts a new, empty account.</p>
-  <p class="muted small">To keep a copy, use Export my data on Settings first.</p>
+  <p class="small">To keep a copy, use Export my data on Settings first.</p>
   <form method="post" action="/settings/delete">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="actions">
-      <button class="primary danger">Delete my account</button>
-      <a href="/settings">Cancel</a>
+    <div class="form-actions">
+      <button class="danger">Delete my account</button>
+      <a class="action" href="{{ settings_href }}">Keep my account</a>
     </div>
   </form>
 </div>

@@ -22,8 +22,10 @@ and Settings.
     /foods                         the saved foods as a table (list_saved_foods), a fold-out that saves one
                                    (POST, save_food); delete and Undo POST to /foods/{id}/delete and /restore
     /foods/{id}/edit               one saved food's serving, kcal and grams (GET, POST)
-    /settings                      the account, the time zone, and the switch for what Claude may do
-                                   (the switch POSTs to /settings/claude-can); export, sample data, delete
+    /settings                      six cards: the account, the time zone (POST), the targets (POST to
+                                   /settings/targets), the switch for what Claude may do (POST to
+                                   /settings/claude-can), the person's data (export, sample data, delete), and
+                                   More (Saved foods, and Sign out for a phone). Each post lands on its own card
     /settings/sample               POST: sample data into an empty account, then Today
     /settings/sample/remove        POST: every sample row removed, then Today
     /settings/export               POST: a zip of CSVs, one per table the person owns
@@ -84,7 +86,7 @@ from app.config import Settings, get_settings
 from app.models import (
     CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
 )
-from app.services import body, lifts, measurements, progress as progress_data
+from app.services import account as account_checks, body, lifts, measurements, progress as progress_data
 from app.services import goals as goal_rules
 from app.services.common import SAMPLE_NOTE
 
@@ -207,23 +209,56 @@ FIELD_HELP = {
     ("saved_food", "grams_per_serving"): ("Give the grams in one serving, from "
                                           f"{rules.span(*rules.NUMBERS['grams_per_serving'][:2], 'grams')}, "
                                           "or leave it empty."),
-    ("settings", "calorie_target_kcal"): "Give a daily target from 800 to 10,000 kcal, as a whole number, or leave it empty.",
-    ("settings", "target_sessions_per_week"): "Give sessions a week from 0 to 14, or leave it empty.",
-    ("settings", "target_cardio_minutes_per_week"): "Give cardio minutes a week from 0 to 3,000, or leave it empty.",
-    ("settings", "add_back_exercise_kcal"): "That setting was not saved.",
 }
 FIRST_FIELD = {"bodyweight": "kg", "measurement": "value", "lift_session": "notes", "food_entry": "description",
-               "cardio_entry": "minutes", "saved_food": "name", "settings": "calorie_target_kcal"}
-FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS, "settings": (*TARGET_FIELDS, "add_back_exercise_kcal")}
+               "cardio_entry": "minutes", "saved_food": "name"}
+FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS}
 
 
-# What each setting of the switch lets Claude do, in one line each.
+# The switch's words, the person's only (section L, Settings): its label, then what each setting lets the person's
+# assistant do, in one line each. The stored values (models.CLAUDE_CAN) never change. No text a connected model reads
+# comes from these two tables.
 CLAUDE_CAN_LINES = {
-    "read": "Read only: Claude can read what you have logged and change nothing.",
-    "log": "Read and log: Claude can also log, edit and restore entries and set goals, but not delete.",
-    "log_delete": "Read, log and delete: Claude can also delete entries. A deleted entry can always be restored.",
+    "read": "Read only: your assistant can read what you have logged and change nothing.",
+    "log": "Read and log: your assistant can also log, edit and restore entries and set goals, but not delete.",
+    "log_delete": "Read, log and delete: your assistant can also delete entries. A deleted entry can always be "
+                  "restored.",
 }
-CLAUDE_CAN_LABELS = {"read": "Read", "log": "Log", "log_delete": "Log and delete"}
+CLAUDE_CAN_LABELS = {"read": "Read only", "log": "Read and log", "log_delete": "Read, log and delete"}
+
+# Settings (section L): each of its three forms posts to its own card's anchor, and every redirect that answers one
+# names that anchor itself, so the person lands on the card that says it was saved. The automatic zone save
+# (base.html's #auto-time-zone, which carries `next`) is not one of them. (the mark's kind, its card's id)
+SETTINGS_CARDS = {"time_zone": "zone", "targets": "targets", "claude_can": "assistant"}
+# Each card's saved line, by the mark's kind: one at most on a page, in its own card.
+SETTINGS_SAVED = {"time_zone": "Time zone saved.", "targets": "Targets saved.",
+                  "claude_can": "Your assistant's access saved."}
+# What the cards say for a refusal, in the page's own words, by the refusal's code (update_settings and
+# set_claude_can give no field). Any other code takes its card's general line. The time zone and the switch say it
+# in the card, the targets under each field: their ranges are update_settings' own (rules.NUMBERS).
+ZONE_ERROR_WORDS = {code: "That time zone was not recognised, so nothing was changed. Choose your time zone from the "
+                          "list." for code in ("unknown_time_zone", "invalid_field")}
+ZONE_ERROR_GENERAL = "The time zone was not saved. Choose yours from the list and try again."
+SWITCH_ERROR_WORDS = {"invalid_field": "Choose one of the three settings below."}
+SWITCH_ERROR_GENERAL = "What your assistant may do was not saved. Choose one of the three and try again."
+
+
+def _target_span(field: str) -> str:
+    lo, hi, _ = rules.NUMBERS[field]
+    return rules.span(lo, hi, TARGET_QUANTITIES[field])
+
+
+TARGET_ERROR_WORDS = {
+    ("invalid_field", "calorie_target_kcal"): (f"Give a daily target from {_target_span('calorie_target_kcal')} kcal, "
+                                               "as a whole number, or leave it empty."),
+    ("invalid_field", "target_sessions_per_week"): (f"Give sessions a week from "
+                                                    f"{_target_span('target_sessions_per_week')}, as a whole number, "
+                                                    "or leave it empty."),
+    ("invalid_field", "target_cardio_minutes_per_week"): (f"Give cardio minutes a week from "
+                                                          f"{_target_span('target_cardio_minutes_per_week')}, as a whole "
+                                                          "number, or leave it empty."),
+}
+TARGETS_ERROR_GENERAL = "The targets were not saved. Check each field and try again."
 
 # Goals (section L, Set a goal). The form shows one kind at a time, chosen by four segments, each a link to
 # /goals?kind={kind}#set-goal. The kind in the address and in the form's hidden field is set_goal's own word for
@@ -325,9 +360,10 @@ CLOSED_WORDS = {"hit": "Hit", "dropped": "Dropped"}  # a closed goal's tag (sect
 STATUS_CLASSES = {"reached": "tag-good", "on track": "tag-good", "behind": "tag-behind",
                   "not enough data": "tag-nodata"}
 
-# What Delete my account says goes, by count. Deleted rows count: they go too.
+# What Delete my account says goes, by count: the one table of its words (a cardio entry is a "Cardio session", as
+# ENTRY_WORDS spells it). Deleted rows count: they go too.
 DELETE_COUNTS = ((LiftSession, "Lift sessions"), (Bodyweight, "Weigh-ins"), (Measurement, "Measurements"),
-                 (FoodEntry, "Food entries"), (CardioEntry, "Cardio entries"), (SavedFood, "Saved foods"),
+                 (FoodEntry, "Food entries"), (CardioEntry, "Cardio sessions"), (SavedFood, "Saved foods"),
                  (Goal, "Goals"))
 
 ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -344,9 +380,6 @@ HSTS = {"Strict-Transport-Security": "max-age=31536000"}  # https sites only
 # /static only: an hour in the browser's cache, so the page cross-fade finds the stylesheet there. The
 # stylesheet's address carries its version, so a deploy is never hidden behind a cached copy.
 STATIC_CACHE = "public, max-age=3600"
-
-ZONE_REFUSED = {"message": "That time zone was not recognised, so nothing was changed.",
-                "fix": "Choose your time zone from the list."}
 
 
 # ---------------------------------------------------------------- set-up
@@ -853,7 +886,7 @@ async def settings_page(request: Request) -> Response:
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
-    error = None
+    zone_error = None
     if request.method == "POST":
         form = await request.form()
         # The one path that stores a zone, the same one Claude uses; it locks the user row first.
@@ -863,33 +896,76 @@ async def settings_page(request: Request) -> Response:
             return too_many(request, result)
         if not failed(result):  # changed: [] (the same zone again) is a success, marked as no change
             mark = UNCHANGED if result.get("changed") == [] else ("saved", "time_zone")
-            # The automatic save carries `next`, the page the person was on: they stay there (decision 1).
-            back = local_path(form.get("next"))
-            if back is not None and urlsplit(back).path != "/settings":
-                return redirect(marked(get_settings().site_origin + back, *mark))
-            return redirect(marked(links.page("settings"), *mark))
+            if "next" in form:  # the automatic save (base.html), not the Time zone card's form: as it always was
+                # It carries `next`, the page the person was on: they stay there (decision 1).
+                back = local_path(form.get("next"))
+                if back is not None and urlsplit(back).path != "/settings":
+                    return redirect(marked(get_settings().site_origin + back, *mark))
+                return redirect(marked(links.page("settings"), *mark))
+            return redirect(settings_landing("time_zone", mark))
         # The service's own text is written for Claude; the page says it in its own words.
-        error = ZONE_REFUSED
-    return await settings_view(request, user, error=error, status_code=400 if error else 200)
+        zone_error = card_error(result, ZONE_ERROR_WORDS, ZONE_ERROR_GENERAL)
+    return await settings_view(request, user, zone_error=zone_error, status_code=400 if zone_error else 200)
 
 
-async def settings_view(request: Request, user: User, error: dict | None = None, switch_error: bool = False,
-                        target_errors: dict | None = None, typed: dict | None = None,
-                        status_code: int = 200) -> Response:
+def page_path(name: str) -> str:
+    """A named page's path for a link on a page: links.page's address without the site's origin."""
+    return urlsplit(links.page(name)).path
+
+
+def settings_landing(kind: str, mark: tuple[str, str]) -> str:
+    """Where a Settings card's post lands: Settings with the post's mark, at that card's own anchor."""
+    return marked(f"{links.page('settings')}#{SETTINGS_CARDS[kind]}", *mark)
+
+
+def card_error(result: dict, words: dict[str, str], general: str) -> str:
+    """The line a card with one field says for a refusal: by its code, else the card's general line. Never the
+    service's message or fix."""
+    return words.get(result.get("error"), general)
+
+
+def target_errors(result: dict, sent: dict) -> tuple[dict[str, str], list[str]]:
+    """{field: the page's own line} for a refused targets post, and the lines for the top of the form.
+    update_settings names no field in a refusal. So each field the form sent goes through update_settings' own check
+    for it (account.SETTABLE, the check the service ran on it): the fields it refuses, in the order sent, are the
+    refusal's problems, in the order the service gives them. Each is placed by its code and that field, never by its
+    message. When the two do not agree one for one, or a code has no line for its field, the general line goes at the
+    top of the form."""
+    problems = [e for e in result.get("errors") or [] if isinstance(e, dict)] or [result]
+    refused = []
+    for field, value in sent.items():
+        check = account_checks.SETTABLE.get(field)
+        _, err = check(value) if check is not None else (None, None)
+        if err:
+            refused.append((field, err.get("error")))
+    if [code for _, code in refused] != [p.get("error") for p in problems] or \
+            any((code, field) not in TARGET_ERROR_WORDS for field, code in refused):
+        return {}, [TARGETS_ERROR_GENERAL]
+    return {field: TARGET_ERROR_WORDS[(code, field)] for field, code in refused}, []
+
+
+async def settings_view(request: Request, user: User, zone_error: str | None = None, switch_error: str | None = None,
+                        targets_refused: dict | None = None, targets_loose: list | None = None,
+                        typed: dict | None = None, add_back: bool | None = None, status_code: int = 200) -> Response:
+    """Settings' six cards. A form sent back with its refusal keeps what was typed (the targets and the add-back box)
+    and shows no saved line. Each target's value is the stored one through formatting.field."""
     state = await _db(services.sample_state, user.id)
     groups, selected = zone_choices(user.time_zone)
+    refused = bool(zone_error or switch_error or targets_refused or targets_loose)
     saved = request.query_params.get("saved")
-    targets = {f: getattr(user, f) for f in TARGET_FIELDS}
+    saved_card = SETTINGS_CARDS[saved] if saved in SETTINGS_SAVED and not refused else None
+    stored = {f: getattr(user, f) for f in TARGET_FIELDS}
     shown = {f: (typed[f] if typed is not None else
-                 ("" if targets[f] is None else formatting.field(targets[f], TARGET_QUANTITIES[f])))
+                 ("" if stored[f] is None else formatting.field(stored[f], TARGET_QUANTITIES[f])))
              for f in TARGET_FIELDS}
-    return page(request, "settings.html", status_code=status_code, user=user, error=error,
-                saved=saved == "time_zone" and error is None, switch_saved=saved == "claude_can",
-                targets_saved=saved == "targets" and not target_errors, target_errors=target_errors or {},
-                targets=shown,
-                switch_error=switch_error, zone_groups=groups, selected_zone=selected,
+    return page(request, "settings.html", status_code=status_code, user=user, cards=SETTINGS_CARDS,
+                saved_card=saved_card, saved_words=SETTINGS_SAVED.get(saved) if saved_card else None,
+                zone_error=zone_error, zone_groups=groups, selected_zone=selected,
+                targets=shown, target_errors=targets_refused or {}, targets_loose=targets_loose or [],
+                add_back=bool(user.add_back_exercise_kcal) if add_back is None else add_back,
+                switch_error=switch_error,
                 choices=[(value, CLAUDE_CAN_LABELS[value], CLAUDE_CAN_LINES[value]) for value in CLAUDE_CAN],
-                sample_rows=sample_rows_of(state))
+                sample_rows=sample_rows_of(state), foods_href=page_path("foods"))
 
 
 async def claude_can_page(request: Request) -> Response:
@@ -902,10 +978,11 @@ async def claude_can_page(request: Request) -> Response:
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if failed(result):
-        return await settings_view(request, user, switch_error=True, status_code=400)
+        return await settings_view(request, user, status_code=400,
+                                   switch_error=card_error(result, SWITCH_ERROR_WORDS, SWITCH_ERROR_GENERAL))
     # The switch already at that setting: changed is False, marked as no change.
     mark = UNCHANGED if result.get("changed") is False else ("saved", "claude_can")
-    return redirect(marked(links.page("settings"), *mark))
+    return redirect(settings_landing("claude_can", mark))
 
 
 # ---------------------------------------------------------------- Today and a day
@@ -1655,15 +1732,18 @@ async def targets_page(request: Request) -> Response:
     form = await request.form()
     data = targets_from_form(form, user)
     if not data:  # nothing differs: marked, but never as saved
-        return redirect(marked(links.page("settings"), *UNCHANGED))
+        return redirect(settings_landing("targets", UNCHANGED))
     result = await write(user, "update_settings", services.update_settings, user.id, data, "web")
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if failed(result):
-        typed = {f: str(form.get(f) or "") for f in TARGET_FIELDS}
-        return await settings_view(request, user, target_errors=field_errors("settings", result), typed=typed,
-                                   status_code=400)
-    return redirect(links.page("settings") + "?saved=targets")
+        errors, loose = target_errors(result, data)
+        typed = {f: str(form.get(f) or "") for f in TARGET_FIELDS}  # what they typed, as typed
+        return await settings_view(request, user, targets_refused=errors, targets_loose=loose, typed=typed,
+                                   add_back=form.get("add_back_exercise_kcal") == "on", status_code=400)
+    # Every value already stored (changed: []): marked as no change, as the zone and the switch are.
+    mark = UNCHANGED if result.get("changed") == [] else ("saved", "targets")
+    return redirect(settings_landing("targets", mark))
 
 
 # ---------------------------------------------------------------- Progress
@@ -2147,7 +2227,8 @@ async def delete_account_page(request: Request) -> Response:
     if user is None:
         return redirect(links.page("sign_in"))
     if request.method == "GET":
-        return page(request, "delete_account.html", counts=await _db(_delete_counts, user.id))
+        return page(request, "delete_account.html", counts=await _db(_delete_counts, user.id),
+                    settings_href=page_path("settings"))
     try:
         await web_auth.delete_identity(user.subject)
     except Exception:  # web_auth has logged the reason by type

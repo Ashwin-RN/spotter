@@ -63,9 +63,7 @@ CONFIRMATION = "confirmation"  # this file's own rule: a confirmation names its 
 
 # What today's pages keep through step 2 (contract section C, "Step 2 does not reshape today's pages").
 SKIPS = (
-    Skip("/settings", CONFIRMATION, "Saved.", "settings.html:72, the bare Saved., replaced in step 4"),
     Skip("/", tr.CODE_WORD, "whoami", "home.html:37, the first sentence offered, replaced in step 4"),
-    Skip("/settings", tr.CODE_WORD, "whoami", "settings.html:15, replaced in step 4"),
     # Not figures: the names in the one attribution line (rule 15), "2024 Adult Compendium" and "CC BY-NC-ND 4.0".
     Skip("", tr.THOUSANDS, "2024", "a year in the Compendium's name, web.ATTRIBUTION", tag="footer"),
     Skip("", tr.TRAILING_ZERO, "4.0", "the licence's version, web.ATTRIBUTION", tag="footer"),
@@ -477,8 +475,9 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
     goal_marks = [f"/goals?saved={s}" for s in web.GOAL_SAVED] + \
         ["/goals?saved=goal&notes=" + ",".join(code for code, _, _ in web.GOAL_NOTES)]
     return {
+        # Settings: each card's saved line, and the mark that only makes it calm.
         "/settings": ["/settings", "/settings?saved=time_zone", "/settings?saved=claude_can",
-                      "/settings?saved=targets"],
+                      "/settings?saved=targets", "/settings?saved=unchanged"],
         "/today": ["/today"],
         "/day/{date}": [f"/day/{d}" for d in dates] + undo + strips,
         # Foods: each strip it has words for, the mark that only makes it calm, and the old mark it no longer reads.
@@ -573,7 +572,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # "/day/{date}". The structure checks below and the page rules in tests/test_page_rules.py run on these
 # routes only. A pass adds its own route here when its page lands.
 BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress", "/progress/{lift}",
-                                   "/goals", "/foods", "/foods/{food_id}/edit"})
+                                   "/goals", "/foods", "/foods/{food_id}/edit", "/settings", "/settings/delete"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 
@@ -782,15 +781,6 @@ CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
         "claude mcp add --transport http --scope user spotter https://spotter.example.app/mcp",
         "You decide what Claude may do.",
         "your targets, what Claude may do, export and delete.",
-    ),
-    "/settings": (  # settings.html: whoami, the switch's card and lines, the data card
-        "Claude's whoami shows the same sign-in id and account id when it is connected to this account.",
-        "What Claude may do",
-        "Only you can change this, here: Claude is never offered this switch.",
-        "Read only: Claude can read what you have logged and change nothing.",
-        "Read and log: Claude can also log, edit and restore entries and set goals, but not delete.",
-        "Read, log and delete: Claude can also delete entries.",
-        "Claude does not do them for you.",
     ),
 }
 _SENTENCE = re.compile(r"(?<=[.?!])\s+")
@@ -1206,7 +1196,7 @@ def test_a_missing_favicon_link_or_a_second_title_is_a_finding():
     assert furniture_findings("/progress", good.replace("<h1>", "<svg><title>Weight</title></svg><h1>"), NAMES) == []
 
 
-def test_claude_is_said_only_in_the_landings_list_of_assistants():
+def test_claude_is_said_only_in_the_landings_list_of_assistants(monkeypatch):
     listed = ('<ul class="assistants"><li><a href="#">Claude apps</a></li>'
               '<li>Claude Code<ul><li>Run this once</li></ul><code>claude mcp add</code></li></ul>')
     assert claude_hits("/", f"<p>Tell your assistant.</p>{listed}<p>Any other client.</p>") == []
@@ -1216,10 +1206,11 @@ def test_claude_is_said_only_in_the_landings_list_of_assistants():
     assert claude_hits("/goals", '<a aria-label="Ask Claude" href="/">x</a>')
     assert claude_hits("/goals", "<head><title>Claude · Spotter</title></head>")
     assert claude_hits("/goals", '<span class="tag tag-claude_estimate">estimate</span>') == []
-    # A skip covers its own sentences on its own route, and nothing else.
-    route, sentence = next((r, s[0]) for r, s in CLAUDE_SKIPS.items() if s and r != "/")
-    address = route.replace("{date}", "2026-11-11").replace("{lift}", "back-squat") + "?saved=goal"
-    address = address.replace("{kind}/{entry_id}", "bodyweight/1")
+    # A skip covers its own sentences on its own route, and nothing else. Since pass B16 no route but the landing keeps
+    # one, so the case plants a skip of its own on a route other than the landing's, as the first such skip was.
+    route, sentence = "/goals", "Ask Claude to set one."
+    monkeypatch.setitem(CLAUDE_SKIPS, route, (sentence,))
+    address = route + "?saved=goal"
     seen: set[tuple[str, str]] = set()
     assert claude_findings(address, f"<p>{sentence}</p>", seen) == [] and seen == {(route, sentence)}
     assert claude_findings(address, f"<p>{sentence} Ask Claude.</p>")  # a new sentence on a skipped page

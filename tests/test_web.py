@@ -507,7 +507,7 @@ def test_sign_out_without_a_provider_session_goes_home(client, seam):
 def test_the_time_zone_form_sets_a_valid_zone(client):
     sign_in(client)
     r = client.post("/settings", data={"time_zone": "Asia/Kolkata", "csrf_token": csrf_of(client)})
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=time_zone"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=time_zone#zone"
     assert only_user().time_zone == "Asia/Kolkata"
     page = client.get(r.headers["location"]).text
     assert "Time zone saved." in page and "Asia/Kolkata" in page
@@ -547,7 +547,7 @@ def test_the_same_zone_again_is_a_success(client):
     sign_in(client)
     set_zone(client, "Europe/London")
     r = set_zone(client, "europe/london")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=unchanged"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=unchanged#zone"
     assert only_user().time_zone == "Europe/London"
     assert 'class="ok' not in client.get(r.headers["location"]).text  # nothing changed, so nothing says saved
 
@@ -983,7 +983,7 @@ def test_the_content_security_policy_is_exact(client):
 def test_the_browsers_zone_is_saved_like_any_other(client, browser_zone, stored):
     sign_in(client)
     r = set_zone(client, browser_zone)
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=time_zone"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=time_zone#zone"
     assert only_user().time_zone == stored
     page = client.get(r.headers["location"]).text
     assert [value for value, selected in options(page) if selected] == [stored]
@@ -997,7 +997,7 @@ def test_a_junk_zone_is_not_saved_and_the_list_is_shown(client, junk):
     r = set_zone(client, junk)
     assert r.status_code == 400 and only_user().time_zone is None
     assert 'class="error"' in r.text and "<b>x</b>" not in r.text
-    assert '<select id="time-zone" name="time_zone" required>' in r.text
+    assert '<select id="time-zone" name="time_zone" aria-invalid="true" aria-describedby="time-zone-error">' in r.text
     assert options(r.text)[0] == ("", True) and len(options(r.text)) > 400
 
 
@@ -1011,7 +1011,7 @@ def test_settings_offers_a_list_with_the_current_zone_selected_and_no_typing(cli
     sign_in(client)
     set_zone(client, "Europe/London")
     page = client.get("/settings").text
-    assert '<select id="time-zone" name="time_zone" required>' in page
+    assert '<select id="time-zone" name="time_zone">' in page
     assert re.search(r'<input[^>]*name="time_zone"', page) is None  # no free-text field, no hidden one
     assert "list=" not in page and "datalist" not in page and "as a name such as" not in page
     assert [value for value, selected in options(page) if selected] == ["Europe/London"]
@@ -1647,13 +1647,14 @@ def test_the_switch_changes_claude_can_and_nothing_else(client, value):
     services.set_claude_can(only_user().id, "read" if value != "read" else "log")  # so the post changes it
     before = {c.name: getattr(only_user(), c.key) for c in User.__table__.columns}
     r = post(client, "/settings/claude-can", claude_can=value)
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=claude_can"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=claude_can#assistant"
     after = {c.name: getattr(only_user(), c.key) for c in User.__table__.columns}
     assert after["claude_can"] == value
     differ = {k for k in after if after[k] != before[k]}
     assert differ <= {"claude_can", "updated_at"}
     page = client.get(r.headers["location"]).text
-    assert f'name="claude_can" value="{value}" checked' in page and "Saved." in page
+    assert f'name="claude_can" value="{value}" checked' in page
+    assert '<p class="ok">Your assistant&#39;s access saved.</p>' in page
 
 
 @pytest.mark.parametrize("value", [None, "", "LOG", "admin", "log_delete ", "everything", "delete"])
@@ -1668,7 +1669,7 @@ def test_every_other_switch_value_is_refused(client, value):
 def test_settings_says_what_each_setting_allows_and_that_claude_never_gets_the_switch(client):
     sign_in(client)
     page = client.get("/settings").text
-    assert "Only you can change this, here: Claude is never offered this switch." in page
+    assert "Only you can change this, here: your assistant is never offered this switch." in page
     for value in ("read", "log", "log_delete"):
         assert f'value="{value}"' in page and web.CLAUDE_CAN_LINES[value] in page
     assert page.count('type="radio" name="claude_can"') == 3
@@ -2312,7 +2313,7 @@ def test_settings_sets_the_targets_and_add_back(client):
     sign_in(client)
     r = post(client, "/settings/targets", calorie_target_kcal="2200", target_sessions_per_week="4",
              target_cardio_minutes_per_week="150", add_back_exercise_kcal="on")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=targets"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=targets#targets"
     user = only_user()
     assert (user.calorie_target_kcal, user.target_sessions_per_week, user.target_cardio_minutes_per_week,
             user.add_back_exercise_kcal) == (2200, 4, 150, True)
@@ -2331,7 +2332,7 @@ def test_settings_clears_a_target_and_turns_add_back_off(client):
 
 
 @pytest.mark.parametrize("field, value, says", [
-    ("calorie_target_kcal", "100", "Give a daily target from 800 to 10,000 kcal"),
+    ("calorie_target_kcal", "100", "Give a daily target from 800 to 10,000 kcal"),
     ("target_sessions_per_week", "30", "Give sessions a week from 0 to 14"),
     ("target_cardio_minutes_per_week", "abc", "Give cardio minutes a week from 0 to 3,000"),
 ])
@@ -2903,11 +2904,11 @@ def test_undo_is_marked_restored_with_its_kind(client, fed):
 
 def test_unchanged_targets_and_an_unchanged_food_are_never_marked_saved(client, fed):
     r = post(client, "/settings/targets", calorie_target_kcal="")
-    assert location(r) == SITE + "/settings?saved=unchanged"
+    assert location(r) == SITE + "/settings?saved=unchanged#targets"
     assert 'class="ok' not in client.get(location(r)).text
     # A real change keeps its own mark and its words.
     r = post(client, "/settings/targets", calorie_target_kcal="2000")
-    assert location(r) == SITE + "/settings?saved=targets"
+    assert location(r) == SITE + "/settings?saved=targets#targets"
     assert '<p class="ok">Targets saved.</p>' in client.get(location(r)).text
     r = post(client, f"/foods/{fed['roti']}/edit", serving_label="1 roti", kcal_per_serving="120")
     assert location(r) == SITE + "/foods?saved=unchanged"
@@ -2920,8 +2921,10 @@ def test_the_marks_pages_have_words_for_stay_as_they_are(client, fed):
         SITE + "/foods?saved=saved_food"
     assert location(post(client, f"/foods/{fed['roti']}/delete")) == SITE + f"/foods?deleted=saved_food:{fed['roti']}"
     assert location(post(client, f"/foods/{fed['roti']}/restore")) == SITE + "/foods?restored=saved_food"
-    assert location(post(client, "/settings/claude-can", claude_can="read")) == SITE + "/settings?saved=claude_can"
-    assert location(post(client, "/settings", time_zone="Asia/Kolkata")) == SITE + "/settings?saved=time_zone"
+    # Settings' since pass B16: each card's own mark, at that card's anchor.
+    assert location(post(client, "/settings/claude-can", claude_can="read")) == \
+        SITE + "/settings?saved=claude_can#assistant"
+    assert location(post(client, "/settings", time_zone="Asia/Kolkata")) == SITE + "/settings?saved=time_zone#zone"
 
 
 def test_the_automatic_zone_save_is_marked_time_zone_on_the_page_it_returns_to(client):
@@ -2971,7 +2974,7 @@ def test_the_same_switch_again_is_marked_unchanged_with_no_strip(client):
     sign_in(client)
     assert only_user().claude_can == "log"
     r = post(client, "/settings/claude-can", claude_can="log")
-    assert location(r) == SITE + "/settings?saved=unchanged"
+    assert location(r) == SITE + "/settings?saved=unchanged#assistant"
     assert 'class="ok' not in client.get(location(r)).text
 
 

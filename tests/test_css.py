@@ -1021,3 +1021,26 @@ def test_the_foods_pages_parts_each_have_their_rule(css):
     assert css.value(".back", "min-height") == "44px" and css.value(".form-page > *", "max-width") == "640px"
     assert css.value("form.stack", "display") == css.value("details.add > form", "display") == "grid"
     assert css.value(".field .hint", "color") == "var(--text-3)"
+
+
+def test_the_settings_pages_parts_each_have_their_rule(css):
+    """Settings and Delete my account (pass B16): on a laptop the six cards take 6 columns each, placed row by row,
+    under the head and the banner, which span both. The card's Sign out shows on a phone only and the top bar's on a
+    laptop only. The radio cards and the add-back row at least 44 px, the chosen one outlined. The delete link in --err,
+    the secondary and danger buttons. Delete my account's card at most 480 px, centred on a laptop. Each part the two
+    pages draw is already styled, so pass B16 adds no rule."""
+    assert css.value(".settings-page > .card", "grid-column", (LAPTOP,)) == "span 6"
+    assert css.value(".page > *", "grid-column", (LAPTOP,)) == "1 / -1"
+    assert css.value(".card .sign-out", "display") == "block" and css.value(".top .sign-out", "display") == "none"
+    assert css.value(".card .sign-out", "display", (LAPTOP,)) == "none"
+    assert css.value(".top .sign-out", "display", (LAPTOP,)) == "block"
+    assert css.value("label.choice", "min-height") == "44px"
+    assert css.value("fieldset.choices label.choice", "border") == "1px solid var(--line-strong)"
+    assert css.value("fieldset.choices label.choice:has(input:checked)", "border-color") == "var(--text)"
+    assert css.value("label.choice strong", "display") == "block"
+    assert css.value("a.is-danger", "color") == "var(--err)" and css.value("a.action", "min-height") == "44px"
+    assert css.value(".secondary", "background") == "var(--raised)"
+    assert css.value("button.danger", "background") == "var(--err)"
+    assert css.value(".notice-page > *", "max-width") == "480px"
+    assert css.value(".notice-page > *", "justify-self", (LAPTOP,)) == "center"
+    assert css.value("dl.facts dt", "color") == "var(--text-2)" and css.value("div.error", "border") ==         "1.5px solid var(--err)"
