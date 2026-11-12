@@ -405,6 +405,21 @@ def page_rule_findings(s: Seen) -> list[str]:
 
 # ---------------------------------------------------------------- the form errors each page sends back
 
+def goal_error_posts(today: str) -> list[tuple[str, dict]]:
+    """The Goals form sent back with its errors on any account, one kind at a time: Body weight with a start typed
+    and a two-line note, Lift with two problems, Cardio time's distance, Measurement's sleep, and a post with no kind
+    (its line at the top of the form). The target date is 60 days after the person's today."""
+    by = (date.fromisoformat(today) + timedelta(days=60)).isoformat()
+    return [("/goals", {"kind": "bodyweight", "target_value": "abc", "target_date": by, "start_value": "eighty",
+                        "text": "two\r\nlines"}),
+            ("/goals", {"kind": "lift", "exercise": "", "target_value": "lots", "target_date": by}),
+            ("/goals", {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": "900", "target_value": "27",
+                        "target_date": by}),
+            ("/goals", {"kind": "measurement", "measurement_kind": "sleep_hours", "target_value": "8",
+                        "target_date": by}),
+            ("/goals", {"target_value": "75", "target_date": by})]
+
+
 def error_posts(today: str, user_id: int) -> dict[str, list[tuple[str, dict]]]:
     """By route: the POSTs that send the page back with a form error, status 400."""
     foods = [f["id"] for f in services.list_saved_foods(user_id)["foods"]]
@@ -420,7 +435,7 @@ def error_posts(today: str, user_id: int) -> dict[str, list[tuple[str, dict]]]:
         "/foods": [("/foods", {"name": "", "serving_label": "1 bowl", "kcal_per_serving": "abc"})],
         "/settings": [("/settings", {"time_zone": "Not/AZone"}),
                       ("/settings/targets", {"calorie_target_kcal": "abc"})],
-        "/goals": [("/goals", {"kind": "bodyweight", "target_value": "abc", "target_date": "2099-01-01"})],
+        "/goals": goal_error_posts(today),
     }
     if foods:
         out["/foods/{food_id}/edit"] = [(f"/foods/{foods[0]}/edit",
@@ -483,11 +498,9 @@ def sweep(client, account: str) -> list[Seen]:
     return seen
 
 
-# The error renders whose page still prints a service's own words, held by route until that page's pass.
-# Goals: goals.html prints set_goal's message and fix ("target_value 'abc' is not a number."). The contract
-# gives the fix to the Goals pass: "The Goals page's own error words, in place of the service's message and
-# fix, are step 4, in lane B."
-TEXT_HELD = {"/goals": "goals.html prints the service's message and fix, until the Goals pass"}
+# The error renders whose page still prints a service's own words, held by route until that page's pass. None
+# is held now: Goals' form says its own words since pass B14. A route held here again fails once its page passes.
+TEXT_HELD: dict[str, str] = {}
 
 
 @pytest.mark.parametrize("account", sorted(ACCOUNTS))
@@ -1586,48 +1599,59 @@ def test_the_lift_page_in_the_states_the_sweeps_never_reach_keeps_every_rule(cli
     assert lift_cards(s) == (LIFT_NOTHING if state == "nothing logged" else LIFT_CARDS)
 
 
-# ---------------------------------------------------------------- Goals, each open goal as its own card (pass B12)
+# ---------------------------------------------------------------- Goals (passes B12, B13 and B14)
 
-# What /goals still waits for, by state: exactly what built_findings and titled_card_findings give on it. An equality,
-# so a second finding cannot hide. Nothing is left under either check. What keeps /goals out of BUILT is outside
-# them: TEXT_HELD["/goals"] (the form's error words, Goals C's), and Goals C's own rebuild of the form. The no-goals
-# words say "your assistant" since Goals B, so CLAUDE_SKIPS holds no /goals line.
-GOALS_WAITS: dict[str, list[str]] = {}
+# The Set a goal form's four kinds, in the segments' order (contract line 1666).
+GOAL_FORM_KINDS = ("bodyweight", "lift", "cardio_best", "measurement")
 
 
-def goals_error_render(client) -> Seen:
-    """The Goals page sent back with its form error, as the sweep reaches it."""
-    address, data = error_posts("", only_user().id)["/goals"][0]
-    r = post(client, address, **data)
-    assert r.status_code == 400
-    return Seen(address, r.text, True, zone_missing=not only_user().time_zone, calm=True, today="2026-11-10",
-                posted_to="/goals")
+def goals_renders(client, today: str, nothing_logged: bool) -> list[Seen]:
+    """Every Goals render of one state: the page, each kind's form by its segment's address, and the form sent back
+    with its errors (the sweep's posts, then, with nothing logged, each kind's refusal for want of a start, which
+    draws Where you are now with its line)."""
+    zone = not only_user().time_zone
+    out = []
+    for address in ["/goals"] + [f"/goals?kind={kind}" for kind in GOAL_FORM_KINDS]:
+        r = client.get(address)
+        assert r.status_code == 200, address
+        out.append(Seen(address, r.text, True, zone_missing=zone, today=today))
+    by = (date.fromisoformat(today) + timedelta(days=60)).isoformat()
+    starts = [{"kind": "bodyweight", "target_value": "75"},
+              {"kind": "lift", "exercise": "Back Squat", "target_value": "140"},
+              {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": "5", "target_value": "27"},
+              {"kind": "measurement", "measurement_kind": "waist", "target_value": "80"}]
+    posts = goal_error_posts(today) + ([("/goals", {**data, "target_date": by}) for data in starts] if nothing_logged
+                                       else [])
+    for n, (address, data) in enumerate(posts):
+        r = post(client, address, **data)
+        assert r.status_code == 400, (data, r.status_code)
+        assert ('id="goal-start-error"' in r.text) == (nothing_logged and n >= len(posts) - len(starts)), data
+        out.append(Seen(address, r.text, True, zone_missing=not only_user().time_zone, calm=True, today=today,
+                        posted_to="/goals"))
+    return out
 
 
 @pytest.mark.parametrize("state", ["sample", "edge", "nothing logged", "line ended", "no goals"])
-def test_goals_in_each_state_keeps_every_rule_and_waits_only_for_its_later_passes(client, monkeypatch, state):
-    """Each Goals state this pass builds, on the fixed day: the frame rules, the page rules every page keeps, T1's
-    text rules and T3's step 4 checks find nothing; the card rule and every rule a route in BUILT keeps find exactly
-    GOALS_WAITS. The same on the page sent back with its form error, less T1, which TEXT_HELD holds there."""
+def test_goals_in_each_state_keeps_every_rule_a_built_route_keeps(client, monkeypatch, state):
+    """/goals is in BUILT (pass B14). Each Goals state on the fixed day, with each kind's form and each form sent back
+    with its errors: the frame rules, the page rules, T1's text rules, T3's step 4 checks, the card rule and every rule
+    a route in BUILT keeps find nothing."""
     from .test_web_goals import goals_page_state  # noqa: PLC0415
 
+    assert "/goals" in BUILT and "/goals" not in CLAUDE_SKIPS and "/goals" not in TEXT_HELD
     sign_in(client)
     uid = goals_page_state(state, monkeypatch)
     today = services.goal_charts(uid)["today"]
-    r = client.get("/goals")
-    assert r.status_code == 200 and ('<li class="goal"' in r.text) == (state != "no goals")
-    s = Seen("/goals", r.text, True, zone_missing=not only_user().time_zone, today=today)
-    findings = frame_findings(s) + page_rule_findings(s)
-    findings += page_findings("/goals", r.text, entered_text(uid), uid)
-    findings += step_4_findings("/goals", r.text, names_of(uid), entered_notes(uid))
+    seen = goals_renders(client, today, nothing_logged=state in ("nothing logged", "no goals"))
+    assert ('<li class="goal"' in seen[0].markup) == (state != "no goals")
+    assert len(seen) == (14 if state in ("nothing logged", "no goals") else 10)
+    findings = []
+    for s in seen:
+        findings += frame_findings(s) + page_rule_findings(s) + titled_card_findings(s) + built_findings(s, uid)
+        findings += page_findings(s.address, s.markup, entered_text(uid), uid, route=s.posted_to or None)
+        findings += step_4_findings(s.address, s.markup, names_of(uid), entered_notes(uid),
+                                    route=s.posted_to or None)
     assert not findings, "\n".join(findings)
-    assert titled_card_findings(s) + built_findings(s, uid) == GOALS_WAITS.get(state, [])
-    error = goals_error_render(client)
-    findings = frame_findings(error) + page_rule_findings(error)
-    findings += step_4_findings(error.address, error.markup, names_of(uid), entered_notes(uid), route="/goals")
-    assert not findings, "\n".join(findings)
-    assert titled_card_findings(error) + built_findings(error, uid) == GOALS_WAITS.get(state, [])
-    assert "/goals" not in BUILT and "/goals" not in CLAUDE_SKIPS and "/goals" in TEXT_HELD
 
 
 def _faked_goals(state: str) -> list[dict]:
@@ -1645,8 +1669,7 @@ def _faked_goals(state: str) -> list[dict]:
 @pytest.mark.parametrize("state", ["every kind with charts", "far projection", "projection to the date", "reached"])
 def test_goals_in_each_faked_state_keeps_every_rule(client, monkeypatch, state):
     """The faked Goals states (pass B13), with the two closed goals: the frame rules, the page rules, T1's text rules
-    and T3's step 4 checks find nothing; the card rule and every rule a route in BUILT keeps find exactly
-    GOALS_WAITS."""
+    and T3's step 4 checks find nothing, and so do the card rule and every rule a route in BUILT keeps."""
     from .test_web_goals import CLOSED, charts_result, goals_result  # noqa: PLC0415
 
     goals = _faked_goals(state)
@@ -1661,13 +1684,13 @@ def test_goals_in_each_faked_state_keeps_every_rule(client, monkeypatch, state):
     findings += page_findings("/goals", r.text, entered_text(uid), uid)
     findings += step_4_findings("/goals", r.text, names_of(uid), entered_notes(uid))
     assert not findings, "\n".join(findings)
-    assert titled_card_findings(s) + built_findings(s, uid) == GOALS_WAITS.get(state, [])
+    assert titled_card_findings(s) + built_findings(s, uid) == []
 
 
 @pytest.mark.parametrize("account", sorted(ACCOUNTS))
 def test_goals_keeps_the_card_rule_on_every_address_the_sweeps_render(client, account):
-    """On each account, every /goals address of get_paths (the marks among them): the card rule and every rule a
-    route in BUILT keeps find exactly GOALS_WAITS, nothing."""
+    """On each account, every /goals address of get_paths (each kind's form and the marks among them): the card rule
+    and every rule a route in BUILT keeps find nothing."""
     sign_in(client)
     ACCOUNTS[account](only_user().id)
     uid, today = only_user().id, today_of(only_user()).isoformat()

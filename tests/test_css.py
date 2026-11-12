@@ -977,3 +977,18 @@ def test_the_behind_line_reads_as_muted_words_and_sits_under_the_facts_on_a_lapt
     assert css.value("li.goal > p.goal-ask", "grid-row", (LAPTOP,)) == "span 2"
     assert css.value("li.goal > .goal-actions", "grid-column", (LAPTOP,)) == "1"
     assert [r.selector for r in css.rules if "goal-ask" in r.selector] == ["p.goal-ask", "li.goal > p.goal-ask"]
+
+
+def test_the_set_a_goal_forms_parts_each_have_their_rule(css):
+    """Goals C: the segments a row of 44 px pills, the current one filled white; the form a grid of stacked fields;
+    the hint and the grey line in --text-3; an error under its field in --err, its input bordered in --err. Each
+    part the form draws is already styled, so pass B14 adds no rule."""
+    assert css.value(".segments", "display") == "flex"
+    assert css.value(".segments a", "min-height") == "44px"
+    assert css.value('.segments a[aria-current="true"]', "background") == "var(--text)"
+    assert css.value('.segments a[aria-current="true"]', "color") == "var(--on-primary)"
+    assert css.value("form.goal-form", "display") == css.value(".field", "display") == "grid"
+    assert css.value("p.hint", "color") == css.value(".small", "color") == "var(--text-3)"
+    assert css.value("p.error", "margin-top") == "6px" and css.value(".error", "color") == "var(--err)"
+    assert css.value('[aria-invalid="true"]', "border") == "1.5px solid var(--err)"
+    assert css.value("div.error", "border") == "1.5px solid var(--err)"

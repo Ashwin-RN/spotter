@@ -18,7 +18,7 @@ and Settings.
     /goals                         each open goal as its own card with its path chart (goal_charts), the
                                    closed ones (get_goals);
                                    Hit, Drop and Reopen POST to /goals/{goal_id}/status; one form for a new
-                                   goal of any kind (POST)
+                                   goal (POST), one kind at a time (?kind=)
     /settings                      the account, the time zone, and the switch for what Claude may do
                                    (the switch POSTs to /settings/claude-can); export, sample data, delete
     /settings/sample               POST: sample data into an empty account, then Today
@@ -82,6 +82,7 @@ from app.models import (
     CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
 )
 from app.services import body, lifts, measurements, progress as progress_data
+from app.services import goals as goal_rules
 from app.services.common import SAMPLE_NOTE
 
 log = logging.getLogger("spotter")
@@ -216,18 +217,81 @@ CLAUDE_CAN_LINES = {
 }
 CLAUDE_CAN_LABELS = {"read": "Read", "log": "Log", "log_delete": "Log and delete"}
 
-# Goals (stage 5, decisions 1 to 3). The form shows every field for every kind; the service decides.
-GOAL_KINDS = (("lift", "A lift: an estimated max in kg"), ("bodyweight", "Body weight in kg"),
-              ("measurement", "A measurement: a body size or resting heart rate"),
-              ("cardio_best", "A cardio time for a distance"))
+# Goals (section L, Set a goal). The form shows one kind at a time, chosen by four segments, each a link to
+# /goals?kind={kind}#set-goal. The kind in the address and in the form's hidden field is set_goal's own word for
+# it. (kind, the segment's words), in the segments' order.
+GOAL_KINDS = (("bodyweight", "Body weight"), ("lift", "Lift"), ("cardio_best", "Cardio time"),
+              ("measurement", "Measurement"))
+GOAL_KIND_FIRST = "bodyweight"  # current when the address names no kind, or one the page does not know
 GOAL_MEASUREMENTS = ("waist", "hips", "chest", "arm", "thigh", "resting_hr")  # decision 2: states, not daily amounts
 GOAL_FIELDS = ("kind", "exercise", "measurement_kind", "distance_km", "target_value", "target_date", "start_value",
                "text")
-GOAL_FIELD_NAMES = re.compile(r"\b(" + "|".join(GOAL_FIELDS) + r")\b")
-# Which field a set_goal refusal belongs beside, by its code, where the code says it.
-GOAL_ERROR_FIELDS = {"unknown_exercise": "exercise", "wrong_direction": "target_value",
-                     "target_is_start": "target_value", "invalid_date": "target_date",
-                     "date_not_in_future": "target_date", "cannot_change_kind": "kind"}
+# Each kind's fields, in the form's order. Where you are now (start_value) joins them before the target only when
+# set_goal refused for want of a start, or the person typed one.
+GOAL_KIND_FIELDS = {"bodyweight": ("target_value", "target_date", "text"),
+                    "lift": ("exercise", "target_value", "target_date", "text"),
+                    "cardio_best": ("exercise", "distance_km", "target_value", "target_date", "text"),
+                    "measurement": ("measurement_kind", "target_value", "target_date", "text")}
+# What the form says for each set_goal refusal a person can reach from it, in the page's own words, keyed by the
+# refusal's error code and its field: never by its message. A line that differs by kind is a {kind: line} table.
+# A measurement's range line names the measurement chosen: {what}, {unit}, {span} and {whole} are filled from
+# rules.MEASUREMENTS. The ranges are the service's own (rules, services.goals), never typed here.
+_BODYWEIGHT_SPAN = rules.span(*rules.BODYWEIGHT_KG, "goal_target")
+_LIFT_MOST = formatting.show(goal_rules.TARGETS["lift"][1], "goal_target", unit=False)
+_TIME_SPAN = rules.span(*goal_rules.TARGETS["cardio_best"], "goal_target")
+_DISTANCE_SPAN = rules.span(*goal_rules.DISTANCE_KM, "goal_target")
+_KIND_LINE = "Choose a kind of goal above: Body weight, Lift, Cardio time or Measurement."
+_EXERCISE_LINE = {"lift": "Choose a lift from the list.", "cardio_best": "Choose an activity from the list."}
+_MEASUREMENT_LINE = "Choose a measurement from the list."
+_DAILY = [measurements.kind_word(k).lower() for k in goal_rules.DAILY_AMOUNTS]  # steps, sleep, water: not goals
+_DAILY_WORDS = (", ".join(_DAILY[:-1]) + " and " + _DAILY[-1]).capitalize()
+GOAL_ERROR_WORDS: dict[tuple[str, str], str | dict[str, str]] = {
+    ("missing_field", "kind"): _KIND_LINE,
+    ("invalid_field", "kind"): _KIND_LINE,
+    ("missing_field", "exercise"): _EXERCISE_LINE,
+    ("unknown_exercise", "exercise"): _EXERCISE_LINE,
+    ("invalid_field", "exercise"): _EXERCISE_LINE,
+    ("missing_field", "distance_km"): "Give the distance the time is for, in km.",
+    ("invalid_field", "distance_km"): f"Give the distance in km, from {_DISTANCE_SPAN}.",
+    ("missing_field", "measurement_kind"): _MEASUREMENT_LINE,
+    ("invalid_kind", "measurement_kind"): _MEASUREMENT_LINE,
+    ("invalid_field", "measurement_kind"): f"{_MEASUREMENT_LINE} {_DAILY_WORDS} are daily amounts, not goals to "
+                                           "reach by a date.",
+    ("missing_field", "target_value"): {
+        "bodyweight": "Give the weight you aim for, in kg.",
+        "lift": "Give the estimated max you aim for, in kg.",
+        "cardio_best": "Give the time you aim for, in minutes.",
+        "measurement": "Give the target, in the unit beside the measurement."},
+    ("invalid_field", "target_value"): {
+        "bodyweight": f"Give the weight you aim for in kg, from {_BODYWEIGHT_SPAN}.",
+        "lift": f"Give the estimated max you aim for in kg, more than 0 and at most {_LIFT_MOST}.",
+        "cardio_best": f"Give the time you aim for in minutes, from {_TIME_SPAN}, such as 27.5 for 27:30.",
+        "measurement": "Give the {what} you aim for in {unit}, from {span}{whole}."},
+    # A new body weight or measurement goal takes its direction from the target, so only a lift or a cardio time
+    # can point the wrong way from the form.
+    ("wrong_direction", "target_value"): {
+        "lift": "A lift goal aims above your estimated max now: give a higher target.",
+        "cardio_best": "A cardio time aims below your time now: give fewer minutes."},
+    ("target_is_start", "target_value"): "That target is where you are now: give one above or below it.",
+    ("missing_field", "target_date"): "Choose the day you aim to reach it by.",
+    ("invalid_date", "target_date"): "That is not a day: choose one after today.",
+    ("date_not_in_future", "target_date"): "Choose a day after today.",
+    ("missing_field", "start_value"): {
+        "bodyweight": "Nothing is logged to start from yet: give your weight now, or log a weigh-in first.",
+        "lift": "No session of this lift is logged yet: give your estimated max now, or log a session first.",
+        "cardio_best": "No session of this distance or longer is logged yet: give your time for it now, or log one "
+                       "first.",
+        "measurement": "None of this measurement is logged yet: give it now, or log one first."},
+    ("invalid_field", "start_value"): {
+        "bodyweight": f"Give your weight now in kg, from {_BODYWEIGHT_SPAN}.",
+        "lift": f"Give your estimated max now in kg, more than 0 and at most {_LIFT_MOST}.",
+        "cardio_best": f"Give your time now in minutes, from {_TIME_SPAN}, such as 27.5 for 27:30.",
+        "measurement": "Give your {what} now in {unit}, from {span}{whole}."},
+    ("invalid_field", "text"): f"Keep the notes to {formatting.show(rules.TEXT_MAX, 'count')} characters or fewer, "
+                               "in plain text.",
+}
+# A refusal the table does not know, by its code or its field: still something true, at the top of the form.
+GOAL_ERROR_GENERAL = "That goal was not set. Check each field and try again."
 GOAL_SAVED = {"goal": "Goal set.", "hit": "Goal marked as hit.", "dropped": "Goal dropped.", "open": "Goal reopened."}
 # set_goal's warnings, said in the page's own words. A saved goal's warnings travel across the redirect as
 # these codes (as the day page carries its undo): (code, how the warning starts, what the page says).
@@ -1254,8 +1318,9 @@ async def edit_page(request: Request) -> Response:
                 shows_estimate=estimate is not None)
 
 
-# The fields a page draws as a textarea. A browser sends a textarea's line breaks as CRLF.
-TEXTAREAS = frozenset({"notes"})
+# The fields a page draws as a textarea: the edit pages' notes, the Goals form's text. A browser sends a textarea's
+# line breaks as CRLF.
+TEXTAREAS = frozenset({"notes", "text"})
 
 
 def line_breaks(text: str) -> str:
@@ -1744,25 +1809,46 @@ def goal_from_form(form) -> dict:
     return data
 
 
-def goal_error_field(err: dict) -> str:
-    """Which field a set_goal refusal belongs beside: the field the error names, else its code, else
-    the first field its message names (the services' messages start with the field), else its fix.
-    "form" when none says."""
-    if err.get("field") in GOAL_FIELDS:
-        return err["field"]
-    if err.get("error") in GOAL_ERROR_FIELDS:
-        return GOAL_ERROR_FIELDS[err["error"]]
-    text = str(err.get("message") or "")
-    found = GOAL_FIELD_NAMES.search(text)
-    if found:
-        return found.group(1)
-    if any(text.casefold().startswith(kind.replace("_", " ") + " ") for kind in rules.MEASUREMENTS):
-        return "measurement_kind"  # "steps cannot be a goal: ..."
-    fix = str(err.get("fix") or "")
-    if re.search(r"\bstart_value\b", fix):  # "nothing to start from": the fix names distance_km too
-        return "start_value"
-    found = GOAL_FIELD_NAMES.search(fix)
-    return found.group(1) if found else "form"
+def goal_kind(value: object) -> str:
+    """The kind the Set a goal form shows: set_goal's word for it, from the address or the posted form. A kind the
+    page does not know, or none, is Body weight."""
+    return value if isinstance(value, str) and value in dict(GOAL_KINDS) else GOAL_KIND_FIRST
+
+
+def goal_error_words(err: dict, kind: str, measured: str = "") -> str | None:
+    """The page's own line for one set_goal refusal, found by its error code and its field, never by its message:
+    the kind's own line where the line differs by kind, a measurement's range named for the one chosen. None for a
+    refusal the table does not know."""
+    words = GOAL_ERROR_WORDS.get((err.get("error"), err.get("field")))
+    if isinstance(words, dict):
+        words = words.get(kind)
+    if words is None or "{" not in words:
+        return words
+    if measured not in rules.MEASUREMENTS:
+        return None
+    unit, lo, hi, whole = rules.MEASUREMENTS[measured]
+    return words.format(what=measurements.kind_word(measured).lower(), unit=unit,
+                        span=rules.span(lo, hi, "goal_target"), whole=", as a whole number" if whole else "")
+
+
+def goal_errors(result: dict, kind: str, typed: dict) -> tuple[dict[str, str], list[str]]:
+    """A set_goal refusal on the form of `kind`: ({field: its line}, [the lines at the top of the form]). Each
+    problem goes under its own field, by the field it names, when the form draws that field (Where you are now is
+    drawn for its own error). A problem about a field the form does not draw, such as the hidden kind, goes at the
+    top, and so does one the table does not know, as the one general line."""
+    found = [e for e in result.get("errors") or [] if isinstance(e, dict)] or [result]
+    drawn = (*GOAL_KIND_FIELDS[kind], "start_value")
+    under: dict[str, list[str]] = {}
+    top: list[str] = []
+    for err in found:
+        words = goal_error_words(err, kind, typed.get("measurement_kind") or "")
+        if words is None:
+            top.append(GOAL_ERROR_GENERAL)
+        elif err.get("field") in drawn:
+            under.setdefault(err["field"], []).append(words)
+        else:
+            top.append(words)
+    return {field: " ".join(dict.fromkeys(lines)) for field, lines in under.items()}, list(dict.fromkeys(top))
 
 
 def goal_note_codes(warnings) -> list[str]:
@@ -1790,15 +1876,6 @@ def saved_address(saved: str, result: dict) -> str:
     return links.page("goals") + f"?saved={saved}" + (f"&notes={','.join(codes)}" if codes else "")
 
 
-def goal_errors(result: dict) -> dict[str, list[dict]]:
-    """{field: [{message, fix}]}: each refusal from set_goal, beside the field it is about."""
-    found = [e for e in result.get("errors") or [] if isinstance(e, dict)] or [result]
-    out: dict[str, list[dict]] = {}
-    for err in found:
-        out.setdefault(goal_error_field(err), []).append({"message": err.get("message"), "fix": err.get("fix")})
-    return out
-
-
 async def exercise_names(kind: str) -> list[str]:
     result = await _db(services.list_exercises, kind)
     return [e["name"] for e in result.get("exercises", [])]
@@ -1818,8 +1895,10 @@ async def goal_reads(user_id: int) -> tuple[dict, dict]:
     return listed, charted
 
 
-async def goals_view(request: Request, user: User, errors: dict | None = None, typed: dict | None = None,
-                     status_code: int = 200) -> Response:
+async def goals_view(request: Request, user: User, kind: str = GOAL_KIND_FIRST, errors: dict | None = None,
+                     loose: list | None = None, typed: dict | None = None, status_code: int = 200) -> Response:
+    """The Goals page, its Set a goal form showing `kind`: after a refusal, with each line under its field or at
+    the top (loose), and what was typed kept."""
     listed, charted = await goal_reads(user.id)
     if failed(listed) or failed(charted):
         return not_found_page(request)
@@ -1830,27 +1909,33 @@ async def goals_view(request: Request, user: User, errors: dict | None = None, t
     return page(request, "goals.html", status_code=status_code, goals=goals, notes=notes,
                 words={g["goal_id"]: goal_words(g) for g in goals},
                 charts={g["goal_id"]: goal_chart(g, today) for g in goals},
-                closed=listed.get("closed") or [], errors=errors or {}, typed=typed or {}, saved=saved,
-                kinds=GOAL_KINDS, lifts=await exercise_names("lift"), activities=await cardio_names(),
-                measurement_choices=[(k, measurements.kind_word(k), rules.MEASUREMENTS[k][0]) for k in GOAL_MEASUREMENTS],
+                closed=listed.get("closed") or [], errors=errors or {}, loose=loose or [], typed=typed or {},
+                saved=saved, kinds=GOAL_KINDS, kind=kind,
+                shows_start="start_value" in (errors or {}) or bool((typed or {}).get("start_value")),
+                lift_choices=[(n, n) for n in await exercise_names("lift")] if kind == "lift" else [],
+                activity_choices=[(n, n) for n in await cardio_names()] if kind == "cardio_best" else [],
+                measurement_choices=[(k, kind_with_unit(k)) for k in GOAL_MEASUREMENTS],
                 goal_quantity=goal_quantity, closed_words=CLOSED_WORDS, sample_rows=sample_rows_of(state),
                 today=today, zone=user.time_zone)
 
 
 async def goals_page(request: Request) -> Response:
-    """GET: every goal. POST: a new goal of any kind, through set_goal as Claude sets one."""
+    """GET: every goal, the form showing the kind ?kind= names. POST: a new goal of the form's kind, through
+    set_goal as Claude sets one. A refusal sends the page back with the posted kind and what was typed."""
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
     if request.method == "GET":
-        return await goals_view(request, user)
-    form = await request.form()
+        return await goals_view(request, user, kind=goal_kind(request.query_params.get("kind")))
+    form = await posted_form(request)  # the Notes' line breaks as LF
     result = await write(user, "set_goal", services.set_goal, user.id, goal_from_form(form), "web")
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if failed(result):
         typed = {f: str(form.get(f) or "") for f in GOAL_FIELDS}
-        return await goals_view(request, user, errors=goal_errors(result), typed=typed, status_code=400)
+        kind = goal_kind(typed["kind"])
+        errors, loose = goal_errors(result, kind, typed)
+        return await goals_view(request, user, kind=kind, errors=errors, loose=loose, typed=typed, status_code=400)
     return redirect(saved_address("goal", result))
 
 

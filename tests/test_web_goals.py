@@ -100,26 +100,17 @@ def goal_item(page: str, goal_id: int) -> str:
 
 # ---------------------------------------------------------------- the page
 
-def test_goals_with_none_offers_the_form_with_every_field(signed, fake_goals):
+def test_goals_with_none_offers_the_body_weight_form(signed, fake_goals):
+    """No kind named: the form is Body weight's, its token and its kind in hidden fields (the one-kind form,
+    contract line 1667; the old every-field form is gone)."""
     seen = fake_goals()
     r = signed.get("/goals")
     assert r.status_code == 200 and "No open goals." in r.text and "Closed goals" not in r.text
     assert seen == [(only_user().id, True)]  # closed goals asked for too
-    form = re.search(r'<form method="post" action="/goals">(.*?)</form>', r.text, re.S).group(1)
-    assert 'name="csrf_token" value="' + session_of(signed)["csrf"] + '"' in form
-    for field in web.GOAL_FIELDS:
-        assert f'name="{field}"' in form, field
-    kinds = re.search(r'<select id="goal-kind" name="kind" required>(.*?)</select>', form, re.S).group(1)
-    assert re.findall(r'<option value="([a-z_]+)"', kinds) == ["lift", "bodyweight", "measurement", "cardio_best"]
-    measured = re.search(r'<select id="goal-measurement" name="measurement_kind">(.*?)</select>', form, re.S).group(1)
-    assert re.findall(r'<option value="([a-z_]*)"', measured) == ["", "waist", "hips", "chest", "arm", "thigh",
-                                                                  "resting_hr"]
-    chosen = re.search(r'<select id="goal-exercise" name="exercise">(.*?)</select>', form, re.S).group(1)
-    names = [html.unescape(n) for n in re.findall(r'<option value="([^"]*)"', chosen)]
-    lifts = [e["name"] for e in services.list_exercises("lift")["exercises"]]
-    cardio = [e["name"] for e in services.list_exercises("cardio")["exercises"]]
-    assert names == ["", *lifts, *cardio] and "Back Squat" in names and "Outdoor Run" in names
-    assert 'name="target_date" type="date"' in form
+    form = form_parts(r.text)
+    assert form["hidden"] == [("csrf_token", session_of(signed)["csrf"]), ("kind", "bodyweight")]
+    assert form["fields"] == FORM_FIELDS["bodyweight"]
+    assert '<input id="goal-date" name="target_date" type="date" autocomplete="off">' in r.text
 
 
 def test_goals_shows_every_kind_with_its_numbers_and_buttons(signed, fake_goals):
@@ -245,86 +236,518 @@ def test_the_form_cannot_send_a_goal_id_or_a_status(signed, capture_set_goal):
     assert sent[0][1] == {"kind": "lift", "exercise": "Back Squat", "target_value": "100", "target_date": "2027-03-31"}
 
 
-def field_block(page: str, field: str) -> str:
-    """What the page shows between a field and the next field: its error, if any."""
-    ids = {"kind": "goal-kind", "exercise": "goal-exercise", "measurement_kind": "goal-measurement",
-           "distance_km": "goal-distance", "target_value": "goal-target", "target_date": "goal-date",
-           "start_value": "goal-start", "text": "goal-text"}
-    after = page.split(f'id="{ids[field]}"', 1)[1]
-    after = after.split("</select>", 1)[1] if field in ("kind", "exercise", "measurement_kind") else after
-    return re.split(r"<label |<button ", after, maxsplit=1)[0]
+# ---------------------------------------------------------------- Set a goal: one kind at a time (pass B14)
+
+def form_parts(page: str) -> dict:
+    """The Set a goal card as a person meets it: the segments (href, words, current), the form's hidden fields, its
+    fields in order (label, tag, name), the top error's lines, each field's error, hint and value, the grey line."""
+    from .test_pages_text import parse  # noqa: PLC0415
+
+    [aside] = parse(page).find_all("aside", "set-goal")
+    [nav] = aside.find_all("nav", "segments")
+    [form] = aside.find_all("form")
+    labels = {label.attrs.get("for"): label.text() for label in form.find_all("label")}
+    controls = [c for c in form.iter() if c.tag in ("input", "select", "textarea")]
+    shown = [c for c in controls if c.attrs.get("type") != "hidden"]
+    errors = {p.attrs.get("id"): p.text() for p in form.find_all("p", "error")}
+
+    def value(c):
+        if c.tag == "textarea":
+            return "".join(t for t in c.children if isinstance(t, str)) or None
+        if c.tag == "select":
+            return next((o.attrs.get("value") for o in c.find_all("option") if "selected" in o.attrs), None)
+        return c.attrs.get("value")
+
+    return {
+        "segments": [(a.attrs.get("href"), a.text(), a.attrs.get("aria-current")) for a in nav.find_all("a")],
+        "hidden": [(c.attrs.get("name"), c.attrs.get("value")) for c in controls if c.attrs.get("type") == "hidden"],
+        "fields": [(labels.get(c.attrs.get("id")), c.tag, c.attrs.get("name")) for c in shown],
+        "top": [p.text() for d in form.find_all("div", "error") for p in d.find_all("p")],
+        "errors": {c.attrs["name"]: errors.get(f"{c.attrs['id']}-error") for c in shown},
+        "invalid": {c.attrs["name"] for c in shown if c.attrs.get("aria-invalid") == "true"},
+        "described": {c.attrs["name"]: c.attrs.get("aria-describedby") for c in shown},
+        "hints": {p.attrs.get("id"): p.text() for p in form.find_all("p", "hint")},
+        "grey": [p.text() for p in form.find_all("p", "small")],
+        "values": {c.attrs["name"]: value(c) for c in shown},
+        "options": {c.attrs["name"]: [(o.attrs.get("value"), o.text()) for o in c.find_all("option")]
+                    for c in shown if c.tag == "select"},
+        "buttons": [(b.classes, b.text()) for b in form.find_all("button")],
+    }
 
 
-REFUSALS = [
-    ("kind", {"error": "invalid_field", "message": "kind 'x' is not a kind of goal.", "fix": "Use one of: lift."}),
-    ("exercise", {"error": "unknown_exercise", "message": "No exercise called 'Squaty'.", "fix": "Closest: Back Squat."}),
-    ("exercise", {"error": "missing_field", "message": "A lift goal needs an exercise.", "fix": "Give the name."}),
-    ("measurement_kind", {"error": "invalid_field", "message": "steps cannot be a goal: it is a day's amount.",
-                          "fix": "Use one of: waist, hips."}),
-    ("measurement_kind", {"error": "invalid_kind", "message": "measurement_kind 'wrist' is not a measurement.",
-                          "fix": "Use one of: waist."}),
-    ("distance_km", {"error": "invalid_field", "message": "distance_km 500 is outside 0.1 to 300.",
-                     "fix": "Give distance_km, 0.1 to 300."}),
-    ("distance_km", {"error": "missing_field", "message": "A cardio_best goal needs distance_km.", "fix": "Give it."}),
-    ("target_value", {"error": "invalid_field", "message": "target_value 900 is outside 20 to 400.",
-                      "fix": "Give target_value in kg, 20 to 400."}),
-    ("target_value", {"error": "wrong_direction", "message": "That target points the other way.", "fix": "Aim below."}),
-    ("target_date", {"error": "date_not_in_future", "message": "target_date 2020-01-01 is not after today.",
-                     "fix": "Give a target date after today."}),
-    ("target_date", {"error": "invalid_date", "message": "That is not a date.", "fix": "Give YYYY-MM-DD."}),
-    ("start_value", {"error": "missing_field", "message": "There is no weigh-in to start this goal from.",
-                     "fix": "Log a weigh-in first, or give start_value: today's body weight in kg."}),
-    ("text", {"error": "invalid_field", "message": "text is longer than 2,000 characters.", "fix": "Shorten it."}),
-    ("form", {"error": "invalid_field", "message": "Something else went wrong.", "fix": "Try another way."}),
-    ("start_value", {"error": "invalid_field", "field": "start_value", "message": "No field named here.",
-                     "fix": "None here either."}),
+BY, NOTES = ("By", "input", "target_date"), ("Notes", "textarea", "text")
+# Each kind's fields, in order (contract lines 1669 to 1674).
+FORM_FIELDS = {
+    "bodyweight": [("Target weight (kg)", "input", "target_value"), BY, NOTES],
+    "lift": [("Lift", "select", "exercise"), ("Target estimated max (kg)", "input", "target_value"), BY, NOTES],
+    "cardio_best": [("Activity", "select", "exercise"), ("Distance (km)", "input", "distance_km"),
+                    ("Target time (min)", "input", "target_value"), BY, NOTES],
+    "measurement": [("Measurement", "select", "measurement_kind"), ("Target", "input", "target_value"), BY, NOTES],
+}
+START_LABELS = {"bodyweight": "Where you are now (kg)", "lift": "Where you are now (kg)",
+                "cardio_best": "Where you are now (min)", "measurement": "Where you are now"}
+SEGMENTS = [("bodyweight", "Body weight"), ("lift", "Lift"), ("cardio_best", "Cardio time"),
+            ("measurement", "Measurement")]
+GREY = "The goal starts from your 7-day average today."
+HINT = "Minutes, such as 27.5 for 27:30"
+# The Measurement choices, each named by web.kind_with_unit: its word, then its unit in brackets.
+MEASURE_CHOICES = [("waist", "Waist (cm)"), ("hips", "Hips (cm)"), ("chest", "Chest (cm)"), ("arm", "Arm (cm)"),
+                   ("thigh", "Thigh (cm)"), ("resting_hr", "Resting heart rate (bpm)")]
+
+
+@pytest.mark.parametrize("address, kind", [
+    ("/goals", "bodyweight"), ("/goals?kind=bodyweight", "bodyweight"), ("/goals?kind=lift", "lift"),
+    ("/goals?kind=cardio_best", "cardio_best"), ("/goals?kind=measurement", "measurement"),
+    ("/goals?kind=", "bodyweight"), ("/goals?kind=nope", "bodyweight"), ("/goals?kind=Lift", "bodyweight"),
+    ("/goals?kind=sessions", "bodyweight"), ("/goals?kind=steps", "bodyweight"),
+    ("/goals?kind=%3Cb%3E", "bodyweight"), ("/goals?saved=goal&kind=measurement", "measurement"),
+])
+def test_the_four_segments_are_links_and_the_kind_the_address_names_is_current(signed, fake_goals, address, kind):
+    """Four links in nav.segments, each to /goals?kind={kind}#set-goal, the current one aria-current="true". No kind,
+    or one the page does not know, is Body weight. The form is the current kind's: its fields and none of another's."""
+    fake_goals()
+    r = signed.get(address)
+    assert r.status_code == 200
+    form = form_parts(r.text)
+    assert form["segments"] == [(f"/goals?kind={k}#set-goal", words, "true" if k == kind else None)
+                                for k, words in SEGMENTS]
+    assert ("kind", kind) in form["hidden"] and form["fields"] == FORM_FIELDS[kind]
+    assert form["buttons"] == [(["primary"], "Set goal")] and form["top"] == [] and not form["invalid"]
+    assert '<nav class="segments" aria-label="Kind of goal">' in r.text and "&lt;b&gt;" not in r.text
+
+
+@pytest.mark.parametrize("kind", list(FORM_FIELDS))
+def test_each_kinds_form_holds_its_fields_in_order_its_empty_choice_and_its_own_lines(signed, fake_goals, kind):
+    """Each list's empty choice names its own kind (contract line 1676). The grey line is Body weight's, the hint
+    Cardio time's, tied to its input. Where you are now is not drawn on a fresh form."""
+    fake_goals()
+    form = form_parts(signed.get(f"/goals?kind={kind}").text)
+    assert form["fields"] == FORM_FIELDS[kind]
+    others = {f for k, fields in FORM_FIELDS.items() if k != kind for _, _, f in fields} - \
+        {f for _, _, f in FORM_FIELDS[kind]}
+    assert not others & set(form["values"]) and "start_value" not in form["values"]
+    lifts = [(e["name"], e["name"]) for e in services.list_exercises("lift")["exercises"]]
+    cardio = [(e["name"], e["name"]) for e in services.list_exercises("cardio")["exercises"]]
+    empty = {"lift": ("exercise", [("", "No lift"), *lifts]),
+             "cardio_best": ("exercise", [("", "No activity"), *cardio]),
+             "measurement": ("measurement_kind", [("", "No measurement"), *MEASURE_CHOICES])}
+    assert form["options"] == ({empty[kind][0]: empty[kind][1]} if kind in empty else {})
+    assert form["grey"] == ([GREY] if kind == "bodyweight" else [])
+    assert form["hints"] == ({"goal-target-hint": HINT} if kind == "cardio_best" else {})
+    assert form["described"]["target_value"] == ("goal-target-hint" if kind == "cardio_best" else None)
+    assert "No lift or activity" not in str(form)
+
+
+def test_the_measurement_choices_are_kind_with_unit_of_each_kind(signed, fake_goals):
+    fake_goals()
+    form = form_parts(signed.get("/goals?kind=measurement").text)
+    assert form["options"]["measurement_kind"][1:] == MEASURE_CHOICES
+    assert MEASURE_CHOICES == [(k, web.kind_with_unit(k)) for k in web.GOAL_MEASUREMENTS]
+
+
+@pytest.fixture
+def real_set_goal(monkeypatch):
+    """set_goal as it is, each answer recorded: every refusal a test reads is set_goal's own."""
+    seen, real = [], services.set_goal
+
+    def spy(*args):
+        seen.append(real(*args))
+        return seen[-1]
+
+    monkeypatch.setattr(services, "set_goal", spy)
+    return seen
+
+
+def problems(result: dict) -> list[dict]:
+    return [e for e in result.get("errors") or [] if isinstance(e, dict)] or [result]
+
+
+def services_words_shown(page: str, result: dict) -> list[str]:
+    """Each message and fix of a refusal that the page shows, escaped or not: none is the answer."""
+    said = [result.get("message"), result.get("fix")] + [e.get(k) for e in problems(result) for k in ("message", "fix")]
+    return [w for w in said if w and (w in page or html.escape(w) in page)]
+
+
+def day_after(days: int) -> str:
+    return (today_of(only_user()) + timedelta(days=days)).isoformat()
+
+
+def filled(data: dict) -> dict:
+    """A form to post, its BY a day 60 after the person's own today and its TODAY their today."""
+    days = {"BY": day_after(60), "TODAY": day_after(0)}
+    return {k: days.get(v, v) for k, v in data.items()}
+
+
+# Every row of the Set a goal form's error table (web.GOAL_ERROR_WORDS), each driven by a real set_goal refusal
+# posted through the form on a new account, nothing logged: (id, the form posted, the refusal's (code, field), the
+# form's kind, where the line lands (a field, or "top"), the page's line).
+FORM_LIFT = {"kind": "lift", "exercise": "Back Squat", "target_value": "140", "target_date": "BY"}
+FORM_RUN = {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": "5", "target_value": "27", "target_date": "BY"}
+FORM_WAIST = {"kind": "measurement", "measurement_kind": "waist", "target_value": "80", "target_date": "BY"}
+FORM_WEIGHT = {"kind": "bodyweight", "target_value": "75", "target_date": "BY"}
+KIND_LINE = "Choose a kind of goal above: Body weight, Lift, Cardio time or Measurement."
+DAILY_LINE = "Choose a measurement from the list. Steps, sleep and water are daily amounts, not goals to reach by a date."
+ERROR_ROWS = [
+    ("kind missing", {"target_value": "75", "target_date": "BY"}, ("missing_field", "kind"), "bodyweight", "top",
+     KIND_LINE),
+    ("kind a setting", {**FORM_WEIGHT, "kind": "sessions"}, ("invalid_field", "kind"), "bodyweight", "top", KIND_LINE),
+    ("kind unknown", {**FORM_WEIGHT, "kind": "x"}, ("invalid_field", "kind"), "bodyweight", "top", KIND_LINE),
+    ("lift with no lift", {**FORM_LIFT, "exercise": ""}, ("missing_field", "exercise"), "lift", "exercise",
+     "Choose a lift from the list."),
+    ("lift unknown", {**FORM_LIFT, "exercise": "Squaty"}, ("unknown_exercise", "exercise"), "lift", "exercise",
+     "Choose a lift from the list."),
+    ("lift given an activity", {**FORM_LIFT, "exercise": "Outdoor Run"}, ("invalid_field", "exercise"), "lift",
+     "exercise", "Choose a lift from the list."),
+    ("cardio with no activity", {**FORM_RUN, "exercise": ""}, ("missing_field", "exercise"), "cardio_best", "exercise",
+     "Choose an activity from the list."),
+    ("cardio unknown", {**FORM_RUN, "exercise": "Moonwalk"}, ("unknown_exercise", "exercise"), "cardio_best", "exercise",
+     "Choose an activity from the list."),
+    ("cardio given a lift", {**FORM_RUN, "exercise": "Back Squat"}, ("invalid_field", "exercise"), "cardio_best",
+     "exercise", "Choose an activity from the list."),
+    ("no distance", {**FORM_RUN, "distance_km": ""}, ("missing_field", "distance_km"), "cardio_best", "distance_km",
+     "Give the distance the time is for, in km."),
+    ("distance too far", {**FORM_RUN, "distance_km": "900"}, ("invalid_field", "distance_km"), "cardio_best",
+     "distance_km", "Give the distance in km, from 0.1 to 300."),
+    ("distance not a number", {**FORM_RUN, "distance_km": "five"}, ("invalid_field", "distance_km"), "cardio_best",
+     "distance_km", "Give the distance in km, from 0.1 to 300."),
+    ("no measurement", {**FORM_WAIST, "measurement_kind": ""}, ("missing_field", "measurement_kind"), "measurement",
+     "measurement_kind", "Choose a measurement from the list."),
+    ("measurement unknown", {**FORM_WAIST, "measurement_kind": "wrist"}, ("invalid_kind", "measurement_kind"),
+     "measurement", "measurement_kind", "Choose a measurement from the list."),
+    ("sleep as a goal", {**FORM_WAIST, "measurement_kind": "sleep_hours"}, ("invalid_field", "measurement_kind"),
+     "measurement", "measurement_kind", DAILY_LINE),
+    ("water as a goal", {**FORM_WAIST, "measurement_kind": "water_ml"}, ("invalid_field", "measurement_kind"),
+     "measurement", "measurement_kind", DAILY_LINE),
+    ("steps as a goal", {**FORM_WAIST, "measurement_kind": "steps"}, ("invalid_field", "measurement_kind"),
+     "measurement", "measurement_kind", DAILY_LINE),
+    ("weight with no target", {**FORM_WEIGHT, "target_value": ""}, ("missing_field", "target_value"), "bodyweight",
+     "target_value", "Give the weight you aim for, in kg."),
+    ("lift with no target", {**FORM_LIFT, "target_value": ""}, ("missing_field", "target_value"), "lift", "target_value",
+     "Give the estimated max you aim for, in kg."),
+    ("cardio with no target", {**FORM_RUN, "target_value": ""}, ("missing_field", "target_value"), "cardio_best",
+     "target_value", "Give the time you aim for, in minutes."),
+    ("measurement with no target", {**FORM_WAIST, "target_value": ""}, ("missing_field", "target_value"), "measurement",
+     "target_value", "Give the target, in the unit beside the measurement."),
+    ("weight out of range", {**FORM_WEIGHT, "target_value": "900"}, ("invalid_field", "target_value"), "bodyweight",
+     "target_value", "Give the weight you aim for in kg, from 20 to 400."),
+    ("lift not a number", {**FORM_LIFT, "target_value": "lots"}, ("invalid_field", "target_value"), "lift",
+     "target_value", "Give the estimated max you aim for in kg, more than 0 and at most 666.67."),
+    ("cardio out of range", {**FORM_RUN, "target_value": "700"}, ("invalid_field", "target_value"), "cardio_best",
+     "target_value", "Give the time you aim for in minutes, from 1 to 600, such as 27.5 for 27:30."),
+    ("waist out of range", {**FORM_WAIST, "target_value": "20"}, ("invalid_field", "target_value"), "measurement",
+     "target_value", "Give the waist you aim for in cm, from 30 to 300."),
+    ("heart rate not whole", {**FORM_WAIST, "measurement_kind": "resting_hr", "target_value": "52.5"},
+     ("invalid_field", "target_value"), "measurement", "target_value",
+     "Give the resting heart rate you aim for in bpm, from 20 to 250, as a whole number."),
+    ("lift below the start", {**FORM_LIFT, "target_value": "90", "start_value": "100"}, ("wrong_direction", "target_value"),
+     "lift", "target_value", "A lift goal aims above your estimated max now: give a higher target."),
+    ("cardio slower than the start", {**FORM_RUN, "target_value": "35", "start_value": "30"},
+     ("wrong_direction", "target_value"), "cardio_best", "target_value",
+     "A cardio time aims below your time now: give fewer minutes."),
+    ("weight at the start", {**FORM_WEIGHT, "target_value": "80", "start_value": "80"}, ("target_is_start", "target_value"),
+     "bodyweight", "target_value", "That target is where you are now: give one above or below it."),
+    ("waist at the start", {**FORM_WAIST, "target_value": "88", "start_value": "88"}, ("target_is_start", "target_value"),
+     "measurement", "target_value", "That target is where you are now: give one above or below it."),
+    ("no date", {**FORM_WEIGHT, "target_date": ""}, ("missing_field", "target_date"), "bodyweight", "target_date",
+     "Choose the day you aim to reach it by."),
+    ("not a date", {**FORM_LIFT, "target_date": "31/12/2027"}, ("invalid_date", "target_date"), "lift", "target_date",
+     "That is not a day: choose one after today."),
+    ("today", {**FORM_RUN, "target_date": "TODAY"}, ("date_not_in_future", "target_date"), "cardio_best", "target_date",
+     "Choose a day after today."),
+    ("weight, nothing to start from", FORM_WEIGHT, ("missing_field", "start_value"), "bodyweight", "start_value",
+     "Nothing is logged to start from yet: give your weight now, or log a weigh-in first."),
+    ("lift, nothing to start from", FORM_LIFT, ("missing_field", "start_value"), "lift", "start_value",
+     "No session of this lift is logged yet: give your estimated max now, or log a session first."),
+    ("cardio, nothing to start from", FORM_RUN, ("missing_field", "start_value"), "cardio_best", "start_value",
+     "No session of this distance or longer is logged yet: give your time for it now, or log one first."),
+    ("waist, nothing to start from", FORM_WAIST, ("missing_field", "start_value"), "measurement", "start_value",
+     "None of this measurement is logged yet: give it now, or log one first."),
+    ("weight start not a number", {**FORM_WEIGHT, "start_value": "eighty"}, ("invalid_field", "start_value"), "bodyweight",
+     "start_value", "Give your weight now in kg, from 20 to 400."),
+    ("lift start out of range", {**FORM_LIFT, "start_value": "0"}, ("invalid_field", "start_value"), "lift",
+     "start_value", "Give your estimated max now in kg, more than 0 and at most 666.67."),
+    ("cardio start out of range", {**FORM_RUN, "start_value": "0.5"}, ("invalid_field", "start_value"), "cardio_best",
+     "start_value", "Give your time now in minutes, from 1 to 600, such as 27.5 for 27:30."),
+    ("arm start out of range", {**FORM_WAIST, "measurement_kind": "arm", "target_value": "38", "start_value": "5"},
+     ("invalid_field", "start_value"), "measurement", "start_value", "Give your arm now in cm, from 10 to 100."),
+    ("heart rate start not whole", {**FORM_WAIST, "measurement_kind": "resting_hr", "target_value": "52",
+                                    "start_value": "60.5"},
+     ("invalid_field", "start_value"), "measurement", "start_value",
+     "Give your resting heart rate now in bpm, from 20 to 250, as a whole number."),
+    ("notes too long", {**FORM_WEIGHT, "text": "x" * 2001}, ("invalid_field", "text"), "bodyweight", "text",
+     "Keep the notes to 2,000 characters or fewer, in plain text."),
+    ("notes with a control character", {**FORM_LIFT, "text": "a\x01b"}, ("invalid_field", "text"), "lift", "text",
+     "Keep the notes to 2,000 characters or fewer, in plain text."),
 ]
+FIELD_IDS = {"exercise": "goal-exercise", "measurement_kind": "goal-measurement", "distance_km": "goal-distance",
+             "target_value": "goal-target", "target_date": "goal-date", "start_value": "goal-start",
+             "text": "goal-text"}
 
 
-@pytest.mark.parametrize("field, err", REFUSALS, ids=[f"{f}-{e['error']}-{i}" for i, (f, e) in enumerate(REFUSALS)])
-def test_a_refusal_shows_the_services_message_and_fix_beside_its_field(signed, capture_set_goal, fake_goals,
-                                                                       field, err):
-    _, state = capture_set_goal
-    state["answer"] = err
-    fake_goals()
-    r = post(signed, "/goals", kind="bodyweight", target_value="900", target_date="2020-01-01", text="mine")
+@pytest.mark.parametrize("data, key, kind, where, line", [row[1:] for row in ERROR_ROWS],
+                         ids=[row[0] for row in ERROR_ROWS])
+def test_each_refusal_shows_the_pages_own_line_under_its_field(signed, real_set_goal, data, key, kind, where, line):
+    """A real set_goal refusal, placed by its error code and its field: the page's own line under that field, tied
+    to its input, or at the top of the form when the form draws no such field. None of the service's words show.
+    The form comes back with the posted kind and what was typed."""
+    r = post(signed, "/goals", **filled(data))
     assert r.status_code == 400
-    shown = f'<div class="error"><p>{err["message"]}</p><p>{err["fix"]}</p></div>'.replace("'", "&#39;")
-    if field == "form":
-        assert shown in r.text.split('<form method="post" action="/goals">')[0].split(SET_GOAL_H2)[1]
+    [result] = real_set_goal
+    assert [(e["error"], e.get("field")) for e in problems(result)] == [key]
+    form = form_parts(r.text)
+    assert ("kind", kind) in form["hidden"]
+    assert [words for _, words, current in form["segments"] if current] == [dict(SEGMENTS)[kind]]
+    if where == "top":
+        assert form["top"] == [line] and not any(form["errors"].values()) and not form["invalid"]
     else:
-        assert shown in field_block(r.text, field)
-        others = [f for f in web.GOAL_FIELDS if f != field]
-        assert all(shown not in field_block(r.text, f) for f in others)
-    assert 'name="target_value" value="900"' in r.text and 'type="date" value="2020-01-01"' in r.text
-    assert ">mine</textarea>" in r.text and '<option value="bodyweight" selected>' in r.text
-    assert "Goal set." not in r.text
-
-
-def test_every_refusal_of_a_combined_answer_is_shown(signed, capture_set_goal, fake_goals):
-    _, state = capture_set_goal
-    errors = [err for _, err in REFUSALS[:4]]
-    state["answer"] = {"error": "invalid_field", "message": "Several fields.", "fix": "See errors.", "errors": errors}
-    fake_goals()
-    r = post(signed, "/goals", kind="lift")
-    for err in errors:
-        assert err["message"].replace("'", "&#39;") in r.text
-    assert "Several fields." not in r.text
-
-
-def test_a_real_refusal_from_set_goal_lands_beside_the_field(signed, fake_goals):
-    fake_goals()
-    tomorrow = (today_of(only_user()) + timedelta(days=1)).isoformat()
-    r = post(signed, "/goals", kind="bodyweight", target_value="900", target_date=tomorrow)
-    assert r.status_code == 400 and "target_value" in field_block(r.text, "target_value")
-    r = post(signed, "/goals", kind="bodyweight", target_value="75", target_date="2020-01-01")
-    assert r.status_code == 400 and "after today" in field_block(r.text, "target_date")
-    r = post(signed, "/goals", kind="bodyweight", target_value="75", target_date=tomorrow)
-    assert r.status_code == 400 and "start_value" in field_block(r.text, "start_value")
-    r = post(signed, "/goals", kind="lift", target_value="100", target_date=tomorrow)
-    assert r.status_code == 400 and "exercise" in field_block(r.text, "exercise")
+        assert form["errors"][where] == line and form["top"] == []
+        assert form["invalid"] == {where} and {f for f, e in form["errors"].items() if e} == {where}
+        assert f"{FIELD_IDS[where]}-error" in form["described"][where].split()
+    assert services_words_shown(r.text, result) == []
+    choices = {f: {v for v, _ in o} for f, o in form["options"].items()}
+    kept = {f: v for f, v in filled(data).items() if f in form["values"]}
+    assert {f: form["values"][f] for f in kept} == \
+        {f: v if v and (f not in choices or v in choices[f]) else None for f, v in kept.items()}
     assert rows(Goal, only_user().id) == []
-    assert [c[0] for c in calls(only_user().id)] == ["set_goal"] * 4
+
+
+def test_the_rows_drive_every_line_of_the_table_and_no_other():
+    """Each (code, field) of web.GOAL_ERROR_WORDS, and each kind of a line that differs by kind, is driven by a row
+    above: no line goes unproved, and no row lands on a line the table lacks."""
+    driven = {(key, kind) for _, _, key, kind, _, _ in ERROR_ROWS}
+    assert {key for key, _ in driven} == set(web.GOAL_ERROR_WORDS)
+    by_kind = {(key, kind) for key, words in web.GOAL_ERROR_WORDS.items() if isinstance(words, dict) for kind in words}
+    assert {(key, kind) for key, kind in driven if isinstance(web.GOAL_ERROR_WORDS[key], dict)} == by_kind
+
+
+@pytest.mark.parametrize("what, start", [("sleep_hours", "Sleep cannot be a goal"),
+                                         ("water_ml", "Water cannot be a goal")])
+def test_sleep_and_water_land_beside_the_measurement_field_by_their_field(signed, real_set_goal, what, start):
+    """Contract lines 748 and 1693: placed by the refusal's field, measurement_kind, never by its words."""
+    r = post(signed, "/goals", **filled({**FORM_WAIST, "measurement_kind": what}))
+    [result] = real_set_goal
+    assert result["message"].startswith(start) and result["field"] == "measurement_kind"
+    form = form_parts(r.text)
+    assert form["errors"]["measurement_kind"] == DAILY_LINE and form["top"] == [] and start not in r.text
+
+
+def test_three_problems_at_once_each_go_under_their_own_field(signed, real_set_goal):
+    r = post(signed, "/goals", **filled({**FORM_LIFT, "exercise": "", "target_value": "lots", "target_date": "TODAY"}))
+    [result] = real_set_goal
+    assert [(e["error"], e["field"]) for e in problems(result)] == [
+        ("missing_field", "exercise"), ("invalid_field", "target_value"), ("date_not_in_future", "target_date")]
+    form = form_parts(r.text)
+    assert {f: e for f, e in form["errors"].items() if e} == {
+        "exercise": "Choose a lift from the list.",
+        "target_value": "Give the estimated max you aim for in kg, more than 0 and at most 666.67.",
+        "target_date": "Choose a day after today."}
+    assert form["invalid"] == {"exercise", "target_value", "target_date"} and form["top"] == []
+    assert services_words_shown(r.text, result) == []
+
+
+def test_a_refusal_the_table_does_not_know_shows_one_general_line_at_the_top(signed, monkeypatch):
+    """Real set_goal refusals the form cannot reach, made by handing set_goal what the form never sends: invalid_by,
+    which names no field, and a status on a new goal, a field the table has no line for. Each shows the one general
+    line at the top and nothing of the service's. Beside a known problem, that one keeps its own line."""
+    real, seen = services.set_goal, []
+    for change, known in (({"by": "api"}, None), ({"status": "won"}, None),
+                          ({"status": "hit", "target_value": "lots"}, "target_value")):
+        def odd(user_id, data, by, change=change):
+            seen.append(real(user_id, {**data, **{k: v for k, v in change.items() if k != "by"}},
+                             change.get("by", by)))
+            return seen[-1]
+
+        monkeypatch.setattr(services, "set_goal", odd)
+        r = post(signed, "/goals", **filled(FORM_LIFT))
+        result = seen[-1]
+        assert r.status_code == 400 and result.get("error"), result
+        assert any(web.goal_error_words(e, "lift") is None for e in problems(result)), result
+        form = form_parts(r.text)
+        assert form["top"] == [web.GOAL_ERROR_GENERAL] == ["That goal was not set. Check each field and try again."]
+        assert {f for f, e in form["errors"].items() if e} == ({known} if known else set())
+        assert services_words_shown(r.text, result) == []
+    assert [[(e["error"], e.get("field")) for e in problems(r)] for r in seen] == [
+        [("invalid_by", None)], [("invalid_field", "status")],
+        [("invalid_field", "status"), ("invalid_field", "target_value")]]
+
+
+# Every refusal set_goal can build, read from app/services/goals.py: (function, how it is built, the field it names).
+# A rules.error call gives its code, "<_at>" wraps a refusal built elsewhere, a <name> field is a variable. Each is
+# answered by the table's lines (their keys) or by why the form never reaches it. A refusal set_goal gains makes the
+# read differ from this table, so it cannot go unseen: give it a line in web.GOAL_ERROR_WORDS, or say here why the
+# form never reaches it.
+NOT_FROM_THE_FORM = "not from the form"
+SERVICE_REFUSALS = {
+    ("_value", "<in_range>", None): [("invalid_field", "target_value"), ("invalid_field", "start_value")],
+    ("_value", "<_at>", "<field>"): [("invalid_field", "target_value"), ("invalid_field", "start_value")],
+    ("_value", "invalid_field", "<field>"): [("invalid_field", "target_value"), ("invalid_field", "start_value")],
+    ("_future_date", "invalid_date", "target_date"): [("invalid_date", "target_date")],
+    ("_future_date", "date_not_in_future", "target_date"): [("date_not_in_future", "target_date")],
+    ("_kind_error", "invalid_field", "kind"): [("invalid_field", "kind")],
+    ("_kind_error", "missing_field", "kind"): [("missing_field", "kind")],
+    ("_measurement_kind", "missing_field", "measurement_kind"): [("missing_field", "measurement_kind")],
+    ("_measurement_kind", "invalid_field", "measurement_kind"): [("invalid_field", "measurement_kind")],
+    ("_measurement_kind", "invalid_kind", "measurement_kind"): [("invalid_kind", "measurement_kind")],
+    ("_wrong_kind", "invalid_field", "exercise"): [("invalid_field", "exercise")],
+    ("_identity", "<match_cardio>", None): [("missing_field", "exercise"), ("unknown_exercise", "exercise")],
+    ("_identity", "missing_field", "exercise"): [("missing_field", "exercise")],
+    ("_identity", "<in_range>", None): [("invalid_field", "distance_km")],
+    ("_identity", "missing_field", "distance_km"): [("missing_field", "distance_km")],
+    ("_identity", "<_at>", "exercise"): [("unknown_exercise", "exercise")],
+    ("_identity", "<_at>", "distance_km"): [("invalid_field", "distance_km")],
+    ("_identity", "<unknown_exercise>", None): [("unknown_exercise", "exercise")],
+    ("_no_start", "missing_field", "start_value"): [("missing_field", "start_value")],
+    ("_wrong_way", "wrong_direction", "target_value"): [("wrong_direction", "target_value")],
+    ("set_goal", "<check_data>", None): NOT_FROM_THE_FORM + ": the web always sends an object",
+    ("set_goal", "<check_by>", None): NOT_FROM_THE_FORM + ": the web always sends by web",
+    ("set_goal", "<check_write_limit>", None): NOT_FROM_THE_FORM + ": the too many writes page answers it",
+    ("set_goal", "<no_account>", None): NOT_FROM_THE_FORM + ": the page needs a signed-in person",
+    ("set_goal", "<text>", None): [("invalid_field", "text")],
+    ("set_goal", "<_at>", "text"): [("invalid_field", "text")],
+    ("set_goal", "invalid_field", "status"): NOT_FROM_THE_FORM + ": the form sends no status",
+    ("set_goal", "<not_found>", None): NOT_FROM_THE_FORM + ": the form sends no goal_id",
+    ("set_goal", "nothing_to_change", None): NOT_FROM_THE_FORM + ": the form sends no goal_id",
+    ("set_goal", "cannot_change_kind", "<renamed>"): NOT_FROM_THE_FORM + ": the form sends no goal_id",
+    ("set_goal", "missing_field", "<field>"): [("missing_field", "target_value"), ("missing_field", "target_date")],
+    ("set_goal", "target_is_start", "target_value"): [("target_is_start", "target_value")],
+    ("get_goals", "<no_account>", None): NOT_FROM_THE_FORM + ": get_goals, not set_goal",
+    ("goal_charts", "<no_account>", None): NOT_FROM_THE_FORM + ": goal_charts, not set_goal",
+}
+# How many times each is built, where more than once: a second copy of one is a new refusal too.
+SERVICE_REFUSAL_COUNTS = {("_kind_error", "invalid_field", "kind"): 2, ("_wrong_kind", "invalid_field", "exercise"): 2,
+                          ("_identity", "<_at>", "exercise"): 2, ("_no_start", "missing_field", "start_value"): 4,
+                          ("_wrong_way", "wrong_direction", "target_value"): 2,
+                          ("set_goal", "invalid_field", "status"): 2}
+BUILDERS = ("check_data", "check_by", "check_write_limit", "no_account", "not_found", "unknown_exercise",
+            "match_cardio", "in_range", "text")
+
+
+def service_refusals() -> dict[tuple, int]:
+    """Each refusal app/services/goals.py builds, named as SERVICE_REFUSALS names it, and how many times."""
+    import ast  # noqa: PLC0415
+    from collections import Counter  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    def named(node):
+        if node is None:
+            return None
+        return node.value if isinstance(node, ast.Constant) else f"<{node.id}>" if isinstance(node, ast.Name) else "<?>"
+
+    tree = ast.parse((Path(__file__).parents[1] / "app" / "services" / "goals.py").read_text(encoding="utf-8"))
+    found = Counter()
+    for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+        for call in (n for n in ast.walk(fn) if isinstance(n, ast.Call)):
+            f = call.func
+            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+            if isinstance(f, ast.Attribute) and getattr(f.value, "id", None) == "rules" and name == "error":
+                field = next((k.value for k in call.keywords if k.arg == "field"), None)
+                found[(fn.name, call.args[0].value, named(field))] += 1
+            elif name == "_at":
+                found[(fn.name, "<_at>", named(call.args[1]))] += 1
+            elif name in BUILDERS:
+                found[(fn.name, f"<{name}>", None)] += 1
+    return dict(found)
+
+
+def test_every_refusal_set_goal_builds_has_a_line_or_a_reason():
+    """A refusal set_goal gains fails here until the table gives it a line or this test says why the form never
+    reaches it. Every line a refusal is answered by is in the table."""
+    assert service_refusals() == {key: SERVICE_REFUSAL_COUNTS.get(key, 1) for key in SERVICE_REFUSALS}
+    for site, answer in SERVICE_REFUSALS.items():
+        assert (isinstance(answer, str) and answer.startswith(NOT_FROM_THE_FORM)) or \
+            all(key in web.GOAL_ERROR_WORDS for key in answer), site
+
+
+def test_where_you_are_now_shows_only_for_its_refusal_or_when_typed(signed, real_set_goal):
+    """Not on a fresh form, nor after a refusal about another field with none typed. With its own refusal it shows
+    before the target, with the line under it. Typed, it shows with what was typed and no line."""
+    for kind in FORM_FIELDS:
+        assert "start_value" not in form_parts(signed.get(f"/goals?kind={kind}").text)["values"], kind
+    form = form_parts(post(signed, "/goals", **filled({**FORM_WEIGHT, "target_value": "lots"})).text)
+    assert "start_value" not in form["values"] and form["errors"]["target_value"]
+    for kind, data in (("bodyweight", FORM_WEIGHT), ("lift", FORM_LIFT), ("cardio_best", FORM_RUN), ("measurement", FORM_WAIST)):
+        form = form_parts(post(signed, "/goals", **filled(data)).text)
+        start = (START_LABELS[kind], "input", "start_value")
+        assert form["fields"] == FORM_FIELDS[kind][:-3] + [start] + FORM_FIELDS[kind][-3:], kind
+        assert form["errors"]["start_value"] and form["values"]["start_value"] is None
+        assert form["described"]["start_value"] == "goal-start-error" and form["invalid"] == {"start_value"}
+    form = form_parts(post(signed, "/goals", **filled({**FORM_WEIGHT, "target_value": "lots", "start_value": "80"})).text)
+    assert form["values"]["start_value"] == "80" and form["errors"]["start_value"] is None
+    assert form["fields"][0] == ("Where you are now (kg)", "input", "start_value")
+    assert [r["error"] for r in real_set_goal] == ["invalid_field", "missing_field", "missing_field", "missing_field",
+                                                   "missing_field", "invalid_field"]
+
+
+@pytest.mark.parametrize("data", [
+    {"kind": "bodyweight", "target_value": "lots", "target_date": "BY", "text": "for the wedding"},
+    {"kind": "lift", "exercise": "Bench Press", "target_value": "lots", "target_date": "BY", "text": "by spring"},
+    {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": "5", "target_value": "lots",
+     "target_date": "BY", "text": "a 5 km race"},
+    {"kind": "measurement", "measurement_kind": "resting_hr", "target_value": "lots", "target_date": "BY",
+     "text": "calmer"},
+], ids=lambda d: d["kind"])
+def test_after_a_refusal_the_posted_kind_is_current_and_what_was_typed_stays(signed, real_set_goal, data):
+    r = post(signed, "/goals", **filled(data))
+    assert r.status_code == 400 and real_set_goal[0]["field"] == "target_value"
+    form = form_parts(r.text)
+    assert [s for s in form["segments"] if s[2]] == [(f"/goals?kind={data['kind']}#set-goal",
+                                                      dict(SEGMENTS)[data["kind"]], "true")]
+    assert ("kind", data["kind"]) in form["hidden"] and form["fields"] == FORM_FIELDS[data["kind"]]
+    assert form["values"] == {k: v for k, v in filled(data).items() if k != "kind"}
+    assert "Goal set." not in r.text and 'class="ok' not in r.text
+
+
+@pytest.mark.parametrize("data", [
+    {"kind": "bodyweight", "target_value": "75", "target_date": "BY", "text": "for the wedding"},
+    {"kind": "lift", "exercise": "Back Squat", "target_value": "140", "target_date": "BY", "text": ""},
+    {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": "5", "target_value": "27",
+     "target_date": "BY", "text": ""},
+    {"kind": "measurement", "measurement_kind": "waist", "target_value": "80", "target_date": "BY", "text": ""},
+], ids=lambda d: d["kind"])
+def test_a_goal_of_each_kind_set_from_its_own_form_ends_on_goals_with_goal_set(signed, data):
+    """Each kind's own fields, with something logged to start from: the goal is set and the page says Goal set."""
+    uid = only_user().id
+    services.log_bodyweight(uid, {"kg": 80}, "claude")
+    services.log_lifts(uid, {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}, "claude")
+    services.log_measurement(uid, {"kind": "waist", "value": "88"}, "claude")
+    services.log_cardio(uid, {"exercise": "Outdoor Run", "minutes": 31, "distance_km": 5}, "claude")
+    form = form_parts(signed.get(f"/goals?kind={data['kind']}").text)
+    assert {f for _, _, f in form["fields"]} == set(data) - {"kind"}
+    r = post(signed, "/goals", **filled(data))
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=goal"
+    assert '<p class="ok">Goal set.</p>' in signed.get(r.headers["location"]).text
+    [goal] = rows(Goal, uid)
+    assert (goal.kind, goal.status) == (data["kind"], "open")
+
+
+def test_a_body_weight_goal_with_nothing_logged_asks_where_you_are_now_then_is_set(signed):
+    uid = only_user().id
+    r = post(signed, "/goals", **filled(FORM_WEIGHT))
+    assert r.status_code == 400 and form_parts(r.text)["errors"]["start_value"]
+    r = post(signed, "/goals", **filled({**FORM_WEIGHT, "start_value": "80"}))
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=goal"
+    [goal] = rows(Goal, uid)
+    assert (goal.start_value, goal.target_value, goal.direction) == (80, 75, "down")
+
+
+def test_a_two_line_note_is_stored_with_lf(signed, real_set_goal):
+    """The post reads through web.posted_form, as the edit pages do: a browser's CRLF is stored as LF. A refusal
+    keeps the note's lines as LF too."""
+    r = post(signed, "/goals", **filled({**FORM_WEIGHT, "start_value": "80", "text": "first line\r\nsecond line"}))
+    assert r.status_code == 303
+    [goal] = rows(Goal, only_user().id)
+    assert goal.text == "first line\nsecond line"
+    r = post(signed, "/goals", **filled({**FORM_WEIGHT, "target_value": "lots", "text": "one\r\ntwo\rthree"}))
+    assert r.status_code == 400 and form_parts(r.text)["values"]["text"] == "one\ntwo\nthree"
+
+
+def test_a_hint_and_an_error_on_one_field_are_both_tied_to_it(signed, real_set_goal):
+    r = post(signed, "/goals", **filled({**FORM_RUN, "target_value": "700"}))
+    form = form_parts(r.text)
+    assert form["described"]["target_value"] == "goal-target-error goal-target-hint"
+    assert form["hints"] == {"goal-target-hint": HINT} and form["invalid"] == {"target_value"}
+    assert '<div class="field has-error">\n  <label for="goal-target">Target time (min)</label>' in \
+        r.text.replace("\r\n", "\n")
 
 
 def test_a_real_goal_set_from_the_form(signed):
@@ -352,13 +775,6 @@ def test_a_goal_of_every_kind_through_the_form_shows_on_the_page(signed):
     for label in ("Back Squat 100 kg", "Body weight 75 kg", "Waist 80 cm", "Outdoor Run 5 km in 28:00"):
         assert f"<strong>{label}</strong>" in page, label
     assert page.count('name="status" value="hit"') == 4
-
-
-def test_a_daily_amount_is_refused_beside_the_measurement_field(signed):
-    by = (today_of(only_user()) + timedelta(days=60)).isoformat()
-    r = post(signed, "/goals", kind="measurement", measurement_kind="steps", target_value="10000", target_date=by,
-             start_value="5000")
-    assert r.status_code == 400 and "a day&#39;s amount" in field_block(r.text, "measurement_kind")
 
 
 # ---------------------------------------------------------------- Hit, Drop, Reopen
@@ -632,13 +1048,6 @@ def test_a_field_of_only_spaces_is_left_out(signed, capture_set_goal):
     post(signed, "/goals", kind="bodyweight", exercise="   ", measurement_kind=" ", distance_km="  ",
          target_value=" 75 ", target_date="2027-03-31", start_value="   ", text="  ")
     assert sent[0][1] == {"kind": "bodyweight", "target_value": "75", "target_date": "2027-03-31"}
-
-
-def test_the_cardio_nothing_to_start_from_refusal_lands_under_start_value():
-    err = {"error": "missing_field", "message": "There is no Outdoor Run session of 5 km or more to start this goal "
-           "from.", "fix": "Log one first (log_cardio with distance_km), or give start_value: the person's time for "
-           "5 km now, in minutes."}
-    assert web.goal_error_field(err) == "start_value"
 
 
 @pytest.mark.parametrize("rate, shown", [(0, "0"), (0.0, "0"), (0.004, "0"), (-0.004, "0"), (1.5, "+1.5"),

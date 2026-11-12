@@ -4176,7 +4176,7 @@ def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
     hr = services.log_measurement(uid, {"kind": "resting_hr", "value": "58"}, "claude")
     edit = client.get(f"/entries/measurement/{hr['id']}/edit").text
     assert '<p id="edit-value-name">Resting heart rate (bpm)</p>' in edit
-    goals = client.get("/goals").text
+    goals = client.get("/goals?kind=measurement").text  # the Measurement form (pass B14: one kind at a time)
     assert '<option value="resting_hr">Resting heart rate (bpm)</option>' in goals
 
 

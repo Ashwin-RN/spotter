@@ -81,8 +81,8 @@ SKIPS = (
 NUMBER_RULES = ("thousands", "trailing_zero")
 # Also kept through step 2, and not checked by this file's rules at all: units in headers, the estimate
 # tag beside the day's total ("of which", day.html:78), remarks inside value cells ("(food minus cardio)",
-# day.html:84), the Notes columns, and the Goals page printing the service's message and fix
-# (goals.html:66-67, which only a refused POST renders).
+# day.html:84) and the Notes columns. The Goals form's errors are its own words since pass B14, and its error
+# renders are checked in tests/test_page_rules.py.
 
 def glance_zeros(user_id: int, address: str, tag: str) -> int:
     """The true zeros Today's glance block shows, read from get_trends and get_days, never from the page: the
@@ -438,6 +438,7 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
     # The side cards' fold-outs open by their own marks, each alone and all three at once.
     strips += [f"/day/{today.isoformat()}?add={mark}" for mark in ("cardio", "weigh-in", "measurement")]
     strips += [f"/day/{(today - timedelta(days=1)).isoformat()}?add=cardio&add=weigh-in&add=measurement"]
+    # Goals: each kind's Set a goal form by its segment's address, then each saved line and every goal note.
     goal_marks = [f"/goals?saved={s}" for s in web.GOAL_SAVED] + \
         ["/goals?saved=goal&notes=" + ",".join(code for code, _, _ in web.GOAL_NOTES)]
     return {
@@ -450,7 +451,7 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
         "/entries/{kind}/{entry_id}/edit": entries,
         "/progress": ["/progress"],
         "/progress/{lift}": [f"/progress/{web.links.slug(name)}" for name in sorted(lifts)],
-        "/goals": ["/goals"] + goal_marks,
+        "/goals": ["/goals"] + [f"/goals?kind={kind}" for kind, _ in web.GOAL_KINDS] + goal_marks,
         "/settings/delete": ["/settings/delete"],
     }
 
@@ -534,7 +535,8 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # The routes whose page a step 4 pass has rebuilt: "/" or a GET path template from web.PAGES, such as
 # "/day/{date}". The structure checks below and the page rules in tests/test_page_rules.py run on these
 # routes only. A pass adds its own route here when its page lands.
-BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress", "/progress/{lift}"})
+BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress", "/progress/{lift}",
+                                   "/goals"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 

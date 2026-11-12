@@ -99,49 +99,37 @@
 
 <aside class="card set-goal" id="set-goal" aria-labelledby="set-goal-title">
   <h2 id="set-goal-title">Set a goal</h2>
-  <p class="muted small">Fill in what your kind of goal needs and leave the rest empty. Spotter checks it and says what is missing.</p>
-  {% if errors.form %}{% for e in errors.form %}<div class="error"><p>{{ e.message }}</p>{% if e.fix %}<p>{{ e.fix }}</p>{% endif %}</div>{% endfor %}{% endif %}
-  {% macro field_error(field) %}{% for e in errors.get(field, []) %}<div class="error"><p>{{ e.message }}</p>{% if e.fix %}<p>{{ e.fix }}</p>{% endif %}</div>{% endfor %}{% endmacro %}
-  <form method="post" action="/goals">
+  {# One kind at a time (section L, Set a goal): the segments are links, the current one the form's kind. The form
+     shows only that kind's fields, each error under its own field in the page's own words (web.goal_errors), and
+     one not tied to a field the form draws at the top. Where you are now shows only for its own error or when the
+     person typed one. #}
+  <nav class="segments" aria-label="Kind of goal">
+    {% for value, words in kinds %}<a href="/goals?kind={{ value }}#set-goal"{% if value == kind %} aria-current="true"{% endif %}>{{ words }}</a>
+    {% endfor %}
+  </nav>
+  {% set target_label = {"bodyweight": "Target weight (kg)", "lift": "Target estimated max (kg)", "cardio_best": "Target time (min)"}.get(kind, "Target") %}
+  {% set start_label = {"bodyweight": "Where you are now (kg)", "lift": "Where you are now (kg)", "cardio_best": "Where you are now (min)"}.get(kind, "Where you are now") %}
+  <form method="post" action="/goals" class="goal-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label for="goal-kind">Kind</label>
-    <select id="goal-kind" name="kind" required>
-      {% for value, label in kinds %}<option value="{{ value }}"{% if typed.get("kind") == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
-    </select>
-    {{ field_error("kind") }}
-    <label for="goal-exercise">Lift or activity (a lift goal or a cardio time)</label>
-    <select id="goal-exercise" name="exercise">
-      <option value="">No lift or activity</option>
-      <optgroup label="Lifts">
-        {% for name in lifts %}<option value="{{ name }}"{% if typed.get("exercise") == name %} selected{% endif %}>{{ name }}</option>{% endfor %}
-      </optgroup>
-      <optgroup label="Cardio">
-        {% for name in activities %}<option value="{{ name }}"{% if typed.get("exercise") == name %} selected{% endif %}>{{ name }}</option>{% endfor %}
-      </optgroup>
-    </select>
-    {{ field_error("exercise") }}
-    <label for="goal-measurement">Measurement (a measurement goal)</label>
-    <select id="goal-measurement" name="measurement_kind">
-      <option value="">No measurement</option>
-      {% for value, label, unit in measurement_choices %}<option value="{{ value }}"{% if typed.get("measurement_kind") == value %} selected{% endif %}>{{ label }} ({{ unit }})</option>{% endfor %}
-    </select>
-    {{ field_error("measurement_kind") }}
-    <label for="goal-distance">Distance in km (a cardio time)</label>
-    <input id="goal-distance" name="distance_km" value="{{ typed.get('distance_km', '') }}" inputmode="decimal" autocomplete="off">
-    {{ field_error("distance_km") }}
-    <label for="goal-target">Target: kg for a lift or body weight, the measurement's unit, or minutes for a cardio time</label>
-    <input id="goal-target" name="target_value" value="{{ typed.get('target_value', '') }}" inputmode="decimal" autocomplete="off">
-    {{ field_error("target_value") }}
-    <label for="goal-date">By</label>
-    <input id="goal-date" name="target_date" type="date" value="{{ typed.get('target_date', '') }}">
-    {{ field_error("target_date") }}
-    <label for="goal-start">Where you are now, only when nothing is logged yet</label>
-    <input id="goal-start" name="start_value" value="{{ typed.get('start_value', '') }}" inputmode="decimal" autocomplete="off">
-    {{ field_error("start_value") }}
-    <label for="goal-text">Notes</label>
-    <textarea id="goal-text" name="text" rows="2">{{ typed.get("text", "") }}</textarea>
-    {{ field_error("text") }}
-    <button class="primary">Set goal</button>
+    <input type="hidden" name="kind" value="{{ kind }}">
+    {% if loose %}<div class="error">{% for words in loose %}<p>{{ words }}</p>{% endfor %}</div>{% endif %}
+    {% if kind == "lift" %}
+    {{ parts.field("goal-exercise", "exercise", "Lift", errors.get("exercise"), typed.get("exercise"), choices=lift_choices, empty="No lift") }}
+    {% elif kind == "cardio_best" %}
+    {{ parts.field("goal-exercise", "exercise", "Activity", errors.get("exercise"), typed.get("exercise"), choices=activity_choices, empty="No activity") }}
+    {{ parts.field("goal-distance", "distance_km", "Distance (km)", errors.get("distance_km"), typed.get("distance_km"), inputmode="decimal") }}
+    {% elif kind == "measurement" %}
+    {{ parts.field("goal-measurement", "measurement_kind", "Measurement", errors.get("measurement_kind"), typed.get("measurement_kind"), choices=measurement_choices, empty="No measurement") }}
+    {% endif %}
+    {% if shows_start %}
+    {{ parts.field("goal-start", "start_value", start_label, errors.get("start_value"), typed.get("start_value"), inputmode="decimal") }}
+    {% endif %}
+    {{ parts.field("goal-target", "target_value", target_label, errors.get("target_value"), typed.get("target_value"), inputmode="decimal", hint="Minutes, such as 27.5 for 27:30" if kind == "cardio_best" else none) }}
+    {{ parts.field("goal-date", "target_date", "By", errors.get("target_date"), typed.get("target_date"), type="date") }}
+    {{ parts.field("goal-text", "text", "Notes", errors.get("text"), typed.get("text"), rows=2) }}
+    {% if kind == "bodyweight" %}<p class="small">The goal starts from your 7-day average today.</p>
+    {% endif %}
+    <div class="form-actions"><button class="primary">Set goal</button></div>
   </form>
 </aside>
 {% endblock %}
