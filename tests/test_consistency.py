@@ -17,8 +17,10 @@ from datetime import date
 
 import pytest
 
-from app import links, services
+from app import db, links, services, users
 from app.formatting import day, day_utc, days, show
+from app.models import User
+from app.services import lifts
 
 from . import text_rules as tr
 from .test_pages_text import edge_account, sample_account
@@ -59,42 +61,57 @@ def account(request, client):
 
 # ---------------------------------------------------------------- Progress and get_trends
 
+def trends_table(page: str) -> dict[str, list[tuple[str, str]]]:
+    """Progress' Trends table: {quantity: [(value, remark), ...]}, each cell's text as a person reads it, the rows of
+    one quantity in their order."""
+    card = re.search(r'<section class="card trends"[^>]*>(.*?)</section>', page, re.S).group(1)
+    out: dict[str, list[tuple[str, str]]] = {}
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", card, re.S)[1:]:  # the header row first
+        quantity, value, remark = (text_of(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S))
+        out.setdefault(quantity, []).append((value, remark))
+    return out
+
+
 def test_the_trends_card_holds_get_trends_figures(client, account):
     trends = services.get_trends(account)
     page = client.get("/progress").text
-    card = facts(re.search(r'<div class="card trends"[^>]*>(.*?)</div>', page, re.S).group(1))
+    table = trends_table(page)
     bw, cal, ses, car, m = (trends["bodyweight"], trends["calories"], trends["sessions"], trends["cardio"],
                             trends["maintenance"])
     assert bw is not None
-    figure(card["Body weight"], bw["smoothed"], "bodyweight_derived")
+    figure(table["Smoothed trend"][0][0], bw["smoothed"], "bodyweight_derived")
     if bw["now"] is not None:
-        figure(card["Body weight"], bw["now"], "bodyweight_derived")
+        [(now, _)] = table.get("7-day average", []) + table.get("Latest weigh-in", [])
+        figure(now, bw["now"], "bodyweight_derived")
+    rate, rate_remark = table["Weight rate"][0]
     if bw["rate_per_week"] is not None:
-        assert holds(card["Body weight"], f"{show(bw['rate_per_week'], 'rate', page=True)} kg a week")
+        assert holds(rate, f"{show(bw['rate_per_week'], 'rate', page=True)} kg a week")
         window = bw["rate_window"]
-        assert holds(card["Body weight"], f"from {days(window['from'], window['to'], trends['today'])}")
+        assert rate_remark == days(window["from"], window["to"], trends["today"])
+    figure(table["Weigh-ins"][0][0], bw["weigh_ins_28d"], "count")
     assert cal is not None
+    (week, week_remark), (month, month_remark) = table["Eaten a day"]
     if cal["avg_7d"] is not None:
-        figure(card["Calories a day"], cal["avg_7d"], "kcal")
-        figure(card["Calories a day"], cal["days_logged_7d"], "count")
-    figure(card["Calories a day"], cal["avg_28d"], "kcal")
-    figure(card["Calories a day"], cal["days_logged_28d"], "count")
+        figure(week, cal["avg_7d"], "kcal")
+        figure(week_remark, cal["days_logged_7d"], "count")
+    figure(month, cal["avg_28d"], "kcal")
+    figure(month_remark, cal["days_logged_28d"], "count")
     if cal["target_kcal"] is not None:
-        figure(card["Calories a day"], cal["target_kcal"], "kcal")
-    if cal["estimated_share_pct_28d"]:
-        figure(card["Calories a day"], cal["estimated_share_pct_28d"], "percent")
-    figure(card["Sessions"], ses["this_week"], "count")
-    figure(card["Sessions"], ses["per_week_4w"], "count_avg")
+        figure(table["Calorie target"][0][0], cal["target_kcal"], "kcal")
+    figure(table["From estimates"][0][0], cal["estimated_share_pct_28d"], "percent")
+    figure(table["Lift sessions"][0][0], ses["this_week"], "count")
+    figure(table["Lift sessions a week"][0][0], ses["per_week_4w"], "count_avg")
     if ses["target_per_week"] is not None:
-        figure(card["Sessions"], ses["target_per_week"], "count")
-    figure(card["Cardio"], car["minutes_this_week"], "week_minutes")
-    figure(card["Cardio"], car["minutes_per_week_4w"], "week_minutes")
+        figure(table["Lift sessions"][0][1], ses["target_per_week"], "count")
+    figure(table["Cardio"][0][0], car["minutes_this_week"], "week_minutes")
+    figure(table["Cardio a week"][0][0], car["minutes_per_week_4w"], "week_minutes")
     if car["target_minutes"] is not None:
-        figure(card["Cardio"], car["target_minutes"], "week_minutes")
+        figure(table["Cardio"][0][1], car["target_minutes"], "week_minutes")
     if m:
-        figure(card["Maintenance"], m["kcal"], "maintenance")
-        figure(card["Maintenance"], m["days_logged"], "count")
-        assert holds(card["Maintenance"], days(m["from"], m["to"], trends["today"]))
+        value, remark = table["Maintenance"][0]
+        figure(value, m["kcal"], "maintenance")
+        figure(remark, m["days_logged"], "count")
+        assert holds(remark, days(m["from"], m["to"], trends["today"]))
 
 
 def test_the_body_weight_card_and_chart_hold_the_same_figures(client, account):
@@ -118,17 +135,48 @@ def test_the_lift_rows_hold_get_progress_figures(client, account):
     page = client.get("/progress").text
     assert rows
     for row in rows:
-        cells = re.search(rf'<td><a href="/progress/[^"]+">{re.escape(row["exercise"])}</a></td>(.*?)</tr>',
-                          page, re.S).group(1)
+        cells = re.search(rf'<td(?: class="lead")?><a href="/progress/[^"]+">{re.escape(row["exercise"])}</a></td>'
+                          r'(.*?)</tr>', page, re.S).group(1)
         text = text_of(cells)
         lift = services.get_progress(account, row["exercise"])["lift"]
         if row["current_estimated_max_kg"] is not None:
             figure(text, row["current_estimated_max_kg"], "estimated_max")
-        else:
-            assert "No estimated max yet" in text
+        else:  # the two reasons, told apart by lifts.history's reps_only; never a 0 kg
+            bare = reps_only(account).get(row["exercise"])
+            assert ("Needs added weight" if bare else "Needs a set of 1 to 10 reps") in text
+            assert not re.search(r"(?<![\d.,])0 kg", text)
+            if bare:
+                assert holds(text, f"{show(bare['reps'], 'reps')} reps")
         best = lift["best_set"]
         if best:  # the best set, read from lifts.history on the page and from get_progress here
             assert holds(text, f"{show(best['weight_kg'], 'weight_kg', page=True)} × {show(best['reps'], 'reps')}")
+        if row["slope_per_week"] is not None:  # the trend, get_progress' slope
+            assert holds(text, f"{show(row['slope_per_week'], 'rate', page=True)} kg a week")
+        else:
+            assert "kg a week" not in text
+
+
+def reps_only(user_id: int) -> dict:
+    """lifts.history's reps_only, the read the page's no-added-weight rows come from."""
+    with db.new_session() as s:
+        return lifts.history(s, user_id, users.today_for(s.get(User, user_id)))["reps_only"]
+
+
+def test_the_cardio_rows_hold_get_cardio_figures(client, account):
+    """Each Cardio row, by its activity's name: the last 28 days' sessions and minutes, the fastest pace as
+    get_cardio gives it, and the last day, each as the read has it."""
+    result = services.get_cardio(account)
+    page = client.get("/progress").text
+    assert result["activities"]
+    for a in result["activities"]:
+        cells = re.search(rf'<td class="lead">{re.escape(a["exercise"])}</td>(.*?)</tr>', page, re.S).group(1)
+        text = text_of(cells)
+        figure(text, a["sessions_28d"], "count")
+        figure(text, a["minutes_28d"], "week_minutes", unit=False)
+        if a["fastest_pace"] is not None:
+            assert holds(text, a["fastest_pace"])
+        assert holds(text, day(a["last_date"], result["today"]))
+        assert f'href="/day/{a["last_date"]}"' in cells
 
 
 def test_a_lifts_page_holds_its_figures(client, account):

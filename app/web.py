@@ -1500,24 +1500,26 @@ BODY_WEIGHT_DAYS = 28  # Progress' Body weight chart: the last 4 weeks
 
 
 def _trend(user_id: int, today: date | None = None) -> dict:
-    """What /progress shows beyond the reads it shares with Today: each lift's best set (lifts.history, the
-    numbers get_progress uses) and the body weight chart. bodyweight_chart takes the weigh-in and goal rows
-    themselves, so this reads them. Nothing is written, and no figure is worked out here: the card's
-    counts and callouts come from get_trends and get_days.
+    """What /progress shows beyond the reads it shares with Today: each lift's best set, and for a lift never
+    done above 0 kg its most reps in one set (lifts.history's best_set and reps_only, the numbers get_progress
+    uses), and the body weight chart. bodyweight_chart takes the weigh-in and goal rows themselves, so this
+    reads them. Nothing is written, and no figure is worked out here: the card's counts and callouts come
+    from get_trends and get_days.
 
     today: the date the page's other reads name (get_trends' today), so the chart's 28 days are theirs.
     Without it, the person's own date."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
-            return {"best_sets": {}, "bodyweight": None}
+            return {"best_sets": {}, "reps_only": {}, "bodyweight": None}
         today = today or users.today_for(user)
-        best_sets = lifts.history(s, user.id, today)["best_set"]
+        history = lifts.history(s, user.id, today)
         weighed = body.weigh_ins(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")))
         # The last 28 days, today included (section D): the same points as get_trends' series.
         since = today - timedelta(days=BODY_WEIGHT_DAYS - 1)
-        return {"best_sets": best_sets, "bodyweight": progress_data.bodyweight_chart(weighed, goals, today, since)}
+        return {"best_sets": history["best_set"], "reps_only": history["reps_only"],
+                "bodyweight": progress_data.bodyweight_chart(weighed, goals, today, since)}
 
 
 def _lift_points(lift: dict) -> dict:
@@ -1536,15 +1538,19 @@ async def progress_page(request: Request) -> Response:
         return not_found_page(request)
     # The tiles, their sheets and the Body weight card read what Today's glance block reads (glance_of), so the
     # three tiles and sheets they share say the same on both pages. None when a read fails: the page then
-    # draws none of them. The Trends card keeps its own get_trends read until its own pass.
+    # draws none of them. The Trends card keeps its own get_trends read, so it draws whenever that read answers,
+    # glance or none. The Cardio card reads get_cardio's row for every activity; a failed read draws no card.
     glance = await glance_of(user.id)
     today = date.fromisoformat(glance["trends"]["today"] if glance else result["today"])
     trend = await _db(_trend, user.id, today)
     trends = await _db(services.get_trends, user.id)
+    cardio = await _db(services.get_cardio, user.id)
     state = await _db(services.sample_state, user.id)
-    return page(request, "progress.html", lifts=result["lifts"], best_sets=trend["best_sets"], glance=glance,
-                bodyweight=trend["bodyweight"], chart=charts.bodyweight_svg(trend["bodyweight"], today=today),
-                slug=links.slug, today=today, trends=None if failed(trends) else trends,
+    return page(request, "progress.html", lifts=result["lifts"], best_sets=trend["best_sets"],
+                reps_only=trend["reps_only"], glance=glance, bodyweight=trend["bodyweight"],
+                chart=charts.bodyweight_svg(trend["bodyweight"], today=today), slug=links.slug, today=today,
+                trends=None if failed(trends) else trends,
+                activities=None if failed(cardio) else cardio["activities"],
                 sample_rows=state["sample_rows"], weight_now_label=weight_now_label, rate_note=rate_note)
 
 

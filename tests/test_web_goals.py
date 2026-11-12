@@ -426,31 +426,52 @@ EMPTY_TRENDS = {**TRENDS, "bodyweight": None, "calories": None, "maintenance": N
 
 
 def trends_card(client, monkeypatch, trends) -> str:
+    """Progress' Trends card with get_trends stood in for: its markup inside the card, whatever the card's tag, or
+    "" when the page draws none."""
     monkeypatch.setattr(services, "get_trends", lambda *args: trends, raising=False)
     page = client.get("/progress").text
-    found = re.search(r'<div class="card trends"[^>]*>(.*?)</dl>', page, re.S)
-    return found.group(1) if found else ""
+    found = re.search(r'<(div|section) class="card trends"[^>]*>(.*?)</\1>', page, re.S)
+    return found.group(2) if found else ""
+
+
+def trends_rows(card: str) -> list[tuple[str, str, str]]:
+    """The Trends table's body rows as a person reads them: (quantity, value, remark), each cell's text squashed,
+    a no-break space kept."""
+    from .test_pages_text import parse, tables  # noqa: PLC0415 - test_pages_text imports test_web
+
+    return [tuple(c.text() for c in row) for t in tables(parse(card)) for row in t.rows]
+
+
+NB = " "
+NO_WEIGH_INS = [("Smoothed trend", "", "No weigh-ins yet."), ("Weight rate", "", "No weigh-ins yet."),
+                ("Weigh-ins", "", "No weigh-ins yet.")]
+NO_FOOD = [(q, "", "No food logged in the last 28 days.")
+           for q in ("Eaten a day", "Eaten a day", "From estimates", "Calorie target")]
 
 
 def test_the_trends_card_shows_every_number(signed, monkeypatch):
-    card = trends_card(signed, monkeypatch, TRENDS)
-    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", card))
-    assert "Smoothed trend 79.1 kg, 7-day average 79.4 kg." in text  # every figure through show: 1 dp
-    assert "-0.31 kg a week, from 13 Oct to 9 Nov." in text
-    assert "2,150 kcal over the 6 logged days of the last 7. 2,210 kcal over the 1 logged day of the last 28." in text
-    assert "Target 2,200 kcal." in text and "13% of it is estimates." in text  # percent is whole
-    assert "3 in the last 7 days, target 4. 2.8 a week over the last 4 weeks." in text
-    assert "95 min in the last 7 days, target 150 min. 88 min a week over the last 4 weeks." in text
-    assert "About 2,480 kcal a day, from 18 days with food logged, 21 Oct to 10 Nov." in text
-    assert "Your calorie target stays yours to set." in text
+    """Section L's Trends table, every figure through show: Quantity, Value, Remark, in the contract's order. A value
+    cell holds a figure and its unit; the words are the remark's."""
+    assert trends_rows(trends_card(signed, monkeypatch, TRENDS)) == [
+        ("Smoothed trend", f"79.1{NB}kg", ""), ("7-day average", f"79.4{NB}kg", ""),  # 1 dp
+        ("Weight rate", f"-0.31{NB}kg a week", "13 Oct to 9 Nov"), ("Weigh-ins", "25", "Last 28 days"),
+        ("Eaten a day", f"2,150{NB}kcal", "Last 7 days, 6 logged"),
+        ("Eaten a day", f"2,210{NB}kcal", "Last 28 days, 1 logged"),
+        ("From estimates", "13%", "Last 28 days"),  # percent is whole
+        ("Calorie target", f"2,200{NB}kcal", ""),
+        ("Lift sessions", "3", "Last 7 days, target 4"), ("Lift sessions a week", "2.8", "4-week average"),
+        ("Cardio", f"95{NB}min", f"Last 7 days, target 150{NB}min"), ("Cardio a week", f"88{NB}min", "4-week average"),
+        ("Maintenance", f"2,480{NB}kcal", "estimate 18 logged days, 21 Oct to 10 Nov")]
 
 
 def test_the_trends_card_without_the_numbers(signed, monkeypatch):
-    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", trends_card(signed, monkeypatch, EMPTY_TRENDS)))
-    assert "No weigh-ins yet." in text and "No food logged in the last 28 days." in text
-    assert "Needs food logged on 14 more of the last 21 days." in text
-    assert "0 in the last 7 days. 0 a week" in text and "target" not in text.split("Cardio")[1].split("Maintenance")[0]
-    assert "About" not in text
+    """No weigh-ins, no food in 28 days, no estimate: each value cell blank, the reason in its remark. Training
+    always shows a number."""
+    assert trends_rows(trends_card(signed, monkeypatch, EMPTY_TRENDS)) == [
+        *NO_WEIGH_INS, *NO_FOOD,
+        ("Lift sessions", "0", "Last 7 days"), ("Lift sessions a week", "0", "4-week average"),
+        ("Cardio", f"0{NB}min", "Last 7 days"), ("Cardio a week", f"0{NB}min", "4-week average"),
+        ("Maintenance", "", "Needs food logged on 14 more of the last 21 days.")]
 
 
 def test_the_trends_card_without_a_rate_or_a_week_of_food(signed, monkeypatch):
@@ -458,11 +479,13 @@ def test_the_trends_card_without_a_rate_or_a_week_of_food(signed, monkeypatch):
               "calories": {**TRENDS["calories"], "avg_7d": None, "days_logged_7d": 0},
               "maintenance": None, "maintenance_note": "Needs weigh-ins in the last 7 days and around 21 days ago.",
               "note": "The weekly rate needs a weigh-in from 14 to 42 days ago. " + SAMPLE_NOTE}
-    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", trends_card(signed, monkeypatch, trends)))
-    assert "The weekly rate needs a weigh-in from 14 to 42 days ago." in text  # the service's own note
-    assert "sample data" not in text  # the banner says that, not the rate line
-    assert "kg a week" not in text and "None logged in the last 7 days" in text
-    assert "Needs weigh-ins in the last 7 days and around 21 days ago." in text
+    shown = dict(((q, n), (v, r)) for n, (q, v, r) in enumerate(trends_rows(trends_card(signed, monkeypatch, trends))))
+    # The service's own note, without the sample sentence: the banner says that.
+    assert shown[("Weight rate", 2)] == ("", "The weekly rate needs a weigh-in from 14 to 42 days ago.")
+    assert shown[("Eaten a day", 4)] == ("", "No food logged in the last 7 days.")
+    assert shown[("Eaten a day", 5)] == (f"2,210{NB}kcal", "Last 28 days, 1 logged")
+    assert shown[("Maintenance", 12)] == ("", "Needs weigh-ins in the last 7 days and around 21 days ago.")
+    assert "sample data" not in trends_card(signed, monkeypatch, trends)
 
 
 def test_a_trends_failure_leaves_the_rest_of_progress(signed, monkeypatch):
@@ -500,10 +523,13 @@ def test_the_real_trends_card(signed):
                                       .isoformat()}, "claude")
     trends = services.get_trends(uid)
     page = signed.get("/progress").text
+    shown = {q: (v, r) for q, v, r in trends_rows(re.search(r'<section class="card trends"[^>]*>(.*?)</section>',
+                                                              page, re.S).group(1))}
     smoothed = formatting.show(trends["bodyweight"]["smoothed"], "bodyweight_derived", page=True)
-    assert f"Smoothed trend <strong>{smoothed}</strong>" in page
-    if trends["bodyweight"]["rate_per_week"] is not None:
-        assert f"{formatting.show(trends['bodyweight']['rate_per_week'], 'rate', page=True)} kg a week" in page
+    assert shown["Smoothed trend"] == (smoothed, "")
+    rate = trends["bodyweight"]["rate_per_week"]
+    if rate is not None:
+        assert shown["Weight rate"][0] == f"{formatting.show(rate, 'rate', page=True)}{NB}kg a week"
     assert '<polyline class="series smoothed"' in page
 
 
@@ -585,19 +611,22 @@ def test_the_cardio_nothing_to_start_from_refusal_lands_under_start_value():
                                          (-0.25, "-0.25")])
 def test_the_weekly_rate_carries_a_sign_and_zero_has_none(signed, monkeypatch, rate, shown):
     trends = {**TRENDS, "bodyweight": {**TRENDS["bodyweight"], "rate_per_week": rate}}
-    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", trends_card(signed, monkeypatch, trends)))
-    assert f". {shown} kg a week, from 13 Oct to 9 Nov." in text
-    assert "+0 " not in text and "-0 " not in text
+    card = trends_card(signed, monkeypatch, trends)
+    assert ("Weight rate", f"{shown}{NB}kg a week", "13 Oct to 9 Nov") in trends_rows(card)
+    assert "+0&nbsp;" not in card and "-0&nbsp;" not in card
 
 
-def test_no_estimate_share_line_when_none_is_estimated(signed, monkeypatch):
-    text = re.sub(r"<[^>]+>", "", trends_card(signed, monkeypatch, {
+def test_the_estimate_share_row_shows_0_percent_when_none_is_estimated(signed, monkeypatch):
+    """The table has a From estimates row whatever the share: none estimated is 0%, a figure with its unit, not a
+    line left out."""
+    shown = trends_rows(trends_card(signed, monkeypatch, {
         **TRENDS, "calories": {**TRENDS["calories"], "estimated_share_pct_28d": 0}}))
-    assert "of it is estimates" not in text and "2,150\u00a0kcal" in text
+    assert ("From estimates", "0%", "Last 28 days") in shown
+    assert ("Eaten a day", f"2,150{NB}kcal", "Last 7 days, 6 logged") in shown
 
 
 def test_now_is_named_the_latest_weigh_in_without_one_in_the_last_7_days(signed, monkeypatch):
     old = {**TRENDS, "bodyweight": {**TRENDS["bodyweight"], "now": 80.1,
                                     "series": [{"date": "2026-10-20", "kg": 80.1, "smoothed": 80.0}]}}
-    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", trends_card(signed, monkeypatch, old)))
-    assert "latest weigh-in 80.1 kg" in text and "7-day average" not in text
+    card = trends_card(signed, monkeypatch, old)
+    assert trends_rows(card)[1] == ("Latest weigh-in", f"80.1{NB}kg", "") and "7-day average" not in card

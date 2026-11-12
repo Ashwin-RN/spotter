@@ -45,7 +45,7 @@ from app import db, formatting, services, web
 from app.models import Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User
 
 from . import text_rules as tr
-from .test_web import client, only_user, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
+from .test_web import FIXED_NOW, client, only_user, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
 
 
 @dataclass(frozen=True)
@@ -108,49 +108,99 @@ def glance_zeros(user_id: int, address: str, tag: str) -> int:
     return weeks + int(bool(weight) and zero(weight["weigh_ins_28d"], "count"))
 
 
+def trends_zeros(user_id: int, address: str, tag: str) -> int:
+    """The true zeros Progress' Trends table shows, read from get_trends, never from the page: Weigh-ins (when there
+    is a weigh-in at all), Lift sessions and Lift sessions a week, each a td, counted where they show as "0". Its
+    other figures carry a unit ("0 min", "0%", "0 kg a week"), so none of them is a bare 0."""
+    if tag != "td":
+        return 0
+    trends = services.get_trends(user_id)
+    zero = lambda value, quantity: formatting.show(value, quantity, unit=False) == "0"  # noqa: E731
+    weight, sessions = trends["bodyweight"], trends["sessions"]
+    return (int(bool(weight) and zero(weight["weigh_ins_28d"], "count")) + int(zero(sessions["this_week"], "count"))
+            + int(zero(sessions["per_week_4w"], "count_avg")))
+
+
+def cardio_zeros(user_id: int, address: str, tag: str) -> int:
+    """The true zeros Progress' Cardio table shows, read from get_cardio: the Sessions and Time (min) of an activity
+    with no session in the last 28 days, each a td, counted where they show as "0"."""
+    if tag != "td":
+        return 0
+    zero = lambda value, quantity: formatting.show(value, quantity, unit=False) == "0"  # noqa: E731
+    return sum(zero(a["sessions_28d"], "count") + zero(a["minutes_28d"], "week_minutes")
+               for a in services.get_cardio(user_id)["activities"])
+
+
 # Where a bare "0" is a true count the page reads from the data, and how many the account holds there: by
-# route and the piece's tag, a function of the account and the address. Training's 0 is a true zero (section
-# L, "Training always shows a number").
+# route, the piece's tag and, on a route with places (ZERO_PLACES), the place it sits in, a function of the
+# account and the address. Training's 0 is a true zero (section L, "Training always shows a number").
 TRUE_ZEROS = {
     ("/foods", "td"): lambda user_id, address: sum(
         (f["times_logged"] == 0) + (f["kcal_per_serving"] == 0)
         for f in services.list_saved_foods(user_id)["foods"] if f.get("deleted_at") is None),
-    ("/day/{date}", "p"): lambda user_id, address: glance_zeros(user_id, address, "p"),
-    ("/day/{date}", "td"): lambda user_id, address: glance_zeros(user_id, address, "td"),
-    ("/day/{date}", "text"): lambda user_id, address: glance_zeros(user_id, address, "text"),
+    ("/day/{date}", "p", "glance"): lambda user_id, address: glance_zeros(user_id, address, "p"),
+    ("/day/{date}", "td", "glance"): lambda user_id, address: glance_zeros(user_id, address, "td"),
+    ("/day/{date}", "text", "glance"): lambda user_id, address: glance_zeros(user_id, address, "text"),
     # Progress' Weight, Calories and Training sheets are Today's, drawn by the same parts from the same reads.
-    ("/progress", "p"): lambda user_id, address: glance_zeros(user_id, address, "p"),
-    ("/progress", "td"): lambda user_id, address: glance_zeros(user_id, address, "td"),
-    ("/progress", "text"): lambda user_id, address: glance_zeros(user_id, address, "text"),
+    ("/progress", "p", "glance"): lambda user_id, address: glance_zeros(user_id, address, "p"),
+    ("/progress", "td", "glance"): lambda user_id, address: glance_zeros(user_id, address, "td"),
+    ("/progress", "text", "glance"): lambda user_id, address: glance_zeros(user_id, address, "text"),
+    # Progress' Trends table and Cardio table, each counted from its own read.
+    ("/progress", "td", "trends"): lambda user_id, address: trends_zeros(user_id, address, "td"),
+    ("/progress", "td", "cardio"): lambda user_id, address: cardio_zeros(user_id, address, "td"),
 }
 
 
-def glance_lines(markup: str) -> tuple[int, int] | None:
-    """The first and last line of Today's div.glance in the markup, or of Progress' (its tiles and sheets), by
-    counting div tags from its start. None when the page draws no glance block."""
-    start = markup.find('<div class="glance">')
+def _block_lines(markup: str, opening: str, tag: str) -> tuple[int, int] | None:
+    """The first and last line of the element the opening text starts, by counting its tag from there. None when
+    the markup holds no such opening."""
+    start = markup.find(opening)
     if start < 0:
         return None
     depth = 0
-    for m in re.finditer(r"<div\b|</div\s*>", markup[start:]):
-        depth += 1 if m.group(0).startswith("<div") else -1
+    for m in re.finditer(rf"<{tag}\b|</{tag}\s*>", markup[start:]):
+        depth += -1 if m.group(0).startswith("</") else 1
         if depth == 0:
             return markup.count("\n", 0, start) + 1, markup.count("\n", 0, start + m.end()) + 1
     return None
 
 
-# Where a route's true zeros may sit: the day page's and Progress' only in its glance block. A bare 0 anywhere
-# else on the page is an empty figure, whatever the glance's own count allows.
-ZERO_PLACES = {"/day/{date}": glance_lines, "/progress": glance_lines}
+def glance_lines(markup: str) -> tuple[int, int] | None:
+    """The first and last line of Today's div.glance in the markup, or of Progress' (its tiles and sheets), by
+    counting div tags from its start. None when the page draws no glance block."""
+    return _block_lines(markup, '<div class="glance">', "div")
+
+
+def trends_lines(markup: str) -> tuple[int, int] | None:
+    """The first and last line of Progress' Trends card, or None."""
+    return _block_lines(markup, '<section class="card trends"', "section")
+
+
+def cardio_lines(markup: str) -> tuple[int, int] | None:
+    """The first and last line of Progress' Cardio card, or None."""
+    return _block_lines(markup, '<section class="card cardio-card"', "section")
+
+
+# Where a route's true zeros may sit, by place, each place with its own allowance: the day page's only in its
+# glance block; Progress' in its glance block, its Trends card and its Cardio card. A bare 0 anywhere else on the
+# page is an empty figure, and a zero lost in one place never pays for a stray one in another.
+ZERO_PLACES = {"/day/{date}": {"glance": glance_lines},
+               "/progress": {"glance": glance_lines, "trends": trends_lines, "cardio": cardio_lines}}
+
+
+def zero_place(route: str, line: int, places: dict) -> str | None:
+    """The place a bare 0 on this line counts in: "" for a route with no places (anywhere on its page), else the
+    name of the place whose span holds the line, else None (it counts nowhere). places: {route: {name: span}}."""
+    if route not in places:
+        return ""
+    return next((name for name, span in places[route].items() if span is not None and span[0] <= line <= span[1]),
+                None)
 
 
 def placed(route: str, line: int, places: dict) -> bool:
-    """Whether a bare 0 on this line may count against its route's allowance: anywhere, for a route with no
-    place, else only inside its place's span."""
-    if route not in places:
-        return True
-    span = places[route]
-    return span is not None and span[0] <= line <= span[1]
+    """Whether a bare 0 on this line may count against an allowance of its route: anywhere, for a route with no
+    place, else only inside one of its places' spans."""
+    return zero_place(route, line, places) is not None
 
 
 # ---------------------------------------------------------------- the three accounts
@@ -351,7 +401,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
     the address is not its own, as for a form sent back with its error."""
     out = []
     zeros: dict[tuple, int] = {}
-    places = {r: where(markup) for r, where in ZERO_PLACES.items()}
+    places = {r: {name: where(markup) for name, where in spots.items()} for r, spots in ZERO_PLACES.items()}
     for piece in tr.html_text(markup):
         text = tr.mask_entered(piece.text, entered)
         surface = tr.TITLE if piece.kind == "title" else tr.PAGE
@@ -359,15 +409,18 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
             if skipped(path, f.rule, f.match, piece.tag):
                 continue
             if f.rule == tr.EMPTY_FIGURE and f.match == "0":
-                key = (route or route_of(path), piece.tag)
-                if key in TRUE_ZEROS and placed(key[0], piece.line, places):
+                at = route or route_of(path)
+                place = zero_place(at, piece.line, places)
+                key = (at, piece.tag) + ((place,) if place else ())
+                if place is not None and key in TRUE_ZEROS:
                     zeros[key] = zeros.get(key, 0) + 1
                     continue
             out.append(f"{path} line {piece.line} <{piece.tag}>: {f}")
     for key, seen in zeros.items():
         held = TRUE_ZEROS[key](user_id, path) if user_id is not None else 0
         if seen > held:
-            out.append(f"{path}: {seen} bare 0 in <{key[1]}>, but the data holds {held} true zeros")
+            where = f" in its {key[2]}" if len(key) > 2 else ""
+            out.append(f"{path}: {seen} bare 0 in <{key[1]}>{where}, but the data holds {held} true zeros")
     for line in confirmations(markup):
         if len(re.findall(r"[A-Za-z]+", line)) < 2 and not skipped(path, CONFIRMATION, line):
             out.append(f"{path}: the confirmation {line!r} does not name its subject")
@@ -600,7 +653,6 @@ CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
         "Claude does not do them for you.",
     ),
     "/foods": ("Saving one by talking to Claude works too.",),  # foods.html: the line under the h1
-    "/progress": (LIFTS_EMPTY,),  # progress.html: the empty Lifts line
     "/progress/{lift}": (LIFTS_EMPTY,),  # progress_lift.html: the empty line
     "/goals": ("Set one below, or tell Claude what you are aiming for.",),  # goals.html: no open goals
 }
@@ -1284,8 +1336,8 @@ def test_the_glance_zeros_pass_only_inside_the_glance_block(client):
     assert 0 < first - (before.count("\n", 0, hero_end) + 1) <= 40
     assert any("empty_figure" in f for f in page_findings(address, before, [], user_id))
     past = client.get(f"/day/{(today - timedelta(days=1)).isoformat()}").text
-    assert glance_lines(past) is None and not placed("/day/{date}", 1, {"/day/{date}": None})
-    assert placed("/foods", 1, {"/day/{date}": None})  # Foods keeps its allowance anywhere on its page
+    assert glance_lines(past) is None and not placed("/day/{date}", 1, {"/day/{date}": {"glance": None}})
+    assert placed("/foods", 1, {"/day/{date}": {"glance": None}})  # Foods keeps its allowance anywhere on its page
 
 
 def test_the_glance_zeros_are_none_on_an_account_whose_figures_are_all_above_0(client):
@@ -1306,11 +1358,12 @@ def test_the_glance_zeros_are_none_on_an_account_whose_figures_are_all_above_0(c
 def test_progress_holds_the_glance_zeros_inside_its_glance_block_only(client):
     """Progress draws Today's Training sheet, so a new account's Progress shows its 0 and the four weeks' eight
     0s, counted from the reads as Today's are. They pass inside Progress' glance block only: one more fails, a
-    stray 0 in the Body weight card fails, and a page with no glance block allows none."""
+    stray 0 in the Body weight card fails, and a page with no glance block allows none. (The Trends table's two 0s,
+    lift sessions and their weekly average, are its own: test_progress_holds_each_tables_zeros_in_its_own_card.)"""
     sign_in(client)
     user_id = only_user().id
     page = client.get("/progress").text
-    assert page.count('<p class="giant">0</p>') == 1 and page.count('<td class="num">0</td>') == 8
+    assert page.count('<p class="giant">0</p>') == 1 and page.count('<td class="num">0</td>') == 8 + 2
     assert [glance_zeros(user_id, "/progress", tag) for tag in ("p", "td", "text")] == [1, 8, 0]
     assert page_findings("/progress", page, [], user_id) == []
     first, last = glance_lines(page)
@@ -1327,3 +1380,43 @@ def test_progress_holds_the_glance_zeros_inside_its_glance_block_only(client):
     without = page[:page.index('<div class="glance">')] + page[page.index(card):]
     assert glance_lines(without) is None
     assert any("empty_figure" in f for f in page_findings("/progress", without + "<p>0</p>", [], user_id))
+
+
+def test_progress_holds_each_tables_zeros_in_its_own_card(client, monkeypatch):
+    """The Trends table's bare 0s (Weigh-ins, Lift sessions, Lift sessions a week) are counted from get_trends and
+    pass in the Trends card only; the Cardio table's (an activity's Sessions and Time with no session in 28 days)
+    from get_cardio, in the Cardio card only. One more fails, a 0 moved from one card to the other fails though
+    the page's total is the same, and a 0 in the Lifts card is an empty figure."""
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    sign_in(client)
+    user_id = only_user().id
+    _ok(services.log_bodyweight(user_id, {"kg": 80, "date": "2026-10-01"}, "claude"))
+    _ok(services.log_cardio(user_id, {"exercise": "Outdoor Walk", "minutes": 30, "date": "2026-10-01"}, "claude"))
+    _ok(services.log_lifts(user_id, {"date": "2026-10-01", "sets": [{"exercise": "Back Squat", "weight_kg": 60,
+                                                                     "reps": 5}]}, "claude"))
+    page = client.get("/progress").text
+    assert [trends_zeros(user_id, "/progress", tag) for tag in ("p", "td", "text")] == [0, 3, 0]
+    assert [cardio_zeros(user_id, "/progress", tag) for tag in ("p", "td", "text")] == [0, 2, 0]
+    trends, cardio = trends_lines(page), cardio_lines(page)
+    lines = page.splitlines()
+    assert lines[trends[0] - 1].strip().startswith('<section class="card trends"') and trends[1] < cardio[0]
+    assert lines[cardio[0] - 1].strip().startswith('<section class="card cardio-card"')
+    assert [lines[n - 1].strip() for n in (trends[1], cardio[1])] == ["</section>", "</section>"]
+    zero = '<td class="num">0</td>'
+    in_trends = sum(line.count(zero) for line in lines[trends[0] - 1:trends[1]])
+    in_cardio = sum(line.count('data-label="Sessions">0</td>') + line.count('data-label="Time (min)">0</td>')
+                    for line in lines[cardio[0] - 1:cardio[1]])
+    assert (in_trends, in_cardio) == (3, 2)
+    assert page_findings("/progress", page, [], user_id) == []
+    lifts = '<section class="card lifts-card" aria-labelledby="lifts-title">'
+    walk = '<td class="lead">Outdoor Walk</td>'
+    weigh_ins = '<td>Weigh-ins</td><td class="num">0</td><td class="remark">Last 28 days</td>'  # not the sheet's
+    assert page.count(lifts) == page.count(walk) == page.count(weigh_ins) == 1
+    one_more = page.replace(weigh_ins, weigh_ins + "<td>0</td>")
+    assert any("in its trends" in f and "true zeros" in f for f in page_findings("/progress", one_more, [], user_id))
+    one_more = page.replace(walk, walk + "<td>0</td>")
+    assert any("in its cardio" in f and "true zeros" in f for f in page_findings("/progress", one_more, [], user_id))
+    moved = page.replace(weigh_ins, weigh_ins.replace(">0<", ">1<")).replace(walk, walk + "<td>0</td>")
+    assert any("in its cardio" in f and "true zeros" in f for f in page_findings("/progress", moved, [], user_id))
+    stray = page.replace(lifts, lifts + "<p>0</p>")
+    assert any("empty_figure" in f for f in page_findings("/progress", stray, [], user_id))

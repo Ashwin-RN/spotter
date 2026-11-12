@@ -73,53 +73,103 @@
 </section>
 {% endif %}
 
+{# The Trends card: get_trends' own figures as a table, one row per quantity, in four groups (Weight, Food,
+   Training, Maintenance), each group after the first starting with a tr.group. A value cell holds a figure and
+   its unit, or nothing: the words go in the remark, a missing figure's reason with them. The card keeps its
+   own get_trends read, so it draws whenever that read answers. #}
 {% if trends %}
-{% set bw, cal, ses, car = trends.bodyweight, trends.calories, trends.sessions, trends.cardio %}
-<div class="card trends" id="trends">
-  <h2>Trends</h2>
-  <dl class="facts">
-    <dt>Body weight</dt>
-    <dd>{% if bw %}Smoothed trend <strong>{{ bw.smoothed|show("bodyweight_derived") }}</strong>{% if bw.now is not none %}, {{ weight_now_label(trends) }} {{ bw.now|show("bodyweight_derived") }}{% endif %}.
-      {% if bw.rate_per_week is not none %}<strong>{{ bw.rate_per_week|show("rate") }} kg a week</strong>{% if bw.rate_window %}, from {{ bw.rate_window.from|days(bw.rate_window.to, trends.today) }}{% endif %}.
-      {% else %}<span class="muted">{{ rate_note(trends) }}</span>{% endif %}
-      {% else %}<span class="muted">No weigh-ins yet.</span>{% endif %}</dd>
-    <dt>Calories a day</dt>
-    <dd>{% if cal %}{% if cal.avg_7d is not none %}<strong>{{ cal.avg_7d|show("kcal") }}</strong> over the {{ cal.days_logged_7d|show("count") }} logged {{ "day" if cal.days_logged_7d == 1 else "days" }} of the last 7{% else %}<span class="muted">None logged in the last 7 days</span>{% endif %}.
-      {{ cal.avg_28d|show("kcal") }} over the {{ cal.days_logged_28d|show("count") }} logged {{ "day" if cal.days_logged_28d == 1 else "days" }} of the last 28.
-      {% if cal.target_kcal is not none %}Target {{ cal.target_kcal|show("kcal") }}.{% endif %}
-      {% if cal.estimated_share_pct_28d %}<span class="muted">{{ cal.estimated_share_pct_28d|show("percent") }} of it is estimates.</span>{% endif %}
-      {% else %}<span class="muted">No food logged in the last 28 days.</span>{% endif %}</dd>
-    <dt>Sessions</dt>
-    <dd><strong>{{ ses.this_week|show("count") }}</strong> in the last 7 days{% if ses.target_per_week is not none %}, target {{ ses.target_per_week|show("count") }}{% endif %}. {{ ses.per_week_4w|show("count_avg") }} a week over the last 4 weeks.</dd>
-    <dt>Cardio</dt>
-    <dd><strong>{{ car.minutes_this_week|show("week_minutes") }}</strong> in the last 7 days{% if car.target_minutes is not none %}, target {{ car.target_minutes|show("week_minutes") }}{% endif %}. {{ car.minutes_per_week_4w|show("week_minutes") }} a week over the last 4 weeks.</dd>
-    <dt>Maintenance</dt>
-    <dd>{% if trends.maintenance %}{% set m = trends.maintenance %}About <strong>{{ m.kcal|show("maintenance") }} a day</strong>, from {{ m.days_logged|show("count") }} days with food logged, {{ m.from|days(m.to, trends.today) }}.
-      <span class="muted">An estimate from your intake and weight change. Your calorie target stays yours to set.</span>
-      {% else %}<span class="muted">{{ trends.maintenance_note or "Not enough logged yet for an estimate." }}</span>{% endif %}</dd>
-  </dl>
-</div>
+{% set bw, cal, ses, car, m = trends.bodyweight, trends.calories, trends.sessions, trends.cardio, trends.maintenance %}
+{% set rated = bw and bw.rate_per_week is not none %}
+<section class="card trends" id="trends" aria-labelledby="trends-title">
+  <h2 id="trends-title">Trends</h2>
+  <div class="table-wrap">
+    <table class="trends">
+      <thead><tr><th scope="col">Quantity</th><th scope="col" class="num">Value</th><th scope="col">Remark</th></tr></thead>
+      <tbody>
+        {% if bw %}
+        <tr><td>Smoothed trend</td><td class="num">{{ bw.smoothed|show("bodyweight_derived") }}</td><td class="remark"></td></tr>
+        {% if bw.now is not none %}<tr><td>{{ weight_now_label(trends)|capitalize }}</td><td class="num">{{ bw.now|show("bodyweight_derived") }}</td><td class="remark"></td></tr>
+        {% endif %}
+        <tr><td>Weight rate</td><td class="num">{% if rated %}{{ bw.rate_per_week|show("rate") }}&nbsp;kg a week{% endif %}</td><td class="remark">{% if rated %}{{ bw.rate_window.from|days(bw.rate_window.to, trends.today) }}{% else %}{{ rate_note(trends) }}{% endif %}</td></tr>
+        <tr><td>Weigh-ins</td><td class="num">{{ bw.weigh_ins_28d|show("count") }}</td><td class="remark">Last 28 days</td></tr>
+        {% else %}
+        {% for quantity in ("Smoothed trend", "Weight rate", "Weigh-ins") %}<tr><td>{{ quantity }}</td><td class="num"></td><td class="remark">No weigh-ins yet.</td></tr>
+        {% endfor %}
+        {% endif %}
+        {% if cal %}
+        <tr class="group"><td>Eaten a day</td><td class="num">{% if cal.avg_7d is not none %}{{ cal.avg_7d|show("kcal") }}{% endif %}</td><td class="remark">{% if cal.avg_7d is not none %}Last 7 days, {{ cal.days_logged_7d|show("count") }} logged{% else %}No food logged in the last 7 days.{% endif %}</td></tr>
+        <tr><td>Eaten a day</td><td class="num">{{ cal.avg_28d|show("kcal") }}</td><td class="remark">Last 28 days, {{ cal.days_logged_28d|show("count") }} logged</td></tr>
+        <tr><td>From estimates</td><td class="num">{{ cal.estimated_share_pct_28d|show("percent") }}</td><td class="remark">Last 28 days</td></tr>
+        <tr><td>Calorie target</td><td class="num">{% if cal.target_kcal is not none %}{{ cal.target_kcal|show("kcal") }}{% endif %}</td><td class="remark">{% if cal.target_kcal is none %}Not set{% endif %}</td></tr>
+        {% else %}
+        {% for quantity in ("Eaten a day", "Eaten a day", "From estimates", "Calorie target") %}<tr{% if loop.first %} class="group"{% endif %}><td>{{ quantity }}</td><td class="num"></td><td class="remark">No food logged in the last 28 days.</td></tr>
+        {% endfor %}
+        {% endif %}
+        <tr class="group"><td>Lift sessions</td><td class="num">{{ ses.this_week|show("count") }}</td><td class="remark">Last 7 days{% if ses.target_per_week is not none %}, target {{ ses.target_per_week|show("count") }}{% endif %}</td></tr>
+        <tr><td>Lift sessions a week</td><td class="num">{{ ses.per_week_4w|show("count_avg") }}</td><td class="remark">4-week average</td></tr>
+        <tr><td>Cardio</td><td class="num">{{ car.minutes_this_week|show("week_minutes") }}</td><td class="remark">Last 7 days{% if car.target_minutes is not none %}, target {{ car.target_minutes|show("week_minutes") }}{% endif %}</td></tr>
+        <tr><td>Cardio a week</td><td class="num">{{ car.minutes_per_week_4w|show("week_minutes") }}</td><td class="remark">4-week average</td></tr>
+        <tr class="group"><td>Maintenance</td><td class="num">{% if m %}{{ m.kcal|show("maintenance") }}{% endif %}</td><td class="remark">{% if m %}<span class="tag tag-estimate">estimate</span> {{ m.days_logged|show("count") }} logged days, {{ m.from|days(m.to, trends.today) }}{% else %}{{ trends.maintenance_note or "Not enough logged yet for an estimate." }}{% endif %}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endif %}
 
-<div class="card">
-  <h2>Lifts</h2>
-  {% if lifts %}
-  <table class="lifts">
-    <thead><tr><th>Lift</th><th>Estimated max</th><th>Best set</th><th>Last trained</th></tr></thead>
-    <tbody>
-    {% for row in lifts %}
-    {% set best = best_sets.get(row.exercise) %}
-    <tr>
-      <td><a href="/progress/{{ slug(row.exercise) }}">{{ row.exercise }}</a></td>
-      <td>{% if row.current_estimated_max_kg is not none %}{{ row.current_estimated_max_kg|show("estimated_max") }}{% else %}<span class="muted">No estimated max yet</span>{% endif %}</td>
-      <td>{% if best %}{{ best.weight_kg|show("weight_kg") }} × {{ best.reps|show("reps") }}{% else %}<span class="muted">No best set yet</span>{% endif %}</td>
-      <td>{% if row.last_trained %}<a href="/day/{{ row.last_trained }}">{{ row.last_trained|day(today) }}</a>{% endif %}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="muted">No lifts logged yet. Tell Claude what you lifted and it shows here.</p>
-  {% endif %}
-</div>
+{# The Cardio card: get_cardio's row for every activity logged, by name, the name plain words. Sessions and time
+   are the last 28 days', the fastest pace the best ever, already m:ss. An activity with no distance leaves its
+   pace cell empty, and with no distance on any activity the column is not drawn. A failed read draws no card. #}
+{% if activities is not none %}
+{% if activities %}
+{% set paced = activities|selectattr("fastest_pace")|list %}
+<section class="card cardio-card" aria-labelledby="cardio-title">
+  <h2 id="cardio-title">Cardio</h2>
+  <div class="table-wrap">
+    <table class="rows">
+      <thead><tr><th scope="col">Activity</th><th scope="col" class="num">Sessions</th><th scope="col" class="num">Time (min)</th>{% if paced %}<th scope="col" class="num">Fastest pace (per km)</th>{% endif %}<th scope="col">Last</th></tr></thead>
+      <tbody>
+        {% for a in activities %}
+        <tr><td class="lead">{{ a.exercise }}</td><td class="num" data-label="Sessions">{{ a.sessions_28d|show("count") }}</td><td class="num" data-label="Time (min)">{{ a.minutes_28d|show("week_minutes", unit=False) }}</td>{% if paced %}<td class="num" data-label="Fastest pace (per km)">{% if a.fastest_pace %}{{ a.fastest_pace }}{% endif %}</td>{% endif %}<td data-label="Last"><a href="/day/{{ a.last_date }}">{{ a.last_date|day(today) }}</a></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="small">Sessions and time cover the last 28 days. Fastest pace is your best ever. A blank pace means no distance is logged for that activity.</p>
+</section>
+{% else %}
+<section class="card cardio-card is-empty" aria-labelledby="cardio-title">
+  <h2 id="cardio-title">Cardio</h2>
+  <p class="empty-line">No cardio logged yet. Tell your assistant what you did, or add it on <a href="/today">Today</a>.</p>
+</section>
+{% endif %}
+{% endif %}
+
+{# The Lifts card: get_progress' row for every lift logged, by name, each a link to its page. The best set is
+   lifts.history's. A lift never done above 0 kg (reps_only) needs added weight, and its best set is its most reps.
+   A weighted lift with no set of 1 to 10 reps has no estimated max and no best set. No lift shows 0 kg. A column
+   no lift fills (Best set, Trend) is not drawn. #}
+{% if lifts %}
+{% set filled = namespace(best=false, trend=false) %}
+{% for row in lifts %}{% if best_sets.get(row.exercise) or reps_only.get(row.exercise) %}{% set filled.best = true %}{% endif %}{% if row.slope_per_week is not none %}{% set filled.trend = true %}{% endif %}{% endfor %}
+<section class="card lifts-card" aria-labelledby="lifts-title">
+  <h2 id="lifts-title">Lifts</h2>
+  <div class="table-wrap">
+    <table class="rows">
+      <thead><tr><th scope="col">Lift</th><th scope="col" class="num">Estimated max</th>{% if filled.best %}<th scope="col" class="num">Best set</th>{% endif %}{% if filled.trend %}<th scope="col" class="num">Trend</th>{% endif %}<th scope="col">Last trained</th></tr></thead>
+      <tbody>
+        {% for row in lifts %}
+        {% set best, bare = best_sets.get(row.exercise), reps_only.get(row.exercise) %}
+        <tr><td class="lead"><a href="/progress/{{ slug(row.exercise) }}">{{ row.exercise }}</a></td>{% if row.current_estimated_max_kg is not none %}<td class="num" data-label="Estimated max">{{ row.current_estimated_max_kg|show("estimated_max") }}</td>{% else %}<td class="num muted" data-label="Estimated max">{% if bare %}Needs added weight{% else %}Needs a set of 1 to 10 reps{% endif %}</td>{% endif %}{% if filled.best %}<td class="num" data-label="Best set">{% if best %}{{ best.weight_kg|show("weight_kg") }} × {{ best.reps|show("reps") }}{% elif bare %}{{ bare.reps|show("reps") }}&nbsp;reps{% endif %}</td>{% endif %}{% if filled.trend %}<td class="num" data-label="Trend">{% if row.slope_per_week is not none %}{{ row.slope_per_week|show("rate") }}&nbsp;kg a week{% endif %}</td>{% endif %}<td data-label="Last trained">{% if row.last_trained %}<a href="/day/{{ row.last_trained }}">{{ row.last_trained|day(today) }}</a>{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="small">Estimated max is worked out from your sets, not a tested max. Trend is its change a week.</p>
+</section>
+{% else %}
+<section class="card lifts-card is-empty" aria-labelledby="lifts-title">
+  <h2 id="lifts-title">Lifts</h2>
+  <p class="empty-line">No lifts logged yet. Tell your assistant what you lifted and it shows here.</p>
+</section>
+{% endif %}
 {% endblock %}

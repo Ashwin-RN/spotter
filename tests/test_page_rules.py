@@ -30,7 +30,7 @@ from app.models import Bodyweight, SavedFood
 
 from .test_pages_text import (ACCOUNTS, BUILT, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
                               entered_text, estimate_findings, get_paths, names_of, page_findings, parse,
-                              render_error_page, route_of, step_4_findings)
+                              render_error_page, route_of, step_4_findings, structure_findings)
 from .test_web import FIXED_NOW, client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
 
 STATIC = Path(web.HERE) / "static"
@@ -1412,31 +1412,57 @@ def test_the_card_and_pill_checks_catch_each_break_on_the_real_page(client, monk
         f"{tail['date']}: the hidden words say 'Tue 10 Nov: cardio only', not {words!r}"]
 
 
-# ---------------------------------------------------------------- Progress' top (pass B8)
+# ---------------------------------------------------------------- Progress (passes B8 and B9)
 
-# What /progress still fails under the card rule after B8: the two cards B9 rebuilds, each still a bare div.card
-# with an h2 of its own. Nothing else on the page may fail it.
-PROGRESS_OLD_CARDS = ["the 'Trends' card is a <div> named by '', not by its own h2",
-                      "the 'Lifts' card is a <div> named by '', not by its own h2"]
+# The titled cards on Progress, in markup order: (classes, id, its h2's id, its h2's words). Section L's order.
+PROGRESS_CARDS = [(["card", "bw-card"], "body-weight", "body-weight-title", "Body weight"),
+                  (["card", "trends"], "trends", "trends-title", "Trends"),
+                  (["card", "cardio-card"], None, "cardio-title", "Cardio"),
+                  (["card", "lifts-card"], None, "lifts-title", "Lifts")]
+
+
+# What /progress fails of the rules a route in BUILT keeps, by GLANCE_STATES state, so it stays out of BUILT: a
+# weekly average of lift sessions that is not whole ("0.2") is a bare figure under the header "Value", and T3's
+# units rule exempts only a whole count. The contract gives the cell as a count up to 1 dp with no unit. Waiting
+# on the lead's ruling. Every other state, and every sweep account, passes every rule.
+PROGRESS_WAITS = {"one_lift_session_and_cardio_today":
+                  ["/progress: the figure '0.2' has no unit in its cell or its header 'Value'"]}
+
+
+def built_findings(s: Seen, user_id: int) -> list[str]:
+    """Every rule a route in BUILT keeps that a route outside it skips: the page rules and T3's structure checks,
+    run whether or not BUILT names the route."""
+    return ([f"{s.address}: {f}" for rule in PAGE_RULES for f in rule(s)]
+            + structure_findings(s.address, s.markup, entered_notes(user_id), s.dom))
+
+
+def progress_cards(s: Seen) -> list[tuple]:
+    """Each card in Progress' main, in order, as PROGRESS_CARDS reads it, less is-empty."""
+    [main] = s.dom.find_all("main")
+    return [([c for c in card.classes if c != "is-empty"], card.attrs.get("id"), card.attrs.get("aria-labelledby"),
+             next(iter(card.find_all("h2"))).text()) for card in main.elements() if card.is_(cls="card")]
 
 
 @pytest.mark.parametrize("account", sorted(ACCOUNTS))
-def test_progress_names_the_cards_b8_built_and_only_the_two_old_cards_wait(client, account):
-    """On each account: the tiles' sheets and the Body weight card keep the card rule, no id repeats, and the
-    only findings are the Trends and Lifts cards that B9 rebuilds."""
+def test_progress_keeps_the_card_rule_on_the_whole_page(client, account):
+    """On each account: the tiles' sheets and every card keep the card rule (a titled card is a section named by its
+    own h2, no card in a card, every h2 in a card or a sheet) and no id repeats, with nothing left over. The four
+    cards run Body weight, Trends, Cardio, Lifts."""
     sign_in(client)
     ACCOUNTS[account](only_user().id)
     r = client.get("/progress")
     assert r.status_code == 200 and '<section class="card bw-card' in r.text
     s = Seen("/progress", r.text, True, today=today_of(only_user()).isoformat())
-    assert titled_card_findings(s) == PROGRESS_OLD_CARDS
+    assert titled_card_findings(s) == []
+    assert progress_cards(s) == PROGRESS_CARDS
+    assert built_findings(s, only_user().id) == []
 
 
 @pytest.mark.parametrize("state", list(GLANCE_STATES), ids=lambda f: f.__name__.strip("_"))
 def test_progress_in_the_states_the_sweeps_never_reach_keeps_every_rule_it_holds(client, state):
     """The glance states on Progress, where its Body weight card shows one weigh-in, none in 28 days, a chart with
     no rate, and the Calories chart's 0: the frame rules, the page rules every page keeps, T1's text rules and
-    T3's step 4 checks hold, and the card rule finds only the two old cards."""
+    T3's step 4 checks hold, and the card rule finds nothing."""
     sign_in(client)
     user = only_user()
     today = today_of(user)
@@ -1448,4 +1474,5 @@ def test_progress_in_the_states_the_sweeps_never_reach_keeps_every_rule_it_holds
     findings += page_findings("/progress", r.text, entered_text(user.id), user.id)
     findings += step_4_findings("/progress", r.text, names_of(user.id), entered_notes(user.id))
     assert not findings, "\n".join(findings)
-    assert titled_card_findings(s) == PROGRESS_OLD_CARDS
+    assert titled_card_findings(s) == []
+    assert built_findings(s, user.id) == PROGRESS_WAITS.get(state.__name__.strip("_"), [])

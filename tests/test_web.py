@@ -1304,7 +1304,7 @@ def test_the_edit_page_renders_for_each_kind(client, stocked):
 
 def test_progress_shows_each_lift_and_the_body_weight_trend(client, stocked):
     page = client.get("/progress").text
-    row = re.search(r'<tr>\s*<td><a href="/progress/back-squat">Back Squat</a></td>(.*?)</tr>', page, re.S).group(1)
+    row = re.search(r'<tr><td class="lead"><a href="/progress/back-squat">Back Squat</a></td>(.*?)</tr>', page, re.S).group(1)
     current = services.get_progress(only_user().id)["lifts"][0]["current_estimated_max_kg"]
     assert formatting.show(current, "estimated_max", page=True) in row and "65\u00a0kg × 5" in row
     assert f'<a href="/day/{stocked["today"].isoformat()}">' in row
@@ -5780,7 +5780,7 @@ def test_progress_twins_point_at_this_page_and_todays_are_unchanged(progress_fix
         assert twin["text"] == button["text"] and twin["text"]
     assert progress_fixed.count('id="body-weight"') == 1 and progress_fixed.count('id="trends"') == 1
     assert '<section class="card bw-card" id="body-weight"' in progress_fixed
-    assert '<div class="card trends" id="trends">' in progress_fixed
+    assert '<section class="card trends" id="trends" aria-labelledby="trends-title">' in progress_fixed
     today = tiles_of(day_of(client, "2026-11-10"))
     assert [t["attrs"].get("href") for t in today if t["tag"] == "a"] == [
         "/progress#body-weight", "/progress#trends", "/progress#trends"]
@@ -6100,9 +6100,9 @@ def test_the_card_reads_the_persons_own_date_not_the_utc_date(client, monkeypatc
     assert tiles_of(page)[0]["value"] == "80.9"
 
 
-def test_progress_runs_head_banner_tiles_body_weight_trends_then_lifts(client, pinned):
-    """Contract lines 1480 to 1488, as they stand after B8: the page head, the sample banner, the tiles and their
-    sheets, Body weight, Trends, Lifts. No Cardio card yet."""
+def test_progress_runs_head_banner_tiles_body_weight_trends_cardio_then_lifts(client, pinned):
+    """Contract lines 1480 to 1488: the page head, the sample banner, the tiles and their sheets, Body weight,
+    Trends, Cardio, Lifts. Cardio comes before Lifts in the markup."""
     from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
 
     sign_in(client)
@@ -6110,7 +6110,7 @@ def test_progress_runs_head_banner_tiles_body_weight_trends_then_lifts(client, p
     main = next(iter(parse(client.get("/progress").text).find_all("main")))
     assert [shape(c) for c in main.elements()] == [
         ("div", "page-head"), ("p", "notice", "sample-banner"), ("div", "glance"), ("section", "card", "bw-card"),
-        ("div", "card", "trends"), ("div", "card")]
+        ("section", "card", "trends"), ("section", "card", "cardio-card"), ("section", "card", "lifts-card")]
     assert [e.text() for e in main.elements()[0].elements()] == ["Progress"]
     glance = main.elements()[2]
     assert [shape(c) for c in glance.elements()] == [("div", "tiles", "four"), *[("div", "sheet")] * 4]
@@ -6147,7 +6147,8 @@ def test_progress_reads_the_glance_and_gives_its_date_to_the_chart(client, pinne
     monkeypatch.setattr(web, "glance_of", none)
     r = client.get("/progress")
     assert r.status_code == 200 and glance_node(r.text) is None and "bw-card" not in r.text and "popover" not in r.text
-    assert '<div class="card trends" id="trends">' in r.text and "<h2>Lifts</h2>" in r.text
+    assert '<section class="card trends" id="trends" aria-labelledby="trends-title">' in r.text
+    assert '<h2 id="cardio-title">Cardio</h2>' in r.text and '<h2 id="lifts-title">Lifts</h2>' in r.text
 
 
 def test_trend_draws_the_28_days_ending_on_the_date_it_is_given(client, pinned):
@@ -6161,3 +6162,385 @@ def test_trend_draws_the_28_days_ending_on_the_date_it_is_given(client, pinned):
     assert len(web._trend(uid, date(2026, 11, 10))["bodyweight"]["points"]) == 2
     assert web._trend(uid, date(2026, 12, 8))["bodyweight"] is None
     assert len(web._trend(uid)["bodyweight"]["points"]) == 2  # no date: the person's own, the pinned fixed day
+
+
+# ---------------------------------------------------------------- stage 6, step 4: Progress' Trends, Cardio and Lifts (B9)
+
+def lower_card(page: str, cls: str):
+    """The section.card of that class on the page, read as a tree."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    [card] = parse(page).find_all("section", cls)
+    return card
+
+
+def card_table(card) -> tuple[list[str], list[list[str]]]:
+    """The one table in a card: its column headers, and each body row's cells as a person reads them."""
+    from .test_pages_text import tables  # noqa: PLC0415 - test_pages_text imports this file
+
+    [table] = tables(card)
+    return table.headers, [[c.text() for c in row] for row in table.rows]
+
+
+def trends_of(page: str) -> list[tuple[str, str, str]]:
+    """The Trends table's rows: (quantity, value, remark)."""
+    headers, body = card_table(lower_card(page, "trends"))
+    assert headers == ["Quantity", "Value", "Remark"]
+    return [tuple(row) for row in body]
+
+
+NO_WEIGH_INS = [("Smoothed trend", "", "No weigh-ins yet."), ("Weight rate", "", "No weigh-ins yet."),
+                ("Weigh-ins", "", "No weigh-ins yet.")]
+NO_FOOD_ROWS = [(q, "", "No food logged in the last 28 days.")
+                for q in ("Eaten a day", "Eaten a day", "From estimates", "Calorie target")]
+NO_TRAINING = [("Lift sessions", "0", "Last 7 days"), ("Lift sessions a week", "0", "4-week average"),
+               ("Cardio", f"0{NB}min", "Last 7 days"), ("Cardio a week", f"0{NB}min", "4-week average")]
+
+
+def test_the_trends_card_on_the_fixed_day(progress_fixed):
+    """Section L's Trends table on the fixed day: Quantity, Value, Remark, one row per quantity in the four groups,
+    every figure get_trends' own through the filter the contract names. Fixed day: 79.2 kg smoothed, 79 kg the
+    7-day average, -0.24 kg a week from 27 Oct to 10 Nov, 2,216 and 2,196 kcal, 41%, no target, 3 sessions,
+    85 min, and maintenance 2,513 shown "2,510" with its tag, 21 logged days, 21 Oct to 10 Nov."""
+    t = services.get_trends(only_user().id)
+    bw, cal, ses, car, m = t["bodyweight"], t["calories"], t["sessions"], t["cardio"], t["maintenance"]
+    show = lambda v, q: formatting.show(v, q, page=True)  # noqa: E731
+    on = lambda a, b: formatting.days(a, b, t["today"])  # noqa: E731
+    assert trends_of(progress_fixed) == [
+        ("Smoothed trend", show(bw["smoothed"], "bodyweight_derived"), ""),
+        ("7-day average", show(bw["now"], "bodyweight_derived"), ""),
+        ("Weight rate", f"{show(bw['rate_per_week'], 'rate')}{NB}kg a week",
+         on(bw["rate_window"]["from"], bw["rate_window"]["to"])),
+        ("Weigh-ins", show(bw["weigh_ins_28d"], "count"), "Last 28 days"),
+        ("Eaten a day", show(cal["avg_7d"], "kcal"), f"Last 7 days, {show(cal['days_logged_7d'], 'count')} logged"),
+        ("Eaten a day", show(cal["avg_28d"], "kcal"), f"Last 28 days, {show(cal['days_logged_28d'], 'count')} logged"),
+        ("From estimates", show(cal["estimated_share_pct_28d"], "percent"), "Last 28 days"),
+        ("Calorie target", "", "Not set"),
+        ("Lift sessions", show(ses["this_week"], "count"), "Last 7 days"),
+        ("Lift sessions a week", show(ses["per_week_4w"], "count_avg"), "4-week average"),
+        ("Cardio", show(car["minutes_this_week"], "week_minutes"), "Last 7 days"),
+        ("Cardio a week", show(car["minutes_per_week_4w"], "week_minutes"), "4-week average"),
+        ("Maintenance", show(m["kcal"], "maintenance"),
+         f"estimate {show(m['days_logged'], 'count')} logged days, {on(m['from'], m['to'])}")]
+    assert [row[1] for row in trends_of(progress_fixed)] == [
+        f"79.2{NB}kg", f"79{NB}kg", f"-0.24{NB}kg a week", "28", f"2,216{NB}kcal", f"2,196{NB}kcal", "41%", "", "3",
+        "3", f"85{NB}min", f"85{NB}min", f"2,510{NB}kcal"]
+    assert (bw["now"], m["kcal"], trends_of(progress_fixed)[2][2]) == (79.0, 2513, "27 Oct to 10 Nov")
+
+
+def test_the_trends_card_is_a_named_section_holding_one_grouped_table(progress_fixed):
+    """The card is section.card.trends#trends named by its own h2, the table in div.table-wrap. One tbody: each group
+    after Weight starts with a tr.group, every body cell a td (the quantity, the num value, the remark). The
+    estimate tag sits first in the Maintenance remark, never in the value."""
+    from .test_pages_text import estimate_findings, parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    card = lower_card(progress_fixed, "trends")
+    assert card.attrs == {"class": "card trends", "id": "trends", "aria-labelledby": "trends-title"}
+    assert [(shape(k), k.attrs.get("id"), k.text() if k.tag == "h2" else None) for k in card.elements()] == [
+        (("h2",), "trends-title", "Trends"), (("div", "table-wrap"), None, None)]
+    [table] = card.elements()[1].elements()
+    assert shape(table) == ("table", "trends") and [e.tag for e in table.elements()] == ["thead", "tbody"]
+    head = table.elements()[0].elements()[0].elements()
+    assert [(c.tag, c.attrs, c.text()) for c in head] == [
+        ("th", {"scope": "col"}, "Quantity"), ("th", {"scope": "col", "class": "num"}, "Value"),
+        ("th", {"scope": "col"}, "Remark")]
+    body = table.elements()[1].elements()
+    assert [r.classes for r in body] == [[]] * 4 + [["group"]] + [[]] * 3 + [["group"]] + [[]] * 3 + [["group"]]
+    assert all([(c.tag, c.classes) for c in r.elements()] == [("td", []), ("td", ["num"]), ("td", ["remark"])]
+               for r in body)
+    remark = body[-1].elements()[2]
+    assert [shape(e) for e in remark.elements()] == [("span", "tag", "tag-estimate")]
+    assert isinstance(remark.children[1], str) and remark.children[1].startswith(" ")  # the tag, then its words
+    assert body[-1].elements()[1].elements() == []  # the value holds the figure alone
+    assert estimate_findings(parse(progress_fixed)) == []
+
+
+@pytest.mark.parametrize("state, rows", [
+    ("new", [*NO_WEIGH_INS, *NO_FOOD_ROWS, *NO_TRAINING,
+             ("Maintenance", "", "Needs food logged on 14 more of the last 21 days.")]),
+    ("a weigh-in today", [
+        ("Smoothed trend", f"80{NB}kg", ""), ("7-day average", f"80{NB}kg", ""),
+        ("Weight rate", "", "The weekly rate needs a weigh-in from 14 to 42 days ago."),
+        ("Weigh-ins", "1", "Last 28 days"), *NO_FOOD_ROWS, *NO_TRAINING,
+        ("Maintenance", "", "Needs food logged on 14 more of the last 21 days.")]),
+    ("old food and an old weigh-in", [
+        ("Smoothed trend", f"80{NB}kg", ""), ("Latest weigh-in", f"80{NB}kg", ""),
+        ("Weight rate", "", "The weekly rate needs a weigh-in in the last 7 days."),
+        ("Weigh-ins", "0", "Last 28 days"),
+        ("Eaten a day", "", "No food logged in the last 7 days."),
+        ("Eaten a day", f"400{NB}kcal", "Last 28 days, 1 logged"), ("From estimates", "0%", "Last 28 days"),
+        ("Calorie target", "", "Not set"), *NO_TRAINING,
+        ("Maintenance", "", "Needs food logged on 13 more of the last 21 days.")]),
+    ("targets and a zero rate", [
+        ("Smoothed trend", f"80{NB}kg", ""), ("7-day average", f"80{NB}kg", ""),
+        ("Weight rate", f"0{NB}kg a week", "27 Oct to 10 Nov"), ("Weigh-ins", "4", "Last 28 days"),
+        ("Eaten a day", f"1,000{NB}kcal", "Last 7 days, 1 logged"),
+        ("Eaten a day", f"1,000{NB}kcal", "Last 28 days, 1 logged"), ("From estimates", "0%", "Last 28 days"),
+        ("Calorie target", f"2,000{NB}kcal", ""),
+        ("Lift sessions", "0", "Last 7 days, target 0"), ("Lift sessions a week", "0", "4-week average"),
+        ("Cardio", f"0{NB}min", f"Last 7 days, target 150{NB}min"), ("Cardio a week", f"0{NB}min", "4-week average"),
+        ("Maintenance", "", "Needs food logged on 13 more of the last 21 days.")]),
+])
+def test_the_trends_card_in_each_state(client, pinned, state, rows):
+    """No weigh-ins: each weight row blank, the reason in its remark, and no basis row (there is no basis). No rate:
+    the value blank, get_trends' reason. No food in 28 days: the four food rows blank with the contract's words. No
+    food in 7: that row's reason. No target: "Not set". Targets: the figure, and each Training target in the remark.
+    No estimate: maintenance_note, no tag. A value cell never holds words."""
+    sign_in(client)
+    progress_state(state)
+    page = client.get("/progress").text
+    assert trends_of(page) == rows
+    body = lower_card(page, "trends").find_all("tbody")[0].elements()
+    food = [q for q, _, _ in rows].index("Eaten a day")  # 3 weight rows with no weigh-in, else 4
+    assert [n for n, r in enumerate(body) if r.classes] == [food, food + 4, food + 8]
+    assert all(r.classes in ([], ["group"]) for r in body)
+    assert not lower_card(page, "trends").find_all(cls="tag-estimate")
+    note = services.get_trends(only_user().id)["maintenance_note"]
+    assert rows[-1][2] == note
+
+
+def test_a_trends_value_holds_no_words_and_the_reasons_are_the_reads(client, pinned, monkeypatch):
+    """Every remark that gives a reason is the read's own words: the rate's from get_trends' note less the sample
+    sentence, the estimate's from maintenance_note. Stood in for, they follow the read."""
+    sign_in(client)
+    progress_state("a weigh-in today")
+    real = services.get_trends
+
+    def worded(uid):
+        out = real(uid)
+        return {**out, "note": "Rate words. " + web.SAMPLE_NOTE, "maintenance_note": "Estimate words."}
+    monkeypatch.setattr(services, "get_trends", worded)
+    rows = {q: (v, r) for q, v, r in trends_of(client.get("/progress").text)}
+    assert rows["Weight rate"] == ("", "Rate words.") and rows["Maintenance"] == ("", "Estimate words.")
+
+
+CARDIO_HEAD = ["Activity", "Sessions", "Time (min)", "Fastest pace (per km)", "Last"]
+CARDIO_LINE = ("Sessions and time cover the last 28 days. Fastest pace is your best ever. A blank pace means no "
+               "distance is logged for that activity.")
+
+
+def test_the_cardio_card_on_the_fixed_day(progress_fixed):
+    """Section L's Cardio card: a row table, one row per activity by name, the name plain words (no activity page is
+    built). Sessions and Time (min) are the last 28 days', the pace get_cardio's m:ss, Last a link to that day. An
+    activity with no distance leaves its pace cell empty: no words, no element. Then the contract's line."""
+    card = lower_card(progress_fixed, "cardio-card")
+    assert card.attrs == {"class": "card cardio-card", "aria-labelledby": "cardio-title"}
+    assert [shape(k) for k in card.elements()] == [("h2",), ("div", "table-wrap"), ("p", "small")]
+    assert card.elements()[0].attrs == {"id": "cardio-title"} and card.elements()[0].text() == "Cardio"
+    assert card.elements()[2].text() == CARDIO_LINE
+    headers, rows = card_table(card)
+    assert headers == CARDIO_HEAD
+    assert rows == [["Outdoor Run", "4", "121", "5:54", "Sat 7 Nov"], ["Stationary Bike", "4", "100", "", "Thu 5 Nov"],
+                    ["Treadmill Walk", "4", "120", "", "Tue 10 Nov"]]
+    read = services.get_cardio(only_user().id)
+    assert rows == [[a["exercise"], formatting.show(a["sessions_28d"], "count"),
+                     formatting.show(a["minutes_28d"], "week_minutes", unit=False), a["fastest_pace"] or "",
+                     formatting.day(a["last_date"], read["today"])] for a in read["activities"]]
+    [table] = card.find_all("table")
+    assert table.classes == ["rows"] and table.parent.classes == ["table-wrap"]
+    for tr_, a in zip(table.find_all("tbody")[0].elements(), read["activities"]):
+        cells = tr_.elements()
+        assert cells[0].classes == ["lead"] and cells[0].elements() == []  # plain words, not a link
+        assert [(c.classes, c.attrs.get("data-label")) for c in cells[1:]] == [
+            (["num"], "Sessions"), (["num"], "Time (min)"), (["num"], "Fastest pace (per km)"), ([], "Last")]
+        assert [(x.attrs, x.text()) for x in cells[4].find_all("a")] == [
+            ({"href": f"/day/{a['last_date']}"}, formatting.day(a["last_date"], read["today"]))]
+        if a["fastest_pace"] is None:
+            assert cells[3].children == []  # empty, so the stacked table hides it
+    assert "/progress/cardio" not in progress_fixed
+
+
+def cardio_state(state: str) -> None:
+    """Cardio for a Cardio card state, on the pinned fixed day."""
+    uid, today = only_user().id, date(2026, 11, 10)
+
+    def log(name, minutes, n, km=None):
+        entry = {"exercise": name, "minutes": minutes, "date": (today - timedelta(days=n)).isoformat()}
+        assert "error" not in services.log_cardio(uid, {**entry, **({"distance_km": km} if km else {})}, "claude")
+    if state == "no distance beside a distance":
+        log("Outdoor Run", 30, 0, 5)
+        log("Stationary Bike", 45.5, 1)
+    if state == "no distance anywhere":
+        log("Stationary Bike", 40, 0)
+    if state == "only older than 28 days":
+        log("Outdoor Walk", 30, 40, 2.5)
+        log("Outdoor Run", 25, 2, 5)
+
+
+@pytest.mark.parametrize("state, head, rows", [
+    ("no distance beside a distance", CARDIO_HEAD,
+     [["Outdoor Run", "1", "30", "6:00", "Tue 10 Nov"], ["Stationary Bike", "1", "46", "", "Mon 9 Nov"]]),
+    ("no distance anywhere", ["Activity", "Sessions", "Time (min)", "Last"],
+     [["Stationary Bike", "1", "40", "Tue 10 Nov"]]),
+    ("only older than 28 days", CARDIO_HEAD,
+     [["Outdoor Run", "1", "25", "5:00", "Sun 8 Nov"], ["Outdoor Walk", "0", "0", "12:00", "Thu 1 Oct"]]),
+])
+def test_the_cardio_card_in_each_state(client, pinned, state, head, rows):
+    """One session each; an activity with no distance beside one with (its pace cell empty); no distance on any
+    activity (no pace column, since a column is never blank in every row); an activity whose sessions are all older
+    than 28 days (0 sessions and 0 minutes, true counts, its best pace and its last day)."""
+    sign_in(client)
+    cardio_state(state)
+    page = client.get("/progress").text
+    card = lower_card(page, "cardio-card")
+    assert "is-empty" not in card.classes and card_table(card) == (head, rows)
+    assert all(c.elements() == [] for c in card.find_all("td", "lead"))
+    assert card.elements()[-1].text() == CARDIO_LINE
+
+
+def test_with_no_cardio_the_cardio_card_says_what_to_do(client, pinned):
+    sign_in(client)
+    card = lower_card(client.get("/progress").text, "cardio-card")
+    assert card.attrs == {"class": "card cardio-card is-empty", "aria-labelledby": "cardio-title"}
+    assert [shape(k) for k in card.elements()] == [("h2",), ("p", "empty-line")]
+    assert card.elements()[1].text() == "No cardio logged yet. Tell your assistant what you did, or add it on Today."
+    assert [(a.attrs, a.text()) for a in card.find_all("a")] == [({"href": "/today"}, "Today")]
+    assert not card.find_all("table")
+
+
+def test_a_failed_cardio_read_draws_no_cardio_card_and_the_rest_of_progress(client, pinned, monkeypatch):
+    sign_in(client)
+    progress_state("the fixed day")
+    monkeypatch.setattr(services, "get_cardio", lambda *a: {"error": "no_account", "message": "x", "fix": "y"})
+    r = client.get("/progress")
+    assert r.status_code == 200 and "cardio-card" not in r.text and 'id="trends"' in r.text
+    assert '<h2 id="lifts-title">Lifts</h2>' in r.text
+
+
+LIFTS_HEAD = ["Lift", "Estimated max", "Best set", "Trend", "Last trained"]
+LIFTS_LINE = "Estimated max is worked out from your sets, not a tested max. Trend is its change a week."
+ZERO_KG = re.compile(r"(?<![\d.,])0 kg")  # a 0 kg figure, not the end of 100 kg
+
+
+def test_the_lifts_card_on_the_fixed_day(progress_fixed):
+    """Section L's Lifts card: a row table, one row per lift by name, each a link to its page. Estimated max through
+    estimated_max (Back Squat 107.92 shown "107.9"), the best set "{weight} kg × {reps}", the trend "{rate} kg a
+    week", the last day a link. Pull-Up, never above 0 kg: "Needs added weight", "6 reps", no trend. No 0 kg."""
+    card = lower_card(progress_fixed, "lifts-card")
+    assert card.attrs == {"class": "card lifts-card", "aria-labelledby": "lifts-title"}
+    assert [shape(k) for k in card.elements()] == [("h2",), ("div", "table-wrap"), ("p", "small")]
+    assert card.elements()[0].attrs == {"id": "lifts-title"} and card.elements()[2].text() == LIFTS_LINE
+    headers, rows = card_table(card)
+    assert headers == LIFTS_HEAD
+    kg = lambda n: f"{n}{NB}kg"  # noqa: E731
+    assert rows == [
+        ["Back Squat", kg("107.9"), f"{kg('92.5')} × 5", f"+4.41{NB}kg a week", "Fri 6 Nov"],
+        ["Barbell Row", kg("79.2"), f"{kg('62.5')} × 8", f"+4.78{NB}kg a week", "Fri 6 Nov"],
+        ["Bench Press", kg("84.6"), f"{kg('72.5')} × 5", f"+4.41{NB}kg a week", "Fri 6 Nov"],
+        ["Deadlift", kg("145.8"), f"{kg('125')} × 5", f"+8.6{NB}kg a week", "Mon 9 Nov"],
+        ["Overhead Press", kg("61.3"), f"{kg('52.5')} × 5", f"+4.3{NB}kg a week", "Mon 9 Nov"],
+        ["Pull-Up", "Needs added weight", f"6{NB}reps", "", "Mon 9 Nov"]]
+    uid = only_user().id
+    read = services.get_progress(uid)
+    with db.new_session() as s:
+        history = web.lifts.history(s, uid, date(2026, 11, 10))
+    assert history["reps_only"] == {"Pull-Up": {"reps": 6, "date": "2026-10-16"}}
+    show = lambda v, q: formatting.show(v, q, page=True)  # noqa: E731
+    for row, lift in zip(rows, read["lifts"]):
+        best = history["best_set"].get(lift["exercise"])
+        assert row[0] == lift["exercise"]
+        if lift["current_estimated_max_kg"] is not None:
+            assert row[1] == show(lift["current_estimated_max_kg"], "estimated_max")
+            assert row[2] == f"{show(best['weight_kg'], 'weight_kg')} × {formatting.show(best['reps'], 'reps')}"
+            assert row[3] == f"{formatting.show(lift['slope_per_week'], 'rate')}{NB}kg a week"
+        assert row[4] == formatting.day(lift["last_trained"], read["today"])
+    body = card.find_all("tbody")[0].elements()
+    for tr_, lift in zip(body, read["lifts"]):
+        lead = tr_.elements()[0]
+        assert lead.classes == ["lead"] and [(a.attrs, a.text()) for a in lead.elements()] == [
+            ({"href": f"/progress/{links.slug(lift['exercise'])}"}, lift["exercise"])]
+        assert [c.attrs.get("data-label") for c in tr_.elements()[1:]] == LIFTS_HEAD[1:]
+        assert [(a.attrs, a.text()) for a in tr_.elements()[4].find_all("a")] == [
+            ({"href": f"/day/{lift['last_trained']}"}, formatting.day(lift["last_trained"], read["today"]))]
+    pull = body[-1].elements()
+    assert pull[1].classes == ["num", "muted"] and pull[3].children == []
+    assert not ZERO_KG.search(card.text()) and "No estimated max yet" not in progress_fixed
+    assert "No best set yet" not in progress_fixed
+
+
+def lift_state(state: str) -> None:
+    """Lift sessions for a Lifts card state, on the pinned fixed day."""
+    uid, today = only_user().id, date(2026, 11, 10)
+
+    def log(n, *sets):
+        assert "error" not in services.log_lifts(uid, {"date": (today - timedelta(days=n)).isoformat(), "sets": [
+            {"exercise": name, "weight_kg": kg, "reps": reps} for name, kg, reps in sets]}, "claude")
+    if state in ("no added weight", "all three"):
+        log(1, ("Pull-Up", 0, 8), ("Pull-Up", 0, 6))
+    if state in ("no set of 1 to 10 reps", "all three"):
+        log(2, ("Bench Press", 40, 15))
+    if state == "one session, no trend":
+        log(0, ("Back Squat", 101.25, 5))  # a weight at 2 dp: weight_kg keeps it, estimated_max would not
+    if state == "all three":
+        for n, kg in ((21, 90), (14, 95), (7, 100), (0, 105)):
+            log(n, ("Back Squat", kg, 5))
+
+
+@pytest.mark.parametrize("state, head, rows", [
+    ("no added weight", ["Lift", "Estimated max", "Best set", "Last trained"],
+     [["Pull-Up", "Needs added weight", f"8{NB}reps", "Mon 9 Nov"]]),
+    ("no set of 1 to 10 reps", ["Lift", "Estimated max", "Last trained"],
+     [["Bench Press", "Needs a set of 1 to 10 reps", "Sun 8 Nov"]]),
+    ("one session, no trend", ["Lift", "Estimated max", "Best set", "Last trained"],
+     [["Back Squat", f"118.1{NB}kg", f"101.25{NB}kg × 5", "Tue 10 Nov"]]),
+    ("all three", LIFTS_HEAD, None),
+])
+def test_the_lifts_card_in_each_state(client, pinned, state, head, rows):
+    """A lift never above 0 kg: "Needs added weight" and its most reps. A weighted lift with no set of 1 to 10 reps:
+    "Needs a set of 1 to 10 reps", best set and trend blank. A lift with no trend: no trend. A column no lift fills
+    is not drawn; with each state beside a lift that has a trend, every column is, and the blank cells are empty."""
+    sign_in(client)
+    lift_state(state)
+    page = client.get("/progress").text
+    card = lower_card(page, "lifts-card")
+    got_head, got = card_table(card)
+    assert got_head == head
+    if rows is None:
+        slope = services.get_progress(only_user().id)["lifts"][0]["slope_per_week"]
+        rows = [["Back Squat", f"122.5{NB}kg", f"105{NB}kg × 5", f"{formatting.show(slope, 'rate')}{NB}kg a week",
+                 "Tue 10 Nov"],
+                ["Bench Press", "Needs a set of 1 to 10 reps", "", "", "Sun 8 Nov"],
+                ["Pull-Up", "Needs added weight", f"8{NB}reps", "", "Mon 9 Nov"]]
+        assert slope is not None and slope > 0
+        blanks = [c for c in card.find_all("td") if not c.text()]
+        assert len(blanks) == 3 and all(c.children == [] for c in blanks)
+    assert got == rows
+    assert not ZERO_KG.search(card.text()) and card.elements()[-1].text() == LIFTS_LINE
+
+
+def test_with_no_lifts_the_lifts_card_says_what_to_do(client, pinned):
+    sign_in(client)
+    card = lower_card(client.get("/progress").text, "lifts-card")
+    assert card.attrs == {"class": "card lifts-card is-empty", "aria-labelledby": "lifts-title"}
+    assert [shape(k) for k in card.elements()] == [("h2",), ("p", "empty-line")]
+    assert card.elements()[1].text() == "No lifts logged yet. Tell your assistant what you lifted and it shows here."
+    assert not card.find_all("table") and "Claude" not in card.text()
+
+
+def test_progress_reads_reps_only_from_the_lift_history(client, pinned, monkeypatch):
+    """The no-added-weight row's words and reps are lifts.history's reps_only, handed down by _trend: stood in for,
+    the row follows it."""
+    sign_in(client)
+    lift_state("no set of 1 to 10 reps")
+    real = web._trend
+
+    def bare(user_id, today=None):
+        return {**real(user_id, today), "reps_only": {"Bench Press": {"reps": 15, "date": "2026-11-08"}}}
+    monkeypatch.setattr(web, "_trend", bare)
+    _, rows = card_table(lower_card(client.get("/progress").text, "lifts-card"))
+    assert rows == [["Bench Press", "Needs added weight", f"15{NB}reps", "Sun 8 Nov"]]
+
+
+def test_the_estimated_max_goes_through_its_own_filter(client, pinned, monkeypatch):
+    """get_progress rounds the estimated max to 1 dp already, so its filter shows only on a read at 2 dp: stood in
+    for, 107.92 shows "107.9", as the contract's fixed day has it."""
+    sign_in(client)
+    lift_state("one session, no trend")
+    real = services.get_progress
+
+    def unrounded(uid, *args):
+        out = real(uid, *args)
+        return {**out, "lifts": [{**row, "current_estimated_max_kg": 107.92} for row in out["lifts"]]} if not args else out
+    monkeypatch.setattr(services, "get_progress", unrounded)
+    _, rows = card_table(lower_card(client.get("/progress").text, "lifts-card"))
+    assert rows[0][:2] == ["Back Squat", f"107.9{NB}kg"]
