@@ -60,6 +60,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 | "Squat 100 by June" | A goal with a start, a target and the pace it needs |
 | "How am I doing?" | Your weight trend, average calories, sessions and cardio minutes |
 | "Am I on track?" | Each open goal's needed pace, its pace so far and its projected date |
+| "Bring my weigh-ins over from my old app", with its export | A preview first, which writes nothing: what would go in, what is already there, what was refused. The assistant is told to write only when you say yes |
 
 ## Under the hood
 

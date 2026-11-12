@@ -242,7 +242,7 @@ def test_as_import_of_bs_own_entries_on_bs_days_writes_as_and_leaves_bs_alone(ht
     before = {k: snapshot(bob["account"], "measurement" if k == "deleted_measurement" else k, bob[k]) for k in kinds}
     totals = ok(http, token(B), "get_log", {"days": 14})["totals"]
     for dry in (True, False):
-        r = ok(http, t, "import_entries", {"rows": rows, "dry_run": dry})
+        r = ok(http, t, "import_entries", {"rows": rows, "dry_run": dry, "weight_unit": "kg", "length_unit": "cm"})
         assert r["row_outcomes"] == {"written": 6, "already_there": 0, "day_taken": 0, "failed": 0}, dry
         assert r["day_taken"] == [] and r["imported_last_24h"] == 0
     assert {k: snapshot(bob["account"], "measurement" if k == "deleted_measurement" else k, bob[k])

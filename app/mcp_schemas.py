@@ -985,9 +985,12 @@ class GetTrendsResult(BaseModel):
 # ---------------------------------------------------------------- import_entries
 
 class ImportUnits(BaseModel):
-    weight: str = Field(description="The call's weight_unit: kg or lb.")
-    distance: str = Field(description="The call's distance_unit: km or mi.")
-    length: str = Field(description="The call's length_unit: cm or in.")
+    """Only the units the call named: a unit is never assumed, so one left out is absent here."""
+
+    weight: str | None = Field(default=None, description="The call's weight_unit, kg or lb. Absent when not sent.")
+    distance: str | None = Field(
+        default=None, description="The call's distance_unit, km or mi. Absent when not sent.")
+    length: str | None = Field(default=None, description="The call's length_unit, cm or in. Absent when not sent.")
 
 
 class ImportCount(BaseModel):
@@ -1082,7 +1085,7 @@ class ImportEntriesResult(BaseModel):
     from_: str | None = Field(
         alias="from", description="The first date among the rows whose date passed, YYYY-MM-DD, or null with none.")
     to: str | None = Field(description="The last such date, YYYY-MM-DD, or null with none.")
-    units: ImportUnits = Field(description="The units the rows were read in.")
+    units: ImportUnits = Field(description="The units the rows were read in: only the ones the call named.")
     counts: ImportCounts = Field(description="Per kind: written, already there, day taken and refused.")
     row_outcomes: ImportOutcomes = Field(description="The same, in rows, for every kind together.")
     repeated_rows: int = Field(

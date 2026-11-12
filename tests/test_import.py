@@ -72,9 +72,14 @@ def run(on, exercise, minutes, distance=None, **extra):
     return row
 
 
+# The units a call names unless a test says otherwise: the defaults the service had before the fix round on
+# 7e95ee9, which made every unit a row needs required. A unit given as None is left out of the call.
+UNITS = {"weight_unit": "kg", "distance_unit": "km", "length_unit": "cm"}
+
+
 def imp(user, *rows, dry=False, by="claude", **data):
-    """An import of these rows. dry=None leaves dry_run out."""
-    sent = {"rows": list(rows), **data}
+    """An import of these rows, in kg, km and cm unless data names a unit. dry=None leaves dry_run out."""
+    sent = {"rows": list(rows), **{k: v for k, v in {**UNITS, **data}.items() if v is not None}}
     if dry is not None:
         sent["dry_run"] = dry
     return services.import_entries(user.id, sent, by)
@@ -827,7 +832,8 @@ WHOLE = [
     ({"rows": []}, "rows_out_of_range", "rows holds 0. It needs 1 to 200.", None),
     ({"rows": "all of it"}, "rows_out_of_range", "rows holds 0. It needs 1 to 200.", None),
     ({}, "rows_out_of_range", "rows holds 0. It needs 1 to 200.", None),
-    ({"rows": [lift(ago(n), *[("Deadlift", 100, 5)] * 50) for n in range(1, 21)] + [meal(ago(1), ("Tea", 40, "snack"))]},
+    ({"rows": [lift(ago(n), *[("Deadlift", 100, 5)] * 50) for n in range(1, 21)] + [meal(ago(1), ("Tea", 40, "snack"))],
+      "weight_unit": "kg"},   # the unit the sets need since the fix round on 7e95ee9
      "items_out_of_range", "These rows hold 1,001 sets and food entries. The most in one call is 1,000.",
      "Send fewer rows in this call, and the rest in the next."),
     ({"rows": [weigh(ago(1), 80)], "weight_unit": "stone"}, "invalid_unit",
@@ -850,6 +856,102 @@ def test_a_whole_call_refusal_writes_nothing(user, data, code, message, fix):
     if fix:
         assert r["fix"] == fix
     assert everything() == before
+
+
+# ---------------------------------------------------------------- the fix round on 7e95ee9: a unit is never assumed
+
+NO_UNIT = {"weight_unit": None, "distance_unit": None, "length_unit": None}   # every unit left out of the call
+HOLDS = {"weight_unit": "a weight", "distance_unit": "a distance or a speed", "length_unit": "a body size"}
+
+
+@pytest.mark.parametrize("row, unit", [
+    (weigh(ago(1), 176), "weight_unit"), (lift(ago(1), ("Deadlift", 225, 5)), "weight_unit"),
+    (lift(ago(1), ("Pull-Up", 0, 8)), "weight_unit"),   # 0 for bodyweight work is still a weight
+    (run(ago(1), "Outdoor Run", 30, 3.1), "distance_unit"), (run(ago(1), "Outdoor Run", 30, speed=6), "distance_unit"),
+    (measure(ago(1), "Waist", 33.5), "length_unit"), (measure(ago(1), "thigh", 22), "length_unit")],
+    ids=["weigh-in", "set", "bodyweight set", "distance", "speed", "waist", "thigh"])
+@pytest.mark.parametrize("dry", [None, True, False], ids=["left out", "preview", "real"])
+def test_a_quantity_without_its_unit_is_refused_whole_preview_or_not(user, row, unit, dry):
+    before = everything()
+    r = imp(user, row, meal(ago(2), ("Oats", 350, "breakfast")), dry=dry, **NO_UNIT)
+    assert r == {"error": "missing_unit", "message": f"{unit} is missing, and 1 row holds {HOLDS[unit]}.",
+                 "fix": f"Send {unit} as the export writes it: {' or '.join(imports.UNITS[unit])}. Spotter never "
+                        "assumes a unit.", "missing_units": [unit]}
+    assert everything() == before
+    stored = next(iter(imports.UNITS[unit]))   # kg, km or cm, named: the same rows are then taken
+    named = imp(user, row, meal(ago(2), ("Oats", 350, "breakfast")), dry=True, **{**NO_UNIT, unit: stored})
+    assert "error" not in named and named["units"] == {unit.removesuffix("_unit"): stored}
+
+
+def test_two_or_three_units_missing_are_named_in_one_refusal(user):
+    rows = [weigh(ago(1), 176), lift(ago(2), ("Deadlift", 225, 5)), run(ago(1), "Outdoor Run", 30, 3.1),
+            measure(ago(1), "waist", 33.5)]
+    before = everything()
+    two = imp(user, *rows, weight_unit=None, distance_unit=None, length_unit="in")
+    assert two == {"error": "missing_unit",
+                   "message": "weight_unit is missing, and 2 rows hold a weight. distance_unit is missing, and 1 row "
+                              "holds a distance or a speed.",
+                   "fix": "Send weight_unit and distance_unit as the export writes them: weight_unit kg or lb, "
+                          "distance_unit km or mi. Spotter never assumes a unit.",
+                   "missing_units": ["weight_unit", "distance_unit"]}
+    three = imp(user, *rows, dry=True, **NO_UNIT)
+    assert three["missing_units"] == ["weight_unit", "distance_unit", "length_unit"]
+    assert three["message"].endswith(" length_unit is missing, and 1 row holds a body size.")
+    assert three["fix"] == ("Send weight_unit, distance_unit and length_unit as the export writes them: weight_unit kg "
+                            "or lb, distance_unit km or mi, length_unit cm or in. Spotter never assumes a unit.")
+    assert everything() == before
+
+
+def test_a_unit_sent_that_no_row_needs_is_taken(user):
+    r = imp(user, meal(ago(1), ("Oats", 350, "breakfast")), measure(ago(1), "steps", 9000), **{**NO_UNIT,
+            "weight_unit": "lb", "distance_unit": "mi"})
+    assert r["row_outcomes"]["written"] == 2 and r["units"] == {"weight": "lb", "distance": "mi"}
+
+
+def test_food_rows_alone_need_no_unit(user):
+    r = imp(user, meal(ago(1), ("Oats", 350, "breakfast")), meal(ago(2), ("Dal", 500, "lunch")), **NO_UNIT)
+    assert r["row_outcomes"]["written"] == 2 and r["units"] == {}
+    assert total(FoodEntry, user.id) == 2
+
+
+def test_resting_heart_rate_alone_needs_no_length_unit(user):
+    """A measurement that is not a length needs no length_unit: resting_hr, and steps, sleep_hours and water_ml."""
+    rows = [measure(ago(1), "resting_hr", 58), measure(ago(1), "steps", 9000), measure(ago(1), "sleep_hours", 7.5),
+            measure(ago(1), "water_ml", 2000)]
+    r = imp(user, rows[0], **NO_UNIT)
+    assert r["row_outcomes"]["written"] == 1 and r["units"] == {}
+    assert imp(user, *rows[1:], **NO_UNIT)["row_outcomes"]["written"] == 3
+
+
+def test_a_mixed_call_needs_the_units_its_rows_hold_and_only_those(user):
+    rows = [weigh(ago(1), 176.4), lift(ago(1), ("Deadlift", 225, 5, 3)), meal(ago(1), ("Oats", 350, "breakfast")),
+            measure(ago(1), "resting_hr", 58), run(ago(2), "Outdoor Run", 30, 3.1)]
+    before = everything()
+    refused = imp(user, *rows, **{**NO_UNIT, "weight_unit": "lb"})   # the run's miles are not named
+    assert refused["error"] == "missing_unit" and refused["missing_units"] == ["distance_unit"]
+    assert refused["message"] == "distance_unit is missing, and 1 row holds a distance or a speed."
+    assert everything() == before
+    r = imp(user, *rows, **{**NO_UNIT, "weight_unit": "lb", "distance_unit": "mi"})   # no body size: no length_unit
+    assert r["row_outcomes"] == {"written": 5, "already_there": 0, "day_taken": 0, "failed": 0}
+    assert r["units"] == {"weight": "lb", "distance": "mi"}
+    assert rows_of(Bodyweight, user.id)[0].kg == 80.01 and rows_of(CardioEntry, user.id)[0].distance_km == 4.99
+
+
+def test_a_row_that_is_not_what_its_kind_takes_needs_no_unit_and_fails_as_before(user):
+    """Which units a call needs is read from the rows as sent, before the row checks, and a malformed row needs
+    none: it is refused by its own checks, as without the unit rule."""
+    r = imp(user, {"kind": "bodyweight", "date": ago(1)}, measure(ago(1), "wasit", 80),
+            {"kind": "weight", "date": ago(1), "weight": 80}, "not a row",
+            {"kind": "lift_session", "date": ago(1), "sets": "heavy"}, meal(ago(1), ("Oats", 350, "breakfast")),
+            **NO_UNIT)
+    assert [f["error"] for f in r["failed"]] == ["missing_field", "invalid_kind", "unknown_kind", "invalid_field",
+                                                 "sets_count_out_of_range"]
+    assert r["row_outcomes"]["written"] == 1
+
+
+def test_an_unknown_unit_is_refused_before_a_missing_one(user):
+    r = imp(user, weigh(ago(1), 80), run(ago(1), "Outdoor Run", 30, 3.1), **{**NO_UNIT, "weight_unit": "stone"})
+    assert r["error"] == "invalid_unit" and r["message"] == "weight_unit 'stone' is not a unit Spotter takes."
 
 
 def test_a_thousand_items_is_allowed(user):
@@ -1524,8 +1626,10 @@ def test_a_partly_matched_food_row_on_a_held_day_says_its_matched_entries(user):
         assert r["counts"]["food_entry"] == {"written": 0, "already_there": 1, "day_taken": 1, "failed": 0}
     assert preview["summary"] == ("Preview, nothing written. 1 row on Thu 5 Nov. Would write nothing. 1 food entry in "
                                   "those rows is already there. 1 row falls on days Spotter already holds.")
-    assert real["summary"] == ("Imported 0 of 1 row on Thu 5 Nov. 1 food entry in those rows was already there. 1 was "
-                               "left out: its day already holds an entry. Nothing was replaced.")
+    # Was: "... 1 food entry in those rows was already there. 1 was left out: ...". Beside the food entries'
+    # sentence the count names rows, as "already there" and "refused" do (fix round on 7e95ee9).
+    assert real["summary"] == ("Imported 0 of 1 row on Thu 5 Nov. 1 food entry in those rows was already there. 1 row "
+                               "was left out: its day already holds an entry. Nothing was replaced.")
 
 
 def test_known_limit_a_moved_food_day_sent_later_with_fewer_entries_writes_them_again(user):

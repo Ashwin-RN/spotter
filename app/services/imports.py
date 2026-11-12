@@ -2,7 +2,11 @@
 
 import_entries(user_id, data, by)
     data: rows (1 to 200 dated rows of mixed kinds), dry_run (true unless false is sent), weight_unit
-    (kg or lb, default kg), distance_unit (km or mi, default km), length_unit (cm or in, default cm).
+    (kg or lb), distance_unit (km or mi), length_unit (cm or in). A unit is never assumed: a call whose
+    rows hold a weight (a weigh-in's or a set's) needs weight_unit, a distance or a speed needs
+    distance_unit, a body size (waist, hips, chest, arm, thigh) needs length_unit. A call that holds a
+    quantity without its unit is refused whole, missing_unit, a preview too. A call that holds none of a
+    quantity needs no unit for it, and a unit sent that no row needs is taken.
     by is checked as every write's is (web or claude). Every row is stored with logged_by "import",
     whoever calls.
 
@@ -51,7 +55,7 @@ import_entries(user_id, data, by)
 
     Whole-call refusals, nothing written: the write limit (the call is one write, a dry run too),
     time_zone_not_set, sample_data_present, invalid_field (a field the call does not take, a dry_run
-    that is neither true nor false), invalid_unit, rows_out_of_range, items_out_of_range (more than
+    that is neither true nor false), invalid_unit, rows_out_of_range, missing_unit, items_out_of_range (more than
     1,000 set items and food entries), and too_many_imported (more than 10,000 imported rows created in
     any 24 hours, counted over the five entry tables, deleted ones included).
 
@@ -232,11 +236,11 @@ def _dry_run(value) -> tuple[bool | None, dict | None]:
 
 
 def _units(data: dict) -> tuple[dict, dict | None]:
+    """The units the call named, each as the field's own key. A unit left out is not in it: never assumed."""
     chosen = {}
     for field, table in UNITS.items():
         raw = data.get(field)
         if _blank(raw):
-            chosen[field] = next(iter(table))
             continue
         key = raw.strip().casefold() if isinstance(raw, str) else None
         if key not in table:
@@ -244,6 +248,52 @@ def _units(data: dict) -> tuple[dict, dict | None]:
                                    UNIT_FIX)
         chosen[field] = key
     return chosen, None
+
+
+# What each unit measures, in a refusal: "2 rows hold a weight."
+UNIT_HELD = {"weight_unit": "a weight", "distance_unit": "a distance or a speed", "length_unit": "a body size"}
+
+
+def _held_quantity(row) -> set[str]:
+    """The units this row needs, from the row as sent: a weigh-in's or a set's weight, a cardio entry's distance
+    or speed, a body size's value. A field left out or blank holds nothing. A row that is not what its kind
+    takes needs nothing here: its own checks refuse it as before."""
+    if not isinstance(row, dict):
+        return set()
+    kind, needs = row.get("kind"), set()
+    if kind == "bodyweight" and not _blank(row.get("weight")):
+        needs.add("weight_unit")
+    elif kind == "lift_session" and isinstance(row.get("sets"), list):
+        if any(isinstance(x, dict) and not _blank(x.get("weight")) for x in row["sets"]):
+            needs.add("weight_unit")
+    elif kind == "cardio_entry" and any(not _blank(row.get(f)) for f in ("distance", "speed")):
+        needs.add("distance_unit")
+    elif kind == "measurement" and not _blank(row.get("value")):
+        measured, _ = rules.match_kind(row.get("measurement_kind"))
+        if measured in BODY_SIZES:
+            needs.add("length_unit")
+    return needs
+
+
+def _missing_units(rows: list, units: dict) -> dict | None:
+    """missing_unit when the rows hold a quantity whose unit the call did not name: one refusal for every such
+    unit, each with how many rows hold it."""
+    held = {field: 0 for field in UNITS}
+    for row in rows:
+        for field in _held_quantity(row):
+            held[field] += 1
+    missing = [field for field in UNITS if held[field] and field not in units]
+    if not missing:
+        return None
+    said = " ".join(f"{field} is missing, and {_n(held[field], 'row holds', 'rows hold')} {UNIT_HELD[field]}."
+                    for field in missing)
+    if len(missing) == 1:
+        fix = f"Send {missing[0]} as the export writes it: {' or '.join(UNITS[missing[0]])}."
+    else:
+        fix = (f"Send {lifts._joined(missing)} as the export writes them: "
+               + ", ".join(f"{field} {' or '.join(UNITS[field])}" for field in missing) + ".")
+    fix += " Spotter never assumes a unit."
+    return rules.error("missing_unit", said, fix, missing_units=missing)
 
 
 # ---------------------------------------------------------------- the date rule
@@ -612,7 +662,7 @@ def _refused_whole(s, user, data: dict) -> dict | None:
     _, err = _dry_run(data.get("dry_run"))
     if err:
         return err
-    _, err = _units(data)
+    units, err = _units(data)
     if err:
         return err
     rows = data.get("rows")
@@ -621,6 +671,9 @@ def _refused_whole(s, user, data: dict) -> dict | None:
         count = len(rows) if isinstance(rows, list) else 0
         return rules.error("rows_out_of_range", f"rows holds {_count(count)}. It needs {lo} to {hi}.",
                            f"Send at most {hi} rows a call, oldest first, and the rest in the next call.")
+    err = _missing_units(rows, units)  # from the rows as sent, before any row is checked
+    if err:
+        return err
     items = sum(len(r.get(field)) for r in rows if isinstance(r, dict)
                 for field in ("sets", "entries") if isinstance(r.get(field), list))
     if items > ITEMS_MAX:
@@ -634,7 +687,9 @@ def _check_rows(s, user, rows: list, units: dict, today: date) -> tuple[list[dic
     """(checked rows, failed rows, unknown names) for every row as sent."""
     lift_names = {e.name: e for e in exercises(s, "lift")}
     activities: dict[str, tuple] = {}
-    factors = {f: UNITS[f][u] for f, u in units.items()}
+    # A unit the call left out is needed by no row it holds (_missing_units), so its factor is never applied
+    # to a number: 1, the stored unit, for a malformed row that its own checks refuse.
+    factors = {f: UNITS[f][units[f]] if f in units else 1.0 for f in UNITS}
     checked, failed, missed_names = [], [], {}
     for n, raw in enumerate(rows, start=1):
         if not isinstance(raw, dict):
@@ -885,7 +940,8 @@ def _result(user, rows, dry, units, decided, failed, day_taken, missed, to_write
     out = {
         "kind": KIND, "dry_run": dry, "rows": len(rows),
         "from": start.isoformat() if start else None, "to": end.isoformat() if end else None,
-        "units": {"weight": units["weight_unit"], "distance": units["distance_unit"], "length": units["length_unit"]},
+        "units": {name: units[field] for name, field in (("weight", "weight_unit"), ("distance", "distance_unit"),
+                                                          ("length", "length_unit")) if field in units},
         "counts": counts, "row_outcomes": outcomes, "repeated_rows": repeated, "ranges": ranges,
         "day_taken": taken[:LISTED],
         "failed": [{k: v for k, v in f.items() if k not in ("entries", "on")} for f in failed[:LISTED]],
@@ -968,8 +1024,9 @@ def _summary(dry: bool, total: int, outcomes: dict, counts: dict, ranges: dict, 
         parts.append(f"{_n(there, 'row was', 'rows were')} already there.")
     elif there:
         parts.append(f"{_count(there)} {'was' if there == 1 else 'were'} already there.")
-    if taken:
-        parts.append(f"{_count(taken)} {'was' if taken == 1 else 'were'} left out: "
+    if taken:  # beside the food entries' sentence, these are named rows too
+        parts.append(f"{_n(taken, 'row', 'rows') if entries_there else _count(taken)} "
+                     f"{'was' if taken == 1 else 'were'} left out: "
                      f"{'its day already holds' if taken == 1 else 'their days already hold'} an entry.")
     if refused and entries_there:  # beside the food entries' sentence: say these are rows, as above
         parts.append(f"{_n(refused, 'row was', 'rows were')} refused.")

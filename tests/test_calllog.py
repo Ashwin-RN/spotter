@@ -137,8 +137,12 @@ MARKED_CALLS = [
     ("log_cardio", {"exercise": MARKER, "minutes": 30, "date": MARKER, "notes": MARKER}),
     ("get_trends", {}),  # no string arguments: in the table so their rows are checked too
     ("get_goals", {"include_closed": True}),
+    # Every string argument of the import, the rows' too: refused (the person has no time zone yet).
+    ("import_entries", {"rows": [{"kind": MARKER, "date": MARKER, "notes": MARKER, "measurement_kind": MARKER,
+                                  "exercise": MARKER}], "weight_unit": MARKER, "distance_unit": MARKER,
+                        "length_unit": MARKER}),
 ]
-REFUSED = 15  # the marked calls the services refuse
+REFUSED = 16  # the marked calls the services refuse. Was 15, before import_entries
 
 
 def string_fields(schema: dict) -> set[str]:

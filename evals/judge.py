@@ -33,7 +33,8 @@ expect, every key optional, all of them must hold:
 
 seed, rows created for the person before the run, through Spotter's own services, in order:
 
-  {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "set_goal", "data": {...}}
+  {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "set_goal" | "import_entries",
+   "data": {...}}                   import_entries returns no one id: no "as".
   {"service": "add_sample_data"}    a service that takes no data: four weeks of everything, three goals.
                                     No "as": it returns no one id.
 

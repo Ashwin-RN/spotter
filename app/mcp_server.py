@@ -74,8 +74,9 @@ IMPORT_RULE = (
     "entries run out before the 200 rows: send times for sets that repeat. Send the first call with dry_run true "
     "and show the person what it found: what would be written, what is already there, what falls on a day "
     "Spotter already holds, and what was refused. Write only when the person says yes, with dry_run false. Send "
-    "weights, distances, speeds and body sizes as the export writes them, with weight_unit, distance_unit and "
-    "length_unit: never convert them yourself. A row's speed is in the call's distance unit an hour. Send each "
+    "weights, distances, speeds and body sizes as the export writes them: never convert them yourself. Send the "
+    "unit of every weight, distance and body size the rows hold, in weight_unit, distance_unit and length_unit: "
+    "a call without it is refused. A row's speed is in the call's distance unit an hour. Send each "
     "row's timestamp with its offset when the export gives one, or its date. Leave out rows more than 2 years "
     "old, and say how many were left out. Use exercise and activity names only from list_exercises. When a name "
     "in the export is not on the list, ask the person once per name which listed name it is, or whether to leave "
@@ -85,7 +86,7 @@ IMPORT_RULE = (
     "each food entry's meal as the export names it. When the export gives only a meal's or a day's total, send "
     "it as one entry described as that total, such as Breakfast from the old app. An import never replaces an "
     "entry. Sent again, the same rows write nothing that is already there, and an imported entry the person "
-    "edited, moved or deleted counts as already there. One food case is the exception: spotter://can-and-cant "
+    "edited, moved or deleted counts as already there. One food case is the exception: the can-and-cant resource "
     "names it."
 )
 
@@ -876,7 +877,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             "Brings history over from another app: lift sessions, weigh-ins, measurements, food and cardio, each "
             "row dated. Up to 200 rows and up to 1,000 sets and food entries a call. Each row takes kind, date and "
             "the named fields of its kind. Send weights, distances, speeds and body sizes as the export writes "
-            "them, with their units: Spotter converts them. With dry_run true or left out, nothing is written: the "
+            "them, with their units: Spotter converts them, and never assumes a unit. A call whose rows hold a "
+            "weight, a distance, a speed or a body size without its unit is refused, a preview too. With dry_run "
+            "true or left out, nothing is written: the "
             "result says what would be written, what is already there, what falls on a day Spotter already holds, "
             "and what was refused and why. Show the person that, and send the same rows with dry_run false only "
             "when they say yes. An import never replaces an entry, and the same rows sent again write nothing that "
@@ -895,15 +898,17 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         dry_run: Annotated[StrictBool, Field(
             description="true, or left out, checks every row and writes nothing. false writes them. Send false only "
                         "after the person has seen a preview and said yes.")] = not_sent(),
+        # No unit has a default: one a row needs and the call left out is the service's missing_unit refusal.
         weight_unit: Annotated[str | None, Field(
-            description="kg or lb: the unit of every weight in these rows, as the export writes it. Leave out for "
-                        "kg.")] = None,
+            description="kg or lb: the unit of every weight in these rows, a weigh-in's or a set's, as the export "
+                        "writes it. Needed when a row holds a weight: a call without it is refused.")] = None,
         distance_unit: Annotated[str | None, Field(
             description="km or mi: the unit of every distance in these rows, as the export writes it, and of every "
-                        "speed an hour. Leave out for km.")] = None,
+                        "speed an hour. Needed when a row holds a distance or a speed: a call without it is "
+                        "refused.")] = None,
         length_unit: Annotated[str | None, Field(
             description="cm or in: the unit of every body size (waist, hips, chest, arm, thigh) in these rows. "
-                        "Leave out for cm.")] = None,
+                        "Needed when a row holds a body size: a call without it is refused.")] = None,
     ) -> Annotated[CallToolResult, ImportEntriesResult]:
         # The five fields the service takes and nothing else: it refuses any other. A row's fields go as sent.
         data = _sent(rows=[r.model_dump(exclude_none=True) for r in rows], dry_run=dry_run, weight_unit=weight_unit,

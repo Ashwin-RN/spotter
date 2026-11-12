@@ -114,7 +114,8 @@ def test_imported_rows_say_import_and_the_readme_says_what_it_means(make_user):
         {"kind": "measurement", "date": "2026-11-02", "measurement_kind": "waist", "value": 84},
         {"kind": "lift_session", "date": "2026-11-03", "sets": [{"exercise": "Back Squat", "weight": 100, "reps": 5}]},
         {"kind": "food_entry", "date": "2026-11-03", "entries": [{"description": "Oats", "kcal": 350, "meal": "breakfast"}]},
-        {"kind": "cardio_entry", "date": "2026-11-04", "exercise": "Outdoor Run", "minutes": 30}]}, "claude")
+        {"kind": "cardio_entry", "date": "2026-11-04", "exercise": "Outdoor Run", "minutes": 30}],
+        "weight_unit": "kg", "length_unit": "cm"}, "claude")
     assert r["row_outcomes"]["written"] == 5, r
     files = services.export_data(user.id)["files"]
     by = {name: [row["logged_by"] for row in table(files[name])]

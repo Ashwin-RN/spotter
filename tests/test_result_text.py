@@ -563,8 +563,10 @@ def test_the_import(make_user):
 
     user = make_user(time_zone="UTC")
     seen = Seen()
+    # kg, km and cm unless a call names its units: the defaults the service had before the fix round on 7e95ee9.
     imp = lambda rows, dry=False, **units: services.import_entries(  # noqa: E731
-        user.id, {"rows": rows, "dry_run": dry, **units}, "claude")
+        user.id, {"rows": rows, "dry_run": dry, "weight_unit": "kg", "distance_unit": "km", "length_unit": "cm",
+                  **units}, "claude")
     services.log_bodyweight(user.id, {"kg": 79, "date": ago(5)}, "web")
     rows = [{"kind": "bodyweight", "date": ago(400), "weight": 176.8}, {"kind": "bodyweight", "date": ago(5), "weight": 180},
             {"kind": "bodyweight", "date": ago(1), "weight": 179.5},
@@ -584,7 +586,12 @@ def test_the_import(make_user):
     seen.add("import again", imp(rows, **units), *entered)
     seen.add("import one again", imp(rows[2:3], **units))
     seen.add("import no weigh-in", services.import_entries(
-        make_user(time_zone="UTC").id, {"rows": rows[7:]}, "claude"))
+        make_user(time_zone="UTC").id, {"rows": rows[7:], "distance_unit": "km"}, "claude"))
+    # The fix round on 7e95ee9: a unit is never assumed. Every unit missing, then one.
+    for name, data in (("import missing units", {"rows": rows}),
+                       ("import missing a unit", {"rows": rows, "weight_unit": "lb", "length_unit": "in"})):
+        missing = seen.add(name, services.import_entries(user.id, data, "claude"))
+        assert missing["error"] == "missing_unit", missing
     bad = [{"kind": "lift_session", "date": ago(n % 600 + 2), "sets": [
         {"exercise": "Squat (Barbell)", "weight": 1000, "reps": 31, "times": 25}, {"exercise": "", "weight": "x"},
         {"exercise": "Deadlift", "weight_kg": 100, "reps": 2.5}]} for n in range(60)]

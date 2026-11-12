@@ -601,8 +601,8 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
     results += [services.import_entries(user.id, {"rows": [
                     {"kind": "bodyweight", "date": on, "weight": 80},
                     {"kind": "lift_session", "date": on, "sets": [{"exercise": "Squat (Barbell)", "weight": 100, "reps": 5}]},
-                    {"kind": "cardio_entry", "date": on, "exercise": "Outdoor Run", "minutes": 30, "distance": 5}]},
-                    "claude"),
+                    {"kind": "cardio_entry", "date": on, "exercise": "Outdoor Run", "minutes": 30, "distance": 5}],
+                    "weight_unit": "kg", "distance_unit": "km"}, "claude"),
                 services.import_entries(user.id, {"rows": [], "weight_units": "lb"}, "claude"),
                 services.import_entries(fresh_id, {"rows": [{"kind": "bodyweight", "date": on, "weight": 80}]}, "claude")]
     assert results[-3]["kind"] == "import" and results[-3]["failed"] and results[-3]["note"]

@@ -77,8 +77,8 @@ WRITES = {
     # One call is one write, however many rows it carries: a weigh-in and a session here.
     "import_entries": lambda u, ids: services.import_entries(u.id, {"dry_run": False, "rows": [
         {"kind": "bodyweight", "date": "2026-11-09", "weight": 79},
-        {"kind": "lift_session", "date": "2026-11-09", "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 5}]}]},
-        "claude"),
+        {"kind": "lift_session", "date": "2026-11-09", "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 5}]}],
+        "weight_unit": "kg"}, "claude"),   # the unit these weights need since the fix round on 7e95ee9
 }
 
 

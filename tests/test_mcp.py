@@ -399,7 +399,10 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     again = import_rows(today)
     keep("import_entries", {"rows": [again[1], *again[3:8]], "dry_run": False, **IMPORT_UNITS})  # nothing new
     keep("import_entries", {"rows": [{"kind": "bodyweight", "date": "soon", "weight": 80},
-                                     {"kind": "weight", "date": "later"}], "dry_run": True})
+                                     {"kind": "weight", "date": "later"}], "dry_run": True, "weight_unit": "kg"})
+    # Food alone needs no unit, so its result's units name none (fix round on 7e95ee9).
+    keep("import_entries", {"rows": [{"kind": "food_entry", "date": (today - timedelta(days=50)).isoformat(),
+                                      "entries": [{"description": "Oats", "kcal": 350, "meal": "breakfast"}]}]})
     return seen
 
 
@@ -2170,6 +2173,13 @@ def test_import_entries_publishes_named_fields_and_a_strict_dry_run_with_no_defa
     assert set(one_food["properties"]) == set(imports.FOOD_FIELDS) == set(one_food["required"])
     assert {"speed_kmh", "distance_km", "kg"}.isdisjoint(row["properties"])
     assert "distance_unit an hour" in row["properties"]["speed"]["description"]
+    # No unit has a default (fix round on 7e95ee9): each says a call without it is refused, none "leave out for kg".
+    for unit in ("weight_unit", "distance_unit", "length_unit"):
+        spec = schema["properties"][unit]
+        assert "a call without it is refused" in spec["description"] and "Leave out" not in spec["description"], unit
+        assert spec["default"] is None  # left out is not sent: the service refuses a quantity without it
+    description = {t["name"]: t["description"] for t in tool_list(http, sign())}["import_entries"]
+    assert "never assumes a unit" in description and "without its unit is refused, a preview too" in description
 
 
 def test_who_logged_it_names_import_wherever_a_result_says(http):
@@ -2200,10 +2210,10 @@ def test_dry_run_true_false_or_left_out(http):
     token, today = import_person(http)
     row = {"kind": "bodyweight", "date": (today - timedelta(days=3)).isoformat(), "weight": 80}
     for arguments in ({"rows": [row]}, {"rows": [row], "dry_run": True}):
-        preview = ok(http, token, "import_entries", arguments)
+        preview = ok(http, token, "import_entries", {**arguments, "weight_unit": "kg"})
         assert preview["dry_run"] is True and preview["summary"].startswith("Preview, nothing written.")
         assert entry_rows() == 0
-    written = ok(http, token, "import_entries", {"rows": [row], "dry_run": False})
+    written = ok(http, token, "import_entries", {"rows": [row], "dry_run": False, "weight_unit": "kg"})
     assert written["dry_run"] is False and written["row_outcomes"]["written"] == 1 and entry_rows() == 1
     assert import_calls() == 3  # one call-log row a call, a preview too: each is one write of the limit
 
@@ -2233,7 +2243,7 @@ def test_a_field_a_row_does_not_take_reaches_the_service_and_fails_its_row(http)
         {"kind": "lift_session", "date": on, "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 5,
                                                        "weight_kg": 100}]},
         {"kind": "food_entry", "date": on, "entries": [{"description": "Oats", "kcal": 350, "meal": "breakfast",
-                                                         "estimated": True}]}]})
+                                                         "estimated": True}]}], "weight_unit": "kg"})
     assert [f["message"] for f in r["failed"]] == [
         "Row 1: 'speed_kmh' is not a field of a cardio_entry row.",
         "Row 2: 'distance_km' is not a field of a cardio_entry row.",
@@ -2243,15 +2253,41 @@ def test_a_field_a_row_does_not_take_reaches_the_service_and_fails_its_row(http)
     assert r["row_outcomes"]["failed"] == 5 and entry_rows() == 0
 
 
-def test_a_misspelt_call_field_is_dropped_by_the_library_and_the_preview_shows_it(http):
-    """As built: the MCP library drops an argument the function does not name, before the wrapper runs, so the
-    service's own refusal of weight_units is never reached through MCP. The preview is the guard: its units and its
-    ranges show 176 read as kg."""
+@pytest.mark.parametrize("misspelt, unit, value, row", [
+    ("weight_units", "weight_unit", "lb", {"kind": "bodyweight", "weight": 176}),
+    ("distance_units", "distance_unit", "mi", {"kind": "cardio_entry", "exercise": "Outdoor Run", "minutes": 30,
+                                               "distance": 3.1}),
+    ("length_units", "length_unit", "in", {"kind": "measurement", "measurement_kind": "waist", "value": 33.5})])
+@pytest.mark.parametrize("dry_run", [None, True, False], ids=["left out", "preview", "real"])
+def test_a_misspelt_unit_argument_ends_in_the_missing_unit_refusal(http, misspelt, unit, value, row, dry_run):
+    """The MCP library drops an argument the function does not name, before the wrapper runs (kept in the fix round
+    on 7e95ee9: the library offers no way for one function to refuse it). Was: a preview in kg, 176 read as 176 kg.
+    Now no unit is assumed, so the dropped unit ends in the service's missing_unit refusal, preview or not."""
     token, today = import_person(http)
-    row = {"kind": "bodyweight", "date": (today - timedelta(days=3)).isoformat(), "weight": 176}
-    r = ok(http, token, "import_entries", {"rows": [row], "weight_units": "lb"})
-    assert r["units"]["weight"] == "kg" and r["ranges"]["bodyweight_kg"] == {"lowest": 176, "highest": 176}
-    assert "Every weigh-in is 176 kg." in r["summary"] and entry_rows() == 0
+    sent = {"rows": [{**row, "date": (today - timedelta(days=3)).isoformat()}], misspelt: value,
+            **({} if dry_run is None else {"dry_run": dry_run})}
+    refused = failed(http, token, "import_entries", sent)
+    assert refused["error"] == "missing_unit" and refused["missing_units"] == [unit], refused
+    assert refused["message"].startswith(f"{unit} is missing, and 1 row holds ")
+    assert refused["fix"].startswith(f"Send {unit} as the export writes it: ")
+    assert refused["fix"].endswith(" Spotter never assumes a unit.")
+    assert entry_rows() == 0 and import_calls() == 1  # the service refused it: one call, one write of the limit
+
+
+def test_a_row_of_the_wrong_type_is_refused_whole_by_the_schema_and_writes_nothing(http):
+    """Ruled in the fix round on 7e95ee9: a call that does not fit the function's shape is refused whole by the
+    library, before the wrapper. Nothing is written and no call is counted as a write. A row the rules refuse fails
+    alone (test_a_field_a_row_does_not_take_reaches_the_service_and_fails_its_row)."""
+    token, today = import_person(http)
+    on = (today - timedelta(days=3)).isoformat()
+    result = call(http, token, "import_entries", {"rows": [
+        {"kind": "bodyweight", "date": on, "weight": 80},
+        {"kind": "lift_session", "date": on, "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 2.5}]}],
+        "weight_unit": "kg", "dry_run": False})
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert re.search(r"^rows\.1\.sets\.0\.reps$", text, re.MULTILINE) and "valid integer" in text, text
+    assert import_calls() == 0 and entry_rows() == 0
 
 
 def test_squat_barbell_gets_only_the_closest_name_the_rule_gives(http):
@@ -2259,7 +2295,7 @@ def test_squat_barbell_gets_only_the_closest_name_the_rule_gives(http):
     token, today = import_person(http)
     r = ok(http, token, "import_entries", {"rows": [
         {"kind": "lift_session", "date": (today - timedelta(days=3)).isoformat(),
-         "sets": [{"exercise": "Squat (Barbell)", "weight": 100, "reps": 5}]}]})
+         "sets": [{"exercise": "Squat (Barbell)", "weight": 100, "reps": 5}]}], "weight_unit": "kg"})
     assert r["unknown_names"] == [{"name": "Squat (Barbell)", "kind": "lift", "rows": 1, "closest": ["Barbell Row"]}]
     assert r["failed"][0]["closest"] == ["Barbell Row"]
     assert "Back Squat" not in mcp_server.IMPORT_RULE and "Barbell Row" not in mcp_server.IMPORT_RULE
@@ -2275,11 +2311,13 @@ def test_the_import_rule_is_in_the_instructions_after_the_cardio_rule():
                   "the 1,000 sets and food entries run out before the 200 rows", "send times for sets that repeat",
                   "Send the first call with dry_run true", "Write only when the person says yes, with dry_run false",
                   "never convert them yourself", "A row's speed is in the call's distance unit an hour",
+                  "Send the unit of every weight, distance and body size the rows hold, in weight_unit, "
+                  "distance_unit and length_unit: a call without it is refused",
                   "ask the person once per name", "The closest names the result gives can be wrong",
                   "Never pick one on a guess", "An import never replaces an entry",
                   "Sent again, the same rows write nothing that is already there",
                   "an imported entry the person edited, moved or deleted counts as already there",
-                  "One food case is the exception: spotter://can-and-cant names it."):
+                  "One food case is the exception: the can-and-cant resource names it."):
         assert words in rule, words
     assert "Claude" not in rule and ";" not in rule and "Settings" not in rule
     assert tr.check(rule, tr.CLAUDE) == []
@@ -2298,7 +2336,8 @@ def test_an_imported_row_of_every_kind_reads_back_through_mcp_as_import(http):
                                                              "times": 3}]},
             {"kind": "food_entry", "date": on[2], "entries": [{"description": "Oats", "kcal": 350, "meal": "breakfast"}]},
             {"kind": "cardio_entry", "date": on[1], "exercise": "Treadmill Walk", "minutes": 30, "distance": 2.5}]
-    assert ok(http, token, "import_entries", {"rows": rows, "dry_run": False})["row_outcomes"]["written"] == 5
+    assert ok(http, token, "import_entries", {"rows": rows, "dry_run": False, "weight_unit": "kg", "distance_unit": "km",
+                                              "length_unit": "cm"})["row_outcomes"]["written"] == 5
     seen: list[tuple[str, dict]] = []
 
     def read(name: str, arguments: dict | None = None) -> dict:
@@ -2354,6 +2393,13 @@ def test_can_and_cant_states_the_import_as_built():
                   "If they edit it, delete it, and the same file is sent again, it comes back too",
                   "a later export holds fewer entries for that first day",
                   "| Edited an imported row | Already there: the edit stands |",
-                  "| Moved an imported row to another date | Already there: not written again on its first date |"):
+                  "| Moved an imported row to another date | Already there: not written again on its first date |",
+                  # The fix round on 7e95ee9.
+                  "A unit is never assumed.", "is refused whole with `missing_unit`, a preview too",
+                  "food alone needs none", "A unit sent that no row needs is taken.",
+                  "A row the rules refuse fails alone, and the other rows go in.",
+                  "refused whole before Spotter reads it: nothing is written, and it is not counted as a write",
+                  "What Claude reads does not mark an imported food entry as imported",
+                  "The export does: `food_entries.csv` says `import`."):
         assert words in text, words
     assert (imports.ITEMS_MAX, imports.IMPORT_LIMIT, imports.IMPORT_HOURS) == (1_000, 10_000, 24)

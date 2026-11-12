@@ -217,6 +217,9 @@ instructions. They have not been run yet.**
 - `say` is one line, so each pasted CSV is one line too: the header, then each row after a space.
 - `import_again`'s seed is the same five rows through `import_entries` with `dry_run` false and
   `weight_unit` lb, as the person's earlier, approved call would have sent them.
+- No unit is assumed. Every case's export names its unit in its header, and a call that leaves the unit
+  out is refused with `missing_unit`. Each case passes or fails on what it checks either way: the seed
+  sends `weight_unit` lb itself.
 - `inputs_forbid` reads `dry_run` at the top of the call. A call that leaves `dry_run` out passes, which is
   right: left out is a preview.
 

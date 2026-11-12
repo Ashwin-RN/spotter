@@ -186,6 +186,16 @@ fields of that kind. Every row it writes is marked `import` in `logged_by`, whoe
   0.45359237, mi x 1.609344, in x 2.54, kept at 2 decimal places. A row's `speed` is in the call's
   distance unit an hour. The preview gives the lowest and highest numbers after conversion, so a wrong
   unit shows before anything is written.
+- **A unit is never assumed.** A call whose rows hold a weight (a weigh-in's or a set's) needs
+  `weight_unit`. A distance or a speed needs `distance_unit`. A body size (waist, hips, chest, arm or
+  thigh) needs `length_unit`. A call that holds one of them without its unit is refused whole with
+  `missing_unit`, a preview too, and nothing is written: the refusal names each missing unit. Rows that
+  hold none of a quantity need no unit for it: food alone needs none, and so do resting heart rate,
+  steps, sleep and water. A unit sent that no row needs is taken. The result's `units` shows only the
+  units the call named.
+- **Refused rows and refused calls.** A row the rules refuse fails alone, and the other rows go in. A
+  call that does not fit the function's shape, such as a set with 2.5 reps, is refused whole before
+  Spotter reads it: nothing is written, and it is not counted as a write.
 - **Names.** A name not on the exercise list fails its row, and is never guessed. `unknown_names` gives
   each such name once, with the closest listed names Spotter found. They can be wrong: for
   "Squat (Barbell)" the closest is Barbell Row.
@@ -268,6 +278,8 @@ date that an earlier import stored for this same row.
 - If the person moves an imported food day's entries to another day, and a later export holds fewer
   entries for that first day, the entries it still holds are written again on the first day, unless
   that day holds a food entry. This is a different file, not the same rows sent again.
+- What Claude reads does not mark an imported food entry as imported: no food result carries
+  `logged_by`. The export does: `food_entries.csv` says `import`.
 
 ## Export and delete: the person's own clicks
 
