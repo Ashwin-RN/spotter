@@ -210,7 +210,12 @@ reply. That is right, and nothing checks it.
 ### The stage 6 import cases
 
 **`import_preview_first`, `import_again` and `import_unknown_lift` hold the import rule in the server
-instructions. They have not been run yet.**
+instructions and the import's own description. They have not been run yet.**
+
+- The server instructions carry only the import's guards. The rest is in `import_entries`' description,
+  which the model reads when it calls the function. Claude Code cuts server instructions, and the
+  description of a tool that loads upfront, past 4,096 characters, and the evals run through it. A test
+  holds both under that cap.
 
 - A placeholder does not work in `say`, so the pasted exports carry fixed dates: 5 to 9 October 2026 for
   the weigh-ins, 20 October 2026 for the lift. They leave the 2-year window in October 2028.

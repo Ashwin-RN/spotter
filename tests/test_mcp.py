@@ -2298,7 +2298,13 @@ def test_squat_barbell_gets_only_the_closest_name_the_rule_gives(http):
          "sets": [{"exercise": "Squat (Barbell)", "weight": 100, "reps": 5}]}], "weight_unit": "kg"})
     assert r["unknown_names"] == [{"name": "Squat (Barbell)", "kind": "lift", "rows": 1, "closest": ["Barbell Row"]}]
     assert r["failed"][0]["closest"] == ["Barbell Row"]
-    assert "Back Squat" not in mcp_server.IMPORT_RULE and "Barbell Row" not in mcp_server.IMPORT_RULE
+    for text in (mcp_server.IMPORT_RULE, mcp_server.IMPORT_DESCRIPTION):
+        assert "Back Squat" not in text and "Barbell Row" not in text
+
+
+# Fix round 2 on 9052e73: the long import rule ran the instructions past what Claude Code delivers. The rule keeps the
+# five guards a model needs before it picks the function; the rest moved to import_entries' own description.
+IMPORT_RULE_MOST = 550  # characters: the ruling aims at 450
 
 
 def test_the_import_rule_is_in_the_instructions_after_the_cardio_rule():
@@ -2307,21 +2313,69 @@ def test_the_import_rule_is_in_the_instructions_after_the_cardio_rule():
     text, rule = mcp_server.INSTRUCTIONS, mcp_server.IMPORT_RULE
     assert "Importing: " + rule + " Deleting: " in text
     assert text.index(mcp_server.CARDIO_RULE) < text.index(rule) < text.index(mcp_server.DELETE_RULE)
-    for words in ("up to 200 rows and up to 1,000 sets and food entries a call",
-                  "the 1,000 sets and food entries run out before the 200 rows", "send times for sets that repeat",
-                  "Send the first call with dry_run true", "Write only when the person says yes, with dry_run false",
-                  "never convert them yourself", "A row's speed is in the call's distance unit an hour",
-                  "Send the unit of every weight, distance and body size the rows hold, in weight_unit, "
-                  "distance_unit and length_unit: a call without it is refused",
-                  "ask the person once per name", "The closest names the result gives can be wrong",
-                  "Never pick one on a guess", "An import never replaces an entry",
-                  "Sent again, the same rows write nothing that is already there",
-                  "an imported entry the person edited, moved or deleted counts as already there",
-                  "One food case is the exception: the can-and-cant resource names it."):
+    assert len(rule) <= IMPORT_RULE_MOST, len(rule)
+    # The five guards, each in the rule itself.
+    for words in ("send it with import_entries, after reading that function's description",
+                  "The first call is a preview: show the person what would be written, what is already there and "
+                  "what was refused",
+                  "Write, with dry_run false, only when the person says yes",
+                  "Send numbers as the export writes them and name the unit of each: never convert one, never "
+                  "assume one",
+                  "Use names only from list_exercises", "Ask the person about any other name: never guess"):
         assert words in rule, words
     assert "Claude" not in rule and ";" not in rule and "Settings" not in rule
     assert tr.check(rule, tr.CLAUDE) == []
     assert not [s for s in sentences(rule) if sends_to_a_page(s)]
+
+
+def test_the_import_description_carries_what_the_long_rule_said(http):
+    """Every sentence the long rule held, moved to the function's description, where a model reads it while it
+    calls the function. The words of each are the old assertion's, under its old test."""
+    from . import text_rules as tr
+
+    description = {t["name"]: t["description"] for t in tool_list(http, sign())}["import_entries"]
+    assert description == mcp_server.IMPORT_DESCRIPTION
+    for words in ("Up to 200 rows and up to 1,000 sets and food entries a call",
+                  "the 1,000 sets and food entries run out before the 200 rows", "send times for sets that repeat",
+                  "With dry_run true or left out, nothing is written",
+                  "send the same rows with dry_run false only when they say yes",
+                  "never convert them yourself", "A row's speed is in the call's distance unit an hour",
+                  "Send the unit of every weight, distance and body size the rows hold, in weight_unit, "
+                  "distance_unit and length_unit",
+                  "without its unit is refused, a preview too",
+                  "Send each row's timestamp with its offset when the export gives one, or its date",
+                  "Leave out rows more than 2 years old, and say how many were left out",
+                  "Use exercise and activity names only from list_exercises",
+                  "ask the person once per name", "The closest names the result gives can be wrong",
+                  "Never pick one on a guess", "never leave a lift out without saying so",
+                  "From a phone's health store, send one value a day",
+                  "Send each food entry's meal as the export names it",
+                  "send it as one entry described as that total, such as Breakfast from the old app",
+                  "An import never replaces an entry",
+                  "Sent again, the same rows write nothing that is already there",
+                  "an imported entry the person edited, moved or deleted counts as already there",
+                  "One food case is the exception: the can-and-cant resource names it."):
+        assert words in description, words
+    assert "Claude" not in description and ";" not in description and "Settings" not in description
+    assert tr.check(description, tr.CLAUDE) == []
+    assert not [s for s in sentences(description) if sends_to_a_page(s)]
+
+
+# Claude Code's documented cap: "Claude Code cuts a tool description or server instructions that run past these
+# default limits, and Claude sees only the text before the cut: Server instructions, and the description of a tool
+# that loads upfront: 4,096 characters." (2,048 before v2.1.296.) The evals run through Claude Code.
+CLAUDE_CODE_TEXT_CAP = 4_096
+
+
+def test_the_instructions_and_every_description_fit_claude_codes_cap(http):
+    init = rpc(http, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                    "clientInfo": {"name": "test", "version": "0"}}, token=sign())
+    instructions = init.json()["result"]["instructions"]
+    assert len(instructions) <= CLAUDE_CODE_TEXT_CAP, len(instructions)
+    assert instructions.endswith(PLAN_LINE_SENTENCE)  # what comes last still arrives whole
+    over = {t["name"]: len(t["description"]) for t in tool_list(http, sign())
+            if len(t["description"]) > CLAUDE_CODE_TEXT_CAP}
+    assert over == {}
 
 
 def test_an_imported_row_of_every_kind_reads_back_through_mcp_as_import(http):
@@ -2400,6 +2454,12 @@ def test_can_and_cant_states_the_import_as_built():
                   "A row the rules refuse fails alone, and the other rows go in.",
                   "refused whole before Spotter reads it: nothing is written, and it is not counted as a write",
                   "What Claude reads does not mark an imported food entry as imported",
-                  "The export does: `food_entries.csv` says `import`."):
+                  "The export does: `food_entries.csv` says `import`.",
+                  # Fix round 2 on 9052e73: what the long rule said, kept here beside the function's description.
+                  "The server instructions carry only the guards", "Rows go oldest first, with one day's rows of a "
+                  "kind in the same call", "Rows more than 2 years old are left out, and Claude says how many.",
+                  "Claude asks the person once per name which listed name it is, or whether to leave it out.",
+                  "It never leaves a lift out without saying so.", "From a phone's health store, one value a day",
+                  "such as Breakfast from the old app"):
         assert words in text, words
     assert (imports.ITEMS_MAX, imports.IMPORT_LIMIT, imports.IMPORT_HOURS) == (1_000, 10_000, 24)

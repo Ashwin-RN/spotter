@@ -206,6 +206,22 @@ fields of that kind. Every row it writes is marked `import` in `logged_by`, whoe
 - **Bests** are worked out from the whole history at read time: `get_progress` shows them after an import.
 - **Sample data.** An account that holds sample data takes no import until the sample rows are removed.
 
+### How Claude sends an export
+
+The server instructions carry only the guards: read the function's description first, preview first,
+write only on a yes, every number as the export writes it with its unit named, and no name guessed. The
+rest is in `import_entries`' own description:
+
+- Rows go oldest first, with one day's rows of a kind in the same call, and the rest in the next call.
+- Each row's timestamp goes with its offset when the export gives one, or its date. Rows more than 2
+  years old are left out, and Claude says how many.
+- When a name is not on the exercise list, Claude asks the person once per name which listed name it
+  is, or whether to leave it out. It never leaves a lift out without saying so.
+- From a phone's health store, one value a day: the day's total steps, the night's total sleep, the
+  day's resting heart rate as the app gives it, and the day's first weigh-in.
+- Each food entry goes with its meal as the export names it. When the export gives only a meal's or a
+  day's total, it goes as one entry described as that total, such as Breakfast from the old app.
+
 ### Dates
 
 | `date` sent | Stored date |

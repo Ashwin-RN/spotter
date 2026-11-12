@@ -65,29 +65,47 @@ CARDIO_RULE = (
     "with edit_entry. Never ask first."
 )
 
-# Bringing history over from another app's export: a preview first, the export's own units, and a name never
-# guessed. Its promises are the service as built (app.services.imports), and the known limit is in can-and-cant.
+# Bringing history over from another app's export: only what guards the person's data before the function is chosen.
+# Everything else is in import_entries' own description (IMPORT_DESCRIPTION), which the model reads when it calls it:
+# Claude Code cuts server instructions past 4,096 characters, so the instructions carry only these five guards.
 IMPORT_RULE = (
-    "To bring history over from another app, read its export yourself and send it with import_entries: up to "
-    "200 rows and up to 1,000 sets and food entries a call, oldest first, with one day's rows of a kind in the "
-    "same call. For food at six entries a day, and for lifting with one item a set, the 1,000 sets and food "
-    "entries run out before the 200 rows: send times for sets that repeat. Send the first call with dry_run true "
-    "and show the person what it found: what would be written, what is already there, what falls on a day "
-    "Spotter already holds, and what was refused. Write only when the person says yes, with dry_run false. Send "
-    "weights, distances, speeds and body sizes as the export writes them: never convert them yourself. Send the "
-    "unit of every weight, distance and body size the rows hold, in weight_unit, distance_unit and length_unit: "
-    "a call without it is refused. A row's speed is in the call's distance unit an hour. Send each "
-    "row's timestamp with its offset when the export gives one, or its date. Leave out rows more than 2 years "
-    "old, and say how many were left out. Use exercise and activity names only from list_exercises. When a name "
-    "in the export is not on the list, ask the person once per name which listed name it is, or whether to leave "
-    "it out. The closest names the result gives can be wrong. Never pick one on a guess, and never leave a lift "
-    "out without saying so. From a phone's health store, send one value a day: the day's total steps, the "
+    "To bring history over from another app, read its export and send it with import_entries, after reading that "
+    "function's description. The first call is a preview: show the person what would be written, what is already "
+    "there and what was refused. Write, with dry_run false, only when the person says yes. Send numbers as the "
+    "export writes them and name the unit of each: never convert one, never assume one. Use names only from "
+    "list_exercises. Ask the person about any other name: never guess."
+)
+
+# import_entries' description: what the long import rule said before, beside what the function does. Its promises
+# are the service as built (app.services.imports), and the known limit is in can-and-cant.
+IMPORT_DESCRIPTION = (
+    "Brings history over from another app's export: lift sessions, weigh-ins, measurements, food and cardio. Each "
+    "row is dated, and takes kind, date and the named fields of its kind. "
+    "A preview first. With dry_run true or left out, nothing is written: the result says what would be written, "
+    "what is already there, what falls on a day Spotter already holds, and what was refused and why. Show the "
+    "person that, and send the same rows with dry_run false only when they say yes. "
+    "Units. Send weights, distances, speeds and body sizes as the export writes them: never convert them "
+    "yourself. Send the unit of every weight, distance and body size the rows hold, in weight_unit, "
+    "distance_unit and length_unit. Spotter converts them and never assumes a unit: a call whose rows hold a "
+    "weight, a distance, a speed or a body size without its unit is refused, a preview too. A row's speed is in "
+    "the call's distance unit an hour. "
+    "Size. Up to 200 rows and up to 1,000 sets and food entries a call, oldest first, with one day's rows of a "
+    "kind in the same call. Send the rest in the next call. For food at six entries a day, and for lifting with "
+    "one item a set, the 1,000 sets and food entries run out before the 200 rows: send times for sets that "
+    "repeat. At most 10,000 imported rows in any 24 hours. "
+    "Dates. Send each row's timestamp with its offset when the export gives one, or its date. Leave out rows "
+    "more than 2 years old, and say how many were left out. "
+    "Names. Use exercise and activity names only from list_exercises, exactly as it gives them. When a name in "
+    "the export is not on the list, ask the person once per name which listed name it is, or whether to leave it "
+    "out. The closest names the result gives can be wrong. Never pick one on a guess, and never leave a lift out "
+    "without saying so. "
+    "Health stores and food. From a phone's health store, send one value a day: the day's total steps, the "
     "night's total sleep, the day's resting heart rate as the app gives it, and the day's first weigh-in. Send "
-    "each food entry's meal as the export names it. When the export gives only a meal's or a day's total, send "
-    "it as one entry described as that total, such as Breakfast from the old app. An import never replaces an "
-    "entry. Sent again, the same rows write nothing that is already there, and an imported entry the person "
-    "edited, moved or deleted counts as already there. One food case is the exception: the can-and-cant resource "
-    "names it."
+    "each food entry's meal as the export names it. When the export gives only a meal's or a day's total, send it "
+    "as one entry described as that total, such as Breakfast from the old app. "
+    "Sending again. An import never replaces an entry. Sent again, the same rows write nothing that is already "
+    "there, and an imported entry the person edited, moved or deleted counts as already there. One food case is "
+    "the exception: the can-and-cant resource names it."
 )
 
 # Which entry to delete. Unlike the activity, a delete is never a guess.
@@ -873,19 +891,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     @server.tool(
         name="import_entries",
         title="Import entries",
-        description=(
-            "Brings history over from another app: lift sessions, weigh-ins, measurements, food and cardio, each "
-            "row dated. Up to 200 rows and up to 1,000 sets and food entries a call. Each row takes kind, date and "
-            "the named fields of its kind. Send weights, distances, speeds and body sizes as the export writes "
-            "them, with their units: Spotter converts them, and never assumes a unit. A call whose rows hold a "
-            "weight, a distance, a speed or a body size without its unit is refused, a preview too. With dry_run "
-            "true or left out, nothing is written: the "
-            "result says what would be written, what is already there, what falls on a day Spotter already holds, "
-            "and what was refused and why. Show the person that, and send the same rows with dry_run false only "
-            "when they say yes. An import never replaces an entry, and the same rows sent again write nothing that "
-            "is already there. At most 10,000 imported rows in any 24 hours. Use names exactly as list_exercises "
-            "gives them."
-        ),
+        description=IMPORT_DESCRIPTION,
         annotations=SETTING,  # the same rows sent twice end in the same state: the second writes nothing
     )
     async def import_entries(
