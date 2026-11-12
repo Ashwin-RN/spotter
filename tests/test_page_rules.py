@@ -917,9 +917,9 @@ CARD_RULES = (table_wrap_findings, inputmode_findings, describedby_findings, fol
 
 
 def food_card_of(s: Seen) -> Seen:
-    """The same response, its tree cut down to the Food card: the div.card in div.col-main headed Food."""
+    """The same response, its tree cut down to the Food card: the section.card in div.col-main headed Food."""
     [main] = s.dom.find_all("div", "col-main")
-    [card] = [c for c in main.elements() if c.is_("div", "card") and [h.text() for h in c.find_all("h2")] == ["Food"]]
+    [card] = [c for c in main.elements() if c.is_("section", "card") and [h.text() for h in c.find_all("h2")] == ["Food"]]
     s.dom = card
     return s
 
@@ -1147,13 +1147,24 @@ def _targets_and_a_zero_rate(user_id: int, today) -> None:
     services.log_food(user_id, {"entries": [{"description": "Thali", "kcal": 1000}]}, "claude")
 
 
+def _one_lift_session_and_cardio_today(user_id: int, today) -> None:
+    services.log_lifts(user_id, {"sets": [{"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
+    services.log_cardio(user_id, {"exercise": "Outdoor Walk", "minutes": 30}, "claude")
+
+
+EMPTY_WEIGHT_CARD = '<section class="card chart-card is-empty" aria-labelledby="weight-card-title">'
+EMPTY_EATEN_CARD = '<section class="card chart-card is-empty" aria-labelledby="eaten-card-title">'
+
 # Each state, and markup only that state draws: proof the page reached it.
 GLANCE_STATES = {
-    _one_weigh_in: ("One weigh-in in the last 28 days. The chart starts from the second one.",),
-    _none_in_28_days: ("No weigh-ins in the last 28 days.", "No weigh-in in the last 7 days"),
-    _two_recent_no_rate: ("The weekly rate needs a weigh-in from 14 to 42 days ago.", 'id="chart-weight-sheet"'),
-    _food_in_28_not_7: ('<span class="tile-value">No food in the last 7 days</span>',),
-    _targets_and_a_zero_rate: ("The trend moved 0&nbsp;kg a week", "The session target is 0 a week.",
+    _one_weigh_in: ("One weigh-in in the last 28 days. The chart starts from the second one.", EMPTY_WEIGHT_CARD),
+    _none_in_28_days: ("No weigh-ins in the last 28 days.", "No weigh-in in the last 7 days", EMPTY_WEIGHT_CARD),
+    _two_recent_no_rate: ("The weekly rate needs a weigh-in from 14 to 42 days ago.", 'id="chart-weight-sheet"',
+                          'id="chart-weight-4w"'),
+    _food_in_28_not_7: ('<span class="tile-value">No food in the last 7 days</span>', EMPTY_EATEN_CARD),
+    _one_lift_session_and_cardio_today: ('<span class="aside">1 lift session</span>', 'class="pill is-lift is-today"',
+                                         ", today: lift session</span>"),
+    _targets_and_a_zero_rate: ("The trend moved 0&nbsp;kg a week", "The session target is 0 a week.", '<line class="goal"',
                                "The calorie target is 2,000 kcal a day."),
 }
 
@@ -1205,3 +1216,110 @@ def test_the_sweeps_reach_todays_glance_and_past_days_without_it(client, account
             assert not has and "popover" not in r.text, address
             other += 1
     assert on_today >= 10 and other >= 2
+
+
+# ---------------------------------------------------------------- Today's titled cards and day pills (pass B7)
+
+def titled_card_findings(s: Seen) -> list[str]:
+    """Section L's card rule on one page: a card with an h2 is a section.card named by aria-labelledby, each but
+    the Today card by its own first h2, and a card with no title is a bare div.card. No id repeats."""
+    out = []
+    for card in s.dom.find_all(cls="card"):
+        heads = card.find_all("h2")
+        named = card.attrs.get("aria-labelledby", "")
+        if "hero" in card.classes:
+            if card.tag != "section" or named not in {n.attrs.get("id") for n in card.iter()}:
+                out.append("the Today card is not a section named by an element inside it")
+        elif not heads:
+            if card.tag != "div":
+                out.append(f"a card with no title is a <{card.tag}>")
+        elif card.tag != "section" or not named or named != heads[0].attrs.get("id"):
+            out.append(f"the {heads[0].text()!r} card is a <{card.tag}> named by {named!r}, not by its own h2")
+    ids = [n.attrs["id"] for n in s.dom.iter() if n.attrs.get("id")]
+    out += [f"the id {i!r} is on the page {ids.count(i)} times" for i in sorted(set(ids)) if ids.count(i) > 1]
+    return out
+
+
+def pill_findings(s: Seen, grid: dict) -> list[str]:
+    """Today's ol.days against get_days: one li a day, oldest first, each one a.pill to its day with the one
+    state class the day calls for, is-today on the last only, and hidden words naming the day."""
+    lists = s.dom.find_all("ol", "days")
+    if len(lists) != 1:
+        return [f"{len(lists)} day grids"]
+    out = []
+    items = lists[0].elements()
+    if len(items) != len(grid["days"]):
+        out.append(f"{len(items)} pills for {len(grid['days'])} days")
+    for n, (li, day) in enumerate(zip(items, grid["days"])):
+        links = li.elements()
+        if li.tag != "li" or len(links) != 1 or not links[0].is_("a", "pill"):
+            out.append(f"{day['date']}: not one a.pill in its li")
+            continue
+        a = links[0]
+        state = "is-lift" if day["lift_sessions"] else ("is-cardio" if day["cardio_entries"] else "is-none")
+        want = ["pill", state] + (["is-today"] if n == len(items) - 1 else [])
+        if a.classes != want:
+            out.append(f"{day['date']}: classes {a.classes}, not {want}")
+        if a.attrs.get("href") != f"/day/{day['date']}":
+            out.append(f"{day['date']}: links to {a.attrs.get('href')!r}")
+        words = a.find_all("span", "sr")
+        if len(words) != 1 or not words[0].text() or a.text() != words[0].text():
+            out.append(f"{day['date']}: no hidden words, or words outside them")
+    return out
+
+
+@pytest.mark.parametrize("account", sorted(ACCOUNTS))
+def test_every_day_page_names_its_titled_cards_and_today_draws_its_pills(client, account):
+    """On each account, every day address the sweeps render and every day page sent back with its error: the
+    card rule and no repeated id. On today's page, the day pills against get_days (section L, Day pill)."""
+    sign_in(client)
+    user = only_user()
+    ACCOUNTS[account](user.id)
+    today = today_of(only_user()).isoformat()
+    grid = services.get_days(user.id)
+    pages = [(address, client.get(address)) for address in get_paths(user.id)["/day/{date}"]]
+    pages += [(address, post(client, address, **data)) for address, data in error_posts(today, user.id)["/day/{date}"]]
+    findings, on_today = [], 0
+    for address, r in pages:
+        assert r.status_code in (200, 400), address
+        s = Seen(address, r.text, True, today=today)
+        findings += [f"{address}: {f}" for f in titled_card_findings(s)]
+        if address.split("?")[0].split("/")[2] == today:
+            on_today += 1
+            findings += [f"{address}: {f}" for f in pill_findings(s, grid)]
+        elif s.dom.find_all("ol", "days"):
+            findings.append(f"{address}: a day grid off today")
+    assert on_today >= 10 and len(pages) > on_today
+    assert not findings, "\n".join(findings)
+
+
+def test_the_card_and_pill_checks_catch_each_break_on_the_real_page(client):
+    """Both checks pass the real page, and find each break in it."""
+    address, page = glance_page(client)
+    today = address.split("/")[2]
+    grid = services.get_days(only_user().id)
+
+    def found(markup: str) -> list[str]:
+        s = Seen(address, markup, True, today=today)
+        return titled_card_findings(s) + pill_findings(s, grid)
+
+    assert found(page) == []
+
+    def broken(old: str, new: str) -> list[str]:
+        assert page.count(old) == 1, old
+        return found(page.replace(old, new))
+
+    lifts = '<section class="card" aria-labelledby="lifts-title">'
+    assert broken(lifts, '<div class="card">')  # a titled card as a bare div
+    assert broken(lifts, '<section class="card" aria-labelledby="food-title">')  # named by another card's h2
+    assert broken('<h2 id="cardio-title">', '<h2 id="food-title">')  # a repeated id that names no card
+    # A repeated id, every card still named by its own h2: only the id check finds it.
+    twice = broken('<h2 id="cardio-title">Cardio</h2>', '<h2 id="cardio-title">Cardio</h2><span id="food-title"></span>')
+    assert twice == ["the id 'food-title' is on the page 2 times"]
+    assert broken('class="card daygrid" aria-labelledby="days-title"', 'class="card daygrid"')
+    first = f'<a class="pill {"is-lift" if grid["days"][0]["lift_sessions"] else "is-cardio"}" href="/day/{grid["days"][0]["date"]}">'
+    assert broken(first, first.replace('class="pill ', 'class="pill is-today '))  # today on the first
+    assert broken(first, first.replace(grid["days"][0]["date"], grid["days"][1]["date"]))  # the wrong day
+    last = 'class="pill is-cardio is-today"' if 'class="pill is-cardio is-today"' in page else 'is-today"'
+    assert broken(last, last.replace(" is-today", ""))  # no today
+    assert found(page.replace('<span class="sr">', '<span>'))  # the words no longer hidden

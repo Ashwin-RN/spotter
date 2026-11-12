@@ -160,6 +160,46 @@
     </table>
   </div>
   {% endcall %}
+  {# The Last 28 days card: a pill a day, oldest first, each a link to its day. A day with a lift session is a
+     lift day, with cardio and no lift session a cardio day, else nothing trained. The last is today. The
+     weekday letters sit over the columns from the first day shown, hidden from reading: each link says its day. #}
+  {% set pill_words = {"lift": "lift session", "cardio": "cardio only", "none": "nothing trained"} %}
+  <section class="card daygrid" aria-labelledby="days-title">
+    <div class="card-head">
+      <h2 id="days-title">Last 28 days</h2>
+      <span class="aside">{{ grid.lift_sessions_28d|show("count") }} {{ "lift session" if grid.lift_sessions_28d == 1 else "lift sessions" }}</span>
+    </div>
+    <div class="week-head" aria-hidden="true">
+      {% for d in grid.days[:7] %}<span>{{ d.date|weekday_letter }}</span>{% if not loop.last %}
+      {% endif %}{% endfor %}
+    </div>
+    <ol class="days">
+      {% for d in grid.days %}{% set kind = "lift" if d.lift_sessions else ("cardio" if d.cardio_entries else "none") %}
+      <li><a class="pill is-{{ kind }}{% if loop.last %} is-today{% endif %}" href="/day/{{ d.date }}"><span class="sr">{{ d.date|day(today) }}{% if loop.last %}, today{% endif %}: {{ pill_words[kind] }}</span></a></li>
+      {% endfor %}
+    </ol>
+    <ul class="legend" aria-label="Key">
+      <li><span class="key is-lift" aria-hidden="true"></span>Lift session</li>
+      <li><span class="key is-cardio" aria-hidden="true"></span>Cardio only</li>
+      <li><span class="key is-none" aria-hidden="true"></span>Nothing trained</li>
+      <li><span class="key is-today" aria-hidden="true"></span>Today</li>
+    </ul>
+  </section>
+  {# The chart pair: the smoothed weight over 4 weeks and the 7-day average of what was eaten, each with its
+     compact chart. A card with no chart is empty and says why, in the chart's own words. #}
+  {% set weight_drawn = bw and glance.weight_small %}
+  {% set eaten_drawn = eaten_week and glance.eaten_small %}
+  <div class="pair">
+    {{ parts.chart_card("weight", "weight-card-title", "Weight", "Trend, 4 weeks",
+                        glance.weight_small if weight_drawn else none,
+                        bw.smoothed|show("bodyweight_derived", unit=False) if weight_drawn else none, "kg",
+                        "One weigh-in in the last 28 days. The chart starts from the second one." if bw and bw.weigh_ins_28d == 1
+                        else "No weigh-ins in the last 28 days.") }}
+    {{ parts.chart_card("calories", "eaten-card-title", "Eaten a day", "Average, 7 days",
+                        glance.eaten_small if eaten_drawn else none,
+                        cal.avg_7d|show("kcal", unit=False) if eaten_drawn else none, "kcal",
+                        "No food logged in the last 7 days.") }}
+  </div>
 </div>
 {% endif %}
 
@@ -169,9 +209,9 @@
 {# The Food card: the day's entries by meal, the totals under them, then the Add food fold-out. An entry's
    name, its kcal with how much was eaten, and a differing description each take a line. Its source tag and
    sample tag share their own slot, apart from every figure. #}
-<div class="card">
+<section class="card" aria-labelledby="food-title">
   <div class="card-head">
-    <h2>Food</h2>
+    <h2 id="food-title">Food</h2>
     <a class="aside" href="/foods">Saved foods</a>
   </div>
   {% if has_food %}
@@ -236,15 +276,15 @@
     <div class="form-actions"><button class="primary">Save food</button></div>
   </form>
   {% endcall %}
-</div>
+</section>
 </div>
 
 <div class="col-side">
 {# The Lifts card: each session's line with its sample tag and actions, its sets in a table, each new best on
    a line of its own, then its notes on theirs. A set at 0 kg leaves its weight cell blank, and a session with
    no weighted set shows no Weight column. No fold-out: lifts are logged through the assistant this stage. #}
-<div class="card">
-  <h2>Lifts</h2>
+<section class="card" aria-labelledby="lifts-title">
+  <h2 id="lifts-title">Lifts</h2>
   {% if day.sessions %}
   {% for session in day.sessions %}
   <div class="session">
@@ -266,12 +306,12 @@
   {% else %}
   <p class="empty-line">No lifts logged on this day. Tell your assistant what you lifted and it shows here.</p>
   {% endif %}
-</div>
+</section>
 
 {# The Cardio card: the activity on line one, then its labelled figures. A figure the entry lacks is left out,
    but the calorie estimate says No estimate. The estimate tag and the sample tag share their own slot. #}
-<div class="card">
-  <h2>Cardio</h2>
+<section class="card" aria-labelledby="cardio-title">
+  <h2 id="cardio-title">Cardio</h2>
   {% if cardio %}
   <ul class="entries">
     {% for c in cardio %}
@@ -316,12 +356,12 @@
     <div class="form-actions"><button class="primary">Save cardio</button></div>
   </form>
   {% endcall %}
-</div>
+</section>
 
 {# The Weigh-in card: the day's one weight, large, with its sample tag and actions. Its fold-out replaces it
    when there is one, and its summary and its button say the same. #}
-<div class="card">
-  <h2>Weigh-in</h2>
+<section class="card" aria-labelledby="weigh-in-title">
+  <h2 id="weigh-in-title">Weigh-in</h2>
   {% if day.weigh_in %}
   <div class="entry-line">
     <div class="entry-main"><span class="entry-big">{{ day.weigh_in.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span></span></div>
@@ -344,11 +384,11 @@
     <div class="form-actions"><button class="primary">{{ weigh_words }}</button></div>
   </form>
   {% endcall %}
-</div>
+</section>
 
 {# The Measurements card: each kind's name from measurements.kind_word, then the value and its unit. #}
-<div class="card">
-  <h2>Measurements</h2>
+<section class="card" aria-labelledby="measurements-title">
+  <h2 id="measurements-title">Measurements</h2>
   {% if day.measurements %}
   <ul class="entries">
     {% for m in day.measurements %}
@@ -376,6 +416,6 @@
     <div class="form-actions"><button class="primary">Save measurement</button></div>
   </form>
   {% endcall %}
-</div>
+</section>
 </div>
 {% endblock %}

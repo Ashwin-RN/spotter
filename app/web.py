@@ -917,7 +917,8 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
 
 async def glance_of(user_id: int) -> dict | None:
     """What Today's glance block shows: get_trends and get_days as they come back, the words for what
-    bodyweight.now is and for a missing rate, and the two sheets' charts. The web works out no figure.
+    bodyweight.now is and for a missing rate, the two sheets' charts, and the chart pair's two compact
+    charts, the Eaten a day one with the calorie target's line when one is set. The web works out no figure.
     None when either read fails: the page then draws no glance block."""
     trends = await _db(services.get_trends, user_id)
     days = await _db(services.get_days, user_id)
@@ -925,9 +926,12 @@ async def glance_of(user_id: int) -> dict | None:
         return None
     today = date.fromisoformat(trends["today"])
     series = (trends.get("bodyweight") or {}).get("series")
+    target = (trends.get("calories") or {}).get("target_kcal")
     return {"trends": trends, "days": days, "basis": weight_now_label(trends), "rate_words": rate_note(trends),
             "weight_chart": charts.weight_sheet_svg(series, today),
-            "eaten_chart": charts.eaten_sheet_svg(days["days"], today)}
+            "eaten_chart": charts.eaten_sheet_svg(days["days"], today),
+            "weight_small": charts.weight_small_svg(series, today),
+            "eaten_small": charts.eaten_small_svg(days["days"], today, target)}
 
 
 SIZE_WORDS = ("small", "medium", "large")

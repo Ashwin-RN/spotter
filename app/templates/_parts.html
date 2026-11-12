@@ -86,6 +86,17 @@
   {% if link %}<p class="sheet-link"><a class="button secondary" href="{{ link }}">Open Progress</a></p>
   {% endif %}</div>{% endmacro %}
 
+{# A chart card: a section named by its label, which carries the variant class for its icon, then the sub line.
+   With a chart: the figure, its unit after a no-break space, then the chart. Without one: is-empty, and the
+   empty words in the figure's and the chart's place. id is the label's id. #}
+{% macro chart_card(variant, id, title, sub, chart=none, figure=none, unit=none, empty=none) %}<section class="card chart-card{% if not chart %} is-empty{% endif %}" aria-labelledby="{{ id }}">
+  <h2 class="card-label tile-{{ variant }}" id="{{ id }}">{{ title }}</h2>
+  <p class="card-sub">{{ sub }}</p>
+  {% if chart %}<p class="figure"><span class="tile-value">{{ figure }}{% if unit %}&nbsp;<span class="unit">{{ unit }}</span>{% endif %}</span></p>
+  {{ chart }}
+  {% else %}<p class="empty-line">{{ empty }}</p>
+  {% endif %}</section>{% endmacro %}
+
 {# A lift session's sets in a table, in its scrolling wrap: Exercise, Set, Weight (kg), Reps. The kg sits in the
    header, so each weight is a bare figure. A set at 0 kg leaves its weight cell blank, and sets with no weight
    above 0 kg show no Weight column at all. #}

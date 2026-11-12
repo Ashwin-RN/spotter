@@ -1878,8 +1878,8 @@ def fed(client):
 
 
 def section(page: str, title: str) -> str:
-    return re.search(rf'<h2>{title}</h2>(.*?)</div>\s*(?=<div class="card">|</div>\s*<div class="col-side">|$)',
-                     page, re.S).group(1)
+    """A titled card's markup after its h2, up to the card's own end. Every titled card is a section.card."""
+    return re.search(rf'<h2 id="[^"]+">{title}</h2>(.*?)</section>', page, re.S).group(1)
 
 
 # One Food entry as the card draws it: line one the name, line two the figures, a grey line for a differing
@@ -1912,12 +1912,12 @@ def meal_of(page: str, meal: str) -> list[dict]:
 
 
 def side_card(page: str, title: str):
-    """One of div.col-side's cards, read as a tree: the div.card directly inside it whose first child is the
-    h2 with that title."""
+    """One of div.col-side's cards, read as a tree: the section.card directly inside it whose first child is
+    the h2 with that title."""
     from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
 
     [side] = parse(page).find_all("div", "col-side")
-    [card] = [c for c in side.elements() if c.is_("div", "card") and c.elements()
+    [card] = [c for c in side.elements() if c.is_("section", "card") and c.elements()
               and c.elements()[0].is_("h2") and c.elements()[0].text() == title]
     return card
 
@@ -3214,8 +3214,9 @@ def test_the_top_of_today_runs_head_banner_strip_card_then_the_columns(client, m
     monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3}, raising=False)
     page = day_of(client, f"{today_of(only_user()).isoformat()}?saved=sample")
     order = ['<div class="page-head">', '<p class="notice sample-banner">', '<p class="ok">Sample data added.</p>',
-             '<section class="card hero"', '<div class="col-main">', "<h2>Food</h2>", '<div class="col-side">',
-             "<h2>Lifts</h2>", "<h2>Cardio</h2>", "<h2>Weigh-in</h2>", "<h2>Measurements</h2>"]
+             '<section class="card hero"', '<div class="col-main">', '<h2 id="food-title">Food</h2>',
+             '<div class="col-side">', '<h2 id="lifts-title">Lifts</h2>', '<h2 id="cardio-title">Cardio</h2>',
+             '<h2 id="weigh-in-title">Weigh-in</h2>', '<h2 id="measurements-title">Measurements</h2>']
     at = [page.index(mark) for mark in order]
     assert at == sorted(at) and all(page.count(mark) == 1 for mark in order)
     head = re.search(r'<div class="page-head">.*?</div>', page, re.S).group(0)
@@ -3258,9 +3259,11 @@ def test_each_wrapper_holds_exactly_its_cards_and_the_banner_spans_the_page(clie
     assert card_titles(main_col) == ["Food"] and len(main_col.elements()) == 1
     assert card_titles(side) == ["Lifts", "Cardio", "Weigh-in", "Measurements"]
     assert len(side.elements()) == 4
-    if glance:  # the tiles, then the sheets they open, and nothing else yet
-        inside = [shape(c)[:2] for c in children[4].elements()]
-        assert inside[0] == ("div", "tiles") and inside[1:] and set(inside[1:]) == {("div", "sheet")}
+    if glance:  # the tiles, the sheets they open, the Last 28 days card, then the chart pair, and nothing else
+        inside = [shape(c) for c in children[4].elements()]
+        assert inside[0] == ("div", "tiles") and inside[-2:] == [("section", "card", "daygrid"), ("div", "pair")]
+        assert inside[1:-2] and set(inside[1:-2]) == {("div", "sheet")}
+        assert [shape(c)[:3] for c in children[4].elements()[-1].elements()] == [("section", "card", "chart-card")] * 2
 
 
 def test_todays_h1_is_today_with_the_day_under_it(client, monkeypatch):
@@ -3381,7 +3384,8 @@ def test_the_meals_run_breakfast_to_snack_and_an_empty_meal_says_nothing_logged(
 def test_the_food_card_head_names_the_card_and_links_to_saved_foods(client):
     sign_in(client)
     card = food_card(day_of(client, today_of(only_user()).isoformat()))
-    assert re.search(r'<div class="card">\s*<div class="card-head">\s*<h2>Food</h2>\s*'
+    assert re.search(r'<section class="card" aria-labelledby="food-title">\s*<div class="card-head">\s*'
+                     r'<h2 id="food-title">Food</h2>\s*'
                      r'<a class="aside" href="/foods">Saved foods</a>\s*</div>', card)
 
 
@@ -3643,7 +3647,7 @@ def test_the_food_card_never_says_claude(client, state):
     else:
         page = day_of(client, address)
     card = food_card(page)
-    assert "<h2>Food</h2>" in card
+    assert '<h2 id="food-title">Food</h2>' in card
     assert not re.search(r"claude", " ".join(p.text for p in tr.html_text(card)), re.I)
 
 
@@ -3963,7 +3967,7 @@ def test_each_side_fold_out_is_closed_by_default_and_open_by_its_mark(client, fe
     page = day_of(client, f"{on}?add={mark}")
     assert page.count(f'id="{fold_id}"') == 1
     home = foldouts_of(page)[fold_id].parent
-    assert home.is_("div", "card") and home.elements()[0].text() == card and home.parent.is_("div", "col-side")
+    assert home.is_("section", "card") and home.elements()[0].text() == card and home.parent.is_("div", "col-side")
 
 
 @pytest.mark.parametrize("path, data, field, control, says, kept", [
@@ -4095,10 +4099,11 @@ def test_each_side_card_reads_as_text_with_a_space_between_a_name_and_its_figure
     for title in ("Lifts", "Cardio", "Weigh-in", "Measurements"):
         card = side_card(page, title)
         assert glued(card) == [], title
-    pieces = [p.text for p in tr.html_text(page[page.index("<h2>Measurements</h2>"):]) if p.kind != "attr"]
+    measured, weighed = '<h2 id="measurements-title">Measurements</h2>', '<h2 id="weigh-in-title">Weigh-in</h2>'
+    pieces = [p.text for p in tr.html_text(page[page.index(measured):]) if p.kind != "attr"]
     assert "Waist 84.5 cm" in pieces and "Steps 9,500 steps" in pieces and "Sleep 7.25 h" in pieces
     assert not any(re.search(r"[A-Za-z]\d", t) for t in pieces), pieces
-    weigh = [p.text for p in tr.html_text(page[page.index("<h2>Weigh-in</h2>"):page.index("<h2>Measurements</h2>")])]
+    weigh = [p.text for p in tr.html_text(page[page.index(weighed):page.index(measured)])]
     assert "80 kg" in weigh  # stock_food's weigh-in replaced the day's 78.4 kg
 
 
@@ -5083,7 +5088,8 @@ def test_glance_of_hands_back_the_reads_as_they_come(client, monkeypatch):
     assert "error" not in services.add_sample_data(uid, "web")
     glance = asyncio.run(web.glance_of(uid))
     trends, days = services.get_trends(uid), services.get_days(uid)
-    assert set(glance) == {"trends", "days", "basis", "rate_words", "weight_chart", "eaten_chart"}
+    assert set(glance) == {"trends", "days", "basis", "rate_words", "weight_chart", "eaten_chart", "weight_small",
+                           "eaten_small"}
     assert glance["trends"] == trends and glance["days"] == days
     assert (glance["basis"], glance["rate_words"]) == (web.weight_now_label(trends), web.rate_note(trends))
     assert glance["weight_chart"] == web.charts.weight_sheet_svg(trends["bodyweight"]["series"], date(2026, 11, 10))
@@ -5111,3 +5117,327 @@ def test_the_training_sentence_reads_this_week_and_the_four_week_figures_apart(c
     # The week ending 7 days ago holds the 10th day back: the third of four, oldest first.
     assert [[c[0] for c in r] for r in sheet["rows"]][2] == [formatting.day(today - timedelta(days=7), today), "2",
                                                              "40"]
+
+
+
+# ---------------------------------------------------------------- stage 6, step 4: the Last 28 days card and the pair
+
+PILL_WORDS = {"is-lift": "lift session", "is-cardio": "cardio only", "is-none": "nothing trained"}
+
+
+def daygrid_of(page: str) -> dict | None:
+    """The Last 28 days card, read as a person reads it, or None."""
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    found = parse(page).find_all("section", "daygrid")
+    if not found:
+        return None
+    [card] = found
+    head = card.elements()[0]
+    [weeks] = card.find_all("div", "week-head")
+    [days] = card.find_all("ol", "days")
+    [legend] = card.find_all("ul", "legend")
+    return {"node": card, "kids": [shape(e) for e in card.elements()],
+            "head": [(e.tag, e.classes, e.attrs.get("id"), e.text()) for e in head.elements()],
+            "weeks": weeks, "letters": [s.text() for s in weeks.elements()],
+            "items": [(li.tag, [shape(a) for a in li.elements()]) for li in days.elements()],
+            "pills": [{"classes": a.classes, "href": a.attrs.get("href"), "words": a.text(),
+                       "inside": [shape(k) for k in a.elements()]} for li in days.elements() for a in li.elements()],
+            "legend": legend, "keys": [(li.elements()[0].classes, li.elements()[0].attrs.get("aria-hidden"), li.text())
+                                       for li in legend.elements()]}
+
+
+def pill_kind(day: dict) -> str:
+    """The state get_days' day calls for: a lift session, else cardio, else nothing trained."""
+    return "is-lift" if day["lift_sessions"] else ("is-cardio" if day["cardio_entries"] else "is-none")
+
+
+def pair_of(page: str) -> list[dict]:
+    """The chart pair's two cards, each read as a person reads it."""
+    [pair] = glance_node(page).find_all("div", "pair")
+    out = []
+    for c in pair.elements():
+        label = c.elements()[0]
+        out.append({"node": c, "tag": c.tag, "classes": c.classes, "named": c.attrs.get("aria-labelledby"),
+                    "kids": [shape(e) for e in c.elements()],
+                    "label": (label.tag, label.classes, label.attrs.get("id"), label.text()),
+                    "sub": slot(c, "card-sub"), "figure": slot(c, "figure"), "empty": slot(c, "empty-line"),
+                    "values": c.find_all(cls="tile-value"), "svg": c.find_all("svg")})
+    return out
+
+
+def test_the_last_28_days_card_on_the_fixed_day(fixed_day):
+    """Section L's card on the fixed day, against get_days: its head and aside, the weekday row, 28 pills oldest
+    first, each a link to its day with its state and its hidden words, today on the last, the legend."""
+    days = services.get_days(only_user().id)
+    grid = daygrid_of(fixed_day)
+    assert grid["node"].attrs == {"class": "card daygrid", "aria-labelledby": "days-title"}
+    assert grid["kids"] == [("div", "card-head"), ("div", "week-head"), ("ol", "days"), ("ul", "legend")]
+    assert days["lift_sessions_28d"] == 12  # the read table's fixed-day count
+    assert grid["head"] == [("h2", [], "days-title", "Last 28 days"), ("span", ["aside"], None, "12 lift sessions")]
+    # The weekday row: seven letters from weekday_letter, from the first day shown, hidden from reading.
+    assert grid["weeks"].attrs == {"class": "week-head", "aria-hidden": "true"}
+    assert grid["letters"] == [formatting.weekday_letter(d["date"]) for d in days["days"][:7]] == list("WTFSSMT")
+    assert days["days"][0]["date"] == "2026-10-14" and days["days"][-1]["date"] == "2026-11-10"
+    # 28 links, oldest first, each to its day, each li holding one a.pill holding only its hidden words.
+    pills = grid["pills"]
+    assert len(pills) == 28 and grid["items"] == [("li", [("a", *p["classes"])]) for p in pills]
+    assert [p["href"] for p in pills] == [f"/day/{d['date']}" for d in days["days"]]
+    assert all(p["inside"] == [("span", "sr")] for p in pills)
+    # The pill classes on the fixed day: lifts Monday, Wednesday and Friday, cardio Tuesday, Thursday and
+    # Saturday, none on Sunday, each as get_days calls it.
+    by_weekday = {0: "is-lift", 1: "is-cardio", 2: "is-lift", 3: "is-cardio", 4: "is-lift", 5: "is-cardio", 6: "is-none"}
+    for n, (p, d) in enumerate(zip(pills, days["days"])):
+        state = by_weekday[date.fromisoformat(d["date"]).weekday()]
+        assert state == pill_kind(d), d["date"]
+        assert p["classes"] == ["pill", state] + (["is-today"] if n == 27 else []), d["date"]
+    assert [p["href"] for p in pills if "is-today" in p["classes"]] == ["/day/2026-11-10"]
+    # Each link's hidden words in its three forms, with ", today" after the date on the last only.
+    assert [p["words"] for p in pills[-3:]] == ["Sun 8 Nov: nothing trained", "Mon 9 Nov: lift session",
+                                               "Tue 10 Nov, today: cardio only"]
+    for n, (p, d) in enumerate(zip(pills, days["days"])):
+        today = ", today" if n == 27 else ""
+        assert p["words"] == f"{formatting.day(d['date'], '2026-11-10')}{today}: {PILL_WORDS[pill_kind(d)]}"
+    # The legend's four keys, each key hidden, its words beside it.
+    assert grid["legend"].attrs == {"class": "legend", "aria-label": "Key"}
+    assert grid["keys"] == [(["key", "is-lift"], "true", "Lift session"), (["key", "is-cardio"], "true", "Cardio only"),
+                            (["key", "is-none"], "true", "Nothing trained"), (["key", "is-today"], "true", "Today")]
+    assert glued(grid["node"]) == []
+    pieces = [p.text for p in tr.html_text(fixed_day[fixed_day.index('<section class="card daygrid"'):
+                                                     fixed_day.index('<div class="col-main">')])]
+    assert pieces and not any(re.search(r"claude", t, re.I) for t in pieces)
+
+
+def test_a_new_account_shows_28_days_of_nothing_and_0_lift_sessions(client):
+    """Section L: a new account shows 28 is-none pills and "0 lift sessions". The 0 sits in one piece of text
+    with its words, so it needs no true-zero allowance: the page's text rules pass as they are."""
+    from .test_pages_text import page_findings  # noqa: PLC0415
+
+    sign_in(client)
+    today = today_of(only_user())
+    page = day_of(client, today.isoformat())
+    grid = daygrid_of(page)
+    assert grid["head"][1] == ("span", ["aside"], None, "0 lift sessions")
+    pills = grid["pills"]
+    assert [p["classes"] for p in pills] == [["pill", "is-none"]] * 27 + [["pill", "is-none", "is-today"]]
+    assert pills[-1]["words"] == f"{formatting.day(today, today)}, today: nothing trained"
+    assert all(p["words"].endswith(": nothing trained") for p in pills)
+    assert page_findings(f"/day/{today.isoformat()}", page, [], only_user().id) == []
+
+
+def test_the_aside_counts_lift_sessions_not_days_and_says_one_in_the_singular(client):
+    """One session: "1 lift session". A second on the same day: "2 lift sessions", though one day was trained,
+    so the aside reads lift_sessions_28d, never lift_days_28d."""
+    sign_in(client)
+    uid, today = only_user().id, today_of(only_user())
+    on = (today - timedelta(days=3)).isoformat()
+    assert "error" not in services.log_lifts(uid, {"date": on, "sets": [
+        {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
+    assert daygrid_of(day_of(client, today.isoformat()))["head"][1][3] == "1 lift session"
+    assert "error" not in services.log_lifts(uid, {"date": on, "sets": [
+        {"exercise": "Bench Press", "weight_kg": 40, "reps": 5}]}, "claude")
+    days = services.get_days(uid)
+    assert (days["lift_sessions_28d"], days["lift_days_28d"]) == (2, 1)
+    grid = daygrid_of(day_of(client, today.isoformat()))
+    assert grid["head"][1][3] == "2 lift sessions"
+    assert [p["classes"] for p in grid["pills"]].count(["pill", "is-lift"]) == 1
+
+
+def test_a_day_with_a_lift_and_cardio_is_a_lift_day_and_cardio_alone_is_cardio_only(client):
+    sign_in(client)
+    uid, today = only_user().id, today_of(only_user())
+    ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
+    for on in (ago(0), ago(5)):
+        assert "error" not in services.log_lifts(uid, {"date": on, "sets": [
+            {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
+    for on in (ago(0), ago(2)):
+        assert "error" not in services.log_cardio(uid, {"exercise": "Outdoor Walk", "minutes": 30, "date": on},
+                                                  "claude")
+    pills = daygrid_of(day_of(client, today.isoformat()))["pills"]
+    assert pills[-1]["classes"] == ["pill", "is-lift", "is-today"]
+    assert pills[-1]["words"] == f"{formatting.day(today, today)}, today: lift session"
+    assert pills[-3]["classes"] == ["pill", "is-cardio"] and pills[-3]["words"].endswith(": cardio only")
+    assert pills[-6]["classes"] == ["pill", "is-lift"] and pills[-6]["words"].endswith(": lift session")
+    assert sum("is-none" in p["classes"] for p in pills) == 25
+
+
+@pytest.mark.parametrize("shift", range(7))
+def test_the_weekday_row_starts_at_the_weekday_of_the_first_day_shown(client, monkeypatch, shift):
+    """Seven days in a row, so the row starts on each weekday once. Each letter is page text the sweeps read,
+    so the page's text rules run on each."""
+    from .test_pages_text import page_findings  # noqa: PLC0415
+
+    sign_in(client)
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW + timedelta(days=shift))
+    today = date(2026, 11, 10) + timedelta(days=shift)
+    page = day_of(client, today.isoformat())
+    grid = daygrid_of(page)
+    first = today - timedelta(days=27)
+    assert grid["pills"][0]["href"] == f"/day/{first.isoformat()}"
+    assert grid["letters"] == [formatting.weekday_letter(first + timedelta(days=n)) for n in range(7)]
+    assert grid["letters"][0] == formatting.weekday(first)[0]
+    assert glued(grid["node"]) == []
+    assert page_findings(f"/day/{today.isoformat()}", page, [], only_user().id) == []
+
+
+def test_the_chart_pair_on_the_fixed_day(fixed_day):
+    """Two chart cards: Weight, its 4-week trend and the smoothed weight, then Eaten a day, its 7-day average.
+    Each with its compact chart from charts.py, as it is."""
+    uid = only_user().id
+    trends, days = services.get_trends(uid), services.get_days(uid)
+    weight, eaten = pair_of(fixed_day)
+    assert (weight["tag"], weight["classes"], weight["named"]) == ("section", ["card", "chart-card"], "weight-card-title")
+    assert weight["label"] == ("h2", ["card-label", "tile-weight"], "weight-card-title", "Weight")
+    assert (weight["sub"], weight["figure"], weight["empty"]) == ("Trend, 4 weeks", f"79.2{NB}kg", None)
+    assert formatting.show(trends["bodyweight"]["smoothed"], "bodyweight_derived", unit=False) == "79.2"
+    assert weight["kids"] == [("h2", "card-label", "tile-weight"), ("p", "card-sub"), ("p", "figure"),
+                              ("svg", "chart", "small")]
+    assert weight["svg"][0].attrs["id"] == "chart-weight-4w"
+    assert str(web.charts.weight_small_svg(trends["bodyweight"]["series"], date(2026, 11, 10))) in fixed_day
+    assert (eaten["tag"], eaten["classes"], eaten["named"]) == ("section", ["card", "chart-card"], "eaten-card-title")
+    assert eaten["label"] == ("h2", ["card-label", "tile-calories"], "eaten-card-title", "Eaten a day")
+    assert (eaten["sub"], eaten["figure"], eaten["empty"]) == ("Average, 7 days", f"2,216{NB}kcal", None)
+    assert formatting.show(trends["calories"]["avg_7d"], "kcal", unit=False) == "2,216"
+    assert eaten["kids"] == [("h2", "card-label", "tile-calories"), ("p", "card-sub"), ("p", "figure"),
+                             ("svg", "chart", "small")]
+    assert eaten["svg"][0].attrs["id"] == "chart-calories-7d"
+    assert str(web.charts.eaten_small_svg(days["days"], date(2026, 11, 10))) in fixed_day
+    assert '<p class="figure"><span class="tile-value">79.2&nbsp;<span class="unit">kg</span></span></p>' in fixed_day
+    assert not eaten["svg"][0].find_all("line", "goal")  # the sample sets no calorie target
+
+
+def log_state(state: str, uid: int, today) -> None:
+    ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
+    if state == "one weigh-in":
+        services.log_bodyweight(uid, {"kg": "80"}, "claude")
+    if state == "weigh-ins none in 28 days":
+        for n in (40, 45):
+            services.log_bodyweight(uid, {"kg": "80", "date": ago(n)}, "claude")
+    if state == "food in 28 days none in 7":
+        assert "error" not in services.log_food(uid, {"date": ago(10), "entries": [{"description": "Dal", "kcal": 400}]},
+                                                "claude")
+    if state == "two weigh-ins and food":
+        services.log_bodyweight(uid, {"kg": "80.4", "date": ago(3)}, "claude")
+        services.log_bodyweight(uid, {"kg": "80"}, "claude")
+        services.log_food(uid, {"entries": [{"description": "Dal", "kcal": 400}]}, "claude")
+
+
+NO_WEIGHT = "No weigh-ins in the last 28 days."
+ONE_WEIGHT = "One weigh-in in the last 28 days. The chart starts from the second one."
+NO_FOOD = "No food logged in the last 7 days."
+
+
+@pytest.mark.parametrize("state, words", [
+    ("new", (NO_WEIGHT, NO_FOOD)),
+    ("one weigh-in", (ONE_WEIGHT, NO_FOOD)),
+    ("weigh-ins none in 28 days", (NO_WEIGHT, NO_FOOD)),
+    ("food in 28 days none in 7", (NO_WEIGHT, NO_FOOD)),
+    ("two weigh-ins and food", (None, None)),
+])
+def test_each_chart_card_with_no_chart_is_empty_and_says_the_charts_words(client, state, words):
+    """The charts table's empty words: keyed on the weigh-ins in the 28 days, none or one, and on food in the 7
+    days. An empty card is is-empty, its label and sub, then the words in place of the figure and the chart."""
+    sign_in(client)
+    uid, today = only_user().id, today_of(only_user())
+    log_state(state, uid, today)
+    cards = pair_of(day_of(client, today.isoformat()))
+    assert [c["label"][3] for c in cards] == ["Weight", "Eaten a day"]
+    for card, said in zip(cards, words):
+        if said is None:
+            assert card["classes"] == ["card", "chart-card"] and card["empty"] is None and len(card["svg"]) == 1
+            continue
+        assert card["classes"] == ["card", "chart-card", "is-empty"], (state, card["label"])
+        assert card["kids"] == [card["kids"][0], ("p", "card-sub"), ("p", "empty-line")]
+        assert (card["empty"], card["figure"], card["values"], card["svg"]) == (said, None, [], [])
+
+
+def test_a_calorie_target_draws_its_line_in_the_eaten_chart(client):
+    sign_in(client)
+    uid, today = only_user().id, today_of(only_user())
+    assert "error" not in services.update_settings(uid, {"calorie_target_kcal": 2000}, "web")
+    services.log_food(uid, {"entries": [{"description": "Thali", "kcal": 1000}]}, "claude")
+    page = day_of(client, today.isoformat())
+    [svg] = pair_of(page)[1]["svg"]
+    assert len(svg.find_all("line", "goal")) == 1
+    assert str(web.charts.eaten_small_svg(services.get_days(uid)["days"], today, 2000)) in page
+    assert pair_of(page)[1]["figure"] == f"1,000{NB}kcal"
+
+
+def test_food_at_0_kcal_still_draws_the_eaten_card_with_its_figure(client):
+    """Food at 0 kcal is food: the chart and the 7-day average agree, so the card is never empty with a figure."""
+    sign_in(client)
+    services.log_food(only_user().id, {"entries": [{"description": "Black coffee", "kcal": 0}]}, "claude")
+    card = pair_of(day_of(client, today_of(only_user()).isoformat()))[1]
+    assert card["classes"] == ["card", "chart-card"] and card["figure"] == f"0{NB}kcal" and len(card["svg"]) == 1
+
+
+def test_food_dated_after_today_counts_as_todays_in_the_eaten_card(client):
+    """Food left on a day after today by a change of time zone counts as today's in both reads."""
+    sign_in(client)
+    user = only_user()
+    services.update_settings(user.id, {"time_zone": "Pacific/Kiritimati"}, "web")  # UTC+14
+    services.log_food(user.id, {"entries": [{"description": "Dal", "kcal": 400}]}, "claude")
+    services.update_settings(user.id, {"time_zone": "Pacific/Pago_Pago"}, "web")  # UTC-11: the food is ahead
+    assert services.get_trends(user.id)["calories"]["avg_7d"] == 400
+    card = pair_of(day_of(client, today_of(only_user()).isoformat()))[1]
+    assert card["classes"] == ["card", "chart-card"] and card["figure"] == f"400{NB}kcal" and len(card["svg"]) == 1
+
+
+def test_a_past_day_and_a_day_after_today_have_neither_the_grid_nor_the_pair(client, stocked):
+    user = only_user()
+    pages = [day_of(client, stocked["yesterday"]), day_of(client, (stocked["today"] - timedelta(days=40)).isoformat())]
+    services.update_settings(user.id, {"time_zone": "Pacific/Kiritimati"}, "web")
+    services.log_bodyweight(user.id, {"kg": "70"}, "claude")
+    later = today_of(only_user()).isoformat()
+    services.update_settings(user.id, {"time_zone": "Pacific/Pago_Pago"}, "web")
+    pages.append(day_of(client, later))
+    assert '<main class="page today past">' in pages[-1]
+    for page in pages:
+        assert daygrid_of(page) is None
+        for mark in ("daygrid", "week-head", 'class="days"', "pill", "legend", 'class="pair"', "chart-card",
+                     "chart-weight-4w", "chart-calories-7d"):
+            assert mark not in page, mark
+    assert daygrid_of(day_of(client, today_of(only_user()).isoformat())) is not None
+
+
+@pytest.mark.parametrize("state", ["new", "sample", "error", "add", "yesterday"])
+def test_every_titled_card_on_today_is_a_section_named_by_its_own_h2(client, monkeypatch, state):
+    """Section L's card rule: a titled card is a section.card whose aria-labelledby names its own h2. The Today
+    card is named by its title or its label, inside it. A card with no title stays a bare div.card. No id
+    repeats on the page."""
+    from .test_pages_text import parse  # noqa: PLC0415
+
+    sign_in(client)
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    if state != "new":
+        assert "error" not in services.add_sample_data(only_user().id, "web")
+    on = "2026-11-09" if state == "yesterday" else "2026-11-10"
+    if state == "error":
+        r = post(client, f"/day/{on}/weigh-in", kg="abc")
+        assert r.status_code == 400
+        page = r.text
+    else:
+        page = day_of(client, on + ("?add=food" if state == "add" else ""))
+    tree = parse(page)
+    titled = []
+    for card in tree.find_all(cls="card"):
+        heads = card.find_all("h2")
+        if "hero" in card.classes:  # titled by its h2 on a new account, else by its eyebrow p
+            named = card.attrs["aria-labelledby"]
+            assert card.tag == "section" and named in ("today-card-title", "today-card-label")
+            assert named in {n.attrs.get("id") for n in card.iter()}
+            titled.append("Today card")
+            continue
+        if not heads:
+            assert card.tag == "div", card.classes
+            continue
+        assert card.tag == "section", heads[0].text()
+        named = card.attrs["aria-labelledby"]
+        assert named == heads[0].attrs["id"], heads[0].text()
+        assert heads[0].parent is card or heads[0].parent.parent is card, heads[0].text()
+        titled.append(heads[0].text())
+    glance = ["Last 28 days", "Weight", "Eaten a day"] if state != "yesterday" else []
+    assert titled == ["Today card", *glance, "Food", "Lifts", "Cardio", "Weigh-in", "Measurements"]
+    ids = [n.attrs["id"] for n in tree.iter() if n.attrs.get("id")]
+    assert len(ids) == len(set(ids)), sorted({i for i in ids if ids.count(i) > 1})
+    assert not [n for n in tree.find_all("div", "sheet") if "card" in n.classes]
