@@ -188,6 +188,8 @@ def _call_unit(err: dict, field: str, raw, factor: float, limits, quantity: str,
 
 
 _SPEED_SENT = re.compile(r"^(speed_kmh \S+) does not match ")
+# A speed out of range on a km call: "speed_kmh 70 is outside 0.1 to 60." lost its unit with the rename to speed.
+_SPEED_RANGE = re.compile(r"^(speed_kmh \S+) is outside (\S+ to \S+)\.$")
 
 
 def _speed_in_call_unit(err: dict, raw: dict, values: dict, factor: float) -> dict:
@@ -432,6 +434,8 @@ def _check_cardio(s, raw: dict, factor: float, activities: dict) -> tuple[dict |
     for e in errs:
         if e["message"].startswith("distance_km "):
             e = _call_unit(e, "distance", raw.get("distance"), factor, rules.NUMBERS["distance_km"][:2], "km")
+        elif e["message"].startswith("speed_kmh ") and factor == 1.0:  # the log function's words, with the unit
+            e = {**e, "message": _SPEED_RANGE.sub(r"\1 km/h is outside \2 km/h.", e["message"], count=1)}
         elif e["message"].startswith("speed_kmh "):
             e = _call_unit(e, "speed", raw.get("speed"), factor, rules.NUMBERS["speed_kmh"][:2], "speed",
                            per="an hour")
@@ -967,7 +971,9 @@ def _summary(dry: bool, total: int, outcomes: dict, counts: dict, ranges: dict, 
     if taken:
         parts.append(f"{_count(taken)} {'was' if taken == 1 else 'were'} left out: "
                      f"{'its day already holds' if taken == 1 else 'their days already hold'} an entry.")
-    if refused:
+    if refused and entries_there:  # beside the food entries' sentence: say these are rows, as above
+        parts.append(f"{_n(refused, 'row was', 'rows were')} refused.")
+    elif refused:
         parts.append(f"{_count(refused)} {'was' if refused == 1 else 'were'} refused.")
     parts.append("Nothing was replaced.")
     return " ".join(parts)

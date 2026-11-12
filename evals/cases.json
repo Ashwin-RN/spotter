@@ -131,7 +131,8 @@
     "expect": {
       "function": "get_trends",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
-                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry"]
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries"]
     }
   },
   {
@@ -141,7 +142,8 @@
     "expect": {
       "function": "get_goals",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
-                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry"]
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries"]
     }
   },
   {
@@ -149,7 +151,8 @@
     "say": "Export my data",
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
-                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry"],
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries"],
       "reply_has": ["Settings"]
     }
   },
@@ -190,9 +193,50 @@
     "expect": {
       "function": "get_trends",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
-                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry"],
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries"],
       "reply_lacks": ["\u2014", "\u2013"],
       "reply_lacks_pattern": ["(?<![\\d.,:+\\-\\u2212])\\d{2,3}\\.\\d{2}(?!\\d|\\.\\d)"]
     }
+  },
+  {
+    "id": "import_preview_first",
+    "say": "Bring my weigh-ins over from my old app. Its export: Date,Weight (lb) 2026-10-05,176.4 2026-10-06,175.8 2026-10-07,176.0 2026-10-08,175.2 2026-10-09,174.6",
+    "expect": {
+      "function": "import_entries",
+      "inputs_forbid": {"dry_run": false},
+      "reply_asks": true
+    },
+    "db": [{"table": "bodyweight", "count": 0}, {"table": "bodyweight", "state": "deleted", "count": 0}]
+  },
+  {
+    "id": "import_again",
+    "say": "I checked the preview, write them: Date,Weight (lb) 2026-10-05,176.4 2026-10-06,175.8 2026-10-07,176.0 2026-10-08,175.2 2026-10-09,174.6",
+    "seed": [{"service": "import_entries",
+              "data": {"rows": [{"kind": "bodyweight", "date": "2026-10-05", "weight": 176.4},
+                                {"kind": "bodyweight", "date": "2026-10-06", "weight": 175.8},
+                                {"kind": "bodyweight", "date": "2026-10-07", "weight": 176.0},
+                                {"kind": "bodyweight", "date": "2026-10-08", "weight": 175.2},
+                                {"kind": "bodyweight", "date": "2026-10-09", "weight": 174.6}],
+                       "dry_run": false, "weight_unit": "lb"}}],
+    "expect": {
+      "function": "import_entries",
+      "inputs_include": {"weight_unit": "lb"},
+      "reply_has": ["already"]
+    },
+    "db": [{"table": "bodyweight", "count": 5, "all": {"logged_by": "import"}},
+           {"table": "bodyweight", "state": "deleted", "count": 0}]
+  },
+  {
+    "id": "import_unknown_lift",
+    "say": "Import my lifts from my Strong export: Date,Exercise Name,Set Order,Weight (kg),Reps 2026-10-20,Zorbinator Press,1,20,8 2026-10-20,Zorbinator Press,2,20,8 2026-10-20,Zorbinator Press,3,20,8",
+    "expect": {
+      "any_of": [
+        {"function": "list_exercises"},
+        {"function": "import_entries"}
+      ],
+      "reply_asks": true
+    },
+    "db": [{"table": "lift_session", "count": 0}]
   }
 ]

@@ -250,12 +250,12 @@ def test_spotter_logs_through_its_own_handler_added_once(provider):
 
 FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings",
              "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
-             "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals"]
+             "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries"]
 READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 SETTING_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
-SETTINGS = {"update_settings", "save_food"}  # idempotent: the same call twice ends in the same state
+SETTINGS = {"update_settings", "save_food", "import_entries"}  # idempotent: the same call twice ends in the same state
 DELETE_HINTS = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 DELETES = {"delete_entry"}
 
@@ -392,7 +392,36 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     sample_goal = seen["get_goals"][-1]["goals"][0]["goal_id"]
     keep("set_goal", {"goal_id": sample_goal, "status": "dropped"}, as_token=sample_token)
     keep("get_goals", {"include_closed": True}, as_token=sample_token)
+    # import_entries, last, so no read above sees its rows: a preview, the real run, the same rows again, and a
+    # run whose every row fails (no date passed: from, to and the day link are null or absent).
+    keep("import_entries", {"rows": import_rows(today), **IMPORT_UNITS})  # dry_run left out: by_row, a null id
+    keep("import_entries", {"rows": import_rows(today), "dry_run": False, **IMPORT_UNITS})  # day taken by id
+    again = import_rows(today)
+    keep("import_entries", {"rows": [again[1], *again[3:8]], "dry_run": False, **IMPORT_UNITS})  # nothing new
+    keep("import_entries", {"rows": [{"kind": "bodyweight", "date": "soon", "weight": 80},
+                                     {"kind": "weight", "date": "later"}], "dry_run": True})
     return seen
+
+
+IMPORT_UNITS = {"weight_unit": "lb", "distance_unit": "mi", "length_unit": "in"}
+
+
+def import_rows(today: date) -> list[dict]:
+    """An export of every kind, in lb, mi and in. Row 1 falls on every_result's 82 kg weigh-in 30 days back (day
+    taken by its id), row 3 on row 2's day (day taken by row 2), row 6 repeats row 5, and row 9 names a lift that
+    is not on the list."""
+    def ago(n: int) -> str:
+        return (today - timedelta(days=n)).isoformat()
+    deadlift = {"kind": "lift_session", "date": ago(43), "notes": "From the old app",
+                "sets": [{"exercise": "Deadlift", "weight": 315, "reps": 5, "times": 3}]}
+    return [{"kind": "bodyweight", "date": ago(30), "weight": 181},
+            {"kind": "bodyweight", "date": ago(45), "weight": 180},
+            {"kind": "bodyweight", "date": ago(45), "weight": 179},
+            {"kind": "measurement", "date": ago(44), "measurement_kind": "waist", "value": 33.5},
+            deadlift, dict(deadlift),
+            {"kind": "food_entry", "date": ago(42), "entries": [{"description": "Oats", "kcal": 350, "meal": "breakfast"}]},
+            {"kind": "cardio_entry", "date": ago(41), "exercise": "Outdoor Run", "minutes": 30, "distance": 3.1},
+            {"kind": "lift_session", "date": ago(40), "sets": [{"exercise": "Squat (Barbell)", "weight": 225, "reps": 5}]}]
 
 
 def test_the_function_list_is_exactly_the_twelve(http):
@@ -822,6 +851,7 @@ OPTIONAL_ARGUMENTS = {
                    "machine_kcal": 210, "notes": "Easy", "allow_repeat": True},
     "get_trends": {},
     "get_goals": {"include_closed": True},
+    "import_entries": {"dry_run": False, "weight_unit": "lb", "distance_unit": "mi", "length_unit": "in"},
 }
 REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
             "log_measurement": {"kind": "waist", "value": 84.5},
@@ -831,9 +861,16 @@ REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
             "find_food": {"query": "banana"},
             "log_food": {"entries": [{"description": "Dal", "kcal": 180.0}]},
             "save_food": {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120.0},
-            "log_cardio": {"exercise": "Treadmill Walk", "minutes": 30.0}}
+            "log_cardio": {"exercise": "Treadmill Walk", "minutes": 30.0},
+            "import_entries": {"rows": [{"kind": "bodyweight", "date": "2026-01-02", "weight": 180.5},
+                                        {"kind": "lift_session", "date": "2026-01-03", "notes": "Old app",
+                                         "sets": [{"exercise": "Deadlift", "weight": 315.0, "reps": 5, "times": 3}]},
+                                        {"kind": "food_entry", "date": "2026-01-03",
+                                         "entries": [{"description": "Oats", "kcal": 350.0, "meal": "breakfast"}]},
+                                        {"kind": "cardio_entry", "date": "2026-01-04", "exercise": "Outdoor Run",
+                                         "minutes": 30.0, "distance": 3.1, "speed": 6.2}]}}
 DATA_WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "log_food",
-               "save_food", "log_cardio"}
+               "save_food", "log_cardio", "import_entries"}
 
 
 def spy_on_services(monkeypatch) -> dict[str, tuple]:
@@ -1180,6 +1217,7 @@ CONTRACT_NEEDS = {
     "log_measurement": "log", "edit_entry": "log", "restore_entry": "log", "delete_entry": "log_delete",
     "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
     "get_trends": "read", "get_goals": "read",
+    "import_entries": "log",
 }
 ALLOWS = {"read": {"read"}, "log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}
 
@@ -1392,7 +1430,7 @@ def test_can_and_cant_states_the_tags_the_cardio_formula_and_the_food_tables():
                   "Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
                   "(CC BY-NC-ND 4.0).",
                   "With no weigh-in there is no estimate", "USDA FoodData Central", "IFCT 2017 and INDB",
-                  "not openly licensed", "`net_kcal`", "Eighteen functions"):
+                  "not openly licensed", "`net_kcal`", "Nineteen functions"):
         assert words in text, words
 
 
@@ -1988,7 +2026,7 @@ def test_can_and_cant_states_the_goal_kinds_the_trends_sample_rows_and_the_setti
                   "more than 2 years from today", "`includes_sample` is true", "Remove sample data",
                   "the person's own clicks on Settings", "No function does either", "Claude never offers to do them",
                   "stays valid until it expires, an hour at most", "recreates an empty account",
-                  "`too_many_reads`", "Eighteen functions", "`get_trends`", "`get_goals`"):
+                  "`too_many_reads`", "Nineteen functions", "`get_trends`", "`get_goals`"):
         assert words in text, words
     lines = CAN_AND_CANT.read_text(encoding="utf-8").splitlines()
     rows = [m.group(1) for line in lines if (m := re.match(r"\| `([a-z_]+)` \| ", line))]
@@ -2079,3 +2117,243 @@ def test_the_new_reads_are_the_services_own_dicts(http):
     assert ok(http, token, "get_trends") == services.get_trends(account)
     assert ok(http, token, "get_goals") == services.get_goals(account)
     assert ok(http, token, "get_goals", {"include_closed": True}) == services.get_goals(account, include_closed=True)
+
+# ================================================================ import_entries through MCP (import pass B)
+
+def import_person(http) -> tuple[str, date]:
+    """A person with a time zone, as an import needs one. Returns their token and their today."""
+    token = sign()
+    ok(http, token, "update_settings", {"time_zone": "Asia/Kolkata"})
+    return token, date.fromisoformat(ok(http, token, "whoami")["today"])
+
+
+def entry_rows() -> int:
+    """Every entry row of every person, deleted ones too."""
+    with db.session_scope() as session:
+        return sum(session.scalar(select(func.count()).select_from(m)) for m in services.entry_kinds().values())
+
+
+def import_calls() -> int:
+    with db.session_scope() as session:
+        return session.scalar(select(func.count()).select_from(CallLog).where(CallLog.function == "import_entries"))
+
+
+def logged_by_values(value: Any) -> list[str]:
+    """Every logged_by in a result, at any depth."""
+    if isinstance(value, list):
+        return [v for item in value for v in logged_by_values(item)]
+    if not isinstance(value, dict):
+        return []
+    own = [value["logged_by"]] if "logged_by" in value else []
+    return own + [v for k, item in value.items() if k != "logged_by" for v in logged_by_values(item)]
+
+
+def test_import_entries_publishes_named_fields_and_a_strict_dry_run_with_no_default(http):
+    from app.services import imports
+
+    schema = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["import_entries"]
+    assert list(schema["properties"]) == ["rows", "dry_run", "weight_unit", "distance_unit", "length_unit"]
+    assert set(schema["properties"]) == set(imports.CALL_FIELDS) and schema["required"] == ["rows"]
+    dry = schema["properties"]["dry_run"]
+    assert dry["type"] == "boolean" and "default" not in dry and "anyOf" not in dry  # left out is the preview
+    rows = schema["properties"]["rows"]
+    assert (rows["minItems"], rows["maxItems"]) == (1, 200) and rows["items"] == {"$ref": "#/$defs/ImportRowIn"}
+    # Named fields for every kind: each row, set and food entry is an object, never a positional list.
+    row, one_set, one_food = (schema["$defs"][n] for n in ("ImportRowIn", "ImportSetIn", "ImportFoodIn"))
+    assert list(row["properties"]) == ["kind", "date", "sets", "notes", "weight", "measurement_kind", "value",
+                                       "entries", "exercise", "minutes", "distance", "incline_pct", "speed", "avg_hr",
+                                       "machine_kcal"]
+    assert row["required"] == ["kind", "date"]
+    assert set(row["properties"]) - {"kind", "date"} == {f for fields in imports.ROW_FIELDS.values() for f in fields}
+    assert set(one_set["properties"]) == set(imports.SET_FIELDS)
+    assert set(one_set["required"]) == {"exercise", "weight", "reps"}
+    assert set(one_food["properties"]) == set(imports.FOOD_FIELDS) == set(one_food["required"])
+    assert {"speed_kmh", "distance_km", "kg"}.isdisjoint(row["properties"])
+    assert "distance_unit an hour" in row["properties"]["speed"]["description"]
+
+
+def test_who_logged_it_names_import_wherever_a_result_says(http):
+    outputs = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}
+    said = {(name, owner): spec["description"] for name, out in outputs.items()
+            for owner, obj in [("", out), *out.get("$defs", {}).items()]
+            for prop, spec in obj.get("properties", {}).items() if prop == "logged_by"}
+    assert {owner for _, owner in said} == {"Session", "WeighIn", "MeasurementOut", "LogSession"}
+    assert set(said.values()) == {"Who logged it: claude, web or import."}
+
+
+@pytest.mark.parametrize("value", ["false", "no", 0, 1, "true", "off", "", None],
+                         ids=["'false'", "'no'", "0", "1", "'true'", "'off'", "blank", "null"])
+def test_a_dry_run_that_is_not_a_bool_is_refused_before_the_service_and_writes_nothing(http, value):
+    """pydantic's default reads "no", "off" and 0 as false. Strict, the schema refuses each, so a loose value
+    never reaches the service as a bool: no call-log row, nothing written."""
+    token, today = import_person(http)
+    row = {"kind": "bodyweight", "date": (today - timedelta(days=3)).isoformat(), "weight": 80}
+    result = call(http, token, "import_entries", {"rows": [row], "dry_run": value})
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert re.search(r"^dry_run$", text, re.MULTILINE) and "valid boolean" in text, text
+    assert import_calls() == 0  # the wrapper never ran: the library refused the argument
+    assert entry_rows() == 0
+
+
+def test_dry_run_true_false_or_left_out(http):
+    token, today = import_person(http)
+    row = {"kind": "bodyweight", "date": (today - timedelta(days=3)).isoformat(), "weight": 80}
+    for arguments in ({"rows": [row]}, {"rows": [row], "dry_run": True}):
+        preview = ok(http, token, "import_entries", arguments)
+        assert preview["dry_run"] is True and preview["summary"].startswith("Preview, nothing written.")
+        assert entry_rows() == 0
+    written = ok(http, token, "import_entries", {"rows": [row], "dry_run": False})
+    assert written["dry_run"] is False and written["row_outcomes"]["written"] == 1 and entry_rows() == 1
+    assert import_calls() == 3  # one call-log row a call, a preview too: each is one write of the limit
+
+
+def test_the_wrapper_passes_the_fields_sent_and_a_row_as_sent(http, monkeypatch):
+    token = sign()
+    whoami(http, token)
+    account = one_user().id
+    received = spy_on_services(monkeypatch)
+    row = {"kind": "cardio_entry", "date": "2026-01-04", "exercise": "Outdoor Run", "minutes": 30.0, "distance": 3.1}
+    failed(http, token, "import_entries", {"rows": [row]})
+    assert received["import_entries"] == ((account, {"rows": [row]}, "claude"), {})  # no dry_run, no unit added
+    failed(http, token, "import_entries", {"rows": [row], "dry_run": True, "weight_unit": "LB"})
+    assert received["import_entries"] == ((account, {"rows": [row], "dry_run": True, "weight_unit": "LB"}, "claude"),
+                                          {})
+
+
+def test_a_field_a_row_does_not_take_reaches_the_service_and_fails_its_row(http):
+    """A row, set or food entry field the schema does not name is passed on, not dropped: the service refuses its
+    row in its own words. Dropped, a misspelt speed_kmh or distance_km would go in as a row without it."""
+    token, today = import_person(http)
+    on = (today - timedelta(days=3)).isoformat()
+    r = ok(http, token, "import_entries", {"rows": [
+        {"kind": "cardio_entry", "date": on, "exercise": "Outdoor Run", "minutes": 30, "speed_kmh": 10},
+        {"kind": "cardio_entry", "date": on, "exercise": "Outdoor Run", "minutes": 30, "distance_km": 5},
+        {"kind": "bodyweight", "date": on, "weight": 80, "kg": 80},
+        {"kind": "lift_session", "date": on, "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 5,
+                                                       "weight_kg": 100}]},
+        {"kind": "food_entry", "date": on, "entries": [{"description": "Oats", "kcal": 350, "meal": "breakfast",
+                                                         "estimated": True}]}]})
+    assert [f["message"] for f in r["failed"]] == [
+        "Row 1: 'speed_kmh' is not a field of a cardio_entry row.",
+        "Row 2: 'distance_km' is not a field of a cardio_entry row.",
+        "Row 3: 'kg' is not a field of a bodyweight row.", "Row 4, set 1: 'weight_kg' is not a field of a set.",
+        "Row 5, entry 1: 'estimated' is not a field of an imported food entry."]
+    assert "speed" in r["failed"][0]["fix"].split(": ")[1].split(", ")
+    assert r["row_outcomes"]["failed"] == 5 and entry_rows() == 0
+
+
+def test_a_misspelt_call_field_is_dropped_by_the_library_and_the_preview_shows_it(http):
+    """As built: the MCP library drops an argument the function does not name, before the wrapper runs, so the
+    service's own refusal of weight_units is never reached through MCP. The preview is the guard: its units and its
+    ranges show 176 read as kg."""
+    token, today = import_person(http)
+    row = {"kind": "bodyweight", "date": (today - timedelta(days=3)).isoformat(), "weight": 176}
+    r = ok(http, token, "import_entries", {"rows": [row], "weight_units": "lb"})
+    assert r["units"]["weight"] == "kg" and r["ranges"]["bodyweight_kg"] == {"lowest": 176, "highest": 176}
+    assert "Every weigh-in is 176 kg." in r["summary"] and entry_rows() == 0
+
+
+def test_squat_barbell_gets_only_the_closest_name_the_rule_gives(http):
+    """The instructions promise no closest name: for Strong's "Squat (Barbell)" the rule offers Barbell Row."""
+    token, today = import_person(http)
+    r = ok(http, token, "import_entries", {"rows": [
+        {"kind": "lift_session", "date": (today - timedelta(days=3)).isoformat(),
+         "sets": [{"exercise": "Squat (Barbell)", "weight": 100, "reps": 5}]}]})
+    assert r["unknown_names"] == [{"name": "Squat (Barbell)", "kind": "lift", "rows": 1, "closest": ["Barbell Row"]}]
+    assert r["failed"][0]["closest"] == ["Barbell Row"]
+    assert "Back Squat" not in mcp_server.IMPORT_RULE and "Barbell Row" not in mcp_server.IMPORT_RULE
+
+
+def test_the_import_rule_is_in_the_instructions_after_the_cardio_rule():
+    from . import text_rules as tr
+
+    text, rule = mcp_server.INSTRUCTIONS, mcp_server.IMPORT_RULE
+    assert "Importing: " + rule + " Deleting: " in text
+    assert text.index(mcp_server.CARDIO_RULE) < text.index(rule) < text.index(mcp_server.DELETE_RULE)
+    for words in ("up to 200 rows and up to 1,000 sets and food entries a call",
+                  "the 1,000 sets and food entries run out before the 200 rows", "send times for sets that repeat",
+                  "Send the first call with dry_run true", "Write only when the person says yes, with dry_run false",
+                  "never convert them yourself", "A row's speed is in the call's distance unit an hour",
+                  "ask the person once per name", "The closest names the result gives can be wrong",
+                  "Never pick one on a guess", "An import never replaces an entry",
+                  "Sent again, the same rows write nothing that is already there",
+                  "an imported entry the person edited, moved or deleted counts as already there",
+                  "One food case is the exception: spotter://can-and-cant names it."):
+        assert words in rule, words
+    assert "Claude" not in rule and ";" not in rule and "Settings" not in rule
+    assert tr.check(rule, tr.CLAUDE) == []
+    assert not [s for s in sentences(rule) if sends_to_a_page(s)]
+
+
+def test_an_imported_row_of_every_kind_reads_back_through_mcp_as_import(http):
+    """Rows of all five kinds imported through MCP, then read with every function that shows an entry: each result
+    passes its schema at every depth, and wherever it says who logged a row, it says import."""
+    token, today = import_person(http)
+    set_switch(one_user().id, "log_delete")
+    on = {n: (today - timedelta(days=n)).isoformat() for n in (1, 2, 3)}
+    rows = [{"kind": "bodyweight", "date": on[2], "weight": 80.5},
+            {"kind": "measurement", "date": on[2], "measurement_kind": "waist", "value": 84.5},
+            {"kind": "lift_session", "date": on[3], "sets": [{"exercise": "Back Squat", "weight": 100, "reps": 5,
+                                                             "times": 3}]},
+            {"kind": "food_entry", "date": on[2], "entries": [{"description": "Oats", "kcal": 350, "meal": "breakfast"}]},
+            {"kind": "cardio_entry", "date": on[1], "exercise": "Treadmill Walk", "minutes": 30, "distance": 2.5}]
+    assert ok(http, token, "import_entries", {"rows": rows, "dry_run": False})["row_outcomes"]["written"] == 5
+    seen: list[tuple[str, dict]] = []
+
+    def read(name: str, arguments: dict | None = None) -> dict:
+        result = ok(http, token, name, arguments)
+        RESULTS[name].model_validate(result)
+        assert unmodelled(result, RESULTS[name], name) == set(), name
+        seen.append((name, result))
+        return result
+
+    log = read("get_log", {"days": 14})
+    day = {d["date"]: d for d in log["days"]}
+    assert [s["logged_by"] for s in day[on[3]]["sessions"]] == ["import"]
+    assert day[on[2]]["weigh_in"]["logged_by"] == "import"
+    assert [m["logged_by"] for m in day[on[2]]["measurements"]] == ["import"]
+    assert [c["logged_by"] for c in day[on[1]]["cardio"]] == ["import"]
+    food = day[on[2]]["food"]["meals"]["breakfast"]
+    assert [(e["description"], e["source"], e["estimated"]) for e in food] == [("Oats", "you_said", False)]
+    ids = {"lift_session": day[on[3]]["sessions"][0]["id"], "bodyweight": day[on[2]]["weigh_in"]["id"],
+           "measurement": day[on[2]]["measurements"][0]["id"], "food_entry": food[0]["id"],
+           "cardio_entry": day[on[1]]["cardio"][0]["id"]}
+    assert read("get_trends")["bodyweight"]["now"] == 80.5
+    assert [line["exercise"] for line in read("get_progress")["lifts"]] == ["Back Squat"]
+    assert read("get_progress", {"exercise": "Back Squat"})["lift"]["sessions"] == 1
+    assert len(read("get_progress", {"exercise": "Treadmill Walk"})["cardio"]["sessions"]) == 1
+    assert read("find_food", {"query": "Oats"})["recent"] == []  # an imported entry is not one of the person's own
+    changes = {"lift_session": {"notes": "Edited"}, "bodyweight": {"kg": 81}, "measurement": {"value": 85},
+               "food_entry": {"kcal": 360}, "cardio_entry": {"minutes": 31}}
+    for kind, entry_id in ids.items():
+        edited = read("edit_entry", {"kind": kind, "entry_id": entry_id, **changes[kind]})
+        entries = [edited["before"], edited["after"], read("delete_entry", {"kind": kind, "entry_id": entry_id})["entry"],
+                   read("restore_entry", {"kind": kind, "entry_id": entry_id})["entry"]]
+        # A food entry's shape carries no logged_by anywhere (FoodEntryOut, food.entry_dict): its tag says who
+        # supplied the number instead. Every other kind says import, before and after the edit, deleted and back.
+        want = [None] * 4 if kind == "food_entry" else ["import"] * 4
+        assert [e.get("logged_by") for e in entries] == want, kind
+        assert [e["deleted_at"] is None for e in entries] == [True, True, False, True], kind
+    assert {v for _, result in seen for v in logged_by_values(result)} == {"import"}
+    assert {name for name, result in seen if logged_by_values(result)} == {"get_log", "edit_entry", "delete_entry",
+                                                                           "restore_entry"}
+
+def test_can_and_cant_states_the_import_as_built():
+    from app.services import imports
+
+    text = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
+    for words in ("`import_entries`", "marked `import` in `logged_by`", "With `dry_run` true or left out, nothing is "
+                  "written", "`dry_run` is true, false or left out: any other value is refused",
+                  "lb x 0.45359237, mi x 1.609344, in x 2.54", "A row's `speed` is in the call's distance unit an hour",
+                  f"| Rows a call | {imports.ROWS[0]} to {imports.ROWS[1]} |",
+                  "| Sets and food entries a call | 1,000 at most, together |",
+                  "| Imported rows in any 24 hours | 10,000, deleted ones counted.", "166 days",
+                  "for \"Squat (Barbell)\" the closest is Barbell Row", "Version 1 has no undo",
+                  "remembered by its own content and date", "it comes back on its first day",
+                  "If they edit it, delete it, and the same file is sent again, it comes back too",
+                  "a later export holds fewer entries for that first day",
+                  "| Edited an imported row | Already there: the edit stands |",
+                  "| Moved an imported row to another date | Already there: not written again on its first date |"):
+        assert words in text, words
+    assert (imports.ITEMS_MAX, imports.IMPORT_LIMIT, imports.IMPORT_HOURS) == (1_000, 10_000, 24)

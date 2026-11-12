@@ -1,4 +1,4 @@
-"""The shapes of the eighteen MCP functions' arguments and results.
+"""The shapes of the nineteen MCP functions' arguments and results.
 
 Each result model is published as that function's result schema, and the MCP library checks every
 successful result against it. The top-level fields match the service's keys exactly, and a top-level
@@ -57,6 +57,77 @@ class FoodEntryIn(BaseModel):
     usda_fdc_id: int | None = Field(
         default=None, description="A USDA food's fdc_id from find_food. Send grams with it, and no kcal.")
     grams: float | None = Field(default=None, description="How many grams of the USDA food, 1 to 5,000.")
+
+
+# An import's rows are named fields for every kind: no positional lists. A field these models do not name still
+# reaches the service (extra allow), which refuses its row in its own words, so a misspelt field such as
+# speed_kmh or kg is never dropped on the way.
+IMPORT_ROWS = (1, 200)  # what one import_entries call takes; the service judges, the schema says it
+
+
+class ImportSetIn(BaseModel):
+    """One set item of an imported lift session."""
+
+    model_config = ConfigDict(extra="allow")
+
+    exercise: str = Field(description="The exercise name, exactly as list_exercises gives it.")
+    weight: float = Field(
+        description="The weight lifted, in the call's weight_unit, as the export writes it. 0 for bodyweight work.")
+    reps: int = Field(description="Reps done in this set, a whole number from 1 to 30.")
+    times: int | None = Field(
+        default=None,
+        description="How many sets in a row had this weight and reps, 1 to 20, so 3 sets of 5 is one item. Leave "
+                    "out for 1. A session holds at most 60 sets once times is counted.")
+
+
+class ImportFoodIn(BaseModel):
+    """One food of an imported food_entry row: the other app's own number."""
+
+    model_config = ConfigDict(extra="allow")
+
+    description: str = Field(description="What was eaten, as the export names it, 1 to 200 characters.")
+    kcal: float = Field(description="Its calories as the export gives them, 0 to 5,000.")
+    meal: str = Field(description="breakfast, lunch, dinner or snack, as the export names the meal.")
+
+
+class ImportRowIn(BaseModel):
+    """One dated row of an import. kind and date always, then the named fields of that kind only."""
+
+    model_config = ConfigDict(extra="allow")
+
+    kind: str = Field(description="lift_session, bodyweight, measurement, food_entry or cardio_entry.")
+    date: str = Field(
+        description="The day it happened: YYYY-MM-DD, or the export's timestamp with its offset, such as "
+                    "2026-03-01T07:12:00+05:30. A timestamp keeps its own date. At most 2 years back.")
+    sets: list[ImportSetIn] | None = Field(
+        default=None, description="A lift_session: every set item, in order, 1 to 60.")
+    notes: str | None = Field(
+        default=None, description="A lift_session or a cardio_entry: its notes, up to 2,000 characters.")
+    weight: float | None = Field(
+        default=None, description="A bodyweight row: the body weight, in the call's weight_unit.")
+    measurement_kind: str | None = Field(
+        default=None,
+        description="A measurement: waist, hips, chest, arm, thigh, steps, sleep_hours, resting_hr or water_ml.")
+    value: float | None = Field(
+        default=None,
+        description="A measurement: its value. A body size (waist, hips, chest, arm, thigh) in the call's "
+                    "length_unit. Steps, hours of sleep, bpm or ml for the others.")
+    entries: list[ImportFoodIn] | None = Field(
+        default=None, description="A food_entry: the day's foods, 1 to 30, each with its meal.")
+    exercise: str | None = Field(
+        default=None, description="A cardio_entry: the activity, exactly as list_exercises gives it (kind cardio).")
+    minutes: float | None = Field(default=None, description="A cardio_entry: how long it lasted, 1 to 600 minutes.")
+    distance: float | None = Field(
+        default=None, description="A cardio_entry: the distance, in the call's distance_unit.")
+    incline_pct: float | None = Field(
+        default=None, description="A cardio_entry: a treadmill's incline in percent, 0 to 40.")
+    speed: float | None = Field(
+        default=None,
+        description="A cardio_entry: the speed, in the call's distance_unit an hour: km an hour on a km call, mi "
+                    "an hour on a mi call.")
+    avg_hr: int | None = Field(default=None, description="A cardio_entry: average heart rate in bpm, 30 to 240.")
+    machine_kcal: int | None = Field(
+        default=None, description="A cardio_entry: the calories the machine or watch showed, 1 to 5,000.")
 
 
 # ---------------------------------------------------------------- shared pieces
@@ -241,7 +312,7 @@ class Session(BaseModel):
     id: int = Field(description="The session's id.")
     date: str = Field(description="The day it happened, YYYY-MM-DD, on the person's own calendar.")
     notes: str = Field(description="The session's notes; empty when none.")
-    logged_by: str = Field(description="Who logged it: claude or web.")
+    logged_by: str = Field(description="Who logged it: claude, web or import.")
     created_at: str = Field(description="When it was logged, UTC.")
     updated_at: str = Field(description="When it last changed, UTC.")
     deleted_at: str | None = Field(description="When it was deleted, UTC, or null.")
@@ -287,7 +358,7 @@ class WeighIn(BaseModel):
     id: int = Field(description="The weigh-in's id.")
     date: str = Field(description="The day, YYYY-MM-DD, on the person's own calendar.")
     kg: float = Field(description="Body weight in kg.")
-    logged_by: str = Field(description="Who logged it: claude or web.")
+    logged_by: str = Field(description="Who logged it: claude, web or import.")
     created_at: str = Field(description="When it was logged, UTC.")
     updated_at: str = Field(description="When it last changed, UTC.")
     deleted_at: str | None = Field(description="When it was deleted or replaced, UTC, or null.")
@@ -655,7 +726,7 @@ class MeasurementOut(BaseModel):
     kind: str = Field(description="waist, hips, chest, arm, thigh, steps, sleep_hours, resting_hr or water_ml.")
     value: float = Field(description="The value, in unit.")
     unit: str = Field(description="cm, steps, h, bpm or ml: fixed by the kind.")
-    logged_by: str = Field(description="Who logged it: claude or web.")
+    logged_by: str = Field(description="Who logged it: claude, web or import.")
     created_at: str = Field(description="When it was logged, UTC.")
     updated_at: str = Field(description="When it last changed, UTC.")
     deleted_at: str | None = Field(description="When it was deleted or replaced, UTC, or null.")
@@ -911,6 +982,135 @@ class GetTrendsResult(BaseModel):
                                   "worked out: what to tell the person.")
 
 
+# ---------------------------------------------------------------- import_entries
+
+class ImportUnits(BaseModel):
+    weight: str = Field(description="The call's weight_unit: kg or lb.")
+    distance: str = Field(description="The call's distance_unit: km or mi.")
+    length: str = Field(description="The call's length_unit: cm or in.")
+
+
+class ImportCount(BaseModel):
+    written: int = Field(description="Written, or in a preview, would be written.")
+    already_there: int = Field(
+        description="Already there: Spotter holds a matching entry, or the row an earlier import stored for it, "
+                    "live or deleted. Not written again.")
+    day_taken: int = Field(
+        description="Left out: no match, and the day already holds an entry of this kind. For a measurement, the "
+                    "same measurement. For cardio, the same activity. Never added to or replaced.")
+    failed: int = Field(description="Refused: see failed for why.")
+
+
+class ImportCounts(BaseModel):
+    bodyweight: ImportCount = Field(description="Weigh-ins, in rows.")
+    measurement: ImportCount = Field(description="Measurements, in rows.")
+    lift_session: ImportCount = Field(description="Lift sessions, in rows.")
+    food_entry: ImportCount = Field(
+        description="Food, in entries, not rows: a row's entries can split between already there and written.")
+    cardio_entry: ImportCount = Field(description="Cardio sessions, in rows.")
+
+
+class ImportOutcomes(BaseModel):
+    written: int = Field(description="Rows written, or in a preview, that would be written.")
+    already_there: int = Field(description="Rows already there whole.")
+    day_taken: int = Field(description="Rows left out because their day already holds an entry of their kind.")
+    failed: int = Field(description="Rows refused. The four add up to rows.")
+
+
+class ImportSpan(BaseModel):
+    lowest: float = Field(description="The lowest, after conversion.")
+    highest: float = Field(description="The highest, after conversion.")
+
+
+class ImportRanges(BaseModel):
+    """The unit guard: a wrong unit shows here before anything is written."""
+
+    bodyweight_kg: ImportSpan | None = Field(
+        description="The weigh-ins checked, in kg after conversion, or null with none. A wrong weight_unit reads "
+                    "as a body weight far from the person's.")
+    body_size_cm: ImportSpan | None = Field(
+        description="The body sizes checked (waist, hips, chest, arm, thigh), in cm after conversion, or null.")
+    heaviest_set_kg: float | None = Field(description="The heaviest set checked, in kg after conversion, or null.")
+    longest_km: float | None = Field(description="The longest cardio distance checked, in km after conversion, or null.")
+
+
+class ImportDayTaken(BaseModel):
+    row: int = Field(description="The row's number as sent, from 1.")
+    kind: str = Field(description="The row's kind.")
+    date: str = Field(description="The row's date, YYYY-MM-DD.")
+    entry_id: int | None = Field(
+        description="The entry that holds the day. Null in a preview when it is a row of this same call: by_row "
+                    "names it.")
+    by_row: int | None = Field(
+        default=None, description="Present when the day is held by an earlier row of this call: its number.")
+
+
+class ImportProblem(BaseModel):
+    row: int = Field(description="The row's number as sent, from 1.")
+    kind: str | None = Field(description="The row's kind as sent, or null when it has none.")
+    date: str | None = Field(description="The row's date, YYYY-MM-DD when it passed, else as sent, or null.")
+    error: str = Field(description="The first problem's code, such as unknown_exercise.")
+    message: str = Field(description="What is wrong, naming the row, and the set or entry where there is one.")
+    fix: str = Field(description="What to send instead.")
+    closest: list[str] | None = Field(
+        default=None,
+        description="Present when a name is not on the list: the closest listed names Spotter found. They can be "
+                    "wrong: ask the person.")
+
+
+class ImportUnknownName(BaseModel):
+    name: str = Field(description="A name from the export that is not on the exercise list, once.")
+    kind: str = Field(description="lift or cardio: which list it was looked for in.")
+    rows: int = Field(description="How many rows carry it.")
+    closest: list[str] = Field(
+        description="The closest listed names Spotter found, possibly none. They can be wrong: ask the person "
+                    "which listed name it is, or whether to leave it out.")
+
+
+class ImportLinks(BaseModel):
+    progress: str = Field(description="The progress page.")
+    day: str | None = Field(default=None, description="The page for the last day of the rows. Absent when no row has "
+                                                      "a valid date.")
+
+
+class ImportEntriesResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    kind: str = Field(description="What this is: import.")
+    dry_run: bool = Field(description="True: a preview, and nothing was written. False: the rows were written.")
+    rows: int = Field(description="How many rows were sent.")
+    from_: str | None = Field(
+        alias="from", description="The first date among the rows whose date passed, YYYY-MM-DD, or null with none.")
+    to: str | None = Field(description="The last such date, YYYY-MM-DD, or null with none.")
+    units: ImportUnits = Field(description="The units the rows were read in.")
+    counts: ImportCounts = Field(description="Per kind: written, already there, day taken and refused.")
+    row_outcomes: ImportOutcomes = Field(description="The same, in rows, for every kind together.")
+    repeated_rows: int = Field(
+        description="Rows whose kind, date and content repeat an earlier row of this call. They still go in, as "
+                    "two real sessions on one day do.")
+    ranges: ImportRanges = Field(
+        description="The lowest and highest numbers checked, after conversion. Show them in a preview: a wrong unit "
+                    "shows here.")
+    day_taken: list[ImportDayTaken] = Field(description="The rows left out for a held day, the first 50.")
+    failed: list[ImportProblem] = Field(description="The rows refused and why, the first 50.")
+    unknown_names: list[ImportUnknownName] = Field(
+        description="Every name not on the exercise list, once each. Ask the person once per name.")
+    more_failed: int = Field(description="Refused rows beyond the 50 listed.")
+    more_day_taken: int = Field(description="Rows left out for a held day beyond the 50 listed.")
+    imported_last_24h: int = Field(description="Imported rows created for this person in the last 24 hours, before "
+                                               "this call.")
+    import_limit: int = Field(description="The most imported rows in any 24 hours: 10,000.")
+    within_import_limit: bool = Field(
+        description="Whether the rows this call writes keep within import_limit. False in a preview means the real "
+                    "run would be refused.")
+    summary: str = Field(description="What the call found or did, ready to quote.")
+    links: ImportLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+    note: str | None = Field(
+        default=None,
+        description="Present when it applies: bests are worked out from history, how imported cardio got its "
+                    "calorie estimate, the rows beyond the 50 listed, or that the real run would go past import_limit.")
+
+
 RESULTS = {
     "whoami": WhoamiResult,
     "list_exercises": ExercisesResult,
@@ -930,4 +1130,5 @@ RESULTS = {
     "log_cardio": LogCardioResult,
     "get_trends": GetTrendsResult,
     "get_goals": GetGoalsResult,
+    "import_entries": ImportEntriesResult,
 }

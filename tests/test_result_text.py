@@ -655,6 +655,17 @@ def test_the_import(make_user):
     held = [{**part[0], "date": ago(23)}]
     seen.add("import held part preview", imp(held, True), "Oats", "Dal")
     seen.add("import held part", imp(held), "Oats", "Dal")
+    # Import pass B: a speed out of range on a km call carries its unit, and refused rows are named rows beside the
+    # food entries' sentence.
+    km = seen.add("import km speed", imp([{"kind": "cardio_entry", "date": ago(1), "exercise": "Outdoor Run",
+                                           "minutes": 30, "speed": 70}], True), 70)
+    assert km["failed"][0]["message"] == "Row 1: speed 70 km/h is outside 0.1 to 60 km/h."
+    imp([{"kind": "food_entry", "date": ago(24), "entries": [part[0]["entries"][0]]}])
+    with db.session_scope() as s:
+        for e in s.scalars(select(FoodEntry).where(FoodEntry.user_id == user.id, FoodEntry.date == TODAY - timedelta(24))):
+            e.deleted_at = NOW
+    refused = [{**part[0], "date": ago(24)}, {"kind": "bodyweight", "date": ago(24), "weight": 1000}]
+    assert "1 row was refused." in seen.add("import beside refused", imp(refused), "Oats", "Dal", 1000)["summary"]
     seen.add("import held days", imp([{"kind": "measurement", "date": ago(n + 10), "measurement_kind": "resting_hr",
                                        "value": 61} for n in range(1, 61)], True))
     for data, *values in (

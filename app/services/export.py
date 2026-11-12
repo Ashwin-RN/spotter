@@ -73,6 +73,9 @@ Everything Spotter holds for this account, one CSV file per kind of record.
                       machine's own number
 
 Deleted rows are included: deleted_at says when. is_sample is true for sample data.
+logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_entries, says how a row
+came in: web (on Spotter's own pages), claude (through the assistant) or import (brought over from
+another app's export with import_entries).
 Times are UTC (ISO 8601, with +00:00). Dates are the account's own local dates.
 A blank cell means no value. Exercises, activities and saved foods are given by name.
 """

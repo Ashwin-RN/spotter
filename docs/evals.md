@@ -37,7 +37,8 @@ changed within a day and one full run cost three times the estimate. Both below 
 | claude-opus-5-5 (earlier that day) | 8 to 35 | 67,000 to 165,000 | $0.10 to $0.18 | not measured |
 | claude-fable-5-2 (later that day) | 8 to 50 | 91,000 to 179,000 | $0.26 to $0.79 | measured: about 17 minutes of runs, $22.41 |
 
-- Most tokens are cached reads of the CLI's own system prompt and the eighteen tool schemas.
+- Most tokens are cached reads of the CLI's own system prompt and the tool schemas: eighteen when this
+  was measured, nineteen since `import_entries`.
 - The model line under the table says which model ran. Pin one with `--model` to compare runs.
 - On a subscription that is usage against the plan's limits, not a bill.
 - The table prints tokens per run and the cost per case.
@@ -97,8 +98,9 @@ record cannot be talked round.
 - `switch` sets what the person lets Claude do (`read`, `log`, `log_delete`) through the Settings
   page's own service before the run. Left out, it is the default, `log`.
 - `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
-  `log_measurement`, `set_goal`, each with `data`, and `add_sample_data`, which takes no data.
+  `log_measurement`, `set_goal`, `import_entries`, each with `data`, and `add_sample_data`, which takes no data.
   - `add_sample_data` is four weeks of everything and three goals in one call. It has no `as`.
+  - `import_entries` returns no one id either, so it has no `as`. Its rows carry fixed dates.
 - `db` checks the person's live rows, or with `"state": "deleted"` the soft-deleted ones.
   - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`, `goal`.
   - A goal has no delete, so every goal row is live. Check `status` instead.
@@ -157,10 +159,13 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `delete_is_a_click` | Delete my account (one weigh-in; Claude may delete) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
 | `drop_goal` | Drop the squat goal (a Back Squat goal and a Bench Press goal) | `set_goal` with the squat goal's id and status dropped, one success; squat dropped, bench still open |
 | `decimals_and_dashes` | How am I doing? (79.2 kg yesterday, 79.3 kg today, no goal) | `get_trends` called; no write function called; no em dash or en dash in the reply; no body weight at two decimals |
+| `import_preview_first` | Bring my weigh-ins over from my old app, with a five-day export, `Date,Weight (lb)` | `import_entries` called, never with `dry_run` false; the reply asks; no weigh-in, live or deleted |
+| `import_again` | I checked the preview, write them, with the same export (the five rows already imported) | `import_entries` called with `weight_unit` lb; the reply says "already"; 5 live weigh-ins, all `import`, none deleted |
+| `import_unknown_lift` | Import my lifts from a Strong export of three Zorbinator Press sets at 20 kg | `list_exercises` or `import_entries` called; the reply asks; no lift session |
 
-"No write function" is the eleven writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
+"No write function" is the twelve writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
 `log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,
-`restore_entry`, `delete_entry`. A write added later must be added to those lists.
+`restore_entry`, `delete_entry`, `import_entries`. A write added later must be added to those lists.
 
 ### What the six stage 5 cases prove, and what they do not
 
@@ -201,6 +206,29 @@ reply. That is right, and nothing checks it.
 | | Three decimals, or a one-digit figure: the pattern looks for exactly two decimals on a two- or three-digit figure. |
 | | A date written as day and month with a dot and no year, such as "11.11": the pattern fails it. |
 | | Any other number rule in the paragraph: rounding further, "about" as a symbol, naming an estimate. |
+
+### The stage 6 import cases
+
+**`import_preview_first`, `import_again` and `import_unknown_lift` hold the import rule in the server
+instructions. They have not been run yet.**
+
+- A placeholder does not work in `say`, so the pasted exports carry fixed dates: 5 to 9 October 2026 for
+  the weigh-ins, 20 October 2026 for the lift. They leave the 2-year window in October 2028.
+- `say` is one line, so each pasted CSV is one line too: the header, then each row after a space.
+- `import_again`'s seed is the same five rows through `import_entries` with `dry_run` false and
+  `weight_unit` lb, as the person's earlier, approved call would have sent them.
+- `inputs_forbid` reads `dry_run` at the top of the call. A call that leaves `dry_run` out passes, which is
+  right: left out is a preview.
+
+| Case | Proves | Does not prove |
+|---|---|---|
+| `import_preview_first` | The model previews before it writes, and asks the person. Nothing is written. | That the reply shows the preview's numbers right, or names the unit. A preview of a longer export. |
+| `import_again` | Told to write, the model sends the export's own unit, and says the rows are already there. Nothing is written twice. | That it previews first when told to write. It may send `dry_run` false at once, and passes. |
+| `import_unknown_lift` | A lift name not on the list is never written, and the model asks. | That it asks once per name: there is one name. That it offers the right listed name. |
+
+**What a run of them costs, by the import spec's estimate, not measured:** $0.15 to $0.40 a run on
+`claude-opus-5-5`, so about $1.50 to $3.50 for the 3 cases at 3 runs. The instructions changed, so the
+whole suite should run again: 20 cases at 3 runs is 60 runs, about $9 to $15, estimated.
 
 ## What the evals prove
 

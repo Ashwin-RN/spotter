@@ -1432,6 +1432,68 @@ def test_a_speed_that_disagrees_on_a_km_call_carries_its_unit(user):
     assert r["failed"][0]["message"] == "Row 1: speed 30 km/h does not match 5 km in 30 minutes, which is 10 km/h."
 
 
+def test_a_speed_out_of_range_on_a_km_call_carries_its_unit(user):
+    """Import pass B: "Row 1: speed 70 is outside 0.1 to 60." lost its unit with the rename to speed. The fix keeps
+    log_cardio's own words, as test_a_fix_on_a_kg_km_or_cm_call_keeps_the_log_functions_words holds."""
+    before = everything()
+    r = imp(user, run(ago(1), "Outdoor Run", 30, speed=70), run(ago(2), "Outdoor Run", 30, speed=0.05), dry=True)
+    assert everything() == before
+    assert [f["message"] for f in r["failed"]] == ["Row 1: speed 70 km/h is outside 0.1 to 60 km/h.",
+                                                   "Row 2: speed 0.05 km/h is outside 0.1 to 60 km/h."]
+    own = services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "speed_kmh": 70}, "web")
+    assert own["message"] == "speed_kmh 70 is outside 0.1 to 60."   # the log function's own words, unchanged
+    assert r["failed"][0]["fix"] == own["fix"].replace("speed_kmh", "speed") == "Give speed as a number from 0.1 to 60."
+    for bound in (0.1, 60):   # each bound the message quotes is itself taken
+        assert imp(user, run(ago(3), "Outdoor Run", 30, speed=bound), dry=True)["row_outcomes"]["written"] == 1, bound
+
+
+def test_beside_the_food_entries_sentence_the_rows_refused_are_named_rows(user):
+    """Import pass B: "1 food entry in those rows was already there. 1 was refused." The second counts rows."""
+    imp(user, meal(ago(1), ("Oats", 350, "breakfast")))
+    for e in rows_of(FoodEntry, user.id):
+        services.delete_entry(user.id, "food_entry", e.id)
+    rows = [meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", 500, "lunch")), weigh(ago(2), 1000),
+            weigh(ago(3), 2000)]
+    preview = imp(user, *rows, dry=True)
+    assert preview["summary"] == ("Preview, nothing written. 3 rows from 7 to 9 Nov. Would write 1 food entry. 1 food "
+                                  "entry in those rows is already there. 2 rows were refused.")
+    real = imp(user, *rows)
+    assert real["summary"] == ("Imported 1 of 3 rows from 7 to 9 Nov: 1 food entry. 1 food entry in those rows was "
+                               "already there. 2 rows were refused. Nothing was replaced.")
+    bare = imp(user, weigh(ago(5), 80), weigh(ago(6), 1000))   # no food entries' sentence: the bare count stays
+    assert bare["summary"] == "Imported 1 of 2 rows from 4 to 5 Nov: 1 weigh-in. 1 was refused. Nothing was replaced."
+
+
+def test_no_in_those_rows_sentence_for_a_food_row_already_there_whole(user):
+    """The re-check's R3: the sentence counts matched entries of rows still written or left out, never a row that
+    is already there whole."""
+    imp(user, meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", 500, "lunch")))
+    rows = [meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", 500, "lunch")), weigh(ago(2), 80)]
+    preview, real = imp(user, *rows, dry=True), imp(user, *rows)
+    assert preview["summary"] == ("Preview, nothing written. 2 rows from 8 to 9 Nov. Would write 1 weigh-in. 1 row is "
+                                  "already there. Every weigh-in is 80 kg.")
+    assert real["summary"] == ("Imported 1 of 2 rows from 8 to 9 Nov: 1 weigh-in. 1 was already there. Nothing was "
+                               "replaced.")
+    assert real["counts"]["food_entry"] == {"written": 0, "already_there": 2, "day_taken": 0, "failed": 0}
+    for r in (preview, real):
+        assert "in those rows" not in r["summary"]
+
+
+def test_beside_the_food_entries_sentence_two_rows_already_there_are_plural(user):
+    """The re-check's R4: "2 rows were already there.", never "2 rows was"."""
+    imp(user, meal(ago(1), ("Oats", 350, "breakfast")), weigh(ago(2), 80), weigh(ago(3), 81))
+    for e in rows_of(FoodEntry, user.id):
+        services.delete_entry(user.id, "food_entry", e.id)
+    rows = [weigh(ago(2), 80), weigh(ago(3), 81), meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", 500, "lunch"))]
+    preview = imp(user, *rows, dry=True)
+    assert preview["summary"] == ("Preview, nothing written. 3 rows from 7 to 9 Nov. Would write 1 food entry. 1 food "
+                                  "entry in those rows is already there. 2 rows are already there. Weigh-ins run from "
+                                  "80 kg to 81 kg.")
+    real = imp(user, *rows)
+    assert real["summary"] == ("Imported 1 of 3 rows from 7 to 9 Nov: 1 food entry. 1 food entry in those rows was "
+                               "already there. 2 rows were already there. Nothing was replaced.")
+
+
 def test_beside_the_food_entries_sentence_the_rows_already_there_are_named_rows(user):
     """Was: "1 food entry in those rows was already there. 1 was already there." The second counts rows."""
     imp(user, meal(ago(1), ("Oats", 350, "breakfast")), weigh(ago(2), 80))
@@ -1464,6 +1526,27 @@ def test_a_partly_matched_food_row_on_a_held_day_says_its_matched_entries(user):
                                   "those rows is already there. 1 row falls on days Spotter already holds.")
     assert real["summary"] == ("Imported 0 of 1 row on Thu 5 Nov. 1 food entry in those rows was already there. 1 was "
                                "left out: its day already holds an entry. Nothing was replaced.")
+
+
+def test_known_limit_a_moved_food_day_sent_later_with_fewer_entries_writes_them_again(user):
+    """Not built in version 1, documented (the re-check's observation). Oats and Tea imported for one day and both
+    moved to the next; a later export holds Oats alone for the first day. Its key is over Oats alone, the stored
+    key over both, and nothing on the first day is live: Oats is written again. A food entry on that day takes it."""
+    for n, held in ((3, False), (6, True)):
+        imp(user, meal(ago(n), ("Oats", 350, "breakfast"), ("Tea", 40, "snack")))
+        for e in rows_of(FoodEntry, user.id, date=TODAY - timedelta(days=n)):
+            services.edit_entry(user.id, "food_entry", e.id, {"date": ago(n - 1)}, "web")
+        if held:
+            services.log_food(user.id, {"date": ago(n), "entries": [{"description": "Toast", "kcal": 200}]}, "web")
+        again = imp(user, meal(ago(n), ("Oats", 350, "breakfast")))
+        want = {"written": 0, "already_there": 0, "day_taken": 1, "failed": 0} if held else {
+            "written": 1, "already_there": 0, "day_taken": 0, "failed": 0}
+        assert again["counts"]["food_entry"] == want, n
+        oats = rows_of(FoodEntry, user.id, description="Oats", deleted_at=None)
+        assert sorted(e.date for e in oats) == sorted([TODAY - timedelta(days=n - 1)] + ([] if held else [
+            TODAY - timedelta(days=n)])), n
+        for e in oats:   # clear the way for the next pass
+            services.delete_entry(user.id, "food_entry", e.id)
 
 
 def test_known_limit_a_food_entry_imported_beside_deleted_entries_comes_back_after_a_move_or_an_edit_and_delete(user):

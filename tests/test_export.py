@@ -105,6 +105,30 @@ def test_names_not_ids_and_the_tags_and_sample_marks(make_user):
     assert "you_said" in files["README.txt"] and "UTC" in files["README.txt"] and "deleted_at" in files["README.txt"]
 
 
+def test_imported_rows_say_import_and_the_readme_says_what_it_means(make_user):
+    """Import pass B: every row import_entries writes is marked import in logged_by, and the README says so."""
+    user = make_user(time_zone="Asia/Kolkata")
+    services.log_bodyweight(user.id, {"kg": 80, "date": "2026-11-01"}, "web")
+    r = services.import_entries(user.id, {"dry_run": False, "rows": [
+        {"kind": "bodyweight", "date": "2026-11-02", "weight": 80.5},
+        {"kind": "measurement", "date": "2026-11-02", "measurement_kind": "waist", "value": 84},
+        {"kind": "lift_session", "date": "2026-11-03", "sets": [{"exercise": "Back Squat", "weight": 100, "reps": 5}]},
+        {"kind": "food_entry", "date": "2026-11-03", "entries": [{"description": "Oats", "kcal": 350, "meal": "breakfast"}]},
+        {"kind": "cardio_entry", "date": "2026-11-04", "exercise": "Outdoor Run", "minutes": 30}]}, "claude")
+    assert r["row_outcomes"]["written"] == 5, r
+    files = services.export_data(user.id)["files"]
+    by = {name: [row["logged_by"] for row in table(files[name])]
+          for name in ("lift_sessions.csv", "bodyweight.csv", "measurements.csv", "food_entries.csv",
+                       "cardio_entries.csv")}
+    assert by == {"lift_sessions.csv": ["import"], "bodyweight.csv": ["web", "import"], "measurements.csv": ["import"],
+                  "food_entries.csv": ["import"], "cardio_entries.csv": ["import"]}
+    readme = " ".join(files["README.txt"].split())
+    assert "logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_entries" in readme
+    assert "import (brought over from another app's export with import_entries)" in readme
+    for name in ("goals.csv", "saved_foods.csv", "lift_sets.csv"):  # the README names only the files that have it
+        assert "logged_by" not in next(csv.reader(io.StringIO(files[name].removeprefix(BOM)))), name
+
+
 def test_sample_rows_are_marked(make_user, monkeypatch):
     user = make_user()
     services.add_sample_data(user.id, "web")
