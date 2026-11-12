@@ -754,7 +754,6 @@ CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
         "Claude does not do them for you.",
     ),
     "/foods": ("Saving one by talking to Claude works too.",),  # foods.html: the line under the h1
-    "/goals": ("Set one below, or tell Claude what you are aiming for.",),  # goals.html: no open goals
 }
 _SENTENCE = re.compile(r"(?<=[.?!])\s+")
 

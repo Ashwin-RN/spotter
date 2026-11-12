@@ -15,7 +15,8 @@ and Settings.
     /progress                      one line per lift, the Trends card (get_trends), and the body weight
                                    chart with its smoothed line
     /progress/{lift}               one lift: its chart, bests and sessions
-    /goals                         each open goal as its own card (goal_charts), the closed ones (get_goals);
+    /goals                         each open goal as its own card with its path chart (goal_charts), the
+                                   closed ones (get_goals);
                                    Hit, Drop and Reopen POST to /goals/{goal_id}/status; one form for a new
                                    goal of any kind (POST)
     /settings                      the account, the time zone, and the switch for what Claude may do
@@ -240,7 +241,7 @@ GOAL_NOTES = (
     ("ignored", None, "Fields this kind of goal does not use were left out."),
 )
 GOAL_NOTE_TEXT = {code: text for code, _, text in GOAL_NOTES}
-CLOSED_WORDS = {"hit": "hit", "dropped": "dropped"}
+CLOSED_WORDS = {"hit": "Hit", "dropped": "Dropped"}  # a closed goal's tag (section L, Closed goals)
 STATUS_CLASSES = {"reached": "tag-good", "on track": "tag-good", "behind": "tag-behind",
                   "not enough data": "tag-nodata"}
 
@@ -1708,6 +1709,30 @@ def goal_words(goal: dict) -> dict:
             "means": goal.get("note") if status == "not enough data" else STATUS_MEANS.get(status)}
 
 
+# The goal path chart's legend (section L, Goals): each item with the key the stylesheet draws for it, named only
+# when the chart draws its mark. Actual is a line with two points or more, a ringed dot alone with one.
+GOAL_LEGEND = (
+    (('<line class="plan" ',), "key line plan", "Plan line"),
+    (('<polyline class="series" ',), "key line", "Actual"),
+    (('<circle class="dot is-latest" ', '<circle class="dot" '), "key dot-key", "Actual"),
+    (('<line class="projection" ',), "key line projection", "Projection"),
+    (('<line class="today-line" ',), "key line today", "Today"),
+)
+
+
+def goal_chart(goal: dict, today) -> dict:
+    """One open goal's path chart and its legend. The chart is charts.goal_svg of goal_charts' own goal, unrounded,
+    drawn on the page's one today. Its desc says plan_line word for word and never widens its own figures (charts.py).
+    The legend names what the drawing holds, read from the drawing itself: the page decides nothing the chart does.
+    No plan (a stand-in read): no chart, no legend."""
+    svg = charts.goal_svg(goal, today)
+    drawn, legend = str(svg), []
+    for marks, key, words in GOAL_LEGEND:
+        if any(m in drawn for m in marks) and words not in (w for _, w in legend):
+            legend.append((key, words))
+    return {"svg": svg, "legend": legend if drawn else []}
+
+
 def goal_from_form(form) -> dict:
     """The new-goal form as set_goal's data: every field the person filled in, as typed. Empty fields
     are left out, so a body weight goal sends no exercise. The service checks everything."""
@@ -1801,14 +1826,15 @@ async def goals_view(request: Request, user: User, errors: dict | None = None, t
     state = await _db(services.sample_state, user.id)
     saved = GOAL_SAVED.get(request.query_params.get("saved") or "") if status_code == 200 else None
     notes = goal_notes_shown(request.query_params.get("notes")) if saved else []
-    goals = charted.get("goals") or []
+    goals, today = charted.get("goals") or [], charted.get("today")
     return page(request, "goals.html", status_code=status_code, goals=goals, notes=notes,
                 words={g["goal_id"]: goal_words(g) for g in goals},
+                charts={g["goal_id"]: goal_chart(g, today) for g in goals},
                 closed=listed.get("closed") or [], errors=errors or {}, typed=typed or {}, saved=saved,
                 kinds=GOAL_KINDS, lifts=await exercise_names("lift"), activities=await cardio_names(),
                 measurement_choices=[(k, measurements.kind_word(k), rules.MEASUREMENTS[k][0]) for k in GOAL_MEASUREMENTS],
                 goal_quantity=goal_quantity, closed_words=CLOSED_WORDS, sample_rows=sample_rows_of(state),
-                today=charted.get("today"), zone=user.time_zone)
+                today=today, zone=user.time_zone)
 
 
 async def goals_page(request: Request) -> Response:
@@ -1829,15 +1855,13 @@ async def goals_page(request: Request) -> Response:
 
 
 async def goal_status_now(user_id: int, goal_id: str) -> str | None:
-    """The status one goal has now, as get_goals(include_closed) lists it: "open" for one of its open goals, a closed
-    goal's own status, None when it lists no goal by that id or the read fails (the write then goes ahead, and
-    set_goal answers it)."""
-    listed = await _db(services.get_goals, user_id, True)
-    if failed(listed):
+    """The status one goal of this person has now, read by its id through get_entry: one owned row, its id parsed as
+    set_goal parses it. "open", "hit" or "dropped"; None for no goal of theirs by that id, or a failed read (the
+    write then goes ahead, and set_goal answers it)."""
+    found = await _db(services.get_entry, user_id, "goal", goal_id)
+    if failed(found):
         return None
-    if any(str(g.get("goal_id")) == goal_id for g in listed.get("goals") or []):
-        return "open"
-    return next((g.get("status") for g in listed.get("closed") or [] if str(g.get("goal_id")) == goal_id), None)
+    return (found.get("entry") or {}).get("status")
 
 
 async def goal_status_page(request: Request) -> Response:

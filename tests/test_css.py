@@ -964,3 +964,16 @@ def test_chart_cards_take_the_card_gap_and_padding(css):
     assert css.value(".pair", "gap") == "var(--gap)" and css.value(".chart-card", "padding") == "var(--pad)"
     assert not css.find(".pair", (LAPTOP,)) and not css.find(".chart-card", (LAPTOP,))
     assert (root(css).get("--gap"), root(css).get("--pad"), css.value(":root", "--gap", (LAPTOP,))) ==         ("12px", "20px", "16px")
+
+
+def test_the_behind_line_reads_as_muted_words_and_sits_under_the_facts_on_a_laptop(css):
+    """Goals B: the behind line, p.goal-ask, looks as p.muted does on a phone. On a laptop it takes the facts' column,
+    under them, and spans the row the actions take, so the actions stay under the chart (no row number: the grid's
+    own placement keeps the markup order). Its rules are the only ones it has."""
+    for prop in ("color", "font-size"):
+        assert css.value("p.goal-ask", prop) == css.value(".muted", prop), prop
+    assert css.value("li.goal > p.goal-ask", "grid-column", (LAPTOP,)) == css.value(
+        "li.goal > dl.goal-facts", "grid-column", (LAPTOP,)) == "2"
+    assert css.value("li.goal > p.goal-ask", "grid-row", (LAPTOP,)) == "span 2"
+    assert css.value("li.goal > .goal-actions", "grid-column", (LAPTOP,)) == "1"
+    assert [r.selector for r in css.rules if "goal-ask" in r.selector] == ["p.goal-ask", "li.goal > p.goal-ask"]

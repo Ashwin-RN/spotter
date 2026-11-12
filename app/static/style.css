@@ -924,6 +924,8 @@ dl.goal-facts dd.words { color: var(--text-2); font-weight: 500; white-space: no
 dl.goal-facts .sub { display: block; color: var(--text-3); font-size: 13px; font-weight: 500; }
 
 .goal-chart .legend { margin-top: 8px; gap: 6px 14px; font-size: 12px; }
+/* A goal that is Behind by projection: one line under the facts, pointing to the assistant. */
+p.goal-ask { color: var(--text-2); font-size: 15px; }
 .goal-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ---------------------------------------------------------------- progress */
@@ -1241,6 +1243,9 @@ dl.facts-list dd { padding-left: 16px; color: var(--text-2); }
   li.goal > .goal-chart { grid-column: 1; margin-top: 18px; }
   li.goal > dl.goal-facts { grid-column: 2; grid-row: span 2; align-self: start; margin-top: 18px; }
   li.goal > .goal-actions { grid-column: 1; margin-top: 14px; }
+  /* The behind line under the facts, in their column. It spans the row the actions then take, so the actions
+     stay under the chart and the line sits beside them. */
+  li.goal > p.goal-ask { grid-column: 2; grid-row: span 2; margin-top: 12px; }
 
   /* Foods: Saved foods in 1 to 8, Save a food in 9 to 12. */
   .foods-page .saved-foods { grid-column: 1 / span 8; }

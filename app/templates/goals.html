@@ -15,8 +15,9 @@
 
 {# Goals (section L): the page head, then in div.goals-main the banner, the strips and each open goal as its own
    card, then the Closed goals card; Set a goal beside it. Each open goal reads goal_charts, unrounded: its now
-   figure prints what plan_line prints (close-call rule 2), and its words come from its own fields (web.goal_words).
-   The facts list waits for its own pass, which adds the chart beside it. #}
+   figure and Plan line today print what plan_line prints (close-call rule 2), its words come from its own fields
+   (web.goal_words), and its path chart is charts.goal_svg of the same goal on the page's one today, with a legend
+   of what the chart draws (web.goal_chart). On the plan line, no Plan line today row (rule 3). #}
 <div class="page-head">
   <h1>Goals</h1>
 </div>
@@ -27,7 +28,7 @@
   {% if goals %}
   <ul class="goals" aria-label="Open goals">
     {% for g in goals %}
-    {% set q, w = goal_quantity(g), words[g.goal_id] %}
+    {% set q, w, chart = goal_quantity(g), words[g.goal_id], charts[g.goal_id] %}
     <li class="goal" id="goal-{{ g.goal_id }}">
       <div class="goal-head">
         <div>
@@ -53,13 +54,20 @@
           <dd><span class="tag tag-status {{ w.tag_class }}">{{ w.tag }}</span>{% if w.means %}<span class="means">{{ w.means }}</span>{% endif %}</dd>
         </div>
       </dl>
+      {% if chart.svg %}
+      <figure class="goal-chart">
+        {{ chart.svg }}
+        <p class="legend" aria-hidden="true">{% for key, item in chart.legend %}<span><span class="{{ key }}"></span>{{ item }}</span>{% endfor %}</p>
+      </figure>
+      {% endif %}
       <dl class="goal-facts">
-        <dt>Started</dt><dd>{{ g.start_value|show(q) }} on {{ g.start_date|day(today) }}</dd>
-        <dt>Needed</dt>{% if g.needed_per_week is not none %}<dd>{{ pace(g, g.needed_per_week) }}</dd>{% else %}<dd class="words">not worked out</dd>{% endif %}
-        <dt>So far</dt>{% if g.actual_per_week is not none %}<dd>{{ pace(g, g.actual_per_week) }}</dd>{% else %}<dd class="words">not enough data yet</dd>{% endif %}
-        <dt>At this pace</dt>{% if g.projected_date %}<dd>reached on {{ g.projected_date|day(today) }}</dd>{% else %}<dd class="words">no date</dd>{% endif %}
+        <dt>Started</dt><dd>{% if g.start_value is not none %}{{ g.start_value|show(q) }}{% endif %}<span class="sub">{{ g.start_date|day(today) }}</span></dd>
+        {% if g.vs_plan != "on the line" %}<dt>Plan line today</dt><dd>{{ g.should_be_today|show(q, w.widened) }}</dd>{% endif %}
+        <dt>Needed</dt>{% if g.needed_per_week is not none %}<dd>{{ pace(g, g.needed_per_week) }}</dd>{% else %}<dd class="words">Not worked out yet</dd>{% endif %}
+        <dt>So far</dt>{% if g.actual_per_week is not none %}<dd>{{ pace(g, g.actual_per_week) }}</dd>{% else %}<dd class="words">Not enough data yet</dd>{% endif %}
+        <dt>At this pace</dt>{% if g.status == "reached" %}<dd class="words">Reached</dd>{% elif g.projected_date %}<dd>{{ g.projected_date|day(today) }}<span class="sub">reached</span></dd>{% else %}<dd class="words">No date yet</dd>{% endif %}
       </dl>
-      {% if g.status == "behind" %}<p class="muted">To close the gap, ask your assistant: How do I get back on track for {{ g.label }}?</p>{% endif %}
+      {% if g.status == "behind" %}<p class="goal-ask">Ask your assistant how to reach this target by its date.</p>{% endif %}
       <div class="goal-actions">
         {{ status_form(g.goal_id, "hit", "Hit", "secondary") }}
         {{ status_form(g.goal_id, "dropped", "Drop") }}
@@ -68,8 +76,8 @@
     {% endfor %}
   </ul>
   {% else %}
-  <div class="card">
-    <p class="muted">No open goals. Set one below, or tell Claude what you are aiming for.</p>
+  <div class="card is-empty">
+    <p class="empty-line">No open goals. Set one below, or tell your assistant what you are aiming for.</p>
   </div>
   {% endif %}
 
@@ -79,8 +87,8 @@
     <ul class="entries">
       {% for g in closed %}
       <li class="entry-line" id="goal-{{ g.goal_id }}">
-        <span>{{ g.label }}{{ sample_tag(g) }} <span class="tag">{{ closed_words.get(g.status, g.status) }}</span>
-          {% if g.closed_at %}<span class="muted small">on {{ g.closed_at|day_utc(zone, today) }}</span>{% endif %}</span>
+        <div class="entry-main"><span class="entry-name">{{ g.label }}</span>{% if g.closed_at %}<span class="entry-figures">Closed {{ g.closed_at|day_utc(zone, today) }}</span>{% endif %}</div>
+        <span class="entry-tags"><span class="tag tag-closed">{{ closed_words.get(g.status, g.status) }}</span>{{ sample_tag(g) }}</span>
         <span class="entry-actions">{{ status_form(g.goal_id, "open", "Reopen") }}</span>
       </li>
       {% endfor %}

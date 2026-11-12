@@ -264,30 +264,35 @@ def test_each_goal_holds_get_goals_figures(client, account):
         q = GOAL_QUANTITY.get(g["kind"]) or ("bpm" if g["unit"] == "bpm" else "cm")
         assert html.unescape(g["label"]) in text  # a label built in the service: plain spaces
         assert holds(text, f"by {day(g['target_date'], today)}")
-        figure(card["Started"], g["start_value"], q)
-        assert holds(card["Started"], day(g["start_date"], today))
+        started = goal_cells(page, g["goal_id"])["Started"]  # the figure, then its day under it in span.sub
+        figure(started[0], g["start_value"], q)
+        assert started[1:] == [day(g["start_date"], today)]
         if g["latest"] is not None:  # get_goals' latest, rounded: the now figure prints it, or the widened plan_line's
             now = text_of(re.search(NOW_FIGURE, item, re.S).group(1))
             assert holds(now, show(g["latest"], q, page=True)) or holds(g["plan_line"], now.replace("\u00a0", " "))
+        if g["vs_plan"] not in (None, "on the line"):  # Plan line today: the plan figure plan_line prints (rule 2)
+            assert holds(g["plan_line"], card["Plan line today"].replace("\u00a0", " ")), card["Plan line today"]
+        else:
+            assert "Plan line today" not in card or g["vs_plan"] is None
         pace = "time_pace" if g["kind"] == "cardio_best" else "rate"
         for name, value in (("Needed", g["needed_per_week"]), ("So far", g["actual_per_week"])):
             if value is None:
                 continue
             words = "" if pace == "time_pace" else f"\u00a0{g['unit']} a week"
             assert holds(card[name], show(value, pace, page=True) + words), (name, card[name])
-        if g["projected_date"]:
+        if g["projected_date"] and g["status"] != "reached":
             assert holds(card["At this pace"], day(g["projected_date"], today))
         assert STATUS_WORDS[g["status"]] in text
     for g in result["closed"]:
         item = re.search(rf'<li class="entry-line" id="goal-{g["goal_id"]}">(.*?)</li>', page, re.S).group(1)
         if g["closed_at"]:
-            assert holds(text_of(item), f"on {day_utc(g['closed_at'], zone, today)}")
+            assert holds(text_of(item), f"Closed {day_utc(g['closed_at'], zone, today)}")
 
 
 def goal_cells(page: str, goal_id: int) -> dict[str, list[str]]:
     """One open goal card's cells, each its own element's text as a person reads it: the head's label and date, the
-    now figure and its words, the plan box's heading and each line under it, the tag and what it means, and each
-    fact's value. Nothing is read from a row's joined text."""
+    now figure and its words, the plan box's heading and each line under it, the tag and what it means, each fact's
+    value and the line under it (span.sub), and the chart's desc. Nothing is read from a row's joined text."""
     item = re.search(rf'<li class="goal" id="goal-{goal_id}">(.*?)</li>', page, re.S).group(1)
     plan = re.search(r'<dt>Against the plan line</dt>\s*<dd( class="plain")?>(.*?)</dd>', item, re.S)
     projection = re.search(r"<dt>By projection</dt>\s*<dd>(.*?)</dd>", item, re.S).group(1)
@@ -304,8 +309,10 @@ def goal_cells(page: str, goal_id: int) -> dict[str, list[str]]:
         "plan_lines": [] if plain else cells(r'<span class="means">(.*?)</span>', plan.group(2)),
         "tag": cells(r'<span class="tag tag-status[^"]*">(.*?)</span>', projection),
         "means": cells(r'<span class="means">(.*?)</span>', projection),
-        **{dt: [text_of(dd)] for dt, dd in re.findall(r'<dt>(Started|Needed|So far|At this pace)</dt>'
-                                                       r'<dd(?: class="words")?>(.*?)</dd>', item, re.S)},
+        "desc": cells(rf'<desc id="chart-goal-{goal_id}-desc">(.*?)</desc>'),
+        **{dt: [text_of(dd.split("<span", 1)[0])] + cells(r'<span class="sub">(.*?)</span>', dd)
+           for dt, dd in re.findall(r'<dt>(Started|Plan line today|Needed|So far|At this pace)</dt>'
+                                    r'<dd(?: class="words")?>(.*?)</dd>', item, re.S)},
     }
 
 
@@ -328,19 +335,33 @@ def test_each_goal_card_holds_goal_charts_figures_cell_by_cell(client, monkeypat
         q = GOAL_QUANTITY.get(g["kind"]) or ("bpm" if g["unit"] == "bpm" else "cm")
         assert cells["label"] == [html.unescape(g["label"])] and cells["by"] == [f"by {day(g['target_date'], today)}"]
         assert cells["tag"] == [STATUS_WORDS[g["status"]]]
-        assert cells["Started"] == [f"{show(g['start_value'], q, page=True)} on {day(g['start_date'], today)}"]
+        assert cells["Started"] == [show(g["start_value"], q, page=True), day(g["start_date"], today)]
         pace = "time_pace" if g["kind"] == "cardio_best" else "rate"
-        for fact, value in (("Needed", g["needed_per_week"]), ("So far", g["actual_per_week"])):
-            if value is not None:
-                words = "" if pace == "time_pace" else f"\u00a0{g['unit']} a week"
-                assert cells[fact] == [show(value, pace, page=True) + words], fact
-        if g["projected_date"]:
-            assert cells["At this pace"] == [f"reached on {day(g['projected_date'], today)}"]
+        for fact, value, missing in (("Needed", g["needed_per_week"], "Not worked out yet"),
+                                     ("So far", g["actual_per_week"], "Not enough data yet")):
+            words = "" if pace == "time_pace" else f"\u00a0{g['unit']} a week"
+            assert cells[fact] == ([show(value, pace, page=True) + words] if value is not None else [missing]), fact
+        if g["status"] == "reached":
+            assert cells["At this pace"] == ["Reached"]
+        elif g["projected_date"]:
+            assert cells["At this pace"] == [day(g["projected_date"], today), "reached"]
+        else:
+            assert cells["At this pace"] == ["No date yet"]
+        # The chart's desc (T7): the start unwidened, then plan_line word for word, then the target.
+        said = g["plan_line"] or "Nothing logged yet."
+        start = f"Started {show(g['start_value'], q)} on {day(g['start_date'], today)}."
+        assert len(cells["desc"]) == 1 and cells["desc"][0].startswith(f"{start} {said} Target "), cells["desc"]
+        wide = g["latest"] is not None and widen([g["latest"], g["should_be_today"]], q)
+        if g["vs_plan"] == "on the line":  # rule 3
+            assert "Plan line today" not in cells
+        else:  # rule 2: the plan figure plan_line prints
+            assert cells["Plan line today"] == [show(g["should_be_today"], q, page=True, widened=wide)]
+            if g["plan_line"]:
+                assert holds(g["plan_line"], cells["Plan line today"][0].replace("\u00a0", " "))
         if g["latest"] is None:
             assert cells["now"] == [] and cells["now_words"] == ["Nothing logged yet"]
             assert cells["plain"] == ["Nothing logged yet"] and cells["heading"] == []
             continue
-        wide = widen([g["latest"], g["should_be_today"]], q)
         assert cells["now"] == [show(g["latest"], q, page=True, widened=wide)]
         assert holds(g["plan_line"], cells["now"][0].replace("\u00a0", " "))
         assert cells["plan_lines"][0] == g["plan_line"]

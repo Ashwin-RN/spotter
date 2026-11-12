@@ -1227,14 +1227,17 @@ def test_the_sweeps_reach_todays_glance_and_past_days_without_it(client, account
 
 # ---------------------------------------------------------------- Today's titled cards and day pills (pass B7)
 
-def _home(node: Node):
-    """The nearest card or sheet holding a node, or the open goal (li.goal) holding it, or None."""
-    return next((a for a in node.ancestors() if a.is_(cls="card") or a.is_(cls="sheet") or a.is_("li", "goal")),
-                None)
+def _home(node: Node, goals: bool = False):
+    """The nearest card or sheet holding a node, or, on a route of GOAL_ROUTES (goals=True), the open goal
+    (li.goal) holding it, or None. Off those routes an li.goal is no one's home."""
+    return next((a for a in node.ancestors()
+                 if a.is_(cls="card") or a.is_(cls="sheet") or (goals and a.is_("li", "goal"))), None)
 
 
 # The contract's one titled aside.card, by route: Goals' Set a goal, aside.card.set-goal with id="set-goal".
 TITLED_ASIDES = {"/goals": "set-goal"}
+# The routes whose page holds open goals, each li.goal its own card-like home: Goals alone.
+GOAL_ROUTES = {"/goals"}
 
 
 def titled_card_findings(s: Seen) -> list[str]:
@@ -1242,27 +1245,40 @@ def titled_card_findings(s: Seen) -> list[str]:
     the Today card by its own h2, which is its only one and sits as its child or in its own div.card-head. Where
     the contract names one (TITLED_ASIDES), a titled card is an aside.card of that class and id, named the same
     way. A card with no title is a bare div.card named by nothing. No card sits in a card or in an open goal.
-    An open goal, li.goal in ul.goals, sits in no card and is the home of its own one h2. Every section in main
-    is a card, and every h2 in main sits in a card, a sheet or an open goal. No id repeats."""
+    An open goal, li.goal in ul.goals, is found only on a route of GOAL_ROUTES. There it sits in no card, no sheet
+    and no other goal, holds no sheet, and is the home of its own one h2, which sits in its own div.goal-head.
+    Every section in main is a card, and every h2 in main sits in a card, a sheet or, on those routes, an open
+    goal. No id repeats."""
     out = []
+    goals = s.route in GOAL_ROUTES
     for main in s.dom.find_all("main"):
         out += [f"a <section> in main is not a card: {n.attrs}" for n in main.find_all("section") if "card" not in n.classes]
-        out += [f"the h2 {h.text()!r} sits in no card or sheet" for h in main.find_all("h2") if _home(h) is None]
+        out += [f"the h2 {h.text()!r} sits in no card or sheet" for h in main.find_all("h2") if _home(h, goals) is None]
     for goal in s.dom.find_all("li", "goal"):
         where = goal.attrs.get("id")
-        heads = [h for h in goal.find_all("h2") if _home(h) is goal]
+        if not goals:
+            out.append(f"the goal {where!r} is on {s.route}, a page with no open goals")
+            continue
+        heads = [h for h in goal.find_all("h2") if _home(h, goals) is goal]
         if len(heads) != 1:
             out.append(f"the goal {where!r} holds {len(heads)} h2s, not its own one")
+        for h in heads:
+            head = next((a for a in h.ancestors() if a.is_("div", "goal-head")), None)
+            if head is None or head.parent is not goal:
+                out.append(f"the goal {where!r} has its h2 {h.text()!r} outside its own div.goal-head")
         if not goal.parent.is_("ul", "goals"):
             out.append(f"the goal {where!r} is not in ul.goals")
         if any(a.is_(cls="card") or a.is_("li", "goal") for a in goal.ancestors()):
             out.append(f"the goal {where!r} sits inside a card")
+        if any(a.is_(cls="sheet") for a in goal.ancestors()):
+            out.append(f"the goal {where!r} sits inside a sheet")
+        out += [f"a sheet sits inside the goal {where!r}" for _ in goal.find_all(cls="sheet")]
     aside = TITLED_ASIDES.get(s.route)
     for card in s.dom.find_all(cls="card"):
         named = card.attrs.get("aria-labelledby", "")
         if any(a.is_(cls="card") or a.is_("li", "goal") for a in card.ancestors()):
             out.append(f"a card sits inside a card: {card.attrs}")
-        heads = [h for h in card.find_all("h2") if _home(h) is card]  # its own, not a nested card's
+        heads = [h for h in card.find_all("h2") if _home(h, goals) is card]  # its own, not a nested card's
         if "hero" in card.classes:
             if card.tag != "section" or named not in {n.attrs.get("id") for n in card.iter()}:
                 out.append("the Today card is not a section named by an element inside it")
@@ -1574,8 +1590,8 @@ def test_the_lift_page_in_the_states_the_sweeps_never_reach_keeps_every_rule(cli
 
 # What /goals still waits for, by state: exactly what built_findings and titled_card_findings give on it. An equality,
 # so a second finding cannot hide. Nothing is left under either check. What keeps /goals out of BUILT is outside
-# them: CLAUDE_SKIPS["/goals"] (the no-goals words, Goals B's) and TEXT_HELD["/goals"] (the form's error words,
-# Goals C's).
+# them: TEXT_HELD["/goals"] (the form's error words, Goals C's), and Goals C's own rebuild of the form. The no-goals
+# words say "your assistant" since Goals B, so CLAUDE_SKIPS holds no /goals line.
 GOALS_WAITS: dict[str, list[str]] = {}
 
 
@@ -1611,7 +1627,41 @@ def test_goals_in_each_state_keeps_every_rule_and_waits_only_for_its_later_passe
     findings += step_4_findings(error.address, error.markup, names_of(uid), entered_notes(uid), route="/goals")
     assert not findings, "\n".join(findings)
     assert titled_card_findings(error) + built_findings(error, uid) == GOALS_WAITS.get(state, [])
-    assert "/goals" not in BUILT and CLAUDE_SKIPS["/goals"] and "/goals" in TEXT_HELD
+    assert "/goals" not in BUILT and "/goals" not in CLAUDE_SKIPS and "/goals" in TEXT_HELD
+
+
+def _faked_goals(state: str) -> list[dict]:
+    """The goal_charts goals of each faked Goals state Goals B builds: every kind with its chart, a projection far
+    past the target, a projection with no projected date, a reached goal, a behind goal with its line."""
+    from .test_web_goals import FOUR, PATH, numbers  # noqa: PLC0415
+
+    return {"every kind with charts": [{**g, "path": PATH} for g in FOUR],
+            "far projection": [numbers(1, path=PATH, projected_date="2029-06-01", status="behind")],
+            "projection to the date": [numbers(1, path=PATH, projected_date=None, projection={"projected": 95.0},
+                                               status="behind")],
+            "reached": [numbers(1, path=PATH, status="reached", needed_per_week=0.0)]}[state]
+
+
+@pytest.mark.parametrize("state", ["every kind with charts", "far projection", "projection to the date", "reached"])
+def test_goals_in_each_faked_state_keeps_every_rule(client, monkeypatch, state):
+    """The faked Goals states (pass B13), with the two closed goals: the frame rules, the page rules, T1's text rules
+    and T3's step 4 checks find nothing; the card rule and every rule a route in BUILT keeps find exactly
+    GOALS_WAITS."""
+    from .test_web_goals import CLOSED, charts_result, goals_result  # noqa: PLC0415
+
+    goals = _faked_goals(state)
+    monkeypatch.setattr(services, "get_goals", lambda *a: goals_result(goals, CLOSED))
+    monkeypatch.setattr(services, "goal_charts", lambda *a: charts_result(goals))
+    sign_in(client)
+    uid = only_user().id
+    r = client.get("/goals")
+    assert r.status_code == 200 and r.text.count('<figure class="goal-chart">') == len(goals)
+    s = Seen("/goals", r.text, True, zone_missing=not only_user().time_zone, today="2026-11-10")
+    findings = frame_findings(s) + page_rule_findings(s)
+    findings += page_findings("/goals", r.text, entered_text(uid), uid)
+    findings += step_4_findings("/goals", r.text, names_of(uid), entered_notes(uid))
+    assert not findings, "\n".join(findings)
+    assert titled_card_findings(s) + built_findings(s, uid) == GOALS_WAITS.get(state, [])
 
 
 @pytest.mark.parametrize("account", sorted(ACCOUNTS))
@@ -1679,12 +1729,39 @@ def test_the_card_rule_learns_the_two_goals_shapes_and_nothing_looser(client, mo
         "an h2 in goals-main outside any card": ('<div class="goals-main">', '<div class="goals-main"><h2>Loose</h2>',
                                                  "/goals", "sits in no card or sheet"),
     }
+    # rev_b12 M1: the goal shape is Goals' alone, and no sheet sits around or inside a goal; the goal's h2 sits in
+    # its own div.goal-head (pass B13).
+    sheet_goal = ('<div class="sheet" popover role="dialog" aria-labelledby="sx"><h2 id="sx">S</h2>'
+                  '<ul class="goals"><li class="goal" id="goal-y"><div class="goal-head"><h2>In a sheet</h2></div>'
+                  '</li></ul></div>')
+    cases.update({
+        "ul.goals inside a sheet": ('<div class="goals-main">', f'<div class="goals-main">{sheet_goal}', "/goals",
+                                    "'goal-y' sits inside a sheet"),
+        "a sheet inside a goal": (head, f'{head}<div class="sheet" popover role="dialog" aria-labelledby="s2">'
+                                        f'<h2 id="s2">S2</h2></div>', "/goals", "a sheet sits inside the goal"),
+        "a second h2 beside the head": (head, f'{item}<h2>Late</h2>\n      <div class="goal-head">', "/goals",
+                                        "has its h2 'Late' outside its own div.goal-head"),
+        "a goal's head without its class": (head, f'{item}\n      <div class="goal-top">', "/goals",
+                                            "outside its own div.goal-head"),
+        "a goal-head inside another div": (head, f'{item}<div><div class="goal-head">', "/goals",
+                                           "outside its own div.goal-head"),
+    })
     missed = {name: broken(old, new, address) for name, (old, new, address, said) in cases.items()
               if not any(said in f for f in broken(old, new, address))}
     assert not missed, missed
     # The goal's h2 one level down, in the head's own div: the shape the contract's markup gives, no finding.
     assert found(page.replace('<h2><strong>', '<div><h2><strong>', 1).replace('</strong></h2>', '</strong></h2></div>',
                                                                               1)) == []
+    # A goal card dropped into Today and into Progress: a finding on each, though each page alone gives none.
+    loose = ('<ul class="goals" aria-label="Open goals"><li class="goal" id="goal-x"><div class="goal-head">'
+             '<h2>Loose goal</h2></div></li></ul>')
+    for address, route in (("/day/2026-11-10", "/day/{date}"), ("/progress", "/progress")):
+        other = client.get(address).text
+        assert found(other, address) == []
+        body = re.search(r"<main[^>]*>", other).group(0)
+        said = found(other.replace(body, body + loose, 1), address)
+        assert f"the goal 'goal-x' is on {route}, a page with no open goals" in said, (address, said)
+        assert "the h2 'Loose goal' sits in no card or sheet" in said, (address, said)
 
 
 # ---------------------------------------------------------------- the Progress batch

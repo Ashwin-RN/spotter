@@ -10,8 +10,8 @@ from datetime import timedelta
 
 import pytest
 
-from app import db, formatting, services, web
-from app.models import Goal
+from app import charts, db, formatting, services, web
+from app.models import CallLog, Goal
 from app.services.common import SAMPLE_NOTE
 
 from .test_web import (  # noqa: F401 - fixtures
@@ -129,21 +129,26 @@ def test_goals_shows_every_kind_with_its_numbers_and_buttons(signed, fake_goals)
     lift = goal_item(page, 1)
     assert "<strong>Back Squat 100 kg</strong></h2>" in lift and '<p class="goal-by">by Tue 2 Feb 2027</p>' in lift
     assert "tag-good" in lift and ">On track<" in lift
-    assert "<dd>80\u00a0kg on Sun 1 Nov</dd>" in lift
+    assert '<dd>80\u00a0kg<span class="sub">Sun 1 Nov</span></dd>' in lift
+    assert "<dt>Plan line today</dt><dd>82\u00a0kg</dd>" in lift
     assert '<span class="big">85&nbsp;<span class="unit">kg</span></span>' in lift
     assert "<dd>+1.25&nbsp;kg a week</dd>" in lift and "<dd>+2.5&nbsp;kg a week</dd>" in lift
-    assert "<dd>reached on Mon 4 Jan 2027</dd>" in lift
+    assert '<dd>Mon 4 Jan 2027<span class="sub">reached</span></dd>' in lift
     weight = goal_item(page, 2)
     assert "tag-behind" in weight and "<dd>-0.42&nbsp;kg a week</dd>" in weight
     assert "<dd>-0.3&nbsp;kg a week</dd>" in weight
-    assert "no date" in weight
+    assert '<dd class="words">No date yet</dd>' in weight
     waist = goal_item(page, 3)
-    assert "Waist 80 cm" in waist and "<dd>88\u00a0cm on Sun 1 Nov</dd>" in waist and "Nothing logged yet" in waist
-    assert "not worked out" in waist and "not enough data yet" in waist and ">Not enough data<" in waist
+    assert "Waist 80 cm" in waist and '<dd>88\u00a0cm<span class="sub">Sun 1 Nov</span></dd>' in waist
+    assert "Nothing logged yet" in waist
+    assert '<dd class="words">Not worked out yet</dd>' in waist
+    assert '<dd class="words">Not enough data yet</dd>' in waist
+    assert ">Not enough data<" in waist
     assert "A projection needs 4 points in the last 6 weeks." in waist  # Not enough data: the goal's own note
     run = goal_item(page, 4)
-    assert "Outdoor Run 5 km in 27:00" in run and "<dd>31:00 on Sun 1 Nov</dd>" in run
+    assert "Outdoor Run 5 km in 27:00" in run and '<dd>31:00<span class="sub">Sun 1 Nov</span></dd>' in run
     assert '<span class="big">29:30</span>' in run and "<dd>-30\u00a0seconds a week</dd>" in run and ">Reached<" in run
+    assert '<dt>At this pace</dt><dd class="words">Reached</dd>' in run
     for goal_id in (1, 2, 3, 4):
         item = goal_item(page, goal_id)
         for status, label, button in (("hit", "Hit", "secondary"), ("dropped", "Drop", "link")):
@@ -153,8 +158,8 @@ def test_goals_shows_every_kind_with_its_numbers_and_buttons(signed, fake_goals)
                              rf'<button class="{button}">{label}</button>', item), (goal_id, status)
         assert 'value="open"' not in item
     closed = page.split(CLOSED_H2)[1].split(SET_GOAL_H2)[0]
-    assert "Bench Press 80 kg" in closed and ">hit<" in closed and "on Thu 5 Nov" in closed
-    assert "Waist 85 cm" in closed and ">dropped<" in closed
+    assert "Bench Press 80 kg" in closed and ">Hit<" in closed and "Closed Thu 5 Nov" in closed
+    assert "Waist 85 cm" in closed and ">Dropped<" in closed
     assert closed.count('name="status" value="open"') == 2 and closed.count(">Reopen<") == 2
     assert page.index("Open goals") < page.index("Closed goals") < page.index("Set a goal")
 
@@ -527,14 +532,17 @@ def test_the_progress_chart_draws_the_smoothed_line_and_keeps_the_average_in_the
 
     def with_smoothed(*args):
         chart = real(*args)
-        chart["points"] = [{**p, "smoothed": s} for p, s in zip(chart["points"], (80.0, 80.1, 79.99))]
+        chart["points"] = [{**p, "smoothed": s} for p, s in zip(chart["points"], (85.0, 85.2, 85.4))]
         return chart
 
     monkeypatch.setattr(web.progress_data, "bodyweight_chart", with_smoothed)
     page = signed.get("/progress").text
-    assert '<polyline class="series smoothed"' in page and "The line is the smoothed trend, now 80 kg." in page
-    # The card's own figure is the read's: the Trend callout is get_trends' smoothed weight, not the chart's.
+    assert '<polyline class="series smoothed"' in page and "The line is the smoothed trend, now 85.4 kg." in page
+    # The card's own figure is the read's: the Trend callout is get_trends' smoothed weight, not the chart's. The
+    # stand-in shows as 85.4, which the read's smoothed weight never does here (rev_b8 finding 6), so a page that
+    # printed the chart's figure in the callout fails.
     smoothed = formatting.show(services.get_trends(uid)["bodyweight"]["smoothed"], "bodyweight_derived", unit=False)
+    assert smoothed != "85.4"
     assert callouts_of(body_weight_card(page))[2] == (["is-key"], "Trend", f"{smoothed}\u00a0kg", "Smoothed")
     assert "7-day average" not in body_weight_card(page)
     assert "The line is the smoothed trend, which evens out day-to-day swings." in page
@@ -567,7 +575,7 @@ def test_sample_goals_carry_a_sample_tag_open_and_closed(signed, fake_goals):
     assert re.search(r'<strong>Back Squat 100 kg</strong></h2>\s*<p class="goal-by">by [^<]+</p>\s*</div>\s*'
                      r'<span class="tag tag-sample">sample</span>\s*</div>', goal_item(page, 1))
     assert "tag-sample" not in goal_item(page, 2)
-    assert 'Bench Press 80 kg <span class="tag tag-sample">sample</span>' in goal_item(page, 9)
+    assert '<span class="tag tag-closed">Hit</span> <span class="tag tag-sample">sample</span>' in goal_item(page, 9)
     assert "tag-sample" not in goal_item(page, 10)  # no is_sample key: no tag
 
 
@@ -673,7 +681,13 @@ def goal_card(page: str, goal_id: int) -> dict:
     [tag] = projection_dd.find_all("span", "tag")
     [facts] = li.find_all("dl", "goal-facts")
     [actions] = li.find_all("div", "goal-actions")
+    charts = li.find_all(cls="goal-chart")
     return {
+        "chart": [(c.tag, [s.attrs.get("id") for s in c.find_all("svg")]) for c in charts],
+        "legend": [[(k.find_all("span")[0].classes, k.text()) for k in p.elements()]
+                   for c in charts for p in c.find_all("p", "legend")],
+        "cells": [(dt.text(), _fact_value(dd), [s.text() for s in dd.find_all("span", "sub")], dd.classes)
+                  for dt, dd in zip(facts.find_all("dt"), facts.find_all("dd"))],
         "parts": [(e.tag, e.classes) for e in li.elements()],
         "label": [h.text() for h in head.find_all("h2")], "strong": [s.text() for s in head.find_all("strong")],
         "by": [p.text() for p in head.find_all("p", "goal-by")], "sample": bool(head.find_all("span", "tag-sample")),
@@ -685,9 +699,16 @@ def goal_card(page: str, goal_id: int) -> dict:
         "plan_lines": [m.text() for m in plan_dd.find_all("span", "means")],
         "tag": (tag.classes, tag.text()), "means": [m.text() for m in projection_dd.find_all("span", "means")],
         "facts": [dt.text() for dt in facts.find_all("dt")],
-        "ask": [p.text() for p in li.elements() if p.is_("p", "muted")],
+        "ask": [p.text() for p in li.elements() if p.is_("p", "goal-ask") or p.is_("p", "muted")],
         "actions": [(b.classes, b.text()) for b in actions.find_all("button")],
     }
+
+
+def _fact_value(dd) -> str:
+    """A fact's own value: the dd's text less the line under it (span.sub), a no-break space kept."""
+    from .test_pages_text import tr  # noqa: PLC0415
+
+    return tr.squash("".join(c for c in dd.children if isinstance(c, str)))
 
 
 def one_card(signed, fake_goals, **values) -> dict:
@@ -765,7 +786,7 @@ def test_a_goal_with_nothing_logged_says_so_in_now_and_in_the_plan_box(signed, f
     assert card["tag"] == (["tag", "tag-status", "tag-nodata"], "Not enough data")
 
 
-ASK = "To close the gap, ask your assistant: How do I get back on track for Back Squat 100 kg?"
+ASK = "Ask your assistant how to reach this target by its date."  # the lead's ruling (pass B13)
 TAG_WORDS = {"reached": "Reached", "on track": "On track", "behind": "Behind", "not enough data": "Not enough data"}
 
 
@@ -786,8 +807,8 @@ def test_by_projection_shows_the_tag_once_and_what_it_means(signed, fake_goals, 
     assert card["ask"] == ([ASK] if status == "behind" else [])
     assert page.count(f">{TAG_WORDS[status]}</span>") == 1  # shown once
     if status == "behind":
-        assert card["parts"][card["parts"].index(("dl", ["goal-facts"])) + 1] == ("p", ["muted"])
-        assert not re.search(r"\d", ASK.replace("Back Squat 100 kg", ""))
+        assert card["parts"][card["parts"].index(("dl", ["goal-facts"])) + 1] == ("p", ["goal-ask"])
+        assert not re.search(r"\d", ASK) and "Back Squat" not in ASK
 
 
 def test_a_note_shows_only_as_not_enough_datas_meaning(signed, fake_goals):
@@ -815,6 +836,7 @@ def test_the_head_holds_the_label_in_strong_the_date_under_it_and_the_sample_tag
         ["Back Squat 100 kg"], ["Back Squat 100 kg"], ["by Tue 2 Feb 2027"], True)
     assert own["sample"] is False
     assert sample["actions"] == [(["secondary"], "Hit"), (["link"], "Drop")]
+    # A stand-in read with no plan draws no chart (numbers' path is empty): the card runs on without it.
     assert sample["parts"] == [("div", ["goal-head"]), ("p", ["goal-now", "figure"]), ("dl", ["standing"]),
                                ("dl", ["goal-facts"]), ("div", ["goal-actions"])]
 
@@ -870,8 +892,9 @@ def test_each_card_on_the_page_is_its_goal_charts_goal(signed, monkeypatch, stat
         assert card["by"] == [f"by {formatting.day(g['target_date'], charted['today'])}"]
         assert card["sample"] == g["is_sample"]
         assert card["tag"][1] == TAG_WORDS[g["status"]]
-        assert card["ask"] == ([f"To close the gap, ask your assistant: How do I get back on track for {g['label']}?"]
-                               if g["status"] == "behind" else [])
+        assert card["ask"] == ([ASK] if g["status"] == "behind" else [])
+        assert card["cells"] == fact_cells(g, charted["today"])
+        assert card["chart"] == [("figure", [f"chart-goal-{g['goal_id']}"])]
         if g["latest"] is None:
             assert card["now"] is None and card["plan_plain"] and g["plan_line"] is None
             continue
@@ -1005,7 +1028,7 @@ def test_the_page_reads_goal_charts_and_get_goals_of_one_day(signed, monkeypatch
                                                                              "today": "2026-12-31"})
     page = signed.get("/goals").text
     assert len(got) == len(charted) == 2 and goal_card(page, 1)["by"] == ["by Tue 2 Feb"]
-    assert "on Thu 5 Nov 2026" in goal_item(page, 9)  # a closed day worded against goal_charts' 2027
+    assert "Closed Thu 5 Nov 2026" in goal_item(page, 9)  # a closed day worded against goal_charts' 2027
     got.clear()
     charted.clear()
     fake_same = {**goals_result(closed=CLOSED), "today": "2027-01-01"}
@@ -1019,3 +1042,461 @@ def test_a_goal_charts_failure_is_a_404_page(signed, monkeypatch):
                         raising=False)
     r = signed.get("/goals")
     assert r.status_code == 404 and "There is nothing here." in r.text
+
+
+# ================================================================ Goals B (pass B13): the chart, the facts, closed
+
+# A stand-in read's path: the plan from start to target through today, the actual line ending at today below the
+# goal's latest (85), so the ring at today shows latest, not the series' last value.
+PATH = {"plan": [{"date": "2026-11-01", "value": 80.0}, {"date": "2026-11-10", "value": 82.0},
+                 {"date": "2027-02-02", "value": 100.0}],
+        "actual": [{"date": "2026-11-01", "value": 80.0}, {"date": "2026-11-05", "value": 83.0},
+                   {"date": "2026-11-10", "value": 84.0}]}
+LEGEND = {"plan": (["key", "line", "plan"], "Plan line"), "line": (["key", "line"], "Actual"),
+          "dot": (["key", "dot-key"], "Actual"), "projection": (["key", "line", "projection"], "Projection"),
+          "today": (["key", "line", "today"], "Today")}
+
+
+def fact_cells(g: dict, today: str) -> list[tuple]:
+    """The facts list a goal card holds, worked out here from goal_charts' own fields: (label, value, the line under
+    it, the dd's classes). Plan line today prints what plan_line prints (rule 2) and is left out on the line (rule 3);
+    each missing fact has its own words; a reached goal's At this pace says so."""
+    q = web.goal_quantity(g)
+    wide = g["latest"] is not None and formatting.widen([g["latest"], g["should_be_today"]], q)
+
+    def pace(value):
+        if g["kind"] == "cardio_best":
+            return formatting.show(value, "time_pace", page=True)
+        return f"{formatting.show(value, 'rate', page=True)}{NB}{g['unit']} a week"
+
+    cells = [("Started", formatting.show(g["start_value"], q, page=True), [formatting.day(g["start_date"], today)], [])]
+    if g["vs_plan"] != "on the line":
+        cells.append(("Plan line today", formatting.show(g["should_be_today"], q, page=True, widened=wide), [], []))
+    for name, value, missing in (("Needed", g["needed_per_week"], "Not worked out yet"),
+                                 ("So far", g["actual_per_week"], "Not enough data yet")):
+        cells.append((name, pace(value), [], []) if value is not None else (name, missing, [], ["words"]))
+    if g["status"] == "reached":
+        cells.append(("At this pace", "Reached", [], ["words"]))
+    elif g["projected_date"]:
+        cells.append(("At this pace", formatting.day(g["projected_date"], today), ["reached"], []))
+    else:
+        cells.append(("At this pace", "No date yet", [], ["words"]))
+    return cells
+
+
+def svg_of(page: str, goal_id: int) -> str:
+    return re.search(rf'<svg class="chart" id="chart-goal-{goal_id}".*?</svg>', page, re.S).group(0)
+
+
+def chart_marks(svg: str) -> dict:
+    """What a goal chart draws, read from its markup: the desc, each plain dot's and the ring's title, the series
+    points, the plan line, the projection with its end dot, the today line and the target tick."""
+    from .test_pages_text import parse  # noqa: PLC0415
+
+    root = parse(svg)
+    a = lambda n, *names: tuple(float(n.attrs[k]) for k in names)  # noqa: E731
+    lines = {cls: [a(n, "x1", "y1", "x2", "y2") for n in root.find_all("line", cls)]
+             for cls in ("plan", "projection", "today-line", "target-tick")}
+    circles = root.find_all("circle")
+    return {"desc": root.find_all("desc")[0].text(), **lines,
+            "dots": [c.find_all("title")[0].text() for c in circles if c.classes == ["dot"]],
+            "rings": [(a(c, "cx", "cy"), c.find_all("title")[0].text()) for c in circles if "is-latest" in c.classes],
+            "ends": [a(c, "cx", "cy") for c in circles if "proj-end" in c.classes],
+            "series": [p.attrs["points"].split() for p in root.find_all("polyline", "series")]}
+
+
+def legend_of(g: dict) -> list[tuple]:
+    """The legend a goal's chart calls for, from the read: the plan line and today always; Actual as a line from two
+    points, a ringed dot from one; the projection when the chart has one to draw (contract, the goal path chart)."""
+    actual = g["path"]["actual"]
+    projected = g["latest"] is not None and bool(g["projected_date"]
+                                                 or (g["projection"] or {}).get("projected") is not None)
+    if len(actual) > 1:
+        line = [LEGEND["line"]]
+    else:
+        line = [LEGEND["dot"]] if g["latest"] is not None else []
+    return [LEGEND["plan"]] + line + ([LEGEND["projection"]] if projected else []) + [LEGEND["today"]]
+
+
+@pytest.mark.parametrize("state", ["sample", "edge", "nothing logged", "line ended"])
+def test_each_goal_chart_is_its_read_drawn_on_the_pages_today(signed, monkeypatch, state):
+    """Each real goal on the fixed day: the chart is charts.goal_svg of goal_charts' own goal on goal_charts' today.
+    Its dots are the read's path.actual, the ring at today holds latest, the plan line ends at the target tick, the
+    projection runs from the ring to its end dot, the desc says plan_line word for word and its other figures
+    unwidened, and the legend names what the chart draws."""
+    uid = goals_page_state(state, monkeypatch)
+    charted = services.goal_charts(uid)
+    today, page = charted["today"], signed.get("/goals").text
+    assert charted["goals"]
+    for g in charted["goals"]:
+        q, svg = web.goal_quantity(g), svg_of(page, g["goal_id"])
+        assert svg == str(charts.goal_svg(g, today))
+        drawn = chart_marks(svg)
+        start = formatting.show(g["start_value"], q)
+        assert drawn["desc"].startswith(f"Started {start} on {formatting.day(g['start_date'], today)}. "
+                                        f"{g['plan_line'] or 'Nothing logged yet.'} Target ")
+        assert drawn["dots"] == [f"{formatting.day(p['date'], today)}: {formatting.show(p['value'], q)}"
+                                 for p in g["path"]["actual"] if p["date"] < today]
+        rings = [title for _, title in drawn["rings"]]
+        assert rings == ([f"{formatting.day(today, today)}: {formatting.show(g['latest'], q)}"]
+                         if g["latest"] is not None else [])
+        actual = g["path"]["actual"]
+        assert [len(s) for s in drawn["series"]] == ([len(actual)] if len(actual) > 1 else [])
+        [(_, _, plan_x2, plan_y2)] = drawn["plan"]
+        [(_, tick_y, tick_x2, _)] = drawn["target-tick"]
+        assert (plan_x2, plan_y2) == (tick_x2, tick_y)
+        [(today_x, _, _, _)] = drawn["today-line"]
+        if drawn["rings"]:
+            [((ring_x, ring_y), _)] = drawn["rings"]
+            assert ring_x == today_x
+        if drawn["projection"]:
+            [(x1, y1, x2, y2)] = drawn["projection"]
+            assert (x1, y1) == (ring_x, ring_y) and drawn["ends"] == [(x2, y2)]
+        else:
+            assert drawn["ends"] == []
+        assert goal_card(page, g["goal_id"])["legend"] == [legend_of(g)]
+
+
+def test_the_sample_charts_on_the_fixed_day(signed, monkeypatch):
+    """The three sample goals: each a line of points with a projection to its projected date, and the body weight
+    desc says the widened plan_line while its start stays unwidened."""
+    goals_page_state("sample", monkeypatch)
+    page = signed.get("/goals").text
+    for goal_id in (1, 2, 3):
+        drawn = chart_marks(svg_of(page, goal_id))
+        assert len(drawn["series"]) == len(drawn["rings"]) == len(drawn["projection"]) == 1, goal_id
+        assert goal_card(page, goal_id)["legend"] == [[LEGEND[k] for k in ("plan", "line", "projection", "today")]]
+    assert chart_marks(svg_of(page, 1))["desc"] == (
+        "Started 79.9 kg on Wed 14 Oct. 79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind. "
+        "Target 77 kg by Tue 5 Jan 2027. Needed -0.25 kg a week. So far -0.29 kg a week. "
+        "At this pace it is reached on Sat 26 Dec.")
+
+
+def test_a_chart_with_one_point_draws_the_plan_line_one_ringed_dot_and_today(signed, monkeypatch):
+    """The edge account's goals set today: one point at most in path.actual, the ring at today holding latest, no
+    series line. With no projection there is no projection line and no Projection in the legend."""
+    uid = goals_page_state("edge", monkeypatch)
+    page = signed.get("/goals").text
+    single = [g for g in services.goal_charts(uid)["goals"] if not g["projection"]]
+    assert len(single) >= 3
+    for g in single:
+        assert len(g["path"]["actual"]) <= 1 and g["latest"] is not None and g["projected_date"] is None
+        drawn = chart_marks(svg_of(page, g["goal_id"]))
+        assert (len(drawn["plan"]), len(drawn["rings"]), len(drawn["today-line"])) == (1, 1, 1)
+        assert drawn["series"] == drawn["dots"] == drawn["projection"] == drawn["ends"] == []
+        assert goal_card(page, g["goal_id"])["legend"] == [[LEGEND["plan"], LEGEND["dot"], LEGEND["today"]]]
+
+
+def test_a_chart_with_nothing_logged_draws_the_plan_line_and_today_only(signed, monkeypatch):
+    uid = goals_page_state("nothing logged", monkeypatch)
+    [g] = services.goal_charts(uid)["goals"]
+    page = signed.get("/goals").text
+    drawn = chart_marks(svg_of(page, g["goal_id"]))
+    assert len(drawn["plan"]) == len(drawn["today-line"]) == len(drawn["target-tick"]) == 1
+    assert drawn["rings"] == drawn["dots"] == drawn["series"] == drawn["projection"] == []
+    assert "Nothing logged yet." in drawn["desc"]
+    assert goal_card(page, g["goal_id"])["legend"] == [[LEGEND["plan"], LEGEND["today"]]]
+
+
+def test_a_chart_draws_no_projection_without_one_and_one_to_the_date_without_a_projected_date(signed, fake_goals):
+    """No projection and no projected date: no projection line, and the legend has no Projection. A projection
+    without a projected date runs to the target date at the projected value (the contract's goal path rules), so
+    the legend names it."""
+    fake_goals([numbers(1, path=PATH, projected_date=None, projection=None, status="behind"),
+                numbers(2, path=PATH, projected_date=None, projection={"projected": 95.0}, status="behind")])
+    page = signed.get("/goals").text
+    none, to_date = chart_marks(svg_of(page, 1)), chart_marks(svg_of(page, 2))
+    assert none["projection"] == none["ends"] == [] and len(to_date["projection"]) == 1
+    assert goal_card(page, 1)["legend"] == [[LEGEND["plan"], LEGEND["line"], LEGEND["today"]]]
+    assert goal_card(page, 2)["legend"] == [[LEGEND["plan"], LEGEND["line"], LEGEND["projection"], LEGEND["today"]]]
+    [(_, _, plan_x2, _)] = to_date["plan"]
+    assert to_date["ends"][0][0] == plan_x2  # at the target date
+    for goal_id in (1, 2):
+        assert goal_card(page, goal_id)["cells"][-1] == ("At this pace", "No date yet", [], ["words"])
+        assert "At this pace it is reached" not in chart_marks(svg_of(page, goal_id))["desc"]
+
+
+def test_a_projected_date_far_past_the_target_is_held_on_the_chart_and_said_in_full(signed, fake_goals):
+    """A projected date years past the target: the chart holds the line at half the plan's length past the target,
+    inside the drawing, and the desc and At this pace keep the real day."""
+    goal = numbers(1, path=PATH, projected_date="2029-06-01", status="behind")
+    fake_goals([goal])
+    page = signed.get("/goals").text
+    assert svg_of(page, 1) == str(charts.goal_svg(goal, "2026-11-10"))
+    drawn = chart_marks(svg_of(page, 1))
+    [(end_x, _)] = drawn["ends"]
+    [(_, _, target_x, _)] = drawn["plan"]
+    assert target_x < end_x <= charts.GOAL_W
+    assert drawn["desc"].endswith("At this pace it is reached on Fri 1 Jun 2029.")
+    assert goal_card(page, 1)["cells"][-1] == ("At this pace", "Fri 1 Jun 2029", ["reached"], [])
+
+
+def test_the_legend_is_a_p_of_spans_in_the_chart_block_hidden_from_a_reader(signed, fake_goals):
+    """Inside a goal card the legend is p.legend of span items, each a key and its words, in the chart's
+    figure.goal-chart after the svg, aria-hidden: the desc says it all. No li in the card."""
+    from .test_pages_text import parse  # noqa: PLC0415
+
+    fake_goals([numbers(1, path=PATH)])
+    page = signed.get("/goals").text
+    [figure] = parse(page).find_all("figure", "goal-chart")
+    assert [(n.tag, n.classes) for n in figure.elements()] == [("svg", ["chart"]), ("p", ["legend"])]
+    legend = figure.elements()[1]
+    assert legend.attrs.get("aria-hidden") == "true"
+    assert all(s.tag == "span" and [k.tag for k in s.elements()] == ["span"] for s in legend.elements())
+    assert goal_card(page, 1)["legend"] == [[LEGEND[k] for k in ("plan", "line", "projection", "today")]]
+    assert not re.search(r"<li\b", goal_item(page, 1))
+
+
+def test_a_stand_in_read_with_no_plan_draws_no_chart_and_no_legend():
+    assert web.goal_chart(numbers(1), "2026-11-10") == {"svg": "", "legend": []}
+    assert web.goal_chart(numbers(1, path=PATH), "2026-11-10")["legend"] == [
+        (" ".join(LEGEND[k][0]), LEGEND[k][1]) for k in ("plan", "line", "projection", "today")]
+
+
+def test_the_chart_takes_the_pages_one_today(signed, monkeypatch):
+    """get_goals and goal_charts name two days, then still two: the chart is drawn on goal_charts' today, the page's
+    date, not get_goals'."""
+    goal = numbers(1, path=PATH)
+    monkeypatch.setattr(services, "get_goals", lambda *a: {**goals_result(), "today": "2026-11-09"})
+    monkeypatch.setattr(services, "goal_charts", lambda *a: {**charts_result([goal]), "today": "2026-11-10"})
+    page = signed.get("/goals").text
+    assert svg_of(page, 1) == str(charts.goal_svg(goal, "2026-11-10")) != str(charts.goal_svg(goal, "2026-11-09"))
+
+
+FACT_STATES = {
+    "lift": {}, "behind no date": {"status": "behind", "projected_date": None},
+    "nothing worked out": {"needed_per_week": None, "actual_per_week": None, "projected_date": None,
+                           "status": "not enough data"},
+    "reached": {"status": "reached"}, "reached no date": {"status": "reached", "projected_date": None},
+    "weight widened": {**WEIGHT, "latest": 79.01, "should_be_today": 78.9566, "vs_plan": "behind",
+                       "needed_per_week": -0.25, "actual_per_week": -0.29},
+    "weight plain": {**WEIGHT, "latest": 79.01, "should_be_today": 78.5, "vs_plan": "behind"},
+    "run widened": {**RUN, "latest": 29.5 + 0.4 / 60, "should_be_today": 29.5 - 0.4 / 60, "needed_per_week": -0.31,
+                    "actual_per_week": -0.5},
+    "waist": {**WAIST, "vs_plan": "behind"}, "heart": {**HEART, "vs_plan": "ahead"},
+    "on the line": {"latest": 82.0, "should_be_today": 82.0, "ahead_by": 0.0, "days_ahead": 0,
+                    "vs_plan": "on the line"},
+    "nothing logged": {"status": "not enough data", "note": "A projection needs 4 points in the last 6 weeks.",
+                       **NOTHING_LOGGED},
+}
+
+
+@pytest.mark.parametrize("state", sorted(FACT_STATES))
+def test_each_fact_is_its_reads_field_cell_by_cell(signed, fake_goals, state):
+    """The facts list, cell by cell, against the read's own fields: Started with its day under it, Plan line today
+    (rule 2's figure, left out on the line), Needed and So far a week, At this pace with "reached" under it, and each
+    missing fact's words."""
+    values = FACT_STATES[state]
+    card = one_card(signed, fake_goals, **values)
+    assert card["cells"] == fact_cells(numbers(1, **values), "2026-11-10")
+
+
+def test_the_facts_words_for_each_missing_fact_and_a_reached_goal(signed, fake_goals):
+    card = one_card(signed, fake_goals, **FACT_STATES["nothing worked out"])
+    assert [(c[0], c[1], c[3]) for c in card["cells"][2:]] == [("Needed", "Not worked out yet", ["words"]),
+                                                               ("So far", "Not enough data yet", ["words"]),
+                                                               ("At this pace", "No date yet", ["words"])]
+    for values in (FACT_STATES["reached"], FACT_STATES["reached no date"]):
+        card = one_card(signed, fake_goals, **values)
+        assert card["cells"][-1] == ("At this pace", "Reached", [], ["words"])
+    card = one_card(signed, fake_goals)
+    assert card["cells"][0] == ("Started", f"80{NB}kg", ["Sun 1 Nov"], [])
+    assert card["cells"][-1] == ("At this pace", "Mon 4 Jan 2027", ["reached"], [])
+
+
+def test_plan_line_today_prints_the_figure_plan_line_prints_widened_and_not(signed, fake_goals):
+    """Rule 2: Plan line today is the plan figure plan_line prints, widened exactly when the now figure is."""
+    plan = lambda card: dict((c[0], c[1]) for c in card["cells"])["Plan line today"]  # noqa: E731
+    wide = one_card(signed, fake_goals, **FACT_STATES["weight widened"])
+    assert plan(wide) == f"78.96{NB}kg" and wide["now"] == f"79.01{NB}kg"
+    plain = one_card(signed, fake_goals, **FACT_STATES["weight plain"])
+    assert plan(plain) == f"78.5{NB}kg" and plain["now"] == f"79{NB}kg"
+    run = one_card(signed, fake_goals, **FACT_STATES["run widened"])
+    assert plan(run) == "29:29.6" and run["now"] == "29:30.4"
+
+
+@pytest.mark.parametrize("state", ["sample", "edge", "line ended"])
+def test_plan_line_today_on_the_real_page_is_the_plan_figure_plan_line_says(signed, monkeypatch, state):
+    """Each real goal off the plan line: Plan line today, its no-break space made plain, is the plan figure in
+    plan_line, "on the plan line today" or "the target of". On the line, no Plan line today row (rule 3)."""
+    uid = goals_page_state(state, monkeypatch)
+    page = signed.get("/goals").text
+    goals = services.goal_charts(uid)["goals"]
+    for g in goals:
+        cells = dict((c[0], c[1]) for c in goal_card(page, g["goal_id"])["cells"])
+        if g["vs_plan"] == "on the line":
+            assert "Plan line today" not in cells
+            continue
+        said = re.search(r" now against (?:the target of )?(.+?)(?: on the plan line today)?: ", g["plan_line"])
+        assert cells["Plan line today"].replace(NB, " ") == said.group(1), (cells, g["plan_line"])
+    if state == "sample":
+        assert dict((c[0], c[1]) for c in goal_card(page, 1)["cells"])["Plan line today"] == f"78.96{NB}kg"
+    if state == "edge":
+        assert {g["vs_plan"] for g in goals} == {"on the line"}
+
+
+def test_rule_3_leaves_out_plan_line_today_on_the_line_only(signed, fake_goals):
+    on = one_card(signed, fake_goals, **FACT_STATES["on the line"])
+    assert on["facts"] == ["Started", "Needed", "So far", "At this pace"]
+    for vs_plan in ("ahead", "behind"):
+        off = one_card(signed, fake_goals, vs_plan=vs_plan)
+        assert off["facts"] == ["Started", "Plan line today", "Needed", "So far", "At this pace"], vs_plan
+
+
+def test_a_passed_target_date_makes_plan_line_today_the_target(signed, monkeypatch):
+    """Ten days past the date: should_be_today is the target, so Plan line today is the target, as plan_line says,
+    and Needed has nothing to work out."""
+    uid = goals_page_state("line ended", monkeypatch)
+    [g] = services.goal_charts(uid)["goals"]
+    assert g["line_ended"] and g["should_be_today"] == g["target_value"] == 75
+    card = goal_card(signed.get("/goals").text, g["goal_id"])
+    assert card["cells"] == [("Started", f"80{NB}kg", ["Tue 10 Nov"], []), ("Plan line today", f"75{NB}kg", [], []),
+                             ("Needed", "Not worked out yet", [], ["words"]),
+                             ("So far", "Not enough data yet", [], ["words"]),
+                             ("At this pace", "No date yet", [], ["words"])]
+
+
+@pytest.mark.parametrize("state", GOAL_STATES)
+def test_the_behind_line_holds_no_label_and_no_figure_in_every_state_that_shows_it(signed, monkeypatch, state):
+    """Wherever a goal is Behind by projection, the one line straight after the facts, in its own p.goal-ask, in the
+    lead's words: no label, no figure, nothing the plan box says. Nowhere else."""
+    uid = goals_page_state(state, monkeypatch)
+    page = signed.get("/goals").text
+    goals = services.goal_charts(uid)["goals"]
+    for g in goals:
+        card = goal_card(page, g["goal_id"])
+        if g["status"] != "behind":
+            assert card["ask"] == [] and ("p", ["goal-ask"]) not in card["parts"]
+            continue
+        assert card["ask"] == [ASK]
+        assert card["parts"][card["parts"].index(("dl", ["goal-facts"])) + 1] == ("p", ["goal-ask"])
+        assert g["label"] not in ASK and not re.search(r"\d", ASK)
+        assert "gap" not in ASK and "track" not in ASK
+    assert any(g["status"] == "behind" for g in goals) == (state == "edge")
+    assert page.count('class="goal-ask"') == sum(g["status"] == "behind" for g in goals)
+
+
+def test_a_card_runs_head_now_standing_chart_facts_the_behind_line_and_actions(signed, fake_goals):
+    fake_goals([numbers(1, path=PATH), numbers(2, path=PATH, status="behind")])
+    page = signed.get("/goals").text
+    parts = [("div", ["goal-head"]), ("p", ["goal-now", "figure"]), ("dl", ["standing"]), ("figure", ["goal-chart"]),
+             ("dl", ["goal-facts"])]
+    assert goal_card(page, 1)["parts"] == parts + [("div", ["goal-actions"])]
+    assert goal_card(page, 2)["parts"] == parts + [("p", ["goal-ask"]), ("div", ["goal-actions"])]
+    assert goal_card(page, 1)["chart"] == [("figure", ["chart-goal-1"])]
+
+
+def closed_rows(page: str) -> list[dict]:
+    """The Closed goals card's rows as a person reads them, part by part."""
+    from .test_pages_text import parse  # noqa: PLC0415
+
+    [card] = [s for s in parse(page).find_all("section", "card")
+              if s.attrs.get("aria-labelledby") == "closed-goals-title"]
+    [ul] = card.find_all("ul", "entries")
+    out = []
+    for li in ul.elements():
+        main, tags, actions = li.elements()
+        forms = [(f.attrs.get("action"),
+                  [(i.attrs.get("name"), i.attrs.get("value")) for i in f.find_all("input")
+                   if i.attrs.get("name") == "status"],
+                  [(b.classes, b.text()) for b in f.find_all("button")]) for f in actions.find_all("form")]
+        out.append({"li": (li.tag, li.classes, li.attrs.get("id")), "main": (main.tag, main.classes),
+                    "parts": [(s.classes, s.text()) for s in main.elements()],
+                    "tags": [(t.classes, t.text()) for t in tags.find_all("span", "tag")], "where": tags.classes,
+                    "actions": actions.classes, "forms": forms})
+    return out
+
+
+def test_closed_goals_each_say_their_label_the_day_in_the_persons_zone_the_tag_and_reopen(signed, fake_goals):
+    """Each closed goal: its label, "Closed {day}" in grey with the day in the person's own zone through day_utc
+    (either side of their midnight), the tag Hit or Dropped as tag-closed, and Reopen as a link button."""
+    services.update_settings(only_user().id, {"time_zone": "Asia/Kolkata"}, "web")
+    closed = [{**CLOSED[0], "closed_at": "2026-11-05T18:29:00+00:00"},   # 23:59 on Thu 5 Nov in India
+              {**CLOSED[1], "closed_at": "2026-11-05T18:31:00+00:00", "is_sample": True}]  # 00:01 on Fri 6 Nov
+    fake_goals([numbers(1)], closed)
+    page = signed.get("/goals").text
+    reopen = lambda n: [(f"/goals/{n}/status", [("status", "open")], [(["link"], "Reopen")])]  # noqa: E731
+    assert closed_rows(page) == [
+        {"li": ("li", ["entry-line"], "goal-9"), "main": ("div", ["entry-main"]),
+         "parts": [(["entry-name"], "Bench Press 80 kg"), (["entry-figures"], "Closed Thu 5 Nov")],
+         "tags": [(["tag", "tag-closed"], "Hit")], "where": ["entry-tags"], "actions": ["entry-actions"],
+         "forms": reopen(9)},
+        {"li": ("li", ["entry-line"], "goal-10"), "main": ("div", ["entry-main"]),
+         "parts": [(["entry-name"], "Waist 85 cm"), (["entry-figures"], "Closed Fri 6 Nov")],
+         "tags": [(["tag", "tag-closed"], "Dropped"), (["tag", "tag-sample"], "sample")], "where": ["entry-tags"],
+         "actions": ["entry-actions"], "forms": reopen(10)}]
+    assert "Bench Press 80 kg" in goal_item(page, 9) and "Waist 85 cm" in goal_item(page, 10)  # goal_item reads a row
+
+
+def test_a_closed_goal_without_a_closing_time_says_no_day(signed, fake_goals):
+    fake_goals([], [{**CLOSED[0], "closed_at": None}])
+    [row] = closed_rows(signed.get("/goals").text)
+    assert row["parts"] == [(["entry-name"], "Bench Press 80 kg")] and row["tags"] == [(["tag", "tag-closed"], "Hit")]
+
+
+def test_no_open_goals_is_one_dashed_card_that_points_to_the_form_and_the_assistant(signed, fake_goals):
+    from .test_pages_text import CLAUDE_SKIPS, parse  # noqa: PLC0415
+
+    fake_goals()
+    page = signed.get("/goals").text
+    [main] = parse(page).find_all("div", "goals-main")
+    empty = [n for n in main.elements() if n.is_(cls="card")]
+    assert [(n.tag, n.classes, [(p.tag, p.classes, p.text()) for p in n.elements()]) for n in empty] == [
+        ("div", ["card", "is-empty"], [("p", ["empty-line"], "No open goals. Set one below, or tell your assistant "
+                                                             "what you are aiming for.")])]
+    assert '<ul class="goals"' not in page and "Claude" not in page.split("<main")[1]
+    assert "/goals" not in CLAUDE_SKIPS
+
+
+def test_a_reopen_among_several_goals_reads_that_goal_alone(signed):
+    """An open goal 12 beside a dropped goal 1: Reopen on goal 1 writes and says so; Reopen on goal 12 writes nothing.
+    The status read is the one goal by its id (get_entry), its id parsed as set_goal parses it."""
+    uid = only_user().id
+    by = (today_of(only_user()) + timedelta(days=30)).isoformat()
+    first = services.set_goal(uid, {"kind": "bodyweight", "target_value": 75, "start_value": 80, "target_date": by},
+                              "claude")["id"]
+    for _ in range(11):
+        made = services.set_goal(uid, {"kind": "lift", "exercise": "Back Squat", "target_value": 140,
+                                       "start_value": 100, "target_date": by}, "claude")["id"]
+    services.set_goal(uid, {"goal_id": first, "status": "dropped"}, "claude")
+    assert (first, made) == (1, 12)
+    writes = len(calls(uid))
+    r = post(signed, f"/goals/{first}/status", status="open")
+    assert r.headers["location"] == SITE + "/goals?saved=open" and len(calls(uid)) == writes + 1
+    assert [g.status for g in rows(Goal, uid) if g.id == first] == ["open"]
+    r = post(signed, f"/goals/{made}/status", status="open")
+    assert r.headers["location"] == SITE + "/goals?saved=unchanged" and len(calls(uid)) == writes + 1
+    r = post(signed, f"/goals/0{first}/status", status="open")
+    assert r.headers["location"] == SITE + "/goals?saved=unchanged" and len(calls(uid)) == writes + 1
+
+
+def test_another_persons_goal_is_never_read_as_unchanged(signed, make_user):
+    """Their goal is open and the post says open: the read finds no goal of this person's by that id, so the post
+    goes to set_goal, which answers not found. Their goal stays as it was."""
+    me = only_user().id
+    other = make_user()
+    theirs = services.set_goal(other.id, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
+                                          "target_date": "2099-01-01"}, "claude")["id"]
+    for status in ("open", "dropped"):
+        r = post(signed, f"/goals/{theirs}/status", status=status)
+        assert r.status_code == 404 and "There is nothing here." in r.text, status
+    assert [g.status for g in rows(Goal, other.id)] == ["open"]
+    assert [c[0] for c in calls(me)] == ["set_goal", "set_goal"]
+
+
+def test_at_the_write_limit_a_status_that_changes_nothing_lands_as_unchanged(signed):
+    """Ruled: nothing is written, so the post lands as unchanged, not refused. A status that changes is refused."""
+    uid = only_user().id
+    made = services.set_goal(uid, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
+                                   "target_date": (today_of(only_user()) + timedelta(days=30)).isoformat()},
+                             "claude")["id"]
+    with db.session_scope() as s:
+        now = db.utcnow()
+        s.add_all(CallLog(function="log_bodyweight", started_at=now, ms=1, ok=True, error_code=None, result_bytes=1,
+                          user_id=uid) for _ in range(services.WRITE_LIMIT))
+    writes = len(calls(uid))
+    r = post(signed, f"/goals/{made}/status", status="open")
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=unchanged"
+    assert len(calls(uid)) == writes
+    r = post(signed, f"/goals/{made}/status", status="dropped")
+    assert r.status_code == 429 and [g.status for g in rows(Goal, uid)] == ["open"]
