@@ -15,8 +15,9 @@ and Settings.
     /progress                      one line per lift, the Trends card (get_trends), and the body weight
                                    chart with its smoothed line
     /progress/{lift}               one lift: its chart, bests and sessions
-    /goals                         every goal with its numbers (get_goals); Hit, Drop and Reopen POST to
-                                   /goals/{goal_id}/status; one form for a new goal of any kind (POST)
+    /goals                         each open goal as its own card (goal_charts), the closed ones (get_goals);
+                                   Hit, Drop and Reopen POST to /goals/{goal_id}/status; one form for a new
+                                   goal of any kind (POST)
     /settings                      the account, the time zone, and the switch for what Claude may do
                                    (the switch POSTs to /settings/claude-can); export, sample data, delete
     /settings/sample               POST: sample data into an empty account, then Today
@@ -240,7 +241,8 @@ GOAL_NOTES = (
 )
 GOAL_NOTE_TEXT = {code: text for code, _, text in GOAL_NOTES}
 CLOSED_WORDS = {"hit": "hit", "dropped": "dropped"}
-STATUS_CLASSES = {"reached": "tag-good", "on track": "tag-good", "behind": "tag-behind"}
+STATUS_CLASSES = {"reached": "tag-good", "on track": "tag-good", "behind": "tag-behind",
+                  "not enough data": "tag-nodata"}
 
 # What Delete my account says goes, by count. Deleted rows count: they go too.
 DELETE_COUNTS = ((LiftSession, "Lift sessions"), (Bodyweight, "Weigh-ins"), (Measurement, "Measurements"),
@@ -1633,6 +1635,69 @@ def goal_quantity(goal: dict) -> str:
     return "bpm" if goal.get("unit") == "bpm" else "cm"
 
 
+# A goal card's words (section L, Goals), each keyed by goal_charts' own fields. What the now figure is, by the
+# goal's kind and its now_basis: a cardio time names its distance, a measurement its kind's word, lowered.
+NOW_WORDS = {
+    ("bodyweight", "average_7d"): "now, the 7-day average",
+    ("bodyweight", "latest_weigh_in"): "now, the latest weigh-in",
+    ("lift", "best_28d"): "now, the best estimated max in 28 days",
+    ("lift", "latest"): "now, the latest session's estimated max",
+    ("cardio_best", "best_28d"): "now, the best {distance} time in 28 days",
+    ("cardio_best", "latest"): "now, the latest {distance} time",
+    ("measurement", "latest"): "now, the latest {measurement}",
+}
+# The heading of Against the plan line, by vs_plan and line_ended: the plan line today while it runs, the target
+# once it has ended or has no length.
+PLAN_HEADINGS = {
+    ("ahead", False): "Ahead of the plan line today", ("ahead", True): "Ahead of the target",
+    ("on the line", False): "On the plan line today", ("on the line", True): "At the target",
+    ("behind", False): "Behind the plan line today", ("behind", True): "Behind the target",
+}
+# By projection: the tag for each status, and what it means. Not enough data means the goal's own note.
+STATUS_TAGS = {"reached": "Reached", "on track": "On track", "behind": "Behind", "not enough data": "Not enough data"}
+STATUS_MEANS = {"reached": "The target is reached.", "on track": "At this pace the target is reached by the date.",
+                "behind": "At this pace the target is not reached by the date."}
+
+
+def now_words(goal: dict) -> str | None:
+    """What a goal's now figure is, in grey words after it: NOW_WORDS by its kind and now_basis. None with nothing
+    logged (now_basis null). A cardio time's distance goes through show, a measurement's word is kind_word's."""
+    words = NOW_WORDS.get((goal.get("kind"), goal.get("now_basis")))
+    if words is None:
+        return None
+    distance = formatting.show(goal["distance_km"], "km", page=True) if goal.get("distance_km") is not None else ""
+    kind = goal.get("measurement_kind")
+    return words.format(distance=distance, measurement=measurements.kind_word(kind).lower() if kind else "")
+
+
+def now_widened(goal: dict) -> bool:
+    """Close-call rule 2 on the page: the now figure widens exactly when plan_line's does, by formatting.widen on
+    goal_charts' unrounded latest and should_be_today, so the card's now and plan_line's print the same figure."""
+    latest, should = goal.get("latest"), goal.get("should_be_today")
+    return latest is not None and should is not None and formatting.widen([latest, should], goal_quantity(goal))
+
+
+def days_words(goal: dict) -> str | None:
+    """'3 days ahead', '1 day behind': days_ahead through show, the word from vs_plan. None when days_ahead is 0 or
+    null: the box then shows the gap alone, in plan_line."""
+    days = goal.get("days_ahead")
+    if not days or goal.get("vs_plan") not in ("ahead", "behind"):
+        return None
+    return f"{formatting.show(abs(days), 'count')}{NBSP}{'day' if abs(days) == 1 else 'days'} {goal['vs_plan']}"
+
+
+def goal_words(goal: dict) -> dict:
+    """One open goal card's words and its now figure's widening, from goal_charts' own fields: the now words, the
+    heading of Against the plan line, the days line, the By projection tag, its class and what it means. The page
+    builds no comparison and never works out whether the line has ended: vs_plan and line_ended say both."""
+    status = goal.get("status")
+    return {"now": now_words(goal), "widened": now_widened(goal),
+            "heading": PLAN_HEADINGS.get((goal.get("vs_plan"), bool(goal.get("line_ended")))),
+            "days": days_words(goal), "tag": STATUS_TAGS.get(status, status),
+            "tag_class": STATUS_CLASSES.get(status, ""),
+            "means": goal.get("note") if status == "not enough data" else STATUS_MEANS.get(status)}
+
+
 def goal_from_form(form) -> dict:
     """The new-goal form as set_goal's data: every field the person filled in, as typed. Empty fields
     are left out, so a body weight goal sends no exercise. The service checks everything."""
@@ -1704,21 +1769,36 @@ async def exercise_names(kind: str) -> list[str]:
     return [e["name"] for e in result.get("exercises", [])]
 
 
+async def goal_reads(user_id: int) -> tuple[dict, dict]:
+    """The Goals page's two reads: get_goals with the closed goals, and goal_charts for the open goals, unrounded,
+    and the page's one date. Each takes the person's date from the clock, so read across their midnight the two can
+    name two dates: both are read once more, as glance_of does. If they still differ, goal_charts' date is the page's
+    for that one render: get_goals gives the page only its closed goals, whose labels, statuses and closing times
+    carry nothing worked out from the date. Either read's failure comes back as it is."""
+    for _ in range(2):
+        listed = await _db(services.get_goals, user_id, True)
+        charted = await _db(services.goal_charts, user_id)
+        if failed(listed) or failed(charted) or listed.get("today") == charted.get("today"):
+            break
+    return listed, charted
+
+
 async def goals_view(request: Request, user: User, errors: dict | None = None, typed: dict | None = None,
                      status_code: int = 200) -> Response:
-    result = await _db(services.get_goals, user.id, True)
-    if failed(result):
+    listed, charted = await goal_reads(user.id)
+    if failed(listed) or failed(charted):
         return not_found_page(request)
     state = await _db(services.sample_state, user.id)
     saved = GOAL_SAVED.get(request.query_params.get("saved") or "") if status_code == 200 else None
     notes = goal_notes_shown(request.query_params.get("notes")) if saved else []
-    return page(request, "goals.html", status_code=status_code, goals=result.get("goals") or [], notes=notes,
-                closed=result.get("closed") or [], errors=errors or {}, typed=typed or {}, saved=saved,
+    goals = charted.get("goals") or []
+    return page(request, "goals.html", status_code=status_code, goals=goals, notes=notes,
+                words={g["goal_id"]: goal_words(g) for g in goals},
+                closed=listed.get("closed") or [], errors=errors or {}, typed=typed or {}, saved=saved,
                 kinds=GOAL_KINDS, lifts=await exercise_names("lift"), activities=await cardio_names(),
                 measurement_choices=[(k, measurements.kind_word(k), rules.MEASUREMENTS[k][0]) for k in GOAL_MEASUREMENTS],
-                goal_quantity=goal_quantity, status_class=lambda s: STATUS_CLASSES.get(s, ""),
-                closed_words=CLOSED_WORDS, sample_rows=state["sample_rows"], today=result.get("today"),
-                zone=user.time_zone)
+                goal_quantity=goal_quantity, closed_words=CLOSED_WORDS, sample_rows=state["sample_rows"],
+                today=charted.get("today"), zone=user.time_zone)
 
 
 async def goals_page(request: Request) -> Response:
@@ -1738,6 +1818,18 @@ async def goals_page(request: Request) -> Response:
     return redirect(saved_address("goal", result))
 
 
+async def goal_status_now(user_id: int, goal_id: str) -> str | None:
+    """The status one goal has now, as get_goals(include_closed) lists it: "open" for one of its open goals, a closed
+    goal's own status, None when it lists no goal by that id or the read fails (the write then goes ahead, and
+    set_goal answers it)."""
+    listed = await _db(services.get_goals, user_id, True)
+    if failed(listed):
+        return None
+    if any(str(g.get("goal_id")) == goal_id for g in listed.get("goals") or []):
+        return "open"
+    return next((g.get("status") for g in listed.get("closed") or [] if str(g.get("goal_id")) == goal_id), None)
+
+
 async def goal_status_page(request: Request) -> Response:
     """POST from Goals: Hit, Drop or Reopen one goal, through set_goal with its id and the status."""
     user = await current_user(request)
@@ -1745,8 +1837,12 @@ async def goal_status_page(request: Request) -> Response:
         return redirect(links.page("sign_in"))
     form = await request.form()
     status = str(form.get("status") or "")
-    result = await write(user, "set_goal", services.set_goal, user.id,
-                         {"goal_id": request.path_params["goal_id"], "status": status}, "web")
+    goal_id = request.path_params["goal_id"]
+    # A goal set to the status it already has: nothing to change, so nothing is written and the page says nothing
+    # was saved. set_goal answers such a post as a success, so the web reads the status first.
+    if status and await goal_status_now(user.id, goal_id) == status:
+        return redirect(marked(links.page("goals"), *UNCHANGED))
+    result = await write(user, "set_goal", services.set_goal, user.id, {"goal_id": goal_id, "status": status}, "web")
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if "not_found" in codes(result):

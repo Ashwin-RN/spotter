@@ -1,69 +1,96 @@
 {% extends "base.html" %}
 {% block title %}Goals · Spotter{% endblock %}
 {% block main %}
-<h1>Goals</h1>
-{% include "sample_banner.html" %}
-{% if saved %}<p class="ok">{{ saved }}</p>{% endif %}
-{% for note in notes %}<p class="notice goal-note">{{ note }}</p>{% endfor %}
+{% import "_parts.html" as parts %}
 {% macro sample_tag(g) %}{% if g.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}{% endmacro %}
-{% macro pace(g, value) %}{% if g.kind == "cardio_best" %}{{ value|show("time_pace") }}{% else %}{{ value|show("rate") }} {{ g.unit }} a week{% endif %}{% endmacro %}
+{% macro pace(g, value) %}{% if g.kind == "cardio_best" %}{{ value|show("time_pace") }}{% else %}{{ value|show("rate") }}&nbsp;{{ g.unit }} a week{% endif %}{% endmacro %}
 
-{% macro status_form(goal_id, status, label) %}
+{% macro status_form(goal_id, status, label, button="link") %}
 <form method="post" action="/goals/{{ goal_id }}/status" class="inline">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="status" value="{{ status }}">
-  <button class="link">{{ label }}</button>
+  <button class="{{ button }}">{{ label }}</button>
 </form>
 {% endmacro %}
 
-<div class="card">
-  <h2>Open goals</h2>
+{# Goals (section L): the page head, then in div.goals-main the banner, the strips and each open goal as its own
+   card, then the Closed goals card; Set a goal beside it. Each open goal reads goal_charts, unrounded: its now
+   figure prints what plan_line prints (close-call rule 2), and its words come from its own fields (web.goal_words).
+   The facts list waits for its own pass, which adds the chart beside it. #}
+<div class="page-head">
+  <h1>Goals</h1>
+</div>
+<div class="goals-main">
+  {% include "sample_banner.html" %}
+  {% if saved %}{{ parts.saved_line(saved) }}{% endif %}
+  {% for note in notes %}<p class="notice goal-note">{{ note }}</p>{% endfor %}
   {% if goals %}
-  <ul class="entries goals">
+  <ul class="goals" aria-label="Open goals">
     {% for g in goals %}
+    {% set q, w = goal_quantity(g), words[g.goal_id] %}
     <li class="goal" id="goal-{{ g.goal_id }}">
-      <div class="entry-line">
-        <span><strong>{{ g.label }}</strong>{{ sample_tag(g) }} by {{ g.target_date|day(today) }}
-          <span class="tag tag-status {{ status_class(g.status) }}">{{ g.status }}</span></span>
-        <span class="entry-actions">
-          {{ status_form(g.goal_id, "hit", "Hit") }}
-          {{ status_form(g.goal_id, "dropped", "Drop") }}
-        </span>
+      <div class="goal-head">
+        <div>
+          <h2><strong>{{ g.label }}</strong></h2>
+          <p class="goal-by">by {{ g.target_date|day(today) }}</p>
+        </div>
+        {% if g.is_sample %}<span class="tag tag-sample">sample</span>{% endif %}
       </div>
-      {% set q = goal_quantity(g) %}
-      <dl class="facts">
-        <dt>Started</dt><dd>{{ g.start_value|show(q) }} on {{ g.start_date|day(today) }}</dd>
-        <dt>Now</dt><dd>{% if g.latest is not none %}{{ g.latest|show(q) }}{% else %}<span class="muted">nothing logged yet</span>{% endif %}</dd>
-        <dt>Needed</dt><dd>{% if g.needed_per_week is not none %}{{ pace(g, g.needed_per_week) }}{% else %}<span class="muted">not worked out</span>{% endif %}</dd>
-        <dt>So far</dt><dd>{% if g.actual_per_week is not none %}{{ pace(g, g.actual_per_week) }}{% else %}<span class="muted">not enough data yet</span>{% endif %}</dd>
-        <dt>At this pace</dt><dd>{% if g.projected_date %}reached on {{ g.projected_date|day(today) }}{% else %}<span class="muted">no date</span>{% endif %}</dd>
+      {% if g.latest is not none %}
+      <p class="goal-now figure"><span class="big">{{ g.latest|show(q, w.widened, unit=False) }}{% if g.kind != "cardio_best" %}&nbsp;<span class="unit">{{ g.unit }}</span>{% endif %}</span> <span class="figure-label">{{ w.now }}</span></p>
+      {% else %}
+      <p class="goal-now figure"><span class="figure-label">Nothing logged yet</span></p>
+      {% endif %}
+      <dl class="standing">
+        <div>
+          <dt>Against the plan line</dt>
+          {% if g.latest is none %}<dd class="plain">Nothing logged yet</dd>
+          {% else %}<dd>{{ w.heading }}<span class="means">{{ g.plan_line }}</span>{% if w.days %}<span class="means">{{ w.days }}</span>{% endif %}</dd>
+          {% endif %}
+        </div>
+        <div>
+          <dt>By projection</dt>
+          <dd><span class="tag tag-status {{ w.tag_class }}">{{ w.tag }}</span>{% if w.means %}<span class="means">{{ w.means }}</span>{% endif %}</dd>
+        </div>
       </dl>
-      {% if g.note %}<p class="muted small">{{ g.note }}</p>{% endif %}
+      <dl class="goal-facts">
+        <dt>Started</dt><dd>{{ g.start_value|show(q) }} on {{ g.start_date|day(today) }}</dd>
+        <dt>Needed</dt>{% if g.needed_per_week is not none %}<dd>{{ pace(g, g.needed_per_week) }}</dd>{% else %}<dd class="words">not worked out</dd>{% endif %}
+        <dt>So far</dt>{% if g.actual_per_week is not none %}<dd>{{ pace(g, g.actual_per_week) }}</dd>{% else %}<dd class="words">not enough data yet</dd>{% endif %}
+        <dt>At this pace</dt>{% if g.projected_date %}<dd>reached on {{ g.projected_date|day(today) }}</dd>{% else %}<dd class="words">no date</dd>{% endif %}
+      </dl>
+      {% if g.status == "behind" %}<p class="muted">To close the gap, ask your assistant: How do I get back on track for {{ g.label }}?</p>{% endif %}
+      <div class="goal-actions">
+        {{ status_form(g.goal_id, "hit", "Hit", "secondary") }}
+        {{ status_form(g.goal_id, "dropped", "Drop") }}
+      </div>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="muted">No open goals. Set one below, or tell Claude what you are aiming for.</p>
+  <div class="card">
+    <p class="muted">No open goals. Set one below, or tell Claude what you are aiming for.</p>
+  </div>
+  {% endif %}
+
+  {% if closed %}
+  <section class="card" aria-labelledby="closed-goals-title">
+    <h2 id="closed-goals-title">Closed goals</h2>
+    <ul class="entries">
+      {% for g in closed %}
+      <li class="entry-line" id="goal-{{ g.goal_id }}">
+        <span>{{ g.label }}{{ sample_tag(g) }} <span class="tag">{{ closed_words.get(g.status, g.status) }}</span>
+          {% if g.closed_at %}<span class="muted small">on {{ g.closed_at|day_utc(zone, today) }}</span>{% endif %}</span>
+        <span class="entry-actions">{{ status_form(g.goal_id, "open", "Reopen") }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
   {% endif %}
 </div>
 
-{% if closed %}
-<div class="card">
-  <h2>Closed goals</h2>
-  <ul class="entries">
-    {% for g in closed %}
-    <li class="entry-line" id="goal-{{ g.goal_id }}">
-      <span>{{ g.label }}{{ sample_tag(g) }} <span class="tag">{{ closed_words.get(g.status, g.status) }}</span>
-        {% if g.closed_at %}<span class="muted small">on {{ g.closed_at|day_utc(zone, today) }}</span>{% endif %}</span>
-      <span class="entry-actions">{{ status_form(g.goal_id, "open", "Reopen") }}</span>
-    </li>
-    {% endfor %}
-  </ul>
-</div>
-{% endif %}
-
-<div class="card">
-  <h2>Set a goal</h2>
+<aside class="card set-goal" id="set-goal" aria-labelledby="set-goal-title">
+  <h2 id="set-goal-title">Set a goal</h2>
   <p class="muted small">Fill in what your kind of goal needs and leave the rest empty. Spotter checks it and says what is missing.</p>
   {% if errors.form %}{% for e in errors.form %}<div class="error"><p>{{ e.message }}</p>{% if e.fix %}<p>{{ e.fix }}</p>{% endif %}</div>{% endfor %}{% endif %}
   {% macro field_error(field) %}{% for e in errors.get(field, []) %}<div class="error"><p>{{ e.message }}</p>{% if e.fix %}<p>{{ e.fix }}</p>{% endif %}</div>{% endfor %}{% endmacro %}
@@ -108,5 +135,5 @@
     {{ field_error("text") }}
     <button class="primary">Set goal</button>
   </form>
-</div>
+</aside>
 {% endblock %}

@@ -6,7 +6,8 @@ the figure's own element. Text inside an SVG chart and a label built in a servic
 page=False. The chart's description never widens.
 
 Run on the real services, on the sample account and on an edge account, so show on both sides holds
-whatever precision a service field carries. The plan-line fields are a later step.
+whatever precision a service field carries. An open goal card reads goal_charts, unrounded: its cells are held
+to goal_charts' own fields, and its now figure to the one plan_line prints.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from datetime import date
 import pytest
 
 from app import db, links, services, users
-from app.formatting import day, day_utc, days, show
+from app.formatting import day, day_utc, days, show, widen
 from app.models import User
 from app.services import lifts
 
@@ -235,7 +236,12 @@ def test_a_lifts_page_holds_its_figures(client, monkeypatch, name):
             for p in reversed(lift["estimated_max_over_time"])]
 
 
-# ---------------------------------------------------------------- Goals and get_goals
+# ---------------------------------------------------------------- Goals, get_goals and goal_charts
+
+# By projection's tag words, by status (section L, Goals).
+STATUS_WORDS = {"reached": "Reached", "on track": "On track", "behind": "Behind", "not enough data": "Not enough data"}
+NOW_FIGURE = r'<span class="big">(.*?)</span> <span class="figure-label">'
+
 
 def test_each_goal_holds_get_goals_figures(client, account):
     result = services.get_goals(account, True)
@@ -250,21 +256,88 @@ def test_each_goal_holds_get_goals_figures(client, account):
         assert holds(text, f"by {day(g['target_date'], today)}")
         figure(card["Started"], g["start_value"], q)
         assert holds(card["Started"], day(g["start_date"], today))
-        if g["latest"] is not None:
-            figure(card["Now"], g["latest"], q)
+        if g["latest"] is not None:  # get_goals' latest, rounded: the now figure prints it, or the widened plan_line's
+            now = text_of(re.search(NOW_FIGURE, item, re.S).group(1))
+            assert holds(now, show(g["latest"], q, page=True)) or holds(g["plan_line"], now.replace("\u00a0", " "))
         pace = "time_pace" if g["kind"] == "cardio_best" else "rate"
         for name, value in (("Needed", g["needed_per_week"]), ("So far", g["actual_per_week"])):
             if value is None:
                 continue
-            words = "" if pace == "time_pace" else f" {g['unit']} a week"
+            words = "" if pace == "time_pace" else f"\u00a0{g['unit']} a week"
             assert holds(card[name], show(value, pace, page=True) + words), (name, card[name])
         if g["projected_date"]:
             assert holds(card["At this pace"], day(g["projected_date"], today))
-        assert g["status"] in text
+        assert STATUS_WORDS[g["status"]] in text
     for g in result["closed"]:
         item = re.search(rf'<li class="entry-line" id="goal-{g["goal_id"]}">(.*?)</li>', page, re.S).group(1)
         if g["closed_at"]:
             assert holds(text_of(item), f"on {day_utc(g['closed_at'], zone, today)}")
+
+
+def goal_cells(page: str, goal_id: int) -> dict[str, list[str]]:
+    """One open goal card's cells, each its own element's text as a person reads it: the head's label and date, the
+    now figure and its words, the plan box's heading and each line under it, the tag and what it means, and each
+    fact's value. Nothing is read from a row's joined text."""
+    item = re.search(rf'<li class="goal" id="goal-{goal_id}">(.*?)</li>', page, re.S).group(1)
+    plan = re.search(r'<dt>Against the plan line</dt>\s*<dd( class="plain")?>(.*?)</dd>', item, re.S)
+    projection = re.search(r"<dt>By projection</dt>\s*<dd>(.*?)</dd>", item, re.S).group(1)
+
+    def cells(pattern: str, markup: str = item) -> list[str]:
+        return [text_of(m) for m in re.findall(pattern, markup, re.S)]
+
+    plain = bool(plan.group(1))
+    return {
+        "label": cells(r"<h2><strong>(.*?)</strong></h2>"), "by": cells(r'<p class="goal-by">(.*?)</p>'),
+        "now": cells(NOW_FIGURE), "now_words": cells(r'<span class="figure-label">(.*?)</span>'),
+        "plain": [text_of(plan.group(2))] if plain else [],
+        "heading": [] if plain else [text_of(plan.group(2).split("<span", 1)[0])],
+        "plan_lines": [] if plain else cells(r'<span class="means">(.*?)</span>', plan.group(2)),
+        "tag": cells(r'<span class="tag tag-status[^"]*">(.*?)</span>', projection),
+        "means": cells(r'<span class="means">(.*?)</span>', projection),
+        **{dt: [text_of(dd)] for dt, dd in re.findall(r'<dt>(Started|Needed|So far|At this pace)</dt>'
+                                                       r'<dd(?: class="words")?>(.*?)</dd>', item, re.S)},
+    }
+
+
+@pytest.mark.parametrize("name", sorted(ACCOUNTS))
+def test_each_goal_card_holds_goal_charts_figures_cell_by_cell(client, monkeypatch, name):
+    """Every open goal card on both accounts at the fixed day, cell by cell, against goal_charts' own unrounded
+    fields: each figure through show with page=True, the now figure widened exactly when formatting.widen is (rule
+    2) and so the one plan_line prints, the plan box's sentence the service's plan_line as written, and every day
+    worded against goal_charts' today."""
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    sign_in(client)
+    account = only_user().id
+    ACCOUNTS[name](account)
+    result = services.goal_charts(account)
+    today = result["today"]
+    page = client.get("/goals").text
+    assert result["goals"]
+    for g in result["goals"]:
+        cells = goal_cells(page, g["goal_id"])
+        q = GOAL_QUANTITY.get(g["kind"]) or ("bpm" if g["unit"] == "bpm" else "cm")
+        assert cells["label"] == [html.unescape(g["label"])] and cells["by"] == [f"by {day(g['target_date'], today)}"]
+        assert cells["tag"] == [STATUS_WORDS[g["status"]]]
+        assert cells["Started"] == [f"{show(g['start_value'], q, page=True)} on {day(g['start_date'], today)}"]
+        pace = "time_pace" if g["kind"] == "cardio_best" else "rate"
+        for fact, value in (("Needed", g["needed_per_week"]), ("So far", g["actual_per_week"])):
+            if value is not None:
+                words = "" if pace == "time_pace" else f"\u00a0{g['unit']} a week"
+                assert cells[fact] == [show(value, pace, page=True) + words], fact
+        if g["projected_date"]:
+            assert cells["At this pace"] == [f"reached on {day(g['projected_date'], today)}"]
+        if g["latest"] is None:
+            assert cells["now"] == [] and cells["now_words"] == ["Nothing logged yet"]
+            assert cells["plain"] == ["Nothing logged yet"] and cells["heading"] == []
+            continue
+        wide = widen([g["latest"], g["should_be_today"]], q)
+        assert cells["now"] == [show(g["latest"], q, page=True, widened=wide)]
+        assert holds(g["plan_line"], cells["now"][0].replace("\u00a0", " "))
+        assert cells["plan_lines"][0] == g["plan_line"]
+        days = g["days_ahead"]
+        assert cells["plan_lines"][1:] == ([f"{show(abs(days), 'count')}\u00a0{'day' if abs(days) == 1 else 'days'} "
+                                            f"{g['vs_plan']}"] if days else [])
+        assert len(cells["heading"]) == len(cells["means"]) == len(cells["now_words"]) == 1
 
 
 def test_the_edge_account_has_a_cardio_time_goal_and_a_closed_goal(client):

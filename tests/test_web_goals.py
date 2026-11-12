@@ -1,7 +1,7 @@
 """Stage 5 on the web: the Goals page and its form, and the Trends card on Progress.
 
-The page tests replace get_goals, get_trends and set_goal with the contract's result shapes, so they
-test the pages whatever the services do. A few run the real services end to end.
+The page tests replace get_goals, goal_charts, get_trends and set_goal with the contract's result shapes, so
+they test the pages whatever the services do. A few run the real services end to end.
 """
 
 import html
@@ -10,38 +10,48 @@ from datetime import timedelta
 
 import pytest
 
-from app import formatting, services, web
+from app import db, formatting, services, web
 from app.models import Goal
 from app.services.common import SAMPLE_NOTE
 
 from .test_web import (  # noqa: F401 - fixtures
-    CSP, SITE, TOO_MANY, FakeSeam, body_weight_card, callouts_of, calls, client, only_user, post, rows, seam,
-    session_of, sign_in, today_of, web_client,
+    CSP, FIXED_NOW, SITE, TOO_MANY, FakeSeam, body_weight_card, callouts_of, calls, client, only_user, post, rows,
+    seam, session_of, sign_in, today_of, web_client,
 )
 
 
 
 def numbers(goal_id: int, **values) -> dict:
-    """One goal-numbers row, the contract's shape."""
+    """One goal-numbers row, the contract's shape, as goal_charts gives it: with the plan line's five fields, path,
+    now_basis and line_ended. get_goals' rows are the same less the last three (fake_goals leaves them in)."""
     base = {"goal_id": goal_id, "label": "Back Squat 100 kg", "kind": "lift", "exercise": "Back Squat",
             "measurement_kind": None, "distance_km": None, "unit": "kg", "start_value": 80.0,
             "start_date": "2026-11-01", "direction": "up", "target_value": 100.0, "target_date": "2027-02-02",
             "latest": 85.0, "status": "on track", "needed_per_week": 1.25, "actual_per_week": 2.5,
-            "projected_date": "2027-01-04", "projection": None, "note": None}
+            "projected_date": "2027-01-04", "projection": None, "note": None, "is_sample": False,
+            "should_be_today": 82.0, "ahead_by": 3.0, "days_ahead": 14, "vs_plan": "ahead",
+            "plan_line": "85 kg now against 82 kg on the plan line today: 3 kg ahead.",
+            "path": {"plan": [], "actual": []}, "now_basis": "best_28d", "line_ended": False}
     return {**base, **values}
 
 
+NOTHING_LOGGED = {"latest": None, "ahead_by": None, "days_ahead": None, "vs_plan": None, "plan_line": None,
+                  "now_basis": None}
 FOUR = [
     numbers(1),
     numbers(2, label="Body weight 75 kg", kind="bodyweight", exercise=None, start_value=80.4, latest=79.6,
             direction="down", target_value=75.0, needed_per_week=-0.42, actual_per_week=-0.3, status="behind",
-            projected_date=None, note="A projection needs 4 points in the last 6 weeks."),
+            projected_date=None, should_be_today=79.0, ahead_by=-0.6, days_ahead=-5, vs_plan="behind",
+            plan_line="79.6 kg now against 79 kg on the plan line today: 0.6 kg behind.", now_basis="average_7d"),
     numbers(3, label="Waist 80 cm", kind="measurement", exercise=None, measurement_kind="waist", unit="cm",
-            start_value=88.0, latest=None, direction="down", target_value=80.0, needed_per_week=None,
-            actual_per_week=None, status="not enough data", projected_date=None),
+            start_value=88.0, direction="down", target_value=80.0, needed_per_week=None,
+            actual_per_week=None, status="not enough data", projected_date=None, should_be_today=87.2,
+            note="A projection needs 4 points in the last 6 weeks.", **NOTHING_LOGGED),
     numbers(4, label="Outdoor Run 5 km in 27:00", kind="cardio_best", exercise="Outdoor Run", distance_km=5.0,
             unit="min", start_value=31.0, latest=29.5, direction="down", target_value=27.0, needed_per_week=-0.5,
-            actual_per_week=-0.75, status="reached", projected_date="2026-12-01"),
+            actual_per_week=-0.75, status="reached", projected_date="2026-12-01", should_be_today=30.2,
+            ahead_by=0.7, days_ahead=9, plan_line="29:30 now against 30:12 on the plan line today: 42 seconds ahead.",
+            now_basis="latest"),
 ]
 CLOSED = [{"goal_id": 9, "label": "Bench Press 80 kg", "kind": "lift", "status": "hit",
            "closed_at": "2026-11-05T10:00:00+00:00", "target_value": 80.0, "target_date": "2026-12-01"},
@@ -54,14 +64,21 @@ def goals_result(goals=(), closed=()) -> dict:
             "how": "", "summary": "", "links": {"goals": SITE + "/goals"}}
 
 
+def charts_result(goals=()) -> dict:
+    """goal_charts' shape: the open goals with their plan line, path, now_basis and line_ended."""
+    return {"today": "2026-11-10", "goals": list(goals), "includes_sample": False}
+
+
 @pytest.fixture
 def fake_goals(monkeypatch):
-    """fake_goals(goals, closed): get_goals answers with these; the calls are recorded."""
+    """fake_goals(goals, closed): get_goals and goal_charts answer with these, both on the one date; get_goals'
+    calls are recorded."""
     seen = []
 
     def install(goals=(), closed=()):
-        result = goals_result(goals, closed)
+        result, charted = goals_result(goals, closed), charts_result(goals)
         monkeypatch.setattr(services, "get_goals", lambda *args: seen.append(args) or result, raising=False)
+        monkeypatch.setattr(services, "goal_charts", lambda *args: charted, raising=False)
         return seen
 
     return install
@@ -71,6 +88,10 @@ def fake_goals(monkeypatch):
 def signed(client):
     sign_in(client)
     return client
+
+
+SET_GOAL_H2 = '<h2 id="set-goal-title">Set a goal</h2>'
+CLOSED_H2 = '<h2 id="closed-goals-title">Closed goals</h2>'
 
 
 def goal_item(page: str, goal_id: int) -> str:
@@ -106,28 +127,32 @@ def test_goals_shows_every_kind_with_its_numbers_and_buttons(signed, fake_goals)
     page = signed.get("/goals").text
     token = session_of(signed)["csrf"]
     lift = goal_item(page, 1)
-    assert "<strong>Back Squat 100 kg</strong> by Tue 2 Feb 2027" in lift and "tag-good" in lift and ">on track<" in lift
-    assert "<dd>80\u00a0kg on Sun 1 Nov</dd>" in lift and "<dd>85\u00a0kg</dd>" in lift
-    assert "<dd>+1.25 kg a week</dd>" in lift and "<dd>+2.5 kg a week</dd>" in lift
+    assert "<strong>Back Squat 100 kg</strong></h2>" in lift and '<p class="goal-by">by Tue 2 Feb 2027</p>' in lift
+    assert "tag-good" in lift and ">On track<" in lift
+    assert "<dd>80\u00a0kg on Sun 1 Nov</dd>" in lift
+    assert '<span class="big">85&nbsp;<span class="unit">kg</span></span>' in lift
+    assert "<dd>+1.25&nbsp;kg a week</dd>" in lift and "<dd>+2.5&nbsp;kg a week</dd>" in lift
     assert "<dd>reached on Mon 4 Jan 2027</dd>" in lift
     weight = goal_item(page, 2)
-    assert "tag-behind" in weight and "<dd>-0.42 kg a week</dd>" in weight and "<dd>-0.3 kg a week</dd>" in weight
-    assert "no date" in weight and "A projection needs 4 points in the last 6 weeks." in weight
+    assert "tag-behind" in weight and "<dd>-0.42&nbsp;kg a week</dd>" in weight
+    assert "<dd>-0.3&nbsp;kg a week</dd>" in weight
+    assert "no date" in weight
     waist = goal_item(page, 3)
-    assert "Waist 80 cm" in waist and "<dd>88\u00a0cm on Sun 1 Nov</dd>" in waist and "nothing logged yet" in waist
-    assert "not worked out" in waist and "not enough data yet" in waist and ">not enough data<" in waist
+    assert "Waist 80 cm" in waist and "<dd>88\u00a0cm on Sun 1 Nov</dd>" in waist and "Nothing logged yet" in waist
+    assert "not worked out" in waist and "not enough data yet" in waist and ">Not enough data<" in waist
+    assert "A projection needs 4 points in the last 6 weeks." in waist  # Not enough data: the goal's own note
     run = goal_item(page, 4)
     assert "Outdoor Run 5 km in 27:00" in run and "<dd>31:00 on Sun 1 Nov</dd>" in run
-    assert "<dd>29:30</dd>" in run and "<dd>-30\u00a0seconds a week</dd>" in run and ">reached<" in run
+    assert '<span class="big">29:30</span>' in run and "<dd>-30\u00a0seconds a week</dd>" in run and ">Reached<" in run
     for goal_id in (1, 2, 3, 4):
         item = goal_item(page, goal_id)
-        for status, label in (("hit", "Hit"), ("dropped", "Drop")):
+        for status, label, button in (("hit", "Hit", "secondary"), ("dropped", "Drop", "link")):
             assert re.search(rf'<form method="post" action="/goals/{goal_id}/status" class="inline">\s*'
                              rf'<input type="hidden" name="csrf_token" value="{token}">\s*'
                              rf'<input type="hidden" name="status" value="{status}">\s*'
-                             rf'<button class="link">{label}</button>', item), (goal_id, status)
+                             rf'<button class="{button}">{label}</button>', item), (goal_id, status)
         assert 'value="open"' not in item
-    closed = page.split("<h2>Closed goals</h2>")[1].split("<h2>Set a goal</h2>")[0]
+    closed = page.split(CLOSED_H2)[1].split(SET_GOAL_H2)[0]
     assert "Bench Press 80 kg" in closed and ">hit<" in closed and "on Thu 5 Nov" in closed
     assert "Waist 85 cm" in closed and ">dropped<" in closed
     assert closed.count('name="status" value="open"') == 2 and closed.count(">Reopen<") == 2
@@ -142,7 +167,7 @@ def test_goals_with_many(signed, fake_goals):
 
 
 def test_goals_text_is_escaped(signed, fake_goals):
-    fake_goals([numbers(1, label="<script>x</script>", note="<b>n</b>")])
+    fake_goals([numbers(1, label="<script>x</script>", note="<b>n</b>", status="not enough data")])
     page = signed.get("/goals").text
     assert "<script>x" not in page and "&lt;script&gt;x&lt;/script&gt;" in page and "&lt;b&gt;n" in page
 
@@ -261,7 +286,7 @@ def test_a_refusal_shows_the_services_message_and_fix_beside_its_field(signed, c
     assert r.status_code == 400
     shown = f'<div class="error"><p>{err["message"]}</p><p>{err["fix"]}</p></div>'.replace("'", "&#39;")
     if field == "form":
-        assert shown in r.text.split('<form method="post" action="/goals">')[0].split("<h2>Set a goal</h2>")[1]
+        assert shown in r.text.split('<form method="post" action="/goals">')[0].split(SET_GOAL_H2)[1]
     else:
         assert shown in field_block(r.text, field)
         others = [f for f in web.GOAL_FIELDS if f != field]
@@ -539,7 +564,8 @@ def test_sample_goals_carry_a_sample_tag_open_and_closed(signed, fake_goals):
     fake_goals([numbers(1, is_sample=True), numbers(2, label="Body weight 75 kg", is_sample=False)],
                [{**CLOSED[0], "is_sample": True}, CLOSED[1]])
     page = signed.get("/goals").text
-    assert '<strong>Back Squat 100 kg</strong> <span class="tag tag-sample">sample</span> by' in goal_item(page, 1)
+    assert re.search(r'<strong>Back Squat 100 kg</strong></h2>\s*<p class="goal-by">by [^<]+</p>\s*</div>\s*'
+                     r'<span class="tag tag-sample">sample</span>\s*</div>', goal_item(page, 1))
     assert "tag-sample" not in goal_item(page, 2)
     assert 'Bench Press 80 kg <span class="tag tag-sample">sample</span>' in goal_item(page, 9)
     assert "tag-sample" not in goal_item(page, 10)  # no is_sample key: no tag
@@ -566,7 +592,7 @@ def test_a_saved_goals_warnings_show_in_the_pages_own_words(signed, capture_set_
     page = signed.get(r.headers["location"]).text
     notes = re.findall(r'<p class="notice goal-note">(.*?)</p>', page)
     assert len(notes) == len(shown) and all(n.startswith(s) for n, s in zip(notes, shown))
-    assert "start_value" not in page.split("<h2>Set a goal</h2>")[0] and "mark goal 3" not in page
+    assert "start_value" not in page.split(SET_GOAL_H2)[0] and "mark goal 3" not in page
 
 
 def test_a_reopened_goal_with_a_past_date_says_so(signed, capture_set_goal, fake_goals):
@@ -579,7 +605,7 @@ def test_a_reopened_goal_with_a_past_date_says_so(signed, capture_set_goal, fake
     assert r.headers["location"] == SITE + "/goals?saved=open&notes=past_date"
     page = signed.get(r.headers["location"]).text
     assert "Goal reopened." in page and "Its date has passed, so there is nothing to aim at" in page
-    assert "target_date" not in page.split("<h2>Set a goal</h2>")[0]
+    assert "target_date" not in page.split(SET_GOAL_H2)[0]
 
 
 @pytest.mark.parametrize("notes", ["<b>x</b>", "duplicate,<script>", "x" * 100, "start,start"])
@@ -630,3 +656,366 @@ def test_now_is_named_the_latest_weigh_in_without_one_in_the_last_7_days(signed,
                                     "series": [{"date": "2026-10-20", "kg": 80.1, "smoothed": 80.0}]}}
     card = trends_card(signed, monkeypatch, old)
     assert trends_rows(card)[1] == ("Latest weigh-in", f"80.1{NB}kg", "") and "7-day average" not in card
+
+
+# ================================================================ Goals A (pass B12): each open goal as its own card
+
+def goal_card(page: str, goal_id: int) -> dict:
+    """One open goal card as a person reads it, part by part, each part's text squashed (a no-break space kept)."""
+    from .test_pages_text import parse, tr  # noqa: PLC0415 - test_pages_text imports test_web
+
+    [li] = [n for n in parse(page).find_all("li", "goal") if n.attrs.get("id") == f"goal-{goal_id}"]
+    [head] = li.find_all("div", "goal-head")
+    [now] = li.find_all("p", "goal-now")
+    [standing] = li.find_all("dl", "standing")
+    plan, projection = standing.elements()
+    [plan_dd], [projection_dd] = plan.find_all("dd"), projection.find_all("dd")
+    [tag] = projection_dd.find_all("span", "tag")
+    [facts] = li.find_all("dl", "goal-facts")
+    [actions] = li.find_all("div", "goal-actions")
+    return {
+        "parts": [(e.tag, e.classes) for e in li.elements()],
+        "label": [h.text() for h in head.find_all("h2")], "strong": [s.text() for s in head.find_all("strong")],
+        "by": [p.text() for p in head.find_all("p", "goal-by")], "sample": bool(head.find_all("span", "tag-sample")),
+        "now": next((b.text() for b in now.find_all("span", "big")), None),
+        "now_words": [f.text() for f in now.find_all("span", "figure-label")],
+        "boxes": [b.find_all("dt")[0].text() for b in (plan, projection)],
+        "plan_plain": plan_dd.classes == ["plain"],
+        "heading": tr.squash("".join(c for c in plan_dd.children if isinstance(c, str))),
+        "plan_lines": [m.text() for m in plan_dd.find_all("span", "means")],
+        "tag": (tag.classes, tag.text()), "means": [m.text() for m in projection_dd.find_all("span", "means")],
+        "facts": [dt.text() for dt in facts.find_all("dt")],
+        "ask": [p.text() for p in li.elements() if p.is_("p", "muted")],
+        "actions": [(b.classes, b.text()) for b in actions.find_all("button")],
+    }
+
+
+def one_card(signed, fake_goals, **values) -> dict:
+    """The card of one faked goal_charts goal: numbers(1) with these values."""
+    fake_goals([numbers(1, **values)])
+    return goal_card(signed.get("/goals").text, 1)
+
+
+WEIGHT = {"label": "Body weight 75 kg", "kind": "bodyweight", "exercise": None, "start_value": 80.4, "latest": 79.6,
+          "direction": "down", "target_value": 75.0}
+RUN = {"label": "Outdoor Run 5 km in 27:00", "kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5.0,
+       "unit": "min", "start_value": 31.0, "latest": 29.5, "direction": "down", "target_value": 27.0,
+       "should_be_today": 29.8, "plan_line": "29:30 now against 29:48 on the plan line today: 18 seconds ahead."}
+WAIST = {"label": "Waist 80 cm", "kind": "measurement", "exercise": None, "measurement_kind": "waist", "unit": "cm",
+         "start_value": 88.0, "latest": 86.5, "should_be_today": 87.0, "direction": "down", "target_value": 80.0}
+HEART = {**WAIST, "label": "Resting heart rate 52 bpm", "measurement_kind": "resting_hr", "unit": "bpm",
+         "start_value": 58.0, "latest": 57.0, "should_be_today": 57.6, "target_value": 52.0}
+
+
+@pytest.mark.parametrize("values, basis, now, words", [
+    (WEIGHT, "average_7d", f"79.6{NB}kg", "now, the 7-day average"),
+    (WEIGHT, "latest_weigh_in", f"79.6{NB}kg", "now, the latest weigh-in"),
+    ({}, "best_28d", f"85{NB}kg", "now, the best estimated max in 28 days"),
+    ({}, "latest", f"85{NB}kg", "now, the latest session's estimated max"),
+    (RUN, "best_28d", "29:30", f"now, the best 5{NB}km time in 28 days"),
+    (RUN, "latest", "29:30", f"now, the latest 5{NB}km time"),
+    ({**RUN, "distance_km": 10.55}, "latest", "29:30", f"now, the latest 10.55{NB}km time"),
+    (WAIST, "latest", f"86.5{NB}cm", "now, the latest waist"),
+    (HEART, "latest", f"57{NB}bpm", "now, the latest resting heart rate"),
+], ids=["weight-average", "weight-latest", "lift-best", "lift-latest", "run-best", "run-latest", "run-10.55",
+        "waist", "resting-hr"])
+def test_the_now_figure_says_what_it_is_by_its_now_basis(signed, fake_goals, values, basis, now, words):
+    """Section L's now table, each kind and now_basis: the figure at 44 px in the goal's unit, then its words."""
+    card = one_card(signed, fake_goals, **{**values, "now_basis": basis})
+    assert (card["now"], card["now_words"]) == (now, [words])
+
+
+@pytest.mark.parametrize("vs_plan, ended, heading", [
+    ("ahead", False, "Ahead of the plan line today"), ("on the line", False, "On the plan line today"),
+    ("behind", False, "Behind the plan line today"), ("ahead", True, "Ahead of the target"),
+    ("on the line", True, "At the target"), ("behind", True, "Behind the target"),
+])
+def test_the_heading_of_against_the_plan_line_is_vs_plan_and_line_ended(signed, fake_goals, vs_plan, ended, heading):
+    """Each cell of the heading table. Under the heading, the goal's plan_line as written: the page builds none."""
+    line = "a sentence the service wrote, as it wrote it."
+    card = one_card(signed, fake_goals, vs_plan=vs_plan, line_ended=ended, plan_line=line, days_ahead=None)
+    assert card["boxes"] == ["Against the plan line", "By projection"]
+    assert (card["heading"], card["plan_lines"], card["plan_plain"]) == (heading, [line], False)
+
+
+@pytest.mark.parametrize("vs_plan, days, shown", [
+    ("ahead", 1, f"1{NB}day ahead"), ("behind", -1, f"1{NB}day behind"), ("ahead", 34, f"34{NB}days ahead"),
+    ("behind", -2, f"2{NB}days behind"), ("ahead", 1234, f"1,234{NB}days ahead"), ("ahead", 0, None),
+    ("behind", 0, None), ("ahead", None, None), ("behind", None, None),
+])
+def test_the_days_line_shows_only_when_days_ahead_is_neither_0_nor_null(signed, fake_goals, vs_plan, days, shown):
+    card = one_card(signed, fake_goals, vs_plan=vs_plan, days_ahead=days)
+    assert card["plan_lines"] == [numbers(1)["plan_line"]] + ([shown] if shown else [])
+
+
+def test_on_the_plan_line_the_card_shows_the_figure_the_heading_and_plan_line_only(signed, fake_goals):
+    """Rule 3: the now figure, the heading and plan_line, no days line, and no Plan line today row."""
+    card = one_card(signed, fake_goals, latest=82.0, should_be_today=82.0, ahead_by=0.0, days_ahead=0,
+                    vs_plan="on the line", plan_line="On the plan line today, at 82 kg.")
+    assert card["now"] == f"82{NB}kg" and card["heading"] == "On the plan line today"
+    assert card["plan_lines"] == ["On the plan line today, at 82 kg."]
+    assert "Plan line today" not in card["facts"] and card["facts"] == ["Started", "Needed", "So far", "At this pace"]
+
+
+def test_a_goal_with_nothing_logged_says_so_in_now_and_in_the_plan_box(signed, fake_goals):
+    card = one_card(signed, fake_goals, status="not enough data",
+                    note="A projection needs 4 points in the last 6 weeks.", **NOTHING_LOGGED)
+    assert card["now"] is None and card["now_words"] == ["Nothing logged yet"]
+    assert (card["plan_plain"], card["heading"], card["plan_lines"]) == (True, "Nothing logged yet", [])
+    assert card["tag"] == (["tag", "tag-status", "tag-nodata"], "Not enough data")
+
+
+ASK = "To close the gap, ask your assistant: How do I get back on track for Back Squat 100 kg?"
+TAG_WORDS = {"reached": "Reached", "on track": "On track", "behind": "Behind", "not enough data": "Not enough data"}
+
+
+@pytest.mark.parametrize("status, tag, means", [
+    ("reached", ["tag", "tag-status", "tag-good"], ["The target is reached."]),
+    ("on track", ["tag", "tag-status", "tag-good"], ["At this pace the target is reached by the date."]),
+    ("behind", ["tag", "tag-status", "tag-behind"], ["At this pace the target is not reached by the date."]),
+    ("not enough data", ["tag", "tag-status", "tag-nodata"], ["A projection needs 4 points in the last 6 weeks."]),
+])
+def test_by_projection_shows_the_tag_once_and_what_it_means(signed, fake_goals, status, tag, means):
+    """Each of the four tags with its meaning. Not enough data means the goal's own note. Only Behind adds the line
+    after the facts, which names no figure of its own."""
+    note = "A projection needs 4 points in the last 6 weeks." if status == "not enough data" else None
+    fake_goals([numbers(1, status=status, note=note)])
+    page = signed.get("/goals").text
+    card = goal_card(page, 1)
+    assert card["tag"] == (tag, TAG_WORDS[status]) and card["means"] == means
+    assert card["ask"] == ([ASK] if status == "behind" else [])
+    assert page.count(f">{TAG_WORDS[status]}</span>") == 1  # shown once
+    if status == "behind":
+        assert card["parts"][card["parts"].index(("dl", ["goal-facts"])) + 1] == ("p", ["muted"])
+        assert not re.search(r"\d", ASK.replace("Back Squat 100 kg", ""))
+
+
+def test_a_note_shows_only_as_not_enough_datas_meaning(signed, fake_goals):
+    card = one_card(signed, fake_goals, status="on track", note="A note the service gave.")
+    assert "A note the service gave." not in str(card)
+
+
+def test_the_now_figure_prints_what_plan_line_prints_widened_when_it_is(signed, fake_goals):
+    """Rule 2: through show with page=True, widened exactly when formatting.widen([latest, should_be_today]) is."""
+    wide = one_card(signed, fake_goals, **{**WEIGHT, "latest": 79.01, "should_be_today": 78.9566})
+    assert wide["now"] == f"79.01{NB}kg"
+    plain = one_card(signed, fake_goals, **{**WEIGHT, "latest": 79.01, "should_be_today": 78.5})
+    assert plain["now"] == f"79{NB}kg"
+    run = one_card(signed, fake_goals, **{**RUN, "latest": 29.5 + 0.4 / 60, "should_be_today": 29.5 - 0.4 / 60})
+    assert run["now"] == "29:30.4"  # the two print 29:30, 0.8 s apart: tenths of a second
+    assert formatting.widen([79.01, 78.9566], "bodyweight_derived")
+    assert not formatting.widen([79.01, 78.5], "bodyweight_derived")
+
+
+def test_the_head_holds_the_label_in_strong_the_date_under_it_and_the_sample_tag(signed, fake_goals):
+    fake_goals([numbers(1, is_sample=True), numbers(2)])
+    page = signed.get("/goals").text
+    sample, own = goal_card(page, 1), goal_card(page, 2)
+    assert (sample["label"], sample["strong"], sample["by"], sample["sample"]) == (
+        ["Back Squat 100 kg"], ["Back Squat 100 kg"], ["by Tue 2 Feb 2027"], True)
+    assert own["sample"] is False
+    assert sample["actions"] == [(["secondary"], "Hit"), (["link"], "Drop")]
+    assert sample["parts"] == [("div", ["goal-head"]), ("p", ["goal-now", "figure"]), ("dl", ["standing"]),
+                               ("dl", ["goal-facts"]), ("div", ["goal-actions"])]
+
+
+def goals_page_state(state: str, monkeypatch) -> int:
+    """One Goals state on the fixed day for the signed-in person, and their id. "sample" and "edge" are the sweeps'
+    accounts; "nothing logged" a body weight goal from a given start; "line ended" a goal ten days past its date;
+    "no goals" a new account."""
+    from .test_pages_text import edge_account, sample_account  # noqa: PLC0415
+
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    uid = only_user().id
+    if state == "sample":
+        sample_account(uid)
+    elif state == "edge":
+        edge_account(uid)
+    elif state == "nothing logged":
+        services.set_goal(uid, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
+                                "target_date": "2027-01-05"}, "claude")
+    elif state == "line ended":
+        services.set_goal(uid, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
+                                "target_date": "2026-11-13"}, "claude")
+        services.log_bodyweight(uid, {"kg": 79, "date": "2026-11-10"}, "claude")
+        later = FIXED_NOW + timedelta(days=10)
+        monkeypatch.setattr(db, "utcnow", lambda: later)
+    return uid
+
+
+GOAL_STATES = ("sample", "edge", "nothing logged", "line ended", "no goals")
+
+
+def plan_words(g: dict) -> list[str]:
+    """What the Against the plan line box holds under its heading, from the goal's own fields: plan_line as
+    written, then the days line when days_ahead is neither 0 nor null."""
+    days = g["days_ahead"]
+    return [g["plan_line"]] + ([f"{formatting.show(abs(days), 'count')}{NB}{'day' if abs(days) == 1 else 'days'} "
+                                f"{g['vs_plan']}"] if days else [])
+
+
+@pytest.mark.parametrize("state", GOAL_STATES)
+def test_each_card_on_the_page_is_its_goal_charts_goal(signed, monkeypatch, state):
+    """Goal by goal, on the fixed day: each card's parts against goal_charts' own fields, every day worded against
+    goal_charts' today, the figures through show. The open goals are goal_charts', in its order."""
+    uid = goals_page_state(state, monkeypatch)
+    charted = services.goal_charts(uid)
+    page = signed.get("/goals").text
+    found = re.findall(r'<li class="goal" id="goal-(\d+)">', page)
+    assert found == [str(g["goal_id"]) for g in charted["goals"]]
+    assert bool(found) == (state != "no goals")
+    for g in charted["goals"]:
+        card, q = goal_card(page, g["goal_id"]), web.goal_quantity(g)
+        assert card["label"] == card["strong"] == [g["label"]]
+        assert card["by"] == [f"by {formatting.day(g['target_date'], charted['today'])}"]
+        assert card["sample"] == g["is_sample"]
+        assert card["tag"][1] == TAG_WORDS[g["status"]]
+        assert card["ask"] == ([f"To close the gap, ask your assistant: How do I get back on track for {g['label']}?"]
+                               if g["status"] == "behind" else [])
+        if g["latest"] is None:
+            assert card["now"] is None and card["plan_plain"] and g["plan_line"] is None
+            continue
+        wide = formatting.widen([g["latest"], g["should_be_today"]], q)
+        unit = "" if q == "goal_time" else f"{NB}{g['unit']}"
+        assert card["now"] == formatting.show(g["latest"], q, page=True, widened=wide, unit=False) + unit
+        assert card["heading"] == web.PLAN_HEADINGS[(g["vs_plan"], g["line_ended"])]
+        assert card["plan_lines"] == plan_words(g)
+        assert card["means"] == [g["note"] if g["status"] == "not enough data" else web.STATUS_MEANS[g["status"]]]
+
+
+@pytest.mark.parametrize("state", ["sample", "edge", "line ended"])
+def test_rule_2_on_the_real_page_the_now_figure_is_plan_lines(signed, monkeypatch, state):
+    """Each real goal, on the sample account (one widens), the edge account (every kind, on the line) and past its
+    date: the now figure, its no-break space made plain, is the figure plan_line gives for now."""
+    goals_page_state(state, monkeypatch)
+    page = signed.get("/goals").text
+    goals = services.goal_charts(only_user().id)["goals"]
+    assert goals
+    for g in goals:
+        now = goal_card(page, g["goal_id"])["now"].replace(NB, " ")
+        said = re.match(r"(?:On the plan line today, at )?(.+?)(?: now against | now, at the target\.|\.$)",
+                        g["plan_line"]).group(1)
+        assert now == said, (now, g["plan_line"])
+    if state == "sample":
+        assert goal_card(page, 1)["now"] == f"79.01{NB}kg"
+    if state == "edge":
+        assert {g["kind"] for g in goals} == {"bodyweight", "lift", "cardio_best", "measurement"}
+
+
+def test_the_two_statements_disagree_on_the_sample_body_weight_goal_and_both_show(signed, monkeypatch):
+    """Section E1's case on the fixed day: behind the plan line today, and on track by projection."""
+    goals_page_state("sample", monkeypatch)
+    card = goal_card(signed.get("/goals").text, 1)
+    assert card["label"] == ["Body weight 77 kg"]
+    assert card["heading"] == "Behind the plan line today"
+    assert card["plan_lines"] == ["79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind.",
+                                  f"2{NB}days behind"]
+    assert card["tag"] == (["tag", "tag-status", "tag-good"], "On track")
+    assert card["means"] == ["At this pace the target is reached by the date."] and card["ask"] == []
+
+
+def test_a_goal_past_its_date_says_the_target_and_no_days(signed, monkeypatch):
+    goals_page_state("line ended", monkeypatch)
+    [g] = services.goal_charts(only_user().id)["goals"]
+    assert g["line_ended"] is True and g["days_ahead"] is None
+    card = goal_card(signed.get("/goals").text, g["goal_id"])
+    assert card["heading"] == "Behind the target"
+    assert card["plan_lines"] == ["79 kg now against the target of 75 kg: 4 kg behind."]
+    assert card["now_words"] == ["now, the latest weigh-in"]
+
+
+@pytest.mark.parametrize("first, again", [("dropped", "dropped"), ("hit", "hit"), (None, "open")],
+                         ids=["dropped twice", "hit twice", "open goal reopened"])
+def test_a_status_set_to_what_it_already_is_writes_nothing_and_says_nothing(signed, first, again):
+    """The second post changes nothing: no set_goal call, the address marked unchanged, the page calm with no saved
+    words. The first post, when there is one, still says its words."""
+    uid = only_user().id
+    made = services.set_goal(uid, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
+                                   "target_date": (today_of(only_user()) + timedelta(days=30)).isoformat()}, "claude")
+    if first:
+        r = post(signed, f"/goals/{made['id']}/status", status=first)
+        assert r.headers["location"] == SITE + f"/goals?saved={first}"
+        assert f'<p class="ok">{web.GOAL_SAVED[first]}</p>' in signed.get(r.headers["location"]).text
+    before = [g.closed_at for g in rows(Goal, uid)]
+    writes = len(calls(uid))
+    r = post(signed, f"/goals/{made['id']}/status", status=again)
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=unchanged"
+    assert len(calls(uid)) == writes and [g.closed_at for g in rows(Goal, uid)] == before
+    assert [g.status for g in rows(Goal, uid)] == [again]
+    page = signed.get(r.headers["location"]).text
+    assert 'class="ok' not in page and '<body class="calm"' in page
+
+
+def test_a_status_that_changes_still_goes_through_set_goal(signed):
+    uid = only_user().id
+    made = services.set_goal(uid, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
+                                   "target_date": (today_of(only_user()) + timedelta(days=30)).isoformat()}, "claude")
+    for status in ("hit", "open", "dropped", "hit"):
+        r = post(signed, f"/goals/{made['id']}/status", status=status)
+        assert r.headers["location"] == SITE + f"/goals?saved={status}", status
+    assert calls(uid) == [("set_goal", True, None)] * 4
+
+
+def test_the_frame_runs_head_banner_strips_goals_closed_then_set_a_goal(signed, monkeypatch):
+    """Section L's order, which is the markup order: the page head, then in div.goals-main the banner, the saved
+    line, each goal note, ul.goals and the Closed goals card; Set a goal beside it, an aside named by its h2."""
+    from .test_pages_text import parse  # noqa: PLC0415
+
+    uid = goals_page_state("sample", monkeypatch)
+    services.set_goal(uid, {"goal_id": 3, "status": "dropped"}, "claude")
+    page = signed.get("/goals?saved=goal&notes=duplicate,start").text
+    [main] = parse(page).find_all("main")
+    shape = lambda n: (n.tag, n.classes, n.attrs.get("id"), n.attrs.get("aria-labelledby"))  # noqa: E731
+    assert [shape(n) for n in main.elements()] == [
+        ("div", ["page-head"], None, None), ("div", ["goals-main"], None, None),
+        ("aside", ["card", "set-goal"], "set-goal", "set-goal-title")]
+    head, goals_main, aside = main.elements()
+    assert [(n.tag, n.text()) for n in head.elements()] == [("h1", "Goals")]
+    assert [shape(n) for n in goals_main.elements()] == [
+        ("p", ["notice", "sample-banner"], None, None), ("p", ["ok"], None, None),
+        ("p", ["notice", "goal-note"], None, None), ("p", ["notice", "goal-note"], None, None),
+        ("ul", ["goals"], None, None), ("section", ["card"], None, "closed-goals-title")]
+    assert [li.attrs["id"] for li in goals_main.elements()[4].elements()] == ["goal-1", "goal-2"]
+    assert goals_main.elements()[4].attrs.get("aria-label") == "Open goals"
+    assert [(h.tag, h.attrs.get("id")) for h in aside.elements()[:1]] == [("h2", "set-goal-title")]
+    assert "Open goals</h2>" not in page and page.count('<li class="goal"') == 2
+
+
+def test_the_page_reads_goal_charts_and_get_goals_of_one_day(signed, monkeypatch):
+    """Read across the person's midnight the two reads can name two dates: both are read once more. If they still
+    differ, goal_charts' date is the page's."""
+    got, charted = [], []
+    days = iter(["2026-12-31", "2027-01-01"])
+
+    def listed(*args):
+        got.append(args)
+        return {**goals_result(closed=CLOSED), "today": next(days, "2027-01-01")}
+
+    def charts(*args):
+        charted.append(args)
+        return {**charts_result([numbers(1)]), "today": "2027-01-01"}
+
+    monkeypatch.setattr(services, "get_goals", listed)
+    monkeypatch.setattr(services, "goal_charts", charts)
+    page = signed.get("/goals").text
+    assert len(got) == len(charted) == 2 and goal_card(page, 1)["by"] == ["by Tue 2 Feb"]
+    got.clear()
+    charted.clear()
+    monkeypatch.setattr(services, "get_goals", lambda *a: got.append(a) or {**goals_result(closed=CLOSED),
+                                                                             "today": "2026-12-31"})
+    page = signed.get("/goals").text
+    assert len(got) == len(charted) == 2 and goal_card(page, 1)["by"] == ["by Tue 2 Feb"]
+    assert "on Thu 5 Nov 2026" in goal_item(page, 9)  # a closed day worded against goal_charts' 2027
+    got.clear()
+    charted.clear()
+    fake_same = {**goals_result(closed=CLOSED), "today": "2027-01-01"}
+    monkeypatch.setattr(services, "get_goals", lambda *a: got.append(a) or fake_same)
+    signed.get("/goals")
+    assert len(got) == len(charted) == 1  # one day at once: read once
+
+
+def test_a_goal_charts_failure_is_a_404_page(signed, monkeypatch):
+    monkeypatch.setattr(services, "goal_charts", lambda *a: {"error": "no_account", "message": "x", "fix": "y"},
+                        raising=False)
+    r = signed.get("/goals")
+    assert r.status_code == 404 and "There is nothing here." in r.text
