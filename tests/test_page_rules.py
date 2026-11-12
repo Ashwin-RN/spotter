@@ -28,7 +28,7 @@ import pytest
 from app import db, formatting, services, web
 from app.models import Bodyweight, SavedFood
 
-from .test_pages_text import (ACCOUNTS, BUILT, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
+from .test_pages_text import (ACCOUNTS, BUILT, CLAUDE_SKIPS, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
                               entered_text, estimate_findings, get_paths, names_of, page_findings, parse,
                               render_error_page, route_of, step_4_findings, structure_findings)
 from .test_web import FIXED_NOW, client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
@@ -1421,14 +1421,6 @@ PROGRESS_CARDS = [(["card", "bw-card"], "body-weight", "body-weight-title", "Bod
                   (["card", "lifts-card"], None, "lifts-title", "Lifts")]
 
 
-# What /progress fails of the rules a route in BUILT keeps, by GLANCE_STATES state, so it stays out of BUILT: a
-# weekly average of lift sessions that is not whole ("0.2") is a bare figure under the header "Value", and T3's
-# units rule exempts only a whole count. The contract gives the cell as a count up to 1 dp with no unit. Waiting
-# on the lead's ruling. Every other state, and every sweep account, passes every rule.
-PROGRESS_WAITS = {"one_lift_session_and_cardio_today":
-                  ["/progress: the figure '0.2' has no unit in its cell or its header 'Value'"]}
-
-
 def built_findings(s: Seen, user_id: int) -> list[str]:
     """Every rule a route in BUILT keeps that a route outside it skips: the page rules and T3's structure checks,
     run whether or not BUILT names the route."""
@@ -1455,6 +1447,7 @@ def test_progress_keeps_the_card_rule_on_the_whole_page(client, account):
     s = Seen("/progress", r.text, True, today=today_of(only_user()).isoformat())
     assert titled_card_findings(s) == []
     assert progress_cards(s) == PROGRESS_CARDS
+    assert "/progress" in BUILT and "/progress" not in CLAUDE_SKIPS
     assert built_findings(s, only_user().id) == []
 
 
@@ -1475,4 +1468,4 @@ def test_progress_in_the_states_the_sweeps_never_reach_keeps_every_rule_it_holds
     findings += step_4_findings("/progress", r.text, names_of(user.id), entered_notes(user.id))
     assert not findings, "\n".join(findings)
     assert titled_card_findings(s) == []
-    assert built_findings(s, user.id) == PROGRESS_WAITS.get(state.__name__.strip("_"), [])
+    assert built_findings(s, user.id) == []

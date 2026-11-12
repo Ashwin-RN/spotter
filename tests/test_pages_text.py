@@ -110,15 +110,14 @@ def glance_zeros(user_id: int, address: str, tag: str) -> int:
 
 def trends_zeros(user_id: int, address: str, tag: str) -> int:
     """The true zeros Progress' Trends table shows, read from get_trends, never from the page: Weigh-ins (when there
-    is a weigh-in at all), Lift sessions and Lift sessions a week, each a td, counted where they show as "0". Its
-    other figures carry a unit ("0 min", "0%", "0 kg a week"), so none of them is a bare 0."""
+    is a weigh-in at all) and Lift sessions, each a td, counted where they show as "0". Its other figures carry a
+    unit or words ("0 min", "0%", "0 kg a week", "0 a week"), so none of them is a bare 0."""
     if tag != "td":
         return 0
     trends = services.get_trends(user_id)
     zero = lambda value, quantity: formatting.show(value, quantity, unit=False) == "0"  # noqa: E731
     weight, sessions = trends["bodyweight"], trends["sessions"]
-    return (int(bool(weight) and zero(weight["weigh_ins_28d"], "count")) + int(zero(sessions["this_week"], "count"))
-            + int(zero(sessions["per_week_4w"], "count_avg")))
+    return int(bool(weight) and zero(weight["weigh_ins_28d"], "count")) + int(zero(sessions["this_week"], "count"))
 
 
 def cardio_zeros(user_id: int, address: str, tag: str) -> int:
@@ -432,7 +431,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # The routes whose page a step 4 pass has rebuilt: "/" or a GET path template from web.PAGES, such as
 # "/day/{date}". The structure checks below and the page rules in tests/test_page_rules.py run on these
 # routes only. A pass adds its own route here when its page lands.
-BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit"})
+BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 
@@ -1359,11 +1358,11 @@ def test_progress_holds_the_glance_zeros_inside_its_glance_block_only(client):
     """Progress draws Today's Training sheet, so a new account's Progress shows its 0 and the four weeks' eight
     0s, counted from the reads as Today's are. They pass inside Progress' glance block only: one more fails, a
     stray 0 in the Body weight card fails, and a page with no glance block allows none. (The Trends table's two 0s,
-    lift sessions and their weekly average, are its own: test_progress_holds_each_tables_zeros_in_its_own_card.)"""
+    lift sessions, is its own: test_progress_holds_each_tables_zeros_in_its_own_card.)"""
     sign_in(client)
     user_id = only_user().id
     page = client.get("/progress").text
-    assert page.count('<p class="giant">0</p>') == 1 and page.count('<td class="num">0</td>') == 8 + 2
+    assert page.count('<p class="giant">0</p>') == 1 and page.count('<td class="num">0</td>') == 8 + 1
     assert [glance_zeros(user_id, "/progress", tag) for tag in ("p", "td", "text")] == [1, 8, 0]
     assert page_findings("/progress", page, [], user_id) == []
     first, last = glance_lines(page)
@@ -1383,7 +1382,7 @@ def test_progress_holds_the_glance_zeros_inside_its_glance_block_only(client):
 
 
 def test_progress_holds_each_tables_zeros_in_its_own_card(client, monkeypatch):
-    """The Trends table's bare 0s (Weigh-ins, Lift sessions, Lift sessions a week) are counted from get_trends and
+    """The Trends table's bare 0s (Weigh-ins, Lift sessions) are counted from get_trends and
     pass in the Trends card only; the Cardio table's (an activity's Sessions and Time with no session in 28 days)
     from get_cardio, in the Cardio card only. One more fails, a 0 moved from one card to the other fails though
     the page's total is the same, and a 0 in the Lifts card is an empty figure."""
@@ -1395,7 +1394,7 @@ def test_progress_holds_each_tables_zeros_in_its_own_card(client, monkeypatch):
     _ok(services.log_lifts(user_id, {"date": "2026-10-01", "sets": [{"exercise": "Back Squat", "weight_kg": 60,
                                                                      "reps": 5}]}, "claude"))
     page = client.get("/progress").text
-    assert [trends_zeros(user_id, "/progress", tag) for tag in ("p", "td", "text")] == [0, 3, 0]
+    assert [trends_zeros(user_id, "/progress", tag) for tag in ("p", "td", "text")] == [0, 2, 0]
     assert [cardio_zeros(user_id, "/progress", tag) for tag in ("p", "td", "text")] == [0, 2, 0]
     trends, cardio = trends_lines(page), cardio_lines(page)
     lines = page.splitlines()
@@ -1406,7 +1405,7 @@ def test_progress_holds_each_tables_zeros_in_its_own_card(client, monkeypatch):
     in_trends = sum(line.count(zero) for line in lines[trends[0] - 1:trends[1]])
     in_cardio = sum(line.count('data-label="Sessions">0</td>') + line.count('data-label="Time (min)">0</td>')
                     for line in lines[cardio[0] - 1:cardio[1]])
-    assert (in_trends, in_cardio) == (3, 2)
+    assert (in_trends, in_cardio) == (2, 2)
     assert page_findings("/progress", page, [], user_id) == []
     lifts = '<section class="card lifts-card" aria-labelledby="lifts-title">'
     walk = '<td class="lead">Outdoor Walk</td>'

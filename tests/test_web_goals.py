@@ -459,7 +459,7 @@ def test_the_trends_card_shows_every_number(signed, monkeypatch):
         ("Eaten a day", f"2,210{NB}kcal", "Last 28 days, 1 logged"),
         ("From estimates", "13%", "Last 28 days"),  # percent is whole
         ("Calorie target", f"2,200{NB}kcal", ""),
-        ("Lift sessions", "3", "Last 7 days, target 4"), ("Lift sessions a week", "2.8", "4-week average"),
+        ("Lift sessions", "3", "Last 7 days, target 4"), ("Lift sessions a week", f"2.8{NB}a week", "4-week average"),
         ("Cardio", f"95{NB}min", f"Last 7 days, target 150{NB}min"), ("Cardio a week", f"88{NB}min", "4-week average"),
         ("Maintenance", f"2,480{NB}kcal", "estimate 18 logged days, 21 Oct to 10 Nov")]
 
@@ -469,7 +469,7 @@ def test_the_trends_card_without_the_numbers(signed, monkeypatch):
     always shows a number."""
     assert trends_rows(trends_card(signed, monkeypatch, EMPTY_TRENDS)) == [
         *NO_WEIGH_INS, *NO_FOOD,
-        ("Lift sessions", "0", "Last 7 days"), ("Lift sessions a week", "0", "4-week average"),
+        ("Lift sessions", "0", "Last 7 days"), ("Lift sessions a week", f"0{NB}a week", "4-week average"),
         ("Cardio", f"0{NB}min", "Last 7 days"), ("Cardio a week", f"0{NB}min", "4-week average"),
         ("Maintenance", "", "Needs food logged on 14 more of the last 21 days.")]
 

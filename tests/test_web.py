@@ -6193,7 +6193,7 @@ NO_WEIGH_INS = [("Smoothed trend", "", "No weigh-ins yet."), ("Weight rate", "",
                 ("Weigh-ins", "", "No weigh-ins yet.")]
 NO_FOOD_ROWS = [(q, "", "No food logged in the last 28 days.")
                 for q in ("Eaten a day", "Eaten a day", "From estimates", "Calorie target")]
-NO_TRAINING = [("Lift sessions", "0", "Last 7 days"), ("Lift sessions a week", "0", "4-week average"),
+NO_TRAINING = [("Lift sessions", "0", "Last 7 days"), ("Lift sessions a week", f"0{NB}a week", "4-week average"),
                ("Cardio", f"0{NB}min", "Last 7 days"), ("Cardio a week", f"0{NB}min", "4-week average")]
 
 
@@ -6217,14 +6217,14 @@ def test_the_trends_card_on_the_fixed_day(progress_fixed):
         ("From estimates", show(cal["estimated_share_pct_28d"], "percent"), "Last 28 days"),
         ("Calorie target", "", "Not set"),
         ("Lift sessions", show(ses["this_week"], "count"), "Last 7 days"),
-        ("Lift sessions a week", show(ses["per_week_4w"], "count_avg"), "4-week average"),
+        ("Lift sessions a week", f"{show(ses['per_week_4w'], 'count_avg')}{NB}a week", "4-week average"),
         ("Cardio", show(car["minutes_this_week"], "week_minutes"), "Last 7 days"),
         ("Cardio a week", show(car["minutes_per_week_4w"], "week_minutes"), "4-week average"),
         ("Maintenance", show(m["kcal"], "maintenance"),
          f"estimate {show(m['days_logged'], 'count')} logged days, {on(m['from'], m['to'])}")]
     assert [row[1] for row in trends_of(progress_fixed)] == [
         f"79.2{NB}kg", f"79{NB}kg", f"-0.24{NB}kg a week", "28", f"2,216{NB}kcal", f"2,196{NB}kcal", "41%", "", "3",
-        "3", f"85{NB}min", f"85{NB}min", f"2,510{NB}kcal"]
+        f"3{NB}a week", f"85{NB}min", f"85{NB}min", f"2,510{NB}kcal"]
     assert (bw["now"], m["kcal"], trends_of(progress_fixed)[2][2]) == (79.0, 2513, "27 Oct to 10 Nov")
 
 
@@ -6277,7 +6277,7 @@ def test_the_trends_card_is_a_named_section_holding_one_grouped_table(progress_f
         ("Eaten a day", f"1,000{NB}kcal", "Last 7 days, 1 logged"),
         ("Eaten a day", f"1,000{NB}kcal", "Last 28 days, 1 logged"), ("From estimates", "0%", "Last 28 days"),
         ("Calorie target", f"2,000{NB}kcal", ""),
-        ("Lift sessions", "0", "Last 7 days, target 0"), ("Lift sessions a week", "0", "4-week average"),
+        ("Lift sessions", "0", "Last 7 days, target 0"), ("Lift sessions a week", f"0{NB}a week", "4-week average"),
         ("Cardio", f"0{NB}min", f"Last 7 days, target 150{NB}min"), ("Cardio a week", f"0{NB}min", "4-week average"),
         ("Maintenance", "", "Needs food logged on 13 more of the last 21 days.")]),
 ])
@@ -6315,6 +6315,7 @@ def test_a_trends_value_holds_no_words_and_the_reasons_are_the_reads(client, pin
 
 
 CARDIO_HEAD = ["Activity", "Sessions", "Time (min)", "Fastest pace (per km)", "Last"]
+CARDIO_SHORT = "Sessions and time cover the last 28 days."  # with no Fastest pace column, its sentences go too
 CARDIO_LINE = ("Sessions and time cover the last 28 days. Fastest pace is your best ever. A blank pace means no "
                "distance is logged for that activity.")
 
@@ -6385,7 +6386,7 @@ def test_the_cardio_card_in_each_state(client, pinned, state, head, rows):
     card = lower_card(page, "cardio-card")
     assert "is-empty" not in card.classes and card_table(card) == (head, rows)
     assert all(c.elements() == [] for c in card.find_all("td", "lead"))
-    assert card.elements()[-1].text() == CARDIO_LINE
+    assert card.elements()[-1].text() == (CARDIO_LINE if "Fastest pace (per km)" in head else CARDIO_SHORT)
 
 
 def test_with_no_cardio_the_cardio_card_says_what_to_do(client, pinned):
@@ -6409,6 +6410,7 @@ def test_a_failed_cardio_read_draws_no_cardio_card_and_the_rest_of_progress(clie
 
 LIFTS_HEAD = ["Lift", "Estimated max", "Best set", "Trend", "Last trained"]
 LIFTS_LINE = "Estimated max is worked out from your sets, not a tested max. Trend is its change a week."
+LIFTS_SHORT = "Estimated max is worked out from your sets, not a tested max."  # with no Trend column
 ZERO_KG = re.compile(r"(?<![\d.,])0 kg")  # a 0 kg figure, not the end of 100 kg
 
 
@@ -6505,7 +6507,8 @@ def test_the_lifts_card_in_each_state(client, pinned, state, head, rows):
         blanks = [c for c in card.find_all("td") if not c.text()]
         assert len(blanks) == 3 and all(c.children == [] for c in blanks)
     assert got == rows
-    assert not ZERO_KG.search(card.text()) and card.elements()[-1].text() == LIFTS_LINE
+    assert not ZERO_KG.search(card.text())
+    assert card.elements()[-1].text() == (LIFTS_LINE if "Trend" in head else LIFTS_SHORT)
 
 
 def test_with_no_lifts_the_lifts_card_says_what_to_do(client, pinned):
@@ -6544,3 +6547,42 @@ def test_the_estimated_max_goes_through_its_own_filter(client, pinned, monkeypat
     monkeypatch.setattr(services, "get_progress", unrounded)
     _, rows = card_table(lower_card(client.get("/progress").text, "lifts-card"))
     assert rows[0][:2] == ["Back Squat", f"107.9{NB}kg"]
+
+
+# ---------------------------------------------------------------- B9's fix round
+
+def test_the_trends_card_reads_the_glances_get_trends_so_one_page_shows_one_day(client, monkeypatch):
+    """Read either side of midnight, one page shows one day's figures. The clock moves a day once the glance is
+    read: a lift session 6 days back counts in the fixed day's 7 days and not in the next day's. The Trends card's
+    Lift sessions still says what the Training tile says, from the one get_trends read."""
+    clock = {"now": FIXED_NOW}
+    monkeypatch.setattr(db, "utcnow", lambda: clock["now"])
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.log_lifts(uid, {"date": "2026-11-04", "sets": [
+        {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
+    real = web.glance_of
+
+    async def then_midnight(user_id):
+        out = await real(user_id)
+        clock["now"] = FIXED_NOW + timedelta(days=1)
+        return out
+    monkeypatch.setattr(web, "glance_of", then_midnight)
+    page = client.get("/progress").text
+    [training] = [t["value"] for t in tiles_of(page) if t["classes"] == ["tile", "tile-training"]]
+    shown = {q: v for q, v, _ in trends_of(page)}
+    assert training == shown["Lift sessions"] == "1"
+    assert services.get_trends(uid)["sessions"]["this_week"] == 0  # the next day's read would have said 0
+
+
+def test_with_weigh_ins_in_the_28_days_and_no_chart_nothing_stands_in_the_charts_place(client, pinned, monkeypatch):
+    """The words in the chart's place key on get_trends' count: one weigh-in, or none in the 28 days. With two or
+    more and no chart drawn, nothing stands in its place: never "No weigh-ins in the last 28 days.", which would be
+    false."""
+    sign_in(client)
+    bw_state("two in 28 days")
+    monkeypatch.setattr(web.charts, "bodyweight_svg", lambda *a, **k: None)
+    card = bw_node(client.get("/progress").text)
+    assert services.get_trends(only_user().id)["bodyweight"]["weigh_ins_28d"] == 2
+    assert [shape(e)[:2] for e in card.elements()[1].elements()] == [("dl", "callouts")]
+    assert "No weigh-ins" not in card.text() and "One weigh-in" not in card.text()

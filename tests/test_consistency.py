@@ -100,7 +100,7 @@ def test_the_trends_card_holds_get_trends_figures(client, account):
         figure(table["Calorie target"][0][0], cal["target_kcal"], "kcal")
     figure(table["From estimates"][0][0], cal["estimated_share_pct_28d"], "percent")
     figure(table["Lift sessions"][0][0], ses["this_week"], "count")
-    figure(table["Lift sessions a week"][0][0], ses["per_week_4w"], "count_avg")
+    assert table["Lift sessions a week"][0][0] == f"{show(ses['per_week_4w'], 'count_avg', page=True)}\u00a0a week"
     if ses["target_per_week"] is not None:
         figure(table["Lift sessions"][0][1], ses["target_per_week"], "count")
     figure(table["Cardio"][0][0], car["minutes_this_week"], "week_minutes")

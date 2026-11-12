@@ -34,7 +34,8 @@
 {# The Body weight card: the chart over the last 28 days, then four callouts, High, Latest, Trend and Low. High,
    Latest and Low are get_days' weigh-ins of the 28 days, each as entered, with its date. Trend is get_trends'
    smoothed weight, the boxed one. The chart is drawn when there is one to draw. With none, one line says why,
-   by get_trends' count of the 28 days' weigh-ins. No weigh-in at all: the card is empty. #}
+   by get_trends' count of the 28 days' weigh-ins: one, or none. Any other count draws nothing in its place. No
+   weigh-in at all: the card is empty. #}
 {% set w = grid.weight %}
 <section class="card bw-card{% if not bw %} is-empty{% endif %}" id="body-weight" aria-labelledby="body-weight-title">
   <div class="card-head">
@@ -45,7 +46,7 @@
   <div class="bw-wrap">
     {% if chart %}{{ chart }}
     {% elif bw.weigh_ins_28d == 1 %}<p class="empty-line">One weigh-in in the last 28 days. The chart starts from the second one.</p>
-    {% else %}<p class="empty-line">No weigh-ins in the last 28 days.</p>
+    {% elif bw.weigh_ins_28d == 0 %}<p class="empty-line">No weigh-ins in the last 28 days.</p>
     {% endif %}
     <dl class="callouts">
       {% if w %}
@@ -106,7 +107,7 @@
         {% endfor %}
         {% endif %}
         <tr class="group"><td>Lift sessions</td><td class="num">{{ ses.this_week|show("count") }}</td><td class="remark">Last 7 days{% if ses.target_per_week is not none %}, target {{ ses.target_per_week|show("count") }}{% endif %}</td></tr>
-        <tr><td>Lift sessions a week</td><td class="num">{{ ses.per_week_4w|show("count_avg") }}</td><td class="remark">4-week average</td></tr>
+        <tr><td>Lift sessions a week</td><td class="num">{{ ses.per_week_4w|show("count_avg") }}&nbsp;a week</td><td class="remark">4-week average</td></tr>
         <tr><td>Cardio</td><td class="num">{{ car.minutes_this_week|show("week_minutes") }}</td><td class="remark">Last 7 days{% if car.target_minutes is not none %}, target {{ car.target_minutes|show("week_minutes") }}{% endif %}</td></tr>
         <tr><td>Cardio a week</td><td class="num">{{ car.minutes_per_week_4w|show("week_minutes") }}</td><td class="remark">4-week average</td></tr>
         <tr class="group"><td>Maintenance</td><td class="num">{% if m %}{{ m.kcal|show("maintenance") }}{% endif %}</td><td class="remark">{% if m %}<span class="tag tag-estimate">estimate</span> {{ m.days_logged|show("count") }} logged days, {{ m.from|days(m.to, trends.today) }}{% else %}{{ trends.maintenance_note or "Not enough logged yet for an estimate." }}{% endif %}</td></tr>
@@ -134,7 +135,7 @@
       </tbody>
     </table>
   </div>
-  <p class="small">Sessions and time cover the last 28 days. Fastest pace is your best ever. A blank pace means no distance is logged for that activity.</p>
+  <p class="small">Sessions and time cover the last 28 days.{% if paced %} Fastest pace is your best ever. A blank pace means no distance is logged for that activity.{% endif %}</p>
 </section>
 {% else %}
 <section class="card cardio-card is-empty" aria-labelledby="cardio-title">
@@ -164,7 +165,7 @@
       </tbody>
     </table>
   </div>
-  <p class="small">Estimated max is worked out from your sets, not a tested max. Trend is its change a week.</p>
+  <p class="small">Estimated max is worked out from your sets, not a tested max.{% if filled.trend %} Trend is its change a week.{% endif %}</p>
 </section>
 {% else %}
 <section class="card lifts-card is-empty" aria-labelledby="lifts-title">

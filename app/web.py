@@ -1538,12 +1538,13 @@ async def progress_page(request: Request) -> Response:
         return not_found_page(request)
     # The tiles, their sheets and the Body weight card read what Today's glance block reads (glance_of), so the
     # three tiles and sheets they share say the same on both pages. None when a read fails: the page then
-    # draws none of them. The Trends card keeps its own get_trends read, so it draws whenever that read answers,
-    # glance or none. The Cardio card reads get_cardio's row for every activity; a failed read draws no card.
+    # draws none of them. The Trends card reads the glance's get_trends, so the tiles and the table say one day's
+    # figures. With no glance it reads get_trends itself, and draws whenever that read answers. The Cardio card
+    # reads get_cardio's row for every activity; a failed read draws no card.
     glance = await glance_of(user.id)
     today = date.fromisoformat(glance["trends"]["today"] if glance else result["today"])
     trend = await _db(_trend, user.id, today)
-    trends = await _db(services.get_trends, user.id)
+    trends = glance["trends"] if glance else await _db(services.get_trends, user.id)
     cardio = await _db(services.get_cardio, user.id)
     state = await _db(services.sample_state, user.id)
     return page(request, "progress.html", lifts=result["lifts"], best_sets=trend["best_sets"],
