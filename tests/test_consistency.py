@@ -94,9 +94,10 @@ def test_the_trends_card_holds_get_trends_figures(client, account):
     (week, week_remark), (month, month_remark) = table["Eaten a day"]
     if cal["avg_7d"] is not None:
         figure(week, cal["avg_7d"], "kcal")
-        figure(week_remark, cal["days_logged_7d"], "count")
+        # The whole remark, so a count is never matched by the 7 of "Last 7 days" or by the other window's count.
+        assert week_remark == f"Last 7 days, {show(cal['days_logged_7d'], 'count')} logged"
     figure(month, cal["avg_28d"], "kcal")
-    figure(month_remark, cal["days_logged_28d"], "count")
+    assert month_remark == f"Last 28 days, {show(cal['days_logged_28d'], 'count')} logged"
     if cal["target_kcal"] is not None:
         figure(table["Calorie target"][0][0], cal["target_kcal"], "kcal")
     figure(table["From estimates"][0][0], cal["estimated_share_pct_28d"], "percent")
@@ -144,7 +145,7 @@ def test_the_lift_rows_hold_get_progress_figures(client, account):
             figure(text, row["current_estimated_max_kg"], "estimated_max")
         else:  # the two reasons, told apart by lifts.history's reps_only; never a 0 kg
             bare = reps_only(account).get(row["exercise"])
-            assert ("Needs added weight" if bare else "Needs a set of 1 to 10 reps") in text
+            assert ("Needs added weight" if bare else "Needs a weighted set of 1 to 10 reps") in text
             assert not re.search(r"(?<![\d.,])0 kg", text)
             if bare:
                 assert holds(text, f"{show(bare['reps'], 'reps')} reps")
@@ -163,20 +164,27 @@ def reps_only(user_id: int) -> dict:
         return lifts.history(s, user_id, users.today_for(s.get(User, user_id)))["reps_only"]
 
 
+def labelled_cells(cells: str) -> dict[str, str]:
+    """A row table's cells by their data-label, each cell's text as a person reads it."""
+    return {label: text_of(cell) for label, cell in re.findall(r'<td[^>]*data-label="([^"]+)"[^>]*>(.*?)</td>', cells,
+                                                               re.S)}
+
+
 def test_the_cardio_rows_hold_get_cardio_figures(client, account):
-    """Each Cardio row, by its activity's name: the last 28 days' sessions and minutes, the fastest pace as
-    get_cardio gives it, and the last day, each as the read has it."""
+    """Each Cardio row, by its activity's name, cell by cell by data-label: the last 28 days' sessions and minutes,
+    the fastest pace as get_cardio gives it, and the last day, each as the read has it. So Sessions and Time
+    swapped, or a count matched inside a day, fail."""
     result = services.get_cardio(account)
     page = client.get("/progress").text
     assert result["activities"]
+    paced = any(a["fastest_pace"] for a in result["activities"])
     for a in result["activities"]:
         cells = re.search(rf'<td class="lead">{re.escape(a["exercise"])}</td>(.*?)</tr>', page, re.S).group(1)
-        text = text_of(cells)
-        figure(text, a["sessions_28d"], "count")
-        figure(text, a["minutes_28d"], "week_minutes", unit=False)
-        if a["fastest_pace"] is not None:
-            assert holds(text, a["fastest_pace"])
-        assert holds(text, day(a["last_date"], result["today"]))
+        want = {"Sessions": show(a["sessions_28d"], "count", page=True),
+                "Time (min)": show(a["minutes_28d"], "week_minutes", page=True, unit=False),
+                **({"Fastest pace (per km)": a["fastest_pace"] or ""} if paced else {}),
+                "Last": day(a["last_date"], result["today"])}
+        assert labelled_cells(cells) == want, a["exercise"]
         assert f'href="/day/{a["last_date"]}"' in cells
 
 
@@ -213,7 +221,7 @@ def test_a_lifts_page_holds_its_figures(client, monkeypatch, name):
             chart = text_of(re.search(r'<p class="figure">(.*?)</p>', page, re.S).group(1))
             figure(chart, lift["current_estimated_max_kg"], "estimated_max")
         else:  # the Lifts card's two reasons, told apart by reps_only
-            assert top.endswith("Needs added weight" if bare else "Needs a set of 1 to 10 reps")
+            assert top.endswith("Needs added weight" if bare else "Needs a weighted set of 1 to 10 reps")
             assert '<p class="figure">' not in page
         assert not re.search(r"(?<![\d.,])0\s?kg", text_of(page))
         if lift["best_set"]:
@@ -222,8 +230,10 @@ def test_a_lifts_page_holds_its_figures(client, monkeypatch, name):
             assert holds(best, f"kg \u00d7 {show(b['reps'], 'reps')}") and holds(best, day(b["date"], today))
         elif bare:
             assert holds(best, f"{show(bare['reps'], 'reps')} reps") and holds(best, day(bare["date"], today))
+        else:  # neither a best set nor reps_only: the empty tile says why
+            assert best.endswith("No weighted set of 1 to 10 reps yet"), best
         figure(sessions, lift["sessions"], "count")
-        assert holds(sessions, f"last {day(lift['last_trained'], today)}")
+        assert holds(sessions, f"last trained {day(lift['last_trained'], today)}")
         want = []
         for p in reversed(lift["bests"]):
             q = "estimated_max" if p["kind"] == "estimated_max" else "weight_kg"

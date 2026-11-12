@@ -1470,17 +1470,35 @@ def test_progress_keeps_the_card_rule_on_the_whole_page(client, account):
     assert built_findings(s, only_user().id) == []
 
 
+# Each glance state on Progress, and markup only that state draws there: proof the page reached it (rev_b8 note 10).
+PROGRESS_MARKERS = {
+    _one_weigh_in: ('<p class="empty-line">One weigh-in in the last 28 days. The chart starts from the second one.</p>',),
+    _none_in_28_days: ('<p class="empty-line">No weigh-ins in the last 28 days.</p>',
+                       "kg. No weigh-ins in the last 28 days.</p>"),
+    _a_day_at_0_kcal: ('">0</text>', 'popovertarget="sheet-calories"'),
+    _two_recent_no_rate: ("The weekly rate needs a weigh-in from 14 to 42 days ago.", 'id="bodyweight-chart"',
+                          'id="chart-weight-sheet"'),
+    _food_in_28_not_7: ('<span class="tile-value">No food in the last 7 days</span>',
+                        '<td class="remark">No food logged in the last 7 days.</td>'),
+    _one_lift_session_and_cardio_today: ('<tr class="group"><td>Lift sessions</td><td class="num">1</td>',
+                                         '<td class="lead">Outdoor Walk</td>'),
+    _targets_and_a_zero_rate: ("Last 7 days, target 0<", "0&nbsp;kg a week", "The session target is 0 a week."),
+}
+
+
 @pytest.mark.parametrize("state", list(GLANCE_STATES), ids=lambda f: f.__name__.strip("_"))
 def test_progress_in_the_states_the_sweeps_never_reach_keeps_every_rule_it_holds(client, state):
     """The glance states on Progress, where its Body weight card shows one weigh-in, none in 28 days, a chart with
     no rate, and the Calories chart's 0: the frame rules, the page rules every page keeps, T1's text rules and
-    T3's step 4 checks hold, and the card rule finds nothing."""
+    T3's step 4 checks hold, and the card rule finds nothing. Each state's own markup shows."""
     sign_in(client)
     user = only_user()
     today = today_of(user)
     state(user.id, today)
     r = client.get("/progress")
     assert r.status_code == 200 and '<div class="glance">' in r.text
+    assert set(PROGRESS_MARKERS) == set(GLANCE_STATES)
+    assert [m for m in PROGRESS_MARKERS[state] if m not in r.text] == [], state.__name__
     s = Seen("/progress", r.text, True, zone_missing=not only_user().time_zone, today=today.isoformat())
     findings = frame_findings(s) + page_rule_findings(s)
     findings += page_findings("/progress", r.text, entered_text(user.id), user.id)
@@ -1667,3 +1685,85 @@ def test_the_card_rule_learns_the_two_goals_shapes_and_nothing_looser(client, mo
     # The goal's h2 one level down, in the head's own div: the shape the contract's markup gives, no finding.
     assert found(page.replace('<h2><strong>', '<div><h2><strong>', 1).replace('</strong></h2>', '</strong></h2></div>',
                                                                               1)) == []
+
+
+# ---------------------------------------------------------------- the Progress batch
+
+def _progress_states() -> list[tuple[str, str]]:
+    """(helper, state) for every Progress state test_web.py builds: the tiles' and Trends' states, the Cardio card's
+    and the Lifts card's (the flat trend and the mixed lift among them)."""
+    from .test_web import MIXED, PROGRESS_STATES  # noqa: PLC0415
+
+    cardio = ("no distance beside a distance", "no distance anywhere", "only older than 28 days")
+    lift = ("no added weight", "no set of 1 to 10 reps", "one session, no trend", MIXED, "a flat trend", "all three")
+    return ([("progress_state", s) for s in PROGRESS_STATES] + [("cardio_state", s) for s in cardio]
+            + [("lift_state", s) for s in lift])
+
+
+@pytest.mark.parametrize("helper, state", _progress_states(), ids=lambda v: v)
+def test_progress_in_its_trends_cardio_and_lifts_states_keeps_every_built_rule(client, monkeypatch, helper, state):
+    """T1 (rev_b9): built_findings, which the sweeps run on three accounts only, on every state the Trends, Cardio
+    and Lifts tests build, at the fixed day. With the frame rules, the page rules, T1's text rules (the true zeros
+    among them), T3's step 4 checks and the card rule: nothing."""
+    from . import test_web  # noqa: PLC0415
+
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    sign_in(client)
+    getattr(test_web, helper)(state)
+    user = only_user()
+    r = client.get("/progress")
+    assert r.status_code == 200
+    s = Seen("/progress", r.text, True, zone_missing=not user.time_zone, today="2026-11-10")
+    findings = built_findings(s, user.id) + titled_card_findings(s) + frame_findings(s) + page_rule_findings(s)
+    findings += page_findings("/progress", r.text, entered_text(user.id), user.id)
+    findings += step_4_findings("/progress", r.text, names_of(user.id), entered_notes(user.id))
+    assert not findings, "\n".join(findings)
+
+
+def test_the_pill_check_holds_each_days_year_and_the_weekday_letters(client, monkeypatch):
+    """Carried from the Today passes (rev_b7 N2): two clauses of pill_findings no sweep proved. On Sat 2 Jan 2027 the
+    grid starts in December 2026, so its first pills name their year: the real page passes, and the same words with
+    the year dropped fail. A wrong letter in the weekday row fails."""
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2027, 1, 2, 12, 0, tzinfo=timezone.utc))
+    address, page = glance_page(client)
+    grid = services.get_days(only_user().id)
+    today = grid["today"]
+    assert today == "2027-01-02" and address == f"/day/{today}" and grid["days"][0]["date"].startswith("2026-12")
+
+    def found(markup: str) -> list[str]:
+        return pill_findings(Seen(address, markup, True, today=today), grid)
+
+    assert found(page) == []
+    head = grid["days"][0]
+    words = formatting.day(head["date"], today)
+    assert words.endswith(" 2026"), words
+    shown = f'<span class="sr">{words}: {PILL_WORDS[pill_state(head)]}</span>'
+    assert page.count(shown) == 1
+    no_year = page.replace(shown, shown.replace(" 2026:", ":"))
+    assert any(f"{head['date']}: the hidden words say" in f for f in found(no_year))
+    letters = [formatting.weekday_letter(d["date"]) for d in grid["days"][:7]]
+    row = re.search(r'<div class="week-head" aria-hidden="true">.*?</div>', page, re.S).group(0)
+    wrong = "W" if letters[0] != "W" else "T"
+    bad_row = row.replace(f"<span>{letters[0]}</span>", f"<span>{wrong}</span>", 1)
+    assert bad_row != row
+    assert any("the weekday row" in f for f in found(page.replace(row, bad_row)))
+
+
+# Every |safe in a template, by template and the count it holds: none. A new one needs a ruling and a line here.
+SAFE_ALLOWED: dict[str, int] = {}
+
+
+def test_no_template_marks_text_safe_outside_its_allowlist():
+    """rev_b10 R8: autoescape is on, and no template turns it off for a value with |safe (or a Markup call), but for
+    the ones SAFE_ALLOWED names. Every template, not one page's. Charts reach the page as Markup from charts.py."""
+    found = {}
+    for path in sorted((Path(web.__file__).parent / "templates").glob("*.html")):
+        text = path.read_text(encoding="utf-8")
+        hits = len(re.findall(r"\|\s*safe\b", text)) + len(re.findall(r"\bMarkup\s*\(", text))
+        hits += len(re.findall(r"{%-?\s*autoescape\s+false", text))
+        if hits:
+            found[path.name] = hits
+    assert found == SAFE_ALLOWED
+    assert len(list((Path(web.__file__).parent / "templates").glob("*.html"))) >= 14

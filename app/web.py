@@ -593,6 +593,12 @@ def failed(result: dict) -> bool:
     return "error" in result or "errors" in result
 
 
+def sample_rows_of(state: dict) -> int:
+    """The sample rows sample_state counts, for the sample banner: 0 when the read failed (the account gone
+    between two reads of one request), so the page draws with no banner."""
+    return 0 if failed(state) else state["sample_rows"]
+
+
 def codes(result: dict) -> set[str]:
     """Every error code in a service result, a combined one included."""
     found = {result["error"]} if isinstance(result.get("error"), str) else set()
@@ -802,7 +808,7 @@ async def settings_view(request: Request, user: User, error: dict | None = None,
                 targets=shown,
                 switch_error=switch_error, zone_groups=groups, selected_zone=selected,
                 choices=[(value, CLAUDE_CAN_LABELS[value], CLAUDE_CAN_LINES[value]) for value in CLAUDE_CAN],
-                sample_rows=state["sample_rows"])
+                sample_rows=sample_rows_of(state))
 
 
 async def claude_can_page(request: Request) -> Response:
@@ -912,7 +918,7 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
                 meal_choices=MEAL_CHOICES, typed=typed or {}, adding=request.query_params.getlist("add"),
                 # The Today card's state: a new account (today's page, sample_state empty), or the day's
                 # food, by whether any meal holds an entry (a day can total 0 kcal with food logged).
-                sample_rows=state["sample_rows"], new_account=state["empty"] and on == today,
+                sample_rows=sample_rows_of(state), new_account=not failed(state) and state["empty"] and on == today,
                 has_food=bool(food) and any((food.get("meals") or {}).values()),
                 shows_estimate=any(c.get("estimate") for c in cardio))
 
@@ -1231,6 +1237,7 @@ async def edit_page(request: Request) -> Response:
     # The day the entry is on, as stored: the back link and Cancel go there, whatever date was typed.
     on, today = date.fromisoformat(entry["date"]), users.today_for(user)
     estimate = entry.get("estimate") if kind == "cardio_entry" else None
+    _, _, _, whole = rules.MEASUREMENTS[entry["kind"]] if kind == "measurement" else (None, None, None, False)
     return page(request, "edit.html", status_code=status, kind=kind, kind_name=KIND_NAMES[kind],
                 entry_id=found["id"], entry=entry, values=values, errors=errors,
                 # A refusal about a field the form does not draw goes at the top of the form.
@@ -1239,8 +1246,7 @@ async def edit_page(request: Request) -> Response:
                 day_words="Today" if on == today else formatting.day(on, today),
                 # A measurement's line above its Value, and a whole-number kind's numeric keyboard.
                 kind_with_unit=kind_with_unit,
-                value_inputmode="numeric" if kind == "measurement" and rules.MEASUREMENTS[entry["kind"]][3]
-                else "decimal",
+                value_inputmode="numeric" if whole else "decimal",
                 meal_choices=MEAL_CHOICES,
                 activity_choices=[(name, name) for name in activities],
                 source_words=SOURCE_WORDS, estimate_kcal=estimate["kcal"] if estimate else None,
@@ -1294,8 +1300,8 @@ def changed_fields(fields, current: dict, form) -> dict:
             else:
                 number = rules.to_float(sent)
                 same = number is not None and now is not None and number == float(now)
-        elif field == "notes":
-            same = sent.strip() == (now or "").strip()
+        elif field == "notes":  # a note stored with CRLF is the same note posted back with LF
+            same = sent.strip() == line_breaks(now or "").strip()
         else:
             same = sent.strip() == str(now if now is not None else "")
         if not same:
@@ -1388,7 +1394,7 @@ async def foods_view(request: Request, user: User, errors: dict | None = None, t
     state = await _db(services.sample_state, user.id)
     deleted = request.query_params.get("deleted")
     return page(request, "foods.html", status_code=status_code, foods=saved, errors=errors or {},
-                sample_rows=state["sample_rows"],
+                sample_rows=sample_rows_of(state),
                 typed=typed or {}, saved=request.query_params.get("saved") == "1",
                 undo=deleted if isinstance(deleted, str) and deleted.isdigit() and len(deleted) <= 10 else None)
 
@@ -1542,19 +1548,23 @@ async def progress_page(request: Request) -> Response:
     # three tiles and sheets they share say the same on both pages. None when a read fails: the page then
     # draws none of them. The Trends card reads the glance's get_trends, so the tiles and the table say one day's
     # figures. With no glance it reads get_trends itself, and draws whenever that read answers. The Cardio card
-    # reads get_cardio's row for every activity; a failed read draws no card.
+    # reads get_cardio's row for every activity; a failed read draws no card. get_cardio takes the person's date
+    # from the clock, so read across their midnight it can count another 28 days than the page's: then it is read
+    # once more, as glance_of does, and if it still names another day the card is not drawn for that one render.
     glance = await glance_of(user.id)
     today = date.fromisoformat(glance["trends"]["today"] if glance else result["today"])
     trend = await _db(_trend, user.id, today)
     trends = glance["trends"] if glance else await _db(services.get_trends, user.id)
     cardio = await _db(services.get_cardio, user.id)
+    if not failed(cardio) and cardio["today"] != today.isoformat():
+        cardio = await _db(services.get_cardio, user.id)
     state = await _db(services.sample_state, user.id)
     return page(request, "progress.html", lifts=result["lifts"], best_sets=trend["best_sets"],
                 reps_only=trend["reps_only"], glance=glance, bodyweight=trend["bodyweight"],
                 chart=charts.bodyweight_svg(trend["bodyweight"], today=today), slug=links.slug, today=today,
                 trends=None if failed(trends) else trends,
-                activities=None if failed(cardio) else cardio["activities"],
-                sample_rows=state["sample_rows"], weight_now_label=weight_now_label, rate_note=rate_note)
+                activities=None if failed(cardio) or cardio["today"] != today.isoformat() else cardio["activities"],
+                sample_rows=sample_rows_of(state), weight_now_label=weight_now_label, rate_note=rate_note)
 
 
 def weight_now_label(trends: dict) -> str:
@@ -1606,7 +1616,7 @@ async def progress_lift_page(request: Request) -> Response:
     chart = progress_data.lift_chart(_lift_points(lift), lift["goals"], lift["exercise"])
     return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart, today=today), today=today,
                 bare=bare, sessions=list(reversed(lift["estimated_max_over_time"])), best_widened=best_widened,
-                best_labels=lifts.BEST_LABELS, sample_rows=state["sample_rows"])
+                best_labels=lifts.BEST_LABELS, sample_rows=sample_rows_of(state))
 
 
 def best_widened(best: dict) -> bool:
@@ -1797,7 +1807,7 @@ async def goals_view(request: Request, user: User, errors: dict | None = None, t
                 closed=listed.get("closed") or [], errors=errors or {}, typed=typed or {}, saved=saved,
                 kinds=GOAL_KINDS, lifts=await exercise_names("lift"), activities=await cardio_names(),
                 measurement_choices=[(k, measurements.kind_word(k), rules.MEASUREMENTS[k][0]) for k in GOAL_MEASUREMENTS],
-                goal_quantity=goal_quantity, closed_words=CLOSED_WORDS, sample_rows=state["sample_rows"],
+                goal_quantity=goal_quantity, closed_words=CLOSED_WORDS, sample_rows=sample_rows_of(state),
                 today=charted.get("today"), zone=user.time_zone)
 
 

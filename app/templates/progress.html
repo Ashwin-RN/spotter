@@ -84,7 +84,7 @@
 <section class="card trends" id="trends" aria-labelledby="trends-title">
   <h2 id="trends-title">Trends</h2>
   <div class="table-wrap">
-    <table class="trends">
+    <table class="trends" aria-labelledby="trends-title">
       <thead><tr><th scope="col">Quantity</th><th scope="col" class="num">Value</th><th scope="col">Remark</th></tr></thead>
       <tbody>
         {% if bw %}
@@ -126,7 +126,7 @@
 <section class="card cardio-card" aria-labelledby="cardio-title">
   <h2 id="cardio-title">Cardio</h2>
   <div class="table-wrap">
-    <table class="rows">
+    <table class="rows" aria-labelledby="cardio-title">
       <thead><tr><th scope="col">Activity</th><th scope="col" class="num">Sessions</th><th scope="col" class="num">Time (min)</th>{% if paced %}<th scope="col" class="num">Fastest pace (per km)</th>{% endif %}<th scope="col">Last</th></tr></thead>
       <tbody>
         {% for a in activities %}
@@ -148,19 +148,20 @@
 {# The Lifts card: get_progress' row for every lift logged, by name, each a link to its page. The best set is
    lifts.history's. A lift never done above 0 kg (reps_only) needs added weight, and its best set is its most reps.
    A weighted lift with no set of 1 to 10 reps has no estimated max and no best set. No lift shows 0 kg. A column
-   no lift fills (Best set, Trend) is not drawn. #}
+   no lift fills (Best set, Trend) is not drawn. The reason cell spans its row on a phone (wide-cell), so it is
+   never squeezed beside Last trained. Each table is named by its card's h2. #}
 {% if lifts %}
 {% set filled = namespace(best=false, trend=false) %}
 {% for row in lifts %}{% if best_sets.get(row.exercise) or reps_only.get(row.exercise) %}{% set filled.best = true %}{% endif %}{% if row.slope_per_week is not none %}{% set filled.trend = true %}{% endif %}{% endfor %}
 <section class="card lifts-card" aria-labelledby="lifts-title">
   <h2 id="lifts-title">Lifts</h2>
   <div class="table-wrap">
-    <table class="rows">
+    <table class="rows" aria-labelledby="lifts-title">
       <thead><tr><th scope="col">Lift</th><th scope="col" class="num">Estimated max</th>{% if filled.best %}<th scope="col" class="num">Best set</th>{% endif %}{% if filled.trend %}<th scope="col" class="num">Trend</th>{% endif %}<th scope="col">Last trained</th></tr></thead>
       <tbody>
         {% for row in lifts %}
         {% set best, bare = best_sets.get(row.exercise), reps_only.get(row.exercise) %}
-        <tr><td class="lead"><a href="/progress/{{ slug(row.exercise) }}">{{ row.exercise }}</a></td>{% if row.current_estimated_max_kg is not none %}<td class="num" data-label="Estimated max">{{ row.current_estimated_max_kg|show("estimated_max") }}</td>{% else %}<td class="num muted" data-label="Estimated max">{% if bare %}Needs added weight{% else %}Needs a set of 1 to 10 reps{% endif %}</td>{% endif %}{% if filled.best %}<td class="num" data-label="Best set">{% if best %}{{ best.weight_kg|show("weight_kg") }} × {{ best.reps|show("reps") }}{% elif bare %}{{ bare.reps|show("reps") }}&nbsp;reps{% endif %}</td>{% endif %}{% if filled.trend %}<td class="num" data-label="Trend">{% if row.slope_per_week is not none %}{{ row.slope_per_week|show("rate") }}&nbsp;kg a week{% endif %}</td>{% endif %}<td data-label="Last trained">{% if row.last_trained %}<a href="/day/{{ row.last_trained }}">{{ row.last_trained|day(today) }}</a>{% endif %}</td></tr>
+        <tr><td class="lead"><a href="/progress/{{ slug(row.exercise) }}">{{ row.exercise }}</a></td>{% if row.current_estimated_max_kg is not none %}<td class="num" data-label="Estimated max">{{ row.current_estimated_max_kg|show("estimated_max") }}</td>{% else %}<td class="num muted wide-cell" data-label="Estimated max">{% if bare %}Needs added weight{% else %}Needs a weighted set of 1 to 10 reps{% endif %}</td>{% endif %}{% if filled.best %}<td class="num" data-label="Best set">{% if best %}{{ best.weight_kg|show("weight_kg") }} × {{ best.reps|show("reps") }}{% elif bare %}{{ bare.reps|show("reps") }}&nbsp;reps{% endif %}</td>{% endif %}{% if filled.trend %}<td class="num" data-label="Trend">{% if row.slope_per_week is not none %}{{ row.slope_per_week|show("rate") }}&nbsp;kg a week{% endif %}</td>{% endif %}<td data-label="Last trained">{% if row.last_trained %}<a href="/day/{{ row.last_trained }}">{{ row.last_trained|day(today) }}</a>{% endif %}</td></tr>
         {% endfor %}
       </tbody>
     </table>

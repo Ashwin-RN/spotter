@@ -5566,11 +5566,11 @@ def test_a_note_posted_with_crlf_or_a_lone_cr_is_stored_with_lf(client, every_ki
 
 def test_a_refused_note_comes_back_with_its_line_breaks(client, every_kind):
     entry_id = every_kind["lift_session"]
-    typed = "x" * 2000 + "\r\nmore"
+    typed = "  " + "x" * 2000 + "\r\nmore  "
     r = post(client, f"/entries/lift_session/{entry_id}/edit", notes=typed, date=every_kind["today"])
     assert r.status_code == 400
     shown = next(f["value"] for f in controls_of(r.text) if f["name"] == "notes")
-    assert shown == "x" * 2000 + "\nmore"  # the same line break, read as one newline
+    assert shown == "  " + "x" * 2000 + "\nmore  "  # the same line break, read as one newline, and nothing stripped
     assert next(x for x in rows(LiftSession, only_user().id) if x.id == entry_id).notes == "felt strong"
 
 
@@ -5647,6 +5647,8 @@ def test_the_field_names_more_ids_after_its_error_and_its_hint():
     assert 'aria-describedby="v-error v-hint v-name"' in both
     assert 'aria-describedby="v-name"' in parts_field("v", "value", "Value", None, "x", describedby="v-name")
     assert 'aria-describedby="v-error v-name"' in parts_field("v", "value", "Value", "Bad.", "x", describedby="v-name")
+    assert 'aria-describedby="v-hint v-name"' in parts_field("v", "value", "Value", None, "x", hint="A hint.",
+                                                             describedby="v-name")  # a hint and no error
     assert "aria-describedby" not in parts_field("v", "value", "Value", None, "x")
 
 
@@ -6152,6 +6154,9 @@ def test_progress_reads_the_glance_and_gives_its_date_to_the_chart(client, pinne
     assert r.status_code == 200 and glance_node(r.text) is None and "bw-card" not in r.text and "popover" not in r.text
     assert '<section class="card trends" id="trends" aria-labelledby="trends-title">' in r.text
     assert '<h2 id="cardio-title">Cardio</h2>' in r.text and '<h2 id="lifts-title">Lifts</h2>' in r.text
+    # The page's date then falls back to get_progress' own: the Lifts card's days are worded against it.
+    _, lifts_rows = card_table(lower_card(r.text, "lifts-card"))
+    assert [row[-1] for row in lifts_rows][:2] == ["Fri 6 Nov", "Fri 6 Nov"]
 
 
 def test_trend_draws_the_28_days_ending_on_the_date_it_is_given(client, pinned):
@@ -6414,7 +6419,7 @@ def test_a_failed_cardio_read_draws_no_cardio_card_and_the_rest_of_progress(clie
 LIFTS_HEAD = ["Lift", "Estimated max", "Best set", "Trend", "Last trained"]
 LIFTS_LINE = "Estimated max is worked out from your sets, not a tested max. Trend is its change a week."
 LIFTS_SHORT = "Estimated max is worked out from your sets, not a tested max."  # with no Trend column
-ZERO_KG = re.compile(r"(?<![\d.,])0 kg")  # a 0 kg figure, not the end of 100 kg
+ZERO_KG = re.compile(r"(?<![\d.,])0\s?kg")  # a 0 kg figure, not the end of 100 kg: a tile's "0" "kg" too
 
 
 def test_the_lifts_card_on_the_fixed_day(progress_fixed):
@@ -6458,9 +6463,12 @@ def test_the_lifts_card_on_the_fixed_day(progress_fixed):
         assert [(a.attrs, a.text()) for a in tr_.elements()[4].find_all("a")] == [
             ({"href": f"/day/{lift['last_trained']}"}, formatting.day(lift["last_trained"], read["today"]))]
     pull = body[-1].elements()
-    assert pull[1].classes == ["num", "muted"] and pull[3].children == []
+    assert pull[1].classes == ["num", "muted", "wide-cell"] and pull[3].children == []
     assert not ZERO_KG.search(card.text()) and "No estimated max yet" not in progress_fixed
     assert "No best set yet" not in progress_fixed
+
+
+MIXED = "0 kg sets of 1 to 10 reps, weighted sets above 10"  # the mixed lift (rev_b10), on both pages
 
 
 def lift_state(state: str) -> None:
@@ -6476,6 +6484,12 @@ def lift_state(state: str) -> None:
         log(2, ("Bench Press", 40, 15))
     if state == "one session, no trend":
         log(0, ("Back Squat", 101.25, 5))  # a weight at 2 dp: weight_kg keeps it, estimated_max would not
+    if state == MIXED:  # a set above 0 kg, so not reps_only, and no weighted set of 1 to 10 reps
+        log(3, ("Pull-Up", 0, 8))
+        log(1, ("Pull-Up", 10, 15))
+    if state == "a flat trend":
+        for n in (21, 14, 7, 0):
+            log(n, ("Back Squat", 100, 5))
     if state == "all three":
         for n, kg in ((21, 90), (14, 95), (7, 100), (0, 105)):
             log(n, ("Back Squat", kg, 5))
@@ -6485,14 +6499,15 @@ def lift_state(state: str) -> None:
     ("no added weight", ["Lift", "Estimated max", "Best set", "Last trained"],
      [["Pull-Up", "Needs added weight", f"8{NB}reps", "Mon 9 Nov"]]),
     ("no set of 1 to 10 reps", ["Lift", "Estimated max", "Last trained"],
-     [["Bench Press", "Needs a set of 1 to 10 reps", "Sun 8 Nov"]]),
+     [["Bench Press", "Needs a weighted set of 1 to 10 reps", "Sun 8 Nov"]]),
     ("one session, no trend", ["Lift", "Estimated max", "Best set", "Last trained"],
      [["Back Squat", f"118.1{NB}kg", f"101.25{NB}kg × 5", "Tue 10 Nov"]]),
+    (MIXED, ["Lift", "Estimated max", "Last trained"], [["Pull-Up", "Needs a weighted set of 1 to 10 reps", "Mon 9 Nov"]]),
     ("all three", LIFTS_HEAD, None),
 ])
 def test_the_lifts_card_in_each_state(client, pinned, state, head, rows):
     """A lift never above 0 kg: "Needs added weight" and its most reps. A weighted lift with no set of 1 to 10 reps:
-    "Needs a set of 1 to 10 reps", best set and trend blank. A lift with no trend: no trend. A column no lift fills
+    "Needs a weighted set of 1 to 10 reps", best set and trend blank. A lift with no trend: no trend. A column no lift fills
     is not drawn; with each state beside a lift that has a trend, every column is, and the blank cells are empty."""
     sign_in(client)
     lift_state(state)
@@ -6504,7 +6519,7 @@ def test_the_lifts_card_in_each_state(client, pinned, state, head, rows):
         slope = services.get_progress(only_user().id)["lifts"][0]["slope_per_week"]
         rows = [["Back Squat", f"122.5{NB}kg", f"105{NB}kg × 5", f"{formatting.show(slope, 'rate')}{NB}kg a week",
                  "Tue 10 Nov"],
-                ["Bench Press", "Needs a set of 1 to 10 reps", "", "", "Sun 8 Nov"],
+                ["Bench Press", "Needs a weighted set of 1 to 10 reps", "", "", "Sun 8 Nov"],
                 ["Pull-Up", "Needs added weight", f"8{NB}reps", "", "Mon 9 Nov"]]
         assert slope is not None and slope > 0
         blanks = [c for c in card.find_all("td") if not c.text()]
@@ -6644,20 +6659,31 @@ def test_the_lift_page_on_the_fixed_day(client, progress_fixed):
     assert [shape(e) for e in head.elements()] == [("h1",), ("nav", "day-nav")]
     assert head.elements()[0].text() == "Back Squat"
     assert [(a.attrs, a.text()) for a in head.find_all("a")] == [({"class": "back", "href": "/progress"}, "Progress")]
+    assert head.elements()[1].attrs == {"class": "day-nav", "aria-label": "Back"}  # the back nav's name
     assert lift_tiles(page) == [
         ("div", ["tile", "tile-max"], "Estimated max now:", "107.9", "kg, estimated max now", None),
         ("div", ["tile", "tile-best"], "Best set:", "92.5", "kg × 5, best set", "Fri 6 Nov"),
-        ("div", ["tile", "tile-sessions"], "Sessions:", "6", "sessions", "last Fri 6 Nov")]
+        ("div", ["tile", "tile-sessions"], "Sessions:", "6", "sessions", "last trained Fri 6 Nov")]
     assert not main.elements()[2].find_all("a") and not main.elements()[2].find_all("button")
     chart = main.elements()[3]
     assert chart.attrs == {"class": "card chart-card", "aria-labelledby": "max-title"}
     assert [shape(e) for e in chart.elements()] == [("h2", "card-label", "tile-max"), ("p", "card-sub"),
                                                     ("p", "figure"), ("svg", "chart")]
     assert chart.elements()[0].attrs["id"] == "max-title" and chart.elements()[0].text() == "Estimated max"
+    assert chart.elements()[1].text() == "Worked out from your sets, not a tested max"  # the sub, as ruled
     assert chart.elements()[2].text() == f"107.9{NB}kg" and chart.elements()[3].attrs["id"] == "progress-chart"
     assert main.elements()[4].attrs == {"class": "card bests-card", "aria-labelledby": "bests-title"}
     assert main.elements()[5].attrs == {"class": "card", "aria-labelledby": "sessions-title"}
     bests, sessions = lift_lines(page, "Bests"), lift_lines(page, "Sessions")
+    # The Bests list is ul.bests, each line one span holding its words and link (a flex row keeps them as one);
+    # the Sessions list is ul.entries of li.entry-line.
+    [bests_ul] = lift_card(page, "Bests").find_all("ul")
+    assert bests_ul.classes == ["bests"] and all(li.classes == [] for li in bests_ul.elements())
+    assert all([shape(e) for e in li.elements()] == [("span",)] and li.elements()[0].find_all("a")
+               and li.text() == li.elements()[0].text() for li in bests_ul.elements())
+    [sessions_ul] = lift_card(page, "Sessions").find_all("ul")
+    assert sessions_ul.classes == ["entries"] and sessions_ul.elements()
+    assert all(li.classes == ["entry-line"] for li in sessions_ul.elements())
     assert bests[:2] == [(f"Fri 6 Nov: heaviest weight 92.5{NB}kg, up from 90{NB}kg", ["/day/2026-11-06"]),
                          (f"Fri 6 Nov: estimated max 107.9{NB}kg, up from 105{NB}kg", ["/day/2026-11-06"])]
     assert sessions[0] == (f"Fri 6 Nov: estimated max 107.9{NB}kg", ["/day/2026-11-06"])
@@ -6671,7 +6697,7 @@ def test_the_lift_page_on_the_fixed_day(client, progress_fixed):
         (formatting.show(lift["current_estimated_max_kg"], "estimated_max", unit=False), "kg, estimated max now", None),
         (formatting.show(best["weight_kg"], "weight_kg", unit=False), f"kg × {formatting.show(best['reps'], 'reps')}, best set",
          formatting.day(best["date"], today)),
-        (formatting.show(lift["sessions"], "count"), "sessions", "last " + formatting.day(lift["last_trained"], today))]
+        (formatting.show(lift["sessions"], "count"), "sessions", "last trained " + formatting.day(lift["last_trained"], today))]
     want = []
     for b in reversed(lift["bests"]):
         q = "estimated_max" if b["kind"] == "estimated_max" else "weight_kg"
@@ -6705,6 +6731,9 @@ def lift_page_state(state: str) -> None:
     if state == "no bests beyond the first":
         log(7, ("Back Squat", 100, 5))
         log(0, ("Back Squat", 95, 5))
+    if state == MIXED:
+        log(3, ("Pull-Up", 0, 8))
+        log(1, ("Pull-Up", 10, 15))
 
 
 # (state, the lift's address, its tiles as (classes, figure, label, note), the chart card's figure or its words,
@@ -6713,7 +6742,7 @@ LIFT_STATES = [
     ("weighted, with bests", "back-squat",
      [(["tile", "tile-max"], "122.5", "kg, estimated max now", None),
       (["tile", "tile-best"], "105", "kg × 5, best set", "Tue 10 Nov"),
-      (["tile", "tile-sessions"], "4", "sessions", "last Tue 10 Nov")],
+      (["tile", "tile-sessions"], "4", "sessions", "last trained Tue 10 Nov")],
      f"122.5{NB}kg",
      [f"Tue 10 Nov: heaviest weight 105{NB}kg, up from 100{NB}kg", f"Tue 10 Nov: estimated max 122.5{NB}kg, up from 116.7{NB}kg",
       f"Tue 3 Nov: heaviest weight 100{NB}kg, up from 95{NB}kg", f"Tue 3 Nov: estimated max 116.7{NB}kg, up from 110.8{NB}kg",
@@ -6723,23 +6752,29 @@ LIFT_STATES = [
     ("no added weight", "pull-up",
      [(["tile", "tile-max", "is-empty"], "Needs added weight", None, None),
       (["tile", "tile-best"], "10", "reps, best set", "Thu 5 Nov"),
-      (["tile", "tile-sessions"], "2", "sessions", "last Mon 9 Nov")],
+      (["tile", "tile-sessions"], "2", "sessions", "last trained Mon 9 Nov")],
      "The chart starts from a set with added weight.", NO_BESTS, NO_SESSIONS),
     ("no set of 1 to 10 reps", "bench-press",
-     [(["tile", "tile-max", "is-empty"], "Needs a set of 1 to 10 reps", None, None),
-      (["tile", "tile-best", "is-empty"], "No set of 1 to 10 reps yet", None, None),
-      (["tile", "tile-sessions"], "1", "session", "last Sun 8 Nov")],
-     "The chart starts from a set of 1 to 10 reps.", NO_BESTS, NO_SESSIONS),
+     [(["tile", "tile-max", "is-empty"], "Needs a weighted set of 1 to 10 reps", None, None),
+      (["tile", "tile-best", "is-empty"], "No weighted set of 1 to 10 reps yet", None, None),
+      (["tile", "tile-sessions"], "1", "session", "last trained Sun 8 Nov")],
+     "The chart starts from a weighted set of 1 to 10 reps.", NO_BESTS, NO_SESSIONS),
     ("one session only", "deadlift",
      [(["tile", "tile-max"], "118.1", "kg, estimated max now", None),
       (["tile", "tile-best"], "101.25", "kg × 5, best set", "Tue 10 Nov"),
-      (["tile", "tile-sessions"], "1", "session", "last Tue 10 Nov")],
+      (["tile", "tile-sessions"], "1", "session", "last trained Tue 10 Nov")],
      f"118.1{NB}kg", NO_BESTS, [f"Tue 10 Nov: estimated max 118.1{NB}kg"]),
     ("no bests beyond the first", "back-squat",
      [(["tile", "tile-max"], "116.7", "kg, estimated max now", None),
       (["tile", "tile-best"], "100", "kg × 5, best set", "Tue 3 Nov"),
-      (["tile", "tile-sessions"], "2", "sessions", "last Tue 10 Nov")],
+      (["tile", "tile-sessions"], "2", "sessions", "last trained Tue 10 Nov")],
      f"116.7{NB}kg", NO_BESTS, [f"Tue 10 Nov: estimated max 110.8{NB}kg", f"Tue 3 Nov: estimated max 116.7{NB}kg"]),
+    # A set of 8 at 0 kg, then 15 at 10 kg: not reps_only (a set above 0 kg), and no weighted set of 1 to 10 reps.
+    (MIXED, "pull-up",
+     [(["tile", "tile-max", "is-empty"], "Needs a weighted set of 1 to 10 reps", None, None),
+      (["tile", "tile-best", "is-empty"], "No weighted set of 1 to 10 reps yet", None, None),
+      (["tile", "tile-sessions"], "2", "sessions", "last trained Mon 9 Nov")],
+     "The chart starts from a weighted set of 1 to 10 reps.", NO_BESTS, NO_SESSIONS),
 ]
 
 
@@ -6864,3 +6899,395 @@ def test_the_lift_pages_estimated_max_goes_through_its_own_filter(client, pinned
     assert lift_card(page, "Estimated max").find_all("p", "figure")[0].text() == f"107.9{NB}kg"
     assert [line for line, _ in lift_lines(page, "Sessions")] == [
         f"Tue 10 Nov: estimated max 118.1{NB}kg", f"Tue 3 Nov: estimated max 80{NB}kg"]
+
+
+# ---------------------------------------------------------------- the Progress batch
+
+BANNER = '<p class="notice sample-banner">Sample data is on this account.'
+NO_ACCOUNT = {"error": "no_account", "message": "x", "fix": "y"}
+
+
+def banner_pages(client) -> dict[str, str]:
+    """Every page that draws the sample banner, by an address of each, for the one signed-in person: Settings, the
+    day page, Foods, Progress, a lift's page and Goals."""
+    assert "error" not in services.log_lifts(only_user().id, {"sets": [
+        {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
+    return {"settings": "/settings", "day": f"/day/{today_of(only_user()).isoformat()}", "foods": "/foods",
+            "progress": "/progress", "lift": "/progress/back-squat", "goals": "/goals"}
+
+
+@pytest.mark.parametrize("name", ["settings", "day", "foods", "progress", "lift", "goals"])
+def test_a_failed_sample_state_read_draws_the_page_with_no_banner(client, monkeypatch, name):
+    """Ruled (rev_b10 section 2): sample_state answering no_account (the account gone between two reads of one
+    request) is not a 500. Each page that reads sample_rows draws as with none: no banner (Settings: no Remove
+    sample data form). With sample rows each shows."""
+    sign_in(client)
+    address = banner_pages(client)[name]
+    mark = 'action="/settings/sample/remove"' if name == "settings" else BANNER
+    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3})
+    shown = client.get(address)
+    assert shown.status_code == 200 and mark in shown.text, name
+    monkeypatch.setattr(services, "sample_state", lambda *a: NO_ACCOUNT)
+    r = client.get(address)
+    assert r.status_code == 200, (name, r.status_code)
+    assert mark not in r.text and "sample-banner" not in r.text
+    assert web.sample_rows_of(NO_ACCOUNT) == 0 and web.sample_rows_of({"empty": True, "sample_rows": 0}) == 0
+
+
+def test_with_a_failed_sample_state_today_is_not_a_new_accounts_page(client, monkeypatch):
+    """The day page reads sample_state for its banner and for whether the account is new. A failed read is neither:
+    the page draws as for an account with entries, with no banner."""
+    sign_in(client)
+    today = f"/day/{today_of(only_user()).isoformat()}"
+    offer = 'id="today-card-title">Nothing logged yet</h2>'
+    assert offer in client.get(today).text  # a new account: the offer of sample data
+    monkeypatch.setattr(services, "sample_state", lambda *a: NO_ACCOUNT)
+    page = client.get(today).text
+    assert offer not in page and "sample-banner" not in page and '<section class="card hero"' in page
+
+
+def test_a_failed_glance_read_draws_no_glance_and_the_page_still_answers(client, monkeypatch):
+    """glance_of's reads failing, on the first try or on the second (after two dates): no glance, and the day page
+    and Progress still answer. Carried from the Today passes (rev_b7 N1)."""
+    sign_in(client)
+    uid = only_user().id
+    real_trends, real_days = services.get_trends, services.get_days
+    calls = {"trends": 0, "days": 0}
+    for failing, on_call in (("days", 1), ("trends", 1), ("days", 2), ("trends", 2)):
+        calls.update(trends=0, days=0)
+
+        def trends(user_id, failing=failing, on_call=on_call):
+            calls["trends"] += 1
+            if failing == "trends" and calls["trends"] == on_call:
+                return NO_ACCOUNT
+            out = real_trends(user_id)
+            # Two dates on the first try, so a second try is made.
+            return {**out, "today": "2020-01-01"} if on_call == 2 and calls["trends"] == 1 else out
+
+        def days(user_id, failing=failing, on_call=on_call):
+            calls["days"] += 1
+            return NO_ACCOUNT if failing == "days" and calls["days"] == on_call else real_days(user_id)
+        monkeypatch.setattr(services, "get_trends", trends)
+        monkeypatch.setattr(services, "get_days", days)
+        assert asyncio.run(web.glance_of(uid)) is None, (failing, on_call)
+        assert calls == {"trends": on_call, "days": on_call}, (failing, on_call, calls)  # both read, each try
+        for address in (f"/day/{today_of(only_user()).isoformat()}", "/progress"):
+            calls.update(trends=0, days=0)
+            r = client.get(address)
+            assert r.status_code == 200 and glance_node(r.text) is None, (failing, on_call, address)
+    monkeypatch.setattr(services, "get_trends", real_trends)
+    monkeypatch.setattr(services, "get_days", real_days)
+    assert asyncio.run(web.glance_of(uid)) is not None
+
+
+def test_the_aside_count_goes_through_its_filter(client, monkeypatch):
+    """The Last 28 days card's aside prints get_days' count through show, so a count from 1,000 carries its comma.
+    Below 1,000 a raw count reads the same, so the read is stood in for (rev_b7 K22)."""
+    sign_in(client)
+    real = services.get_days
+    monkeypatch.setattr(services, "get_days", lambda uid: {**real(uid), "lift_sessions_28d": 1234})
+    head = daygrid_of(day_of(client, today_of(only_user()).isoformat()))["head"]
+    assert [words for tag, classes, _, words in head if classes == ["aside"]] == ["1,234 lift sessions"]
+
+
+def test_a_note_stored_with_crlf_is_no_change_when_saved_as_drawn(client, every_kind):
+    """A note an assistant stored with CRLF (rules.text keeps CR) is posted back by a browser as drawn, CRLF, and read
+    as LF (posted_form): a Save with no change is "unchanged", and nothing is rewritten. A cardio estimate is not
+    worked out again, though the weigh-in has moved since it was made. Carried from the Today passes (rev_b5b R1)."""
+    for kind, model in (("lift_session", LiftSession), ("cardio_entry", CardioEntry)):
+        entry_id = every_kind[kind]
+        with db.session_scope() as s:
+            s.get(model, entry_id).notes = "old\r\nnote"
+            s.get(Bodyweight, every_kind["bodyweight"]).kg = 95.0
+        before = next(x for x in rows(model, only_user().id) if x.id == entry_id)
+        drawn = {f["name"]: f["value"] or "" for f in controls_of(edit_of(client, kind, entry_id))}
+        r = post(client, f"/entries/{kind}/{entry_id}/edit", **{**drawn, "notes": "old\r\nnote"})
+        assert location(r) == SITE + f"/day/{every_kind['today']}?saved=unchanged", kind
+        after = next(x for x in rows(model, only_user().id) if x.id == entry_id)
+        assert after.notes == "old\r\nnote"
+        if kind == "cardio_entry":
+            assert (after.estimated_kcal, after.estimate_weight_kg) == (before.estimated_kcal, before.estimate_weight_kg)
+        # A real change to the note is still saved.
+        r = post(client, f"/entries/{kind}/{entry_id}/edit", **{**drawn, "notes": "old\r\nnote, new"})
+        assert location(r) == SITE + f"/day/{every_kind['today']}?saved={kind}"
+
+
+def weight_sheet_panel(page: str) -> list[str]:
+    return sheets_of(page)["sheet-weight"]["panel"]
+
+
+@pytest.mark.parametrize("where", ["today", "progress"])
+def test_the_weight_sheet_says_no_weigh_ins_only_when_there_are_none(client, pinned, monkeypatch, where):
+    """The Weight sheet's panel, with no chart: one weigh-in in the 28 days, its words; none, "No weigh-ins in the
+    last 28 days."; two or more (a chart that is not drawn), nothing in its place, never the false "none". Before
+    this batch, two or more with no chart read "No weigh-ins in the last 28 days."."""
+    sign_in(client)
+    address = "/day/2026-11-10" if where == "today" else "/progress"
+    bw_state("none in 28 days")  # 40 and 45 days back
+    assert weight_sheet_panel(client.get(address).text) == ["Smoothed weight", "No weigh-ins in the last 28 days."]
+    for on, kg in (("2026-11-07", "80.6"), ("2026-11-10", "80.2")):
+        assert "error" not in services.log_bodyweight(only_user().id, {"kg": kg, "date": on}, "claude")
+    assert services.get_trends(only_user().id)["bodyweight"]["weigh_ins_28d"] == 2
+    assert weight_sheet_panel(client.get(address).text) == ["Smoothed weight", "svg"]
+    monkeypatch.setattr(web.charts, "weight_sheet_svg", lambda *a, **k: None)
+    page = client.get(address).text
+    assert weight_sheet_panel(page) == ["Smoothed weight"]
+    assert "No weigh-ins in the last 28 days" not in sheets_of(page)["sheet-weight"]["node"].text()
+
+
+def test_the_lifts_reason_cell_spans_its_row_on_a_phone(client, pinned):
+    """P1: a lift's reason sits in a wide-cell, which spans the stacked row on a phone (style.css' table.rows
+    td.wide-cell), so it never runs over Last trained. Both reasons, and no other cell."""
+    sign_in(client)
+    lift_state("all three")
+    card = lower_card(client.get("/progress").text, "lifts-card")
+    wide = [(c.classes, c.text()) for c in card.find_all("td") if "wide-cell" in c.classes]
+    assert wide == [(["num", "muted", "wide-cell"], "Needs a weighted set of 1 to 10 reps"),
+                    (["num", "muted", "wide-cell"], "Needs added weight")]
+
+
+def test_each_progress_table_is_named_by_its_cards_h2(progress_fixed):
+    """P5: each table on Progress' cards is named by its card's h2, by aria-labelledby. Row headers stay td."""
+    for cls, title in (("trends", "trends-title"), ("cardio-card", "cardio-title"), ("lifts-card", "lifts-title")):
+        card = lower_card(progress_fixed, cls)
+        [table] = card.find_all("table")
+        assert table.attrs.get("aria-labelledby") == title == card.attrs["aria-labelledby"], cls
+        assert [h.attrs.get("id") for h in card.find_all("h2")] == [title]
+        assert all(r.elements()[0].tag == "td" for r in table.find_all("tbody")[0].elements())
+
+
+def test_the_cardio_card_counts_the_pages_own_28_days_read_across_midnight(client, monkeypatch):
+    """P2 and T9: the glance reads Tue 10 Nov, and get_cardio may read a moment later on Wed 11 Nov, so its 28 days
+    would leave out the walk on 14 Oct that Trends counts. get_cardio is then read once more: on the page's day,
+    the card draws that day's figures. Still on another day, no Cardio card for that render, and the rest draws."""
+    clock = {"now": FIXED_NOW}
+    monkeypatch.setattr(db, "utcnow", lambda: clock["now"])
+    sign_in(client)
+    uid = only_user().id
+    for name, minutes, on in (("Outdoor Walk", 30, "2026-10-14"), ("Outdoor Run", 20, "2026-11-10")):
+        assert "error" not in services.log_cardio(uid, {"exercise": name, "minutes": minutes, "date": on}, "claude")
+    real, later = services.get_cardio, FIXED_NOW + timedelta(days=1)
+    for name, at, calls, drawn in (("both on the page's day", [FIXED_NOW], 1, True),
+                                   ("the first after midnight", [later, FIXED_NOW], 2, True),
+                                   ("both after midnight", [later, later], 2, False)):
+        seen = []
+
+        def cardio(user_id, *args, at=at, seen=seen):
+            clock["now"] = at[min(len(seen), len(at) - 1)]
+            seen.append(clock["now"])
+            out = real(user_id, *args)
+            clock["now"] = FIXED_NOW
+            return out
+        monkeypatch.setattr(services, "get_cardio", cardio)
+        page = client.get("/progress").text
+        assert len(seen) == calls, name
+        assert ('class="card cardio-card' in page) == drawn, name
+        assert 'id="trends"' in page and '<h2 id="lifts-title">Lifts</h2>' in page and glance_node(page) is not None
+        if drawn:
+            _, rows = card_table(lower_card(page, "cardio-card"))
+            assert rows == [["Outdoor Run", "1", "20", "Tue 10 Nov"], ["Outdoor Walk", "1", "30", "Wed 14 Oct"]], name
+    monkeypatch.setattr(services, "get_cardio", real)
+    clock["now"] = later
+    assert [a["sessions_28d"] for a in services.get_cardio(uid)["activities"]] == [1, 0]  # the next day leaves it out
+
+
+def test_the_trends_card_draws_from_the_glance_when_a_later_get_trends_would_fail(client, pinned, monkeypatch):
+    """T10: the page's own get_trends is read only with no glance. With the glance's read answering and any later
+    one failing, the Trends card still draws, from the one read. With no glance (get_days failing), the page reads
+    get_trends itself, and the card draws from that read."""
+    sign_in(client)
+    progress_state("the fixed day")
+    real, calls = services.get_trends, []
+
+    def first_only(uid):
+        calls.append(uid)
+        return real(uid) if len(calls) == 1 else NO_ACCOUNT
+    monkeypatch.setattr(services, "get_trends", first_only)
+    page = client.get("/progress").text
+    assert len(calls) == 1 and glance_node(page) is not None
+    assert trends_of(page)[0] == ("Smoothed trend", f"79.2{NB}kg", "")
+    calls.clear()
+    monkeypatch.setattr(services, "get_trends", lambda uid: (calls.append(uid), real(uid))[1])
+    monkeypatch.setattr(services, "get_days", lambda uid: NO_ACCOUNT)
+    page = client.get("/progress").text
+    assert len(calls) == 2 and glance_node(page) is None  # once in glance_of, once the page's own
+    assert trends_of(page)[0] == ("Smoothed trend", f"79.2{NB}kg", "")
+
+
+def test_trend_with_no_account_answers_empty(client):
+    """T4: _trend's answer for an account that is gone: no best sets, no reps_only, no chart. Every key the page
+    reads is there."""
+    assert web._trend(987654) == {"best_sets": {}, "reps_only": {}, "bodyweight": None}
+
+
+def test_the_maintenance_row_falls_back_to_its_own_words(client, pinned, monkeypatch):
+    """T5: with no estimate and no maintenance_note from the read, the Maintenance row says "Not enough logged yet
+    for an estimate.", its value blank and no tag."""
+    sign_in(client)
+    real = services.get_trends
+    monkeypatch.setattr(services, "get_trends", lambda uid: {**real(uid), "maintenance": None, "maintenance_note": None})
+    page = client.get("/progress").text
+    assert trends_of(page)[-1] == ("Maintenance", "", "Not enough logged yet for an estimate.")
+    assert not lower_card(page, "trends").find_all(cls="tag-estimate")
+
+
+def test_a_flat_lift_trend_reads_0_kg_a_week(client, pinned):
+    """T2: the same weight four weeks running is a slope of 0: the Trend reads "0 kg a week", never blank."""
+    sign_in(client)
+    lift_state("a flat trend")
+    assert services.get_progress(only_user().id)["lifts"][0]["slope_per_week"] == 0
+    card = lower_card(client.get("/progress").text, "lifts-card")
+    assert card_table(card) == (LIFTS_HEAD, [["Back Squat", f"116.7{NB}kg", f"100{NB}kg × 5", f"0{NB}kg a week",
+                                              "Tue 10 Nov"]])
+    assert card.elements()[-1].text() == LIFTS_LINE
+
+
+def test_a_last_day_in_the_year_before_carries_its_year(client, monkeypatch):
+    """T3: on Tue 5 Jan 2027, a lift and a run last done on Sun 20 Dec 2026 read "Sun 20 Dec 2026" in the Lifts card's
+    Last trained and the Cardio card's Last."""
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2027, 1, 5, 12, 0, tzinfo=timezone.utc))
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.log_lifts(uid, {"date": "2026-12-20", "sets": [
+        {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}, "claude")
+    assert "error" not in services.log_cardio(uid, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5,
+                                                    "date": "2026-12-20"}, "claude")
+    page = client.get("/progress").text
+    assert card_table(lower_card(page, "lifts-card"))[1] == [["Back Squat", f"116.7{NB}kg", f"100{NB}kg × 5",
+                                                              "Sun 20 Dec 2026"]]
+    assert card_table(lower_card(page, "cardio-card"))[1] == [["Outdoor Run", "1", "30", "6:00", "Sun 20 Dec 2026"]]
+
+
+def test_high_latest_and_low_each_show_their_own_weigh_in(client, pinned):
+    """rev_b8 finding 2: weigh-ins of 81, 79 and 80 kg at 5, 3 and 0 days back, so High, Latest and Low are three
+    weigh-ins. Each callout shows its own, with its date."""
+    sign_in(client)
+    uid, today = only_user().id, date(2026, 11, 10)
+    for n, kg in ((5, "81"), (3, "79"), (0, "80")):
+        assert "error" not in services.log_bodyweight(uid, {"kg": kg, "date": (today - timedelta(days=n)).isoformat()},
+                                                      "claude")
+    card = body_weight_card(client.get("/progress").text)
+    assert callouts_of(card) == expected_callouts(uid) == [
+        ([], "High", f"81{NB}kg", "Thu 5 Nov"), ([], "Latest", f"80{NB}kg", "Tue 10 Nov"),
+        (["is-key"], "Trend", f"80.7{NB}kg", "Smoothed"), ([], "Low", f"79{NB}kg", "Sat 7 Nov")]
+
+
+def test_the_maintenance_sheet_counts_its_logged_days_not_its_window(client, pinned):
+    """rev_b8 finding 3: food on 15 of the last 21 days. The sheet says "worked out from 15 logged days": the read's
+    days_logged, which differs from its window_days (21) here."""
+    sign_in(client)
+    uid, today = only_user().id, date(2026, 11, 10)
+    for n in (21, 14, 7, 0):
+        assert "error" not in services.log_bodyweight(uid, {"kg": "80", "date": (today - timedelta(days=n)).isoformat()},
+                                                      "claude")
+    for n in range(15):
+        assert "error" not in services.log_food(uid, {"date": (today - timedelta(days=n)).isoformat(), "entries": [
+            {"description": "Dal", "kcal": 2000}]}, "claude")
+    m = services.get_trends(uid)["maintenance"]
+    assert (m["days_logged"], m["window_days"]) == (15, 21)
+    sheet = sheets_of(client.get("/progress").text)["sheet-maintenance"]
+    assert sheet["sentence"] == (f"About 2,000{NB}kcal a day, worked out from 15 logged days. Over that window intake "
+                                 f"averaged 2,000{NB}kcal a day and the 7-day average weight moved 0{NB}kg.")
+
+
+def test_the_trend_callout_is_the_reads_not_the_charts(client, pinned, monkeypatch):
+    """rev_b8 finding 6: the chart's last smoothed point stood in at 85.4, a value that shows differently from
+    get_trends' smoothed weight. The Trend callout still shows the read's."""
+    sign_in(client)
+    bw_state("two in 28 days")
+    real = web.progress_data.bodyweight_chart
+
+    def stood_in(*args):
+        chart = real(*args)
+        chart["points"] = [{**p, "smoothed": 85.4} for p in chart["points"]]
+        return chart
+    monkeypatch.setattr(web.progress_data, "bodyweight_chart", stood_in)
+    page = client.get("/progress").text
+    assert 'id="bodyweight-chart"' in page
+    read = formatting.show(services.get_trends(only_user().id)["bodyweight"]["smoothed"], "bodyweight_derived",
+                           unit=False)
+    assert read != "85.4"
+    assert callouts_of(body_weight_card(page))[2] == (["is-key"], "Trend", f"{read}{NB}kg", "Smoothed")
+
+
+def test_the_lift_chart_is_drawn_on_get_progress_today(client, monkeypatch):
+    """rev_b10 R6: the chart takes get_progress' today. On Tue 5 Jan 2027, the last session is 8 days back, in the
+    year before: the chart drawn on get_progress' today names its days with their year ("Mon 28 Dec 2026"), and one
+    drawn without it (on its own last day) would not. The page's chart is the one drawn on get_progress' today."""
+    monkeypatch.setattr(db, "utcnow", lambda: datetime(2027, 1, 5, 12, 0, tzinfo=timezone.utc))
+    sign_in(client)
+    for on, kg in (("2026-12-14", 90), ("2026-12-21", 95), ("2026-12-28", 100)):
+        assert "error" not in services.log_lifts(only_user().id, {"date": on, "sets": [
+            {"exercise": "Back Squat", "weight_kg": kg, "reps": 5}]}, "claude")
+    read = services.get_progress(only_user().id, "Back Squat")
+    assert read["today"] == "2027-01-05"
+    chart = web.progress_data.lift_chart(web._lift_points(read["lift"]), read["lift"]["goals"], "Back Squat")
+    on_read, on_its_own = str(web.charts.chart_svg(chart, today=date(2027, 1, 5))), str(web.charts.chart_svg(chart))
+    assert "Mon 28 Dec 2026" in on_read and "2026" not in on_its_own  # so the test can tell them apart
+    page = client.get("/progress/back-squat").text
+    svg = re.search(r'<svg class="chart" id="progress-chart".*?</svg>', page, re.S).group(0)
+    assert svg == on_read
+
+
+def test_the_lift_page_words_its_days_against_get_progress_today_across_a_year_end(client, monkeypatch):
+    """rev_b10 R10: the page hands its today to the template. get_progress answers on Thu 31 Dec 2026 and the clock
+    then moves to 1 Jan 2027: the head's days still read without a year, as 31 Dec's page reads them."""
+    clock = {"now": datetime(2026, 12, 31, 12, 0, tzinfo=timezone.utc)}
+    monkeypatch.setattr(db, "utcnow", lambda: clock["now"])
+    sign_in(client)
+    for on, kg in (("2026-12-24", 95), ("2026-12-31", 100)):
+        assert "error" not in services.log_lifts(only_user().id, {"date": on, "sets": [
+            {"exercise": "Back Squat", "weight_kg": kg, "reps": 5}]}, "claude")
+    real = services.get_progress
+
+    def then_new_year(*args):
+        out = real(*args)
+        clock["now"] = datetime(2027, 1, 1, 12, 0, tzinfo=timezone.utc)
+        return out
+    monkeypatch.setattr(services, "get_progress", then_new_year)
+    page = client.get("/progress/back-squat").text
+    assert [t[5] for t in lift_tiles(page)] == [None, "Thu 31 Dec", "last trained Thu 31 Dec"]
+    assert [line for line, _ in lift_lines(page, "Sessions")] == [
+        f"Thu 31 Dec: estimated max 116.7{NB}kg", f"Thu 24 Dec: estimated max 110.8{NB}kg"]
+    assert "2026" not in lift_main(page).text()
+
+
+def test_a_best_whose_previous_is_0_still_shows_up_from(client, pinned, monkeypatch):
+    """rev_b10 R9: a previous of 0 is a previous, not none: the line still says "up from". The read is stood in."""
+    sign_in(client)
+    lift_page_state("one session only")
+    real = services.get_progress
+
+    def from_zero(uid, *args):
+        out = real(uid, *args)
+        bests = [{"date": "2026-11-10", "kind": "weight", "value": 101.25, "previous": 0.0}]
+        return {**out, "lift": {**out["lift"], "bests": bests}} if args else out
+    monkeypatch.setattr(services, "get_progress", from_zero)
+    assert lift_lines(client.get("/progress/deadlift").text, "Bests") == [
+        (f"Tue 10 Nov: heaviest weight 101.25{NB}kg, up from 0{NB}kg", ["/day/2026-11-10"])]
+
+
+def test_the_lift_page_with_nothing_logged_carries_the_sample_banner(client, pinned, monkeypatch):
+    """rev_b10 R11: with sample rows and none of this lift's sets, the banner still shows, after the head and before
+    the one card."""
+    sign_in(client)
+    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3})
+    main = lift_main(client.get("/progress/back-squat").text)
+    assert [shape(c) for c in main.elements()] == [("div", "page-head"), ("p", "notice", "sample-banner"),
+                                                   ("div", "card", "is-empty")]
+    assert main.elements()[1].text() == "Sample data is on this account. Remove it on Settings."
+
+
+def test_the_zero_kg_check_sees_a_tiles_figure_and_unit_in_two_spans(client, pinned, monkeypatch):
+    """rev_b10's note: a tile reads its figure and its unit in two spans, which main.text() joins with a plain space.
+    ZERO_KG sees "0" and "kg" there too: an estimated max stood in at 0.04 kg reads "0" "kg" on the tile."""
+    sign_in(client)
+    lift_page_state("one session only")
+    real = services.get_progress
+    monkeypatch.setattr(services, "get_progress", lambda uid, *args: (lambda out: {
+        **out, "lift": {**out["lift"], "current_estimated_max_kg": 0.04}} if args else out)(real(uid, *args)))
+    page = client.get("/progress/deadlift").text
+    main = lift_main(page)
+    assert lift_tiles(page)[0][3:5] == ("0", "kg, estimated max now")
+    assert ZERO_KG.search(main.text())
+    assert ZERO_KG.search(f"0{NB}kg") and ZERO_KG.search("0 kg") and not ZERO_KG.search("100 kg")

@@ -126,7 +126,7 @@
     <p class="panel-title">Smoothed weight</p>
     {% if glance.weight_chart %}{{ glance.weight_chart }}
     {% elif bw.weigh_ins_28d == 1 %}<p class="muted">One weigh-in in the last 28 days. The chart starts from the second one.</p>
-    {% else %}<p class="muted">No weigh-ins in the last 28 days.</p>
+    {% elif bw.weigh_ins_28d == 0 %}<p class="muted">No weigh-ins in the last 28 days.</p>
     {% endif %}
   </div>
   <div class="table-wrap">

@@ -6,7 +6,8 @@
    controls, the Estimated max chart card beside the Bests card, and the Sessions card across. Every figure is
    get_progress' own, or lifts.history's reps_only for a lift never done above 0 kg, through the filters. Every
    day is worded against get_progress' today. A lift with no estimated max says why, in the Lifts card's words:
-   reps_only holding the lift means it needs added weight, else a set of 1 to 10 reps. No figure reads 0 kg. #}
+   reps_only holding the lift means it needs added weight, else a weighted set of 1 to 10 reps. No figure reads
+   0 kg. #}
 <div class="page-head">
   <h1>{{ lift.exercise }}</h1>
   <nav class="day-nav" aria-label="Back">
@@ -17,7 +18,7 @@
 
 {% if lift.sessions %}
 {% set best, estimated = lift.best_set, lift.current_estimated_max_kg is not none %}
-{% set reason = "Needs added weight" if bare else "Needs a set of 1 to 10 reps" %}
+{% set reason = "Needs added weight" if bare else "Needs a weighted set of 1 to 10 reps" %}
 <div class="tiles">
   {% if estimated %}
   {{ parts.tile("max", "Estimated max now: ", lift.current_estimated_max_kg|show("estimated_max", unit=False), "kg, estimated max now") }}
@@ -29,18 +30,18 @@
   {% elif bare %}
   {{ parts.tile("best", "Best set: ", bare.reps|show("reps"), "reps, best set", bare.date|day(today)) }}
   {% else %}
-  {{ parts.tile("best", "Best set: ", "No set of 1 to 10 reps yet", empty=true) }}
+  {{ parts.tile("best", "Best set: ", "No weighted set of 1 to 10 reps yet", empty=true) }}
   {% endif %}
-  {{ parts.tile("sessions", "Sessions: ", lift.sessions|show("count"), "session" if lift.sessions == 1 else "sessions", "last " ~ lift.last_trained|day(today)) }}
+  {{ parts.tile("sessions", "Sessions: ", lift.sessions|show("count"), "session" if lift.sessions == 1 else "sessions", "last trained " ~ lift.last_trained|day(today)) }}
 </div>
 
 {# The chart card: the lift chart, with the estimated max now as its figure. No session of 1 to 10 reps with
    added weight: no chart, and the card says why. #}
-{{ parts.chart_card("max", "max-title", "Estimated max", "Each session, worked out from your sets",
+{{ parts.chart_card("max", "max-title", "Estimated max", "Worked out from your sets, not a tested max",
                     chart if chart else none,
                     lift.current_estimated_max_kg|show("estimated_max", unit=False) if chart and estimated else none, "kg",
                     "The chart starts from a set with added weight." if bare
-                    else "The chart starts from a set of 1 to 10 reps.") }}
+                    else "The chart starts from a weighted set of 1 to 10 reps.") }}
 
 {# The Bests card: each new best, newest first, in the service's words (lifts.BEST_LABELS), the day a link. A
    pair that prints the same shows widened, together. A best with no previous shows its value only. #}
