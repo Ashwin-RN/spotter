@@ -98,7 +98,9 @@ class ImportRowIn(BaseModel):
     kind: str = Field(description="lift_session, bodyweight, measurement, food_entry or cardio_entry.")
     date: str = Field(
         description="The day it happened: YYYY-MM-DD, or the export's timestamp with its offset, such as "
-                    "2026-03-01T07:12:00+05:30. A timestamp keeps its own date. At most 2 years back.")
+                    "2026-03-01T07:12:00+05:30. A timestamp with a non-zero offset keeps its own date. One in UTC, "
+                    "ending Z or +00:00, is moved to the person's own date in their time zone. At most 2 years "
+                    "back.")
     sets: list[ImportSetIn] | None = Field(
         default=None, description="A lift_session: every set item, in order, 1 to 60.")
     notes: str | None = Field(

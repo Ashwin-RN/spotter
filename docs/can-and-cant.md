@@ -221,6 +221,12 @@ rest is in `import_entries`' own description:
   day's resting heart rate as the app gives it, and the day's first weigh-in.
 - Each food entry goes with its meal as the export names it. When the export gives only a meal's or a
   day's total, it goes as one entry described as that total, such as Breakfast from the old app.
+- For an import only, when the export gives only a day's total, Claude asks the person once which meal
+  such totals go under. Logging food never asks which meal.
+- A food entry's calories go only as the export gives them, never estimated for an import. A food entry
+  with no calories is left out, and Claude tells the person how many.
+- When the export does not say which unit it uses, Claude asks the person. One call names one unit for
+  each quantity: rows in another unit go in a separate call.
 
 ### Dates
 
@@ -243,7 +249,8 @@ Then the usual rule: never after today, at most 2 years back. An import needs th
 | The write limit | One call is one write of the 120, a preview too |
 
 - The 1,000 sets and food entries run out before the 200 rows for food at six entries a day: 166 days
-  is the most one call takes. They also run out first for lifting sent with one item a set.
+  is the most one call takes. They also run out first for lifting sent with one item a set and more
+  than 5 sets a session.
 - `times` on a set counts repeats: 3 sets of 5 at 100 kg is one item. A session holds at most 60 sets
   once `times` is counted.
 - A call over a cap is refused whole, and nothing is written.
@@ -271,6 +278,8 @@ date that an earlier import stored for this same row.
 
 ### Sending the same rows again
 
+Each answer holds with the same time zone set at both runs. The last row is the exception.
+
 | Between the runs, the person | The rows sent again |
 |---|---|
 | Changed nothing | Already there |
@@ -280,6 +289,7 @@ date that an earlier import stored for this same row.
 | Deleted rows imported in the wrong unit, then sent the file with the right unit | Written: the numbers differ |
 | Logged a new entry by hand on an imported day | Day taken |
 | Edited or deleted a row they logged by hand | Matched by its value on its date only. A deleted one is not held |
+| Changed their time zone, and the rows carry timestamps in UTC | Can be written again, on another date: a known limit, below |
 
 ### Known limits
 
@@ -289,8 +299,12 @@ date that an earlier import stored for this same row.
   date, not by the whole day it came with. If the person moves it to another day and the same file is
   sent again, it comes back on its first day. If they edit it, delete it, and the same file is sent
   again, it comes back too.
-- The same file brings back no other imported entry the person moved, edited or deleted. A food day
-  imported whole is one of these.
+- With the same time zone set, the same file brings back no other imported entry the person moved,
+  edited or deleted. A food day imported whole is one of these.
+- A row stamped in UTC, ending Z or +00:00, takes the person's own date in the time zone set when it is
+  imported. If the person changes their time zone and the same rows are sent again, such a row can land
+  on another date. It is then written again there, beside the first copy. A timestamp with its own
+  offset, such as +05:30, keeps its own date, and so does a plain date: neither moves.
 - If the person moves an imported food day's entries to another day, and a later export holds fewer
   entries for that first day, the entries it still holds are written again on the first day, unless
   that day holds a food entry. This is a different file, not the same rows sent again.

@@ -83,16 +83,18 @@ IMPORT_DESCRIPTION = (
     "row is dated, and takes kind, date and the named fields of its kind. "
     "A preview first. With dry_run true or left out, nothing is written: the result says what would be written, "
     "what is already there, what falls on a day Spotter already holds, and what was refused and why. Show the "
-    "person that, and send the same rows with dry_run false only when they say yes. "
+    "person that, and the units the preview names, and send the same rows with dry_run false only when they say "
+    "yes. "
     "Units. Send weights, distances, speeds and body sizes as the export writes them: never convert them "
     "yourself. Send the unit of every weight, distance and body size the rows hold, in weight_unit, "
     "distance_unit and length_unit. Spotter converts them and never assumes a unit: a call whose rows hold a "
-    "weight, a distance, a speed or a body size without its unit is refused, a preview too. A row's speed is in "
-    "the call's distance unit an hour. "
+    "weight, a distance, a speed or a body size without its unit is refused, a preview too. When the export does "
+    "not say which unit it uses, ask the person: never guess. One call names one unit for each quantity: rows in "
+    "another unit go in a separate call. A row's speed is in the call's distance unit an hour. "
     "Size. Up to 200 rows and up to 1,000 sets and food entries a call, oldest first, with one day's rows of a "
     "kind in the same call. Send the rest in the next call. For food at six entries a day, and for lifting with "
-    "one item a set, the 1,000 sets and food entries run out before the 200 rows: send times for sets that "
-    "repeat. At most 10,000 imported rows in any 24 hours. "
+    "one item a set and more than 5 sets a session, the 1,000 sets and food entries run out before the 200 rows: "
+    "send times for sets that repeat. At most 10,000 imported rows in any 24 hours. "
     "Dates. Send each row's timestamp with its offset when the export gives one, or its date. Leave out rows "
     "more than 2 years old, and say how many were left out. "
     "Names. Use exercise and activity names only from list_exercises, exactly as it gives them. When a name in "
@@ -101,11 +103,15 @@ IMPORT_DESCRIPTION = (
     "without saying so. "
     "Health stores and food. From a phone's health store, send one value a day: the day's total steps, the "
     "night's total sleep, the day's resting heart rate as the app gives it, and the day's first weigh-in. Send "
-    "each food entry's meal as the export names it. When the export gives only a meal's or a day's total, send it "
-    "as one entry described as that total, such as Breakfast from the old app. "
-    "Sending again. An import never replaces an entry. Sent again, the same rows write nothing that is already "
-    "there, and an imported entry the person edited, moved or deleted counts as already there. One food case is "
-    "the exception: the can-and-cant resource names it."
+    "each food entry's meal as the export names it. Send a food entry's calories only as the export gives them: "
+    "never estimate one for an import. A food entry with no calories is left out: tell the person how many. "
+    "When the export gives only a meal's or a day's total, send it as one entry described as that total, such as "
+    "Breakfast from the old app. For an import only, when the export gives only a day's total, ask the person "
+    "once which meal such totals go under, and use it for every such row: logging food still never asks. "
+    "Sending again. An import never replaces an entry. Sent again with the same time zone set, the same rows "
+    "write nothing that is already there, and an imported entry the person edited, moved or deleted counts as "
+    "already there. Two cases are the exception, both named in the can-and-cant resource: one food case, and "
+    "rows stamped in UTC after the person's time zone changed."
 )
 
 # Which entry to delete. Unlike the activity, a delete is never a guess.
@@ -892,7 +898,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="import_entries",
         title="Import entries",
         description=IMPORT_DESCRIPTION,
-        annotations=SETTING,  # the same rows sent twice end in the same state: the second writes nothing
+        # A write, as the log functions are: up to 200 rows with no undo, a re-run can write again in the documented
+        # cases, and every real call counts against the write limit. Not a setting.
+        annotations=WRITE,
     )
     async def import_entries(
         rows: Annotated[list[ImportRowIn], Field(

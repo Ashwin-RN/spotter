@@ -292,7 +292,7 @@ def _missing_units(rows: list, units: dict) -> dict | None:
     else:
         fix = (f"Send {lifts._joined(missing)} as the export writes them: "
                + ", ".join(f"{field} {' or '.join(UNITS[field])}" for field in missing) + ".")
-    fix += " Spotter never assumes a unit."
+    fix += " If the export does not say which unit, ask the person. Spotter never assumes a unit."
     return rules.error("missing_unit", said, fix, missing_units=missing)
 
 

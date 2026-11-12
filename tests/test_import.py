@@ -875,8 +875,10 @@ def test_a_quantity_without_its_unit_is_refused_whole_preview_or_not(user, row, 
     before = everything()
     r = imp(user, row, meal(ago(2), ("Oats", 350, "breakfast")), dry=dry, **NO_UNIT)
     assert r == {"error": "missing_unit", "message": f"{unit} is missing, and 1 row holds {HOLDS[unit]}.",
-                 "fix": f"Send {unit} as the export writes it: {' or '.join(imports.UNITS[unit])}. Spotter never "
-                        "assumes a unit.", "missing_units": [unit]}
+                 # Was: "... {kg or lb}. Spotter never assumes a unit." Fix round 3: the fix says to ask, never guess.
+                 "fix": f"Send {unit} as the export writes it: {' or '.join(imports.UNITS[unit])}. If the export "
+                        "does not say which unit, ask the person. Spotter never assumes a unit.",
+                 "missing_units": [unit]}
     assert everything() == before
     stored = next(iter(imports.UNITS[unit]))   # kg, km or cm, named: the same rows are then taken
     named = imp(user, row, meal(ago(2), ("Oats", 350, "breakfast")), dry=True, **{**NO_UNIT, unit: stored})
@@ -892,13 +894,15 @@ def test_two_or_three_units_missing_are_named_in_one_refusal(user):
                    "message": "weight_unit is missing, and 2 rows hold a weight. distance_unit is missing, and 1 row "
                               "holds a distance or a speed.",
                    "fix": "Send weight_unit and distance_unit as the export writes them: weight_unit kg or lb, "
-                          "distance_unit km or mi. Spotter never assumes a unit.",
+                          "distance_unit km or mi. If the export does not say which unit, ask the person. Spotter "
+                          "never assumes a unit.",
                    "missing_units": ["weight_unit", "distance_unit"]}
     three = imp(user, *rows, dry=True, **NO_UNIT)
     assert three["missing_units"] == ["weight_unit", "distance_unit", "length_unit"]
     assert three["message"].endswith(" length_unit is missing, and 1 row holds a body size.")
     assert three["fix"] == ("Send weight_unit, distance_unit and length_unit as the export writes them: weight_unit kg "
-                            "or lb, distance_unit km or mi, length_unit cm or in. Spotter never assumes a unit.")
+                            "or lb, distance_unit km or mi, length_unit cm or in. If the export does not say which "
+                            "unit, ask the person. Spotter never assumes a unit.")
     assert everything() == before
 
 
@@ -947,6 +951,33 @@ def test_a_row_that_is_not_what_its_kind_takes_needs_no_unit_and_fails_as_before
     assert [f["error"] for f in r["failed"]] == ["missing_field", "invalid_kind", "unknown_kind", "invalid_field",
                                                  "sets_count_out_of_range"]
     assert r["row_outcomes"]["written"] == 1
+
+
+def test_a_missing_unit_is_refused_before_too_many_items(user):
+    """The ruled order: rows_out_of_range, then missing_unit, then items_out_of_range (fix round 3)."""
+    rows = [lift(ago(n), *[("Deadlift", 100, 5)] * 50) for n in range(1, 21)] + [meal(ago(1), ("Tea", 40, "snack"))]
+    r = imp(user, *rows, **NO_UNIT)
+    assert r["error"] == "missing_unit" and r["missing_units"] == ["weight_unit"]
+    assert imp(user, *rows, **{**NO_UNIT, "weight_unit": "kg"})["error"] == "items_out_of_range"
+    assert imp(user, *rows * 10, **NO_UNIT)["error"] == "rows_out_of_range"
+
+
+def test_known_limit_utc_rows_sent_again_after_a_time_zone_change_are_written_again(user):
+    """Not built in version 1, documented (the review's M1). A timestamp in UTC takes the person's date in the zone
+    set when it is imported, and every key holds the date. After a change of zone the same rows can land on another
+    date, and are written there again. A timestamp with its own offset, and a plain date, do not move."""
+    utc = "2026-11-07T20:00:00Z"   # 8 Nov in Kolkata (01:30), 7 Nov in New York (15:00)
+    rows = [weigh(utc, 80), run(utc, "Outdoor Run", 30, 5), lift("2026-11-07T20:00:00+00:00", ("Deadlift", 100, 5))]
+    kept = [weigh("2026-11-05T20:00:00+05:30", 81), measure("2026-11-04", "waist", 84)]
+    first = imp(user, *rows, *kept)
+    assert first["row_outcomes"]["written"] == 5 and first["from"] == "2026-11-04" and first["to"] == "2026-11-08"
+    with db.session_scope() as s:
+        s.get(User, user.id).time_zone = "America/New_York"
+    again = imp(user, *rows, *kept)
+    assert again["row_outcomes"] == {"written": 3, "already_there": 2, "day_taken": 0, "failed": 0}
+    weigh_ins = sorted((b.date.isoformat(), b.kg) for b in rows_of(Bodyweight, user.id, deleted_at=None))
+    assert weigh_ins == [("2026-11-05", 81.0), ("2026-11-07", 80.0), ("2026-11-08", 80.0)]   # one row, twice
+    assert total(CardioEntry, user.id) == 2 and total(LiftSession, user.id) == 2 and total(Measurement, user.id) == 1
 
 
 def test_an_unknown_unit_is_refused_before_a_missing_one(user):

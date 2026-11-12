@@ -159,9 +159,9 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `delete_is_a_click` | Delete my account (one weigh-in; Claude may delete) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
 | `drop_goal` | Drop the squat goal (a Back Squat goal and a Bench Press goal) | `set_goal` with the squat goal's id and status dropped, one success; squat dropped, bench still open |
 | `decimals_and_dashes` | How am I doing? (79.2 kg yesterday, 79.3 kg today, no goal) | `get_trends` called; no write function called; no em dash or en dash in the reply; no body weight at two decimals |
-| `import_preview_first` | Bring my weigh-ins over from my old app, with a five-day export, `Date,Weight (lb)` | `import_entries` called, never with `dry_run` false; the reply asks; no weigh-in, live or deleted |
+| `import_preview_first` | Bring my weigh-ins over from my old app, with a five-day export, `Date,Weight (lb)` | `import_entries` called with `weight_unit` lb, never with `dry_run` false; the reply asks; no weigh-in, live or deleted |
 | `import_again` | I checked the preview, write them, with the same export (the five rows already imported) | `import_entries` called with `weight_unit` lb; the reply says "already"; 5 live weigh-ins, all `import`, none deleted |
-| `import_unknown_lift` | Import my lifts from a Strong export of three Zorbinator Press sets at 20 kg | `list_exercises` or `import_entries` called; the reply asks; no lift session |
+| `import_unknown_lift` | Import my lifts from a Strong export of three Zorbinator Press sets at 20 kg | `list_exercises` or `import_entries` called; the reply asks and names Zorbinator; no lift session |
 
 "No write function" is the twelve writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
 `log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,
@@ -230,9 +230,9 @@ instructions and the import's own description. They have not been run yet.**
 
 | Case | Proves | Does not prove |
 |---|---|---|
-| `import_preview_first` | The model previews before it writes, and asks the person. Nothing is written. | That the reply shows the preview's numbers right, or names the unit. A preview of a longer export. |
+| `import_preview_first` | The model previews before it writes, in the export's own unit, and asks the person. Nothing is written. | That the reply shows the preview's numbers right, or names the unit. A preview of a longer export. |
 | `import_again` | Told to write, the model sends the export's own unit, and says the rows are already there. Nothing is written twice. | That it previews first when told to write. It may send `dry_run` false at once, and passes. |
-| `import_unknown_lift` | A lift name not on the list is never written, and the model asks. | That it asks once per name: there is one name. That it offers the right listed name. |
+| `import_unknown_lift` | A lift name not on the list is never written, and the model asks about it by name. | That it asks once per name: there is one name. That it offers the right listed name, or that no call carries a guessed one: the judge has no key for that. |
 
 **What a run of them costs, by the import spec's estimate, not measured:** $0.15 to $0.40 a run on
 `claude-opus-5-5`, so about $1.50 to $3.50 for the 3 cases at 3 runs. The instructions changed, so the

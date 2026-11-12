@@ -255,7 +255,8 @@ READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "ge
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 SETTING_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
-SETTINGS = {"update_settings", "save_food", "import_entries"}  # idempotent: the same call twice ends in the same state
+# Was {"update_settings", "save_food", "import_entries"}: the import is a write, as the log functions are.
+SETTINGS = {"update_settings", "save_food"}  # idempotent: the same call twice ends in the same state
 DELETE_HINTS = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 DELETES = {"delete_entry"}
 
@@ -2136,6 +2137,15 @@ def entry_rows() -> int:
         return sum(session.scalar(select(func.count()).select_from(m)) for m in services.entry_kinds().values())
 
 
+def every_table() -> dict:
+    """Every row of every table but the call log (each call adds its own row), to compare before and after."""
+    from app.models import Base
+
+    with db.session_scope() as session:
+        return {t.name: sorted(tuple(str(v) for v in row) for row in session.execute(select(t)).all())
+                for t in Base.metadata.sorted_tables if t.name != CallLog.__tablename__}
+
+
 def import_calls() -> int:
     with db.session_scope() as session:
         return session.scalar(select(func.count()).select_from(CallLog).where(CallLog.function == "import_entries"))
@@ -2182,6 +2192,14 @@ def test_import_entries_publishes_named_fields_and_a_strict_dry_run_with_no_defa
     assert "never assumes a unit" in description and "without its unit is refused, a preview too" in description
 
 
+def test_import_entries_is_annotated_as_the_log_functions_are(http):
+    """Ruled after fix round 3: a write, not a setting. It writes up to 200 rows with no undo, a re-run can write again
+    in the documented cases, and every real call counts against the write limit."""
+    hints = {t["name"]: t["annotations"] for t in tool_list(http, sign())}
+    assert hints["import_entries"] == WRITE_HINTS == hints["log_food"] == hints["log_lifts"]
+    assert hints["import_entries"]["idempotentHint"] is False
+
+
 def test_who_logged_it_names_import_wherever_a_result_says(http):
     outputs = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}
     said = {(name, owner): spec["description"] for name, out in outputs.items()
@@ -2210,9 +2228,10 @@ def test_dry_run_true_false_or_left_out(http):
     token, today = import_person(http)
     row = {"kind": "bodyweight", "date": (today - timedelta(days=3)).isoformat(), "weight": 80}
     for arguments in ({"rows": [row]}, {"rows": [row], "dry_run": True}):
+        before = every_table()
         preview = ok(http, token, "import_entries", {**arguments, "weight_unit": "kg"})
         assert preview["dry_run"] is True and preview["summary"].startswith("Preview, nothing written.")
-        assert entry_rows() == 0
+        assert every_table() == before  # was entry_rows() == 0: now every table, row by row, but the call log
     written = ok(http, token, "import_entries", {"rows": [row], "dry_run": False, "weight_unit": "kg"})
     assert written["dry_run"] is False and written["row_outcomes"]["written"] == 1 and entry_rows() == 1
     assert import_calls() == 3  # one call-log row a call, a preview too: each is one write of the limit
@@ -2270,7 +2289,8 @@ def test_a_misspelt_unit_argument_ends_in_the_missing_unit_refusal(http, misspel
     assert refused["error"] == "missing_unit" and refused["missing_units"] == [unit], refused
     assert refused["message"].startswith(f"{unit} is missing, and 1 row holds ")
     assert refused["fix"].startswith(f"Send {unit} as the export writes it: ")
-    assert refused["fix"].endswith(" Spotter never assumes a unit.")
+    assert refused["fix"].endswith(" If the export does not say which unit, ask the person. Spotter never assumes a "
+                                   "unit.")  # was: endswith(" Spotter never assumes a unit."), before fix round 3
     assert entry_rows() == 0 and import_calls() == 1  # the service refused it: one call, one write of the limit
 
 
@@ -2337,7 +2357,18 @@ def test_the_import_description_carries_what_the_long_rule_said(http):
     assert description == mcp_server.IMPORT_DESCRIPTION
     for words in ("Up to 200 rows and up to 1,000 sets and food entries a call",
                   "the 1,000 sets and food entries run out before the 200 rows", "send times for sets that repeat",
+                  # V6: true only above 5 sets a session, so said so.
+                  "for lifting with one item a set and more than 5 sets a session",
                   "With dry_run true or left out, nothing is written",
+                  "Show the person that, and the units the preview names",  # V7
+                  "When the export does not say which unit it uses, ask the person: never guess.",  # V2
+                  "One call names one unit for each quantity: rows in another unit go in a separate call.",  # V3
+                  # V4
+                  "Send a food entry's calories only as the export gives them: never estimate one for an import.",
+                  "A food entry with no calories is left out: tell the person how many.",
+                  # V5
+                  "For an import only, when the export gives only a day's total, ask the person once which meal "
+                  "such totals go under, and use it for every such row: logging food still never asks.",
                   "send the same rows with dry_run false only when they say yes",
                   "never convert them yourself", "A row's speed is in the call's distance unit an hour",
                   "Send the unit of every weight, distance and body size the rows hold, in weight_unit, "
@@ -2352,10 +2383,14 @@ def test_the_import_description_carries_what_the_long_rule_said(http):
                   "Send each food entry's meal as the export names it",
                   "send it as one entry described as that total, such as Breakfast from the old app",
                   "An import never replaces an entry",
-                  "Sent again, the same rows write nothing that is already there",
+                  # M1. Was "Sent again, the same rows write nothing that is already there" and "One food case is
+                  # the exception: the can-and-cant resource names it."
+                  "Sent again with the same time zone set, the same rows write nothing that is already there",
                   "an imported entry the person edited, moved or deleted counts as already there",
-                  "One food case is the exception: the can-and-cant resource names it."):
+                  "Two cases are the exception, both named in the can-and-cant resource: one food case, and rows "
+                  "stamped in UTC after the person's time zone changed."):
         assert words in description, words
+    assert "Sent again, the same rows" not in description  # no "nothing" without the limit
     assert "Claude" not in description and ";" not in description and "Settings" not in description
     assert tr.check(description, tr.CLAUDE) == []
     assert not [s for s in sentences(description) if sends_to_a_page(s)]
@@ -2417,6 +2452,10 @@ def test_an_imported_row_of_every_kind_reads_back_through_mcp_as_import(http):
     assert read("get_progress", {"exercise": "Back Squat"})["lift"]["sessions"] == 1
     assert len(read("get_progress", {"exercise": "Treadmill Walk"})["cardio"]["sessions"]) == 1
     assert read("find_food", {"query": "Oats"})["recent"] == []  # an imported entry is not one of the person's own
+    ok(http, token, "set_goal", {"kind": "bodyweight", "target_value": 75,
+                                 "target_date": (today + timedelta(days=60)).isoformat()})
+    goals = read("get_goals")  # fix round 3: the goal starts from the imported weigh-in
+    assert [(g["kind"], g["start_value"]) for g in goals["goals"]] == [("bodyweight", 80.5)]
     changes = {"lift_session": {"notes": "Edited"}, "bodyweight": {"kg": 81}, "measurement": {"value": 85},
                "food_entry": {"kcal": 360}, "cardio_entry": {"minutes": 31}}
     for kind, entry_id in ids.items():
@@ -2460,6 +2499,60 @@ def test_can_and_cant_states_the_import_as_built():
                   "kind in the same call", "Rows more than 2 years old are left out, and Claude says how many.",
                   "Claude asks the person once per name which listed name it is, or whether to leave it out.",
                   "It never leaves a lift out without saying so.", "From a phone's health store, one value a day",
-                  "such as Breakfast from the old app"):
+                  "such as Breakfast from the old app",
+                  # Fix round 3.
+                  "Each answer holds with the same time zone set at both runs. The last row is the exception.",
+                  "| Changed their time zone, and the rows carry timestamps in UTC | Can be written again, on another "
+                  "date: a known limit, below |",
+                  "With the same time zone set, the same file brings back no other imported entry",
+                  "If the person changes their time zone and the same rows are sent again, such a row can land on "
+                  "another date. It is then written again there, beside the first copy.",
+                  "A timestamp with its own offset, such as +05:30, keeps its own date, and so does a plain date: "
+                  "neither moves.",
+                  "They also run out first for lifting sent with one item a set and more than 5 sets a session.",
+                  "Claude asks the person once which meal such totals go under. Logging food never asks which meal.",
+                  "never estimated for an import. A food entry with no calories is left out, and Claude tells the "
+                  "person how many.",
+                  "When the export does not say which unit it uses, Claude asks the person. One call names one unit "
+                  "for each quantity: rows in another unit go in a separate call."):
         assert words in text, words
     assert (imports.ITEMS_MAX, imports.IMPORT_LIMIT, imports.IMPORT_HOURS) == (1_000, 10_000, 24)
+
+
+# ---------------------------------------------------------------- fix round 3: the review's items
+
+def test_the_row_date_says_what_a_timestamp_takes(http):
+    """V1: "A timestamp keeps its own date." was false for one in UTC, which takes the person's own date."""
+    row = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["import_entries"]["$defs"]["ImportRowIn"]
+    date_text = row["properties"]["date"]["description"]
+    for words in ("A timestamp with a non-zero offset keeps its own date.",
+                  "One in UTC, ending Z or +00:00, is moved to the person's own date in their time zone.",
+                  "At most 2 years back."):
+        assert words in date_text, words
+    assert "A timestamp keeps its own date." not in date_text
+
+
+def test_the_import_cap_holds_through_mcp(http):
+    """10,000 imported rows in any 24 hours: at 9,999 held, a preview of two says the real run would be refused, the
+    real run is refused with nothing written, and one row still goes in."""
+    from sqlalchemy import insert
+
+    from app.models import IMPORTED, FoodEntry
+
+    token, today = import_person(http)
+    account = one_user().id
+    at = db.utcnow()
+    with db.session_scope() as session:
+        session.execute(insert(FoodEntry), [
+            {"user_id": account, "date": today - timedelta(days=600), "meal": "snack", "description": f"x{i}", "kcal": 1,
+             "source": "you_said", "estimated": False, "logged_by": IMPORTED, "dedupe_key": "k", "created_at": at,
+             "updated_at": at, "is_sample": False, "deleted_at": at if i % 2 else None} for i in range(9_999)])
+    two = [{"kind": "bodyweight", "date": (today - timedelta(days=n)).isoformat(), "weight": 80} for n in (1, 2)]
+    preview = ok(http, token, "import_entries", {"rows": two, "weight_unit": "kg"})
+    assert (preview["imported_last_24h"], preview["within_import_limit"]) == (9_999, False)
+    assert "would be refused" in preview["note"]
+    held = entry_rows()
+    refused = failed(http, token, "import_entries", {"rows": two, "weight_unit": "kg", "dry_run": False})
+    assert refused["error"] == "too_many_imported" and refused["wait_hours"] >= 1 and entry_rows() == held
+    one = ok(http, token, "import_entries", {"rows": two[:1], "weight_unit": "kg", "dry_run": False})
+    assert one["within_import_limit"] is True and one["row_outcomes"]["written"] == 1 and entry_rows() == held + 1

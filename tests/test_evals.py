@@ -619,8 +619,16 @@ def test_the_import_cases_judge_as_designed():
                              "Shall I write them?") == []
     assert judge.judge_calls(expect, [call("import_entries", {"rows": rows, "dry_run": False, "weight_unit": "lb"})],
                              "Written. Anything else?") == ["import_entries sent dry_run = false"]
-    assert judge.judge_calls(expect, [call("import_entries", {"rows": rows})], "Here is the preview.") == [
-        "the reply asks nothing"]
+    # Was {"rows": rows}: the call now names its unit, so the reply is the one fault, as before (fix round 3).
+    assert judge.judge_calls(expect, [call("import_entries", {"rows": rows, "weight_unit": "lb"})],
+                             "Here is the preview.") == ["the reply asks nothing"]
+    # Fix round 3: a model that converts the pounds itself, or reads them as kg, fails.
+    converted = [{**r, "weight": round(r["weight"] * 0.45359237, 2)} for r in rows]
+    assert judge.judge_calls(expect, [call("import_entries", {"rows": converted, "weight_unit": "kg"})],
+                             "Write these 5 weigh-ins?") == [
+        f"no import_entries call sent {json.dumps({'weight_unit': 'lb'})} "
+        f"(sent: {json.dumps({'rows': converted, 'weight_unit': 'kg'})})"]
+    assert judge.judge_calls(expect, [call("import_entries", {"rows": rows})], "Write these 5 weigh-ins?")
     assert judge.judge_calls(expect, [call("log_bodyweight", {"kg": 80})], "Logged?")
     assert judge.judge_db(preview["db"], {"bodyweight": []}) == []
     assert judge.judge_db(preview["db"], {"bodyweight": [{"id": 1, "kg": 80.01, "deleted_at": None}]})
@@ -640,11 +648,26 @@ def test_the_import_cases_judge_as_designed():
 
     lift = cases["import_unknown_lift"]
     assert judge.judge_calls(lift["expect"], [call("list_exercises")], "Which listed lift is Zorbinator Press?") == []
-    assert judge.judge_calls(lift["expect"], [call("import_entries")], "Is it the Chest Press, or leave it out?") == []
+    # Was "Is it the Chest Press, or leave it out?": the reply now names the lift it asks about (fix round 3).
+    assert judge.judge_calls(lift["expect"], [call("import_entries")],
+                             "Is Zorbinator Press the Chest Press, or leave it out?") == []
+    # Fix round 3: a model that guesses a listed name and asks only for approval fails.
+    assert judge.judge_calls(lift["expect"], [call("import_entries")], "Shall I import these as Chest Press?") == [
+        "the reply does not say 'Zorbinator'"]
     assert judge.judge_calls(lift["expect"], [], "Which lift is that?")  # neither function called
     assert judge.judge_calls(lift["expect"], [call("list_exercises")], "Imported it as Chest Press.")  # asked nothing
     assert judge.judge_db(lift["db"], {"lift_session": []}) == []
     assert judge.judge_db(lift["db"], {"lift_session": [{"id": 1, "deleted_at": None}]})
+
+
+def test_the_evals_doc_says_the_import_cases_checks():
+    """Fix round 3: docs/evals.md says what the two strengthened cases now check, and each check is in the case."""
+    doc = " ".join((Path(__file__).resolve().parent.parent / "docs" / "evals.md").read_text(encoding="utf-8").split())
+    assert "`import_entries` called with `weight_unit` lb, never with `dry_run` false" in doc
+    assert "the reply asks and names Zorbinator" in doc
+    cases = _import_cases()
+    assert cases["import_preview_first"]["expect"]["inputs_include"] == {"weight_unit": "lb"}
+    assert cases["import_unknown_lift"]["expect"]["reply_has"] == ["Zorbinator"]
 
 
 def test_the_import_again_seed_writes_the_five_rows_as_an_import(app_settings, monkeypatch):

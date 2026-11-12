@@ -250,3 +250,24 @@ def test_as_import_of_bs_own_entries_on_bs_days_writes_as_and_leaves_bs_alone(ht
     assert ok(http, token(B), "get_log", {"days": 14})["totals"] == totals
     mine = ok(http, t, "get_log", {"days": 14})["totals"]
     assert mine == {"sessions": 1, "weigh_ins": 1, "measurements": 2, "food_entries": 1, "cardio_entries": 1}
+
+
+def test_bs_imported_row_held_by_its_key_is_never_held_for_a_through_mcp(http, bob):
+    """Fix round 3: the key lookup across people, through MCP. B imports a waist and moves it, so only its key holds
+    it. A sends the same row: written for A. B sends it again: already there for B."""
+    allow_everything(http, A)
+    t, tb = token(A), token(B)
+    ok(http, t, "update_settings", {"time_zone": "UTC"})
+    ok(http, tb, "update_settings", {"time_zone": "UTC"})
+    today = date.fromisoformat(ok(http, tb, "whoami")["today"])
+    row = {"kind": "measurement", "date": (today - timedelta(days=5)).isoformat(), "measurement_kind": "thigh",
+           "value": 61.25}
+    sent = {"rows": [row], "length_unit": "cm", "dry_run": False}
+    assert ok(http, tb, "import_entries", sent)["row_outcomes"]["written"] == 1
+    day = ok(http, tb, "get_log", {"date": row["date"]})["days"][0]
+    [thigh] = [m for m in day["measurements"] if m["kind"] == "thigh"]
+    moved = (today - timedelta(days=6)).isoformat()
+    ok(http, tb, "edit_entry", {"kind": "measurement", "entry_id": thigh["id"], "date": moved})  # held by key alone
+    mine = ok(http, t, "import_entries", sent)
+    assert mine["row_outcomes"] == {"written": 1, "already_there": 0, "day_taken": 0, "failed": 0}
+    assert ok(http, tb, "import_entries", sent)["row_outcomes"]["already_there"] == 1

@@ -204,6 +204,7 @@
     "say": "Bring my weigh-ins over from my old app. Its export: Date,Weight (lb) 2026-10-05,176.4 2026-10-06,175.8 2026-10-07,176.0 2026-10-08,175.2 2026-10-09,174.6",
     "expect": {
       "function": "import_entries",
+      "inputs_include": {"weight_unit": "lb"},
       "inputs_forbid": {"dry_run": false},
       "reply_asks": true
     },
@@ -235,7 +236,8 @@
         {"function": "list_exercises"},
         {"function": "import_entries"}
       ],
-      "reply_asks": true
+      "reply_asks": true,
+      "reply_has": ["Zorbinator"]
     },
     "db": [{"table": "lift_session", "count": 0}]
   }

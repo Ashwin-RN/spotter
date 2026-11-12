@@ -126,6 +126,10 @@ def test_imported_rows_say_import_and_the_readme_says_what_it_means(make_user):
     readme = " ".join(files["README.txt"].split())
     assert "logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_entries" in readme
     assert "import (brought over from another app's export with import_entries)" in readme
+    # The whole sentence, who logged a row in each of its three words (after fix round 3).
+    assert ("logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_entries, says how a row "
+            "came in: web (on Spotter's own pages), claude (through the assistant) or import (brought over from "
+            "another app's export with import_entries).") in readme
     for name in ("goals.csv", "saved_foods.csv", "lift_sets.csv"):  # the README names only the files that have it
         assert "logged_by" not in next(csv.reader(io.StringIO(files[name].removeprefix(BOM)))), name
 
