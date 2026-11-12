@@ -9,9 +9,11 @@ import re
 from datetime import timedelta
 
 import pytest
+from markupsafe import escape
 
-from app import charts, db, formatting, services, web
+from app import charts, db, formatting, rules, services, web
 from app.models import CallLog, Goal
+from app.services import goals as goal_rules
 from app.services.common import SAMPLE_NOTE
 
 from .test_web import (  # noqa: F401 - fixtures
@@ -223,7 +225,7 @@ def test_the_form_sends_what_was_filled_in_to_set_goal(signed, capture_set_goal,
     sent, _ = capture_set_goal
     fake_goals()
     r = post(signed, "/goals", **form)
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=goal"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=goal#top"
     assert sent == [(only_user().id, data, "web")]
     assert calls(only_user().id) == [("set_goal", True, None)]
     assert '<p class="ok">Goal set.</p>' in signed.get(r.headers["location"]).text
@@ -259,6 +261,7 @@ def form_parts(page: str) -> dict:
         return c.attrs.get("value")
 
     return {
+        "form": (form.attrs.get("method"), form.attrs.get("action"), form.classes),
         "segments": [(a.attrs.get("href"), a.text(), a.attrs.get("aria-current")) for a in nav.find_all("a")],
         "hidden": [(c.attrs.get("name"), c.attrs.get("value")) for c in controls if c.attrs.get("type") == "hidden"],
         "fields": [(labels.get(c.attrs.get("id")), c.tag, c.attrs.get("name")) for c in shown],
@@ -386,6 +389,10 @@ FORM_RUN = {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": "5"
 FORM_WAIST = {"kind": "measurement", "measurement_kind": "waist", "target_value": "80", "target_date": "BY"}
 FORM_WEIGHT = {"kind": "bodyweight", "target_value": "75", "target_date": "BY"}
 KIND_LINE = "Choose a kind of goal above: Body weight, Lift, Cardio time or Measurement."
+# The wrong-way lines (lane B's rewording, rev_b14 M1): true with the start inside its range and at its end.
+WRONG_WAY = {"lift": "A lift goal aims above your estimated max now, and this target is not above it.",
+             "cardio_best": "A cardio time goal aims below your time now, and this target is not below it."}
+LIFT_TOP, TIME_LEAST = goal_rules.TARGETS["lift"][1], goal_rules.TARGETS["cardio_best"][0]  # set_goal's own ends
 DAILY_LINE = "Choose a measurement from the list. Steps, sleep and water are daily amounts, not goals to reach by a date."
 ERROR_ROWS = [
     ("kind missing", {"target_value": "75", "target_date": "BY"}, ("missing_field", "kind"), "bodyweight", "top",
@@ -427,23 +434,28 @@ ERROR_ROWS = [
     ("cardio with no target", {**FORM_RUN, "target_value": ""}, ("missing_field", "target_value"), "cardio_best",
      "target_value", "Give the time you aim for, in minutes."),
     ("measurement with no target", {**FORM_WAIST, "target_value": ""}, ("missing_field", "target_value"), "measurement",
-     "target_value", "Give the target, in the unit beside the measurement."),
+     "target_value", "Give a target for your waist, in cm."),
     ("weight out of range", {**FORM_WEIGHT, "target_value": "900"}, ("invalid_field", "target_value"), "bodyweight",
      "target_value", "Give the weight you aim for in kg, from 20 to 400."),
     ("lift not a number", {**FORM_LIFT, "target_value": "lots"}, ("invalid_field", "target_value"), "lift",
      "target_value", "Give the estimated max you aim for in kg, more than 0 and at most 666.67."),
     ("cardio out of range", {**FORM_RUN, "target_value": "700"}, ("invalid_field", "target_value"), "cardio_best",
-     "target_value", "Give the time you aim for in minutes, from 1 to 600, such as 27.5 for 27:30."),
+     "target_value", "Give the time you aim for in minutes, from 1 to 600."),
     ("waist out of range", {**FORM_WAIST, "target_value": "20"}, ("invalid_field", "target_value"), "measurement",
-     "target_value", "Give the waist you aim for in cm, from 30 to 300."),
+     "target_value", "Give a target for your waist in cm, from 30 to 300."),
     ("heart rate not whole", {**FORM_WAIST, "measurement_kind": "resting_hr", "target_value": "52.5"},
      ("invalid_field", "target_value"), "measurement", "target_value",
-     "Give the resting heart rate you aim for in bpm, from 20 to 250, as a whole number."),
+     "Give a target for your resting heart rate in bpm, from 20 to 250, as a whole number."),
     ("lift below the start", {**FORM_LIFT, "target_value": "90", "start_value": "100"}, ("wrong_direction", "target_value"),
-     "lift", "target_value", "A lift goal aims above your estimated max now: give a higher target."),
+     "lift", "target_value", WRONG_WAY["lift"]),
+    # The start at the top of the lift's range: no higher target can be set, and the line asks for none.
+    ("lift at the top of its range", {**FORM_LIFT, "target_value": "600", "start_value": str(LIFT_TOP)},
+     ("wrong_direction", "target_value"), "lift", "target_value", WRONG_WAY["lift"]),
     ("cardio slower than the start", {**FORM_RUN, "target_value": "35", "start_value": "30"},
-     ("wrong_direction", "target_value"), "cardio_best", "target_value",
-     "A cardio time aims below your time now: give fewer minutes."),
+     ("wrong_direction", "target_value"), "cardio_best", "target_value", WRONG_WAY["cardio_best"]),
+    # The start at the bottom of a cardio time's range: no faster time can be set, and the line asks for none.
+    ("cardio at the bottom of its range", {**FORM_RUN, "target_value": "5", "start_value": str(TIME_LEAST)},
+     ("wrong_direction", "target_value"), "cardio_best", "target_value", WRONG_WAY["cardio_best"]),
     ("weight at the start", {**FORM_WEIGHT, "target_value": "80", "start_value": "80"}, ("target_is_start", "target_value"),
      "bodyweight", "target_value", "That target is where you are now: give one above or below it."),
     ("waist at the start", {**FORM_WAIST, "target_value": "88", "start_value": "88"}, ("target_is_start", "target_value"),
@@ -459,21 +471,23 @@ ERROR_ROWS = [
     ("lift, nothing to start from", FORM_LIFT, ("missing_field", "start_value"), "lift", "start_value",
      "No session of this lift is logged yet: give your estimated max now, or log a session first."),
     ("cardio, nothing to start from", FORM_RUN, ("missing_field", "start_value"), "cardio_best", "start_value",
-     "No session of this distance or longer is logged yet: give your time for it now, or log one first."),
+     "No session of this activity at this distance or longer is logged yet: give your time for it now, or log one "
+     "first."),
     ("waist, nothing to start from", FORM_WAIST, ("missing_field", "start_value"), "measurement", "start_value",
-     "None of this measurement is logged yet: give it now, or log one first."),
+     "No waist is logged yet: give where you are now, or log one first."),
     ("weight start not a number", {**FORM_WEIGHT, "start_value": "eighty"}, ("invalid_field", "start_value"), "bodyweight",
      "start_value", "Give your weight now in kg, from 20 to 400."),
     ("lift start out of range", {**FORM_LIFT, "start_value": "0"}, ("invalid_field", "start_value"), "lift",
      "start_value", "Give your estimated max now in kg, more than 0 and at most 666.67."),
     ("cardio start out of range", {**FORM_RUN, "start_value": "0.5"}, ("invalid_field", "start_value"), "cardio_best",
-     "start_value", "Give your time now in minutes, from 1 to 600, such as 27.5 for 27:30."),
+     "start_value", "Give your time now in minutes, from 1 to 600."),
     ("arm start out of range", {**FORM_WAIST, "measurement_kind": "arm", "target_value": "38", "start_value": "5"},
-     ("invalid_field", "start_value"), "measurement", "start_value", "Give your arm now in cm, from 10 to 100."),
+     ("invalid_field", "start_value"), "measurement", "start_value",
+     "Give where your arm is now, in cm, from 10 to 100."),
     ("heart rate start not whole", {**FORM_WAIST, "measurement_kind": "resting_hr", "target_value": "52",
                                     "start_value": "60.5"},
      ("invalid_field", "start_value"), "measurement", "start_value",
-     "Give your resting heart rate now in bpm, from 20 to 250, as a whole number."),
+     "Give where your resting heart rate is now, in bpm, from 20 to 250, as a whole number."),
     ("notes too long", {**FORM_WEIGHT, "text": "x" * 2001}, ("invalid_field", "text"), "bodyweight", "text",
      "Keep the notes to 2,000 characters or fewer, in plain text."),
     ("notes with a control character", {**FORM_LIFT, "text": "a\x01b"}, ("invalid_field", "text"), "lift", "text",
@@ -489,11 +503,20 @@ FIELD_IDS = {"exercise": "goal-exercise", "measurement_kind": "goal-measurement"
 def test_each_refusal_shows_the_pages_own_line_under_its_field(signed, real_set_goal, data, key, kind, where, line):
     """A real set_goal refusal, placed by its error code and its field: the page's own line under that field, tied
     to its input, or at the top of the form when the form draws no such field. None of the service's words show.
-    The form comes back with the posted kind and what was typed."""
+    The form comes back with the posted kind and what was typed. The refused post is logged as a set_goal call
+    with its code. Every rule a page keeps, the check that it never says Claude among them, reads this render: so
+    every line of the table is read by them, not only the sweeps' sample."""
+    from .test_pages_text import entered_notes, entered_text, names_of, page_findings, step_4_findings  # noqa: PLC0415
+
     r = post(signed, "/goals", **filled(data))
     assert r.status_code == 400
     [result] = real_set_goal
     assert [(e["error"], e.get("field")) for e in problems(result)] == [key]
+    uid = only_user().id
+    assert calls(uid) == [("set_goal", False, key[0])]
+    typed = [v for v in filled(data).values() if v]  # what the person typed is theirs, as entered_text is
+    assert page_findings("/goals", r.text, entered_text(uid) + typed, uid, route="/goals") == []
+    assert step_4_findings("/goals", r.text, names_of(uid), entered_notes(uid), route="/goals") == []
     form = form_parts(r.text)
     assert ("kind", kind) in form["hidden"]
     assert [words for _, words, current in form["segments"] if current] == [dict(SEGMENTS)[kind]]
@@ -572,15 +595,24 @@ def test_a_refusal_the_table_does_not_know_shows_one_general_line_at_the_top(sig
 
 
 # Every refusal set_goal can build, read from app/services/goals.py: (function, how it is built, the field it names).
-# A rules.error call gives its code, "<_at>" wraps a refusal built elsewhere, a <name> field is a variable. Each is
-# answered by the table's lines (their keys) or by why the form never reaches it. A refusal set_goal gains makes the
-# read differ from this table, so it cannot go unseen: give it a line in web.GOAL_ERROR_WORDS, or say here why the
-# form never reaches it.
+# A rules.error call, or a dict literal with an "error" key, gives its code. "<_at>" wraps a refusal built
+# elsewhere, "<dict>" is a dict literal that sets the field of one. "<name>" is a call to a function of app outside
+# goals.py that can build a refusal: its codes are read from its own source, through every function of app it calls
+# (OUTSIDE_CODES). A call whose refusal is unpacked into _, or cut off by [0], drops it, so it is no site. A field
+# passed through a name is read for each value the name can take, each its own site: a for loop's tuple, a
+# parameter's argument at every call, a name set from a call of goals.py. Each is answered by the table's lines
+# (their keys) or by why the form never reaches it. A refusal set_goal gains makes the read differ from this table,
+# so it cannot go unseen: give it a line in web.GOAL_ERROR_WORDS, or say here why the form never reaches it. Which
+# kinds can reach a line is not in the source: the sweep test
+# test_each_kinds_form_through_real_set_goal_meets_no_refusal_without_a_line drives the service for that.
 NOT_FROM_THE_FORM = "not from the form"
+NO_GOAL_ID = NOT_FROM_THE_FORM + ": the form sends no goal_id"
 SERVICE_REFUSALS = {
     ("_value", "<in_range>", None): [("invalid_field", "target_value"), ("invalid_field", "start_value")],
-    ("_value", "<_at>", "<field>"): [("invalid_field", "target_value"), ("invalid_field", "start_value")],
-    ("_value", "invalid_field", "<field>"): [("invalid_field", "target_value"), ("invalid_field", "start_value")],
+    ("_value", "<_at>", "target_value"): [("invalid_field", "target_value")],
+    ("_value", "<_at>", "start_value"): [("invalid_field", "start_value")],
+    ("_value", "invalid_field", "target_value"): [("invalid_field", "target_value")],
+    ("_value", "invalid_field", "start_value"): [("invalid_field", "start_value")],
     ("_future_date", "invalid_date", "target_date"): [("invalid_date", "target_date")],
     ("_future_date", "date_not_in_future", "target_date"): [("date_not_in_future", "target_date")],
     ("_kind_error", "invalid_field", "kind"): [("invalid_field", "kind")],
@@ -590,6 +622,7 @@ SERVICE_REFUSALS = {
     ("_measurement_kind", "invalid_kind", "measurement_kind"): [("invalid_kind", "measurement_kind")],
     ("_wrong_kind", "invalid_field", "exercise"): [("invalid_field", "exercise")],
     ("_identity", "<match_cardio>", None): [("missing_field", "exercise"), ("unknown_exercise", "exercise")],
+    ("_identity", "<dict>", "exercise"): [("missing_field", "exercise")],  # match_cardio's missing_field, renamed
     ("_identity", "missing_field", "exercise"): [("missing_field", "exercise")],
     ("_identity", "<in_range>", None): [("invalid_field", "distance_km")],
     ("_identity", "missing_field", "distance_km"): [("missing_field", "distance_km")],
@@ -605,10 +638,14 @@ SERVICE_REFUSALS = {
     ("set_goal", "<text>", None): [("invalid_field", "text")],
     ("set_goal", "<_at>", "text"): [("invalid_field", "text")],
     ("set_goal", "invalid_field", "status"): NOT_FROM_THE_FORM + ": the form sends no status",
-    ("set_goal", "<not_found>", None): NOT_FROM_THE_FORM + ": the form sends no goal_id",
-    ("set_goal", "nothing_to_change", None): NOT_FROM_THE_FORM + ": the form sends no goal_id",
-    ("set_goal", "cannot_change_kind", "<renamed>"): NOT_FROM_THE_FORM + ": the form sends no goal_id",
-    ("set_goal", "missing_field", "<field>"): [("missing_field", "target_value"), ("missing_field", "target_date")],
+    ("set_goal", "<not_found>", None): NO_GOAL_ID,
+    ("set_goal", "nothing_to_change", None): NO_GOAL_ID,
+    ("set_goal", "cannot_change_kind", "kind"): NO_GOAL_ID,
+    ("set_goal", "cannot_change_kind", "exercise"): NO_GOAL_ID,
+    ("set_goal", "cannot_change_kind", "measurement_kind"): NO_GOAL_ID,
+    ("set_goal", "cannot_change_kind", "distance_km"): NO_GOAL_ID,
+    ("set_goal", "missing_field", "target_value"): [("missing_field", "target_value")],
+    ("set_goal", "missing_field", "target_date"): [("missing_field", "target_date")],
     ("set_goal", "target_is_start", "target_value"): [("target_is_start", "target_value")],
     ("get_goals", "<no_account>", None): NOT_FROM_THE_FORM + ": get_goals, not set_goal",
     ("goal_charts", "<no_account>", None): NOT_FROM_THE_FORM + ": goal_charts, not set_goal",
@@ -618,44 +655,177 @@ SERVICE_REFUSAL_COUNTS = {("_kind_error", "invalid_field", "kind"): 2, ("_wrong_
                           ("_identity", "<_at>", "exercise"): 2, ("_no_start", "missing_field", "start_value"): 4,
                           ("_wrong_way", "wrong_direction", "target_value"): 2,
                           ("set_goal", "invalid_field", "status"): 2}
-BUILDERS = ("check_data", "check_by", "check_write_limit", "no_account", "not_found", "unknown_exercise",
-            "match_cardio", "in_range", "text")
+# The codes each function of app outside goals.py that set_goal's module calls can build, read from its source.
+OUTSIDE_CODES = {"check_by": {"invalid_by"}, "check_data": {"invalid_field"}, "check_write_limit": {"too_many_writes"},
+                 "in_range": {"invalid_field"}, "match_cardio": {"missing_field", "unknown_exercise"},
+                 "no_account": {"no_account"}, "not_found": {"not_found"}, "text": {"invalid_field"},
+                 "unknown_exercise": {"unknown_exercise"}, "match_kind": {"invalid_kind"}}
 
 
-def service_refusals() -> dict[tuple, int]:
-    """Each refusal app/services/goals.py builds, named as SERVICE_REFUSALS names it, and how many times."""
+def _named(node):
     import ast  # noqa: PLC0415
+
+    if node is None:
+        return None
+    return node.value if isinstance(node, ast.Constant) else f"<{node.id}>" if isinstance(node, ast.Name) else "<?>"
+
+
+def _resolve(node, scope: dict):
+    """What a called name or dotted name is in a module's scope, or None."""
+    import ast  # noqa: PLC0415
+
+    if isinstance(node, ast.Name):
+        return scope.get(node.id)
+    if isinstance(node, ast.Attribute):
+        owner = _resolve(node.value, scope)
+        return getattr(owner, node.attr, None) if owner is not None else None
+    return None
+
+
+def codes_built(fn, seen: set | None = None) -> set:
+    """Every error code a function of app can build, read from its source: each rules.error call's code, each dict
+    literal's or dict() call's "error", and those of every function of app it calls."""
+    import ast  # noqa: PLC0415
+    import inspect  # noqa: PLC0415
+    import textwrap  # noqa: PLC0415
+
+    seen = set() if seen is None else seen
+    if fn in seen:
+        return set()
+    seen.add(fn)
+    out = set()
+    for node in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(fn)))):
+        if isinstance(node, ast.Dict):
+            out |= {_named(v) for k, v in zip(node.keys, node.values)
+                    if isinstance(k, ast.Constant) and k.value == "error"}
+        elif isinstance(node, ast.Call):
+            target = _resolve(node.func, fn.__globals__)
+            if target is rules.error:
+                out.add(_named(node.args[0]) if node.args else "<?>")
+            elif target is dict:
+                out |= {_named(k.value) for k in node.keywords if k.arg == "error"}
+            elif inspect.isfunction(target) and target.__module__.startswith("app."):
+                out |= codes_built(target, seen)
+    return out
+
+
+def service_refusals() -> tuple[dict[tuple, int], dict[str, set]]:
+    """Each refusal app/services/goals.py builds, named as SERVICE_REFUSALS names it, and how many times; and the
+    codes each outside function it calls can build, by "<name>"."""
+    import ast  # noqa: PLC0415
+    import inspect  # noqa: PLC0415
     from collections import Counter  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
-    def named(node):
-        if node is None:
-            return None
-        return node.value if isinstance(node, ast.Constant) else f"<{node.id}>" if isinstance(node, ast.Name) else "<?>"
-
     tree = ast.parse((Path(__file__).parents[1] / "app" / "services" / "goals.py").read_text(encoding="utf-8"))
-    found = Counter()
-    for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+    scope = vars(goal_rules)
+    functions = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+    def dropped(call) -> bool:
+        """The refusal a call gives is thrown away: `hit, _ = f(...)` or `f(...)[0]`."""
+        up = parents.get(call)
+        if isinstance(up, ast.Subscript) and up.value is call:
+            return isinstance(up.slice, ast.Constant) and up.slice.value == 0
+        return isinstance(up, ast.Assign) and up.value is call and len(up.targets) == 1 and \
+            isinstance(up.targets[0], ast.Tuple) and isinstance(up.targets[0].elts[-1], ast.Name) and \
+            up.targets[0].elts[-1].id == "_"
+
+    def values(node, fn) -> list:
+        """The values a field can take: a constant as it is; a name, each value a for loop's tuple, the
+        parameter's argument at every call, or a call of goals.py it is set from gives it; else "<?>"."""
+        if not isinstance(node, ast.Name):
+            return [_named(node)]
+        name, out = node.id, []
+        for loop in (n for n in ast.walk(fn) if isinstance(n, ast.For) and isinstance(n.target, ast.Tuple)):
+            slots = [e.id if isinstance(e, ast.Name) else None for e in loop.target.elts]
+            if name in slots:
+                at = slots.index(name)
+                items = loop.iter.elts if isinstance(loop.iter, (ast.Tuple, ast.List)) else [None]
+                out += [_named(i.elts[at]) if isinstance(i, ast.Tuple) else "<?>" for i in items]
+        params = [a.arg for a in fn.args.args]
+        if name in params:
+            at = params.index(name)
+            calls_of = (n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == fn.name)
+            for call in calls_of:
+                given = call.args[at] if at < len(call.args) else \
+                    next((k.value for k in call.keywords if k.arg == name), None)
+                out.append(given.value if isinstance(given, ast.Constant) else "<?>")
+        for assign in (n for n in ast.walk(fn) if isinstance(n, ast.Assign)):
+            if not any(isinstance(t, ast.Name) and t.id == name for t in assign.targets):
+                continue
+            made = assign.value
+            if isinstance(made, ast.Constant) and made.value is None:
+                continue
+            maker = functions.get(getattr(made.func, "id", None)) if isinstance(made, ast.Call) else None
+            if maker is None:
+                out.append("<?>")
+                continue
+            for ret in (r for r in ast.walk(maker) if isinstance(r, ast.Return)):
+                if not (isinstance(ret.value, ast.Constant) and ret.value.value is None):
+                    out.append(ret.value.value if isinstance(ret.value, ast.Constant) else "<?>")
+        return sorted(set(out), key=str) or ["<?>"]
+
+    found, outside = Counter(), {}
+    for fn in functions.values():
         for call in (n for n in ast.walk(fn) if isinstance(n, ast.Call)):
-            f = call.func
-            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
-            if isinstance(f, ast.Attribute) and getattr(f.value, "id", None) == "rules" and name == "error":
+            target = _resolve(call.func, scope)
+            name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", None)
+            if target is rules.error:
                 field = next((k.value for k in call.keywords if k.arg == "field"), None)
-                found[(fn.name, call.args[0].value, named(field))] += 1
+                for value in values(field, fn) if field is not None else [None]:
+                    found[(fn.name, _named(call.args[0]) if call.args else "<?>", value)] += 1
             elif name == "_at":
-                found[(fn.name, "<_at>", named(call.args[1]))] += 1
-            elif name in BUILDERS:
-                found[(fn.name, f"<{name}>", None)] += 1
-    return dict(found)
+                for value in values(call.args[1], fn):
+                    found[(fn.name, "<_at>", value)] += 1
+            elif inspect.isfunction(target) and target.__module__.startswith("app.") and \
+                    target.__module__ != goal_rules.__name__ and not dropped(call):
+                codes = codes_built(target)
+                if codes:
+                    outside[f"<{target.__name__}>"] = codes
+                    found[(fn.name, f"<{target.__name__}>", None)] += 1
+        if fn.name == "_at":  # the field setter itself: every call of it is read above
+            continue
+        for d in (n for n in ast.walk(fn) if isinstance(n, ast.Dict)):
+            keys = {k.value: v for k, v in zip(d.keys, d.values) if isinstance(k, ast.Constant)}
+            if "error" in keys or "field" in keys:
+                code = _named(keys["error"]) if "error" in keys else "<dict>"
+                for value in values(keys["field"], fn) if "field" in keys else [None]:
+                    found[(fn.name, code, value)] += 1
+    return dict(found), outside
 
 
 def test_every_refusal_set_goal_builds_has_a_line_or_a_reason():
     """A refusal set_goal gains fails here until the table gives it a line or this test says why the form never
-    reaches it. Every line a refusal is answered by is in the table."""
-    assert service_refusals() == {key: SERVICE_REFUSAL_COUNTS.get(key, 1) for key in SERVICE_REFUSALS}
+    reaches it: a new code from a function it calls, a refusal built as a dict literal, a new value of a field passed
+    through a name. Every line a refusal is answered by is in the table, and is about that refusal: its code and
+    field, the field _at or a dict literal sets, or each code an outside function can build."""
+    found, outside = service_refusals()
+    assert found == {key: SERVICE_REFUSAL_COUNTS.get(key, 1) for key in SERVICE_REFUSALS}
+    assert outside == {f"<{name}>": codes for name, codes in OUTSIDE_CODES.items() if name != "match_kind"}
     for site, answer in SERVICE_REFUSALS.items():
-        assert (isinstance(answer, str) and answer.startswith(NOT_FROM_THE_FORM)) or \
-            all(key in web.GOAL_ERROR_WORDS for key in answer), site
+        if isinstance(answer, str):
+            assert answer.startswith(NOT_FROM_THE_FORM), site
+            continue
+        assert answer and all(key in web.GOAL_ERROR_WORDS for key in answer), site
+        _, built, field = site
+        if built in outside:  # each code the function can build, and no other
+            assert {code for code, _ in answer} == outside[built], site
+        elif built in ("<_at>", "<dict>"):  # the field set here
+            assert {f for _, f in answer} == {field}, site
+        else:  # rules.error, or a dict literal with its code: that code and field
+            assert answer == [(built, field)], site
+
+
+def test_the_reader_reads_a_bare_error_call_and_skips_only_a_dropped_refusal():
+    """in_range calls error imported bare from rules, and its code is read. match_kind can build a refusal, but
+    goals.py drops it in both its calls (`hit, _ =` and `[0]`), so it is no site."""
+    from app.services import common  # noqa: PLC0415
+
+    assert codes_built(rules.match_kind) == OUTSIDE_CODES["match_kind"]
+    assert codes_built(common.in_range) == {"invalid_field"}  # in_range calls error, imported bare from rules
+    found, _ = service_refusals()
+    assert not [key for key in found if key[1] == "<match_kind>"]
 
 
 def test_where_you_are_now_shows_only_for_its_refusal_or_when_typed(signed, real_set_goal):
@@ -670,7 +840,8 @@ def test_where_you_are_now_shows_only_for_its_refusal_or_when_typed(signed, real
         start = (START_LABELS[kind], "input", "start_value")
         assert form["fields"] == FORM_FIELDS[kind][:-3] + [start] + FORM_FIELDS[kind][-3:], kind
         assert form["errors"]["start_value"] and form["values"]["start_value"] is None
-        assert form["described"]["start_value"] == "goal-start-error" and form["invalid"] == {"start_value"}
+        assert form["described"]["start_value"] == ("goal-start-error goal-start-hint" if kind == "cardio_best"
+                                                     else "goal-start-error") and form["invalid"] == {"start_value"}
     form = form_parts(post(signed, "/goals", **filled({**FORM_WEIGHT, "target_value": "lots", "start_value": "80"})).text)
     assert form["values"]["start_value"] == "80" and form["errors"]["start_value"] is None
     assert form["fields"][0] == ("Where you are now (kg)", "input", "start_value")
@@ -714,7 +885,7 @@ def test_a_goal_of_each_kind_set_from_its_own_form_ends_on_goals_with_goal_set(s
     form = form_parts(signed.get(f"/goals?kind={data['kind']}").text)
     assert {f for _, _, f in form["fields"]} == set(data) - {"kind"}
     r = post(signed, "/goals", **filled(data))
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=goal"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=goal#top"
     assert '<p class="ok">Goal set.</p>' in signed.get(r.headers["location"]).text
     [goal] = rows(Goal, uid)
     assert (goal.kind, goal.status) == (data["kind"], "open")
@@ -725,7 +896,7 @@ def test_a_body_weight_goal_with_nothing_logged_asks_where_you_are_now_then_is_s
     r = post(signed, "/goals", **filled(FORM_WEIGHT))
     assert r.status_code == 400 and form_parts(r.text)["errors"]["start_value"]
     r = post(signed, "/goals", **filled({**FORM_WEIGHT, "start_value": "80"}))
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=goal"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=goal#top"
     [goal] = rows(Goal, uid)
     assert (goal.start_value, goal.target_value, goal.direction) == (80, 75, "down")
 
@@ -748,6 +919,197 @@ def test_a_hint_and_an_error_on_one_field_are_both_tied_to_it(signed, real_set_g
     assert form["hints"] == {"goal-target-hint": HINT} and form["invalid"] == {"target_value"}
     assert '<div class="field has-error">\n  <label for="goal-target">Target time (min)</label>' in \
         r.text.replace("\r\n", "\n")
+
+
+def test_cardio_times_where_you_are_now_has_the_targets_hint_tied_to_it_with_its_error(signed, real_set_goal):
+    """Cardio time's start field carries the target's hint (lane B's ruling, A4), tied to its input, and with an
+    error under it both are tied. No other kind's start field has a hint."""
+    form = form_parts(post(signed, "/goals", **filled({**FORM_RUN, "start_value": "0.5"})).text)
+    assert form["errors"]["start_value"] == "Give your time now in minutes, from 1 to 600."
+    assert form["described"]["start_value"] == "goal-start-error goal-start-hint"
+    assert form["hints"] == {"goal-start-hint": HINT, "goal-target-hint": HINT} and form["invalid"] == {"start_value"}
+    form = form_parts(post(signed, "/goals", **filled({**FORM_RUN, "start_value": "30", "target_value": "lots"})).text)
+    assert form["described"] == {**form["described"], "start_value": "goal-start-hint",
+                                 "target_value": "goal-target-error goal-target-hint"}
+    for data in (FORM_WEIGHT, FORM_LIFT, FORM_WAIST):
+        form = form_parts(post(signed, "/goals", **filled(data)).text)
+        assert form["errors"]["start_value"] and form["described"]["start_value"] == "goal-start-error", data["kind"]
+        assert "goal-start-hint" not in form["hints"], data["kind"]
+    assert [r["error"] for r in real_set_goal] == ["invalid_field", "invalid_field"] + ["missing_field"] * 3
+
+
+def test_the_grey_line_shows_only_while_where_you_are_now_is_not_shown(signed, real_set_goal):
+    """Body weight's grey line says the goal starts from the 7-day average. Beside Where you are now, asked for or
+    typed, the goal starts from the number given, so the line is not drawn (rev_b14 M2, the lead's ruling A3)."""
+    fresh = form_parts(signed.get("/goals?kind=bodyweight").text)
+    assert fresh["grey"] == [GREY] and "start_value" not in fresh["values"]
+    other = form_parts(post(signed, "/goals", **filled({**FORM_WEIGHT, "target_value": "lots"})).text)
+    assert other["grey"] == [GREY] and "start_value" not in other["values"]
+    asked = form_parts(post(signed, "/goals", **filled(FORM_WEIGHT)).text)
+    assert asked["errors"]["start_value"] == "Nothing is logged to start from yet: give your weight now, or log a " \
+                                             "weigh-in first."
+    assert asked["grey"] == []
+    typed = form_parts(post(signed, "/goals",
+                            **filled({**FORM_WEIGHT, "target_value": "lots", "start_value": "80"})).text)
+    assert typed["values"]["start_value"] == "80" and typed["grey"] == []
+    assert [(r["error"], r["field"]) for r in real_set_goal] == [
+        ("invalid_field", "target_value"), ("missing_field", "start_value"), ("invalid_field", "target_value")]
+
+
+@pytest.mark.parametrize("measurement", ["", "wrist"], ids=["none chosen", "one the page does not know"])
+def test_a_measurement_with_no_target_and_none_known_chosen_asks_for_the_target_alone(signed, real_set_goal,
+                                                                                    measurement):
+    """With no measurement the page knows, the target's line names none: "Give the target you aim for."
+    (web.GOAL_ERROR_UNNAMED), beside the measurement's own line."""
+    r = post(signed, "/goals", **filled({"kind": "measurement", "measurement_kind": measurement, "target_date": "BY"}))
+    [result] = real_set_goal
+    assert {(e["error"], e["field"]) for e in problems(result)} == {
+        ("missing_field" if not measurement else "invalid_kind", "measurement_kind"), ("missing_field", "target_value")}
+    form = form_parts(r.text)
+    assert {f: e for f, e in form["errors"].items() if e} == {"measurement_kind": "Choose a measurement from the list.",
+                                                            "target_value": "Give the target you aim for."}
+    assert web.GOAL_ERROR_UNNAMED == {("missing_field", "target_value"): "Give the target you aim for."}
+    assert form["top"] == [] and services_words_shown(r.text, result) == []
+
+
+def test_the_form_posts_to_its_card_and_a_set_goal_lands_at_the_top_with_no_autofocus(signed, real_set_goal):
+    """A refused post comes back to /goals#set-goal, the form's action, so the window lands on the card. Every
+    redirect that answers the post ends in #top, the id body carries, so the page after "Goal set." lands at its
+    top with the strip in view and does not take on the post's #set-goal. Nothing on the page carries autofocus:
+    with a fragment in the address a browser skips it. The status forms carry no fragment, and neither do their
+    redirects."""
+    from .test_pages_text import parse  # noqa: PLC0415
+
+    def autofocused(page: str) -> list:
+        return [n.tag for n in parse(page).iter() if "autofocus" in n.attrs]
+
+    for kind in FORM_FIELDS:
+        page = signed.get(f"/goals?kind={kind}").text
+        assert form_parts(page)["form"] == ("post", "/goals#set-goal", ["goal-form"]) and autofocused(page) == []
+    for data in (FORM_WEIGHT, FORM_LIFT, FORM_RUN, FORM_WAIST, {"target_value": "75", "target_date": "BY"}):
+        r = post(signed, "/goals", **filled(data))
+        assert r.status_code == 400 and form_parts(r.text)["form"][1] == "/goals#set-goal" and autofocused(r.text) == []
+        assert 'id="set-goal"' in r.text
+    r = post(signed, "/goals", **filled({**FORM_WEIGHT, "start_value": "80"}))
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/goals?saved=goal#top"
+    page = signed.get(r.headers["location"]).text
+    [body] = parse(page).find_all("body")
+    assert body.attrs.get("id") == "top"
+    assert [n.tag for n in parse(page).iter() if n.attrs.get("id") == "top"] == ["body"]  # the one id="top"
+    assert '<p class="ok">Goal set.</p>' in page and autofocused(page) == []
+    again = post(signed, "/goals", **filled({**FORM_WEIGHT, "start_value": "80"}))  # a second, with its note
+    assert again.headers["location"] == SITE + "/goals?saved=goal&notes=duplicate#top"
+    first, second = [g.id for g in rows(Goal, only_user().id)]
+    r = post(signed, f"/goals/{first}/status", status="dropped")
+    assert r.headers["location"] == SITE + "/goals?saved=dropped"
+    actions = re.findall(r'<form method="post" action="(/goals[^"]*)"', signed.get("/goals").text)
+    assert sorted(actions) == sorted(["/goals#set-goal", *(f"/goals/{n}/status" for n in (first, second, second))])
+
+
+def test_a_goal_post_with_no_person_behind_it_goes_to_sign_in_at_the_top(signed, capture_set_goal, monkeypatch):
+    """The form's other redirect: a post whose person is gone (the token still good) goes to sign in, and it too
+    ends in #top. A GET's sign-in redirect is as it was."""
+    sent, _ = capture_set_goal
+
+    async def nobody(request):
+        return None
+
+    monkeypatch.setattr(web, "current_user", nobody)
+    r = post(signed, "/goals", **FORM_WEIGHT)
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/sign-in#top" and sent == []
+    r = signed.get("/goals")
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/sign-in"
+
+
+MARKUP = '<b>x</b> & "q" \'a\''
+
+
+@pytest.mark.parametrize("data", [
+    {"kind": "bodyweight", "target_value": MARKUP, "target_date": MARKUP, "start_value": MARKUP, "text": MARKUP},
+    {"kind": "lift", "exercise": MARKUP, "target_value": MARKUP, "target_date": MARKUP, "text": MARKUP},
+    {"kind": "cardio_best", "exercise": MARKUP, "distance_km": MARKUP, "target_value": MARKUP,
+     "target_date": MARKUP, "text": MARKUP + "\r\nline two"},
+    {"kind": "measurement", "measurement_kind": MARKUP, "target_value": MARKUP, "target_date": MARKUP,
+     "start_value": MARKUP, "text": MARKUP},
+    {"kind": MARKUP, "target_value": MARKUP, "target_date": MARKUP, "text": MARKUP},
+], ids=["bodyweight", "lift", "cardio", "measurement", "kind"])
+def test_markup_typed_into_every_field_comes_back_as_typed_escaped_once(signed, real_set_goal, data):
+    """rev_b14 T7, the reviewer's probe kept: markup typed into each field of each kind, and as the kind, is refused
+    and comes back escaped once. Each field keeps what was typed (a choice that is not on its list keeps none)."""
+    r = post(signed, "/goals", **data)
+    assert r.status_code == 400 and real_set_goal[-1].get("error")
+    once = str(escape(MARKUP))  # as the page escapes it
+    assert "<b>x</b>" not in r.text and str(escape(once)) not in r.text and once in r.text
+    form = form_parts(r.text)
+    assert ("kind", web.goal_kind(data["kind"])) in form["hidden"]
+    typed = {f: v.replace("\r\n", "\n") for f, v in data.items() if f != "kind"}
+    assert {f: form["values"][f] for f in typed} == {f: None if f in form["options"] else v for f, v in typed.items()}
+
+
+def sweep_posts() -> list[dict]:
+    """Each kind's form as a person, or a hand, can fill it on an account with nothing logged: every field empty,
+    not a number, each range's ends and past them, the other kind's names, and a start typed with the target above,
+    below and at it, the start inside its range and at its ends. Every range is the service's own."""
+    w_lo, w_hi = rules.BODYWEIGHT_KG
+    l_lo, l_hi = goal_rules.TARGETS["lift"]
+    t_lo, t_hi = goal_rules.TARGETS["cardio_best"]
+    d_lo, d_hi = goal_rules.DISTANCE_KM
+    s = str
+    lift, run = {"kind": "lift", "exercise": "Back Squat"}, {"kind": "cardio_best", "exercise": "Outdoor Run",
+                                                             "distance_km": "5"}
+    out = [{"kind": "bodyweight", "target_date": ""}, {"kind": "bodyweight", "target_value": "lots"},
+           {"kind": "bodyweight", "target_value": s(w_lo - 1)}, {"kind": "bodyweight", "target_value": s(w_hi + 1)},
+           {"kind": "bodyweight", "target_value": "lots", "start_value": "eighty"}]
+    out += [{"kind": "bodyweight", "start_value": s(start), "target_value": s(target)}
+            for start, target in ((80, 75), (80, 85), (80, 80), (w_lo, w_lo), (w_hi, w_hi), (w_lo, w_hi), (w_hi, w_lo))]
+    out += [{"kind": "lift", "target_date": ""}, {**lift, "exercise": "Outdoor Run"}, {**lift, "exercise": "Moonwalk"},
+            {**lift, "target_value": s(l_lo)}, {**lift, "target_value": s(l_hi + 1)}, {**lift, "start_value": s(l_lo)}]
+    out += [{**lift, "start_value": s(start), "target_value": s(target)}
+            for start, target in ((100, 120), (100, 90), (100, 100), (l_hi, 600), (l_hi, l_hi), (1, l_hi))]
+    out += [{"kind": "cardio_best", "target_date": ""}, {**run, "exercise": "Back Squat"},
+            {**run, "exercise": "Moonwalk"}, {**run, "distance_km": s(d_lo / 2)}, {**run, "distance_km": s(d_hi + 1)},
+            {**run, "distance_km": s(d_lo), "target_value": "lots"}, {**run, "target_value": s(t_lo / 2)},
+            {**run, "target_value": s(t_hi + 1)}, {**run, "start_value": s(t_hi + 1)}]
+    out += [{**run, "start_value": s(start), "target_value": s(target)}
+            for start, target in ((30, 25), (30, 35), (30, 30), (t_lo, 5), (t_lo, t_lo), (t_hi, t_lo))]
+    out += [{"kind": "measurement", "target_date": ""}, {"kind": "measurement", "measurement_kind": "wrist"},
+            *({"kind": "measurement", "measurement_kind": daily, "target_value": "5"}
+              for daily in goal_rules.DAILY_AMOUNTS)]
+    for kind in goal_rules.GOAL_MEASUREMENTS:
+        _, lo, hi, whole = rules.MEASUREMENTS[kind]
+        given = {"kind": "measurement", "measurement_kind": kind}
+        out += [{**given}, {**given, "target_value": s(lo - 1)}, {**given, "target_value": s(lo + 0.5)},
+                {**given, "start_value": s(lo), "target_value": s(hi)},
+                {**given, "start_value": s(hi), "target_value": s(hi)},
+                {**given, "start_value": s(hi), "target_value": s(lo)},
+                {**given, "start_value": s(hi + 1), "target_value": s(lo)}]
+    return out
+
+
+def test_each_kinds_form_through_real_set_goal_meets_no_refusal_without_a_line(signed, real_set_goal):
+    """rev_b14 T1 and T4, by the service itself: which kinds can reach which refusal is not in the source. Every
+    refusal set_goal gives a sweep of each kind's form has the page's own line for that kind, and so the general line
+    never shows. The sweep reaches what it is for: the wrong way for a lift and a cardio time, inside the range and
+    at its end; a target at the start for a body weight and a measurement; a body weight goal set either way."""
+    reached, set_ = set(), []
+    for data in sweep_posts():
+        real_set_goal.clear()
+        r = post(signed, "/goals", **filled({"target_date": "BY", **data}))
+        [result] = real_set_goal
+        if r.status_code == 303:
+            set_.append((data["kind"], result["goal"]["direction"]))
+            continue
+        assert r.status_code == 400, (data, r.status_code)
+        kind = web.goal_kind(data["kind"])
+        for e in problems(result):
+            reached.add((kind, e["error"], e.get("field")))
+            assert web.goal_error_words(e, kind, data.get("measurement_kind") or "") is not None, (data, e)
+        assert web.GOAL_ERROR_GENERAL not in form_parts(r.text)["top"], data
+    assert {("lift", "wrong_direction", "target_value"), ("cardio_best", "wrong_direction", "target_value"),
+            ("bodyweight", "target_is_start", "target_value"), ("measurement", "target_is_start", "target_value"),
+            ("measurement", "invalid_field", "target_value"), ("cardio_best", "invalid_field", "distance_km"),
+            ("lift", "invalid_field", "exercise"), ("cardio_best", "unknown_exercise", "exercise")} <= reached
+    assert {("bodyweight", "up"), ("bodyweight", "down"), ("measurement", "up"), ("measurement", "down")} <= set(set_)
 
 
 def test_a_real_goal_set_from_the_form(signed):
@@ -1013,6 +1375,7 @@ def test_a_saved_goals_warnings_show_in_the_pages_own_words(signed, capture_set_
     fake_goals()
     r = post(signed, "/goals", kind="lift", exercise="Back Squat", target_value="100", target_date="2027-03-31")
     assert r.status_code == 303 and r.headers["location"].startswith(SITE + "/goals?saved=goal")
+    assert r.headers["location"].endswith("#top") and r.headers["location"].count("#") == 1
     page = signed.get(r.headers["location"]).text
     notes = re.findall(r'<p class="notice goal-note">(.*?)</p>', page)
     assert len(notes) == len(shown) and all(n.startswith(s) for n, s in zip(notes, shown))
@@ -1375,7 +1738,7 @@ def test_a_status_set_to_what_it_already_is_writes_nothing_and_says_nothing(sign
     assert len(calls(uid)) == writes and [g.closed_at for g in rows(Goal, uid)] == before
     assert [g.status for g in rows(Goal, uid)] == [again]
     page = signed.get(r.headers["location"]).text
-    assert 'class="ok' not in page and '<body class="calm"' in page
+    assert 'class="ok' not in page and '<body class="calm" data-time-zone="missing" id="top">' in page
 
 
 def test_a_status_that_changes_still_goes_through_set_goal(signed):
@@ -1851,10 +2214,39 @@ def test_no_open_goals_is_one_dashed_card_that_points_to_the_form_and_the_assist
     [main] = parse(page).find_all("div", "goals-main")
     empty = [n for n in main.elements() if n.is_(cls="card")]
     assert [(n.tag, n.classes, [(p.tag, p.classes, p.text()) for p in n.elements()]) for n in empty] == [
-        ("div", ["card", "is-empty"], [("p", ["empty-line"], "No open goals. Set one below, or tell your assistant "
+        ("div", ["card", "is-empty"], [("p", ["empty-line"], "No open goals. Set one, or tell your assistant "
                                                              "what you are aiming for.")])]
     assert '<ul class="goals"' not in page and "Claude" not in page.split("<main")[1]
     assert "/goals" not in CLAUDE_SKIPS
+
+
+EMPTY_LINE = "No open goals. Set one, or tell your assistant what you are aiming for."  # the lead's ruling, A7
+
+
+def test_no_open_goals_beside_closed_goals_is_the_empty_card_then_the_closed_card(signed, fake_goals):
+    """rev_b13: with closed goals and none open, div.goals-main holds the one dashed card with its line, then the
+    Closed goals card with both rows."""
+    from .test_pages_text import parse  # noqa: PLC0415
+
+    fake_goals([], CLOSED)
+    page = signed.get("/goals").text
+    [main] = parse(page).find_all("div", "goals-main")
+    shape = [(n.tag, n.classes, n.attrs.get("aria-labelledby")) for n in main.elements()]
+    assert shape == [("div", ["card", "is-empty"], None), ("section", ["card"], "closed-goals-title")]
+    assert [(p.tag, p.classes, p.text()) for p in main.elements()[0].elements()] == [("p", ["empty-line"], EMPTY_LINE)]
+    assert [row["li"][2] for row in closed_rows(page)] == ["goal-9", "goal-10"]
+
+
+def test_a_closed_goals_label_and_a_charts_title_are_escaped_through_the_page(signed, fake_goals):
+    """rev_b13: markup in a closed goal's label, and in an open goal's label where its chart's title says it, reaches
+    the page escaped, once."""
+    fake_goals([numbers(1, label="<script>x</script>", path=PATH)], [{**CLOSED[0], "label": "<script>y</script>"}])
+    page = signed.get("/goals").text
+    assert "<script>x" not in page and "<script>y" not in page
+    assert "&lt;script&gt;y&lt;/script&gt;" in goal_item(page, 9) and "&amp;lt;" not in page
+    svg = svg_of(page, 1)
+    title = re.search(r"<title[^>]*>(.*?)</title>", svg, re.S).group(1)
+    assert title.startswith("&lt;script&gt;x&lt;/script&gt; by ") and "<script" not in svg
 
 
 def test_a_reopen_among_several_goals_reads_that_goal_alone(signed):

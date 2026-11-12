@@ -1066,6 +1066,17 @@ def test_no_rebuilt_route_keeps_a_claude_skip():
     assert not BUILT & set(CLAUDE_SKIPS), BUILT & set(CLAUDE_SKIPS)
 
 
+def test_no_error_line_the_day_edit_and_foods_pages_can_draw_says_claude():
+    """The sweeps render each page's form errors from a sample of posts, so the Claude check reads only the lines
+    those posts reach. Every line the day page's fold-outs, the edit pages and Foods' two forms draw under a field
+    or at the top comes from FIELD_HELP, form_message (each of its branches here) or FOOD_ERROR_GENERAL: each is read
+    here. Each Goals line is rendered and checked by tests/test_web_goals.py's row test."""
+    drawn = [*web.FIELD_HELP.values(), web.FOOD_ERROR_GENERAL,
+             *(web.form_message(kind, f, m) for kind in (*web.EDIT_FIELDS, "") for f in ("date", "kind", "")
+               for m in (None, *web.rules.MEASUREMENTS))]
+    assert [line for line in drawn if CLAUDE.search(line)] == []
+
+
 # ---------------------------------------------------------------- the checks themselves
 
 def test_a_bare_zero_passes_only_as_a_true_count(client):

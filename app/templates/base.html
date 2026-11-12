@@ -12,7 +12,7 @@
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="stylesheet" href="{{ style_href }}">
 </head>
-<body{% if calm %} class="calm"{% endif %}{% if time_zone_missing %} data-time-zone="missing"{% endif %}>
+<body{% if calm %} class="calm"{% endif %}{% if time_zone_missing %} data-time-zone="missing"{% endif %} id="top">
   {% if signed_in %}
   <header class="top">
     <a class="brand" href="/">Spotter</a>

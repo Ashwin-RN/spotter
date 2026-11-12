@@ -77,7 +77,7 @@
   </ul>
   {% else %}
   <div class="card is-empty">
-    <p class="empty-line">No open goals. Set one below, or tell your assistant what you are aiming for.</p>
+    <p class="empty-line">No open goals. Set one, or tell your assistant what you are aiming for.</p>
   </div>
   {% endif %}
 
@@ -102,14 +102,16 @@
   {# One kind at a time (section L, Set a goal): the segments are links, the current one the form's kind. The form
      shows only that kind's fields, each error under its own field in the page's own words (web.goal_errors), and
      one not tied to a field the form draws at the top. Where you are now shows only for its own error or when the
-     person typed one. #}
+     person typed one. The action's #set-goal lands a refused post on this card. The redirect after a goal is set
+     names #top (web.GOAL_POST_LANDS), so "Goal set." is in view. #}
   <nav class="segments" aria-label="Kind of goal">
     {% for value, words in kinds %}<a href="/goals?kind={{ value }}#set-goal"{% if value == kind %} aria-current="true"{% endif %}>{{ words }}</a>
     {% endfor %}
   </nav>
   {% set target_label = {"bodyweight": "Target weight (kg)", "lift": "Target estimated max (kg)", "cardio_best": "Target time (min)"}.get(kind, "Target") %}
   {% set start_label = {"bodyweight": "Where you are now (kg)", "lift": "Where you are now (kg)", "cardio_best": "Where you are now (min)"}.get(kind, "Where you are now") %}
-  <form method="post" action="/goals" class="goal-form">
+  {% set minutes_hint = "Minutes, such as 27.5 for 27:30" if kind == "cardio_best" else none %}
+  <form method="post" action="/goals#set-goal" class="goal-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="kind" value="{{ kind }}">
     {% if loose %}<div class="error">{% for words in loose %}<p>{{ words }}</p>{% endfor %}</div>{% endif %}
@@ -122,12 +124,13 @@
     {{ parts.field("goal-measurement", "measurement_kind", "Measurement", errors.get("measurement_kind"), typed.get("measurement_kind"), choices=measurement_choices, empty="No measurement") }}
     {% endif %}
     {% if shows_start %}
-    {{ parts.field("goal-start", "start_value", start_label, errors.get("start_value"), typed.get("start_value"), inputmode="decimal") }}
+    {{ parts.field("goal-start", "start_value", start_label, errors.get("start_value"), typed.get("start_value"), inputmode="decimal", hint=minutes_hint) }}
     {% endif %}
-    {{ parts.field("goal-target", "target_value", target_label, errors.get("target_value"), typed.get("target_value"), inputmode="decimal", hint="Minutes, such as 27.5 for 27:30" if kind == "cardio_best" else none) }}
+    {{ parts.field("goal-target", "target_value", target_label, errors.get("target_value"), typed.get("target_value"), inputmode="decimal", hint=minutes_hint) }}
     {{ parts.field("goal-date", "target_date", "By", errors.get("target_date"), typed.get("target_date"), type="date") }}
     {{ parts.field("goal-text", "text", "Notes", errors.get("text"), typed.get("text"), rows=2) }}
-    {% if kind == "bodyweight" %}<p class="small">The goal starts from your 7-day average today.</p>
+    {# The grey line only when Where you are now is not shown: beside it, the goal starts from the number given. #}
+    {% if kind == "bodyweight" and not shows_start %}<p class="small">The goal starts from your 7-day average today.</p>
     {% endif %}
     <div class="form-actions"><button class="primary">Set goal</button></div>
   </form>

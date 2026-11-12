@@ -4639,7 +4639,7 @@ def test_each_edit_error_sits_under_its_field_tied_to_it_and_keeps_what_was_type
     r = post(client, f"/entries/{kind}/{entry_id}/edit", **{"date": every_kind["today"], **data})
     assert r.status_code == 400
     assert title_of(r.text) == f"Edit {web.ENTRY_WORDS[kind].lower()} · Spotter"
-    assert '<body class="calm"' in r.text
+    assert '<body class="calm" data-time-zone="missing" id="top">' in r.text  # no zone saved on this account
     form = edit_form(r.text)
     [field] = [f for f in form.find_all("div", "field") if [c for c in f.elements() if c.attrs.get("name") == name]]
     assert field.classes == ["field", "has-error"]
@@ -6145,8 +6145,11 @@ def test_progress_reads_the_glance_and_gives_its_date_to_the_chart(client, pinne
     # get_progress names another date: the chart still takes the glance's.
     real_progress = services.get_progress
     monkeypatch.setattr(services, "get_progress", lambda uid, *a: {**real_progress(uid, *a), "today": "2026-10-01"})
-    assert client.get("/progress").status_code == 200
+    r = client.get("/progress")
+    assert r.status_code == 200
     assert glances == [only_user().id] and seen == [date(2026, 11, 10)]
+    # The Cardio card reads get_cardio of the page's day, the glance's: it draws, though get_progress names another.
+    assert '<h2 id="cardio-title">Cardio</h2>' in r.text
     monkeypatch.setattr(services, "get_progress", real_progress)
 
     async def none(user_id):
@@ -6159,6 +6162,8 @@ def test_progress_reads_the_glance_and_gives_its_date_to_the_chart(client, pinne
     # The page's date then falls back to get_progress' own: the Lifts card's days are worded against it.
     _, lifts_rows = card_table(lower_card(r.text, "lifts-card"))
     assert [row[-1] for row in lifts_rows][:2] == ["Fri 6 Nov", "Fri 6 Nov"]
+    # That day itself, not one a day off: the chart is handed get_progress' own today.
+    assert seen[-1] == date.fromisoformat(real_progress(only_user().id)["today"]) == date(2026, 11, 10)
 
 
 def test_trend_draws_the_28_days_ending_on_the_date_it_is_given(client, pinned):

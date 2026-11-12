@@ -269,17 +269,18 @@ GOAL_ERROR_WORDS: dict[tuple[str, str], str | dict[str, str]] = {
         "bodyweight": "Give the weight you aim for, in kg.",
         "lift": "Give the estimated max you aim for, in kg.",
         "cardio_best": "Give the time you aim for, in minutes.",
-        "measurement": "Give the target, in the unit beside the measurement."},
+        "measurement": "Give a target for your {what}, in {unit}."},
     ("invalid_field", "target_value"): {
         "bodyweight": f"Give the weight you aim for in kg, from {_BODYWEIGHT_SPAN}.",
         "lift": f"Give the estimated max you aim for in kg, more than 0 and at most {_LIFT_MOST}.",
-        "cardio_best": f"Give the time you aim for in minutes, from {_TIME_SPAN}, such as 27.5 for 27:30.",
-        "measurement": "Give the {what} you aim for in {unit}, from {span}{whole}."},
+        "cardio_best": f"Give the time you aim for in minutes, from {_TIME_SPAN}.",
+        "measurement": "Give a target for your {what} in {unit}, from {span}{whole}."},
     # A new body weight or measurement goal takes its direction from the target, so only a lift or a cardio time
-    # can point the wrong way from the form.
+    # can point the wrong way from the form. Each line holds with the start inside its range and at its end, where
+    # no target the other side can be set, so it tells no one to do what cannot be done.
     ("wrong_direction", "target_value"): {
-        "lift": "A lift goal aims above your estimated max now: give a higher target.",
-        "cardio_best": "A cardio time aims below your time now: give fewer minutes."},
+        "lift": "A lift goal aims above your estimated max now, and this target is not above it.",
+        "cardio_best": "A cardio time goal aims below your time now, and this target is not below it."},
     ("target_is_start", "target_value"): "That target is where you are now: give one above or below it.",
     ("missing_field", "target_date"): "Choose the day you aim to reach it by.",
     ("invalid_date", "target_date"): "That is not a day: choose one after today.",
@@ -287,20 +288,27 @@ GOAL_ERROR_WORDS: dict[tuple[str, str], str | dict[str, str]] = {
     ("missing_field", "start_value"): {
         "bodyweight": "Nothing is logged to start from yet: give your weight now, or log a weigh-in first.",
         "lift": "No session of this lift is logged yet: give your estimated max now, or log a session first.",
-        "cardio_best": "No session of this distance or longer is logged yet: give your time for it now, or log one "
-                       "first.",
-        "measurement": "None of this measurement is logged yet: give it now, or log one first."},
+        "cardio_best": "No session of this activity at this distance or longer is logged yet: give your time for it "
+                       "now, or log one first.",
+        "measurement": "No {what} is logged yet: give where you are now, or log one first."},
     ("invalid_field", "start_value"): {
         "bodyweight": f"Give your weight now in kg, from {_BODYWEIGHT_SPAN}.",
         "lift": f"Give your estimated max now in kg, more than 0 and at most {_LIFT_MOST}.",
-        "cardio_best": f"Give your time now in minutes, from {_TIME_SPAN}, such as 27.5 for 27:30.",
-        "measurement": "Give your {what} now in {unit}, from {span}{whole}."},
+        "cardio_best": f"Give your time now in minutes, from {_TIME_SPAN}.",
+        "measurement": "Give where your {what} is now, in {unit}, from {span}{whole}."},
     ("invalid_field", "text"): f"Keep the notes to {formatting.show(rules.TEXT_MAX, 'count')} characters or fewer, "
                                "in plain text.",
 }
+# A line that names the measurement, when none the page knows is chosen: by (code, field). A line with none here
+# then shows the general line at the top.
+GOAL_ERROR_UNNAMED = {("missing_field", "target_value"): "Give the target you aim for."}
 # A refusal the table does not know, by its code or its field: still something true, at the top of the form.
 GOAL_ERROR_GENERAL = "That goal was not set. Check each field and try again."
 GOAL_SAVED = {"goal": "Goal set.", "hit": "Goal marked as hit.", "dropped": "Goal dropped.", "open": "Goal reopened."}
+# The fragment every redirect that answers the Set a goal form's post ends in: the id base.html gives body. Without
+# one, the address after the redirect keeps the post's #set-goal and lands on the form, out of sight of "Goal set."
+# The status posts (Hit, Drop, Reopen) carry no fragment, so their redirects carry none.
+GOAL_POST_LANDS = "#top"
 # set_goal's warnings, said in the page's own words. A saved goal's warnings travel across the redirect as
 # these codes (as the day page carries its undo): (code, how the warning starts, what the page says).
 GOAL_NOTES = (
@@ -1907,15 +1915,16 @@ def goal_kind(value: object) -> str:
 
 def goal_error_words(err: dict, kind: str, measured: str = "") -> str | None:
     """The page's own line for one set_goal refusal, found by its error code and its field, never by its message:
-    the kind's own line where the line differs by kind, a measurement's range named for the one chosen. None for a
-    refusal the table does not know."""
-    words = GOAL_ERROR_WORDS.get((err.get("error"), err.get("field")))
+    the kind's own line where the line differs by kind, a measurement's line named for the one chosen, or its
+    GOAL_ERROR_UNNAMED line when none is. None for a refusal the table does not know."""
+    key = (err.get("error"), err.get("field"))
+    words = GOAL_ERROR_WORDS.get(key)
     if isinstance(words, dict):
         words = words.get(kind)
     if words is None or "{" not in words:
         return words
     if measured not in rules.MEASUREMENTS:
-        return None
+        return GOAL_ERROR_UNNAMED.get(key)
     unit, lo, hi, whole = rules.MEASUREMENTS[measured]
     return words.format(what=measurements.kind_word(measured).lower(), unit=unit,
                         span=rules.span(lo, hi, "goal_target"), whole=", as a whole number" if whole else "")
@@ -2011,10 +2020,11 @@ async def goals_view(request: Request, user: User, kind: str = GOAL_KIND_FIRST, 
 
 async def goals_page(request: Request) -> Response:
     """GET: every goal, the form showing the kind ?kind= names. POST: a new goal of the form's kind, through
-    set_goal as Claude sets one. A refusal sends the page back with the posted kind and what was typed."""
+    set_goal as Claude sets one. A refusal sends the page back with the posted kind and what was typed, at the
+    form (its action ends in #set-goal). Every redirect that answers the post ends in GOAL_POST_LANDS."""
     user = await current_user(request)
     if user is None:
-        return redirect(links.page("sign_in"))
+        return redirect(links.page("sign_in") + (GOAL_POST_LANDS if request.method == "POST" else ""))
     if request.method == "GET":
         return await goals_view(request, user, kind=goal_kind(request.query_params.get("kind")))
     form = await posted_form(request)  # the Notes' line breaks as LF
@@ -2026,7 +2036,7 @@ async def goals_page(request: Request) -> Response:
         kind = goal_kind(typed["kind"])
         errors, loose = goal_errors(result, kind, typed)
         return await goals_view(request, user, kind=kind, errors=errors, loose=loose, typed=typed, status_code=400)
-    return redirect(saved_address("goal", result))
+    return redirect(saved_address("goal", result) + GOAL_POST_LANDS)
 
 
 async def goal_status_now(user_id: int, goal_id: str) -> str | None:

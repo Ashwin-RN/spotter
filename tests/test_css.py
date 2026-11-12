@@ -994,6 +994,15 @@ def test_the_set_a_goal_forms_parts_each_have_their_rule(css):
     assert css.value("div.error", "border") == "1.5px solid var(--err)"
 
 
+def test_a_wide_cell_spans_its_stacked_row_below_720_px_only(css):
+    """rev_pbatch P1: a lift's reason sits in td.wide-cell, and below 720 px, where a row table's row is a grid of two
+    columns, that cell spans the row, so it never runs over Last trained. Above it the cell is an ordinary cell."""
+    assert css.value("table.rows tr", "display", (STACKED,)) == "grid"
+    assert css.value("table.rows tr", "grid-template-columns", (STACKED,)) == "repeat(2, minmax(0, 1fr))"
+    assert css.value("table.rows td.wide-cell", "grid-column", (STACKED,)) == "1 / -1"
+    assert [r.context for r in css.rules if "table.rows td.wide-cell" in r.selectors] == [(STACKED,)]
+
+
 def test_the_foods_pages_parts_each_have_their_rule(css):
     """Foods (pass B15): on a laptop Saved foods takes columns 1 to 8 and Save a food 9 to 12, under the page head,
     the banner and the strip, which span both; the grey line under the h1 in --text-2; the table in its sideways
