@@ -602,13 +602,38 @@ def test_the_import(make_user):
                                                                 "saved_food_id": 1}]},
             {"kind": "cardio_entry", "date": ago(1), "exercise": "Treadmil Rnu", "minutes": 601, "avg_hr": 120.5},
             {"kind": "cardio_entry", "date": ago(1), "exercise": "Outdoor Run", "minutes": 30, "distance": 5,
-             "speed_kmh": 30},
+             "speed": 30},   # was "speed_kmh": 30: the import's field is speed now
             {"kind": "cardio_entry", "date": ago(1), "exercise": "Outdoor Run", "minutes": 1, "distance": 300}]
     seen.add("import refused rows", imp(bad, True), "Squat (Barbell)", "x", "weight", "not a row", "2026-03-01T07:12",
              "kg", "heavy", "soon", "wasit", 8000.5, "feast", 5000.6, "brunch", "weight_kg", "Treadmil Rnu", 120.5,
              "saved_food_id", 1234.5, 2.5)
     for n in range(1, 61):
         services.log_measurement(user.id, {"kind": "resting_hr", "value": 60, "date": ago(n + 10)}, "web")
+    # The fix round: refusals in the call's units, more than 60 set items, a year-1 timestamp, repeated rows,
+    # a partly matched food row.
+    seen.add("import units refused", imp([
+        {"kind": "bodyweight", "date": ago(1), "weight": 1000},
+        {"kind": "lift_session", "date": ago(1), "sets": [{"exercise": "Back Squat", "weight": 1200, "reps": 5}]},
+        {"kind": "cardio_entry", "date": ago(1), "exercise": "Outdoor Run", "minutes": 600, "distance": 400},
+        {"kind": "cardio_entry", "date": ago(2), "exercise": "Outdoor Run", "minutes": 30, "distance": 3, "speed": 12},
+        {"kind": "cardio_entry", "date": ago(3), "exercise": "Outdoor Run", "minutes": 1, "distance": 100},
+        {"kind": "cardio_entry", "date": ago(4), "exercise": "Outdoor Run", "minutes": 30, "speed": 40},
+        {"kind": "measurement", "date": ago(1), "measurement_kind": "waist", "value": 200},
+        {"kind": "lift_session", "date": ago(1), "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 5}] * 61},
+        {"kind": "bodyweight", "date": "0001-01-01T00:00:00Z", "weight": 80}], True,
+        weight_unit="lb", distance_unit="mi", length_unit="in"), 1000, 1200, 400, 200, 12, 40, 100)
+    twice = [{"kind": "lift_session", "date": ago(20), "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 5}]}] * 2
+    seen.add("import repeats preview", imp(twice, True))
+    seen.add("import repeats", imp(twice))
+    seen.add("import repeats again", imp(twice))
+    part = [{"kind": "food_entry", "date": ago(21), "entries": [
+        {"description": "Oats", "kcal": 350, "meal": "breakfast"}, {"description": "Dal", "kcal": 500, "meal": "lunch"}]}]
+    imp([{"kind": "food_entry", "date": ago(21), "entries": [part[0]["entries"][0]]}])
+    with db.session_scope() as s:
+        for e in s.scalars(select(FoodEntry).where(FoodEntry.user_id == user.id, FoodEntry.date == TODAY - timedelta(21))):
+            e.deleted_at = NOW
+    seen.add("import part preview", imp(part, True), "Oats", "Dal")
+    seen.add("import part", imp(part), "Oats", "Dal")
     seen.add("import held days", imp([{"kind": "measurement", "date": ago(n + 10), "measurement_kind": "resting_hr",
                                        "value": 61} for n in range(1, 61)], True))
     for data, *values in (

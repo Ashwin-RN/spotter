@@ -7,18 +7,19 @@ import_entries(user_id, data, by)
     whoever calls.
 
     Each row: kind (lift_session, bodyweight, measurement, food_entry or cardio_entry) and date, plus
-    the fields its own log function takes. Only the three fields that carry a unit are renamed:
-    weight (a weigh-in, or a set), distance (cardio), and value for a body size, each in the call's
+    the fields its own log function takes. Only the fields that carry a unit are renamed: weight (a
+    weigh-in, or a set), distance and speed (cardio), and value for a body size, each in the call's
     unit. Spotter converts them (lb x 0.45359237, mi x 1.609344, in x 2.54), and the existing checks
-    keep them at the column's 2 dp, so the same file gives the same stored numbers every time.
+    keep them at the column's 2 dp, so the same file gives the same stored numbers every time. A
+    refusal of a converted number quotes it as sent, with the range, in the call's unit.
       lift_session  sets [{exercise, weight, reps, times?}] (times 1 to 20: one item for "3 sets of
                     5"), notes?. At most 60 sets once times is counted.
       bodyweight    weight
       measurement   measurement_kind, value
       food_entry    entries [{description, kcal, meal}] (1 to 30): the other app's own numbers, stored
                     as you_said, estimated false.
-      cardio_entry  exercise, minutes, distance?, incline_pct?, speed_kmh?, avg_hr?, machine_kcal?,
-                    notes?
+      cardio_entry  exercise, minutes, distance?, incline_pct?, speed? (in the call's distance unit an
+                    hour, converted as distance is), avg_hr?, machine_kcal?, notes?
 
     Each row is checked by the rules its own log function uses (app.rules, lifts, body, food,
     cardio); a refusal names the row by its number as sent, from 1. A row that fails is left out, and
@@ -31,7 +32,10 @@ import_entries(user_id, data, by)
 
     The rule for every kind, judged against what the person held before the call:
       already there  the row matches an entry of that kind on that date: a live one, or a soft-deleted
-                     one that was imported, so a row the person deleted never comes back
+                     one that was imported, so a row the person deleted never comes back. Or an
+                     imported row of this person, on any date, live or deleted, holds the key this row
+                     would be stored under: an edit keeps an imported row's key (entries.edit_entry),
+                     so a row the person edited, moved or deleted is never written again
       day taken      no match, and that date holds a live entry of that kind: never added to, never
                      replaced. The result names the entry.
       written        otherwise
@@ -49,7 +53,7 @@ import_entries(user_id, data, by)
     1,000 set items and food entries), and too_many_imported (more than 10,000 imported rows created in
     any 24 hours, counted over the five entry tables, deleted ones included).
 
-    dry_run true, the default, writes nothing: it reads what the person holds and reports what a real run
+    dry_run true or left out writes nothing (only true, false or left out are taken): it reads what the person holds and reports what a real run
     would do, the import limit included. The same rows sent with dry_run false then write exactly what it counted.
 
 Every write here locks the user row first (common.lock_user), then checks the write limit
@@ -86,8 +90,7 @@ ROW_FIELDS = {
     "bodyweight": ("weight",),
     "measurement": ("measurement_kind", "value"),
     "food_entry": ("entries",),
-    "cardio_entry": ("exercise", "minutes", "distance", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal",
-                     "notes"),
+    "cardio_entry": ("exercise", "minutes", "distance", "incline_pct", "speed", "avg_hr", "machine_kcal", "notes"),
 }
 SET_FIELDS = ("exercise", "weight", "reps", "times")
 FOOD_FIELDS = ("description", "kcal", "meal")
@@ -146,6 +149,38 @@ def _converted(value, factor: float):
     return number * factor
 
 
+UNIT_OF = {factor: unit for table in UNITS.values() for unit, factor in table.items() if factor != 1.0}
+
+
+def _call_unit(err: dict, field: str, raw, factor: float, limits, quantity: str, where: str = "",
+               fix_tail: str = "", per: str = "") -> dict:
+    """A range refusal of a converted number, said as it was sent: the value and the range in the call's
+    unit (lb, mi, in), the range through the formatter. A refusal in the stored unit, or of another kind,
+    goes on as it is."""
+    if factor == 1.0 or " is outside " not in err["message"]:
+        return err
+    unit = UNIT_OF[factor] + (f" {per}" if per else "")
+    lo, hi = (formatting.show(v / factor, quantity, unit=False) for v in limits)
+    at = f"{where}: " if where else ""
+    on = f" on {where.lower()}" if where else ""
+    return {**err, "message": f"{at}{field} {rules.as_sent(raw)} {unit} is outside {lo} to {hi} {unit}.",
+            "fix": f"Give {field}{on} from {lo} to {hi} {unit}{fix_tail}."}
+
+
+def _speed_in_call_unit(err: dict, raw: dict, values: dict, factor: float) -> dict:
+    """with_speed's two refusals on a mi call, in miles: otherwise they quote the converted distance and speed."""
+    if factor == 1.0:
+        return err
+    worked = metrics.speed(values["distance_km"], values["minutes"])
+    shown = formatting.show(worked / factor, "speed", unit=False)
+    ran = f"{rules.as_sent(raw.get('distance'))} mi in {formatting.field(values['minutes'], 'session_time')} minutes"
+    if values.get("speed_kmh") is not None and "does not match" in err["message"]:
+        return {**err, "message": f"speed {rules.as_sent(raw.get('speed'))} mi an hour does not match {ran}, "
+                                  f"which is {shown} mi an hour."}
+    lo, hi = (formatting.show(v / factor, "speed", unit=False) for v in rules.NUMBERS["speed_kmh"][:2])
+    return {**err, "message": f"{ran} is {shown} mi an hour, outside {lo} to {hi} mi an hour."}
+
+
 def _blank(value) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
@@ -160,19 +195,12 @@ def _name_key(name) -> str:
 
 
 def _dry_run(value) -> tuple[bool | None, dict | None]:
-    """True unless false is sent. Anything that is neither is refused: a write is never a guess."""
+    """True, false or left out (true). Anything else, text and 0 or 1 included, is refused: a write is never
+    a guess."""
     if value is None or value is True:
         return True, None
     if value is False:
         return False, None
-    if isinstance(value, int) and not isinstance(value, bool) and value in (0, 1):
-        return bool(value), None
-    if isinstance(value, str):
-        key = value.strip().casefold()
-        if key in ("", "true", "1", "yes", "on"):
-            return True, None
-        if key in ("false", "0", "no", "off"):
-            return False, None
     return None, rules.error("invalid_field", f"dry_run '{rules.quote(value)}' is not true or false.",
                              "Send dry_run true to check the rows, or false to write them after the person has said yes.")
 
@@ -216,8 +244,11 @@ def _date(raw, user, today: date, noun: str) -> tuple[date | None, dict | None]:
                     return None, rules.error("timestamp_without_offset", f"'{rules.quote(text)}' has no offset.",
                                              "Send the timestamp with its offset, such as +05:30, or the date alone "
                                              "when it is the person's local date.")
-                on = moment.astimezone(users.zone_for(user.time_zone)).date() if offset == timedelta(0) \
-                    else moment.date()
+                try:
+                    on = moment.astimezone(users.zone_for(user.time_zone)).date() if offset == timedelta(0) \
+                        else moment.date()
+                except OverflowError:  # near year 1 or 9999 there is no local date: its own date is refused below
+                    on = moment.date()
     if on is None:
         _, err = rules.entry_date(text, today, noun)
         return None, {**err, "fix": DATE_FIX}
@@ -240,7 +271,12 @@ def _check_lift(raw: dict, on, today, by_name: dict, factor: float) -> tuple[dic
     sent = items if isinstance(items, list) else []
     converted, times, missed = [], [], []
     names = list(by_name)
-    for k, item in enumerate(sent[:rules.SESSION_SETS[1]], start=1):
+    lo, hi = rules.SESSION_SETS
+    if len(sent) > hi:  # as log_lifts refuses it: never a session cut short
+        return None, [rules.error("sets_count_out_of_range", f"The session has {_count(len(sent))} set items. It needs "
+                                  f"{lo} to {hi}.", f"Send {lo} to {hi} items a session: one a set, or one with times "
+                                  "for sets that repeat.")], missed
+    for k, item in enumerate(sent, start=1):
         item = item if isinstance(item, dict) else {}
         where = f"Set {k}"
         errors += _unknown_fields(item, SET_FIELDS, "a set", "A set takes: exercise, weight, reps, times", where)
@@ -260,7 +296,13 @@ def _check_lift(raw: dict, on, today, by_name: dict, factor: float) -> tuple[dic
         converted = items  # check_session refuses it in its own words
     _, sets, err = rules.check_session(on or today, converted, names, today)
     if err:
-        errors += [_renamed(e, "weight_kg", "weight") for e in err["errors"]]
+        for e in err["errors"]:
+            at = _AT.match(e["message"])
+            if e["error"] == "weight_out_of_range" and at:
+                k = int(at.group(2))
+                e = _call_unit(e, "weight", sent[k - 1].get("weight"), factor, rules.HARD_RULES["weight_kg"],
+                               "weight_kg", f"Set {k}", ", 0 for bodyweight")
+            errors.append(_renamed(e, "weight_kg", "weight"))
         for e in err["errors"]:  # the set a missed name came from, by the number its message names
             at = _AT.match(e["message"]) if e["error"] == "unknown_exercise" else None
             if at:
@@ -270,7 +312,6 @@ def _check_lift(raw: dict, on, today, by_name: dict, factor: float) -> tuple[dic
     if errors:
         return None, errors, missed
     expanded = [x for x, count in zip(sets, times) for _ in range(count)]
-    lo, hi = rules.SESSION_SETS
     if len(expanded) > hi:
         return None, [rules.error("sets_count_out_of_range",
                                   f"The session has {_count(len(expanded))} sets once times is counted. It needs {lo} "
@@ -287,7 +328,8 @@ def _check_bodyweight(raw: dict, factor: float) -> tuple[dict | None, list[dict]
                                   f"Give the weight in weight_unit: {lo} to {hi} kg once converted.")]
     kg, err = body.check_kg(_converted(raw.get("weight"), factor))
     if err:
-        return None, [_renamed(err, "kg", "weight", fix=False) if err["message"].startswith("kg ") else err]
+        err = _renamed(err, "kg", "weight", fix=False) if err["message"].startswith("kg ") else err
+        return None, [_call_unit(err, "weight", raw.get("weight"), factor, rules.BODYWEIGHT_KG, "weigh_in")]
     return {"kg": kg, "match": kg}, []
 
 
@@ -303,6 +345,8 @@ def _check_measurement(raw: dict, factor: float) -> tuple[dict | None, list[dict
         value = _converted(value, factor)
     value, err = rules.measurement_value(kind, value)
     if err:
+        if kind in BODY_SIZES:
+            err = _call_unit(err, kind, raw.get("value"), factor, rules.MEASUREMENTS[kind][1:3], "cm")
         return None, [err]
     return {"measurement_kind": kind, "value": value, "unit": rules.MEASUREMENTS[kind][0],
             "match": (kind, float(value))}, []
@@ -357,15 +401,23 @@ def _check_cardio(s, raw: dict, factor: float, activities: dict) -> tuple[dict |
         errors.append(err)
         if err["error"] == "unknown_exercise":
             missed.append(_sent_name(name))
-    data = {f: raw.get(f) for f in cardio.NUMBER_FIELDS if f != "distance_km"}
+    data = {f: raw.get(f) for f in cardio.NUMBER_FIELDS if f not in ("distance_km", "speed_kmh")}
     data["distance_km"] = _converted(raw.get("distance"), factor)
+    data["speed_kmh"] = _converted(raw.get("speed"), factor)
     values, errs = cardio.check_numbers(data)
-    errors += [_renamed(e, "distance_km", "distance") for e in errs]
+    for e in errs:
+        if e["message"].startswith("distance_km "):
+            e = _call_unit(e, "distance", raw.get("distance"), factor, rules.NUMBERS["distance_km"][:2], "km")
+        elif e["message"].startswith("speed_kmh "):
+            e = _call_unit(e, "speed", raw.get("speed"), factor, rules.NUMBERS["speed_kmh"][:2], "speed",
+                           per="an hour")
+        errors.append(_renamed(_renamed(e, "distance_km", "distance"), "speed_kmh", "speed"))
     notes, err = rules.text(raw.get("notes"), "notes")
     errors += [err] if err else []
     if not errors:
         values, err = cardio.with_speed(values)
-        errors += [err] if err else []
+        if err:
+            errors.append(_renamed(_speed_in_call_unit(err, raw, values, factor), "speed_kmh", "speed"))
     if errors:
         return None, errors, missed
     given = {f: values[f] if not _blank(data.get(f)) else None for f in cardio.NUMBER_FIELDS}
@@ -396,20 +448,33 @@ def _failure(n: int, kind, on, raw_date, errors: list[dict]) -> dict:
 # ---------------------------------------------------------------- what the person already holds
 
 class _Held:
-    """One kind's entries on the call's dates: live ones and soft-deleted imported ones, each with its
-    match value. live_days: (date, part) to the id of a live entry, for "day taken"."""
+    """One kind's entries on the call's dates (live ones and soft-deleted imported ones), and this person's
+    imported rows on any date that hold one of the call's keys. Each with its match value, and for an
+    imported row the key it was stored under. live_days: (date, part) to a live entry, for "day taken"."""
 
     def __init__(self, kind: str):
         self.kind = kind
         self.entries: list[dict] = []
+        self.ids: set[int] = set()
         self.live_days: dict[tuple, dict] = {}
 
-    def add(self, on: date, part, match, entry_id, live: bool, by_row: int | None = None) -> dict:
-        held = {"date": on, "part": part, "match": match, "id": entry_id, "used": False, "by_row": by_row}
+    def add(self, on: date, part, match, entry_id, live: bool, by_row: int | None = None, key: str | None = None) -> dict:
+        held = {"date": on, "part": part, "match": match, "id": entry_id, "used": False, "by_row": by_row, "key": key}
         self.entries.append(held)
+        if entry_id is not None:
+            self.ids.add(entry_id)
         if live and (on, part) not in self.live_days:
             self.live_days[(on, part)] = held
         return held
+
+    def find_key(self, key: str, consume: bool) -> dict | None:
+        """An imported row stored under this key, wherever the person has since moved, changed or deleted it."""
+        for held in self.entries:
+            if held["key"] == key and not (consume and held["used"]):
+                if consume:
+                    held["used"] = True
+                return held
+        return None
 
     def find(self, on: date, part, match, consume: bool) -> dict | None:
         for held in self.entries:
@@ -420,30 +485,49 @@ class _Held:
         return None
 
 
-def _held(s, user_id: int, kind: str, dates: set) -> _Held:
+def _held(s, user_id: int, kind: str, dates: set, keys: set) -> _Held:
     model = MODELS[kind]
     out = _Held(kind)
     if not dates:
         return out
-    query = select(model).where(model.user_id == user_id, model.date.in_(dates),
-                                or_(model.deleted_at.is_(None), model.logged_by == IMPORTED)).order_by(model.id)
-    if kind == "lift_session":
-        query = query.options(selectinload(LiftSession.sets))
-    for row in s.scalars(query):
-        live = row.deleted_at is None
-        if kind == "bodyweight":
-            out.add(row.date, None, round(row.kg, 2), row.id, live)
-        elif kind == "measurement":
-            out.add(row.date, row.kind, (row.kind, float(row.value)), row.id, live)
-        elif kind == "lift_session":
-            match = tuple(sorted((x.exercise_id, x.set_number, round(x.weight_kg, 2), x.reps) for x in row.sets))
-            out.add(row.date, None, match, row.id, live)
-        elif kind == "food_entry":
-            out.add(row.date, None, (row.meal, row.description.casefold(), int(row.kcal)), row.id, live)
-        else:
-            km = None if row.distance_km is None else round(row.distance_km, 2)
-            out.add(row.date, row.exercise_id, (row.exercise_id, round(row.minutes, 1), km), row.id, live)
+    on_dates = select(model).where(model.user_id == user_id, model.date.in_(dates),
+                                   or_(model.deleted_at.is_(None), model.logged_by == IMPORTED))
+    by_key = select(model).where(model.user_id == user_id, model.logged_by == IMPORTED, model.dedupe_key.in_(keys))
+    for query in (on_dates, by_key):
+        if kind == "lift_session":
+            query = query.options(selectinload(LiftSession.sets))
+        for row in s.scalars(query.order_by(model.id)):
+            if row.id in out.ids:
+                continue
+            live, key = row.deleted_at is None, row.dedupe_key if row.logged_by == IMPORTED else None
+            if kind == "bodyweight":
+                out.add(row.date, None, round(row.kg, 2), row.id, live, key=key)
+            elif kind == "measurement":
+                out.add(row.date, row.kind, (row.kind, float(row.value)), row.id, live, key=key)
+            elif kind == "lift_session":
+                match = tuple(sorted((x.exercise_id, x.set_number, round(x.weight_kg, 2), x.reps) for x in row.sets))
+                out.add(row.date, None, match, row.id, live, key=key)
+            elif kind == "food_entry":
+                out.add(row.date, None, (row.meal, row.description.casefold(), int(row.kcal)), row.id, live, key=key)
+            else:
+                km = None if row.distance_km is None else round(row.distance_km, 2)
+                out.add(row.date, row.exercise_id, (row.exercise_id, round(row.minutes, 1), km), row.id, live, key=key)
     return out
+
+
+def _row_key(r: dict) -> str:
+    """The key this row is stored under when written whole: its own kind's (lifts.session_key, body.weigh_in_key,
+    measurements.measurement_key, food.entry_key over the row's entries, cardio.cardio_key)."""
+    kind, on = r["kind"], r["date"]
+    if kind == "bodyweight":
+        return body.weigh_in_key(on, r["kg"])
+    if kind == "measurement":
+        return measurements.measurement_key(on, r["measurement_kind"], r["value"])
+    if kind == "lift_session":
+        return lifts.session_key(on, r["notes"], r["keyed"])
+    if kind == "food_entry":
+        return food.entry_key(on, [food.entry_tuple(e) for e in r["entries"]])
+    return cardio.cardio_key(on, r["exercise"].id, r["given"])
 
 
 def _imported_since(s, user_id: int, since: datetime) -> list[datetime]:
@@ -578,15 +662,18 @@ def _check_rows(s, user, rows: list, units: dict, today: date) -> tuple[list[dic
 def _decide(s, user, checked: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
     """(rows to write, day_taken rows, every checked row). Each checked row gets "outcome",
     and a food row its "matched" and "unmatched" entries."""
+    for r in checked:
+        r["key"] = _row_key(r)
     dates = {kind: {r["date"] for r in checked if r["kind"] == kind} for kind in ORDER}
-    held = {kind: _held(s, user.id, kind, dates[kind]) for kind in ORDER}
+    keys = {kind: {r["key"] for r in checked if r["kind"] == kind} for kind in ORDER}
+    held = {kind: _held(s, user.id, kind, dates[kind], keys[kind]) for kind in ORDER}
     pre_live = {kind: dict(h.live_days) for kind, h in held.items()}  # before the call: sessions, food, cardio
     to_write, day_taken = [], []
     for r in sorted(checked, key=lambda r: (ORDER.index(r["kind"]), r["date"], r["n"])):
         kind, on, h = r["kind"], r["date"], held[r["kind"]]
         if kind in ("bodyweight", "measurement"):
             part = r.get("measurement_kind")
-            if h.find(on, part, r["match"], consume=False):
+            if h.find(on, part, r["match"], consume=False) or h.find_key(r["key"], consume=False):
                 r["outcome"] = "already_there"
                 continue
             taker = h.live_days.get((on, part))
@@ -603,10 +690,12 @@ def _decide(s, user, checked: list[dict]) -> tuple[list[dict], list[dict], list[
             r["matched"], r["unmatched"] = [], []
             for entry, match in zip(r["entries"], r["match"]):
                 r["matched" if h.find(on, None, match, consume=True) else "unmatched"].append(entry)
+            while r["unmatched"] and h.find_key(r["key"], consume=True):  # entries of this row moved or changed
+                r["matched"].append(r["unmatched"].pop(0))
             if not r["unmatched"]:
                 r["outcome"] = "already_there"
                 continue
-        elif h.find(on, part, r["match"], consume=True):
+        elif h.find(on, part, r["match"], consume=True) or h.find_key(r["key"], consume=True):
             r["outcome"] = "already_there"
             continue
         taker = pre_live[kind].get((on, part))
@@ -690,7 +779,7 @@ def _run(s, user, rows: list, dry: bool, units: dict) -> dict:
         return rules.error("too_many_imported",
                            f"{_count(len(times))} rows were imported in the last {IMPORT_HOURS} hours. This call "
                            f"would take it past {_count(IMPORT_LIMIT)}. Nothing was saved.",
-                           f"Wait {wait} hour{'s' if wait != 1 else ''}, then send it again.", wait_hours=wait)
+                           f"Wait {_count(wait)} hour{'s' if wait != 1 else ''}, then send it again.", wait_hours=wait)
     cardio_estimated = None
     if not dry and to_write:
         cardio_estimated = _write(s, user, to_write, today)["cardio_estimated"]
@@ -736,6 +825,12 @@ def _result(user, rows, dry, units, decided, failed, day_taken, missed, to_write
         outcomes[r["outcome"]] += 1
     counts = _counts(decided, failed)
     ranges = _ranges(decided)
+    seen, repeated = set(), 0
+    for r in sorted(decided, key=lambda r: r["n"]):
+        same = (r["kind"], r["date"], tuple(r["match"]) if isinstance(r["match"], list) else r["match"])
+        repeated += same in seen
+        seen.add(same)
+    entries_there = sum(len(r["matched"]) for r in decided if r["kind"] == "food_entry" and r["outcome"] == "written")
     dated = [r["date"] for r in decided] + [f["on"] for f in failed if f.get("on")]  # dates that passed
     start, end = (min(dated), max(dated)) if dated else (None, None)
     taken = [{"row": r["n"], "kind": r["kind"], "date": r["date"].isoformat(),
@@ -745,13 +840,13 @@ def _result(user, rows, dry, units, decided, failed, day_taken, missed, to_write
         "kind": KIND, "dry_run": dry, "rows": len(rows),
         "from": start.isoformat() if start else None, "to": end.isoformat() if end else None,
         "units": {"weight": units["weight_unit"], "distance": units["distance_unit"], "length": units["length_unit"]},
-        "counts": counts, "row_outcomes": outcomes, "ranges": ranges,
+        "counts": counts, "row_outcomes": outcomes, "repeated_rows": repeated, "ranges": ranges,
         "day_taken": taken[:LISTED],
         "failed": [{k: v for k, v in f.items() if k not in ("entries", "on")} for f in failed[:LISTED]],
         "unknown_names": list(missed.values()),
         "more_failed": max(0, len(failed) - LISTED), "more_day_taken": max(0, len(taken) - LISTED),
         "imported_last_24h": imported, "import_limit": IMPORT_LIMIT, "within_import_limit": within,
-        "summary": _summary(dry, len(rows), outcomes, counts, ranges, start, end, today),
+        "summary": _summary(dry, len(rows), outcomes, counts, ranges, start, end, today, repeated, entries_there),
         "links": {"progress": links.page("progress"), **({"day": links.page("day", date=end)} if end else {})},
     }
     note = _note(dry, to_write, cardio_estimated, within, imported, out)
@@ -778,7 +873,8 @@ def _listing(counts: dict) -> str:
     return lifts._joined([_n(counts[k]["written"], *NOUNS[k]) for k in ORDER if counts[k]["written"]])
 
 
-def _summary(dry: bool, total: int, outcomes: dict, counts: dict, ranges: dict, start, end, today) -> str:
+def _summary(dry: bool, total: int, outcomes: dict, counts: dict, ranges: dict, start, end, today,
+             repeated: int = 0, entries_there: int = 0) -> str:
     """The preview, written and run-again sentences: see the module notes."""
     span = _span(start, end, today)
     there, taken, refused = outcomes["already_there"], outcomes["day_taken"], outcomes["failed"]
@@ -786,6 +882,11 @@ def _summary(dry: bool, total: int, outcomes: dict, counts: dict, ranges: dict, 
     if dry:
         parts = ["Preview, nothing written.", f"{_n(total, 'row', 'rows')}{span}.",
                  f"Would write {listing}." if listing else "Would write nothing."]
+        if entries_there:
+            parts.append(f"{_n(entries_there, 'food entry', 'food entries')} in those rows "
+                         f"{'is' if entries_there == 1 else 'are'} already there.")
+        if repeated:
+            parts.append(f"{_n(repeated, 'row repeats', 'rows repeat')} an earlier row of this call.")
         if there:
             parts.append(f"{_n(there, 'row is', 'rows are')} already there.")
         if taken:
@@ -805,12 +906,18 @@ def _summary(dry: bool, total: int, outcomes: dict, counts: dict, ranges: dict, 
         if ranges["longest_km"]:
             parts.append(f"The longest distance is {formatting.show(ranges['longest_km'], 'km')}.")
         return " ".join(parts)
+    again = f" {_n(repeated, 'row', 'rows')} repeated an earlier row of this call." if repeated else ""
     if there == total:
         if total == 1:
             return f"Nothing new: the row{span} is already there."
-        return f"Nothing new: all {_n(total, 'row', 'rows')}{span} are already there."
+        return f"Nothing new: all {_n(total, 'row', 'rows')}{span} are already there.{again}"
     parts = [f"Imported {_count(outcomes['written'])} of {_n(total, 'row', 'rows')}{span}"
              + (f": {listing}." if listing else ".")]
+    if entries_there:
+        parts.append(f"{_n(entries_there, 'food entry', 'food entries')} in those rows "
+                     f"{'was' if entries_there == 1 else 'were'} already there.")
+    if repeated:
+        parts.append(again.strip())
     if there:
         parts.append(f"{_count(there)} {'was' if there == 1 else 'were'} already there.")
     if taken:

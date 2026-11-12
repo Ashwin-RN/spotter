@@ -426,3 +426,20 @@ def test_as_import_limit_counts_only_as_own_imported_rows(world):
     r = services.import_entries(a.id, {"rows": [{"kind": "bodyweight", "date": users.today_for(a).isoformat(),
                                                  "weight": 70}], "dry_run": False}, "claude")
     assert r["imported_last_24h"] == 0 and r["within_import_limit"] is True and r["row_outcomes"]["written"] == 1
+
+
+def test_bs_imported_rows_never_hold_their_key_for_a(world):
+    """An imported row keeps its key when edited; the import looks it up by key on any date. Only the person's own."""
+    a, b, _ = world
+    _zoned(a)
+    _zoned(b)
+    on = users.today_for(b).isoformat()
+    row = {"kind": "measurement", "date": on, "measurement_kind": "hips", "value": 99}
+    services.import_entries(b.id, {"rows": [row], "dry_run": False}, "web")
+    with db.new_session() as s:
+        hips = s.scalars(select(Measurement).where(Measurement.user_id == b.id, Measurement.kind == "hips")).one()
+    moved = (users.today_for(b) - timedelta(days=1)).isoformat()
+    assert services.edit_entry(b.id, "measurement", hips.id, {"date": moved}, "web")["changed"]  # held by key alone
+    r = services.import_entries(a.id, {"rows": [row], "dry_run": False}, "claude")
+    assert r["row_outcomes"]["written"] == 1
+    assert services.import_entries(b.id, {"rows": [row]}, "web")["row_outcomes"]["already_there"] == 1

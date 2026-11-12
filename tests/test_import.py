@@ -186,7 +186,8 @@ def test_a_dry_run_writes_nothing_and_the_real_run_writes_exactly_what_it_counte
     assert len(after["lift_set"]) - len(before["lift_set"]) == 3
 
 
-@pytest.mark.parametrize("dry_run", [None, True, "true", "yes", 1, ""])
+# Was: [None, True, "true", "yes", 1, ""] all previewed. Now only left out and true do (the lead's ruling).
+@pytest.mark.parametrize("dry_run", [None, True])
 def test_dry_run_left_out_or_true_is_a_preview(user, dry_run):
     before = everything()
     r = imp(user, weigh(ago(1), 80), dry=None) if dry_run is None else imp(user, weigh(ago(1), 80), dry=dry_run)
@@ -194,13 +195,16 @@ def test_dry_run_left_out_or_true_is_a_preview(user, dry_run):
     assert everything() == before
 
 
-@pytest.mark.parametrize("dry_run", [False, "false", "False", "no", 0, "0"])
+# Was: [False, "false", "False", "no", 0, "0"] all wrote. Now only False writes.
+@pytest.mark.parametrize("dry_run", [False])
 def test_only_a_plain_false_writes(user, dry_run):
     r = imp(user, weigh(ago(1), 80), dry=dry_run)
     assert r["dry_run"] is False and total(Bodyweight, user.id) == 1
 
 
-@pytest.mark.parametrize("dry_run", ["maybe", 2, [], {}, 0.5])
+# Was: ["maybe", 2, [], {}, 0.5]. Now the text forms and 0 and 1 are refused too.
+@pytest.mark.parametrize("dry_run", ["maybe", 2, [], {}, 0.5, "true", "false", "False", "yes", "no", "off", "on", "",
+                                     "0", "1", 0, 1])
 def test_a_dry_run_that_is_neither_true_nor_false_is_refused_and_writes_nothing(user, dry_run):
     before = everything()
     r = imp(user, weigh(ago(1), 80), dry=dry_run)
@@ -331,7 +335,10 @@ def test_an_edited_import_row_is_left_as_edited(user, kind):
     before = everything()
     r = imp(user, KINDS[kind]["row"](ago(1)))
     assert everything() == before   # the edit stands, and nothing comes back beside it
-    assert r["row_outcomes"]["day_taken"] == 1 and r["day_taken"][0]["entry_id"] == first
+    # Was: day taken, naming the edited entry:
+    #     assert r["row_outcomes"]["day_taken"] == 1 and r["day_taken"][0]["entry_id"] == first
+    # Now the edited row keeps the key it was imported under, so the row is already there.
+    assert r["row_outcomes"] == {"written": 0, "already_there": 1, "day_taken": 0, "failed": 0}
 
 
 @pytest.mark.parametrize("kind", list(KINDS))
@@ -356,17 +363,98 @@ def test_a_deleted_hand_logged_entry_does_not_block(user, kind):
 
 
 @pytest.mark.parametrize("kind", list(KINDS))
-def test_an_edited_then_deleted_import_row_comes_back_at_its_old_value_as_built(user, kind):
-    """As built, a ruling wanted: the edit changed the deleted row's value, so the row as exported no longer
-    matches it and the day holds nothing live. The re-run writes the exported value again. Food: the edited
-    entry comes back, the untouched deleted one stays deleted."""
+def test_an_edited_then_deleted_import_row_stays_deleted(user, kind):
+    """The edit kept the key the row was imported under, so the deleted row still holds it."""
     imp(user, KINDS[kind]["row"](ago(1)))
     first = rows_of(MODELS[kind], user.id)[0].id
     services.edit_entry(user.id, kind, first, KINDS[kind]["edit"], "web")
     for row in rows_of(MODELS[kind], user.id):
         services.delete_entry(user.id, kind, row.id)
+    before = everything()
     r = imp(user, KINDS[kind]["row"](ago(1)))
-    assert r["row_outcomes"]["written"] == 1 and r["counts"][kind]["written"] == 1
+    # Was (as built, ruling wanted): the exported value came back.
+    #     assert r["row_outcomes"]["written"] == 1 and r["counts"][kind]["written"] == 1
+    assert r["row_outcomes"]["written"] == 0 and r["counts"][kind]["written"] == 0
+    assert r["row_outcomes"]["already_there"] == 1 and everything() == before
+
+
+# A one-entry food day, as the reviewer named it: no second entry stays behind on the old day.
+ONE = {**{k: v["row"] for k, v in KINDS.items()}, "food_entry": lambda d: meal(d, ("Oats", 350, "breakfast"))}
+
+
+@pytest.mark.parametrize("kind", list(KINDS))
+def test_a_moved_import_row_is_never_written_again(user, kind):
+    """M3: the person moves an imported row to another day; the same import then writes nothing."""
+    imp(user, ONE[kind](ago(3)))
+    for row in rows_of(MODELS[kind], user.id):
+        assert services.edit_entry(user.id, kind, row.id, {"date": ago(2)}, "web")["changed"], kind
+    before = everything()
+    for dry in (True, False):
+        r = imp(user, ONE[kind](ago(3)), dry=dry)
+        assert r["row_outcomes"] == {"written": 0, "already_there": 1, "day_taken": 0, "failed": 0}, (kind, dry)
+    assert everything() == before
+
+
+@pytest.mark.parametrize("kind", list(KINDS))
+def test_a_moved_and_changed_then_deleted_import_row_is_never_written_again(user, kind):
+    imp(user, ONE[kind](ago(3)))
+    for row in rows_of(MODELS[kind], user.id):
+        services.edit_entry(user.id, kind, row.id, {"date": ago(2)}, "web")
+        services.edit_entry(user.id, kind, row.id, KINDS[kind]["edit"], "web")
+        services.delete_entry(user.id, kind, row.id)
+    before = everything()
+    assert imp(user, ONE[kind](ago(3)))["row_outcomes"]["already_there"] == 1 and everything() == before
+
+
+def test_a_moved_food_entry_of_a_two_entry_day_is_never_written_again(user):
+    imp(user, KINDS["food_entry"]["row"](ago(3)))
+    oats = rows_of(FoodEntry, user.id)[0]
+    services.edit_entry(user.id, "food_entry", oats.id, {"date": ago(2), "kcal": 360}, "web")
+    r = imp(user, KINDS["food_entry"]["row"](ago(3)))
+    assert r["counts"]["food_entry"] == {"written": 0, "already_there": 2, "day_taken": 0, "failed": 0}
+    assert total(FoodEntry, user.id) == 2
+
+
+@pytest.mark.parametrize("kind", ["bodyweight", "measurement", "cardio_entry"])
+def test_a_deleted_wrong_unit_import_can_be_imported_again_with_the_right_unit(user, kind):
+    """No undo in version 1: delete the wrong rows, send the file with its right unit. Different numbers, different
+    keys: the corrected rows go in."""
+    row = {"bodyweight": weigh(ago(1), 180), "measurement": measure(ago(1), "waist", 33),
+           "cardio_entry": run(ago(1), "Outdoor Run", 30, 3.1)}[kind]
+    unit = {"bodyweight": {"weight_unit": "lb"}, "measurement": {"length_unit": "in"},
+            "cardio_entry": {"distance_unit": "mi"}}[kind]
+    imp(user, row)
+    for r in rows_of(MODELS[kind], user.id):
+        services.delete_entry(user.id, kind, r.id)
+    again = imp(user, row, **unit)
+    assert again["row_outcomes"]["written"] == 1
+
+
+def test_a_hand_log_of_an_edited_import_row_soon_after_reads_the_import_time_key(user):
+    """What the 10-minute guard says once an imported row keeps its key: the weigh-in as imported is a
+    duplicate of the edited row, and the edited value is not."""
+    imp(user, weigh(TODAY.isoformat(), 80.5))
+    [w] = rows_of(Bodyweight, user.id)
+    services.edit_entry(user.id, "bodyweight", w.id, {"kg": 81}, "web")
+    same_as_imported = services.log_bodyweight(user.id, {"kg": 80.5}, "claude")
+    assert same_as_imported["duplicate"] is True and same_as_imported["id"] == w.id
+    edited = services.log_bodyweight(user.id, {"kg": 81}, "claude")
+    assert edited["duplicate"] is False and edited["replaced"]["id"] == w.id
+
+
+def test_an_edit_of_a_hand_logged_row_still_works_its_key_out_again(user):
+    w = services.log_bodyweight(user.id, {"kg": 80.5, "date": ago(1)}, "web")["id"]
+    services.edit_entry(user.id, "bodyweight", w, {"kg": 81, "date": ago(2)}, "web")
+    [row] = rows_of(Bodyweight, user.id)
+    assert row.dedupe_key == body.weigh_in_key(row.date, 81.0)
+
+
+def test_an_edit_of_an_imported_row_keeps_its_key(user):
+    imp(user, weigh(ago(1), 80.5))
+    [row] = rows_of(Bodyweight, user.id)
+    key = row.dedupe_key
+    services.edit_entry(user.id, "bodyweight", row.id, {"kg": 81, "date": ago(2)}, "web")
+    assert rows_of(Bodyweight, user.id)[0].dedupe_key == key == body.weigh_in_key(TODAY - timedelta(days=1), 80.5)
 
 
 def test_bodyweight_a_second_row_for_the_same_day_in_one_call(user):
@@ -502,7 +590,7 @@ def test_a_row_refusal_is_the_refusal_its_own_log_function_gives(user):
     def without_set(message):
         return message.split(": ", 1)[1]
     r = imp(user, weigh(ago(1), 1234.5), lift(ago(1), ("Back Squat", 100, 31)), measure(ago(1), "steps", 8000.5),
-            meal(ago(1), ("Feast", 5000.6, "dinner")), run(ago(1), "Outdoor Run", 30, 5, speed_kmh=30),
+            meal(ago(1), ("Feast", 5000.6, "dinner")), run(ago(1), "Outdoor Run", 30, 5, speed=30),
             run(ago(2), "Outdoor Run", 601))
     own = [services.log_bodyweight(user.id, {"kg": 1234.5}, "web"),
            services.log_lifts(user.id, {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 31}]}, "web"),
@@ -517,7 +605,9 @@ def test_a_row_refusal_is_the_refusal_its_own_log_function_gives(user):
     assert got[1]["message"] == "Row 2, set 1: " + without_set(own[1]["message"]) and got[1]["fix"] == own[1]["fix"]
     assert got[2]["message"] == "Row 3: " + own[2]["message"] and got[2]["fix"] == own[2]["fix"]
     assert got[3]["message"] == "Row 4, entry 1: " + without_set(own[3]["message"]) and got[3]["fix"] == own[3]["fix"]
-    assert got[4]["message"] == "Row 5: " + own[4]["message"] and got[4]["fix"] == own[4]["fix"]
+    # Was: "Row 5: " + own[4]["message"]. The import's field is speed now (S2).
+    assert got[4]["message"] == "Row 5: " + own[4]["message"].replace("speed_kmh", "speed")
+    assert got[4]["fix"] == own[4]["fix"].replace("speed_kmh", "speed")
     assert got[5]["message"] == "Row 6: " + own[5]["message"] and got[5]["fix"] == own[5]["fix"]
 
 
@@ -964,7 +1054,8 @@ def test_the_result_shape_and_its_summaries(user):
     rows = [weigh(ago(400), 80.2), weigh(ago(5), 80), weigh(ago(1), 81.4), lift(ago(1), ("Deadlift", 140, 5, 3)),
             lift(ago(2), ("Zercher Squat", 80, 5))]
     preview = imp(user, *rows, dry=True)
-    assert set(preview) == {"kind", "dry_run", "rows", "from", "to", "units", "counts", "row_outcomes", "ranges",
+    assert set(preview) == {"kind", "dry_run", "rows", "from", "to", "units", "counts", "row_outcomes",
+                            "repeated_rows", "ranges",
                             "day_taken", "failed", "unknown_names", "more_failed", "more_day_taken",
                             "imported_last_24h", "import_limit", "within_import_limit", "summary", "note", "links"}
     assert (preview["kind"], preview["from"], preview["to"]) == ("import", ago(400), ago(1))
@@ -991,7 +1082,7 @@ def test_the_service_needs_no_mcp_object_and_takes_plain_text_numbers(user):
         {"kind": "bodyweight", "date": ago(1), "weight": "176.5"},
         {"kind": "lift_session", "date": ago(1), "sets": [{"exercise": "Deadlift", "weight": "225", "reps": "5",
                                                            "times": "3"}]}],
-        "dry_run": "false", "weight_unit": "lb"}, "web")
+        "dry_run": False, "weight_unit": "lb"}, "web")   # was "dry_run": "false", refused now
     assert r["row_outcomes"]["written"] == 2 and rows_of(Bodyweight, user.id)[0].kg == 80.06
 
 
@@ -1000,3 +1091,154 @@ def test_users_with_no_time_zone_are_refused_before_any_row_is_read(make_user):
     with db.session_scope() as s:
         s.get(User, user.id).time_zone = None
     assert imp(user, "not a row")["error"] == "time_zone_not_set"
+
+
+# ---------------------------------------------------------------- the fix round
+
+def test_more_than_60_set_items_fail_the_row_and_nothing_is_dropped(user):
+    """M1: a 61st item was cut off before it was counted."""
+    items = [("Bench Press", 60, 5)] * 60 + [("Deadlift", 200, 1)]
+    r = imp(user, lift(ago(1), *items))
+    assert r["failed"][0]["error"] == "sets_count_out_of_range" and total(LiftSession, user.id) == 0
+    assert r["failed"][0]["message"] == "Row 1: The session has 61 set items. It needs 1 to 60."
+    sixty = imp(user, lift(ago(1), *items[:60]))
+    assert sixty["row_outcomes"]["written"] == 1
+
+
+def test_every_one_of_60_items_is_checked(user):
+    r = imp(user, lift(ago(1), *[("Bench Press", 60, 5)] * 59, ("Zorbinator", 9999, 99)))
+    assert r["row_outcomes"]["failed"] == 1 and r["unknown_names"][0]["name"] == "Zorbinator"
+    assert r["failed"][0]["message"].startswith("Row 1: 3 problems. Set 60: ")
+
+
+def test_a_food_row_of_31_entries_fails_and_30_go_in(user):
+    entries = [(f"Food {n}", 100, "snack") for n in range(31)]
+    r = imp(user, meal(ago(1), *entries))
+    assert r["failed"][0]["message"] == "Row 1: entries holds 31. It needs 1 to 30." and total(FoodEntry, user.id) == 0
+    assert r["counts"]["food_entry"]["failed"] == 31
+    assert imp(user, meal(ago(1), *entries[:30]))["counts"]["food_entry"]["written"] == 30
+
+
+@pytest.mark.parametrize("zone,sent,code", [
+    ("America/New_York", "0001-01-01T00:00:00Z", "date_too_old"),
+    ("Asia/Kolkata", "9999-12-31T23:59:59Z", "date_in_future"),
+    ("Pacific/Kiritimati", "9999-12-31T23:59:59+00:00", "date_in_future"),
+    ("Pacific/Kiritimati", "0001-01-01T00:00:00Z", "date_too_old"),
+    ("Asia/Kolkata", "0001-01-01T00:00:00-05:00", "date_too_old"),
+    ("Asia/Kolkata", "9999-12-31T23:59:59+14:00", "date_in_future")])
+def test_a_timestamp_near_year_1_or_9999_fails_its_row_and_the_call_goes_on(make_user, zone, sent, code):
+    """M2: the conversion overflowed and ended the call."""
+    user = make_user(time_zone=zone)
+    r = imp(user, weigh(sent, 80), weigh(ago(1), 80))
+    assert r["failed"][0]["error"] == code and r["row_outcomes"]["written"] == 1
+
+
+def test_a_utc_timestamp_in_a_daylight_saving_zone_lands_on_the_local_date(make_user):
+    user = make_user(time_zone="America/New_York")
+    assert stored_date(user, "2026-03-08T04:30:00Z") == "2026-03-07"   # 23:30 EST, before the change
+    assert stored_date(user, "2026-03-08T07:30:00Z") == "2026-03-08"   # 03:30 EDT, after it
+    assert stored_date(user, "2026-11-01T03:30:00Z") == "2026-10-31"   # 23:30 EDT
+    assert stored_date(user, "2026-11-01T06:30:00Z") == "2026-11-01"   # 01:30 EST
+
+
+def test_refusals_quote_the_number_as_sent_in_the_calls_unit(user):
+    """S1: the messages quoted the converted number with the stored range."""
+    r = imp(user, weigh(ago(1), 1000), lift(ago(1), ("Back Squat", 1200, 5)), run(ago(1), "Outdoor Run", 600, 400),
+            measure(ago(1), "waist", 200), run(ago(2), "Outdoor Run", 30, speed=40),
+            weight_unit="lb", distance_unit="mi", length_unit="in")
+    got = [(f["message"], f["fix"]) for f in r["failed"]]
+    assert got == [
+        ("Row 1: weight 1000 lb is outside 44.09 to 881.85 lb.", "Give weight from 44.09 to 881.85 lb."),
+        ("Row 2, set 1: weight 1200 lb is outside 0 to 1,102.31 lb.",
+         "Give weight on set 1 from 0 to 1,102.31 lb, 0 for bodyweight."),
+        ("Row 3: distance 400 mi is outside 0.01 to 186.41 mi.", "Give distance from 0.01 to 186.41 mi."),
+        ("Row 4: waist 200 in is outside 11.8 to 118.1 in.", "Give waist from 11.8 to 118.1 in."),
+        ("Row 5: speed 40 mi an hour is outside 0.1 to 37.3 mi an hour.",
+         "Give speed from 0.1 to 37.3 mi an hour.")]
+
+
+def test_refusals_in_kg_km_and_cm_keep_the_log_functions_words(user):
+    r = imp(user, weigh(ago(1), 1000), measure(ago(1), "waist", 400))
+    assert r["failed"][0]["message"] == "Row 1: weight 1000 is outside 20 to 400."
+    assert r["failed"][1]["message"].startswith("Row 2: waist 400 cm is outside 30 to 300")
+
+
+def test_a_speed_on_a_mile_call_is_converted(user):
+    """S2: speed_kmh was stored as sent on a mi call: 6 mph read as 6 km/h."""
+    imp(user, run(ago(1), "Treadmill Run", 30, speed=6), distance_unit="mi")
+    assert rows_of(CardioEntry, user.id)[0].speed_kmh == 9.66   # 6 x 1.609344 = 9.656...
+
+
+def test_speed_kmh_is_not_a_field_of_an_imported_row(user):
+    r = imp(user, run(ago(1), "Treadmill Run", 30, speed_kmh=6))
+    assert r["failed"][0]["message"] == "Row 1: 'speed_kmh' is not a field of a cardio_entry row."
+    assert "speed" in r["failed"][0]["fix"].split(": ")[1].split(", ")
+
+
+def test_a_speed_that_disagrees_on_a_mile_call_is_said_in_miles(user):
+    r = imp(user, run(ago(1), "Outdoor Run", 30, 3, speed=12), distance_unit="mi")
+    assert r["failed"][0]["message"] == ("Row 1: speed 12 mi an hour does not match 3 mi in 30 minutes, which is 6 mi "
+                                         "an hour.")
+
+
+def test_rows_that_repeat_an_earlier_row_of_the_call_are_counted_and_said(user):
+    """S3: they still go in, and the preview and the real run say how many."""
+    rows = [lift(ago(1), ("Deadlift", 140, 5)), lift(ago(1), ("Deadlift", 140, 5)), run(ago(1), "Outdoor Run", 30, 5),
+            run(ago(1), "Outdoor Run", 30, 5), weigh(ago(1), 80), weigh(ago(1), 80)]
+    preview = imp(user, *rows, dry=True)
+    assert preview["repeated_rows"] == 3 and "3 rows repeat an earlier row of this call." in preview["summary"]
+    real = imp(user, *rows)
+    assert real["repeated_rows"] == 3 and "3 rows repeated an earlier row of this call." in real["summary"]
+    assert total(LiftSession, user.id) == 2 and total(CardioEntry, user.id) == 2 and total(Bodyweight, user.id) == 1
+    again = imp(user, *rows)
+    assert again["summary"].endswith(" are already there. 3 rows repeated an earlier row of this call.")
+    assert imp(user, rows[0], dry=True)["repeated_rows"] == 0
+
+
+def test_a_partly_matched_food_row_says_how_many_entries_were_there(user):
+    """S4: it read as all new."""
+    imp(user, meal(ago(1), ("Oats", 350, "breakfast")))
+    for e in rows_of(FoodEntry, user.id):
+        services.delete_entry(user.id, "food_entry", e.id)
+    rows = [meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", 500, "lunch"), ("Tea", 40, "snack"))]
+    preview = imp(user, *rows, dry=True)
+    assert "Would write 2 food entries. 1 food entry in those rows is already there." in preview["summary"]
+    real = imp(user, *rows)
+    assert real["summary"] == ("Imported 1 of 1 row on Mon 9 Nov: 2 food entries. 1 food entry in those rows was "
+                               "already there. Nothing was replaced.")
+
+
+def test_session_notes_are_stored(user):
+    imp(user, lift(ago(1), ("Deadlift", 140, 5), notes="Felt heavy, from the old app"))
+    assert rows_of(LiftSession, user.id)[0].notes == "Felt heavy, from the old app"
+
+
+def test_the_daily_cap_counts_food_entries_not_rows(user):
+    imported_rows(user.id, 9_998)
+    r = imp(user, meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", 500, "lunch"), ("Tea", 40, "snack")))
+    assert r["error"] == "too_many_imported"   # 3 entries in 1 row: 10,001
+    assert "error" not in imp(user, meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", 500, "lunch")))
+
+
+def test_the_food_key_covers_the_entries_written_not_the_whole_row(user):
+    imp(user, meal(ago(1), ("Oats", 350, "breakfast")))
+    imp(user, meal(ago(2), ("Oats", 350, "breakfast")))
+    for e in rows_of(FoodEntry, user.id, date=TODAY - timedelta(days=1)):
+        services.delete_entry(user.id, "food_entry", e.id)
+    imp(user, meal(ago(1), ("Oats", 350, "breakfast"), ("Tea", 40, "snack")))
+    [tea] = rows_of(FoodEntry, user.id, description="Tea")
+    assert tea.dedupe_key == food.entry_key(tea.date, [food.entry_tuple(tea)])
+
+
+def test_two_identical_weigh_ins_on_a_held_day_are_both_already_there(user):
+    services.log_bodyweight(user.id, {"kg": 80, "date": ago(1)}, "web")
+    r = imp(user, weigh(ago(1), 80), weigh(ago(1), 80))
+    assert r["row_outcomes"] == {"written": 0, "already_there": 2, "day_taken": 0, "failed": 0}
+    m = services.log_measurement(user.id, {"kind": "waist", "value": 84, "date": ago(1)}, "web")
+    assert m["id"] and imp(user, measure(ago(1), "waist", 84), measure(ago(1), "waist", 84))["row_outcomes"][
+        "already_there"] == 2
+
+
+def test_a_failed_food_row_counts_its_entries(user):
+    r = imp(user, meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", "lots", "lunch"), ("Tea", 40, "snack")))
+    assert r["counts"]["food_entry"]["failed"] == 3 and r["row_outcomes"]["failed"] == 1
