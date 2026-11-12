@@ -1202,7 +1202,7 @@ async def edit_page(request: Request) -> Response:
     entry, errors, status = found["entry"], {}, 200
     values = edit_values(kind, entry)
     if request.method == "POST":
-        form = await request.form()
+        form = await posted_form(request)
         changes = edit_changes(kind, entry, form)
         if not changes:  # nothing differs: nothing to write
             return redirect(marked(links.page("day", date=entry["date"]), *UNCHANGED))
@@ -1227,10 +1227,31 @@ async def edit_page(request: Request) -> Response:
                 loose=[words for field, words in errors.items() if field not in EDIT_FIELDS[kind]],
                 day_href=f"/day/{on.isoformat()}",
                 day_words="Today" if on == today else formatting.day(on, today),
-                kind_word=measurements.kind_word, meal_choices=MEAL_CHOICES,
+                # A measurement's line above its Value, and a whole-number kind's numeric keyboard.
+                kind_with_unit=kind_with_unit,
+                value_inputmode="numeric" if kind == "measurement" and rules.MEASUREMENTS[entry["kind"]][3]
+                else "decimal",
+                meal_choices=MEAL_CHOICES,
                 activity_choices=[(name, name) for name in activities],
                 source_words=SOURCE_WORDS, estimate_kcal=estimate["kcal"] if estimate else None,
                 shows_estimate=estimate is not None)
+
+
+# The fields a page draws as a textarea. A browser sends a textarea's line breaks as CRLF.
+TEXTAREAS = frozenset({"notes"})
+
+
+def line_breaks(text: str) -> str:
+    """Each line break as one newline: CRLF and a lone CR become LF."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+async def posted_form(request: Request) -> dict:
+    """The posted form, each textarea's line breaks read as LF, once, before anything compares or saves it.
+    So a note posted as drawn is the note it was, and no line break is stored as CRLF."""
+    form = await request.form()
+    return {key: line_breaks(value) if key in TEXTAREAS and isinstance(value, str) else value
+            for key, value in form.items()}
 
 
 def edit_values(kind: str, entry: dict) -> dict:

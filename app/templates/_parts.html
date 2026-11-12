@@ -36,10 +36,12 @@
 </details>{% endmacro %}
 
 {# A labelled field: an input, a select when choices are (value, words) pairs, or a textarea when rows are given,
-   its error then its hint under it, both tied to it. type gives an input its type, such as date. #}
-{% macro field(id, name, label, error=none, value="", inputmode=none, choices=none, empty=none, required=false, maxlength=none, hint=none, type=none, rows=none) %}
+   its error then its hint under it, both tied to it. type gives an input its type, such as date. describedby
+   names more ids the control is described by, such as a line above the field, after the error and the hint. #}
+{% macro field(id, name, label, error=none, value="", inputmode=none, choices=none, empty=none, required=false, maxlength=none, hint=none, type=none, rows=none, describedby=none) %}
 {%- set given = value is not none and value|string != "" -%}
 {%- set described = ((id ~ "-error") if error else "") ~ (" " if error and hint else "") ~ ((id ~ "-hint") if hint else "") -%}
+{%- set described = (described ~ " " ~ describedby) if described and describedby else (described or describedby or "") -%}
 <div class="field{% if error %} has-error{% endif %}">
   <label for="{{ id }}">{{ label }}</label>
   {% if choices is not none %}<select id="{{ id }}" name="{{ name }}"{% if required %} required{% endif %}{% if error %} aria-invalid="true"{% endif %}{% if described %} aria-describedby="{{ described }}"{% endif %}>

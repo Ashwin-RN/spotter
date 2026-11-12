@@ -4080,7 +4080,6 @@ def test_the_side_cards_never_say_claude(client, state):
                        if k in tr.READ_ATTRIBUTES), (state, title)
 
 
-
 def glued(node) -> list[str]:
     """Two inline elements side by side with no whitespace between them, each holding words: read as text
     with no stylesheet, they run together as one word ("Waist84.5 cm")."""
@@ -4088,7 +4087,8 @@ def glued(node) -> list[str]:
     for n in [node, *node.iter()]:
         kids = n.children
         for left, right in zip(kids, kids[1:]):
-            if not isinstance(left, str) and not isinstance(right, str) and left.tag in tr.INLINE                     and right.tag in tr.INLINE and left.text() and right.text():
+            if not isinstance(left, str) and not isinstance(right, str) and left.tag in tr.INLINE \
+                    and right.tag in tr.INLINE and left.text() and right.text():
                 out.append(f"{left.text()!r} touches {right.text()!r}")
     return out
 
@@ -4136,7 +4136,7 @@ def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
     uid = only_user().id
     hr = services.log_measurement(uid, {"kind": "resting_hr", "value": "58"}, "claude")
     edit = client.get(f"/entries/measurement/{hr['id']}/edit").text
-    assert "<p>Resting heart rate (bpm)</p>" in edit
+    assert '<p id="edit-value-name">Resting heart rate (bpm)</p>' in edit
     goals = client.get("/goals").text
     assert '<option value="resting_hr">Resting heart rate (bpm)</option>' in goals
 
@@ -4542,12 +4542,16 @@ def test_the_sets_table_macro_drops_the_weight_column_and_blanks_a_zero():
     weighted = str(module.sets_table([{"exercise": "Back Squat", "set_number": 1, "weight_kg": 102.5, "reps": 5},
                                       {"exercise": "Pull-Up", "set_number": 1, "weight_kg": 0, "reps": 8}]))
     assert weighted.startswith('<div class="table-wrap">\n  <table>') and weighted.endswith("</table>\n</div>")
-    assert '<th class="num">Weight (kg)</th>' in weighted
+    assert '<thead><tr><th>Exercise</th><th class="num">Set</th><th class="num">Weight (kg)</th>' \
+        '<th class="num">Reps</th></tr></thead>' in weighted
     assert '<tr><td>Back Squat</td><td class="num">1</td><td class="num">102.5</td><td class="num">5</td></tr>' \
         in weighted
     assert '<tr><td>Pull-Up</td><td class="num">1</td><td class="num"></td><td class="num">8</td></tr>' in weighted
     bare = str(module.sets_table([{"exercise": "Pull-Up", "set_number": 1, "weight_kg": 0, "reps": 8}]))
     assert "Weight" not in bare and bare.count("<td") == 3
+    assert '<thead><tr><th>Exercise</th><th class="num">Set</th><th class="num">Reps</th></tr></thead>' in bare
+    hostile = str(module.sets_table([{"exercise": '<b>"Squat"</b> & co', "set_number": 1, "weight_kg": 60, "reps": 5}]))
+    assert "<tr><td>&lt;b&gt;&#34;Squat&#34;&lt;/b&gt; &amp; co</td>" in hostile and "<b>" not in hostile
 
 
 # One refused edit per kind of control: an input, a typed 0, a select, a textarea and a date. The field it lands
@@ -4555,6 +4559,7 @@ def test_the_sets_table_macro_drops_the_weight_column_and_blanks_a_zero():
 EDIT_ERRORS = [
     ("bodyweight", {"kg": "abc"}, "kg", "That weight was not saved: give it in kg, from 20 to 400.", "abc"),
     ("bodyweight", {"kg": "0"}, "kg", "That weight was not saved: give it in kg, from 20 to 400.", "0"),
+    ("bodyweight", {"kg": " abc "}, "kg", "That weight was not saved: give it in kg, from 20 to 400.", " abc "),
     ("measurement", {"value": "500"}, "value", "That value was not saved: give waist in cm, from 30 to 300.", "500"),
     ("lift_session", {"notes": "x" * 2001}, "notes", "Those notes were not saved: keep them under 2,000 characters.",
      "x" * 2001),
@@ -4600,7 +4605,9 @@ def test_each_edit_error_sits_under_its_field_tied_to_it_and_keeps_what_was_type
     label, control, error = field.elements()
     assert label.tag == "label" and control.attrs["name"] == name
     assert control.attrs["aria-invalid"] == "true"
-    assert control.attrs["aria-describedby"] == f"{control.attrs['id']}-error"
+    # The error first, then the measurement's name line on Value.
+    assert control.attrs["aria-describedby"] == f"{control.attrs['id']}-error" + (" edit-value-name" if name == "value"
+                                                                                  else "")
     assert error.is_("p", "error") and error.attrs["id"] == f"{control.attrs['id']}-error" and error.text() == words
     assert next(f for f in controls_of(r.text) if f["name"] == name)["value"] == typed
     # Only the refused field is marked, nothing sits at the top of the form, and nothing was written.
@@ -4636,13 +4643,21 @@ def test_an_edit_refusal_with_no_field_of_its_own_sits_at_the_top_of_the_form(cl
 def test_an_edit_lands_on_the_day_marked_saved_and_the_form_as_drawn_is_unchanged(client, every_kind, kind, change):
     on, entry_id = every_kind["today"], every_kind[kind]
     edit = f"/entries/{kind}/{entry_id}/edit"
+    if kind in ("lift_session", "cardio_entry"):  # a note of two lines
+        assert "error" not in services.edit_entry(only_user().id, kind, entry_id, {"notes": "two\nlines"}, "claude")
     drawn = {f["name"]: f["value"] or "" for f in controls_of(edit_of(client, kind, entry_id))}
+    # A browser sends a textarea's line breaks as CRLF.
+    sent = {name: value.replace("\n", "\r\n") for name, value in drawn.items()}
+    if "notes" in drawn and kind != "food_entry":
+        assert drawn["notes"] == "two\nlines" and sent["notes"] == "two\r\nlines"
     before = calls(only_user().id)
-    assert location(post(client, edit, **drawn)) == SITE + f"/day/{on}?saved=unchanged"
+    assert location(post(client, edit, **sent)) == SITE + f"/day/{on}?saved=unchanged"
     assert calls(only_user().id) == before  # the form sent back as drawn writes nothing
-    assert location(post(client, edit, **{**drawn, **change})) == SITE + f"/day/{on}?saved={kind}"
+    assert location(post(client, edit, **{**sent, **change})) == SITE + f"/day/{on}?saved={kind}"
     redrawn = {f["name"]: f["value"] or "" for f in controls_of(edit_of(client, kind, entry_id))}
     assert redrawn == {**drawn, **change}
+    row = next(r for r in rows(EDIT_MODELS[kind], only_user().id) if r.id == entry_id)
+    assert "\r" not in (getattr(row, "notes", None) or "")
 
 
 @pytest.mark.parametrize("kind", list(EDIT_LABELS))
@@ -4697,7 +4712,8 @@ EDIT_ATTRS = {
 @pytest.mark.parametrize("kind", list(EDIT_ATTRS))
 def test_each_edit_control_carries_its_inputmode_required_and_limits(client, every_kind, kind):
     fields = controls_of(edit_of(client, kind, every_kind[kind]))[:-1]  # the Date field is held above
-    assert [(f["name"], f["tag"], f["inputmode"], f["required"], f["maxlength"], f["rows"]) for f in fields]         == EDIT_ATTRS[kind]
+    assert [(f["name"], f["tag"], f["inputmode"], f["required"], f["maxlength"], f["rows"]) for f in fields] \
+        == EDIT_ATTRS[kind]
 
 
 def test_the_edit_selects_offer_every_meal_and_every_activity(client, every_kind):
@@ -5474,3 +5490,103 @@ def test_a_day_logged_at_0_kcal_is_food_its_tile_reads_0_and_its_sheet_opens(cli
     assert figure.text() == "0" and not sheet["svg"][0].find_all("rect")
     small = re.search(r'<svg class="chart small" id="chart-calories-7d".*?</svg>', page, re.S).group(0)
     assert ">0</text>" not in small and "value" not in small
+
+
+# ---------------------------------------------------------------- stage 6, step 4: the edit pages' fix round
+
+@pytest.mark.parametrize("kind", ["lift_session", "cardio_entry"])
+def test_a_note_posted_with_crlf_or_a_lone_cr_is_stored_with_lf(client, every_kind, kind):
+    entry_id = every_kind[kind]
+    drawn = {f["name"]: f["value"] or "" for f in controls_of(edit_of(client, kind, entry_id))}
+    r = post(client, f"/entries/{kind}/{entry_id}/edit", **{**drawn, "notes": "first\r\nsecond\rthird"})
+    assert location(r) == SITE + f"/day/{every_kind['today']}?saved={kind}"
+    row = next(x for x in rows(EDIT_MODELS[kind], only_user().id) if x.id == entry_id)
+    assert row.notes == "first\nsecond\nthird"
+    assert next(f["value"] for f in controls_of(edit_of(client, kind, entry_id)) if f["name"] == "notes") \
+        == "first\nsecond\nthird"
+
+
+def test_a_refused_note_comes_back_with_its_line_breaks(client, every_kind):
+    entry_id = every_kind["lift_session"]
+    typed = "x" * 2000 + "\r\nmore"
+    r = post(client, f"/entries/lift_session/{entry_id}/edit", notes=typed, date=every_kind["today"])
+    assert r.status_code == 400
+    shown = next(f["value"] for f in controls_of(r.text) if f["name"] == "notes")
+    assert shown == "x" * 2000 + "\nmore"  # the same line break, read as one newline
+    assert next(x for x in rows(LiftSession, only_user().id) if x.id == entry_id).notes == "felt strong"
+
+
+def test_no_add_form_on_today_takes_a_note(client):
+    """Today's fold-outs draw no notes field, and the cardio post takes none: a note sent there by hand is not
+    stored, so no line break from Today can be stored as CRLF."""
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    page = day_of(client, on)
+    assert 'name="notes"' not in page and "<textarea" not in page
+    r = post(client, f"/day/{on}/cardio", exercise="Outdoor Walk", minutes="30", notes="a\r\nb")
+    assert location(r) == SITE + f"/day/{on}?saved=cardio_entry"
+    [row] = rows(CardioEntry, only_user().id)
+    assert row.notes in (None, "")
+
+
+def test_the_back_link_names_a_day_last_year_and_a_day_after_today_by_its_date(client):
+    """The edge account holds a steps measurement on a day after today and one 366 days back. The back link and
+    Cancel on each read formatting.day(on, today): the year on the old one, never Today on the later one."""
+    from .test_pages_text import ACCOUNTS  # noqa: PLC0415 - test_pages_text imports this file
+
+    sign_in(client)
+    user = only_user()
+    ACCOUNTS["edge"](user.id)
+    today = today_of(user)
+    days = {m.date: m.id for m in rows(Measurement, user.id) if m.deleted_at is None}
+    later = [d for d in days if d > today]
+    old = [d for d in days if d.year != today.year]
+    assert later and old, sorted(days)
+    for on in (later[0], old[0]):
+        page = edit_of(client, "measurement", days[on])
+        words = formatting.day(on, today)
+        assert f'<a class="back" href="/day/{on.isoformat()}">{words}</a>' in page
+        assert f'<a class="action" href="/day/{on.isoformat()}">Cancel</a>' in page
+        assert words != "Today"
+    assert str(old[0].year) in formatting.day(old[0], today)
+
+
+@pytest.mark.parametrize("kind, line", [("waist", "Waist (cm)"), ("steps", "Steps"), ("sleep_hours", "Sleep (h)"),
+                                        ("resting_hr", "Resting heart rate (bpm)"), ("water_ml", "Water (ml)")])
+def test_the_measurement_line_reads_kind_with_unit_and_describes_the_value(client, kind, line):
+    sign_in(client)
+    made = services.log_measurement(only_user().id, {"kind": kind, "value": str(rules.MEASUREMENTS[kind][1])}, "claude")
+    assert "error" not in made, made
+    page = edit_of(client, "measurement", made["id"])
+    form = edit_form(page)
+    named = form.elements()[1]
+    assert named.tag == "p" and named.attrs == {"id": "edit-value-name"} and named.text() == line == \
+        web.kind_with_unit(kind)
+    assert "Steps (steps)" not in page
+    [value] = [n for n in form.iter() if n.attrs.get("name") == "value"]
+    assert value.attrs["aria-describedby"] == "edit-value-name"
+    # Sent back with its error: the error first, then the line, as field orders an error and a hint.
+    r = post(client, f"/entries/measurement/{made['id']}/edit", value="abc", date=today_of(only_user()).isoformat())
+    assert r.status_code == 400
+    [value] = [n for n in edit_form(r.text).iter() if n.attrs.get("name") == "value"]
+    assert value.attrs["aria-describedby"] == "edit-value-error edit-value-name"
+    assert value.attrs["aria-invalid"] == "true"
+
+
+@pytest.mark.parametrize("kind", sorted(rules.MEASUREMENTS))
+def test_a_whole_number_measurement_takes_a_numeric_keyboard(client, kind):
+    """rules.MEASUREMENTS says which kinds take a whole number only: steps, resting heart rate, water."""
+    sign_in(client)
+    made = services.log_measurement(only_user().id, {"kind": kind, "value": str(rules.MEASUREMENTS[kind][1])}, "claude")
+    [value] = [f for f in controls_of(edit_of(client, "measurement", made["id"])) if f["name"] == "value"]
+    whole = rules.MEASUREMENTS[kind][3]
+    assert whole is (kind in ("steps", "resting_hr", "water_ml"))
+    assert value["inputmode"] == ("numeric" if whole else "decimal")
+
+
+def test_the_field_names_more_ids_after_its_error_and_its_hint():
+    both = parts_field("v", "value", "Value", "Bad.", "x", hint="A hint.", describedby="v-name")
+    assert 'aria-describedby="v-error v-hint v-name"' in both
+    assert 'aria-describedby="v-name"' in parts_field("v", "value", "Value", None, "x", describedby="v-name")
+    assert 'aria-describedby="v-error v-name"' in parts_field("v", "value", "Value", "Bad.", "x", describedby="v-name")
+    assert "aria-describedby" not in parts_field("v", "value", "Value", None, "x")

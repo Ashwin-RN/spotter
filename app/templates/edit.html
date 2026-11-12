@@ -21,8 +21,8 @@
     {% if kind == "bodyweight" %}
     {{ parts.field("edit-kg", "kg", "Weight (kg)", errors.get("kg"), values.kg, inputmode="decimal", required=true) }}
     {% elif kind == "measurement" %}
-    <p>{{ kind_word(entry.kind) }}{% if entry.unit %} ({{ entry.unit }}){% endif %}</p>
-    {{ parts.field("edit-value", "value", "Value", errors.get("value"), values.value, inputmode="decimal", required=true) }}
+    <p id="edit-value-name">{{ kind_with_unit(entry.kind) }}</p>
+    {{ parts.field("edit-value", "value", "Value", errors.get("value"), values.value, inputmode=value_inputmode, required=true, describedby="edit-value-name") }}
     {% elif kind == "food_entry" %}
     {{ parts.field("edit-description", "description", "Food", errors.get("description"), values.description, required=true, maxlength=200) }}
     {{ parts.field("edit-kcal", "kcal", "Calories (kcal)", errors.get("kcal"), values.kcal, inputmode="numeric", required=true) }}
