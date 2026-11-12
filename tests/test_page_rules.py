@@ -1147,6 +1147,10 @@ def _targets_and_a_zero_rate(user_id: int, today) -> None:
     services.log_food(user_id, {"entries": [{"description": "Thali", "kcal": 1000}]}, "claude")
 
 
+def _a_day_at_0_kcal(user_id: int, today) -> None:
+    services.log_food(user_id, {"entries": [{"description": "Black coffee", "kcal": 0}]}, "claude")
+
+
 def _one_lift_session_and_cardio_today(user_id: int, today) -> None:
     services.log_lifts(user_id, {"sets": [{"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
     services.log_cardio(user_id, {"exercise": "Outdoor Walk", "minutes": 30}, "claude")
@@ -1158,7 +1162,10 @@ EMPTY_EATEN_CARD = '<section class="card chart-card is-empty" aria-labelledby="e
 # Each state, and markup only that state draws: proof the page reached it.
 GLANCE_STATES = {
     _one_weigh_in: ("One weigh-in in the last 28 days. The chart starts from the second one.", EMPTY_WEIGHT_CARD),
-    _none_in_28_days: ("No weigh-ins in the last 28 days.", "No weigh-in in the last 7 days", EMPTY_WEIGHT_CARD),
+    _none_in_28_days: ("No weigh-ins in the last 28 days.", "No weigh-in in the last 7 days", EMPTY_WEIGHT_CARD,
+                       "kg. No weigh-ins in the last 28 days.</p>"),
+    # The Calories sheet chart's 0 over no bar, and its sheet open: no other state logs a 0 kcal day.
+    _a_day_at_0_kcal: ('class="axis value" x=', '">0</text>', 'popovertarget="sheet-calories"'),
     _two_recent_no_rate: ("The weekly rate needs a weigh-in from 14 to 42 days ago.", 'id="chart-weight-sheet"',
                           'id="chart-weight-4w"'),
     _food_in_28_not_7: ('<span class="tile-value">No food in the last 7 days</span>', EMPTY_EATEN_CARD),

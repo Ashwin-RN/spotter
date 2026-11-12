@@ -4820,6 +4820,9 @@ def test_the_three_tiles_on_the_fixed_day_carry_section_ls_figures_and_words(fix
                      ("button", ["tile", "tile-training"], *training),
                      ("a", ["tile", "tile-training", "tile-link"], *training)]
     assert '<span class="tile-note">-0.24&nbsp;kg a week</span>' in fixed_day  # the held fix: a no-break space
+    # Each tile reads in section L's order: its hidden name, the figure, the label, then the note.
+    assert [[e.classes for e in t["node"].elements()] for t in tiles_of(fixed_day)] == [
+        [["sr"], ["tile-value"], ["tile-label"], ["tile-note"]]] * 6
 
 
 def test_each_tile_button_has_a_twin_link_to_its_part_of_progress_with_the_same_words(fixed_day):
@@ -4873,6 +4876,10 @@ def test_the_calories_sheet_on_the_fixed_day(fixed_day):
         [("Eaten a day", []), (f"2,196{NB}kcal", ["num"]), ("Last 28 days, 28 logged", ["remark"])],
         [("From estimates", []), ("41%", ["num"]), ("Last 28 days", ["remark"])],
         [("Calorie target", []), ("", ["num"]), ("Not set. Set one on Settings.", ["remark"])]]
+    # The words are unchanged, and Settings is a link to the page that sets the target.
+    remark = sheet["node"].find_all("table")[0].find_all("tr")[-1].elements()[-1]
+    assert [(a.attrs, a.text()) for a in remark.find_all("a")] == [({"href": "/settings"}, "Settings")]
+    assert '<td class="remark">Not set. Set one on <a href="/settings">Settings</a>.</td>' in fixed_day
 
 
 def test_the_training_sheet_on_the_fixed_day(fixed_day):
@@ -4906,6 +4913,8 @@ def test_a_new_account_shows_the_empty_tiles_and_trainings_true_zero(client):
         ("div", ["tile", "tile-calories", "is-empty"], "No food in the last 28 days", None, None),
         ("button", ["tile", "tile-training"], "0", "lift sessions", "last 7 days"),
         ("a", ["tile", "tile-training", "tile-link"], "0", "lift sessions", "last 7 days")]
+    assert [[e.classes for e in t["node"].elements()] for t in shown] == [[["sr"], ["tile-value"]]] * 2 + [
+        [["sr"], ["tile-value"], ["tile-label"], ["tile-note"]]] * 2  # an empty tile: its name, then its words
     assert '<span class="tile-value">No <span class="nowrap">weigh-ins</span> yet</span>' in page
     assert [t["attrs"] for t in shown[:2]] == [{"class": "tile tile-weight is-empty"},
                                                {"class": "tile tile-calories is-empty"}]
@@ -4991,7 +5000,8 @@ def test_weigh_ins_but_none_in_28_days_still_open_the_sheet_and_its_chart_says_w
                                                                                  "No weekly rate yet")
     sheet = sheets_of(page)["sheet-weight"]
     assert sheet["sentence"] == ("The weekly rate needs a weigh-in in the last 7 days. The latest weigh-in is "
-                                 f"80{NB}kg, from 0 weigh-ins in 28 days.")
+                                 f"80{NB}kg. No weigh-ins in the last 28 days.")  # the lead's words
+    assert "from 0 weigh-ins" not in page
     assert sheet["panel"] == ["Smoothed weight", "No weigh-ins in the last 28 days."] and sheet["svg"] == []
     assert sheet["rows"][1] == [("Latest weigh-in", []), (f"80{NB}kg", ["num"]),
                                 ("No weigh-in in the last 7 days", ["remark"])]
@@ -5012,7 +5022,8 @@ def test_two_recent_weigh_ins_draw_the_chart_with_no_rate(client):
     (None, None, " No session or cardio target is set."),
     (0, None, " The session target is 0 a week."),
     (None, 150, f" The cardio target is 150{NB}min a week."),
-    (3, 150, f" The session target is 3 a week. The cardio target is 150{NB}min a week."),
+    (None, 0, f" The cardio target is 0{NB}min a week."),
+    (3, 150,f" The session target is 3 a week. The cardio target is 150{NB}min a week."),
 ])
 def test_the_training_sentence_names_each_target_that_is_set(client, sessions, cardio, words):
     sign_in(client)
@@ -5441,3 +5452,25 @@ def test_every_titled_card_on_today_is_a_section_named_by_its_own_h2(client, mon
     ids = [n.attrs["id"] for n in tree.iter() if n.attrs.get("id")]
     assert len(ids) == len(set(ids)), sorted({i for i in ids if ids.count(i) > 1})
     assert not [n for n in tree.find_all("div", "sheet") if "card" in n.classes]
+
+
+def test_a_day_logged_at_0_kcal_is_food_its_tile_reads_0_and_its_sheet_opens(client):
+    """A logged day can total 0 kcal (section L): the Calories tile reads "0" with its label and note, its sheet
+    opens, and the sheet chart writes the day's figure "0" over no bar. The compact Eaten chart writes no figure,
+    only the weekday letters, so it draws no bare 0."""
+    sign_in(client)
+    today = today_of(only_user())
+    assert "error" not in services.log_food(only_user().id, {"entries": [{"description": "Black coffee", "kcal": 0}]},
+                                            "claude")
+    page = day_of(client, today.isoformat())
+    [button, twin] = [t for t in tiles_of(page) if "tile-calories" in t["classes"]]
+    assert (button["tag"], button["value"], button["label"], button["note"]) == ("button", "0", "kcal eaten a day",
+                                                                                 "last 7 days")
+    assert button["attrs"]["popovertarget"] == "sheet-calories" and twin["tag"] == "a"
+    sheet = sheets_of(page)["sheet-calories"]
+    assert sheet_frame_findings(sheet, "sheet-calories", "/progress#trends") == []
+    assert sheet["giant"] == f"0{NB}kcal" and sheet["panel"] == ["Each day", "svg"]
+    [figure] = [t for t in sheet["svg"][0].find_all("text") if "value" in t.classes]
+    assert figure.text() == "0" and not sheet["svg"][0].find_all("rect")
+    small = re.search(r'<svg class="chart small" id="chart-calories-7d".*?</svg>', page, re.S).group(0)
+    assert ">0</text>" not in small and "value" not in small

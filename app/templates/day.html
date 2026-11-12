@@ -105,7 +105,7 @@
   </div>
   {% if bw %}
   {% call parts.sheet("sheet-weight", "Last 4 weeks", bw.smoothed|show("bodyweight_derived", unit=False), "Weight trend", unit="kg", link="/progress#body-weight") %}
-  <p class="sentence">{% if rated %}The trend moved {{ bw.rate_per_week|show("rate") }}&nbsp;kg a week from {{ bw.rate_window.from|days(bw.rate_window.to, today) }}.{% else %}{{ glance.rate_words }}{% endif %}{% if bw.now is not none %} The {{ glance.basis }} is {{ bw.now|show("bodyweight_derived") }}, from {{ bw.weigh_ins_28d|show("count") }} {{ "weigh-in" if bw.weigh_ins_28d == 1 else "weigh-ins" }} in 28 days.{% endif %}</p>
+  <p class="sentence">{% if rated %}The trend moved {{ bw.rate_per_week|show("rate") }}&nbsp;kg a week from {{ bw.rate_window.from|days(bw.rate_window.to, today) }}.{% else %}{{ glance.rate_words }}{% endif %}{% if bw.now is not none %} The {{ glance.basis }} is {{ bw.now|show("bodyweight_derived") }}{% if bw.weigh_ins_28d == 0 %}. No weigh-ins in the last 28 days.{% else %}, from {{ bw.weigh_ins_28d|show("count") }} {{ "weigh-in" if bw.weigh_ins_28d == 1 else "weigh-ins" }} in 28 days.{% endif %}{% endif %}</p>
   <div class="panel">
     <p class="panel-title">Smoothed weight</p>
     {% if glance.weight_chart %}{{ glance.weight_chart }}
@@ -141,7 +141,7 @@
         <tr><td>Eaten a day</td><td class="num">{{ cal.avg_7d|show("kcal") }}</td><td class="remark">Last 7 days, {{ cal.days_logged_7d|show("count") }} logged</td></tr>
         <tr><td>Eaten a day</td><td class="num">{{ cal.avg_28d|show("kcal") }}</td><td class="remark">Last 28 days, {{ cal.days_logged_28d|show("count") }} logged</td></tr>
         <tr><td>From estimates</td><td class="num">{{ cal.estimated_share_pct_28d|show("percent") }}</td><td class="remark">Last 28 days</td></tr>
-        <tr><td>Calorie target</td><td class="num">{% if cal.target_kcal is not none %}{{ cal.target_kcal|show("kcal") }}{% endif %}</td><td class="remark">{% if cal.target_kcal is none %}Not set. Set one on Settings.{% endif %}</td></tr>
+        <tr><td>Calorie target</td><td class="num">{% if cal.target_kcal is not none %}{{ cal.target_kcal|show("kcal") }}{% endif %}</td><td class="remark">{% if cal.target_kcal is none %}Not set. Set one on <a href="/settings">Settings</a>.{% endif %}</td></tr>
       </tbody>
     </table>
   </div>

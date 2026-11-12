@@ -86,15 +86,22 @@ NUMBER_RULES = ("thousands", "trailing_zero")
 
 def glance_zeros(user_id: int, address: str, tag: str) -> int:
     """The true zeros Today's glance block shows, read from get_trends and get_days, never from the page: the
-    Training sheet's number (a p), and its weeks' lift sessions and cardio minutes and the Weight sheet's
-    weigh-ins (each a td), counted where they show as "0". Today's page and its error renders only: a past day
-    has no glance block, so it allows none."""
+    Training sheet's number (a p), its weeks' lift sessions and cardio minutes and the Weight sheet's weigh-ins
+    (each a td), and the Calories sheet chart's figure over each of the last 7 days logged at 0 kcal (a text),
+    counted where they show as "0". The chart's count is at most: crowded figures give way. Its sheet is drawn
+    only with food in the last 7 days. Today's page and its error renders only: a past day has no glance
+    block, so it allows none."""
     trends, grid = services.get_trends(user_id), services.get_days(user_id)
     if address.split("?")[0].split("/")[2:3] != [trends["today"]]:
         return 0
     zero = lambda value, quantity: formatting.show(value, quantity, unit=False) == "0"  # noqa: E731
     if tag == "p":
         return int(zero(trends["sessions"]["this_week"], "count"))
+    if tag == "text":
+        calories = trends["calories"]
+        if not calories or calories["avg_7d"] is None:
+            return 0
+        return sum(d["kcal"] is not None and zero(d["kcal"], "kcal") for d in grid["days"][-7:])
     weeks = sum(zero(w["lift_sessions"], "count") + zero(w["cardio_minutes"], "week_minutes") for w in grid["weeks"])
     weight = trends["bodyweight"]
     return weeks + int(bool(weight) and zero(weight["weigh_ins_28d"], "count"))
@@ -109,7 +116,36 @@ TRUE_ZEROS = {
         for f in services.list_saved_foods(user_id)["foods"] if f.get("deleted_at") is None),
     ("/day/{date}", "p"): lambda user_id, address: glance_zeros(user_id, address, "p"),
     ("/day/{date}", "td"): lambda user_id, address: glance_zeros(user_id, address, "td"),
+    ("/day/{date}", "text"): lambda user_id, address: glance_zeros(user_id, address, "text"),
 }
+
+
+def glance_lines(markup: str) -> tuple[int, int] | None:
+    """The first and last line of Today's div.glance in the markup, by counting div tags from its start. None
+    when the page draws no glance block."""
+    start = markup.find('<div class="glance">')
+    if start < 0:
+        return None
+    depth = 0
+    for m in re.finditer(r"<div\b|</div\s*>", markup[start:]):
+        depth += 1 if m.group(0).startswith("<div") else -1
+        if depth == 0:
+            return markup.count("\n", 0, start) + 1, markup.count("\n", 0, start + m.end()) + 1
+    return None
+
+
+# Where a route's true zeros may sit: the day page's only in its glance block. A bare 0 anywhere else on the
+# page is an empty figure, whatever the glance's own count allows.
+ZERO_PLACES = {"/day/{date}": glance_lines}
+
+
+def placed(route: str, line: int, places: dict) -> bool:
+    """Whether a bare 0 on this line may count against its route's allowance: anywhere, for a route with no
+    place, else only inside its place's span."""
+    if route not in places:
+        return True
+    span = places[route]
+    return span is not None and span[0] <= line <= span[1]
 
 
 # ---------------------------------------------------------------- the three accounts
@@ -310,6 +346,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
     the address is not its own, as for a form sent back with its error."""
     out = []
     zeros: dict[tuple, int] = {}
+    places = {r: where(markup) for r, where in ZERO_PLACES.items()}
     for piece in tr.html_text(markup):
         text = tr.mask_entered(piece.text, entered)
         surface = tr.TITLE if piece.kind == "title" else tr.PAGE
@@ -318,7 +355,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
                 continue
             if f.rule == tr.EMPTY_FIGURE and f.match == "0":
                 key = (route or route_of(path), piece.tag)
-                if key in TRUE_ZEROS:
+                if key in TRUE_ZEROS and placed(key[0], piece.line, places):
                     zeros[key] = zeros.get(key, 0) + 1
                     continue
             out.append(f"{path} line {piece.line} <{piece.tag}>: {f}")
@@ -1182,3 +1219,74 @@ def test_the_error_page_checks_find_a_wrong_title_and_claude():
     # A message answered 200 still takes its h1 for its title, not its route's.
     R.status_code, R.text = 200, good
     assert error_page_findings(Rendered("/settings/delete", R(), False)) == []
+
+
+def _log_kcal(user_id: int, days_back: int, kcal: int) -> None:
+    today = today_of(only_user())
+    _ok(services.log_food(user_id, {"date": (today - timedelta(days=days_back)).isoformat(),
+                                    "entries": [{"description": "Black coffee", "kcal": kcal}]}, "claude"))
+
+
+def test_a_0_kcal_days_chart_figure_is_a_true_zero_counted_from_the_reads(client):
+    """The Calories sheet chart writes a 0 kcal day's figure "0" (section L: "A 0 kcal day gets its figure and
+    no bar"). It passes as often as the last 7 days of get_days hold a day that shows 0 kcal, and only while the
+    sheet is drawn: no food in the last 7 days, no sheet, no allowance. The compact Eaten chart writes no figure."""
+    sign_in(client)
+    user_id = only_user().id
+    address = f"/day/{today_of(only_user()).isoformat()}"
+    _log_kcal(user_id, 10, 0)  # food in 28 days, none in 7: no Calories sheet
+    assert glance_zeros(user_id, address, "text") == 0
+    _log_kcal(user_id, 0, 0)
+    page = client.get(address).text
+    assert page.count(">0</text>") == 1 and glance_zeros(user_id, address, "text") == 1
+    assert page_findings(address, page, [], user_id) == []
+    one_more = page.replace(">0</text>", ">0</text><text>0</text>")
+    assert any("<text>" in f and "true zeros" in f for f in page_findings(address, one_more, [], user_id))
+    for n in range(1, 7):  # every one of the 7 days at 0 kcal: seven figures, seven true zeros
+        _log_kcal(user_id, n, 0)
+    page = client.get(address).text
+    assert page.count(">0</text>") == 7 and glance_zeros(user_id, address, "text") == 7
+    assert page_findings(address, page, [], user_id) == []
+    yesterday = f"/day/{(today_of(only_user()) - timedelta(days=1)).isoformat()}"
+    assert glance_zeros(user_id, yesterday, "text") == 0
+
+
+def test_the_glance_zeros_pass_only_inside_the_glance_block(client):
+    """The allowance is the glance block's, not the page's: a true zero lost in the glance and a stray 0 in the
+    Food card do not cancel out. A page with no glance block allows none."""
+    sign_in(client)
+    user_id = only_user().id
+    today = today_of(only_user())
+    address = f"/day/{today.isoformat()}"
+    page = client.get(address).text
+    first, last = glance_lines(page)
+    lines = page.splitlines()
+    main_col = next(n for n, line in enumerate(lines, 1) if '<div class="col-main">' in line)
+    assert lines[first - 1].strip() == '<div class="glance">' and lines[last - 1].strip() == "</div>"
+    assert first < last < main_col and all("food-title" not in line for line in lines[first - 1:last])
+    assert page_findings(address, page, [], user_id) == []
+    food = '<section class="card" aria-labelledby="food-title">'
+    assert page.count(food) == 1 and page.count('<td class="num">0</td>') == 8
+    swapped = page.replace('<td class="num">0</td>', '<td class="num">1</td>', 1).replace(
+        food, food + "<table><tr><td>0</td></tr></table>")
+    assert any("empty_figure" in f for f in page_findings(address, swapped, [], user_id))
+    stray = page.replace(food, food + "<p>0</p>")
+    assert any("empty_figure" in f for f in page_findings(address, stray, [], user_id))
+    past = client.get(f"/day/{(today - timedelta(days=1)).isoformat()}").text
+    assert glance_lines(past) is None and not placed("/day/{date}", 1, {"/day/{date}": None})
+    assert placed("/foods", 1, {"/day/{date}": None})  # Foods keeps its allowance anywhere on its page
+
+
+def test_the_glance_zeros_are_none_on_an_account_whose_figures_are_all_above_0(client):
+    """The sample account's today: sessions, weigh-ins, food on every day, cardio every week. Its glance shows
+    no bare 0, and the allowance is 0 for every tag, so one would fail."""
+    sign_in(client)
+    user_id = only_user().id
+    ACCOUNTS["sample"](user_id)
+    address = f"/day/{today_of(only_user()).isoformat()}"
+    assert [glance_zeros(user_id, address, tag) for tag in ("p", "td", "text")] == [0, 0, 0]
+    page = client.get(address).text
+    assert page_findings(address, page, entered_text(user_id), user_id) == []
+    giant = re.search(r'<p class="giant">\d+</p>', page).group(0)
+    broken = page.replace(giant, '<p class="giant">0</p>', 1)
+    assert any("true zeros" in f for f in page_findings(address, broken, entered_text(user_id), user_id))
