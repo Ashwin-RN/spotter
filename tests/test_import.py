@@ -6,6 +6,7 @@ the real date. The date-rule tests move the clock themselves, either side of the
 """
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -606,7 +607,9 @@ def test_a_row_refusal_is_the_refusal_its_own_log_function_gives(user):
     assert got[2]["message"] == "Row 3: " + own[2]["message"] and got[2]["fix"] == own[2]["fix"]
     assert got[3]["message"] == "Row 4, entry 1: " + without_set(own[3]["message"]) and got[3]["fix"] == own[3]["fix"]
     # Was: "Row 5: " + own[4]["message"]. The import's field is speed now (S2).
-    assert got[4]["message"] == "Row 5: " + own[4]["message"].replace("speed_kmh", "speed")
+    # Then: "Row 5: " + own[4]["message"].replace("speed_kmh", "speed"). Now the speed sent carries its unit, as on
+    # a mi call (fix round 2): "speed 30 km/h does not match 5 km in 30 minutes, which is 10 km/h."
+    assert got[4]["message"] == "Row 5: " + own[4]["message"].replace("speed_kmh 30 ", "speed 30 km/h ")
     assert got[4]["fix"] == own[4]["fix"].replace("speed_kmh", "speed")
     assert got[5]["message"] == "Row 6: " + own[5]["message"] and got[5]["fix"] == own[5]["fix"]
 
@@ -1147,14 +1150,19 @@ def test_refusals_quote_the_number_as_sent_in_the_calls_unit(user):
             measure(ago(1), "waist", 200), run(ago(2), "Outdoor Run", 30, speed=40),
             weight_unit="lb", distance_unit="mi", length_unit="in")
     got = [(f["message"], f["fix"]) for f in r["failed"]]
+    # Was, the bounds rounded to the nearest step, so an edge value read as inside the range it was refused by:
+    #     ("Row 1: weight 1000 lb is outside 44.09 to 881.85 lb.", "Give weight from 44.09 to 881.85 lb."),
+    #     ("Row 4: waist 200 in is outside 11.8 to 118.1 in.", "Give waist from 11.8 to 118.1 in."),
+    #     ("Row 5: speed 40 mi an hour is outside 0.1 to 37.3 mi an hour.", "Give speed from 0.1 to 37.3 mi an hour.")
+    # Now the lower bound is rounded up and the upper one down (fix round 2). Rows 2 and 3 read the same.
     assert got == [
-        ("Row 1: weight 1000 lb is outside 44.09 to 881.85 lb.", "Give weight from 44.09 to 881.85 lb."),
+        ("Row 1: weight 1000 lb is outside 44.1 to 881.84 lb.", "Give weight from 44.1 to 881.84 lb."),
         ("Row 2, set 1: weight 1200 lb is outside 0 to 1,102.31 lb.",
          "Give weight on set 1 from 0 to 1,102.31 lb, 0 for bodyweight."),
         ("Row 3: distance 400 mi is outside 0.01 to 186.41 mi.", "Give distance from 0.01 to 186.41 mi."),
-        ("Row 4: waist 200 in is outside 11.8 to 118.1 in.", "Give waist from 11.8 to 118.1 in."),
-        ("Row 5: speed 40 mi an hour is outside 0.1 to 37.3 mi an hour.",
-         "Give speed from 0.1 to 37.3 mi an hour.")]
+        ("Row 4: waist 200 in is outside 11.9 to 118.1 in.", "Give waist from 11.9 to 118.1 in."),
+        ("Row 5: speed 40 mi an hour is outside 0.1 to 37.2 mi an hour.",
+         "Give speed from 0.1 to 37.2 mi an hour.")]
 
 
 def test_refusals_in_kg_km_and_cm_keep_the_log_functions_words(user):
@@ -1242,3 +1250,238 @@ def test_two_identical_weigh_ins_on_a_held_day_are_both_already_there(user):
 def test_a_failed_food_row_counts_its_entries(user):
     r = imp(user, meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", "lots", "lunch"), ("Tea", 40, "snack")))
     assert r["counts"]["food_entry"]["failed"] == 3 and r["row_outcomes"]["failed"] == 1
+
+
+# ---------------------------------------------------------------- fix round 2
+
+# The same content on every day: the shape where a value match on one day could take another day's row.
+SAME = {"cardio_entry": lambda d: run(d, "Treadmill Walk", 30), "lift_session": lambda d: lift(d, ("Back Squat", 100, 5, 3)),
+        "food_entry": lambda d: meal(d, ("Oats", 350, "breakfast"))}
+
+
+def move(user, kind, frm: str, to: str):
+    """Every live row of this kind on frm, moved to to, as the person does it on the edit page."""
+    for row in rows_of(MODELS[kind], user.id, date=datetime.fromisoformat(frm).date(), deleted_at=None):
+        assert services.edit_entry(user.id, kind, row.id, {"date": to}, "web")["changed"] == ["date"]
+
+
+@pytest.mark.parametrize("kind", list(SAME))
+def test_two_identical_rows_each_moved_back_a_day_are_never_written_again(user, kind):
+    """F1: 7 Nov's row moved to 6 Nov, then 8 Nov's to 7 Nov. 7 Nov's row took 8 Nov's moved row by its value,
+    so 8 Nov's row found nothing and was written again."""
+    rows = [SAME[kind](ago(3)), SAME[kind](ago(2))]
+    assert imp(user, *rows)["row_outcomes"]["written"] == 2
+    move(user, kind, ago(3), ago(4))
+    move(user, kind, ago(2), ago(3))
+    before = everything()
+    for dry in (True, False):
+        r = imp(user, *rows, dry=dry)
+        assert r["row_outcomes"] == {"written": 0, "already_there": 2, "day_taken": 0, "failed": 0}, (kind, dry)
+    assert everything() == before
+
+
+@pytest.mark.parametrize("kind", list(SAME))
+def test_two_identical_rows_each_moved_forward_a_day_are_never_written_again(user, kind):
+    rows = [SAME[kind](ago(3)), SAME[kind](ago(2))]
+    imp(user, *rows)
+    move(user, kind, ago(2), ago(1))
+    move(user, kind, ago(3), ago(2))
+    before = everything()
+    assert imp(user, *rows)["row_outcomes"]["already_there"] == 2 and everything() == before
+
+
+def test_a_week_of_walks_each_moved_back_a_day_is_never_written_again(user):
+    """The reviewer's shape: an export that dates evening walks a day late, each moved back by the person."""
+    rows = [run(ago(n), "Treadmill Walk", 30) for n in range(8, 1, -1)]
+    imp(user, *rows)
+    for n in range(8, 1, -1):   # the oldest first, so no walk lands on a day another still holds
+        move(user, "cardio_entry", ago(n), ago(n + 1))
+    before = everything()
+    r = imp(user, *rows)
+    assert r["row_outcomes"] == {"written": 0, "already_there": 7, "day_taken": 0, "failed": 0}
+    assert everything() == before
+
+
+def test_two_food_days_that_share_a_breakfast_each_moved_back_are_never_written_again(user):
+    """The reviewer's shape: Rice was written again on 8 Nov, 500 kcal added to a day."""
+    rows = [meal(ago(3), ("Oats", 350, "breakfast"), ("Dal", 600, "lunch")),
+            meal(ago(2), ("Oats", 350, "breakfast"), ("Rice", 500, "lunch"))]
+    imp(user, *rows)
+    move(user, "food_entry", ago(3), ago(4))
+    move(user, "food_entry", ago(2), ago(3))
+    before = everything()
+    r = imp(user, *rows)
+    assert r["counts"]["food_entry"] == {"written": 0, "already_there": 4, "day_taken": 0, "failed": 0}
+    assert everything() == before
+
+
+def test_a_key_match_takes_only_the_rows_own_import(user):
+    """The walk imported for 8 Nov, moved to 7 Nov and deleted, is 8 Nov's row's own: 8 Nov's row takes it by
+    its key, it stays deleted, and a 7 Nov walk new to this export is written. By value first, 7 Nov's walk
+    took it and 8 Nov's walk came back."""
+    imp(user, SAME["cardio_entry"](ago(2)))
+    move(user, "cardio_entry", ago(2), ago(3))
+    [moved] = rows_of(CardioEntry, user.id)
+    services.delete_entry(user.id, "cardio_entry", moved.id)
+    r = imp(user, SAME["cardio_entry"](ago(3)), SAME["cardio_entry"](ago(2)))
+    assert r["row_outcomes"] == {"written": 1, "already_there": 1, "day_taken": 0, "failed": 0}
+    assert [str(c.date) for c in rows_of(CardioEntry, user.id, deleted_at=None)] == [ago(3)]
+    assert rows_of(CardioEntry, user.id, id=moved.id)[0].deleted_at is not None
+
+
+@pytest.mark.parametrize("kind", list(SAME))
+def test_three_identical_rows_after_two_were_imported_and_moved_write_one(user, kind):
+    """Each key holder matches one row only: two stored, three sent, the third is written."""
+    imp(user, SAME[kind](ago(2)), SAME[kind](ago(2)))
+    move(user, kind, ago(2), ago(3))
+    r = imp(user, *[SAME[kind](ago(2))] * 3)
+    assert r["row_outcomes"] == {"written": 1, "already_there": 2, "day_taken": 0, "failed": 0}
+    assert total(MODELS[kind], user.id) == 3
+
+
+def test_a_session_held_on_its_date_and_by_its_key_is_held_once(user):
+    """The stored session is found by both queries: held twice, it matched both rows of the re-run."""
+    imp(user, SAME["lift_session"](ago(1)))
+    r = imp(user, SAME["lift_session"](ago(1)), SAME["lift_session"](ago(1)))
+    assert r["counts"]["lift_session"] == {"written": 0, "already_there": 1, "day_taken": 1, "failed": 0}
+
+
+def test_two_different_sessions_on_one_day_repeat_nothing(user):
+    before = everything()
+    r = imp(user, lift(ago(1), ("Deadlift", 140, 5)), lift(ago(1), ("Bench Press", 70, 5)), dry=True)
+    assert r["repeated_rows"] == 0 and "repeat" not in r["summary"]
+    assert everything() == before
+
+
+def test_a_moved_session_with_notes_is_never_written_again(user):
+    """The key covers the notes: a key worked out without them matches no stored session."""
+    row = lift(ago(3), ("Deadlift", 140, 5), notes="From the old app")
+    imp(user, row)
+    move(user, "lift_session", ago(3), ago(2))
+    before = everything()
+    assert imp(user, row)["row_outcomes"]["already_there"] == 1 and everything() == before
+
+
+@pytest.mark.parametrize("kind", ["bodyweight", "measurement"])
+def test_two_identical_one_a_day_rows_after_a_move_are_both_already_there(user, kind):
+    """A weigh-in's or measurement's key holder is not used up: a second row that day matches it too."""
+    row = weigh(ago(2), 80) if kind == "bodyweight" else measure(ago(2), "waist", 84)
+    imp(user, row)
+    move(user, kind, ago(2), ago(3))
+    before = everything()
+    r = imp(user, row, row)
+    assert r["row_outcomes"] == {"written": 0, "already_there": 2, "day_taken": 0, "failed": 0}
+    assert everything() == before
+
+
+@pytest.mark.parametrize("row,units,message", [
+    (weigh(ago(1), 44.09), {"weight_unit": "lb"}, "Row 1: weight 44.09 lb is outside 44.1 to 881.84 lb."),
+    (weigh(ago(1), 881.85), {"weight_unit": "lb"}, "Row 1: weight 881.85 lb is outside 44.1 to 881.84 lb."),
+    (measure(ago(1), "waist", 11.8), {"length_unit": "in"}, "Row 1: waist 11.8 in is outside 11.9 to 118.1 in."),
+    (measure(ago(1), "waist", 11.81), {"length_unit": "in"}, "Row 1: waist 11.81 in is outside 11.9 to 118.1 in."),
+    (run(ago(1), "Outdoor Run", 30, speed=37.29), {"distance_unit": "mi"},
+     "Row 1: speed 37.29 mi an hour is outside 0.1 to 37.2 mi an hour."),
+    (run(ago(1), "Outdoor Run", 30, speed=37.3), {"distance_unit": "mi"},
+     "Row 1: speed 37.3 mi an hour is outside 0.1 to 37.2 mi an hour.")])
+def test_a_refused_edge_value_is_outside_the_range_its_message_quotes(user, row, units, message):
+    """S1: the bounds were rounded to the nearest step: "weight 44.09 lb is outside 44.09 to 881.85 lb". Each
+    bound the message quotes is itself taken."""
+    before = everything()
+    r = imp(user, row, dry=True, **units)
+    assert r["failed"][0]["message"] == message
+    field = {"bodyweight": "weight", "measurement": "value", "cardio_entry": "speed"}[row["kind"]]
+    for bound in re.search(r"outside ([\d.,]+) to ([\d.,]+) ", message).groups():
+        sent = {**row, field: float(bound.replace(",", ""))}
+        assert imp(user, sent, dry=True, **units)["row_outcomes"]["written"] == 1, bound
+    assert everything() == before
+
+
+@pytest.mark.parametrize("row,units,message,fix", [
+    (weigh(ago(1), "heavy"), {"weight_unit": "lb"}, "Row 1: weight 'heavy' is not a number.",
+     "Give weight from 44.1 to 881.84 lb."),
+    (measure(ago(1), "waist", "big"), {"length_unit": "in"}, "Row 1: value 'big' is not a number.",
+     "Give waist from 11.9 to 118.1 in."),
+    (measure(ago(1), "waist", None), {"length_unit": "in"}, "Row 1: value is missing.", "Give waist from 11.9 to 118.1 in."),
+    (run(ago(1), "Outdoor Run", 30, "far"), {"distance_unit": "mi"}, "Row 1: distance 'far' is not a number.",
+     "Give distance from 0.01 to 186.41 mi."),
+    (run(ago(1), "Outdoor Run", 30, speed="fast"), {"distance_unit": "mi"}, "Row 1: speed 'fast' is not a number.",
+     "Give speed from 0.1 to 37.2 mi an hour.")])
+def test_a_fix_on_a_pound_mile_or_inch_call_gives_the_range_in_the_calls_unit(user, row, units, message, fix):
+    """S1: the fix gave the stored unit's range ("Give the body weight in kg, 20 to 400.") on a lb call."""
+    r = imp(user, row, dry=True, **units)
+    assert (r["failed"][0]["message"], r["failed"][0]["fix"]) == (message, fix)
+
+
+def test_a_fix_on_a_kg_km_or_cm_call_keeps_the_log_functions_words(user):
+    r = imp(user, weigh(ago(1), "heavy"), measure(ago(1), "waist", "big"), run(ago(1), "Outdoor Run", 30, "far"),
+            run(ago(2), "Outdoor Run", 30, speed="fast"), dry=True)
+    own = [services.log_bodyweight(user.id, {"kg": "heavy"}, "web"),
+           services.log_measurement(user.id, {"kind": "waist", "value": "big"}, "web"),
+           services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": "far"}, "web"),
+           services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "speed_kmh": "fast"}, "web")]
+    assert [f["fix"] for f in r["failed"]] == [o["fix"].replace("distance_km", "distance").replace("speed_kmh", "speed")
+                                               for o in own]
+    assert [f["fix"] for f in r["failed"]] == ["Give the body weight in kg, 20 to 400.", "Give waist in cm, 30 to 300.",
+                                               "Give distance as a number from 0.01 to 300.",
+                                               "Give speed as a number from 0.1 to 60."]
+
+
+def test_a_speed_that_disagrees_on_a_km_call_carries_its_unit(user):
+    """S2: "speed 30 does not match 5 km in 30 minutes" lost its unit with the rename."""
+    r = imp(user, run(ago(1), "Outdoor Run", 30, 5, speed=30), dry=True)
+    assert r["failed"][0]["message"] == "Row 1: speed 30 km/h does not match 5 km in 30 minutes, which is 10 km/h."
+
+
+def test_beside_the_food_entries_sentence_the_rows_already_there_are_named_rows(user):
+    """Was: "1 food entry in those rows was already there. 1 was already there." The second counts rows."""
+    imp(user, meal(ago(1), ("Oats", 350, "breakfast")), weigh(ago(2), 80))
+    for e in rows_of(FoodEntry, user.id):
+        services.delete_entry(user.id, "food_entry", e.id)
+    rows = [weigh(ago(2), 80), meal(ago(1), ("Oats", 350, "breakfast"), ("Dal", 500, "lunch"))]
+    before = everything()
+    preview = imp(user, *rows, dry=True)
+    assert everything() == before
+    assert preview["summary"] == ("Preview, nothing written. 2 rows from 8 to 9 Nov. Would write 1 food entry. 1 food "
+                                  "entry in those rows is already there. 1 row is already there. Every weigh-in is "
+                                  "80 kg.")
+    real = imp(user, *rows)
+    assert real["summary"] == ("Imported 1 of 2 rows from 8 to 9 Nov: 1 food entry. 1 food entry in those rows was "
+                               "already there. 1 row was already there. Nothing was replaced.")
+
+
+def test_a_partly_matched_food_row_on_a_held_day_says_its_matched_entries(user):
+    """S4 on a day-taken row: counts had the matched entry as already there, and the summary said nothing of it."""
+    services.log_food(user.id, {"date": ago(5), "entries": [{"description": "Oats", "kcal": 350, "meal": "breakfast"}]},
+                      "web")
+    row = meal(ago(5), ("Oats", 350, "breakfast"), ("Tea", 40, "snack"))
+    before = everything()
+    preview = imp(user, row, dry=True)
+    real = imp(user, row)
+    assert everything() == before
+    for r in (preview, real):
+        assert r["counts"]["food_entry"] == {"written": 0, "already_there": 1, "day_taken": 1, "failed": 0}
+    assert preview["summary"] == ("Preview, nothing written. 1 row on Thu 5 Nov. Would write nothing. 1 food entry in "
+                                  "those rows is already there. 1 row falls on days Spotter already holds.")
+    assert real["summary"] == ("Imported 0 of 1 row on Thu 5 Nov. 1 food entry in those rows was already there. 1 was "
+                               "left out: its day already holds an entry. Nothing was replaced.")
+
+
+def test_known_limit_a_food_entry_imported_beside_deleted_entries_comes_back_after_a_move_or_an_edit_and_delete(user):
+    """Not built in version 1, documented. An entry written beside entries that were already there stores a key
+    over the entries written, not over its whole row, so a re-run of the row finds it neither by key nor, once
+    it is moved or edited, by value. Pinned as it is: Tea comes back on its first day."""
+    for n, change in ((3, "move"), (6, "edit then delete")):
+        imp(user, meal(ago(n), ("Oats", 350, "breakfast")))
+        for e in rows_of(FoodEntry, user.id, date=TODAY - timedelta(days=n)):
+            services.delete_entry(user.id, "food_entry", e.id)
+        row = meal(ago(n), ("Oats", 350, "breakfast"), ("Tea", 40, "snack"))
+        assert imp(user, row)["counts"]["food_entry"]["written"] == 1   # Tea, its key over Tea alone
+        [tea] = rows_of(FoodEntry, user.id, date=TODAY - timedelta(days=n), description="Tea")
+        if change == "move":
+            services.edit_entry(user.id, "food_entry", tea.id, {"date": ago(n - 1)}, "web")
+        else:
+            services.edit_entry(user.id, "food_entry", tea.id, {"kcal": 60}, "web")
+            services.delete_entry(user.id, "food_entry", tea.id)
+        again = imp(user, row)
+        assert again["counts"]["food_entry"] == {"written": 1, "already_there": 1, "day_taken": 0, "failed": 0}, change
+        assert len(rows_of(FoodEntry, user.id, date=TODAY - timedelta(days=n), description="Tea", deleted_at=None)) == 1

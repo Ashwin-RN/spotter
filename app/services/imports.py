@@ -42,7 +42,9 @@ import_entries(user_id, data, by)
     Weigh-ins and measurements allow one live row a day (the schema's own indexes), so for them a row
     written earlier in the call counts as held for the rows after it. For sessions, food and cardio
     each held entry matches one row only, and rows of the same call do not take each other's day, so
-    two identical sessions in one call both go in, and both match when it runs again.
+    two identical sessions in one call both go in, and both match when it runs again. For them every row of
+    the call first takes the imported rows that hold its own key, and only then does the value match run
+    for what is left, so a row the person moved onto the day of another row is matched by its own row.
 
     Order of work: weigh-ins, measurements, lift sessions, food, cardio; within a kind by date. So
     imported cardio gets its calorie estimate from body weight now, imported weigh-ins included.
@@ -63,6 +65,7 @@ Every write here locks the user row first (common.lock_user), then checks the wr
 import math
 import re
 from datetime import date, datetime, timedelta
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
@@ -152,32 +155,53 @@ def _converted(value, factor: float):
 UNIT_OF = {factor: unit for table in UNITS.values() for unit, factor in table.items() if factor != 1.0}
 
 
+def _inward(limits, factor: float, quantity: str) -> tuple[str, str]:
+    """A stored range in the call's unit, through the formatter at the quantity's step, each bound moved
+    inward: the lower one rounded up, the upper one down. So a number refused for being outside the range is
+    never inside the range its message quotes: 44.09 lb is outside 44.1 to 881.84 lb, not 44.09 to 881.85."""
+    step = Decimal(repr(formatting.STEP[quantity]))
+    shown = []
+    for bound, rounding in zip(limits, (ROUND_CEILING, ROUND_FLOOR)):
+        with localcontext() as ctx:
+            ctx.prec = 50
+            steps = (Decimal(repr(float(bound))) / Decimal(repr(factor)) / step).to_integral_value(rounding=rounding)
+            shown.append(formatting.show(float(steps * step), quantity, unit=False))
+    return shown[0], shown[1]
+
+
 def _call_unit(err: dict, field: str, raw, factor: float, limits, quantity: str, where: str = "",
                fix_tail: str = "", per: str = "") -> dict:
-    """A range refusal of a converted number, said as it was sent: the value and the range in the call's
-    unit (lb, mi, in), the range through the formatter. A refusal in the stored unit, or of another kind,
-    goes on as it is."""
-    if factor == 1.0 or " is outside " not in err["message"]:
+    """A refusal of a number sent in the call's unit (lb, mi, in), said in that unit. A range refusal quotes
+    the value as sent and the range. Every refusal of the field, "not a number" and "missing" too, gets a
+    fix with the range in the call's unit, never the stored unit's. The range through the formatter, each
+    bound moved inward (_inward). A refusal on a kg, km or cm call goes on as it is."""
+    if factor == 1.0:
         return err
     unit = UNIT_OF[factor] + (f" {per}" if per else "")
-    lo, hi = (formatting.show(v / factor, quantity, unit=False) for v in limits)
+    lo, hi = _inward(limits, factor, quantity)
     at = f"{where}: " if where else ""
     on = f" on {where.lower()}" if where else ""
-    return {**err, "message": f"{at}{field} {rules.as_sent(raw)} {unit} is outside {lo} to {hi} {unit}.",
-            "fix": f"Give {field}{on} from {lo} to {hi} {unit}{fix_tail}."}
+    fix = f"Give {field}{on} from {lo} to {hi} {unit}{fix_tail}."
+    if " is outside " not in err["message"]:
+        return {**err, "fix": fix}
+    return {**err, "message": f"{at}{field} {rules.as_sent(raw)} {unit} is outside {lo} to {hi} {unit}.", "fix": fix}
+
+
+_SPEED_SENT = re.compile(r"^(speed_kmh \S+) does not match ")
 
 
 def _speed_in_call_unit(err: dict, raw: dict, values: dict, factor: float) -> dict:
-    """with_speed's two refusals on a mi call, in miles: otherwise they quote the converted distance and speed."""
+    """with_speed's two refusals on a mi call, in miles: otherwise they quote the converted distance and speed.
+    On a km call the log function's words, with the speed sent given its unit, as on a mi call."""
     if factor == 1.0:
-        return err
+        return {**err, "message": _SPEED_SENT.sub(r"\1 km/h does not match ", err["message"], count=1)}
     worked = metrics.speed(values["distance_km"], values["minutes"])
     shown = formatting.show(worked / factor, "speed", unit=False)
     ran = f"{rules.as_sent(raw.get('distance'))} mi in {formatting.field(values['minutes'], 'session_time')} minutes"
     if values.get("speed_kmh") is not None and "does not match" in err["message"]:
         return {**err, "message": f"speed {rules.as_sent(raw.get('speed'))} mi an hour does not match {ran}, "
                                   f"which is {shown} mi an hour."}
-    lo, hi = (formatting.show(v / factor, "speed", unit=False) for v in rules.NUMBERS["speed_kmh"][:2])
+    lo, hi = _inward(rules.NUMBERS["speed_kmh"][:2], factor, "speed")
     return {**err, "message": f"{ran} is {shown} mi an hour, outside {lo} to {hi} mi an hour."}
 
 
@@ -668,8 +692,25 @@ def _decide(s, user, checked: list[dict]) -> tuple[list[dict], list[dict], list[
     keys = {kind: {r["key"] for r in checked if r["kind"] == kind} for kind in ORDER}
     held = {kind: _held(s, user.id, kind, dates[kind], keys[kind]) for kind in ORDER}
     pre_live = {kind: dict(h.live_days) for kind, h in held.items()}  # before the call: sessions, food, cardio
+    in_order = sorted(checked, key=lambda r: (ORDER.index(r["kind"]), r["date"], r["n"]))
+    # Sessions, food and cardio: every row of the call takes the imported rows that hold its own key first,
+    # each holder once, and only then does the value match run for what is left. A holder is the import of a
+    # row of the same kind, date and content (the key covers them all), so a key match takes no other row's
+    # entry. A value match first could take, on its own date, a row the person moved there from another
+    # day, and leave that day's row with nothing to match: it was written again.
+    for r in in_order:
+        if r["kind"] in ("bodyweight", "measurement"):
+            continue
+        h = held[r["kind"]]
+        if r["kind"] == "food_entry":
+            taken = 0
+            while taken < len(r["entries"]) and h.find_key(r["key"], consume=True):  # moved or changed too
+                taken += 1
+            r["by_key"] = taken
+        else:
+            r["by_key"] = h.find_key(r["key"], consume=True) is not None
     to_write, day_taken = [], []
-    for r in sorted(checked, key=lambda r: (ORDER.index(r["kind"]), r["date"], r["n"])):
+    for r in in_order:
         kind, on, h = r["kind"], r["date"], held[r["kind"]]
         if kind in ("bodyweight", "measurement"):
             part = r.get("measurement_kind")
@@ -687,15 +728,14 @@ def _decide(s, user, checked: list[dict]) -> tuple[list[dict], list[dict], list[
             continue
         part = r["exercise"].id if kind == "cardio_entry" else None
         if kind == "food_entry":
-            r["matched"], r["unmatched"] = [], []
-            for entry, match in zip(r["entries"], r["match"]):
+            k = r["by_key"]
+            r["matched"], r["unmatched"] = list(r["entries"][:k]), []
+            for entry, match in zip(r["entries"][k:], r["match"][k:]):
                 r["matched" if h.find(on, None, match, consume=True) else "unmatched"].append(entry)
-            while r["unmatched"] and h.find_key(r["key"], consume=True):  # entries of this row moved or changed
-                r["matched"].append(r["unmatched"].pop(0))
             if not r["unmatched"]:
                 r["outcome"] = "already_there"
                 continue
-        elif h.find(on, part, r["match"], consume=True) or h.find_key(r["key"], consume=True):
+        elif r["by_key"] or h.find(on, part, r["match"], consume=True):
             r["outcome"] = "already_there"
             continue
         taker = pre_live[kind].get((on, part))
@@ -830,7 +870,9 @@ def _result(user, rows, dry, units, decided, failed, day_taken, missed, to_write
         same = (r["kind"], r["date"], tuple(r["match"]) if isinstance(r["match"], list) else r["match"])
         repeated += same in seen
         seen.add(same)
-    entries_there = sum(len(r["matched"]) for r in decided if r["kind"] == "food_entry" and r["outcome"] == "written")
+    # Matched entries of food rows not already there whole: a written row, or a day-taken one, as counts has them.
+    entries_there = sum(len(r["matched"]) for r in decided
+                        if r["kind"] == "food_entry" and r["outcome"] in ("written", "day_taken"))
     dated = [r["date"] for r in decided] + [f["on"] for f in failed if f.get("on")]  # dates that passed
     start, end = (min(dated), max(dated)) if dated else (None, None)
     taken = [{"row": r["n"], "kind": r["kind"], "date": r["date"].isoformat(),
@@ -918,7 +960,9 @@ def _summary(dry: bool, total: int, outcomes: dict, counts: dict, ranges: dict, 
                      f"{'was' if entries_there == 1 else 'were'} already there.")
     if repeated:
         parts.append(again.strip())
-    if there:
+    if there and entries_there:  # beside the food entries' sentence: say these are rows
+        parts.append(f"{_n(there, 'row was', 'rows were')} already there.")
+    elif there:
         parts.append(f"{_count(there)} {'was' if there == 1 else 'were'} already there.")
     if taken:
         parts.append(f"{_count(taken)} {'was' if taken == 1 else 'were'} left out: "

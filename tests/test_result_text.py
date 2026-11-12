@@ -634,6 +634,27 @@ def test_the_import(make_user):
             e.deleted_at = NOW
     seen.add("import part preview", imp(part, True), "Oats", "Dal")
     seen.add("import part", imp(part), "Oats", "Dal")
+    # Fix round 2: fixes in the call's unit, bounds moved inward, a speed with its unit on a km call, rows already
+    # there named beside the food entries' sentence, and a partly matched food row on a held day.
+    seen.add("import units fixes", imp([
+        {"kind": "bodyweight", "date": ago(1), "weight": "heavy"},
+        {"kind": "bodyweight", "date": ago(2), "weight": 44.09},
+        {"kind": "measurement", "date": ago(1), "measurement_kind": "waist", "value": "big"},
+        {"kind": "cardio_entry", "date": ago(1), "exercise": "Outdoor Run", "minutes": 30, "distance": "far"},
+        {"kind": "cardio_entry", "date": ago(2), "exercise": "Outdoor Run", "minutes": 30, "speed": "fast"},
+        {"kind": "cardio_entry", "date": ago(3), "exercise": "Outdoor Run", "minutes": 30, "speed": 37.3}], True,
+        weight_unit="lb", distance_unit="mi", length_unit="in"), "heavy", 44.09, "big", "far", "fast", 37.3)
+    imp([{"kind": "food_entry", "date": ago(22), "entries": [part[0]["entries"][0]]},
+         {"kind": "bodyweight", "date": ago(22), "weight": 80}])
+    with db.session_scope() as s:
+        for e in s.scalars(select(FoodEntry).where(FoodEntry.user_id == user.id, FoodEntry.date == TODAY - timedelta(22))):
+            e.deleted_at = NOW
+    beside = [{**part[0], "date": ago(22)}, {"kind": "bodyweight", "date": ago(22), "weight": 80}]
+    assert "1 row was already there." in seen.add("import beside", imp(beside), "Oats", "Dal", 80)["summary"]
+    services.log_food(user.id, {"date": ago(23), "entries": [part[0]["entries"][0]]}, "web")
+    held = [{**part[0], "date": ago(23)}]
+    seen.add("import held part preview", imp(held, True), "Oats", "Dal")
+    seen.add("import held part", imp(held), "Oats", "Dal")
     seen.add("import held days", imp([{"kind": "measurement", "date": ago(n + 10), "measurement_kind": "resting_hr",
                                        "value": 61} for n in range(1, 61)], True))
     for data, *values in (
