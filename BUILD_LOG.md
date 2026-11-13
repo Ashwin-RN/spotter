@@ -562,3 +562,19 @@ Every finding on a fix list is fixed. The re-check found seven new things. None 
 Step 3 has no exit of its own. It goes live with step 4, and step 4's exit covers both.
 
 **A change of method, 2026-11-11, the owner's call.** The whole suite no longer runs on every push. A docs-only push runs the docs tests. A small change runs the tests for the files it touches. The whole suite runs on a big push, such as a stage step, or about once in every four or five pushes.
+
+### Beside the steps, 2026-11-12: the import's evals
+
+Five runs of the evals, each on `claude-opus-5-5` through the Claude Code CLI. The cost is the CLI's list-price figure. On a subscription it is usage against the plan's limits, not a bill.
+
+| Run | What ran | Passed | From, to | Cost at list price |
+|---|---|---|---|---|
+| 1, at `3eff0c3` | all 20 cases, 3 runs each | 60 of 60 | 21:23:48 to 21:42:57 | $8.5603 |
+| 2, after the description gained its sentence on mixed units | the three import cases, 3 runs each | 8 of 9 | 22:02:38 to 22:05:43 | $1.4998 |
+| 3, after the judge read a waiting phrase as asking | the same three cases | 9 of 9 | 22:19:43 to 22:22:25 | $1.4968 |
+| 4, after that rule was narrowed | the same three cases | 9 of 9 | 22:43:34 to 22:47:10 | $1.5015 |
+| 5, after the judge went back to the question mark | the same three cases | 9 of 9 | 23:01:40 to 23:05:03 | $1.4817 |
+
+- **The one failure:** run 2, `import_unknown_lift`, its second run, "the reply asks nothing". The reply wrote nothing, named the lift, would not guess and put the choice to the person, with no question mark, which was then the judge's only sign of asking. The server's record was right: `whoami` and `list_exercises`, no import call. It is a false fail of the question-mark check, kept on purpose as a test fixture.
+- **The judge of each run.** Runs 1 and 2: the question mark. Run 3: a rule that also read fixed waiting phrases. Run 4: that rule, narrowed. A reviewer found wrong replies that each version passed, so the phrase rule was withdrawn and the judge is the question mark again. Runs 3 and 4 kept no replies, so their counts under it are not known. Run 5: the question mark.
+- Every run's handshakes carried the server's instructions: 60 of 60, then 9 of 9 in each of the four later runs.

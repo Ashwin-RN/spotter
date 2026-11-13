@@ -40,8 +40,22 @@ changed within a day and one full run cost three times the estimate. Both below 
 - Most tokens are cached reads of the CLI's own system prompt and the tool schemas: eighteen when this
   was measured, nineteen since `import_entries`.
 - The model line under the table says which model ran. Pin one with `--model` to compare runs.
-- On a subscription that is usage against the plan's limits, not a bill.
-- The table prints tokens per run and the cost per case.
+- The cost is the CLI's list-price figure. On a subscription that is usage against the plan's limits, not
+  a bill.
+- The table prints tokens per run and the cost per case, for its runs.
+
+**The run of 2026-11-12, measured.** The branch at `3eff0c3`, model `claude-opus-5-5`, 20 cases at 3 runs:
+60 of 60 runs passed. It started at 21:23:48 and ended at 21:42:57. `reply_asks` read a question mark.
+
+| | Smallest | Largest |
+|---|---|---|
+| Tokens a run, by case | 83,802 (`export_is_a_click`) | 179,850 (`treadmill_once`) |
+| Cost by case, for its 3 runs | $0.3352 (`delete_is_a_click`) | $0.5211 (`import_again`) |
+
+- The whole run: $8.5603.
+- The runner printed: "handshakes that carried the server's instructions: 60 of 60 runs (whether the CLI
+  shows them to the model is what the cases measure)".
+- Three runs a case is a small sample: see "One run is not a rate" below.
 
 ## How a run works
 
@@ -183,7 +197,8 @@ reply. That is right, and nothing checks it.
 
 ### The stage 6 case: how Claude says numbers
 
-**`decimals_and_dashes` holds the reply paragraph in the server instructions. It has not been run yet.**
+**`decimals_and_dashes` holds the reply paragraph in the server instructions. It ran on 2026-11-12: 3 of 3
+passed.**
 
 - The two weigh-ins are at 1 dp. Their 7-day average works out at 79.25 kg, two decimals, before Spotter
   rounds it to 1 dp. A reply that recalculates, or adds decimals, says a figure Spotter never gave.
@@ -210,7 +225,27 @@ reply. That is right, and nothing checks it.
 ### The stage 6 import cases
 
 **`import_preview_first`, `import_again` and `import_unknown_lift` hold the import rule in the server
-instructions and the import's own description. They have not been run yet.**
+instructions and the import's own description. They ran on 2026-11-12, on `3eff0c3`: each 3 of 3 passed.
+That was before the description gained its sentence on mixed units.**
+
+**The second run, 2026-11-12, after that sentence:** the three import cases at 3 runs, `claude-opus-5-5`, 8 of
+9 passed, from 22:02:38 to 22:05:43. `import_unknown_lift` run 2 failed: "the reply asks nothing". Its reply
+wrote nothing, named the lift, would not guess and put the choice to the person, with no question mark,
+the judge's only sign of asking, then and now. That reply is a test fixture, a known false fail kept on
+purpose.
+
+**The third run, 2026-11-12, judged by the first phrase rule:** the same three cases at 3 runs, `claude-opus-5-5`, 9 of 9
+passed, from 22:19:43 to 22:22:25. Three runs of a case are not a rate.
+
+**The fourth run, 2026-11-12, judged by the narrowed phrase rule:** the same three cases at 3 runs,
+`claude-opus-5-5`, 9 of 9 passed, from 22:43:34 to 22:47:10.
+
+Runs 3 and 4 are records of judges since withdrawn. Their replies were not kept: a passing run prints
+none. So their counts under the question mark are not known.
+
+**The fifth run, 2026-11-12, judged by the question mark, the judge as it now is:** the same three cases at
+3 runs, `claude-opus-5-5`, 9 of 9 passed, from 23:01:40 to 23:05:03. So of the 9 runs of `import_unknown_lift`
+judged by the question mark, 8 passed and 1 failed falsely.
 
 - The server instructions carry only the import's guards. The rest is in `import_entries`' description,
   which the model reads when it calls the function. Claude Code cuts server instructions, and the
@@ -232,11 +267,20 @@ instructions and the import's own description. They have not been run yet.**
 |---|---|---|
 | `import_preview_first` | The model previews before it writes, in the export's own unit, and asks the person. Nothing is written. | That the reply shows the preview's numbers right, or names the unit. A preview of a longer export. |
 | `import_again` | Told to write, the model sends the export's own unit, and says the rows are already there. Nothing is written twice. | That it previews first when told to write. It may send `dry_run` false at once, and passes. |
-| `import_unknown_lift` | A lift name not on the list is never written, and the model asks about it by name. | That it asks once per name: there is one name. That it offers the right listed name, or that no call carries a guessed one: the judge has no key for that. |
+| `import_unknown_lift` | A lift name not on the list is never written, and the model asks about it by name. | That it asks once per name: there is one name. That it offers the right listed name, or that no call carries a guessed one: the judge has no key for that. That it asked before it acted: a reply that left a guess in a preview and then asked "Is that right?" passes the reply check, and only the server's record shows the guessed name. |
 
-**What a run of them costs, by the import spec's estimate, not measured:** $0.15 to $0.40 a run on
-`claude-opus-5-5`, so about $1.50 to $3.50 for the 3 cases at 3 runs. The instructions changed, so the
-whole suite should run again: 20 cases at 3 runs is 60 runs, about $9 to $15, estimated.
+**What they cost in the first run, 2026-11-12 at `3eff0c3`, measured:**
+
+| Case | Tokens a run | Cost, for its 3 runs |
+|---|---|---|
+| `import_preview_first` | 125,800 | $0.4956 |
+| `import_again` | 125,808 | $0.5211 |
+| `import_unknown_lift` | 93,555 | $0.4843 |
+
+- The second run, the same three cases at 3 runs: $1.4998 in all.
+- The third run, the same: $1.4968 in all.
+- The fourth run, the same: $1.5015 in all.
+- The fifth run, the same: $1.4817 in all.
 
 ## What the evals prove
 
@@ -257,5 +301,14 @@ whole suite should run again: 20 cases at 3 runs is 60 runs, about $9 to $15, es
 - **The heuristics are heuristics.** `reply_asks` is a question mark; `reply_has` and `reply_lacks` are
   phrase lists; `reply_lacks_pattern` is a regular expression. A reply can ask without one, say a phrase
   innocently, match a pattern with a correct figure, or name Settings and still offer something else.
+  - **The false fail of `reply_asks`.** A reply that puts a choice to the person and waits, with no
+    question mark, fails. Seen once: run 2 of 2026-11-12, `import_unknown_lift`, its second run. Of the 9
+    runs of that case judged by the question mark, the first, second and fifth runs' 3 each, it is the 1
+    that failed.
+  - **The false pass of the same kind.** A reply that guesses and then asks "Is that right?" passes the
+    reply check. Only the server's record and the rows show what the model did.
+  - **What was tried.** On 2026-11-12 a rule that also read fixed waiting phrases was built, then narrowed.
+    A reviewer found wrong replies that each version passed, and it was withdrawn. Those replies are now
+    fixtures that must fail.
 - **Not the person's own data.** Every run is a throwaway person on a local copy. Nothing here touches
   the live site.
