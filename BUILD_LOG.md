@@ -621,3 +621,36 @@ Each pass was read by a fresh reviewer on a frozen copy, who broke the code on p
 - **Measure what the browser does.** Where a refused post lands was settled in Chrome, not by reading. A redirect with no fragment of its own inherits the form's, and no reading of the templates showed that.
 - **A sample is a promise.** The landing's reply was what a stranger would expect from their assistant, and it broke the rules the server gives the assistant. A test now rebuilds it from `get_goals`.
 - **A line about a permission is held against the permission.** The switch's line and the Undo line each said less, or more, than the server allows.
+
+## Before posting online: the safety basics
+
+What one person, or many at once, can do to the server before strangers use it. The decisions are in `docs/contracts/safety.md`.
+
+| Part | What it does |
+|---|---|
+| Connection pool | 5 connections and 5 more under load, a 10 s wait for one, each recycled after 30 min |
+| Postgres limits | Every connection starts with a 15 s statement limit, a 10 s lock wait and a 1 min limit on an idle transaction |
+| Busy database | Every time-out, a full pool and an idle transaction cut off all give the same "database busy" answer, on the web and through MCP |
+| Read limit | 300 reads per person in 10 min through MCP, beside the write limit of 120 |
+| Page limit | 300 page loads per person in 10 min on the web, then a 429 |
+| Request size | Every request body is capped at 1 MiB, then a 413 |
+| Load test | `tools/load.py`, run only against a local database. It refuses a remote address or a setting that could send it to one |
+
+### The load test
+
+Local Postgres 17, every simulated person calling back to back with no pause.
+
+| Run | Calls a second | p50 | p95 | Errors |
+|---|---|---|---|---|
+| 10 people | 87 | 111 ms | 168 ms | none |
+| 50 people | 94 | 514 ms | 748 ms | none |
+
+A bigger pool (15 and 5) gave 101 calls a second: the limit is the one Python process, not the database. The three Postgres limits were read back from a real connection, and they held after a rollback.
+
+### The review
+
+| Finding | Fix |
+|---|---|
+| An idle transaction cut off by Postgres gave a 500 on the web and an internal error through MCP | It gives the busy answer like every other time-out |
+| A libpq setting in the environment, or `?service=` in the URL, could send the load test to a remote database | The tool refuses both |
+| A body over 1 MiB that was already sent in full gets a dropped connection, not the 413 line | Left as it is: the request is refused either way |
