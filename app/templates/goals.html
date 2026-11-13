@@ -2,7 +2,6 @@
 {% block title %}Goals · Spotter{% endblock %}
 {% block main %}
 {% import "_parts.html" as parts %}
-{% macro sample_tag(g) %}{% if g.is_sample %} <span class="tag tag-sample">sample</span>{% endif %}{% endmacro %}
 {% macro pace(g, value) %}{% if g.kind == "cardio_best" %}{{ value|show("time_pace") }}{% else %}{{ value|show("rate") }}&nbsp;{{ g.unit }} a week{% endif %}{% endmacro %}
 
 {% macro status_form(goal_id, status, label, button="link") %}
@@ -13,7 +12,7 @@
 </form>
 {% endmacro %}
 
-{# Goals (section L): the page head, then in div.goals-main the banner, the strips and each open goal as its own
+{# Goals (section L): the page head, then in div.goals-main the strips and each open goal as its own
    card, then the Closed goals card; Set a goal beside it. Each open goal reads goal_charts, unrounded: its now
    figure and Plan line today print what plan_line prints (close-call rule 2), its words come from its own fields
    (web.goal_words), and its path chart is charts.goal_svg of the same goal on the page's one today, with a legend
@@ -22,7 +21,6 @@
   <h1>Goals</h1>
 </div>
 <div class="goals-main">
-  {% include "sample_banner.html" %}
   {% if saved %}{{ parts.saved_line(saved) }}{% endif %}
   {% for note in notes %}<p class="notice goal-note">{{ note }}</p>{% endfor %}
   {% if goals %}
@@ -35,7 +33,6 @@
           <h2><strong>{{ g.label }}</strong></h2>
           <p class="goal-by">by {{ g.target_date|day(today) }}</p>
         </div>
-        {% if g.is_sample %}<span class="tag tag-sample">sample</span>{% endif %}
       </div>
       {% if g.latest is not none %}
       <p class="goal-now figure"><span class="big">{{ g.latest|show(q, w.widened, unit=False) }}{% if g.kind != "cardio_best" %}&nbsp;<span class="unit">{{ g.unit }}</span>{% endif %}</span> <span class="figure-label">{{ w.now }}</span></p>
@@ -88,7 +85,7 @@
       {% for g in closed %}
       <li class="entry-line" id="goal-{{ g.goal_id }}">
         <div class="entry-main"><span class="entry-name">{{ g.label }}</span>{% if g.closed_at %}<span class="entry-figures">Closed {{ g.closed_at|day_utc(zone, today) }}</span>{% endif %}</div>
-        <span class="entry-tags"><span class="tag tag-closed">{{ closed_words.get(g.status, g.status) }}</span>{{ sample_tag(g) }}</span>
+        <span class="entry-tags"><span class="tag tag-closed">{{ closed_words.get(g.status, g.status) }}</span></span>
         <span class="entry-actions">{{ status_form(g.goal_id, "open", "Reopen") }}</span>
       </li>
       {% endfor %}

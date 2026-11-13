@@ -2,7 +2,6 @@
 {% block title %}{% if on == today %}Today{% else %}{{ on|day(today) }}{% endif %} · Spotter{% endblock %}
 {% block main %}
 {% import "_parts.html" as parts %}
-{% from "_parts.html" import sample_tag %}
 {% set on_today = on == today %}
 {# The h1 is day_heading's words: "Today, Tuesday 10 November" reads as one line, shown as Today with the
    day under it. A day with no lead word ("Sunday 8 November") is its date alone. #}
@@ -17,7 +16,6 @@
   </nav>
   {% endif %}
 </div>
-{% include "sample_banner.html" %}
 
 {% if strip and strip.undo %}
 {{ parts.undo_strip(strip.words, "/entries/" ~ strip.undo[0] ~ "/" ~ strip.undo[1] ~ "/restore", csrf_token) }}
@@ -30,23 +28,18 @@
    and shown by the stylesheet only when motion is allowed and the page is not calm. A comma stays a comma. #}
 {% macro rolling(text) %}<span class="rolling"><span class="rolling-text">{{ text }}</span><span class="roll" aria-hidden="true" hidden>{% for c in text %}{% if c.isdigit() %}<span class="reel d{{ c }}"><span class="strip">{% for n in range(10) %}<span>{{ n }}</span>{% endfor %}</span></span>{% else %}<span>{{ c }}</span>{% endif %}{% endfor %}</span></span>{% endmacro %}
 
-{# The Today card: a new account's offer of sample data, or the day's food with its chips. It shows entries
-   and adds nothing up, and it carries no sample tag: the tags sit on the entries below. #}
+{# The Today card: a new account's first step, or the day's food with its chips. It shows entries and adds
+   nothing up. #}
 {% if new_account %}
 <section class="card hero" aria-labelledby="today-card-title">
   <p class="eyebrow">Today</p>
   <h2 class="hero-title" id="today-card-title">Nothing logged yet</h2>
-  <p class="muted">To see Spotter full before you log anything, add sample data: four weeks of lifts, weigh-ins, meals,
-    cardio, measurements and three goals. Every sample row is marked, and one button on Settings removes it all.</p>
+  <p class="muted">Tell your assistant what you ate, lifted or did, and it shows here.</p>
   <ul class="chips" aria-label="Logged today">
     <li class="chip chip-food is-missing">No food yet</li>
     <li class="chip chip-weight is-missing">No weigh-in yet</li>
     <li class="chip chip-lifts is-missing">No lifts yet</li>
   </ul>
-  <form method="post" action="/settings/sample">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button class="primary wide">Add sample data</button>
-  </form>
 </section>
 {% else %}
 {% set yet = " yet" if on_today else "" %}
@@ -138,8 +131,8 @@
    glance block goes between the Today card and col-main, on today's page only. #}
 <div class="col-main">
 {# The Food card: the day's entries by meal, the totals under them, then the Add food fold-out. An entry's
-   name, its kcal with how much was eaten, and a differing description each take a line. Its source tag and
-   sample tag share their own slot, apart from every figure. #}
+   name, its kcal with how much was eaten, and a differing description each take a line. Its source tag has
+   its own slot, apart from every figure. #}
 <section class="card" aria-labelledby="food-title">
   <div class="card-head">
     <h2 id="food-title">Food</h2>
@@ -162,7 +155,7 @@
           <span class="entry-figures">{{ f.kcal|show("kcal") }}{% if served %}, {{ served }}{% endif %}</span>
           {% if note %}<span class="entry-note">{{ note }}</span>{% endif %}
         </div>
-        <span class="entry-tags"><span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span>{{ sample_tag(f) }}</span>
+        <span class="entry-tags"><span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span></span>
         {{ parts.entry_actions("food_entry", f.id, csrf_token, confirm=f.source == "claude_estimate") }}
       </li>
       {% endfor %}
@@ -211,7 +204,7 @@
 </div>
 
 <div class="col-side">
-{# The Lifts card: each session's line with its sample tag and actions, its sets in a table, each new best on
+{# The Lifts card: each session's line with its actions, its sets in a table, each new best on
    a line of its own, then its notes on theirs. A set at 0 kg leaves its weight cell blank, and a session with
    no weighted set shows no Weight column. No fold-out: lifts are logged through the assistant this stage. #}
 <section class="card" aria-labelledby="lifts-title">
@@ -221,7 +214,6 @@
   <div class="session">
     <div class="entry-line">
       <div class="entry-main"><span class="entry-name">Lift session</span></div>
-      {% if session.is_sample %}<span class="entry-tags"><span class="tag tag-sample">sample</span></span>{% endif %}
       {{ parts.entry_actions("lift_session", session.id, csrf_token) }}
     </div>
     {{ parts.sets_table(session.sets) }}
@@ -240,7 +232,7 @@
 </section>
 
 {# The Cardio card: the activity on line one, then its labelled figures. A figure the entry lacks is left out,
-   but the calorie estimate says No estimate. The estimate tag and the sample tag share their own slot. #}
+   but the calorie estimate says No estimate. The estimate tag has its own slot. #}
 <section class="card" aria-labelledby="cardio-title">
   <h2 id="cardio-title">Cardio</h2>
   {% if cardio %}
@@ -259,7 +251,7 @@
         </dl>
         {% if c.notes %}<p class="entry-note"><b>Notes</b> {{ c.notes }}</p>{% endif %}
       </div>
-      {% if c.estimate or c.is_sample %}<span class="entry-tags">{% if c.estimate %}<span class="tag tag-estimate">estimate</span>{% endif %}{{ sample_tag(c) }}</span>{% endif %}
+      {% if c.estimate %}<span class="entry-tags"><span class="tag tag-estimate">estimate</span></span>{% endif %}
       {{ parts.entry_actions("cardio_entry", c.id, csrf_token) }}
     </li>
     {% endfor %}
@@ -289,14 +281,13 @@
   {% endcall %}
 </section>
 
-{# The Weigh-in card: the day's one weight, large, with its sample tag and actions. Its fold-out replaces it
+{# The Weigh-in card: the day's one weight, large, with its actions. Its fold-out replaces it
    when there is one, and its summary and its button say the same. #}
 <section class="card" aria-labelledby="weigh-in-title">
   <h2 id="weigh-in-title">Weigh-in</h2>
   {% if day.weigh_in %}
   <div class="entry-line">
     <div class="entry-main"><span class="entry-big">{{ day.weigh_in.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span></span></div>
-    {% if day.weigh_in.is_sample %}<span class="entry-tags"><span class="tag tag-sample">sample</span></span>{% endif %}
     {{ parts.entry_actions("bodyweight", day.weigh_in.id, csrf_token) }}
   </div>
   {% else %}
@@ -326,7 +317,6 @@
     <li class="entry-line">
       <div class="entry-main"><span class="entry-name">{{ kind_word(m.kind) }}</span>
         <span class="entry-figures">{{ m.value|show(measurement_quantity(m.kind)) }}</span></div>
-      {% if m.is_sample %}<span class="entry-tags"><span class="tag tag-sample">sample</span></span>{% endif %}
       {{ parts.entry_actions("measurement", m.id, csrf_token) }}
     </li>
     {% endfor %}

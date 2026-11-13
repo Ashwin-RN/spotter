@@ -433,7 +433,7 @@ def test_a_result_that_cannot_be_sent_is_an_internal_error(http, monkeypatch, lo
 # ---------------------------------------------------------------- values JSON cannot carry, a busy database
 
 def test_a_result_holding_nan_is_an_internal_error(http, monkeypatch, logs):
-    summary = {"today": "2026-11-09", "goals": [], "includes_sample": False, "how": "How.",
+    summary = {"today": "2026-11-09", "goals": [], "how": "How.",
                "links": {"progress": "https://x.example/progress"},
                "lifts": [{"exercise": "Back Squat", "sessions": 1, "last_trained": None,
                           "current_estimated_max_kg": float("nan"), "best_estimated_max_kg": None,

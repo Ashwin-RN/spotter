@@ -1,7 +1,7 @@
 """T3, the text part (stage 6, step 2): the words on every page a person reads, held to the page rules.
 
 Every GET path in web.PAGES is rendered with fixture values for each parameter, signed in, and / signed
-in and out, on three accounts: empty, sample, and an edge case (a zero rate, over target, a day over
+in and out, on three accounts: empty, four weeks (evals/four_weeks.py), and an edge case (a zero rate, over target, a day over
 1,000 kcal, a cardio time goal, every measurement kind). The pages behind an address mark (?saved=,
 ?deleted=, ?notes=) are rendered too, since a bare GET never shows their text.
 
@@ -345,9 +345,10 @@ def empty_account(user_id: int) -> None:
     """A new account: no entries, no time zone."""
 
 
-def sample_account(user_id: int) -> None:
+def four_week_account(user_id: int) -> None:
+    from evals.four_weeks import four_weeks
     _ok(services.update_settings(user_id, {"time_zone": "Asia/Kolkata"}, "web"))
-    _ok(services.add_sample_data(user_id, "web"))
+    _ok(four_weeks(user_id))
 
 
 def edge_account(user_id: int) -> None:
@@ -425,7 +426,7 @@ def edge_and_far_days(user_id: int) -> None:
 
 
 # The sweeps' accounts. tests/test_consistency.py takes edge_account alone.
-ACCOUNTS = {"empty": empty_account, "sample": sample_account, "edge": edge_and_far_days}
+ACCOUNTS = {"empty": empty_account, "four weeks": four_week_account, "edge": edge_and_far_days}
 
 
 # ---------------------------------------------------------------- the addresses
@@ -463,7 +464,7 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
             for kind, model in ENTRY_MODELS]
     # Each strip the day page has words for after a write (section L, the strips table), and the two marks
     # that only make it calm. One on a past day too.
-    marks = ["saved=confirmed", "saved=sample", "deleted=sample", "saved=unchanged", "saved=time_zone",
+    marks = ["saved=confirmed", "saved=unchanged", "saved=time_zone",
              *(f"{mark}={kind}" for mark in ("saved", "restored") for kind, _ in ENTRY_MODELS)]
     strips = [f"/day/{today.isoformat()}?{mark}" for mark in marks] + \
         [f"/day/{(today - timedelta(days=1)).isoformat()}?saved=bodyweight"]
@@ -1313,8 +1314,6 @@ ERROR_PAGES = {
     "form expired": (403, "Form expired"),
     "too many changes": (429, "Too many changes"),
     "already back": (409, "Already back"),
-    "sample already added": (409, "Already added"),
-    "sample into a full account": (409, "Not added"),
     "not saved": (400, "Not saved"),
     "not changed": (400, "Not changed"),
     "not set up yet": (503, "Not set up yet"),
@@ -1372,11 +1371,6 @@ def render_error_page(case: str, web_client, seam, monkeypatch) -> Rendered:
     if case == "already back":
         weigh_in = _ok(services.log_bodyweight(user_id, {"kg": "80"}, "claude"))["id"]
         return signed("/entries/bodyweight/1/restore", post(client, f"/entries/bodyweight/{weigh_in}/restore"))
-    if case in ("sample already added", "sample into a full account"):
-        code = "already_sample" if case == "sample already added" else "not_empty"
-        monkeypatch.setattr(services, "add_sample_data",
-                            lambda *args: {"error": code, "message": "x", "fix": "y"})
-        return signed("/settings/sample", post(client, "/settings/sample"))
     if case == "not saved":  # a weigh-in for a day after today, which has no page
         later = (today + timedelta(days=1)).isoformat()
         return signed(f"/day/{later}/weigh-in", post(client, f"/day/{later}/weigh-in", kg="80"), calm=True)
@@ -1404,7 +1398,7 @@ def error_page_findings(page: Rendered) -> list[str]:
 
 
 # Section L, "404 and 500 pages", as written there: the two designed pages and every message it names, by
-# status and h1. The sample refusals (409) are named there without a title.
+# status and h1.
 CONTRACT_STATUSES = {404, 500, 403, 429, 409, 400, 503, 200}
 CONTRACT_PAGES = {(404, "Page not found"), (500, "Something went wrong"), (403, "Form expired"),
                   (429, "Too many changes"), (409, "Already back"), (400, "Not saved"), (400, "Not changed"),
@@ -1415,7 +1409,7 @@ CONTRACT_PAGES = {(404, "Page not found"), (500, "Something went wrong"), (403, 
 def test_the_error_pages_cover_every_status_and_page_the_contract_lists():
     assert {status for status, _ in ERROR_PAGES.values()} == CONTRACT_STATUSES
     assert CONTRACT_PAGES <= set(ERROR_PAGES.values()), CONTRACT_PAGES - set(ERROR_PAGES.values())
-    assert sum(1 for status, _ in ERROR_PAGES.values() if status == 409) >= 3  # Already back, two sample refusals
+    assert [h1 for status, h1 in ERROR_PAGES.values() if status == 409] == ["Already back"]
 
 
 @pytest.mark.parametrize("case", sorted(ERROR_PAGES))
@@ -1515,11 +1509,11 @@ def test_the_glance_zeros_pass_only_inside_the_glance_block(client):
 
 
 def test_the_glance_zeros_are_none_on_an_account_whose_figures_are_all_above_0(client):
-    """The sample account's today: sessions, weigh-ins, food on every day, cardio every week. Its glance shows
+    """The four-week account's today: sessions, weigh-ins, food on every day, cardio every week. Its glance shows
     no bare 0, and the allowance is 0 for every tag, so one would fail."""
     sign_in(client)
     user_id = only_user().id
-    ACCOUNTS["sample"](user_id)
+    ACCOUNTS["four weeks"](user_id)
     address = f"/day/{today_of(only_user()).isoformat()}"
     assert [glance_zeros(user_id, address, tag) for tag in ("p", "td", "text")] == [0, 0, 0]
     page = client.get(address).text
@@ -1790,19 +1784,20 @@ def _no_break_units(label: str) -> str:
 
 
 def fixed_day_goals(make_user, monkeypatch) -> tuple[dict, dict]:
-    """get_goals and goal_charts, the Goals page's read, for the sample account on the fixed day of
-    tests/test_sample.py: the landing's sample exchange and its picture are both of it."""
+    """get_goals and goal_charts, the Goals page's read, for the four-week account (evals/four_weeks.py) on the
+    fixed day of tests/test_four_weeks.py: the landing's example exchange and its picture are both of it."""
     monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
     user = make_user()
-    assert "error" not in services.add_sample_data(user.id, "web")
+    from evals.four_weeks import four_weeks
+    assert "error" not in four_weeks(user.id)
     listed, charted = services.get_goals(user.id), services.goal_charts(user.id)
     assert listed["today"] == charted["today"] == "2026-11-10" and len(listed["goals"]) == 3
     return listed, charted
 
 
-def test_the_landings_exchange_is_the_fixed_day_sample_goals_line_by_line(client, make_user, monkeypatch):
-    """The exchange is one constant (web.LANDING_EXCHANGE): get_goals for the sample account on the fixed day of
-    tests/test_sample.py, said by the server's reply rules: one opening line, then three lines a goal, the label and
+def test_the_landings_exchange_is_the_fixed_day_goals_line_by_line(client, make_user, monkeypatch):
+    """The exchange is one constant (web.LANDING_EXCHANGE): get_goals for the four-week account on the fixed day of
+    tests/test_four_weeks.py, said by the server's reply rules: one opening line, then three lines a goal, the label and
     date alone, the goal's plan_line as get_goals writes it, the projected date. Rebuilt here from get_goals, it must
     equal the constant character for character, and the page must say it as written."""
     listed, _ = fixed_day_goals(make_user, monkeypatch)

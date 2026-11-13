@@ -27,7 +27,6 @@
   --today: #5aa9ff;
   --warn: #f5b841;
   --err: #ff7a7a;
-  --sample: #a9b4ff;
 
   --r-card: 24px;
   --r-tile: 20px;
@@ -694,7 +693,6 @@ dl.totals dd.total { font-size: 19px; font-weight: 700; }
 }
 .tag-you_said, .tag-saved_food, .tag-usda, .tag-status { border-color: var(--line-strong); color: var(--text-2); }
 .tag-claude_estimate, .tag-estimate { border-color: var(--warn); color: var(--warn); }
-.tag-sample { border-color: var(--sample); border-style: dashed; color: var(--sample); }
 .tag-good { border-color: var(--up); color: var(--up); }
 .tag-behind { border-color: var(--warn); color: var(--warn); }
 .tag-good::before, .tag-behind::before {
@@ -717,8 +715,6 @@ p.notice, div.notice {
   font-size: 14px;
   line-height: 1.45;
 }
-p.sample-banner { border: 1.5px dashed var(--sample); color: var(--sample); }
-p.sample-banner a { color: var(--text); font-weight: 600; text-underline-offset: 3px; }
 p.goal-note { background: var(--raised); color: var(--text); }
 
 p.ok, div.ok {

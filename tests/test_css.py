@@ -187,7 +187,7 @@ TOKENS = {
     "--raised-2": "#2c2c2c", "--sheet": "#1c1c1c", "--bar": "#1a1a1a", "--line": "#343434",
     "--line-strong": "#707070", "--text": "#f2f2f2", "--text-bright": "#ffffff", "--text-2": "#a6a6a6",
     "--text-3": "#8c8c8c", "--on-primary": "#000000", "--up": "#4ade80", "--today": "#5aa9ff",
-    "--warn": "#f5b841", "--err": "#ff7a7a", "--sample": "#a9b4ff",
+    "--warn": "#f5b841", "--err": "#ff7a7a",
 }
 HEX = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 COLOUR_FUNCTION = re.compile(r"\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(", re.I)
@@ -288,7 +288,6 @@ L_TABLE = {
     "--today": ((8.55, 7.37, 6.40, 6.94, 5.69), TEXT),
     "--warn": ((11.82, 10.18, 8.84, 9.59, 7.86), TEXT),
     "--err": ((8.32, 7.17, 6.22, 6.75, 5.53), TEXT),
-    "--sample": ((10.66, 9.19, 7.98, 8.65, 7.09), TEXT),
     "--line-strong": ((4.24, 3.65, 3.17, 3.44, None), BORDER),
 }
 BANNED = {("--text-3", "--raised-2"): 4.15, ("--line-strong", "--raised-2"): 2.82}
@@ -657,9 +656,9 @@ NAMED_CLASSES = """
 card card-head is-empty tiles four tile tile-weight tile-calories tile-training tile-maintenance tile-pace tile-run
 tile-time tile-max tile-best tile-sessions tile-value tile-label tile-note tile-link sr nowrap chips chip chip-weight
 chip-lifts chip-cardio chip-food chip-label is-missing primary secondary danger link action wide button tag
-tag-you_said tag-saved_food tag-usda tag-claude_estimate tag-estimate tag-sample tag-status tag-good tag-behind
+tag-you_said tag-saved_food tag-usda tag-claude_estimate tag-estimate tag-status tag-good tag-behind
 tag-nodata tag-closed top brand tabs tab tab-today tab-progress tab-goals tab-settings top-out ok undo notice
-sample-banner goal-note error add field field-row hint has-error segments sheet sheet-head grab sheet-bar close period
+goal-note error add field field-row hint has-error segments sheet sheet-head grab sheet-bar close period
 giant noun sentence panel panel-title sheet-link table-wrap num remark group rows lead figure big unit figure-label
 days pill is-lift is-cardio is-none is-today legend key line plan projection goal today dot-key link-box muted inline
 steps entry-line attribution meal empty chart trends facts entries totals goals calm roll glance col-main col-side
@@ -1051,7 +1050,7 @@ def test_the_landings_parts_each_have_their_rule(css):
     12, Before you start 1 to 5, How to start 6 to 12 over three rows, Things to say first and Your pages 1 to 5,
     Your data 1 to 6 and How it is built 7 to 12. The h1, the one line and the grey second line, the button row, the
     plain link 44 px tall, the picture the card's width, the exchange's two bubbles (yours at the right on
-    --raised-2, your assistant's outlined at the left), the caption, the sample tag and the plain list, the steps,
+    --raised-2, your assistant's outlined at the left), the caption and the plain list, the steps,
     the sentences to say, the facts list and the site footer. Each part the page draws but the list of assistants is
     already styled, so neither pass adds a rule."""
     assert css.value(".landing .landing-hero", "grid-column", (LAPTOP,)) == "1 / span 5"
@@ -1071,7 +1070,6 @@ def test_the_landings_parts_each_have_their_rule(css):
     assert css.value(".said.claude", "border") == "1px solid var(--line)"
     assert css.value(".said .who", "display") == "block"
     assert css.value(".caption", "color") == "var(--text-3)"
-    assert css.value(".tag-sample", "border-style") == "dashed"
     assert css.value("ul.plain-list li", "color") == "var(--text-2)"
     assert css.value(".card-head", "display") == "flex"
     assert css.value("p.notice", "padding") == "12px 16px"  # the line in the button's place without web sign-in

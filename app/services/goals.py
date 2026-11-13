@@ -69,7 +69,7 @@ rounded_numbers(numbers)
 
 goal_charts(user_id)
     The Goals page's read, web only: {today, goals [goal numbers, unrounded, each with path,
-    now_basis and line_ended], includes_sample[, note]}. now_basis names the measure latest is:
+    now_basis and line_ended]}. now_basis names the measure latest is:
     average_7d, latest_weigh_in, best_28d or latest; null with nothing logged. line_ended is
     metrics.goal_path's ended: the plan figure is the target, so the page says "the target" as
     plan_line does.
@@ -87,7 +87,7 @@ from app import db, formatting, links, metrics, rules, users
 from app.models import GOAL_STATUSES, CardioEntry, Goal, Measurement, User
 from app.services import body, cardio, lifts, measurements
 from app.services.common import (
-    SAMPLE_NOTE, check_by, check_data, check_write_limit, exercises, in_range, lock_user, no_account, not_found,
+    check_by, check_data, check_write_limit, exercises, in_range, lock_user, no_account, not_found,
     owned, row_dict, truthy,
 )
 
@@ -204,8 +204,7 @@ def load_numbers(s, user_id: int, today: date, goals: list, lift_history: dict |
     lift_history: lifts.history when the caller has it already, so it is not read twice.
 
     Returns {lifts: lifts.history, weigh_ins: [Bodyweight], measurements: {kind: [Measurement]},
-    cardio: {exercise_id: [CardioEntry with a distance]}, sample: bool}, every list in the one order.
-    sample: whether any row read is sample data."""
+    cardio: {exercise_id: [CardioEntry with a distance]}}, every list in the one order."""
     kinds = {g.kind for g in goals}
     if lift_history is None:
         lift_history = lifts.history(s, user_id, today) if "lift" in kinds else NO_LIFTS
@@ -225,11 +224,6 @@ def load_numbers(s, user_id: int, today: date, goals: list, lift_history: dict |
             CardioEntry.distance_km.is_not(None)))
         for c in sorted(rows, key=lambda c: metrics.order_key(c.date, c.id, today)):
             out["cardio"].setdefault(c.exercise_id, []).append(c)
-    used = [*out["weigh_ins"], *(m for ms in out["measurements"].values() for m in ms),
-            *(c for cs in out["cardio"].values() for c in cs)]
-    if "lift" in kinds:
-        used += lift_history["sessions"]
-    out["sample"] = any(row.is_sample for row in used)
     return out
 
 
@@ -414,7 +408,6 @@ def goal_numbers(goals: list, loaded: dict, today: date, charts: bool = False) -
             "projected_date": p["projected_date"] if p else None,
             "projection": p,
             "note": None if p or status == "reached" else metrics.projection_gap(points, today),
-            "is_sample": bool(g.is_sample),
             "should_be_today": path["should_be_today"], "ahead_by": path["ahead_by"],
             "days_ahead": path["days_ahead"], "vs_plan": path["vs_plan"],
             "plan_line": plan_line(now, path["should_be_today"], path["ahead_by"], path["vs_plan"], quantity,
@@ -774,8 +767,7 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
 def _closed(g: Goal) -> dict:
     return {"goal_id": g.id, "label": label(g) if g.target_value is not None else g.kind, "kind": g.kind,
             "status": g.status, "closed_at": g.closed_at.isoformat() if g.closed_at else None,
-            "target_value": g.target_value, "target_date": g.target_date.isoformat() if g.target_date else None,
-            "is_sample": bool(g.is_sample)}
+            "target_value": g.target_value, "target_date": g.target_date.isoformat() if g.target_date else None}
 
 
 def _summary(numbers: list[dict], closed: list[dict], today: date) -> str:
@@ -796,8 +788,8 @@ def get_goals(user_id: int, include_closed=False) -> dict:
     """Every open goal and where it stands; the closed ones too with include_closed.
 
     Returns {today, goals [goal numbers, by id], closed [{goal_id, label, kind, status, closed_at,
-    target_value, target_date}] (empty unless include_closed), includes_sample, how, summary,
-    links {goals}[, note]} or {error, message, fix}. A read: no lock, no write limit."""
+    target_value, target_date}] (empty unless include_closed), how, summary,
+    links {goals}} or {error, message, fix}. A read: no lock, no write limit."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
@@ -809,15 +801,9 @@ def get_goals(user_id: int, include_closed=False) -> dict:
         open_goals = [g for g in rows if g.status == "open"]
         loaded = load_numbers(s, user.id, today, open_goals)
         numbers = rounded_numbers(goal_numbers(open_goals, loaded, today))
-        shown_ids = {n["goal_id"] for n in numbers}
-        closed_rows = [g for g in rows if g.status != "open"] if wanted else []
-        closed = [_closed(g) for g in closed_rows]
-        sample = loaded["sample"] or any(g.is_sample for g in rows if g.id in shown_ids or g in closed_rows)
-        out = {"today": today.isoformat(), "goals": numbers, "closed": closed, "includes_sample": sample,
-               "how": GOALS_HOW, "summary": _summary(numbers, closed, today), "links": {"goals": links.page("goals")}}
-        if sample:
-            out["note"] = SAMPLE_NOTE
-        return out
+        closed = [_closed(g) for g in rows if g.status != "open"] if wanted else []
+        return {"today": today.isoformat(), "goals": numbers, "closed": closed, "how": GOALS_HOW,
+                "summary": _summary(numbers, closed, today), "links": {"goals": links.page("goals")}}
 
 
 # ---------------------------------------------------------------- goal_charts, the Goals page's read
@@ -828,7 +814,7 @@ def goal_charts(user_id: int) -> dict:
     result.
 
     Returns {today, goals [goal numbers + path {plan [{date, value}], actual [{date, value}]},
-    now_basis, line_ended], includes_sample[, note]} or {error, message, fix}. Read through
+    now_basis, line_ended]} or {error, message, fix}. Read through
     load_numbers and goal_numbers, as get_goals is, so the two never disagree: rounded_numbers of these
     goals, without path, now_basis and line_ended, is get_goals' goals. A read: no lock, no write limit."""
     with db.new_session() as s:
@@ -839,10 +825,4 @@ def goal_charts(user_id: int) -> dict:
         open_goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                     .order_by(Goal.id).options(selectinload(Goal.exercise))))
         loaded = load_numbers(s, user.id, today, open_goals)
-        numbers = goal_numbers(open_goals, loaded, today, charts=True)
-        shown_ids = {n["goal_id"] for n in numbers}
-        sample = loaded["sample"] or any(g.is_sample for g in open_goals if g.id in shown_ids)
-        out = {"today": today.isoformat(), "goals": numbers, "includes_sample": sample}
-        if sample:
-            out["note"] = SAMPLE_NOTE
-        return out
+        return {"today": today.isoformat(), "goals": goal_numbers(open_goals, loaded, today, charts=True)}

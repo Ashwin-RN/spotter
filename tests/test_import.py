@@ -225,7 +225,7 @@ def test_each_kind_is_written_with_the_import_mark_and_its_own_kinds_key(user):
     assert "error" not in r and r["row_outcomes"]["written"] == 5
     for kind, model in MODELS.items():
         for row in rows_of(model, user.id):
-            assert (row.logged_by, row.is_sample, row.deleted_at) == (IMPORTED, False, None), kind
+            assert (row.logged_by, row.deleted_at) == (IMPORTED, None), kind
     [w] = rows_of(Bodyweight, user.id)
     assert w.dedupe_key == body.weigh_in_key(w.date, w.kg)
     [m] = rows_of(Measurement, user.id)
@@ -998,13 +998,12 @@ def test_no_time_zone_is_refused_whole(make_user):
     assert r["fix"].startswith("Set it with update_settings first")
 
 
-def test_an_account_with_sample_data_is_refused_whole(user):
-    assert "error" not in services.add_sample_data(user.id, "web")
-    before = everything()
-    for dry in (True, False):
-        r = imp(user, weigh(ago(40), 80), dry=dry)
-        assert r["error"] == "sample_data_present" and everything() == before
-    assert "Remove sample data button on Settings" in r["fix"]
+def test_an_account_full_of_entries_imports_beside_them(user):
+    """Decision 4: no account is refused for what it already holds. Four weeks of entries, then an import."""
+    from evals.four_weeks import four_weeks
+    assert "error" not in four_weeks(user.id)
+    r = imp(user, weigh(ago(40), 80))
+    assert "error" not in r and r["row_outcomes"]["written"] == 1
 
 
 def test_by_is_web_or_claude_and_the_mark_is_import_either_way(user):
@@ -1031,7 +1030,7 @@ def imported_rows(user_id, n, hours_ago=1.0, deleted=False):
         s.execute(insert(FoodEntry), [
             {"user_id": user_id, "date": TODAY - timedelta(days=30), "meal": "snack", "description": "x", "kcal": 1,
              "source": "you_said", "estimated": False, "logged_by": IMPORTED, "dedupe_key": "k", "created_at": at,
-             "updated_at": at, "deleted_at": at if deleted else None, "is_sample": False} for _ in range(n)])
+             "updated_at": at, "deleted_at": at if deleted else None} for _ in range(n)])
 
 
 def test_the_cap_is_ten_thousand_rows_in_24_hours():

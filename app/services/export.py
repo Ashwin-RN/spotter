@@ -4,8 +4,7 @@ export_data(user_id)
     A read. One CSV per table the person owns, plus account.csv and README.txt:
       account.csv, lift_sessions.csv, lift_sets.csv, bodyweight.csv, measurements.csv, goals.csv,
       saved_foods.csv, food_entries.csv, cardio_entries.csv
-    - Deleted rows are included, with deleted_at; is_sample and source are included where the table
-      has them.
+    - Deleted rows are included, with deleted_at; source is included where the table has it.
     - Times are UTC, ISO 8601 with the offset (2026-11-10T08:00:00+00:00). Dates are the person's own.
     - Names, not ids, for what the shared lists hold: a set's exercise, a goal's exercise, a cardio
       entry's activity, a food entry's saved food (its id too). A blank cell is no value. A whole
@@ -72,7 +71,7 @@ Everything Spotter holds for this account, one CSV file per kind of record.
   cardio_entries.csv  each cardio session; estimated_kcal is the app's estimate, machine_kcal the
                       machine's own number
 
-Deleted rows are included: deleted_at says when. is_sample is true for sample data.
+Deleted rows are included: deleted_at says when.
 logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_entries, says how a row
 came in: web (on Spotter's own pages), claude (through the assistant) or import (brought over from
 another app's export with import_entries).
@@ -124,7 +123,7 @@ def _table(s, model, renamed: dict, user_id: int, names: dict) -> tuple[str, int
 
 
 def export_data(user_id: int) -> dict:
-    """Every row this person owns, deleted and sample rows included. See the module notes."""
+    """Every row this person owns, deleted rows included. See the module notes."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
@@ -149,4 +148,4 @@ def export_data(user_id: int) -> dict:
     total = sum(rows.values())
     return {"files": files, "rows": rows,
             "summary": (f"{formatting.show(total, 'count')} rows in {formatting.show(len(ORDER), 'count')} CSV "
-                        "files, deleted and sample rows included, times in UTC.")}
+                        "files, deleted rows included, times in UTC.")}

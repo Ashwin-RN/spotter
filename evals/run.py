@@ -225,9 +225,9 @@ class LocalServer:
         seeded = {}
         dates = dates_for(zone)
         for seed in seeds:
-            service = getattr(services, seed["service"])
+            service = judge.seed_service(seed["service"])
             if seed["service"] in judge.NO_DATA_SERVICES:
-                result = service(user_id, "web")
+                result = service(user_id)
             else:
                 result = service(user_id, judge.resolve(dict(seed["data"]), dates), "web")
             if "error" in result:

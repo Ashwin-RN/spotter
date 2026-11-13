@@ -14,7 +14,6 @@ from markupsafe import escape
 from app import charts, db, formatting, rules, services, web
 from app.models import CallLog, Goal
 from app.services import goals as goal_rules
-from app.services.common import SAMPLE_NOTE
 
 from .test_web import (  # noqa: F401 - fixtures
     CSP, FIXED_NOW, SITE, TOO_MANY, FakeSeam, body_weight_card, callouts_of, calls, client, only_user, post, rows,
@@ -30,7 +29,7 @@ def numbers(goal_id: int, **values) -> dict:
             "measurement_kind": None, "distance_km": None, "unit": "kg", "start_value": 80.0,
             "start_date": "2026-11-01", "direction": "up", "target_value": 100.0, "target_date": "2027-02-02",
             "latest": 85.0, "status": "on track", "needed_per_week": 1.25, "actual_per_week": 2.5,
-            "projected_date": "2027-01-04", "projection": None, "note": None, "is_sample": False,
+            "projected_date": "2027-01-04", "projection": None, "note": None,
             "should_be_today": 82.0, "ahead_by": 3.0, "days_ahead": 14, "vs_plan": "ahead",
             "plan_line": "85 kg now against 82 kg on the plan line today: 3 kg ahead.",
             "path": {"plan": [], "actual": []}, "now_basis": "best_28d", "line_ended": False}
@@ -62,13 +61,13 @@ CLOSED = [{"goal_id": 9, "label": "Bench Press 80 kg", "kind": "lift", "status":
 
 
 def goals_result(goals=(), closed=()) -> dict:
-    return {"today": "2026-11-10", "goals": list(goals), "closed": list(closed), "includes_sample": False,
+    return {"today": "2026-11-10", "goals": list(goals), "closed": list(closed),
             "how": "", "summary": "", "links": {"goals": SITE + "/goals"}}
 
 
 def charts_result(goals=()) -> dict:
     """goal_charts' shape: the open goals with their plan line, path, now_basis and line_ended."""
-    return {"today": "2026-11-10", "goals": list(goals), "includes_sample": False}
+    return {"today": "2026-11-10", "goals": list(goals)}
 
 
 @pytest.fixture
@@ -1281,7 +1280,7 @@ TRENDS = {
     "cardio": {"minutes_this_week": 95, "target_minutes": 150, "minutes_per_week_4w": 87.5},
     "maintenance": {"kcal": 2480, "intake_avg_kcal": 2210, "weight_change_kg": -0.74, "days_logged": 18,
                     "window_days": 21, "from": "2026-10-21", "to": "2026-11-10"},
-    "maintenance_note": None, "includes_sample": False, "how": "", "summary": "", "links": {},
+    "maintenance_note": None, "how": "", "summary": "", "links": {},
 }
 EMPTY_TRENDS = {**TRENDS, "bodyweight": None, "calories": None, "maintenance": None,
                 "sessions": {"this_week": 0, "target_per_week": None, "per_week_4w": 0},
@@ -1342,9 +1341,9 @@ def test_the_trends_card_without_a_rate_or_a_week_of_food(signed, monkeypatch):
     trends = {**TRENDS, "bodyweight": {**TRENDS["bodyweight"], "rate_per_week": None, "rate_window": None},
               "calories": {**TRENDS["calories"], "avg_7d": None, "days_logged_7d": 0},
               "maintenance": None, "maintenance_note": "Needs weigh-ins in the last 7 days and around 21 days ago.",
-              "note": "The weekly rate needs a weigh-in from 14 to 42 days ago. " + SAMPLE_NOTE}
+              "note": "The weekly rate needs a weigh-in from 14 to 42 days ago."}
     shown = dict(((q, n), (v, r)) for n, (q, v, r) in enumerate(trends_rows(trends_card(signed, monkeypatch, trends))))
-    # The service's own note, without the sample sentence: the banner says that.
+    # The service's own note, as written.
     assert shown[("Weight rate", 2)] == ("", "The weekly rate needs a weigh-in from 14 to 42 days ago.")
     assert shown[("Eaten a day", 4)] == ("", "No food logged in the last 7 days.")
     assert shown[("Eaten a day", 5)] == (f"2,210{NB}kcal", "Last 28 days, 1 logged")
@@ -1402,15 +1401,16 @@ def test_the_real_trends_card(signed):
 
 # ================================================================ review fixes
 
-def test_sample_goals_carry_a_sample_tag_open_and_closed(signed, fake_goals):
-    fake_goals([numbers(1, is_sample=True), numbers(2, label="Body weight 75 kg", is_sample=False)],
+def test_no_goal_carries_a_sample_tag_open_or_closed(signed, fake_goals):
+    """Decision 1: a goal's head holds its label and date alone, and a closed goal's tags its status alone, even
+    when a stray is_sample key arrives."""
+    fake_goals([numbers(1, is_sample=True), numbers(2, label="Body weight 75 kg")],
                [{**CLOSED[0], "is_sample": True}, CLOSED[1]])
     page = signed.get("/goals").text
-    assert re.search(r'<strong>Back Squat 100 kg</strong></h2>\s*<p class="goal-by">by [^<]+</p>\s*</div>\s*'
-                     r'<span class="tag tag-sample">sample</span>\s*</div>', goal_item(page, 1))
-    assert "tag-sample" not in goal_item(page, 2)
-    assert '<span class="tag tag-closed">Hit</span> <span class="tag tag-sample">sample</span>' in goal_item(page, 9)
-    assert "tag-sample" not in goal_item(page, 10)  # no is_sample key: no tag
+    assert re.search(r'<strong>Back Squat 100 kg</strong></h2>\s*<p class="goal-by">by [^<]+</p>\s*</div>\s*</div>',
+                     goal_item(page, 1))
+    assert '<span class="entry-tags"><span class="tag tag-closed">Hit</span></span>' in goal_item(page, 9)
+    assert "sample" not in page.casefold()
 
 
 @pytest.mark.parametrize("warnings, shown", [
@@ -1518,7 +1518,7 @@ def goal_card(page: str, goal_id: int) -> dict:
                   for dt, dd in zip(facts.find_all("dt"), facts.find_all("dd"))],
         "parts": [(e.tag, e.classes) for e in li.elements()],
         "label": [h.text() for h in head.find_all("h2")], "strong": [s.text() for s in head.find_all("strong")],
-        "by": [p.text() for p in head.find_all("p", "goal-by")], "sample": bool(head.find_all("span", "tag-sample")),
+        "by": [p.text() for p in head.find_all("p", "goal-by")], "head_tags": head.find_all("span", "tag"),
         "now": next((b.text() for b in now.find_all("span", "big")), None),
         "now_words": [f.text() for f in now.find_all("span", "figure-label")],
         "boxes": [b.find_all("dt")[0].text() for b in (plan, projection)],
@@ -1656,29 +1656,28 @@ def test_the_now_figure_prints_what_plan_line_prints_widened_when_it_is(signed, 
     assert not formatting.widen([79.01, 78.5], "bodyweight_derived")
 
 
-def test_the_head_holds_the_label_in_strong_the_date_under_it_and_the_sample_tag(signed, fake_goals):
-    fake_goals([numbers(1, is_sample=True), numbers(2)])
+def test_the_head_holds_the_label_in_strong_and_the_date_under_it(signed, fake_goals):
+    fake_goals([numbers(1), numbers(2)])
     page = signed.get("/goals").text
-    sample, own = goal_card(page, 1), goal_card(page, 2)
-    assert (sample["label"], sample["strong"], sample["by"], sample["sample"]) == (
-        ["Back Squat 100 kg"], ["Back Squat 100 kg"], ["by Tue 2 Feb 2027"], True)
-    assert own["sample"] is False
-    assert sample["actions"] == [(["secondary"], "Hit"), (["link"], "Drop")]
+    card = goal_card(page, 1)
+    assert (card["label"], card["strong"], card["by"], card["head_tags"]) == (
+        ["Back Squat 100 kg"], ["Back Squat 100 kg"], ["by Tue 2 Feb 2027"], [])
+    assert card["actions"] == [(["secondary"], "Hit"), (["link"], "Drop")]
     # A stand-in read with no plan draws no chart (numbers' path is empty): the card runs on without it.
-    assert sample["parts"] == [("div", ["goal-head"]), ("p", ["goal-now", "figure"]), ("dl", ["standing"]),
+    assert card["parts"] == [("div", ["goal-head"]), ("p", ["goal-now", "figure"]), ("dl", ["standing"]),
                                ("dl", ["goal-facts"]), ("div", ["goal-actions"])]
 
 
 def goals_page_state(state: str, monkeypatch) -> int:
-    """One Goals state on the fixed day for the signed-in person, and their id. "sample" and "edge" are the sweeps'
-    accounts; "nothing logged" a body weight goal from a given start; "line ended" a goal ten days past its date;
+    """One Goals state on the fixed day for the signed-in person, and their id. "four weeks" and "edge" are the
+    sweeps' accounts; "nothing logged" a body weight goal from a given start; "line ended" a goal ten days past its date;
     "no goals" a new account."""
-    from .test_pages_text import edge_account, sample_account  # noqa: PLC0415
+    from .test_pages_text import edge_account, four_week_account  # noqa: PLC0415
 
     monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
     uid = only_user().id
-    if state == "sample":
-        sample_account(uid)
+    if state == "four weeks":
+        four_week_account(uid)
     elif state == "edge":
         edge_account(uid)
     elif state == "nothing logged":
@@ -1693,7 +1692,7 @@ def goals_page_state(state: str, monkeypatch) -> int:
     return uid
 
 
-GOAL_STATES = ("sample", "edge", "nothing logged", "line ended", "no goals")
+GOAL_STATES = ("four weeks", "edge", "nothing logged", "line ended", "no goals")
 
 
 def plan_words(g: dict) -> list[str]:
@@ -1718,7 +1717,7 @@ def test_each_card_on_the_page_is_its_goal_charts_goal(signed, monkeypatch, stat
         card, q = goal_card(page, g["goal_id"]), web.goal_quantity(g)
         assert card["label"] == card["strong"] == [g["label"]]
         assert card["by"] == [f"by {formatting.day(g['target_date'], charted['today'])}"]
-        assert card["sample"] == g["is_sample"]
+        assert card["head_tags"] == []
         assert card["tag"][1] == TAG_WORDS[g["status"]]
         assert card["ask"] == ([ASK] if g["status"] == "behind" else [])
         assert card["cells"] == fact_cells(g, charted["today"])
@@ -1734,9 +1733,9 @@ def test_each_card_on_the_page_is_its_goal_charts_goal(signed, monkeypatch, stat
         assert card["means"] == [g["note"] if g["status"] == "not enough data" else web.STATUS_MEANS[g["status"]]]
 
 
-@pytest.mark.parametrize("state", ["sample", "edge", "line ended"])
+@pytest.mark.parametrize("state", ["four weeks", "edge", "line ended"])
 def test_rule_2_on_the_real_page_the_now_figure_is_plan_lines(signed, monkeypatch, state):
-    """Each real goal, on the sample account (one widens), the edge account (every kind, on the line) and past its
+    """Each real goal, on the four-week account (one widens), the edge account (every kind, on the line) and past its
     date: the now figure, its no-break space made plain, is the figure plan_line gives for now."""
     goals_page_state(state, monkeypatch)
     page = signed.get("/goals").text
@@ -1747,15 +1746,15 @@ def test_rule_2_on_the_real_page_the_now_figure_is_plan_lines(signed, monkeypatc
         said = re.match(r"(?:On the plan line today, at )?(.+?)(?: now against | now, at the target\.|\.$)",
                         g["plan_line"]).group(1)
         assert now == said, (now, g["plan_line"])
-    if state == "sample":
+    if state == "four weeks":
         assert goal_card(page, 1)["now"] == f"79.01{NB}kg"
     if state == "edge":
         assert {g["kind"] for g in goals} == {"bodyweight", "lift", "cardio_best", "measurement"}
 
 
-def test_the_two_statements_disagree_on_the_sample_body_weight_goal_and_both_show(signed, monkeypatch):
+def test_the_two_statements_disagree_on_the_four_week_body_weight_goal_and_both_show(signed, monkeypatch):
     """Section E1's case on the fixed day: behind the plan line today, and on track by projection."""
-    goals_page_state("sample", monkeypatch)
+    goals_page_state("four weeks", monkeypatch)
     card = goal_card(signed.get("/goals").text, 1)
     assert card["label"] == ["Body weight 77 kg"]
     assert card["heading"] == "Behind the plan line today"
@@ -1807,12 +1806,11 @@ def test_a_status_that_changes_still_goes_through_set_goal(signed):
     assert calls(uid) == [("set_goal", True, None)] * 4
 
 
-def test_the_frame_runs_head_banner_strips_goals_closed_then_set_a_goal(signed, monkeypatch):
-    """Section L's order, which is the markup order: the page head, then in div.goals-main the banner, the saved
-    line, each goal note, ul.goals and the Closed goals card; Set a goal beside it, an aside named by its h2."""
+def test_the_frame_runs_head_strips_goals_closed_then_set_a_goal(signed, monkeypatch):
+    """Section L's order, which is the markup order: the page head, then in div.goals-main the saved line, each goal note, ul.goals and the Closed goals card; Set a goal beside it, an aside named by its h2."""
     from .test_pages_text import parse  # noqa: PLC0415
 
-    uid = goals_page_state("sample", monkeypatch)
+    uid = goals_page_state("four weeks", monkeypatch)
     services.set_goal(uid, {"goal_id": 3, "status": "dropped"}, "claude")
     page = signed.get("/goals?saved=goal&notes=duplicate,start").text
     [main] = parse(page).find_all("main")
@@ -1823,11 +1821,11 @@ def test_the_frame_runs_head_banner_strips_goals_closed_then_set_a_goal(signed, 
     head, goals_main, aside = main.elements()
     assert [(n.tag, n.text()) for n in head.elements()] == [("h1", "Goals")]
     assert [shape(n) for n in goals_main.elements()] == [
-        ("p", ["notice", "sample-banner"], None, None), ("p", ["ok"], None, None),
+        ("p", ["ok"], None, None),
         ("p", ["notice", "goal-note"], None, None), ("p", ["notice", "goal-note"], None, None),
         ("ul", ["goals"], None, None), ("section", ["card"], None, "closed-goals-title")]
-    assert [li.attrs["id"] for li in goals_main.elements()[4].elements()] == ["goal-1", "goal-2"]
-    assert goals_main.elements()[4].attrs.get("aria-label") == "Open goals"
+    assert [li.attrs["id"] for li in goals_main.elements()[3].elements()] == ["goal-1", "goal-2"]
+    assert goals_main.elements()[3].attrs.get("aria-label") == "Open goals"
     assert [(h.tag, h.attrs.get("id")) for h in aside.elements()[:1]] == [("h2", "set-goal-title")]
     assert "Open goals</h2>" not in page and page.count('<li class="goal"') == 2
 
@@ -1946,7 +1944,7 @@ def legend_of(g: dict) -> list[tuple]:
     return [LEGEND["plan"]] + line + ([LEGEND["projection"]] if projected else []) + [LEGEND["today"]]
 
 
-@pytest.mark.parametrize("state", ["sample", "edge", "nothing logged", "line ended"])
+@pytest.mark.parametrize("state", ["four weeks", "edge", "nothing logged", "line ended"])
 def test_each_goal_chart_is_its_read_drawn_on_the_pages_today(signed, monkeypatch, state):
     """Each real goal on the fixed day: the chart is charts.goal_svg of goal_charts' own goal on goal_charts' today.
     Its dots are the read's path.actual, the ring at today holds latest, the plan line ends at the target tick, the
@@ -1985,10 +1983,10 @@ def test_each_goal_chart_is_its_read_drawn_on_the_pages_today(signed, monkeypatc
         assert goal_card(page, g["goal_id"])["legend"] == [legend_of(g)]
 
 
-def test_the_sample_charts_on_the_fixed_day(signed, monkeypatch):
-    """The three sample goals: each a line of points with a projection to its projected date, and the body weight
+def test_the_four_week_charts_on_the_fixed_day(signed, monkeypatch):
+    """The three goals of the four weeks: each a line of points with a projection to its projected date, and the body weight
     desc says the widened plan_line while its start stays unwidened."""
-    goals_page_state("sample", monkeypatch)
+    goals_page_state("four weeks", monkeypatch)
     page = signed.get("/goals").text
     for goal_id in (1, 2, 3):
         drawn = chart_marks(svg_of(page, goal_id))
@@ -2143,7 +2141,7 @@ def test_plan_line_today_prints_the_figure_plan_line_prints_widened_and_not(sign
     assert plan(run) == "29:29.6" and run["now"] == "29:30.4"
 
 
-@pytest.mark.parametrize("state", ["sample", "edge", "line ended"])
+@pytest.mark.parametrize("state", ["four weeks", "edge", "line ended"])
 def test_plan_line_today_on_the_real_page_is_the_plan_figure_plan_line_says(signed, monkeypatch, state):
     """Each real goal off the plan line: Plan line today, its no-break space made plain, is the plan figure in
     plan_line, "on the plan line today" or "the target of". On the line, no Plan line today row (rule 3)."""
@@ -2157,7 +2155,7 @@ def test_plan_line_today_on_the_real_page_is_the_plan_figure_plan_line_says(sign
             continue
         said = re.search(r" now against (?:the target of )?(.+?)(?: on the plan line today)?: ", g["plan_line"])
         assert cells["Plan line today"].replace(NB, " ") == said.group(1), (cells, g["plan_line"])
-    if state == "sample":
+    if state == "four weeks":
         assert dict((c[0], c[1]) for c in goal_card(page, 1)["cells"])["Plan line today"] == f"78.96{NB}kg"
     if state == "edge":
         assert {g["vs_plan"] for g in goals} == {"on the line"}
@@ -2240,7 +2238,7 @@ def test_closed_goals_each_say_their_label_the_day_in_the_persons_zone_the_tag_a
     (either side of their midnight), the tag Hit or Dropped as tag-closed, and Reopen as a link button."""
     services.update_settings(only_user().id, {"time_zone": "Asia/Kolkata"}, "web")
     closed = [{**CLOSED[0], "closed_at": "2026-11-05T18:29:00+00:00"},   # 23:59 on Thu 5 Nov in India
-              {**CLOSED[1], "closed_at": "2026-11-05T18:31:00+00:00", "is_sample": True}]  # 00:01 on Fri 6 Nov
+              {**CLOSED[1], "closed_at": "2026-11-05T18:31:00+00:00"}]  # 00:01 on Fri 6 Nov
     fake_goals([numbers(1)], closed)
     page = signed.get("/goals").text
     reopen = lambda n: [(f"/goals/{n}/status", [("status", "open")], [(["link"], "Reopen")])]  # noqa: E731
@@ -2251,7 +2249,7 @@ def test_closed_goals_each_say_their_label_the_day_in_the_persons_zone_the_tag_a
          "forms": reopen(9)},
         {"li": ("li", ["entry-line"], "goal-10"), "main": ("div", ["entry-main"]),
          "parts": [(["entry-name"], "Waist 85 cm"), (["entry-figures"], "Closed Fri 6 Nov")],
-         "tags": [(["tag", "tag-closed"], "Dropped"), (["tag", "tag-sample"], "sample")], "where": ["entry-tags"],
+         "tags": [(["tag", "tag-closed"], "Dropped")], "where": ["entry-tags"],
          "actions": ["entry-actions"], "forms": reopen(10)}]
     assert "Bench Press 80 kg" in goal_item(page, 9) and "Waist 85 cm" in goal_item(page, 10)  # goal_item reads a row
 

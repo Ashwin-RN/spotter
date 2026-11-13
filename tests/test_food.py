@@ -42,8 +42,7 @@ def test_a_stated_number_is_you_said_and_a_guess_is_claude_estimate(user):
     assert r["kind"] == "food_entry" and r["ids"] == [e["id"] for e in r["entries"]] and r["duplicate"] is False
     assert set(r) == {"kind", "ids", "duplicate", "entries", "day", "summary", "links", "note"}
     assert set(r["entries"][0]) == {"id", "date", "meal", "description", "kcal", "source", "estimated",
-                                    "saved_food_id", "servings", "usda_fdc_id", "grams", "is_sample"}
-    assert r["entries"][0]["is_sample"] is False
+                                    "saved_food_id", "servings", "usda_fdc_id", "grams"}
     assert r["note"].startswith("1 entry is Claude's estimate:")
     two = eat(user, {"description": "a", "kcal": 1, "estimated": True}, {"description": "b", "kcal": 2, "estimated": True})
     assert two["note"].startswith("2 entries are Claude's estimates: the person can confirm or correct them")
@@ -387,7 +386,7 @@ def test_list_saved_foods_agrees_with_find_food(user):
     by_name = {f["name"]: f for f in listed["foods"]}
     assert by_name["Roti"] == {"id": r["id"], "name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
                                "grams_per_serving": None, "times_logged": 2,
-                               "last_logged": users.today_for(user).isoformat(), "is_sample": False,
+                               "last_logged": users.today_for(user).isoformat(),
                                "deleted_at": None}
     assert by_name["dal bowl"]["times_logged"] == 0 and by_name["dal bowl"]["last_logged"] is None
     assert by_name["Oats"]["deleted_at"] is not None
@@ -399,10 +398,13 @@ def test_list_saved_foods_agrees_with_find_food(user):
     assert services.list_saved_foods(987654)["error"] == "no_account"
 
 
-def test_list_saved_foods_marks_sample_foods(user):
-    services.add_sample_data(user.id, "web")
+def test_list_saved_foods_on_the_four_weeks(user):
+    from evals.four_weeks import four_weeks
+    four_weeks(user.id)
     foods = services.list_saved_foods(user.id)["foods"]
-    assert len(foods) == 4 and all(f["is_sample"] for f in foods) and foods[0]["times_logged"] > 0
+    assert len(foods) == 4 and all(f["times_logged"] > 0 for f in foods)
+    assert all(set(f) == {"id", "name", "serving_label", "kcal_per_serving", "grams_per_serving", "times_logged",
+                          "last_logged", "deleted_at"} for f in foods)
 
 
 # ---------------------------------------------------------------- stage 5: the read throttle (decision 13)

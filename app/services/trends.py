@@ -17,15 +17,15 @@ get_trends(user_id)
                    last 28 days / 4, 1 dp.
       maintenance  metrics.maintenance over the 21 days ending today, or null with maintenance_note
                    saying what it still needs. It never sets the calorie target.
-    An entry dated after today counts as today's (metrics.on_or_before). includes_sample is true when
-    any row read is sample data, and the note then says so (common.SAMPLE_NOTE).
+    An entry dated after today counts as today's (metrics.on_or_before). When there is no weekly rate,
+    the note says why.
     bodyweight.now, smoothed and each series point's smoothed come back at 1 dp (formatting.rounded),
     after the rate is worked out from the unrounded line. A weigh-in's own kg stays as entered.
 
 get_days(user_id)
     A read, for the web only: the 28 days ending today, from the same rows get_trends reads. Per day:
     lift sessions, cardio entries and minutes, food entries and kcal (null with no food), whether a
-    weigh-in was logged, and whether any of the day's rows is sample data. Then four weeks, each the 7
+    weigh-in was logged. Then four weeks, each the 7
     days ending on its `to`, the last ending today; the latest, highest and lowest weigh-in of the 28
     days (a tie for high or low goes to the latest in the one order); and the 28 days' counts. Live rows
     only. An entry dated after today counts as today's. cardio_minutes come back at 1 dp, as get_trends
@@ -39,7 +39,7 @@ from sqlalchemy import select
 from app import db, formatting, links, metrics, users
 from app.models import CardioEntry, FoodEntry, LiftSession, User
 from app.services import body
-from app.services.common import SAMPLE_NOTE, no_account
+from app.services.common import no_account
 
 WINDOW_DAYS = 28
 WEEK_DAYS = 7
@@ -147,7 +147,7 @@ def get_trends(user_id: int) -> dict:
     days_logged_28d, estimated_share_pct_28d, target_kcal} | null, sessions {this_week, target_per_week,
     per_week_4w}, cardio {minutes_this_week, target_minutes, minutes_per_week_4w}, maintenance {kcal,
     intake_avg_kcal, weight_change_kg, days_logged, window_days, from, to} | null, maintenance_note,
-    includes_sample, how, summary, links {progress, goals, settings}[, note]} or {error, message, fix}.
+    how, summary, links {progress, goals, settings}[, note]} or {error, message, fix}.
     A read: no lock, no write limit."""
     with db.new_session() as s:
         user = s.get(User, user_id)
@@ -175,16 +175,13 @@ def get_trends(user_id: int) -> dict:
         points = [(b.date, b.kg) for b in weighed]
         maintenance = metrics.maintenance(intake, points, today)
         maintenance_note = None if maintenance else metrics.maintenance_gap(intake, points, today)
-        sample = any(row.is_sample for row in (*weighed, *eaten, *trained, *moved))
         out = {"today": today.isoformat(), "bodyweight": weight, "calories": calories, "sessions": sessions,
-               "cardio": cardio, "maintenance": maintenance, "maintenance_note": maintenance_note,
-               "includes_sample": sample, "how": TRENDS_HOW,
+               "cardio": cardio, "maintenance": maintenance, "maintenance_note": maintenance_note, "how": TRENDS_HOW,
                "summary": _summary(weight, calories, sessions, cardio, maintenance, maintenance_note),
                "links": {"progress": links.page("progress"), "goals": links.page("goals"),
                          "settings": links.page("settings")}}
-        note = " ".join(t for t in (rate_note, SAMPLE_NOTE if sample else None) if t)
-        if note:
-            out["note"] = note
+        if rate_note:
+            out["note"] = rate_note
         return out
 
 
@@ -210,10 +207,10 @@ def get_days(user_id: int) -> dict:
     """The 28-day grid. See the module notes.
 
     Returns {today, from, to, days [{date, lift_sessions, cardio_entries, cardio_minutes, food_entries,
-    kcal | null, weighed, is_sample}] (28, oldest first), weeks [{to, lift_sessions, cardio_minutes}] (4,
+    kcal | null, weighed}] (28, oldest first), weeks [{to, lift_sessions, cardio_minutes}] (4,
     oldest first), weight {latest, high, low} | null (each {date, kg}), lift_sessions_28d, lift_days_28d,
-    cardio_days_28d, includes_sample[, note]} or {error, message, fix}. Web only: no MCP function returns
-    it. A read: no lock, no write limit."""
+    cardio_days_28d} or {error, message, fix}. Web only: no MCP function returns it. A read: no lock, no
+    write limit."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
@@ -238,8 +235,7 @@ def get_days(user_id: int) -> dict:
             weigh = [b for b in weighed if on(b) == d]
             days.append({"date": d.isoformat(), "lift_sessions": len(lifted), "cardio_entries": len(cardio),
                          "cardio_minutes": round(sum((c.minutes for c in cardio), 0.0), 1), "food_entries": len(food),
-                         "kcal": sum(int(f.kcal) for f in food) if food else None, "weighed": bool(weigh),
-                         "is_sample": any(row.is_sample for row in (*food, *lifted, *cardio, *weigh))})
+                         "kcal": sum(int(f.kcal) for f in food) if food else None, "weighed": bool(weigh)})
         weeks = []
         for n in range(WEEKS):
             to = today - timedelta(days=WEEK_DAYS * (WEEKS - 1 - n))
@@ -247,11 +243,6 @@ def get_days(user_id: int) -> dict:
             inside = lambda row: first <= on(row) <= to  # noqa: E731
             weeks.append({"to": to.isoformat(), "lift_sessions": sum(1 for t in trained if inside(t)),
                           "cardio_minutes": round(sum((c.minutes for c in moved if inside(c)), 0.0), 1)})
-        sample = any(row.is_sample for row in (*weighed, *eaten, *trained, *moved))
-        out = {"today": today.isoformat(), "from": start.isoformat(), "to": today.isoformat(), "days": days,
-               "weeks": weeks, "weight": _weight(weighed), "lift_sessions_28d": len(trained),
-               "lift_days_28d": len({on(t) for t in trained}), "cardio_days_28d": len({on(c) for c in moved}),
-               "includes_sample": sample}
-        if sample:
-            out["note"] = SAMPLE_NOTE
-        return out
+        return {"today": today.isoformat(), "from": start.isoformat(), "to": today.isoformat(), "days": days,
+                "weeks": weeks, "weight": _weight(weighed), "lift_sessions_28d": len(trained),
+                "lift_days_28d": len({on(t) for t in trained}), "cardio_days_28d": len({on(c) for c in moved})}

@@ -1,4 +1,4 @@
-"""export_data: every table the person owns as CSV, deleted and sample rows in, another person's rows out."""
+"""export_data: every table the person owns as CSV, deleted rows in, another person's rows out."""
 
 import csv
 import io
@@ -9,6 +9,7 @@ import pytest
 
 from app import db, services
 from app.models import Base, user_tables
+from evals.four_weeks import four_weeks
 
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
 BOM = "\ufeff"
@@ -56,7 +57,7 @@ def test_every_table_and_every_file(make_user):
     assert r["rows"] == {"account.csv": 1, "lift_sessions.csv": 1, "lift_sets.csv": 2, "bodyweight.csv": 2,
                          "measurements.csv": 2, "goals.csv": 1, "saved_foods.csv": 1, "food_entries.csv": 2,
                          "cardio_entries.csv": 1}
-    assert r["summary"] == "13 rows in 9 CSV files, deleted and sample rows included, times in UTC."
+    assert r["summary"] == "13 rows in 9 CSV files, deleted rows included, times in UTC."
     account = table(r["files"]["account.csv"])
     assert account == [{"account_id": str(user.id), "email": "asha@example.com", "name": "Asha",
                         "time_zone": "Asia/Kolkata", "calorie_target_kcal": "2200", "target_sessions_per_week": "",
@@ -81,17 +82,17 @@ def test_deleted_rows_are_in_with_their_time_and_times_are_utc(make_user):
     assert weigh_ins[str(ids["weigh_in"])]["deleted_at"] == ""
     assert weigh_ins[str(ids["weigh_in"])]["created_at"] == "2026-11-10T08:30:00+00:00"
     assert set(weigh_ins[str(ids["weigh_in"])]) == {"id", "date", "kg", "logged_by", "created_at", "updated_at",
-                                                    "deleted_at", "is_sample"}
+                                                    "deleted_at"}
 
 
-def test_names_not_ids_and_the_tags_and_sample_marks(make_user):
+def test_names_not_ids_and_the_tags(make_user):
     user = make_user()
     ids = one_of_everything(user.id)
     files = services.export_data(user.id)["files"]
     food = table(files["food_entries.csv"])
-    assert [(f["description"], f["source"], f["saved_food_id"], f["saved_food"], f["is_sample"]) for f in food] == [
-        ("Roti", "saved_food", str(ids["roti"]), "Roti", "false"),
-        ('dal, with "ghee"', "claude_estimate", "", "", "false")]
+    assert [(f["description"], f["source"], f["saved_food_id"], f["saved_food"]) for f in food] == [
+        ("Roti", "saved_food", str(ids["roti"]), "Roti"),
+        ('dal, with "ghee"', "claude_estimate", "", "")]
     assert table(files["cardio_entries.csv"])[0]["exercise"] == "Outdoor Run"
     goal = table(files["goals.csv"])[0]
     assert goal["kind"] == "measurement" and goal["measurement_kind"] == "waist" and goal["exercise"] == ""
@@ -134,14 +135,14 @@ def test_imported_rows_say_import_and_the_readme_says_what_it_means(make_user):
         assert "logged_by" not in next(csv.reader(io.StringIO(files[name].removeprefix(BOM)))), name
 
 
-def test_sample_rows_are_marked(make_user, monkeypatch):
+def test_no_file_has_a_sample_column(make_user):
+    """Decision 4: the export carries no is_sample column, on any file, nor a word of it in the README."""
     user = make_user()
-    services.add_sample_data(user.id, "web")
+    four_weeks(user.id)
     r = services.export_data(user.id)
     assert r["rows"]["food_entries.csv"] == 240 and r["rows"]["goals.csv"] == 3
-    for name in ("lift_sessions.csv", "bodyweight.csv", "goals.csv", "saved_foods.csv", "food_entries.csv",
-                 "cardio_entries.csv", "measurements.csv"):
-        assert {row["is_sample"] for row in table(r["files"][name])} == {"true"}, name
+    for name, text in r["files"].items():
+        assert "sample" not in text.casefold(), name
 
 
 def test_another_persons_rows_are_out(make_user):
@@ -205,7 +206,7 @@ def test_headers_are_snake_case_with_a_unit_on_every_fixed_unit_number(make_user
     user = make_user(calorie_target_kcal=2200, target_sessions_per_week=3, target_cardio_minutes_per_week=150)
     one_of_everything(user.id)
     hostile(user.id)
-    services.add_sample_data(make_user().id, "web")   # another person's: no bearing on this export
+    four_weeks(make_user().id)   # another person's: no bearing on this export
     files = services.export_data(user.id)["files"]
     checked = set()
     for name, text in files.items():

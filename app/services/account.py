@@ -24,6 +24,11 @@ set_claude_can(user_id, value)
 
     Changing the zone changes no stored entry: entries keep the dates they were logged with.
 
+account_empty(user_id)
+    Today's read for a new account: empty is true when the person has no live entry in the five entry
+    tables, no live saved food and no open goal. Deleted rows and closed goals (hit or dropped) do not
+    count. A read: no lock, no write limit. The page then shows what to do first.
+
 list_exercises(kind=None, category=None)
     The names entries must use, filtered by kind (lift, cardio) and category.
 
@@ -47,7 +52,7 @@ from sqlalchemy import delete, func, select, update
 from app import db, exercises as exercise_list, formatting, links, rules, users
 from app.models import (
     CLAUDE_CAN, EXERCISE_KINDS, Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement,
-    SavedFood, User,
+    SavedFood, User, entry_models,
 )
 from app.rules import error, quote
 from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account, truthy
@@ -86,6 +91,17 @@ def whoami(user_id: int) -> dict:
         if not isinstance(users.zone_for(user.time_zone), ZoneInfo):
             out["time_zone_note"] = TIME_ZONE_NOTE
         return out
+
+
+def account_empty(user_id: int) -> dict:
+    """Returns {empty} or {error, message, fix}. See the module notes."""
+    with db.new_session() as s:
+        if s.get(User, user_id) is None:
+            return no_account()
+        for model in (*entry_models(), SavedFood):
+            if s.scalar(select(model.id).where(model.user_id == user_id, model.deleted_at.is_(None)).limit(1)):
+                return {"empty": False}
+        return {"empty": not s.scalar(select(Goal.id).where(Goal.user_id == user_id, Goal.status == "open").limit(1))}
 
 
 # ---------------------------------------------------------------- settings

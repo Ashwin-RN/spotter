@@ -5,7 +5,7 @@ get_goals, the page's text holds exactly show(value, quantity, page=True) of the
 the figure's own element. Text inside an SVG chart and a label built in a service are compared with
 page=False. The chart's description never widens.
 
-Run on the real services, on the sample account and on an edge account, so show on both sides holds
+Run on the real services, on the four-week account and on an edge account, so show on both sides holds
 whatever precision a service field carries. An open goal card reads goal_charts, unrounded: its cells are held
 to goal_charts' own fields, and its now figure to the one plan_line prints.
 """
@@ -25,10 +25,10 @@ from app.models import Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Me
 from app.services import lifts
 
 from . import text_rules as tr
-from .test_pages_text import edge_account, sample_account
+from .test_pages_text import edge_account, four_week_account
 from .test_web import FIXED_NOW, body_weight_card, client, only_user, seam, sign_in, web_client  # noqa: F401 - fixtures
 
-ACCOUNTS = {"sample": sample_account, "edge": edge_account}
+ACCOUNTS = {"four weeks": four_week_account, "edge": edge_account}
 # A goal's figures take the goal unit's quantity (contract section C).
 GOAL_QUANTITY = {"bodyweight": "bodyweight_derived", "lift": "estimated_max", "cardio_best": "goal_time"}
 
@@ -384,7 +384,7 @@ def saved_food_rows(page: str) -> tuple[list[str], list[list[str]]]:
 
 
 def test_each_saved_food_row_holds_list_saved_foods_figures_cell_by_cell(client, account):
-    """Every live saved food, in list_saved_foods' order, cell by cell under its header: the name and its sample tag,
+    """Every live saved food, in list_saved_foods' order, cell by cell under its header: the name,
     the serving as written, kcal_per_serving, times_logged as a count and grams_per_serving, each through show, a food
     with no grams an empty cell, and the Grams column only when some food has grams. So two columns swapped, a figure
     off the formatter, or a deleted food shown, fail."""
@@ -396,7 +396,7 @@ def test_each_saved_food_row_holds_list_saved_foods_figures_cell_by_cell(client,
         ["Edit", "Delete"]
     want = []
     for f in live:
-        cells = {"Food": f["name"] + (" sample" if f["is_sample"] else ""), "Serving": f["serving_label"],
+        cells = {"Food": f["name"], "Serving": f["serving_label"],
                  "kcal": show(f["kcal_per_serving"], "kcal_per_serving", page=True, unit=False),
                  "Times logged": show(f["times_logged"], "count", page=True),
                  "Grams (g)": "" if f["grams_per_serving"] is None else show(f["grams_per_serving"], "grams", page=True,

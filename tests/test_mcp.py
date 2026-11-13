@@ -382,17 +382,23 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("get_trends")  # weigh-ins 30 days apart and food: a rate and calories, no maintenance yet
     keep("get_goals")
     keep("get_goals", {"include_closed": True})  # the squat goal marked hit
-    # A second person with sample data: every read carries includes_sample and its note.
-    sample_token = sign(claims(sub="user_01SAMPLE", email="sample@example.com", name="Sample"))
-    sample_account = whoami(client, sample_token)["account_id"]
-    added = services.add_sample_data(sample_account, "web")
+    # A second person with four weeks of everything (evals/four_weeks.py): every read, full.
+    from evals.four_weeks import four_weeks
+    full_token = sign(claims(sub="user_01FULL", email="full@example.com", name="Full"))
+    full_account = whoami(client, full_token)["account_id"]
+    added = four_weeks(full_account)
     assert "error" not in added, added
     for name in ("get_log", "get_progress", "get_trends", "get_goals"):
-        keep(name, as_token=sample_token)
-    # A sample goal dropped: the closed list then holds a sample goal too.
-    sample_goal = seen["get_goals"][-1]["goals"][0]["goal_id"]
-    keep("set_goal", {"goal_id": sample_goal, "status": "dropped"}, as_token=sample_token)
-    keep("get_goals", {"include_closed": True}, as_token=sample_token)
+        keep(name, as_token=full_token)
+    # One of its goals dropped: the closed list then holds it.
+    full_goal = seen["get_goals"][-1]["goals"][0]["goal_id"]
+    keep("set_goal", {"goal_id": full_goal, "status": "dropped"}, as_token=full_token)
+    keep("get_goals", {"include_closed": True}, as_token=full_token)
+    # A third person with one weigh-in: get_trends has no rate, and its note says why.
+    one_token = sign(claims(sub="user_01ONE", email="one@example.com", name="One"))
+    keep("log_bodyweight", {"kg": 80}, as_token=one_token)
+    keep("get_trends", as_token=one_token)
+    assert seen["get_trends"][-1]["note"] and seen["get_trends"][-1]["bodyweight"]["rate_per_week"] is None
     # import_entries, last, so no read above sees its rows: a preview, the real run, the same rows again, and a
     # run whose every row fails (no date passed: from, to and the day link are null or absent).
     keep("import_entries", {"rows": import_rows(today), **IMPORT_UNITS})  # dry_run left out: by_row, a null id
@@ -1331,9 +1337,10 @@ def test_get_log_publishes_the_days_range(http):
 def test_the_write_limit_counts_the_same_names_the_switch_gates_as_writes():
     # The services count call-log rows by function name; every write Claude can make must be among them.
     writes = {name for name, level in mcp_server.NEEDS.items() if level != "read"}
-    # Besides them, only the web's own writes, which no function makes (stage 5: sample data, delete account).
+    # Besides them, only the web's own writes, which no function makes (delete account).
     assert writes <= set(services.WRITE_FUNCTIONS)
-    assert set(services.WRITE_FUNCTIONS) - writes <= {"add_sample_data", "remove_sample_data", "delete_account"}
+    assert set(services.WRITE_FUNCTIONS) - writes <= {"delete_account"}
+    assert not {"add_sample_data", "remove_sample_data"} & set(services.WRITE_FUNCTIONS)   # decision 7
 
 
 # ---------------------------------------------------------------- food: the tag is the server's (stage 4)
@@ -1465,10 +1472,11 @@ def test_the_real_results_include_the_null_cases_and_the_filled_ones(http):
     assert any(r["bodyweight"]["rate_window"] is not None for r in trends if r["bodyweight"])
     assert any(r["closed"] for r in seen["get_goals"]) and any(not r["goals"] for r in seen["get_goals"])
     closed = [g for r in seen["get_goals"] for g in r["closed"]]
-    assert any(g["is_sample"] for g in closed) and any(not g["is_sample"] for g in closed)
-    for name in ("get_log", "get_progress", "get_trends", "get_goals"):
-        assert any(r["includes_sample"] is True and r["note"] for r in seen[name]), name
-        assert any(r["includes_sample"] is False for r in seen[name]), name
+    assert len(closed) >= 2 and not any("is_sample" in g for g in closed)
+    # Decision 3: no result of any function carries a sample field or a word of sample data.
+    for name, results in seen.items():
+        for r in results:
+            assert "sample" not in json.dumps(r).casefold(), name
 
 
 # ---------------------------------------------------------------- update_settings: null clears a target
@@ -1630,13 +1638,12 @@ SITE = "https://spotter.example.app"
 GOAL_NUMBER_KEYS = {"goal_id", "label", "kind", "exercise", "measurement_kind", "distance_km", "unit", "start_value",
                     "start_date", "direction", "target_value", "target_date", "latest", "status", "needed_per_week",
                     "actual_per_week", "projected_date", "projection", "note",
-                    "is_sample",  # is_sample: beyond the contract's shape, sent by the services for rule 16
                     "should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line"}
 # The plan line's five fields (stage 6, E1): optional with a null default, so a result without them validates.
 PLAN_LINE_KEYS = {"should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line"}
 CONTRACT_KEYS = {
     "GetTrendsResult": {"today", "bodyweight", "calories", "sessions", "cardio", "maintenance", "maintenance_note",
-                        "includes_sample", "how", "summary", "links", "note"},
+                        "how", "summary", "links", "note"},
     "BodyweightTrends": {"now", "smoothed", "rate_per_week", "rate_window", "weigh_ins_28d", "series"},
     "RateWindow": {"from", "to", "days"},
     "SmoothedPoint": {"date", "kg", "smoothed"},
@@ -1646,13 +1653,12 @@ CONTRACT_KEYS = {
     "CardioTrends": {"minutes_this_week", "target_minutes", "minutes_per_week_4w"},
     "Maintenance": {"kcal", "intake_avg_kcal", "weight_change_kg", "days_logged", "window_days", "from", "to"},
     "TrendsLinks": {"progress", "goals", "settings"},
-    "GetGoalsResult": {"today", "goals", "closed", "includes_sample", "how", "summary", "links", "note"},
-    "ClosedGoal": {"goal_id", "label", "kind", "status", "closed_at", "target_value", "target_date",
-                   "is_sample"},  # is_sample: beyond the contract's shape, as on GoalNumbers
+    "GetGoalsResult": {"today", "goals", "closed", "how", "summary", "links"},
+    "ClosedGoal": {"goal_id", "label", "kind", "status", "closed_at", "target_value", "target_date"},
     "GoalNumbers": GOAL_NUMBER_KEYS,
 }
 # Of the new shapes, only the top-level note is ever left out.
-OPTIONAL_KEYS = {"GetTrendsResult": {"note"}, "GetGoalsResult": {"note"}, "GoalNumbers": PLAN_LINE_KEYS}
+OPTIONAL_KEYS = {"GetTrendsResult": {"note"}, "GoalNumbers": PLAN_LINE_KEYS}
 
 
 def numbers(goal_id: int, kind: str, label: str, unit: str, line: bool = True, **which) -> dict:
@@ -1666,7 +1672,7 @@ def numbers(goal_id: int, kind: str, label: str, unit: str, line: bool = True, *
             "status": "on track" if line else "not enough data", "needed_per_week": -0.26 if line else None,
             "actual_per_week": -0.3 if line else None, "projected_date": "2027-01-02" if line else None,
             "projection": projection if line else None,
-            "note": None if line else "A line needs 4 points in the last 6 weeks; there is 1.", "is_sample": False}
+            "note": None if line else "A line needs 4 points in the last 6 weeks; there is 1."}
 
 
 EVERY_KIND = [
@@ -1675,14 +1681,13 @@ EVERY_KIND = [
     numbers(3, "measurement", "Waist 80 cm", "cm", measurement_kind="waist"),
     numbers(4, "cardio_best", "Outdoor Run 5 km in 28:00", "min", line=False, exercise="Outdoor Run", distance_km=5.0),
 ]
-SAMPLE_NOTE = "These numbers include sample data. The Remove sample data button on Settings takes it out."
 TRENDS_LINKS = {"progress": f"{SITE}/progress", "goals": f"{SITE}/goals", "settings": f"{SITE}/settings"}
 TRENDS_EMPTY = {
     "today": "2026-11-10", "bodyweight": None, "calories": None,
     "sessions": {"this_week": 0, "target_per_week": None, "per_week_4w": 0.0},
     "cardio": {"minutes_this_week": 0.0, "target_minutes": None, "minutes_per_week_4w": 0.0},
     "maintenance": None, "maintenance_note": "Needs food logged on 14 more of the last 21 days.",
-    "includes_sample": False, "how": "How.", "summary": "Nothing logged yet.", "links": TRENDS_LINKS,
+    "how": "How.", "summary": "Nothing logged yet.", "links": TRENDS_LINKS,
 }
 TRENDS_NO_RATE = {
     **TRENDS_EMPTY,
@@ -1705,17 +1710,16 @@ TRENDS_FULL = {
     "cardio": {"minutes_this_week": 85.0, "target_minutes": 150, "minutes_per_week_4w": 83.8},
     "maintenance": {"kcal": 2530, "intake_avg_kcal": 2205, "weight_change_kg": -0.9, "days_logged": 21,
                     "window_days": 21, "from": "2026-10-21", "to": "2026-11-10"},
-    "maintenance_note": None, "includes_sample": True, "how": "How.", "summary": "Down 0.31 kg a week.",
-    "links": TRENDS_LINKS, "note": SAMPLE_NOTE,
+    "maintenance_note": None, "how": "How.", "summary": "Down 0.31 kg a week.",
+    "links": TRENDS_LINKS,
 }
-GOALS_EMPTY = {"today": "2026-11-10", "goals": [], "closed": [], "includes_sample": False, "how": "How.",
+GOALS_EMPTY = {"today": "2026-11-10", "goals": [], "closed": [], "how": "How.",
                "summary": "No goals yet.", "links": {"goals": f"{SITE}/goals"}}
 GOALS_FULL = {
     **GOALS_EMPTY, "goals": EVERY_KIND,
     "closed": [{"goal_id": 9, "label": "Bench Press 80 kg", "kind": "lift", "status": "dropped",
-                "closed_at": "2026-11-01T10:00:00+00:00", "target_value": 80.0, "target_date": "2027-02-01",
-                "is_sample": True}],
-    "includes_sample": True, "summary": "Four open goals.", "note": SAMPLE_NOTE,
+                "closed_at": "2026-11-01T10:00:00+00:00", "target_value": 80.0, "target_date": "2027-02-01"}],
+    "summary": "Four open goals.",
 }
 
 
@@ -1726,7 +1730,7 @@ def goal_row(n: dict) -> dict:
             "unit": n["unit"], "start_value": n["start_value"], "start_date": n["start_date"],
             "direction": n["direction"], "target_value": n["target_value"], "target_date": n["target_date"],
             "status": "open", "text": "", "created_at": "2026-11-01T10:00:00+00:00",
-            "updated_at": "2026-11-01T10:00:00+00:00", "closed_at": None, "is_sample": False}
+            "updated_at": "2026-11-01T10:00:00+00:00", "closed_at": None}
 
 
 def set_goal_result(n: dict) -> dict:
@@ -1749,10 +1753,9 @@ def test_the_new_models_have_exactly_the_contracts_keys():
         assert wire_fields(model) == keys, name
         required = {f.alias or n for n, f in model.model_fields.items() if f.is_required()}
         assert required == keys - OPTIONAL_KEYS.get(name, set()), name
-    for name in ("get_log", "get_progress"):
-        fields = RESULTS[name].model_fields
-        assert {"includes_sample", "note"} <= wire_fields(RESULTS[name]), name
-        assert fields["includes_sample"].is_required() and not fields["note"].is_required(), name
+    assert "note" not in wire_fields(RESULTS["get_log"]) and "note" not in wire_fields(RESULTS["get_goals"])
+    fields = RESULTS["get_progress"].model_fields
+    assert "note" in wire_fields(RESULTS["get_progress"]) and not fields["note"].is_required()
 
 
 @pytest.mark.parametrize("name, result", NEW_SHAPES, ids=NEW_SHAPE_IDS)
@@ -1767,24 +1770,28 @@ def test_the_contracts_shapes_validate_with_their_nulls_and_nothing_else_does(na
 
 
 @pytest.mark.parametrize("name, result", [
-    ("get_log", {"from": "2026-11-10", "to": "2026-11-10", "days": [], "includes_sample": True, "summary": "s",
+    ("get_log", {"from": "2026-11-10", "to": "2026-11-10", "days": [], "summary": "s",
                  "totals": {"sessions": 0, "weigh_ins": 1, "measurements": 0, "food_entries": 0, "cardio_entries": 0},
-                 "links": {"day": f"{SITE}/day/2026-11-10", "progress": f"{SITE}/progress"}, "note": SAMPLE_NOTE}),
-    ("get_progress", {"today": "2026-11-10", "lifts": [], "goals": EVERY_KIND, "includes_sample": True,
-                      "how": "How.", "links": {"progress": f"{SITE}/progress"}, "note": SAMPLE_NOTE}),
+                 "links": {"day": f"{SITE}/day/2026-11-10", "progress": f"{SITE}/progress"}}),
+    ("get_progress", {"today": "2026-11-10", "lifts": [], "goals": EVERY_KIND,
+                      "how": "How.", "links": {"progress": f"{SITE}/progress"}, "note": "No lift sessions logged yet."}),
 ], ids=["get_log", "get_progress"])
-def test_a_read_with_sample_rows_validates_with_its_note(name, result):
+def test_a_read_refuses_the_old_sample_fields(name, result):
+    """Decision 3: includes_sample and the sample note are gone from the results; a result that sent them fails."""
     RESULTS[name].model_validate(result)
     with pytest.raises(ValueError):
-        RESULTS[name].model_validate({**result, "includes_sample": "yes, some"})
+        RESULTS[name].model_validate({**result, "includes_sample": False})
 
 
 def test_the_new_fields_are_published(http):
     out = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}
-    for name in ("get_log", "get_progress", "get_trends", "get_goals"):
-        assert {"includes_sample", "note"} <= set(out[name]["properties"]), name
-    for name in ("get_log", "get_progress", "get_trends", "get_goals"):
-        assert "includes_sample" in out[name]["required"] and "note" not in out[name]["required"], name
+    for name in ("get_progress", "get_trends"):
+        assert "note" in out[name]["properties"] and "note" not in out[name]["required"], name
+    for name in ("get_log", "get_goals"):
+        assert "note" not in out[name]["properties"], name
+    # Decision 3: no function's input or output schema, nor its description, says a word of sample data.
+    for tool in tool_list(http, sign()):
+        assert "sample" not in json.dumps(tool).casefold(), tool["name"]
     for name in ("set_goal", "get_goals", "get_progress"):
         assert GOAL_NUMBER_KEYS == set(out[name]["$defs"]["GoalNumbers"]["properties"]), name
 
@@ -1819,9 +1826,9 @@ LIFT_DETAIL = {
 PLANNED_RESULTS = [
     *[("set_goal", set_goal_result(n)) for n in PLANNED],
     ("get_goals", {**GOALS_FULL, "goals": PLANNED}),
-    ("get_progress", {"today": "2026-11-10", "lifts": [], "goals": PLANNED, "includes_sample": False,
+    ("get_progress", {"today": "2026-11-10", "lifts": [], "goals": PLANNED,
                       "how": "How.", "links": {"progress": f"{SITE}/progress"}}),
-    ("get_progress", {"today": "2026-11-10", "lift": LIFT_DETAIL, "includes_sample": False, "how": "How.",
+    ("get_progress", {"today": "2026-11-10", "lift": LIFT_DETAIL, "how": "How.",
                       "links": {"progress_lift": f"{SITE}/progress/Back%20Squat"}}),
 ]
 PLANNED_IDS = [*[f"set_goal {n['goal_id']} {n['kind']} {n['vs_plan']}" for n in PLANNED], "get_goals",
@@ -2016,7 +2023,7 @@ def test_the_descriptions_carry_the_same_sentences(http):
     assert "description" not in entry.get("required", [])  # optional: a saved or USDA food defaults to its name
 
 
-def test_can_and_cant_states_the_goal_kinds_the_trends_sample_rows_and_the_settings_clicks():
+def test_can_and_cant_states_the_goal_kinds_the_trends_and_the_settings_clicks():
     text = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
     for words in ("`lift`", "`bodyweight`", "`measurement`", "`cardio_best`",
                   "The best session in the last 28 days, else the latest session's",
@@ -2027,7 +2034,7 @@ def test_can_and_cant_states_the_goal_kinds_the_trends_sample_rows_and_the_setti
                   "the latest, dated in the last 7 days, and the last one dated 14 to 42 days before today",
                   "food logged on at least 14 of the last 21 days", "7,700 kcal a kg",
                   "it never sets the calorie target", "The projected date",
-                  "more than 2 years from today", "`includes_sample` is true", "Remove sample data",
+                  "more than 2 years from today",
                   "the person's own clicks on Settings", "No function does either", "Claude never offers to do them",
                   "stays valid until it expires, an hour at most", "recreates an empty account",
                   "`too_many_reads`", "Nineteen functions", "`get_trends`", "`get_goals`"):
@@ -2549,7 +2556,7 @@ def test_the_import_cap_holds_through_mcp(http):
         session.execute(insert(FoodEntry), [
             {"user_id": account, "date": today - timedelta(days=600), "meal": "snack", "description": f"x{i}", "kcal": 1,
              "source": "you_said", "estimated": False, "logged_by": IMPORTED, "dedupe_key": "k", "created_at": at,
-             "updated_at": at, "is_sample": False, "deleted_at": at if i % 2 else None} for i in range(9_999)])
+             "updated_at": at, "deleted_at": at if i % 2 else None} for i in range(9_999)])
     two = [{"kind": "bodyweight", "date": (today - timedelta(days=n)).isoformat(), "weight": 80} for n in (1, 2)]
     preview = ok(http, token, "import_entries", {"rows": two, "weight_unit": "kg"})
     assert (preview["imported_last_24h"], preview["within_import_limit"]) == (9_999, False)

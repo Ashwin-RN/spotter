@@ -35,8 +35,6 @@ READS_LIMIT in WRITE_WINDOW_MINUTES is too_many_reads. The MCP wrapper runs it b
 function's work, in its own short session; find_food keeps its own READ_LIMIT as well. A conversation makes
 a handful of reads, so READS_LIMIT is only ever reached by a loop.
 
-Sample rows. SAMPLE_NOTE is what every read says when sample rows are in its numbers (rule 16).
-
 The duplicate guard. dedupe_key() is a SHA-256 of an entry's defining values, normalised.
 find_duplicate() looks for a live entry of the same person with the same date and key, created in
 the last DUPLICATE_MINUTES. It reads the entry's own created_at, and runs for the web and for
@@ -68,13 +66,12 @@ KIND_LABELS = {
     "goal": ("goal", "the id that set_goal returned, or a goal_id from get_progress"),
 }
 
-# Every write, by the name its call-log rows carry (the MCP name, which the web uses too). The last
-# two are the web's own (an empty Today, Settings); they count and are limited like the rest.
+# Every write, by the name its call-log rows carry (the MCP name, which the web uses too).
 # Two writes are exempt on purpose, the person's own way out and their own switch: delete_account
 # and set_claude_can. Their call-log rows are written but do not count, and they are never refused.
 WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                    "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
-                   "add_sample_data", "remove_sample_data", "import_entries")
+                   "import_entries")
 WRITE_LIMIT = 120
 WRITE_WINDOW_MINUTES = 10
 READ_LIMIT = 120  # a throttled read (find_food): its own rows in the same 10 minutes
@@ -84,11 +81,6 @@ READS_LIMIT = 300  # every read-level function through MCP, together, in the sam
 # rows with logged_by "import" created in any IMPORT_WINDOW_HOURS (app.services.imports).
 IMPORT_LIMIT = 10_000
 IMPORT_WINDOW_HOURS = 24
-
-# Rule 16: what a read says when sample rows are in its numbers. It names the button, not a function.
-SAMPLE_NOTE = ("Some of these numbers come from sample data, not the person's own logs. The person can clear it "
-               "with the Remove sample data button on Settings.")
-
 
 def not_found(kind: str) -> dict:
     """The one "not found" for a kind. It never repeats the id and never says why, so it reads the

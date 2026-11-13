@@ -35,8 +35,8 @@ seed, rows created for the person before the run, through Spotter's own services
 
   {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "set_goal" | "import_entries",
    "data": {...}}                   import_entries returns no one id: no "as".
-  {"service": "add_sample_data"}    a service that takes no data: four weeks of everything, three goals.
-                                    No "as": it returns no one id.
+  {"service": "four_weeks"}         a seed that takes no data: four weeks of everything, three goals
+                                    (evals/four_weeks.py). No "as": it returns no one id.
 
 db, checks on the person's rows after the run:
 
@@ -65,7 +65,7 @@ DB_KEYS = {"table", "state", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
 SWITCHES = ("read", "log", "log_delete")
 SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "set_goal", "import_entries"}
-NO_DATA_SERVICES = {"add_sample_data"}  # called as service(user_id, by)
+NO_DATA_SERVICES = {"four_weeks"}  # called as seed_service(name)(user_id): see seed_service
 DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal"}
 _PLACEHOLDER = re.compile(r"^\{\{\s*([a-z_]+(?:\.[A-Za-z0-9_]+|:[0-9]+)?)\s*\}\}$")
 
@@ -176,6 +176,19 @@ def resolve(value: Any, variables: dict[str, Any]) -> Any:
                 raise KeyError(f"no value for the placeholder {value}")
             return variables[name]
     return value
+
+
+def seed_service(name: str):
+    """The function a seed's service names. four_weeks is evals/four_weeks.py's, called as service(user_id); every
+    other is Spotter's own service, called as service(user_id, data, "web"). Imported only when asked for, so the
+    rest of this module still opens no database."""
+    if name in NO_DATA_SERVICES:
+        from evals.four_weeks import four_weeks
+        return four_weeks
+    if name not in SEED_SERVICES:
+        raise KeyError(f"no seed service {name}")
+    from app import services
+    return getattr(services, name)
 
 
 # ---------------------------------------------------------------- matching

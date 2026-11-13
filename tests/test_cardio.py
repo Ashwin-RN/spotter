@@ -335,10 +335,9 @@ def test_without_an_estimate_estimate_weight_kg_is_null_too(user):
 
 # ---------------------------------------------------------------- get_cardio: an activity's bests (stage 6, E3)
 
-ONE_KEYS = {"today", "exercise", "sessions", "bests", "week", "includes_sample"}
-SESSION_KEYS = {"id", "date", "minutes", "distance_km", "pace", "pace_min_per_km", "estimate", "machine_kcal", "notes",
-                "is_sample"}
-SUMMARY_KEYS = {"today", "activities", "includes_sample"}
+ONE_KEYS = {"today", "exercise", "sessions", "bests", "week"}
+SESSION_KEYS = {"id", "date", "minutes", "distance_km", "pace", "pace_min_per_km", "estimate", "machine_kcal", "notes"}
+SUMMARY_KEYS = {"today", "activities"}
 
 
 def ago(user, days):
@@ -390,7 +389,7 @@ def test_every_best_by_hand_with_its_ties(user, make_user):
     c = next(s for s in r["sessions"] if s["id"] == ids["C"])
     assert c["pace_min_per_km"] == 28 / 4.5 and c["pace"] == "6:13"
     assert all(s["pace"] == formatting.show(s["pace_min_per_km"], "pace") for s in r["sessions"] if s["pace"])
-    assert r["includes_sample"] is False and "note" not in r
+    assert "note" not in r
 
 
 def test_one_session_reaches_only_the_distances_it_covers(user):
@@ -482,7 +481,7 @@ def test_the_summary_form_lists_every_activity_with_a_session_by_name(user, make
     services.delete_entry(user.id, "cardio_entry", gone)           # only a deleted session: not listed
     ran(make_user(), 1, 30, exercise="Swimming")                   # another person's activity
     r = services.get_cardio(user.id)
-    assert set(r) == SUMMARY_KEYS and r["today"] == ago(user, 0) and r["includes_sample"] is False
+    assert set(r) == SUMMARY_KEYS and r["today"] == ago(user, 0)
     assert r["activities"] == [
         {"exercise": "Elliptical", "sessions_28d": 0, "minutes_28d": 0.0, "fastest_pace": None,
          "last_date": ago(user, 35)},
@@ -496,7 +495,7 @@ def test_the_summary_form_lists_every_activity_with_a_session_by_name(user, make
         assert a["fastest_pace"] == (best["pace"] if best else None)
     assert services.get_cardio(user.id, "") == r
     empty = services.get_cardio(make_user().id)
-    assert empty == {"today": empty["today"], "activities": [], "includes_sample": False}
+    assert empty == {"today": empty["today"], "activities": []}
 
 
 def test_a_session_dated_after_today_stands_at_today(user, monkeypatch):
@@ -514,18 +513,13 @@ def test_a_session_dated_after_today_stands_at_today(user, monkeypatch):
     assert summary["sessions_28d"] == 3 and summary["last_date"] == ago(user, 0)
 
 
-def test_sample_rows_are_said_and_feed_the_charts(user):
-    """includes_sample and the note, on both forms; the real sessions and days draw lane B's charts."""
+def test_the_reads_feed_the_charts(user):
+    """No note on either form when sessions are logged; the sessions and days draw lane B's charts."""
     from app import charts
-    from app.services.common import SAMPLE_NOTE
-    ids = runs(user)
-    with db.session_scope() as s:
-        s.get(CardioEntry, ids["A"]).is_sample = True
+    runs(user)
     one, every = services.get_cardio(user.id, "Outdoor Run"), services.get_cardio(user.id)
-    assert one["includes_sample"] is every["includes_sample"] is True
-    assert one["note"] == every["note"] == SAMPLE_NOTE
-    assert [s["is_sample"] for s in one["sessions"]] == [False] * 5 + [True]
-    assert services.get_cardio(user.id, "Elliptical")["includes_sample"] is False
+    assert "note" not in one and "note" not in every
+    assert services.get_cardio(user.id, "Elliptical")["note"] == "No Elliptical logged yet."
     today = users.today_for(user)
     # Each chart function draws a non-empty svg from the real read. Lane B pins its own descriptions.
     services.log_food(user.id, {"entries": [{"description": "dal", "kcal": 450}]}, "web")
@@ -567,18 +561,13 @@ def test_pace_min_per_km_is_unrounded(user):
     assert formatting.show(r["bests"]["fastest_pace"]["pace_min_per_km"], "pace") == r["bests"]["fastest_pace"]["pace"]
 
 
-def test_a_sample_session_older_than_28_days_still_says_so(user):
-    """The summary form reads every live session ever, for the fastest pace and the last day: an old sample
-    session is in its numbers, so includes_sample is true."""
-    from app.services.common import SAMPLE_NOTE
-    old = ran(user, 40, 30, 5)
+def test_a_session_older_than_28_days_still_counts_in_the_summary(user):
+    """The summary form reads every live session ever, for the fastest pace and the last day: an old session is
+    in its numbers."""
+    ran(user, 40, 30, 5)
     ran(user, 2, 31, 5)
-    with db.session_scope() as s:
-        s.get(CardioEntry, old).is_sample = True
     r = services.get_cardio(user.id)
     assert r["activities"][0]["sessions_28d"] == 1 and r["activities"][0]["fastest_pace"] == "6:00"   # the old one
-    assert r["includes_sample"] is True and r["note"] == SAMPLE_NOTE
-    assert services.get_cardio(user.id, "Outdoor Run")["includes_sample"] is True
 
 
 def test_a_restored_session_comes_back(user):

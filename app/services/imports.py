@@ -55,7 +55,7 @@ import_entries(user_id, data, by)
     imported cardio gets its calorie estimate from body weight now, imported weigh-ins included.
 
     Whole-call refusals, nothing written: the write limit (the call is one write, a dry run too),
-    time_zone_not_set, sample_data_present, invalid_field (a field the call does not take, a dry_run
+    time_zone_not_set, invalid_field (a field the call does not take, a dry_run
     that is neither true nor false), invalid_unit, rows_out_of_range, missing_unit, items_out_of_range (more than
     1,000 set items and food entries), and too_many_imported (more than 10,000 imported rows created in
     any 24 hours, counted over the five entry tables, deleted ones included).
@@ -77,7 +77,7 @@ from sqlalchemy.orm import selectinload
 
 from app import db, formatting, links, metrics, rules, users
 from app.models import IMPORTED, Bodyweight, CardioEntry, FoodEntry, LiftSession, LiftSet, Measurement
-from app.services import body, cardio, common, food, lifts, measurements, sample
+from app.services import body, cardio, common, food, lifts, measurements
 from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account
 from app.services.entries import SESSION_NOTE
 
@@ -651,11 +651,6 @@ def _refused_whole(s, user, data: dict) -> dict | None:
                            "The person's time zone is not set, so today has no date to check against.",
                            "Set it with update_settings first: use the person's time zone if you know it, otherwise "
                            "ask once which city they are in. Then send the import again.")
-    if sample._sample_rows(s, user.id):
-        return rules.error("sample_data_present",
-                           "This account holds sample data. An import goes in only beside the person's own entries.",
-                           "The person can clear it with the Remove sample data button on Settings. Then send the "
-                           "import again.")
     unknown = [k for k in data if k not in CALL_FIELDS]
     if unknown:
         return rules.error("invalid_field", f"'{rules.quote(unknown[0])}' is not a field of an import.",

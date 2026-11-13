@@ -1,9 +1,9 @@
-"""The v1 schema: every table for stages 2 to 5, as the stage 2 contract lists them, and the one
-column stage 5 added (goal.measurement_kind, migration 0003).
+"""The v1 schema: every table for stages 2 to 5, as the stage 2 contract lists them, and the one column
+stage 5 added (goal.measurement_kind, migration 0003). Migration 0004 dropped one column from seven tables.
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
-- Entry tables take their five shared columns from EntryColumns and their two indexes from entry_indexes().
+- Entry tables take their four shared columns from EntryColumns and their two indexes from entry_indexes().
 - Deleting a user deletes everything they own, in the database (ON DELETE CASCADE).
 - Allowed values for the string columns are listed here as tuples. The services check them; the
   schema does not, so a later stage can add a value without a migration.
@@ -85,13 +85,12 @@ def _user_id(nullable: bool = False) -> Mapped:
 
 
 class EntryColumns:
-    """The five columns every entry table carries."""
+    """The four columns every entry table carries."""
 
     logged_by: Mapped[str] = mapped_column(String(8))  # one of LOGGED_BY
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, onupdate=_now)
     deleted_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    is_sample: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 def entry_indexes(table: str) -> tuple[Index, Index]:
@@ -216,7 +215,6 @@ class Goal(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, onupdate=_now)
     closed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    is_sample: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     exercise: Mapped[Exercise | None] = relationship()
 
@@ -275,7 +273,6 @@ class SavedFood(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, onupdate=_now)
     deleted_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    is_sample: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 class FoodEntry(EntryColumns, Base):

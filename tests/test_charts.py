@@ -15,6 +15,7 @@ from app.models import Goal
 from app.services import body, lifts
 from app.services.goals import goal_numbers, load_numbers
 from app.services.progress import bodyweight_chart, lift_chart
+from evals.four_weeks import four_weeks
 
 from . import text_rules as tr
 from .test_css import CSS_PATH, Sheet
@@ -377,7 +378,7 @@ def test_a_weight_chart_needs_two_smoothed_points():
 
 
 DAYS = [{"date": (TODAY - timedelta(days=27 - n)).isoformat(), "kcal": 2000 + n * 10, "lift_sessions": 0,
-         "cardio_entries": 0, "cardio_minutes": 0.0, "food_entries": 3, "weighed": False, "is_sample": False}
+         "cardio_entries": 0, "cardio_minutes": 0.0, "food_entries": 3, "weighed": False}
         for n in range(28)]
 DAYS[-3] = {**DAYS[-3], "kcal": None}  # Sunday 8 November: no food logged
 
@@ -415,7 +416,7 @@ def test_an_eaten_chart_needs_food_in_the_seven_days():
 
 
 def goal_like(**over) -> dict:
-    goal = {"goal_id": 7, "label": "Body weight 77 kg", "kind": "bodyweight", "unit": "kg", "is_sample": False,
+    goal = {"goal_id": 7, "label": "Body weight 77 kg", "kind": "bodyweight", "unit": "kg",
             "start_date": "2026-10-14", "start_value": 79.9, "target_date": "2027-01-05", "target_value": 77.0,
             "latest": 79.0123, "needed_per_week": -0.2512, "actual_per_week": -0.29,
             "projected_date": "2026-12-26", "projection": {"projected": 76.5, "latest": 79.0123},
@@ -634,8 +635,8 @@ def test_a_goal_chart_with_nothing_to_draw_is_empty():
 
 
 SESSIONS = [{"id": n, "date": (TODAY - timedelta(days=3 + 7 * n)).isoformat(), "minutes": 30.0,
-             "distance_km": 5.0, "pace": None, "pace_min_per_km": round(5.9 + 0.1 * n, 2), "notes": None,
-             "is_sample": False} for n in range(4)]  # newest first, as the read gives them
+             "distance_km": 5.0, "pace": None, "pace_min_per_km": round(5.9 + 0.1 * n, 2), "notes": None}
+            for n in range(4)]  # newest first, as the read gives them
 SESSIONS.insert(1, {**SESSIONS[0], "id": 9, "distance_km": None, "pace_min_per_km": None})  # no distance
 
 
@@ -876,10 +877,10 @@ def test_every_number_in_a_chart_comes_from_the_formatter(monkeypatch):
 
 
 # ---------------------------------------------------------------- every chart from the real reads
-# The sample account on the sample tests' fixed day, an empty account, and an account with one entry of
+# The four-week account (evals/four_weeks.py) on its fixed day, an empty account, and an account with one entry of
 # each kind. Each desc holds exactly show of the read's own figures (T7); parsed holds every label.
 
-NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)  # a Tuesday: tests/test_sample.py's fixed day
+NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)  # a Tuesday: tests/test_four_weeks.py's fixed day
 FIXED = date(2026, 11, 10)
 
 
@@ -889,9 +890,9 @@ def fixed_clock(monkeypatch):
 
 
 @pytest.fixture
-def sampled(make_user, fixed_clock):
+def seeded(make_user, fixed_clock):
     user = make_user()
-    assert "error" not in services.add_sample_data(user.id, "web")
+    assert "error" not in four_weeks(user.id)
     assert users.today_for(user) == FIXED
     return user
 
@@ -918,8 +919,8 @@ def desc_of(root) -> str:
     return root.find(f"{SVG}desc").text
 
 
-def test_the_weight_charts_from_get_trends(sampled):
-    trends = services.get_trends(sampled.id)
+def test_the_weight_charts_from_get_trends(seeded):
+    trends = services.get_trends(seeded.id)
     series, today = trends["bodyweight"]["series"], date.fromisoformat(trends["today"])
     first, last = series[0], series[-1]
     said = (f"Smoothed body weight over the last 4 weeks, from {formatting.show(first['smoothed'], 'bodyweight_derived')} "
@@ -935,9 +936,9 @@ def test_the_weight_charts_from_get_trends(sampled):
         formatting.show(trends["bodyweight"]["smoothed"], "bodyweight_derived")
 
 
-def test_the_eaten_charts_from_get_days(sampled):
-    days = services.get_days(sampled.id)
-    target = services.get_trends(sampled.id)["calories"]["target_kcal"]
+def test_the_eaten_charts_from_get_days(seeded):
+    days = services.get_days(seeded.id)
+    target = services.get_trends(seeded.id)["calories"]["target_kcal"]
     today = date.fromisoformat(days["today"])
     week = days["days"][-7:]
     said = ["Calories eaten each day, last 7 days."] + [
@@ -952,13 +953,13 @@ def test_the_eaten_charts_from_get_days(sampled):
         page_text_is_clean(root)
 
 
-def test_the_body_weight_chart_as_progress_calls_it(sampled):
+def test_the_body_weight_chart_as_progress_calls_it(seeded):
     from app import web
 
-    # A weigh-in older than the sample's four weeks: the page draws the 28 days only.
-    assert "error" not in services.log_bodyweight(sampled.id, {"kg": 81.5, "date": "2026-10-01"}, "claude")
-    chart = web._trend(sampled.id)["bodyweight"]
-    trends = services.get_trends(sampled.id)
+    # A weigh-in older than the seed's four weeks: the page draws the 28 days only.
+    assert "error" not in services.log_bodyweight(seeded.id, {"kg": 81.5, "date": "2026-10-01"}, "claude")
+    chart = web._trend(seeded.id)["bodyweight"]
+    trends = services.get_trends(seeded.id)
     assert chart["points"] == trends["bodyweight"]["series"]  # since 28 days back: the same points
     assert chart["points"][0]["date"] == "2026-10-14"
     root = parsed(bodyweight_svg(chart, today=FIXED))
@@ -973,10 +974,10 @@ def test_the_body_weight_chart_as_progress_calls_it(sampled):
     page_text_is_clean(root)
 
 
-def test_each_goal_chart_from_goal_charts(sampled):
+def test_each_goal_chart_from_goal_charts(seeded):
     from app.services import goals as goal_reads
 
-    read = services.goal_charts(sampled.id)
+    read = services.goal_charts(seeded.id)
     today = date.fromisoformat(read["today"])
     assert len(read["goals"]) == 3
     for goal in read["goals"]:
@@ -1000,8 +1001,8 @@ def test_each_goal_chart_from_goal_charts(sampled):
         page_text_is_clean(root)
 
 
-def test_the_pace_chart_from_get_cardio(sampled):
-    read = services.get_cardio(sampled.id, "Outdoor Run")
+def test_the_pace_chart_from_get_cardio(seeded):
+    read = services.get_cardio(seeded.id, "Outdoor Run")
     today = date.fromisoformat(read["today"])
     root = parsed(charts.pace_svg(read["sessions"], read["exercise"], today))
     oldest_first = list(reversed(read["sessions"]))
@@ -1014,10 +1015,10 @@ def test_the_pace_chart_from_get_cardio(sampled):
     page_text_is_clean(root)
 
 
-def test_the_lift_charts_from_get_progress(sampled):
+def test_the_lift_charts_from_get_progress(seeded):
     from app import web
 
-    read = services.get_progress(sampled.id, "Back Squat")
+    read = services.get_progress(seeded.id, "Back Squat")
     lift = read["lift"]
     chart = lift_chart(web._lift_points(lift), lift["goals"], lift["exercise"])
     today = date.fromisoformat(read["today"])
@@ -1033,11 +1034,11 @@ def test_the_lift_charts_from_get_progress(sampled):
     drawn = bool(lines(root).get("projection") is not None)
     assert (f", projected {formatting.show(goal['projected'], 'estimated_max')}." in desc) == drawn
     page_text_is_clean(root)
-    pull = services.get_progress(sampled.id, "Pull-Up")["lift"]
+    pull = services.get_progress(seeded.id, "Pull-Up")["lift"]
     assert lift_chart(web._lift_points(pull), pull["goals"], pull["exercise"]) is None  # no added weight: no chart
     assert str(chart_svg(None)) == ""
     with db.new_session() as s:
-        assert lifts.history(s, sampled.id, today)["reps_only"]["Pull-Up"]["reps"] == 6
+        assert lifts.history(s, seeded.id, today)["reps_only"]["Pull-Up"]["reps"] == 6
 
 
 def test_every_chart_is_empty_on_an_empty_account(make_user, fixed_clock):

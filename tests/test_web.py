@@ -27,6 +27,7 @@ from app import config, db, formatting, links, mcp_server, rules, services, user
 from app.config import DEFAULT_SIGNUPS_PER_DAY, Settings
 from app.main import create_app
 from app.models import Bodyweight, CallLog, CardioEntry, FoodEntry, LiftSession, Measurement, SavedFood, User
+from evals.four_weeks import four_weeks
 
 from . import text_rules as tr
 from .conftest import RESOURCE, TEST_DIR, rpc, settings
@@ -232,10 +233,10 @@ LANDING_WORDS = (
     "pace in code, and your assistant quotes those numbers.",
     "{button}",
     "Source code on GitHub",
-    "What it looks like", "sample",
+    "What it looks like",
     "You", "Am I on track for my goals?",
     "Your assistant", "{answer}",
-    "Sample data. The assistant asked Spotter for the goals and quoted them. The Goals page shows the same numbers.",
+    "An example. The assistant asked Spotter for the goals and quoted them. The Goals page shows the same numbers.",
     "Before you start",
     "You need an AI assistant that can add a remote MCP server with sign-in.",
     "Each assistant's plan limits are in the README's table.",
@@ -247,7 +248,6 @@ LANDING_WORDS = (
     "There is no key to paste: your assistant opens the sign-in page. Sign in with the same account you use here.",
     "Say what you did.", "Start a new chat and say what you did, or one of the sentences below.",
     "The first time, your assistant may ask you to allow each call. Allow it.",
-    "To see it full first, press Add sample data on Today. One button on Settings removes it.",
     "How to add Spotter in each assistant",
     "Claude apps", "Claude Code", "Run this once, then type /mcp and pick spotter to sign in.",
     f"claude mcp add --transport http --scope user spotter {RESOURCE}",
@@ -776,7 +776,7 @@ def test_every_non_get_web_route_checks_the_token(client):
         "/entries/{kind}/{entry_id}/edit", "/entries/{kind}/{entry_id}/delete", "/entries/{kind}/{entry_id}/restore",
         "/day/{date}/food", "/day/{date}/cardio", "/foods", "/foods/{food_id}/edit", "/foods/{food_id}/delete",
         "/foods/{food_id}/restore", "/settings/targets", "/entries/food_entry/{entry_id}/confirm",
-        "/goals", "/goals/{goal_id}/status", "/settings/sample", "/settings/sample/remove", "/settings/export",
+        "/goals", "/goals/{goal_id}/status", "/settings/export",
         "/settings/delete"}
     filled = {"{date}": "2026-11-09", "{kind}": "bodyweight", "{entry_id}": "1", "{food_id}": "1", "{goal_id}": "1"}
     for route in posting:
@@ -1393,7 +1393,6 @@ def test_an_old_name_already_stored_selects_its_current_entry():
     assert selected == "Asia/Kolkata" and groups[0][0] != "Saved"
 
 
-
 # ---------------------------------------------------------------- the script's guards, held by reading it
 
 def script_source() -> str:
@@ -1447,7 +1446,6 @@ def test_with_no_zone_data_settings_still_offers_utc(client, monkeypatch):
     finally:
         users._zone_tables.cache_clear()
         web.zone_groups.cache_clear()
-
 
 
 # ================================================================ stage 3: the pages a person uses
@@ -2088,7 +2086,6 @@ def test_the_real_limit_reaches_the_page(client, stocked):
     assert [b.kg for b in rows(Bodyweight, uid) if b.deleted_at is None and b.date == stocked["today"]] == [78.4]
 
 
-
 # ---------------------------------------------------------------- review fixes
 
 def test_the_first_day_there_is_has_no_page_and_the_next_one_no_prev_link(client):
@@ -2192,7 +2189,6 @@ def test_a_lost_call_log_never_costs_the_write(client, monkeypatch):
     monkeypatch.setattr(web.calllog, "finish", down)
     r = post(client, f"/day/{today_of(only_user()).isoformat()}/weigh-in", kg="80.5")
     assert r.status_code == 303 and [b.kg for b in rows(Bodyweight, only_user().id)] == [80.5]
-
 
 
 # ================================================================ stage 4: food and cardio
@@ -2714,7 +2710,6 @@ def test_the_new_forms_refuse_a_missing_csrf_token(client, path, data):
     assert rows(SavedFood, only_user().id) == [] and only_user().calorie_target_kcal is None
 
 
-
 # ---------------------------------------------------------------- review: Foods edits and the food form
 
 def test_an_unchanged_food_edit_writes_nothing(client, fed):
@@ -2893,7 +2888,7 @@ def test_an_unrouted_path_is_the_designed_404_signed_out_with_the_page_header(cl
 
 
 def test_a_wrong_method_on_a_page_is_the_404_page(client):
-    for method, path in (("GET", "/sign-out"), ("GET", "/settings/sample"), ("POST", "/progress")):
+    for method, path in (("GET", "/sign-out"), ("GET", "/settings/export"), ("POST", "/progress")):
         assert_designed(client.request(method, path), 404, NOT_FOUND, SIGNED_OUT_LINKS, signed_in=False)
 
 
@@ -3296,11 +3291,10 @@ def test_the_automatic_zone_save_is_marked_time_zone_on_the_page_it_returns_to(c
 
 
 @pytest.mark.parametrize("query, passed", [
-    ("saved=sample", "?saved=sample"),
-    ("deleted=sample", "?deleted=sample"),
+    ("saved=confirmed", "?saved=confirmed"),
     ("restored=bodyweight", "?restored=bodyweight"),
     ("deleted=bodyweight:5", "?deleted=bodyweight:5"),
-    ("restored=x&deleted=sample&saved=sample", "?saved=sample&deleted=sample&restored=x"),
+    ("restored=x&deleted=bodyweight:5&saved=confirmed", "?saved=confirmed&deleted=bodyweight:5&restored=x"),
     # A value is passed on encoded: it can never become a second mark or another address.
     ("saved=x%26deleted%3Dbodyweight:5", "?saved=x%26deleted%3Dbodyweight:5"),
     ("saved=a%23b%0D%0Ac", "?saved=a%23b%0D%0Ac"),
@@ -3311,17 +3305,6 @@ def test_today_passes_the_marks_on_to_the_day(client, query, passed):
     sign_in(client)
     r = client.get("/today" + ("?" + query if query else ""))
     assert location(r) == SITE + f"/day/{today_of(only_user()).isoformat()}" + passed
-
-
-def test_sample_data_added_and_removed_land_on_the_marked_day(client):
-    sign_in(client)
-    day = SITE + f"/day/{today_of(only_user()).isoformat()}"
-    added = client.get(location(post(client, "/settings/sample")))
-    assert location(added) == day + "?saved=sample"
-    removed = client.get(location(post(client, "/settings/sample/remove")))
-    assert location(removed) == day + "?deleted=sample"
-    page = client.get(location(removed)).text
-    assert '<div class="ok undo">' not in page and "/restore" not in page  # no Undo for sample data (D15)
 
 
 # ---------------------------------------------------------------- the fix round: the 500 wrapper's edges
@@ -3437,20 +3420,20 @@ def strips_of(page: str) -> list[str]:
     return re.findall(r'<(?:p|div) class="ok[^"]*">\s*([^<]*?)\s*<', page)
 
 
-def test_a_new_accounts_today_card_offers_sample_data(client):
+def test_a_new_accounts_today_card_says_what_to_do_first(client):
+    """Decision 1: nothing logged yet, and the person tells their assistant, in two short lines. No button, no
+    form, no word of sample data."""
     sign_in(client)
     page = day_of(client, today_of(only_user()).isoformat())
     hero = hero_of(page)
     assert hero.startswith('<section class="card hero" aria-labelledby="today-card-title">')
     assert '<h2 class="hero-title" id="today-card-title">Nothing logged yet</h2>' in hero
-    assert hero_lines(page)[:2] == ["Today", "Nothing logged yet"]
-    assert hero_lines(page)[2] == ("To see Spotter full before you log anything, add sample data: four weeks of "
-                                   "lifts, weigh-ins, meals, cardio, measurements and three goals. Every sample row "
-                                   "is marked, and one button on Settings removes it all.")
+    assert hero_lines(page) == ["Today", "Nothing logged yet", "Tell your assistant what you ate, lifted or did, and it shows here.",
+                                "No food yet", "No weigh-in yet", "No lifts yet"]
+    assert '<p class="muted">Tell your assistant what you ate, lifted or did, and it shows here.</p>' in hero
     assert chips_of(page) == [("chip-food is-missing", "No food yet"), ("chip-weight is-missing", "No weigh-in yet"),
                               ("chip-lifts is-missing", "No lifts yet")]
-    form = re.search(r'<form method="post" action="/settings/sample">(.*?)</form>', hero, re.S).group(1)
-    assert '<button class="primary wide">Add sample data</button>' in form and 'name="csrf_token"' in form
+    assert "<form" not in hero and "<button" not in hero and "sample" not in page.casefold()
     assert "Add food" not in hero and 'class="big"' not in hero and "Eaten" not in hero
 
 
@@ -3464,7 +3447,7 @@ def test_a_new_account_on_another_day_shows_the_food_state_without_yet(client):
     assert [cls for cls, _ in chips_of(page)] == ["chip-weight is-missing", "chip-lifts is-missing",
                                                   "chip-cardio is-missing"]
     assert f'<a class="button primary wide" href="/day/{yesterday}?add=food#add-food">Add food</a>' in page
-    assert 'action="/settings/sample"' not in page and 'aria-label="Logged on this day"' in hero_of(page)
+    assert "Nothing logged yet" not in page and 'aria-label="Logged on this day"' in hero_of(page)
 
 
 def test_a_day_with_food_shows_the_days_kcal_big_with_its_unit(client, fed):
@@ -3473,7 +3456,7 @@ def test_a_day_with_food_shows_the_days_kcal_big_with_its_unit(client, fed):
                                 "No lifts yet", "Treadmill Run " + formatting.show(30, "session_time"), "Add food"]
     assert re.search(r'<p class="big">.*?460.*?&nbsp;<span class="unit">kcal</span></p>', hero_of(page), re.S)
     assert f'href="/day/{fed["today"]}?add=food#add-food"' in page and 'id="add-food"' in page
-    assert 'aria-label="Logged today"' in hero_of(page) and "tag-sample" not in hero_of(page)
+    assert 'aria-label="Logged today"' in hero_of(page) and "Nothing logged yet" not in page
 
 
 def test_food_that_totals_zero_is_a_day_with_food(client):
@@ -3560,12 +3543,9 @@ DAY_STRIP_CASES = [
     ("saved=confirmed", "Estimate confirmed."),
     ("restored=bodyweight", "Weigh-in restored."),
     ("restored=lift_session", "Lift session restored."),
-    ("saved=sample", "Sample data added."),
-    ("deleted=sample", "Sample data removed."),
     # One strip only: the Undo strip first, then deleted, saved and restored.
     ("saved=bodyweight&restored=measurement", "Weigh-in saved."),
-    ("restored=measurement&deleted=sample", "Sample data removed."),
-    ("saved=bodyweight&deleted=sample", "Sample data removed."),
+    ("restored=measurement&saved=confirmed", "Estimate confirmed."),
     ("saved=unchanged&restored=cardio_entry", "Cardio session restored."),
 ]
 
@@ -3576,7 +3556,7 @@ def test_each_strip_says_its_words_by_its_address(client, query, words):
     page = day_of(client, f"{today_of(only_user()).isoformat()}?{query}")
     assert strips_of(page) == [words]
     assert f'<p class="ok">{words}</p>' in page
-    assert '<div class="ok undo">' not in page and "/restore" not in page  # no Undo, deleted=sample included
+    assert '<div class="ok undo">' not in page and "/restore" not in page
 
 
 def test_the_undo_strip_names_the_kind_and_carries_its_form(client, stocked):
@@ -3590,6 +3570,7 @@ def test_the_undo_strip_names_the_kind_and_carries_its_form(client, stocked):
 
 @pytest.mark.parametrize("query", ["saved=unchanged", "saved=time_zone", "saved=x", "saved=goal", "saved=1",
                                    "restored=goal", "restored=sample", "restored=confirmed", "deleted=bodyweight",
+                                   "saved=sample", "deleted=sample",
                                    "saved=Bodyweight", "saved=%3Cb%3Eweigh%3C%2Fb%3E", "add=food", "saved=",
                                    "saved=unchanged&add=food", "saved=time_zone&add=food"])
 def test_no_strip_for_unchanged_the_zone_or_a_value_the_table_does_not_name(client, query):
@@ -3603,17 +3584,17 @@ def test_day_strip_reads_only_the_tables():
     assert web.day_strip({}) is None
     assert web.day_strip({"saved": "unchanged"}) is None and web.day_strip({"saved": "time_zone"}) is None
     assert web.day_strip({"deleted": "food_entry:7"}) == {"words": "Food entry deleted.", "undo": ("food_entry", "7")}
-    assert web.day_strip({"deleted": "sample"}) == {"words": "Sample data removed.", "undo": None}
+    assert web.day_strip({"deleted": "sample"}) is None and web.day_strip({"saved": "sample"}) is None
     for kind, words in web.ENTRY_WORDS.items():
         assert web.day_strip({"saved": kind})["words"] == f"{words} saved."
         assert web.day_strip({"restored": kind})["words"] == f"{words} restored."
 
 
-def test_the_top_of_today_runs_head_banner_strip_card_then_the_columns(client, monkeypatch):
+def test_the_top_of_today_runs_head_strip_card_then_the_columns(client, monkeypatch):
     sign_in(client)
-    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3}, raising=False)
-    page = day_of(client, f"{today_of(only_user()).isoformat()}?saved=sample")
-    order = ['<div class="page-head">', '<p class="notice sample-banner">', '<p class="ok">Sample data added.</p>',
+    monkeypatch.setattr(services, "account_empty", lambda *a: {"empty": False})
+    page = day_of(client, f"{today_of(only_user()).isoformat()}?saved=confirmed")
+    order = ['<div class="page-head">', '<p class="ok">Estimate confirmed.</p>',
              '<section class="card hero"', '<div class="col-main">', '<h2 id="food-title">Food</h2>',
              '<div class="col-side">', '<h2 id="lifts-title">Lifts</h2>', '<h2 id="cardio-title">Cardio</h2>',
              '<h2 id="weigh-in-title">Weigh-in</h2>', '<h2 id="measurements-title">Measurements</h2>']
@@ -3635,35 +3616,32 @@ def card_titles(wrapper) -> list[str]:
             if card.is_(cls="card")]
 
 
-@pytest.mark.parametrize("address", ["{today}?saved=sample", "{yesterday}?saved=sample"])
-def test_each_wrapper_holds_exactly_its_cards_and_the_banner_spans_the_page(client, monkeypatch, address):
-    """Read as a tree, not as text: main's own children run page head, banner, strip, Today card, col-main,
-    col-side. col-main holds the Food card alone, col-side the four cards after it in order. The banner is a
-    child of main, after the page head has closed, never inside it."""
+@pytest.mark.parametrize("address", ["{today}?saved=confirmed", "{yesterday}?saved=confirmed"])
+def test_each_wrapper_holds_exactly_its_cards(client, monkeypatch, address):
+    """Read as a tree, not as text: main's own children run page head, strip, Today card, col-main, col-side.
+    col-main holds the Food card alone, col-side the four cards after it in order."""
     from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
 
     sign_in(client)
-    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3}, raising=False)
+    monkeypatch.setattr(services, "account_empty", lambda *a: {"empty": False})
     today = today_of(only_user())
     address = address.format(today=today.isoformat(), yesterday=(today - timedelta(days=1)).isoformat())
     main = next(iter(parse(day_of(client, address)).find_all("main")))
     children = main.elements()
     # The glance block sits between the Today card and col-main, on today's page only (section L, Today).
     glance = [("div", "glance")] if address.startswith(today.isoformat()) else []
-    assert [shape(c) for c in children] == [("div", "page-head"), ("p", "notice", "sample-banner"), ("p", "ok"),
+    assert [shape(c) for c in children] == [("div", "page-head"), ("p", "ok"),
                                             ("section", "card", "hero"), *glance, ("div", "col-main"),
                                             ("div", "col-side")]
-    head, banner = children[0], children[1]
-    assert not head.find_all(cls="sample-banner") and banner.parent is main
     main_col, side = children[-2], children[-1]
     assert card_titles(main_col) == ["Food"] and len(main_col.elements()) == 1
     assert card_titles(side) == ["Lifts", "Cardio", "Weigh-in", "Measurements"]
     assert len(side.elements()) == 4
     if glance:  # the tiles, the sheets they open, the Last 28 days card, then the chart pair, and nothing else
-        inside = [shape(c) for c in children[4].elements()]
+        inside = [shape(c) for c in children[3].elements()]
         assert inside[0] == ("div", "tiles") and inside[-2:] == [("section", "card", "daygrid"), ("div", "pair")]
         assert inside[1:-2] and set(inside[1:-2]) == {("div", "sheet")}
-        assert [shape(c)[:3] for c in children[4].elements()[-1].elements()] == [("section", "card", "chart-card")] * 2
+        assert [shape(c)[:3] for c in children[3].elements()[-1].elements()] == [("section", "card", "chart-card")] * 2
 
 
 def test_todays_h1_is_today_with_the_day_under_it(client, monkeypatch):
@@ -3698,16 +3676,6 @@ def test_a_day_after_today_is_a_past_day(client):
     assert chips_of(page)[0] == ("chip-weight", f"Weigh-in {kg(70)}") and chips_of(page)[1][1] == "No lifts"
     assert 'rel="prev">Previous day</a>' in page and h1_text(page) == formatting.day_heading(later, today)
     assert "Nothing logged yet" not in page
-
-
-def test_the_sample_banner_sits_above_the_today_card(client):
-    sign_in(client)
-    assert post(client, "/settings/sample").status_code == 303
-    page = day_of(client, today_of(only_user()).isoformat())
-    banner = page.index('<p class="notice sample-banner">Sample data is on this account. Remove it on '
-                        '<a href="/settings">Settings</a>.</p>')
-    assert page.index('<div class="page-head">') < banner < page.index('<section class="card hero"')
-    assert "tag-sample" not in hero_of(page) and "Nothing logged yet" not in page
 
 
 REEL = "<span class=\"strip\">" + "".join(f"<span>{n}</span>" for n in range(10)) + "</span>"
@@ -3844,33 +3812,14 @@ def test_the_tags_sit_in_their_own_slot_apart_from_every_figure(client, fed):
                                                                    "tag-claude_estimate"]
 
 
-def test_a_sample_food_named_with_sample_shows_the_sample_mark_once(client):
-    """A deleted saved food of the person's holds the name, so sample data stores its own as "Roti (sample)"
-    (sample._free_name). The card shows the name and the sample tag, never the word as well."""
-    sign_in(client)
-    uid = only_user().id
-    mine = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 110}, "web")
-    assert "error" not in services.delete_entry(uid, "saved_food", mine["id"])
-    assert "error" not in services.add_sample_data(uid, "web")
-    stored = [e.description for e in rows(FoodEntry, uid) if e.saved_food_id is not None]
-    assert "Roti (sample)" in stored  # the real path names it so
-    card = food_card(day_of(client, today_of(only_user()).isoformat()))
-    rotis = [e for e in meal_of(card, "Lunch") if e["name"] == "Roti"]
-    assert rotis and all(e["note"] is None and e["tags"] == [("tag-saved_food", "saved food"), ("tag-sample", "sample")]
-                         for e in rotis)
-    assert "(sample)" not in card
-
-
 @pytest.mark.parametrize("entry, shown", [
-    ({"saved_food_name": "Roti (sample)", "description": "Roti (sample)", "is_sample": True}, "Roti"),
-    ({"saved_food_name": "Roti (Sample)", "description": "x", "is_sample": True}, "Roti"),
-    ({"saved_food_name": "Roti (sample)", "description": "Roti (sample)", "is_sample": False}, "Roti (sample)"),
-    ({"saved_food_name": None, "description": "Tea (sample)", "is_sample": True}, "Tea (sample)"),
-    ({"saved_food_name": "", "description": "My lunch (sample)", "is_sample": True}, "My lunch (sample)"),
-    ({"saved_food_name": None, "description": "Tea", "is_sample": True}, "Tea"),
-    ({"saved_food_name": "Dal", "description": "Dal tadka", "is_sample": False}, "Dal"),
+    ({"saved_food_name": "Roti (sample)", "description": "Roti (sample)"}, "Roti (sample)"),
+    ({"saved_food_name": None, "description": "Tea (sample)"}, "Tea (sample)"),
+    ({"saved_food_name": "", "description": "My lunch"}, "My lunch"),
+    ({"saved_food_name": None, "description": None}, ""),
+    ({"saved_food_name": "Dal", "description": "Dal tadka"}, "Dal"),
 ])
-def test_the_name_on_line_one_drops_the_sample_word_only_on_a_sample_row(entry, shown):
+def test_the_name_on_line_one_is_the_saved_foods_name_else_the_description_as_written(entry, shown):
     assert web.food_name(entry) == shown
 
 
@@ -4030,15 +3979,15 @@ def test_on_the_page_a_no_break_space_goes_before_the_serving_words(servings, la
     assert web.serving_text(servings, label) == says.replace(" ", " ")
 
 
-@pytest.mark.parametrize("state", ["empty", "fed", "add", "error", "sample", "past"])
+@pytest.mark.parametrize("state", ["empty", "fed", "add", "error", "four weeks", "past"])
 def test_the_food_card_never_says_claude(client, state):
     sign_in(client)
     uid = only_user().id
     on = today_of(only_user())
     if state in ("fed", "add", "past"):
         stock_food(only_user())
-    if state == "sample":
-        services.add_sample_data(uid, "web")
+    if state == "four weeks":
+        four_weeks(uid)
     address = on.isoformat() + ("?add=food" if state == "add" else "")
     if state == "past":
         address = (on - timedelta(days=1)).isoformat()
@@ -4189,7 +4138,7 @@ def test_each_cardio_figure_shows_when_the_entry_has_it_and_is_left_out_when_not
     kcal = formatting.show(logged["estimate"]["kcal"], "kcal", unit=False)
     assert entry["name"] == data["exercise"]
     assert entry["labelled"] == [(label, figure.format(kcal=kcal)) for label, figure in labelled]
-    # The estimate tag in its own slot beside the sample slot, never inside a figure.
+    # The estimate tag in its own slot, never inside a figure.
     assert entry["tags"] == [("tag-estimate", "estimate")] and entry["tag_slots"] == [("entry-tags",)]
     assert entry["edit"] == [f"/entries/cardio_entry/{logged['id']}/edit"]
     assert entry["delete"] == [f"/entries/cardio_entry/{logged['id']}/delete"]
@@ -4455,7 +4404,7 @@ def test_what_was_typed_in_a_side_fold_out_comes_back_escaped(client):
     assert 'value="&lt;b&gt;&#34;80&#34;&lt;/b&gt;"' in out and "<b>&#34;80" not in out
 
 
-@pytest.mark.parametrize("state", ["empty", "stocked", "fed", "add", "error", "sample", "past"])
+@pytest.mark.parametrize("state", ["empty", "stocked", "fed", "add", "error", "four weeks", "past"])
 def test_the_side_cards_never_say_claude(client, state):
     sign_in(client)
     uid = only_user().id
@@ -4464,8 +4413,8 @@ def test_the_side_cards_never_say_claude(client, state):
         stock(only_user())
     if state in ("fed", "add"):
         stock_food(only_user(), weigh_in=state == "fed")
-    if state == "sample":
-        services.add_sample_data(uid, "web")
+    if state == "four weeks":
+        four_weeks(uid)
     address = on.isoformat() + ("?add=cardio&add=weigh-in&add=measurement" if state == "add" else "")
     if state == "past":
         address = (on - timedelta(days=1)).isoformat()
@@ -4543,22 +4492,24 @@ def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
 
 # ---------------------------------------------------------------- stage 6, step 4: the Food card review's fixes
 
-def test_servings_whose_saved_food_went_with_the_sample_data_are_counted(client):
-    """A person's own entry logged against a sample food keeps its servings when Remove sample data takes the
-    food away (the link is set to null). Line two counts them in words."""
+def test_servings_whose_saved_food_is_gone_are_counted(client):
+    """An entry logged against a saved food keeps its servings when the food's row goes for good (the link is set
+    to null, as migration 0004 does for a sample food). Line two counts them in words."""
+    from app.models import SavedFood  # noqa: PLC0415
     sign_in(client)
     uid = only_user().id
-    assert "error" not in services.add_sample_data(uid, "web")
+    assert "error" not in four_weeks(uid)
     roti = next(f["id"] for f in services.list_saved_foods(uid)["foods"] if f["name"] == "Roti")
     mine = services.log_food(uid, {"entries": [{"saved_food_id": roti, "servings": 3, "meal": "snack"}]}, "claude")
     assert "error" not in mine
     on = today_of(only_user()).isoformat()
     [before] = meal_of(food_card(day_of(client, on)), "Snack")[-1:]
     assert (before["name"], before["figures"]) == ("Roti", "360 kcal, 3 rotis")
-    assert "error" not in services.remove_sample_data(uid, "web")
+    with db.session_scope() as s:
+        s.delete(s.get(SavedFood, roti))
     [row] = [e for e in rows(FoodEntry, uid) if e.id == mine["ids"][0]]
-    assert (row.saved_food_id, row.servings, row.deleted_at) == (None, 3, None)  # the real path unlinks it
-    [after] = meal_of(food_card(day_of(client, on)), "Snack")
+    assert (row.saved_food_id, row.servings, row.deleted_at) == (None, 3, None)  # the schema unlinks it
+    [after] = meal_of(food_card(day_of(client, on)), "Snack")[-1:]
     assert (after["name"], after["figures"], after["note"]) == ("Roti", "360 kcal, 3 servings", None)
 
 
@@ -4587,19 +4538,6 @@ def test_a_name_ending_in_a_digit_stays_apart_from_its_kcal(client):
     assert page_findings(f"/day/{on}", card, [], uid) == []  # nothing masked: the text rules read it all
     joined = card.replace("</span>\n          <span", "</span><span")
     assert joined != card and page_findings(f"/day/{on}", joined, [], uid)  # touching, it reads "2250"
-
-
-def test_a_sample_row_renamed_with_sample_keeps_the_word(client):
-    """Only a saved food's name ever gets " (sample)" from sample data. A description is the person's own."""
-    sign_in(client)
-    uid = only_user().id
-    assert "error" not in services.add_sample_data(uid, "web")
-    tea = next(e for e in rows(FoodEntry, uid) if e.description == "Tea with milk" and e.is_sample)
-    on = tea.date.isoformat()
-    assert "error" not in services.edit_entry(uid, "food_entry", tea.id, {"description": "My lunch (sample)"}, "claude")
-    card = food_card(day_of(client, on))
-    [mine] = [e for e in food_entries(card) if e["name"].startswith("My lunch")]
-    assert mine["name"] == "My lunch (sample)" and ("tag-sample", "sample") in mine["tags"]
 
 
 def parts_field(*args, **kwargs) -> str:
@@ -5226,10 +5164,10 @@ def sheet_frame_findings(sheet: dict, sid: str, link: str | None, tag: tuple[str
 
 @pytest.fixture
 def fixed_day(client, monkeypatch):
-    """The contract's fixed day: sample data, the clock pinned to Tuesday 10 November 2026."""
+    """The contract's fixed day: the four weeks, the clock pinned to Tuesday 10 November 2026."""
     sign_in(client)
     monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
-    assert "error" not in services.add_sample_data(only_user().id, "web")
+    assert "error" not in four_weeks(only_user().id)
     return day_of(client, "2026-11-10")
 
 
@@ -5263,7 +5201,7 @@ def test_each_tile_button_has_a_twin_link_to_its_part_of_progress_with_the_same_
         {"class": "tile tile-training tile-link", "href": "/progress#trends"}]
     for b, a in zip(buttons, twins):
         assert a["text"] == b["text"] and a["text"]
-    assert all(t["tags"] == [] for t in shown)  # no tile holds a sample tag, nor any tag
+    assert all(t["tags"] == [] for t in shown)  # no tile holds a tag
 
 
 def test_the_weight_sheet_on_the_fixed_day(fixed_day):
@@ -5320,14 +5258,14 @@ def test_the_training_sheet_on_the_fixed_day(fixed_day):
         ("Tue 20 Oct", "86"), ("Tue 27 Oct", "86"), ("Tue 3 Nov", "85"), ("Tue 10 Nov", "85"))]
 
 
-def test_the_glance_reads_as_text_says_no_claude_and_holds_no_form_or_sample_tag(fixed_day):
+def test_the_glance_reads_as_text_says_no_claude_and_holds_no_form_or_tag(fixed_day):
     glance = glance_node(fixed_day)
     assert glued(glance) == []  # a name never touches its figure
     pieces = [p.text for p in tr.html_text(fixed_day[fixed_day.index('<div class="glance">'):
                                                      fixed_day.index('<div class="col-main">')])]
     assert pieces and not any(re.search(r"claude", t, re.I) for t in pieces)
-    assert not glance.find_all("form") and not glance.find_all(cls="tag-sample") and not glance.find_all(cls="tag")
-    assert fixed_day.count("tag-sample") == without_glance(fixed_day).count("tag-sample") > 0
+    assert not glance.find_all("form") and not glance.find_all(cls="tag")
+    assert "sample" not in fixed_day.casefold()
 
 
 def test_a_new_account_shows_the_empty_tiles_and_trainings_true_zero(client):
@@ -5522,7 +5460,7 @@ def test_glance_of_hands_back_the_reads_as_they_come(client, monkeypatch):
     sign_in(client)
     monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
     uid = only_user().id
-    assert "error" not in services.add_sample_data(uid, "web")
+    assert "error" not in four_weeks(uid)
     glance = asyncio.run(web.glance_of(uid))
     trends, days = services.get_trends(uid), services.get_days(uid)
     assert set(glance) == {"trends", "days", "basis", "rate_words", "weight_chart", "eaten_chart", "weight_small",
@@ -5554,7 +5492,6 @@ def test_the_training_sentence_reads_this_week_and_the_four_week_figures_apart(c
     # The week ending 7 days ago holds the 10th day back: the third of four, oldest first.
     assert [[c[0] for c in r] for r in sheet["rows"]][2] == [formatting.day(today - timedelta(days=7), today), "2",
                                                              "40"]
-
 
 
 # ---------------------------------------------------------------- stage 6, step 4: the Last 28 days card and the pair
@@ -5749,7 +5686,7 @@ def test_the_chart_pair_on_the_fixed_day(fixed_day):
     assert eaten["svg"][0].attrs["id"] == "chart-calories-7d"
     assert str(web.charts.eaten_small_svg(days["days"], date(2026, 11, 10))) in fixed_day
     assert '<p class="figure"><span class="tile-value">79.2&nbsp;<span class="unit">kg</span></span></p>' in fixed_day
-    assert not eaten["svg"][0].find_all("line", "goal")  # the sample sets no calorie target
+    assert not eaten["svg"][0].find_all("line", "goal")  # the four weeks set no calorie target
 
 
 def log_state(state: str, uid: int, today) -> None:
@@ -5846,7 +5783,7 @@ def test_a_past_day_and_a_day_after_today_have_neither_the_grid_nor_the_pair(cli
     assert daygrid_of(day_of(client, today_of(only_user()).isoformat())) is not None
 
 
-@pytest.mark.parametrize("state", ["new", "sample", "error", "add", "yesterday"])
+@pytest.mark.parametrize("state", ["new", "four weeks", "error", "add", "yesterday"])
 def test_every_titled_card_on_today_is_a_section_named_by_its_own_h2(client, monkeypatch, state):
     """Section L's card rule: a titled card is a section.card whose aria-labelledby names its own h2. The Today
     card is named by its title or its label, inside it. A card with no title stays a bare div.card. No id
@@ -5856,7 +5793,7 @@ def test_every_titled_card_on_today_is_a_section_named_by_its_own_h2(client, mon
     sign_in(client)
     monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
     if state != "new":
-        assert "error" not in services.add_sample_data(only_user().id, "web")
+        assert "error" not in four_weeks(only_user().id)
     on = "2026-11-09" if state == "yesterday" else "2026-11-10"
     if state == "error":
         r = post(client, f"/day/{on}/weigh-in", kg="abc")
@@ -6091,9 +6028,9 @@ def pinned(monkeypatch):
 
 @pytest.fixture
 def progress_fixed(client, pinned):
-    """Progress on the contract's fixed day: sample data, the clock pinned to Tuesday 10 November 2026."""
+    """Progress on the contract's fixed day: the four weeks, the clock pinned to Tuesday 10 November 2026."""
     sign_in(client)
-    assert "error" not in services.add_sample_data(only_user().id, "web")
+    assert "error" not in four_weeks(only_user().id)
     return client.get("/progress").text
 
 
@@ -6221,7 +6158,7 @@ def progress_state(state: str) -> None:
     if state == "food in 28 not 7":
         services.log_food(uid, {"date": ago(10), "entries": [{"description": "Dal", "kcal": 400}]}, "claude")
     if state == "the fixed day":
-        assert "error" not in services.add_sample_data(uid, "web")
+        assert "error" not in four_weeks(uid)
     if state == "targets and a zero rate":
         services.update_settings(uid, {"calorie_target_kcal": 2000, "target_sessions_per_week": 0,
                                        "target_cardio_minutes_per_week": 150}, "web")
@@ -6466,8 +6403,8 @@ def test_the_card_reads_the_persons_own_date_not_the_utc_date(client, monkeypatc
     assert tiles_of(page)[0]["value"] == "80.9"
 
 
-def test_progress_runs_head_banner_tiles_body_weight_trends_cardio_then_lifts(client, pinned):
-    """Contract lines 1480 to 1488: the page head, the sample banner, the tiles and their sheets, Body weight,
+def test_progress_runs_head_tiles_body_weight_trends_cardio_then_lifts(client, pinned):
+    """Contract lines 1480 to 1488: the page head, the tiles and their sheets, Body weight,
     Trends, Cardio, Lifts. Cardio comes before Lifts in the markup."""
     from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
 
@@ -6475,10 +6412,10 @@ def test_progress_runs_head_banner_tiles_body_weight_trends_cardio_then_lifts(cl
     progress_state("the fixed day")
     main = next(iter(parse(client.get("/progress").text).find_all("main")))
     assert [shape(c) for c in main.elements()] == [
-        ("div", "page-head"), ("p", "notice", "sample-banner"), ("div", "glance"), ("section", "card", "bw-card"),
+        ("div", "page-head"), ("div", "glance"), ("section", "card", "bw-card"),
         ("section", "card", "trends"), ("section", "card", "cardio-card"), ("section", "card", "lifts-card")]
     assert [e.text() for e in main.elements()[0].elements()] == ["Progress"]
-    glance = main.elements()[2]
+    glance = main.elements()[1]
     assert [shape(c) for c in glance.elements()] == [("div", "tiles", "four"), *[("div", "sheet")] * 4]
     assert [c.attrs["id"] for c in glance.elements()[1:]] == ["sheet-weight", "sheet-calories", "sheet-training",
                                                               "sheet-maintenance"]
@@ -6674,15 +6611,15 @@ def test_the_trends_card_in_each_state(client, pinned, state, rows):
 
 
 def test_a_trends_value_holds_no_words_and_the_reasons_are_the_reads(client, pinned, monkeypatch):
-    """Every remark that gives a reason is the read's own words: the rate's from get_trends' note less the sample
-    sentence, the estimate's from maintenance_note. Stood in for, they follow the read."""
+    """Every remark that gives a reason is the read's own words: the rate's from get_trends' note, the estimate's
+    from maintenance_note. Stood in for, they follow the read."""
     sign_in(client)
     progress_state("a weigh-in today")
     real = services.get_trends
 
     def worded(uid):
         out = real(uid)
-        return {**out, "note": "Rate words. " + web.SAMPLE_NOTE, "maintenance_note": "Estimate words."}
+        return {**out, "note": "Rate words.", "maintenance_note": "Estimate words."}
     monkeypatch.setattr(services, "get_trends", worded)
     rows = {q: (v, r) for q, v, r in trends_of(client.get("/progress").text)}
     assert rows["Weight rate"] == ("", "Rate words.") and rows["Maintenance"] == ("", "Estimate words.")
@@ -7007,7 +6944,7 @@ def lift_lines(page: str, title: str) -> list[tuple[str, list[str]]]:
 
 
 # A lift's page in main, top to bottom (contract lines 1559 to 1568).
-LIFT_PAGE = [("div", "page-head"), ("p", "notice", "sample-banner"), ("div", "tiles"), ("section", "card", "chart-card"),
+LIFT_PAGE = [("div", "page-head"), ("div", "tiles"), ("section", "card", "chart-card"),
              ("section", "card", "bests-card"), ("section", "card")]
 LIFT_EMPTY = "No sets of Back Squat logged yet. Tell your assistant what you lifted and it shows here."
 NO_BESTS = "No new bests beyond the first session yet."
@@ -7015,7 +6952,7 @@ NO_SESSIONS = "No session has an estimated max yet."
 
 
 def test_the_lift_page_on_the_fixed_day(client, progress_fixed):
-    """Back Squat on the fixed day: the head and its back link, the banner, three tiles that are not controls, the
+    """Back Squat on the fixed day: the head and its back link, three tiles that are not controls, the
     Estimated max chart card, Bests newest first in the new best's own words, Sessions newest first. Every figure is
     get_progress' own through its filter, every day worded against get_progress' today."""
     page = client.get("/progress/back-squat").text
@@ -7030,16 +6967,16 @@ def test_the_lift_page_on_the_fixed_day(client, progress_fixed):
         ("div", ["tile", "tile-max"], "Estimated max now:", "107.9", "kg, estimated max now", None),
         ("div", ["tile", "tile-best"], "Best set:", "92.5", "kg × 5, best set", "Fri 6 Nov"),
         ("div", ["tile", "tile-sessions"], "Sessions:", "6", "sessions", "last trained Fri 6 Nov")]
-    assert not main.elements()[2].find_all("a") and not main.elements()[2].find_all("button")
-    chart = main.elements()[3]
+    assert not main.elements()[1].find_all("a") and not main.elements()[1].find_all("button")
+    chart = main.elements()[2]
     assert chart.attrs == {"class": "card chart-card", "aria-labelledby": "max-title"}
     assert [shape(e) for e in chart.elements()] == [("h2", "card-label", "tile-max"), ("p", "card-sub"),
                                                     ("p", "figure"), ("svg", "chart")]
     assert chart.elements()[0].attrs["id"] == "max-title" and chart.elements()[0].text() == "Estimated max"
     assert chart.elements()[1].text() == "Worked out from your sets, not a tested max"  # the sub, as ruled
     assert chart.elements()[2].text() == f"107.9{NB}kg" and chart.elements()[3].attrs["id"] == "progress-chart"
-    assert main.elements()[4].attrs == {"class": "card bests-card", "aria-labelledby": "bests-title"}
-    assert main.elements()[5].attrs == {"class": "card", "aria-labelledby": "sessions-title"}
+    assert main.elements()[3].attrs == {"class": "card bests-card", "aria-labelledby": "bests-title"}
+    assert main.elements()[4].attrs == {"class": "card", "aria-labelledby": "sessions-title"}
     bests, sessions = lift_lines(page, "Bests"), lift_lines(page, "Sessions")
     # The Bests list is ul.bests, each line one span holding its words and link (a flex row keeps them as one);
     # the Sessions list is ul.entries of li.entry-line.
@@ -7154,7 +7091,7 @@ def test_the_lift_page_in_each_state(client, pinned, state, slug, tiles, chart, 
     lift_page_state(state)
     page = client.get(f"/progress/{slug}").text
     main = lift_main(page)
-    assert [card_shape(c) for c in main.elements()] == [s for s in LIFT_PAGE if s[1] != "notice"]
+    assert [card_shape(c) for c in main.elements()] == LIFT_PAGE
     assert [t[1] for t in lift_tiles(page)] == [t[0] for t in tiles] and all(t[0] == "div" for t in lift_tiles(page))
     assert [t[3:] for t in lift_tiles(page)] == [t[1:] for t in tiles]
     card = lift_card(page, "Estimated max")
@@ -7187,18 +7124,6 @@ def test_with_nothing_logged_the_lift_page_is_one_card_saying_what_to_do(client,
     assert "Claude" not in main.text()
     missing = client.get("/progress/not-a-lift")
     assert missing.status_code == 404 and "There is nothing here." in missing.text and "lift-page" not in missing.text
-
-
-def test_the_lift_page_carries_the_sample_banner_as_progress_does(client, pinned, monkeypatch):
-    """The banner from sample_state, between the page head and the tiles; none without sample rows."""
-    sign_in(client)
-    lift_page_state("one session only")
-    assert [card_shape(c) for c in lift_main(client.get("/progress/deadlift").text).elements()][:2] == [
-        ("div", "page-head"), ("div", "tiles")]
-    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3})
-    main = lift_main(client.get("/progress/deadlift").text)
-    assert [card_shape(c) for c in main.elements()] == LIFT_PAGE
-    assert main.elements()[1].text() == "Sample data is on this account. Remove it on Settings."
 
 
 def test_a_best_with_no_previous_shows_its_value_only(client, pinned, monkeypatch):
@@ -7269,13 +7194,12 @@ def test_the_lift_pages_estimated_max_goes_through_its_own_filter(client, pinned
 
 # ---------------------------------------------------------------- the Progress batch
 
-BANNER = '<p class="notice sample-banner">Sample data is on this account.'
 NO_ACCOUNT = {"error": "no_account", "message": "x", "fix": "y"}
 
 
-def banner_pages(client) -> dict[str, str]:
-    """Every page that draws the sample banner, by an address of each, for the one signed-in person: Settings, the
-    day page, Foods, Progress, a lift's page and Goals."""
+def signed_in_pages(client) -> dict[str, str]:
+    """Every signed-in page, by an address of each, for the one signed-in person: Settings, the day page, Foods,
+    Progress, a lift's page and Goals."""
     assert "error" not in services.log_lifts(only_user().id, {"sets": [
         {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
     return {"settings": "/settings", "day": f"/day/{today_of(only_user()).isoformat()}", "foods": "/foods",
@@ -7283,33 +7207,24 @@ def banner_pages(client) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("name", ["settings", "day", "foods", "progress", "lift", "goals"])
-def test_a_failed_sample_state_read_draws_the_page_with_no_banner(client, monkeypatch, name):
-    """Ruled (rev_b10 section 2): sample_state answering no_account (the account gone between two reads of one
-    request) is not a 500. Each page that reads sample_rows draws as with none: no banner (Settings: no Remove
-    sample data form). With sample rows each shows."""
+def test_no_signed_in_page_says_a_word_of_sample_data(client, name):
+    """Decision 1: no banner, no tag, no button and no form on any signed-in page, the four weeks logged or not."""
     sign_in(client)
-    address = banner_pages(client)[name]
-    mark = 'action="/settings/sample/remove"' if name == "settings" else BANNER
-    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3})
-    shown = client.get(address)
-    assert shown.status_code == 200 and mark in shown.text, name
-    monkeypatch.setattr(services, "sample_state", lambda *a: NO_ACCOUNT)
+    address = signed_in_pages(client)[name]
     r = client.get(address)
-    assert r.status_code == 200, (name, r.status_code)
-    assert mark not in r.text and "sample-banner" not in r.text
-    assert web.sample_rows_of(NO_ACCOUNT) == 0 and web.sample_rows_of({"empty": True, "sample_rows": 0}) == 0
+    assert r.status_code == 200 and "sample" not in r.text.casefold(), name
 
 
-def test_with_a_failed_sample_state_today_is_not_a_new_accounts_page(client, monkeypatch):
-    """The day page reads sample_state for its banner and for whether the account is new. A failed read is neither:
-    the page draws as for an account with entries, with no banner."""
+def test_with_a_failed_empty_account_read_today_is_not_a_new_accounts_page(client, monkeypatch):
+    """The day page reads account_empty for whether the account is new. A failed read (the account gone between two
+    reads of one request) is not a 500 and not a new account: the page draws as for an account with entries."""
     sign_in(client)
     today = f"/day/{today_of(only_user()).isoformat()}"
-    offer = 'id="today-card-title">Nothing logged yet</h2>'
-    assert offer in client.get(today).text  # a new account: the offer of sample data
-    monkeypatch.setattr(services, "sample_state", lambda *a: NO_ACCOUNT)
-    page = client.get(today).text
-    assert offer not in page and "sample-banner" not in page and '<section class="card hero"' in page
+    first = 'id="today-card-title">Nothing logged yet</h2>'
+    assert first in client.get(today).text  # a new account: what to do first
+    monkeypatch.setattr(services, "account_empty", lambda *a: NO_ACCOUNT)
+    r = client.get(today)
+    assert r.status_code == 200 and first not in r.text and '<section class="card hero"' in r.text
 
 
 def test_a_failed_glance_read_draws_no_glance_and_the_page_still_answers(client, monkeypatch):
@@ -7631,17 +7546,6 @@ def test_a_best_whose_previous_is_0_still_shows_up_from(client, pinned, monkeypa
     monkeypatch.setattr(services, "get_progress", from_zero)
     assert lift_lines(client.get("/progress/deadlift").text, "Bests") == [
         (f"Tue 10 Nov: heaviest weight 101.25{NB}kg, up from 0{NB}kg", ["/day/2026-11-10"])]
-
-
-def test_the_lift_page_with_nothing_logged_carries_the_sample_banner(client, pinned, monkeypatch):
-    """rev_b10 R11: with sample rows and none of this lift's sets, the banner still shows, after the head and before
-    the one card."""
-    sign_in(client)
-    monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": False, "sample_rows": 3})
-    main = lift_main(client.get("/progress/back-squat").text)
-    assert [shape(c) for c in main.elements()] == [("div", "page-head"), ("p", "notice", "sample-banner"),
-                                                   ("div", "card", "is-empty")]
-    assert main.elements()[1].text() == "Sample data is on this account. Remove it on Settings."
 
 
 def test_the_zero_kg_check_sees_a_tiles_figure_and_unit_in_two_spans(client, pinned, monkeypatch):

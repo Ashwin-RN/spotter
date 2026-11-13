@@ -2,10 +2,10 @@
 {% block title %}Foods · Spotter{% endblock %}
 {% block main %}
 {% import "_parts.html" as parts %}
-{# Foods (section L): the page head with its grey line, the sample banner, one strip after a write, then the Saved
+{# Foods (section L): the page head with its grey line, one strip after a write, then the Saved
    foods card in columns 1 to 8 and the Save a food card in 9 to 12. Every figure is list_saved_foods' own field
    through its filter: kcal_per_serving, grams_per_serving (grams), times_logged (count). The Saved foods table is a
-   row table (table.rows), which stacks below 720 px: the Food cell (td.lead) holds the name and its sample tag and
+   row table (table.rows), which stacks below 720 px: the Food cell (td.lead) holds the name and
    spans the row, each figure is a td.num that shows its data-label above it. Grams sit in their own column after
    Times logged, a food with none leaving its cell empty (not shown when stacked), and with no grams on any food the
    column is not drawn. Edit and Delete each sit in a cell of their own, with no label. No saved foods: a dashed
@@ -14,7 +14,6 @@
   <h1>Foods</h1>
   <p class="lede">Foods you save are logged by name and amount: Spotter works out the kcal. Saving one by talking to your assistant works too.</p>
 </div>
-{% include "sample_banner.html" %}
 
 {% if strip and strip.undo %}
 {{ parts.undo_strip(strip.words, "/foods/" ~ strip.undo ~ "/restore", csrf_token) }}
@@ -31,7 +30,7 @@
       <thead><tr><th scope="col">Food</th><th scope="col">Serving</th><th scope="col" class="num">kcal</th><th scope="col" class="num">Times logged</th>{% if weighed %}<th scope="col" class="num">Grams (g)</th>{% endif %}<th scope="col"><span class="sr">Edit</span></th><th scope="col"><span class="sr">Delete</span></th></tr></thead>
       <tbody>
         {% for f in foods %}
-        <tr><td class="lead">{{ f.name }}{{ parts.sample_tag(f) }}</td><td data-label="Serving">{{ f.serving_label }}</td><td class="num" data-label="kcal">{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td><td class="num" data-label="Times logged">{{ f.times_logged|show("count") }}</td>{% if weighed %}<td class="num" data-label="Grams (g)">{% if f.grams_per_serving is not none %}{{ f.grams_per_serving|show("grams", unit=False) }}{% endif %}</td>{% endif %}<td><a class="action" href="/foods/{{ f.id }}/edit">Edit</a></td><td><form method="post" action="/foods/{{ f.id }}/delete" class="inline">
+        <tr><td class="lead">{{ f.name }}</td><td data-label="Serving">{{ f.serving_label }}</td><td class="num" data-label="kcal">{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td><td class="num" data-label="Times logged">{{ f.times_logged|show("count") }}</td>{% if weighed %}<td class="num" data-label="Grams (g)">{% if f.grams_per_serving is not none %}{{ f.grams_per_serving|show("grams", unit=False) }}{% endif %}</td>{% endif %}<td><a class="action" href="/foods/{{ f.id }}/edit">Edit</a></td><td><form method="post" action="/foods/{{ f.id }}/delete" class="inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button class="link">Delete</button>
         </form></td></tr>

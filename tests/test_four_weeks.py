@@ -1,22 +1,25 @@
-"""Sample data: refused on a non-empty account, every count and tag, deterministic, removed completely,
-and the goal and trend numbers it gives on a fixed day, to the decimal.
+"""The four-week seed (evals/four_weeks.py): refused on a non-empty account, every count and tag, deterministic,
+unmarked, and the goal and trend numbers it gives on a fixed day, to the decimal. Also the read an empty account's
+Today card stands on (services.account_empty).
 
-The day is fixed by replacing the clock (db.utcnow) with NOW. The live exit test compares Spotter's
-numbers with these, for the same day: to check another day, set NOW to it and rerun the numbers
-(the decimals below are for 2026-11-10 only; the counts hold on any day). The decimals were worked
-out a second way, in plain Python from the seed, not copied from the service's output.
+The day is fixed by replacing the clock (db.utcnow) with NOW. The decimals below are for 2026-11-10 only; the
+counts hold on any day. They were worked out a second way, in plain Python from the seed, not copied from the
+service's output, and they are the same numbers the seed gave when Spotter itself could add it.
 """
 
+import ast
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import func, select
 
 from app import db, services, users
+from app.config import ROOT
 from app.models import (
-    Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, User,
+    Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, User,
 )
-from app.services import sample
+from evals import four_weeks as seed
+from evals.four_weeks import four_weeks
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)   # a Tuesday
 MODELS = (LiftSession, Bodyweight, Measurement, SavedFood, FoodEntry, CardioEntry, Goal)
@@ -34,43 +37,39 @@ def user(make_user):
     return make_user()
 
 
-def rows_of(user_id, only_sample=False) -> dict:
+def rows_of(user_id) -> dict:
     with db.new_session() as s:
-        out = {}
-        for m in MODELS:
-            q = select(func.count()).select_from(m).where(m.user_id == user_id)
-            out[m.__tablename__] = s.scalar(q.where(m.is_sample.is_(True)) if only_sample else q)
+        out = {m.__tablename__: s.scalar(select(func.count()).select_from(m).where(m.user_id == user_id))
+               for m in MODELS}
         out["lift_set"] = s.scalar(select(func.count()).select_from(LiftSet).join(LiftSession)
                                    .where(LiftSession.user_id == user_id))
         return out
 
 
 def added(user):
-    r = services.add_sample_data(user.id, "web")
+    r = four_weeks(user.id)
     assert "error" not in r, r
     return r
 
 
-# ---------------------------------------------------------------- counts, tags, marks
+# ---------------------------------------------------------------- counts, tags, no mark
 
 def test_it_adds_four_weeks_of_everything(user):
-    assert services.sample_state(user.id) == {"empty": True, "sample_rows": 0}
+    assert services.account_empty(user.id) == {"empty": True}
     r = added(user)
-    assert r["added"] == COUNTS and r["from"] == "2026-10-14" and r["to"] == "2026-11-10"
-    assert set(r["links"]) == {"today", "progress", "goals"} and "Remove sample data" in r["summary"]
-    assert r["summary"].startswith("Added sample data for 14 Oct to 10 Nov: 12 lift sessions, ") and ";" not in r["summary"]
-    assert services.sample_state(user.id) == {"empty": False, "sample_rows": sum(COUNTS.values())}
+    assert r == {"added": COUNTS, "from": "2026-10-14", "to": "2026-11-10"}
+    assert services.account_empty(user.id) == {"empty": False}
     assert rows_of(user.id)["lift_set"] == 6 * (9 + 7)   # six A sessions of 9 sets, six B of 7
     with db.new_session() as s:
         for m in MODELS:
-            assert all(r.is_sample for r in s.scalars(select(m).where(m.user_id == user.id))), m
+            assert "is_sample" not in m.__table__.c, m   # no mark: the rows read as anyone's
             if hasattr(m, "logged_by"):
                 assert {r.logged_by for r in s.scalars(select(m).where(m.user_id == user.id))} == {"web"}
         dates = [d for m in (LiftSession, Bodyweight, Measurement, FoodEntry, CardioEntry)
                  for d in s.scalars(select(m.date).where(m.user_id == user.id))]
         assert min(dates).isoformat() == "2026-10-14" and max(dates).isoformat() == "2026-11-10"
         sources = {e.source for e in s.scalars(select(FoodEntry).where(FoodEntry.user_id == user.id))}
-        assert sources == {"saved_food", "you_said", "claude_estimate"}   # every tag a sample can carry
+        assert sources == {"saved_food", "you_said", "claude_estimate"}   # every tag the Food card shows
         sessions = list(s.scalars(select(LiftSession).where(LiftSession.user_id == user.id)))
         assert {t.date.weekday() for t in sessions} == {0, 2, 4}
         cardio = list(s.scalars(select(CardioEntry).where(CardioEntry.user_id == user.id)))
@@ -82,8 +81,11 @@ def test_it_adds_four_weeks_of_everything(user):
         waist = [m.value for m in s.scalars(select(Measurement).where(Measurement.kind == "waist")
                                             .order_by(Measurement.date))]
         assert waist == [88.0, 87.5, 87.0, 86.5]
+        names = sorted(f.name for f in s.scalars(select(SavedFood).where(SavedFood.user_id == user.id)))
+        assert names == ["Dal bowl", "Oats bowl", "Rice bowl", "Roti"]
         user_row = s.get(User, user.id)
         assert user_row.calorie_target_kcal is None and user_row.time_zone is None   # settings untouched
+        assert s.scalar(select(func.count()).select_from(CallLog)) == 0   # a seed, not a call
 
 
 def test_every_day_lands_between_2100_and_2300_kcal(user):
@@ -99,8 +101,6 @@ def test_every_day_lands_between_2100_and_2300_kcal(user):
     days = services.get_log(user.id, days=14)["days"]
     snacks = sum(1 for e in days if e["food"]["meals"]["snack"])
     assert 0 < snacks < 14   # some days, not all
-    shown = [e for d in days for meal in d["food"]["meals"].values() for e in meal]
-    assert shown and all(e["is_sample"] is True for e in shown)   # each one can be tagged on the day page
 
 
 def test_two_runs_on_the_same_day_give_the_same_rows(make_user):
@@ -127,7 +127,7 @@ def test_two_runs_on_the_same_day_give_the_same_rows(make_user):
 
 
 def test_each_row_carries_its_kinds_own_duplicate_key(user):
-    """A real entry with the same content, logged now, is judged the same way: a duplicate."""
+    """An entry with the same content, logged now, is judged the same way: a duplicate."""
     added(user)
     day = "2026-11-10"
     with db.new_session() as s:
@@ -164,10 +164,8 @@ def test_each_row_carries_its_kinds_own_duplicate_key(user):
 def test_get_goals_numbers_for_the_fixed_day(user):
     added(user)
     r = services.get_goals(user.id)
-    assert r["today"] == "2026-11-10" and r["includes_sample"] is True and r["closed"] == []
-    assert "Remove sample data" in r["note"]
+    assert r["today"] == "2026-11-10" and r["closed"] == [] and "note" not in r
     weight, squat, run = r["goals"]
-    assert all(g["is_sample"] is True for g in r["goals"])   # each one can be tagged on the Goals page
     # A body weight or lift goal's start_value and latest come back at 1 dp (stage 6, section D): the
     # 7-day average 79.01 is 79.0, the squat's 93.33 and 107.92 are 93.3 and 107.9. The pace, the
     # projection and the dates are worked out from the unrounded figures, so they do not move. The
@@ -200,7 +198,7 @@ def test_get_goals_numbers_for_the_fixed_day(user):
                             "Tue 2 Feb 2027, on track. Outdoor Run 5 km in 27:00 by Tue 5 Jan 2027, on track.")
 
 
-def test_the_plan_line_of_the_three_sample_goals_on_the_fixed_day(user):
+def test_the_plan_line_of_the_three_goals_on_the_fixed_day(user):
     """Stage 6, E1, worked out a second way: the straight line from each goal's start to its target, read
     on 2026-11-10, against the goal's now (79.01, 107.92 and 29.5 from the test above)."""
     added(user)
@@ -256,239 +254,25 @@ def test_get_trends_numbers_for_the_fixed_day(user):
     assert r["cardio"] == {"minutes_this_week": 84.5, "target_minutes": None, "minutes_per_week_4w": 85.2}
     assert r["maintenance"] == {"kcal": 2513, "intake_avg_kcal": 2198, "weight_change_kg": -0.86, "days_logged": 21,
                                 "window_days": 21, "from": "2026-10-21", "to": "2026-11-10"}
-    assert r["maintenance_note"] is None and r["includes_sample"] is True and "Remove sample data" in r["note"]
+    assert r["maintenance_note"] is None and "note" not in r   # a rate, so nothing to say
     # The field keeps whole kcal; the summary says the nearest 10 (D11): 2513 is "about 2,510 kcal".
     assert "Maintenance about 2,510 kcal a day, from 21 logged days of the last 21." in r["summary"]
     assert r["summary"].startswith("Body weight 79 kg now, smoothed 79.2 kg, -0.24 kg a week. Calories 2,216 a day "
                                    "over 7 logged days of the last 7, 2,196 over 28 of the last 28.")
 
 
-def test_every_read_says_it_includes_sample_rows_until_they_go(user):
-    added(user)
-    reads = {"get_log": lambda: services.get_log(user.id, days=7), "get_progress": lambda: services.get_progress(user.id),
-             "get_progress lift": lambda: services.get_progress(user.id, "Back Squat"),
-             "get_progress cardio": lambda: services.get_progress(user.id, "Outdoor Run"),
-             "get_goals": lambda: services.get_goals(user.id), "get_trends": lambda: services.get_trends(user.id)}
-    for name, read in reads.items():
-        r = read()
-        assert r["includes_sample"] is True and r["note"].endswith(services.common.SAMPLE_NOTE), name
-        assert "Settings" in r["note"] and "remove_sample_data" not in r["note"], name
-    # With every sample goal dropped, the sample sessions alone still make get_progress say so.
-    for g in services.get_goals(user.id)["goals"]:
-        services.set_goal(user.id, {"goal_id": g["goal_id"], "status": "dropped"}, "web")
-    summary = services.get_progress(user.id)
-    assert summary["goals"] == [] and summary["includes_sample"] is True
-    assert services.remove_sample_data(user.id, "web")["removed"] == COUNTS
-    for name, read in reads.items():
-        r = read()
-        assert r["includes_sample"] is False and services.common.SAMPLE_NOTE not in r.get("note", ""), name
-
-
-# ---------------------------------------------------------------- refusals
-
-def test_refused_on_an_account_with_its_own_rows(user):
-    services.log_bodyweight(user.id, {"kg": 80}, "web")
-    r = services.add_sample_data(user.id, "web")
-    assert r["error"] == "not_empty" and r["message"] == "Sample data goes only into an empty account."
-    assert "day pages" in r["fix"] and "delete" in r["fix"].lower()
-    assert rows_of(user.id, only_sample=True) == {**{m.__tablename__: 0 for m in MODELS}, "lift_set": 0}
-    assert services.sample_state(user.id) == {"empty": False, "sample_rows": 0}
-
-
-@pytest.mark.parametrize("what", ["live saved food", "open goal", "lift session", "food entry", "cardio entry",
-                                  "measurement"])
-def test_each_live_thing_keeps_an_account_from_being_empty(user, what):
-    goal_date = (users.today_for(user) + timedelta(days=30)).isoformat()
-    {"live saved food": lambda: services.save_food(user.id, {"name": "Toast", "serving_label": "1 slice",
-                                                             "kcal_per_serving": 80}, "web"),
-     "open goal": lambda: services.set_goal(user.id, {"kind": "bodyweight", "target_value": 70, "start_value": 80,
-                                                      "target_date": goal_date}, "web"),
-     "lift session": lambda: services.log_lifts(user.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 100,
-                                                                    "reps": 5}]}, "web"),
-     "food entry": lambda: services.log_food(user.id, {"entries": [{"description": "dal", "kcal": 180}]}, "web"),
-     "cardio entry": lambda: services.log_cardio(user.id, {"exercise": "Elliptical", "minutes": 20}, "web"),
-     "measurement": lambda: services.log_measurement(user.id, {"kind": "waist", "value": 84}, "web")}[what]()
-    assert services.sample_state(user.id)["empty"] is False
-    assert services.add_sample_data(user.id, "web")["error"] == "not_empty"
-
-
-def test_deleted_entries_deleted_saved_foods_and_closed_goals_do_not_count(user):
-    """Amended decision 9: only live entries, live saved foods and open goals keep an account from being empty."""
-    weigh = services.log_bodyweight(user.id, {"kg": 80}, "web")
-    services.delete_entry(user.id, "bodyweight", weigh["id"])
-    roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1 big roti", "kcal_per_serving": 150}, "web")
-    services.delete_entry(user.id, "saved_food", roti["id"])
-    for status in ("dropped", "hit"):   # a closed goal does not count, whichever way it closed
-        gid = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 70, "start_value": 80,
-                                          "target_date": "2027-01-01"}, "web")["id"]
-        services.set_goal(user.id, {"goal_id": gid, "status": status}, "web")
-    assert services.sample_state(user.id) == {"empty": True, "sample_rows": 0}
-    assert added(user)["added"] == COUNTS
-    with db.new_session() as s:   # the deleted Roti keeps its name; the sample one is told apart
-        names = sorted(f.name for f in s.scalars(select(SavedFood).where(SavedFood.user_id == user.id)))
-        assert names == ["Dal bowl", "Oats bowl", "Rice bowl", "Roti", "Roti (sample)"]
-    assert services.restore_entry(user.id, "saved_food", roti["id"])["restored"] is True
-    # Removal leaves the person's own rows, deleted ones included.
-    services.remove_sample_data(user.id, "web")
-    assert rows_of(user.id) == {**{m.__tablename__: 0 for m in MODELS}, "bodyweight": 1, "saved_food": 1, "goal": 2,
-                                "lift_set": 0}
-
-
-def test_a_hit_goal_alone_does_not_block_and_an_open_one_does(user):
-    gid = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 70, "start_value": 80,
-                                      "target_date": "2027-01-01"}, "web")["id"]
-    assert services.sample_state(user.id)["empty"] is False
-    services.set_goal(user.id, {"goal_id": gid, "status": "hit"}, "web")
-    assert services.sample_state(user.id)["empty"] is True and "error" not in services.add_sample_data(user.id, "web")
-
-
-def test_one_kind_of_sample_row_alone_still_flags_every_read(user):
-    """Rule 16 per kind: only the sample meals left, the sample goals dropped, a real goal set."""
-    added(user)
-    with db.session_scope() as s:
-        for m in (LiftSession, Bodyweight, Measurement, CardioEntry):
-            for row in s.scalars(select(m).where(m.user_id == user.id, m.is_sample.is_(True))):
-                row.deleted_at = NOW
-    for g in services.get_goals(user.id)["goals"]:
-        services.set_goal(user.id, {"goal_id": g["goal_id"], "status": "dropped"}, "web")
-    services.log_bodyweight(user.id, {"kg": 80}, "web")
-    real = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75, "target_date": "2027-01-01"}, "web")
-    assert real["goal"]["is_sample"] is False
-    log = services.get_log(user.id, days=7)
-    trends = services.get_trends(user.id)
-    assert log["includes_sample"] is True and trends["includes_sample"] is True   # the meals alone
-    assert trends["bodyweight"]["weigh_ins_28d"] == 1 and trends["calories"]["days_logged_28d"] == 28
-    # get_goals reads no food: its flag is the goals' own, and the open goal is real.
-    goals = services.get_goals(user.id)
-    assert goals["includes_sample"] is False and [g["is_sample"] for g in goals["goals"]] == [False]
-    closed = services.get_goals(user.id, include_closed=True)
-    assert closed["includes_sample"] is True and [c["is_sample"] for c in closed["closed"]] == [True, True, True]
-
-
-def test_sample_weigh_ins_under_a_real_goal_flag_get_goals(user):
-    """The goals' numbers read the weigh-ins: sample ones in them make get_goals say so, real goal or not."""
-    added(user)
-    with db.session_scope() as s:
-        for m in (LiftSession, Measurement, CardioEntry, FoodEntry):
-            for row in s.scalars(select(m).where(m.user_id == user.id)):
-                row.deleted_at = NOW
-    for g in services.get_goals(user.id)["goals"]:
-        services.set_goal(user.id, {"goal_id": g["goal_id"], "status": "dropped"}, "web")
-    real = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75, "target_date": "2027-01-01"}, "web")
-    assert real["goal"]["is_sample"] is False and real["goal"]["start_value"] == 79.0   # 79.01 at 1 dp
-    r = services.get_goals(user.id)
-    assert [g["is_sample"] for g in r["goals"]] == [False] and r["includes_sample"] is True
-    assert services.get_progress(user.id)["includes_sample"] is True
-
-
-def test_a_sample_goal_alone_flags_get_goals(user):
-    added(user)
-    with db.session_scope() as s:   # every sample entry deleted: only the goals are left
-        for m in (LiftSession, Bodyweight, Measurement, CardioEntry, FoodEntry):
-            for row in s.scalars(select(m).where(m.user_id == user.id)):
-                row.deleted_at = NOW
-    r = services.get_goals(user.id)
-    assert r["includes_sample"] is True and all(g["is_sample"] for g in r["goals"])
-    assert all(g["status"] == "not enough data" for g in r["goals"])
-
-
-def test_removal_says_which_of_the_persons_own_entries_lose_their_link(user):
-    added(user)
-    with db.new_session() as s:
-        roti = s.scalar(select(SavedFood.id).where(SavedFood.user_id == user.id, SavedFood.name == "Roti"))
-    mine = services.log_food(user.id, {"entries": [{"saved_food_id": roti, "servings": 3, "meal": "snack"},
-                                                   {"saved_food_id": roti, "servings": 1, "meal": "lunch"}]}, "web")
-    r = services.remove_sample_data(user.id, "web")
-    assert r["summary"].endswith(" 2 real entries were logged against a sample food. They keep their numbers "
-                                 "and lose the link.")
-    after = [services.get_entry(user.id, "food_entry", i)["entry"] for i in mine["ids"]]
-    assert [(e["kcal"], e["source"], e["saved_food_id"], e["servings"]) for e in after] == [
-        (360, "saved_food", None, 3.0), (120, "saved_food", None, 1.0)]
-    for i in mine["ids"]:   # an empty account again, so sample data can go back in
-        services.delete_entry(user.id, "food_entry", i)
-    added(user)
-    with db.new_session() as s:
-        roti = s.scalar(select(SavedFood.id).where(SavedFood.user_id == user.id, SavedFood.name == "Roti"))
-    services.log_food(user.id, {"entries": [{"saved_food_id": roti, "servings": 2}]}, "web")
-    one = services.remove_sample_data(user.id, "web")["summary"]
-    assert one.endswith(" 1 real entry was logged against a sample food. It keeps its numbers and loses the "
-                        "link.")
-    added_again = services.remove_sample_data(user.id, "web")["summary"]
-    assert "real entr" not in added_again
-
-
-def test_never_twice(user):
-    added(user)
-    r = services.add_sample_data(user.id, "web")
-    assert r["error"] == "already_sample" and "Remove sample data" in r["fix"]
-    assert services.sample_state(user.id)["sample_rows"] == sum(COUNTS.values())
-
-
-def test_bad_callers(user):
-    assert services.add_sample_data(user.id, "robot")["error"] == "invalid_by"
-    assert services.remove_sample_data(user.id, "robot")["error"] == "invalid_by"
-    assert services.add_sample_data(987654, "web")["error"] == "no_account"
-    assert services.remove_sample_data(987654, "web")["error"] == "no_account"
-    assert services.sample_state(987654)["error"] == "no_account"
-
-
-# ---------------------------------------------------------------- removal
-
-def test_removal_is_complete_and_leaves_real_rows_and_other_people(user, make_user):
-    other = make_user()
-    added(user)
-    added(other)
-    # The person logs for real on top, and edits, deletes and restores sample rows.
-    real = services.log_food(user.id, {"entries": [{"description": "real lunch", "kcal": 500}]}, "web")["ids"][0]
-    with db.new_session() as s:
-        waist = s.scalar(select(Measurement.id).where(Measurement.user_id == user.id, Measurement.kind == "waist")
-                         .order_by(Measurement.id))
-        squat_goal = s.scalar(select(Goal.id).where(Goal.user_id == user.id, Goal.kind == "lift"))
-        walk = s.scalar(select(CardioEntry.id).where(CardioEntry.user_id == user.id).order_by(CardioEntry.id))
-    services.delete_entry(user.id, "measurement", waist)
-    services.set_goal(user.id, {"goal_id": squat_goal, "status": "dropped"}, "claude")
-    assert services.edit_entry(user.id, "cardio_entry", walk, {"minutes": 35}, "web")["changed"]
-    r = services.remove_sample_data(user.id, "web")
-    assert r["removed"] == COUNTS and set(r["links"]) == {"today"}
-    left = rows_of(user.id)
-    assert left == {**{m.__tablename__: 0 for m in MODELS}, "food_entry": 1, "lift_set": 0}
-    assert services.get_entry(user.id, "food_entry", real)["entry"]["description"] == "real lunch"
-    assert rows_of(other.id, only_sample=True)["food_entry"] == 240   # the other person's are untouched
-    again = services.remove_sample_data(user.id, "web")
-    assert again["removed"] == {k: 0 for k in COUNTS} and "no sample data" in again["summary"]
-    services.delete_entry(user.id, "food_entry", real)
-    assert services.sample_state(user.id) == {"empty": True, "sample_rows": 0}
-    assert added(user)["added"] == COUNTS   # and it can be added again
-
-
-def test_add_and_remove_are_limited_writes(user):
-    from app.models import CallLog
-    with db.session_scope() as s:
-        s.add_all(CallLog(user_id=user.id, function="log_lifts", started_at=NOW, ms=1, ok=True, result_bytes=1)
-                  for _ in range(services.WRITE_LIMIT + 1))
-    assert services.add_sample_data(user.id, "web")["error"] == "too_many_writes"
-    assert services.remove_sample_data(user.id, "web")["error"] == "too_many_writes"
-    assert services.sample_state(user.id)["sample_rows"] == 0
-
-
-def test_the_seed_and_the_window_are_the_contracts():
-    assert sample.SEED == 20261110 and sample.DAYS == 28
-    assert sample.TARGETS == {"bodyweight": 77, "lift": 120, "cardio_best": 27.0}
-    assert sample.GOAL_DAYS == {"bodyweight": 56, "lift": 84, "cardio_best": 56}
-
-
-def test_goal_charts_says_it_includes_sample_rows(user):
-    """The Goals page's read flags sample rows as get_goals does, with the same note."""
+def test_goal_charts_agrees_with_get_goals(user):
+    """The Goals page's read and get_goals, on the four weeks: the same plan lines, and neither carries a note."""
     added(user)
     charts, listed = services.goal_charts(user.id), services.get_goals(user.id)
-    assert charts["includes_sample"] is True and charts["note"] == listed["note"]
+    assert set(charts) == {"today", "goals"} and "note" not in listed
     assert [n["now_basis"] for n in charts["goals"]] == ["average_7d", "best_28d", "best_28d"]
     assert [n["plan_line"] for n in charts["goals"]] == [n["plan_line"] for n in listed["goals"]]
 
 
 # ---------------------------------------------------------------- the 28-day grid and the run's bests (stage 6)
 
-def sample_weights() -> list[float]:
+def seeded_weights() -> list[float]:
     """The 28 weigh-ins a second way: the seed's first 28 draws, in plain Python, as the module notes say."""
     import random
     rng = random.Random(20261110)
@@ -514,15 +298,14 @@ def test_the_grid_of_the_fixed_day(user):
     assert by_weekday == {0: {(1, 0)}, 1: {(0, 1)}, 2: {(1, 0)}, 3: {(0, 1)}, 4: {(1, 0)}, 5: {(0, 1)}, 6: {(0, 0)}}
     assert [d["cardio_minutes"] for d in r["days"] if d["cardio_entries"]] == [
         25.0, 31.0, 30.0, 25.0, 30.5, 30.0, 25.0, 30.0, 30.0, 25.0, 29.5, 30.0]   # Thu 15 Oct first
-    assert all(d["weighed"] and d["is_sample"] and d["food_entries"] in (8, 9) and 2100 <= d["kcal"] <= 2300
-               for d in r["days"])
+    assert all(d["weighed"] and d["food_entries"] in (8, 9) and 2100 <= d["kcal"] <= 2300 for d in r["days"])
     with db.new_session() as s:
         kcal = {}
         for e in s.scalars(select(FoodEntry).where(FoodEntry.user_id == user.id)):
             kcal[e.date.isoformat()] = kcal.get(e.date.isoformat(), 0) + e.kcal
     assert {d["date"]: d["kcal"] for d in r["days"]} == kcal
     assert (r["lift_sessions_28d"], r["lift_days_28d"], r["cardio_days_28d"]) == (12, 12, 12)
-    assert r["includes_sample"] is True and r["note"] == services.common.SAMPLE_NOTE
+    assert "note" not in r
 
 
 def test_the_weeks_and_the_weight_of_the_fixed_day(user):
@@ -548,7 +331,7 @@ def test_the_weeks_and_the_weight_of_the_fixed_day(user):
     assert len(stored) == 28 and stored[0] == ("2026-10-14", 79.9) and stored[-1] == ("2026-11-10", 78.6)
     assert [d for d, kg in stored if kg == max(k for _, k in stored)] == ["2026-10-16"]
     assert [d for d, kg in stored if kg == min(k for _, k in stored)] == ["2026-11-10"]
-    assert [kg for _, kg in stored] == sample_weights()               # the rows are the seed's draws
+    assert [kg for _, kg in stored] == seeded_weights()               # the rows are the seed's draws
     assert r["weight"]["latest"]["kg"] == trends["bodyweight"]["series"][-1]["kg"]
 
 
@@ -569,21 +352,21 @@ def test_the_outdoor_run_bests_of_the_fixed_day(user):
         "times": [{"distance_km": 1.0, "minutes": 5.9, "date": "2026-11-07", "entry_id": fastest["id"]},
                   {"distance_km": 5.0, "minutes": 29.5, "date": "2026-11-07", "entry_id": fastest["id"]}]}
     assert r["week"] == {"minutes": 84.5, "target_minutes": None}
-    assert r["includes_sample"] is True and all(s["is_sample"] for s in r["sessions"])
-    # The 5 km time is the sample goal's latest: one rule for both.
+    assert "note" not in r
+    # The 5 km time is the run goal's latest: one rule for both.
     assert services.get_goals(user.id)["goals"][2]["latest"] == r["bests"]["times"][-1]["minutes"]
     summary = services.get_cardio(user.id)
-    assert summary["activities"] == [
+    assert summary == {"today": "2026-11-10", "activities": [
         {"exercise": "Outdoor Run", "sessions_28d": 4, "minutes_28d": 121.0, "fastest_pace": "5:54",
          "last_date": "2026-11-07"},
         {"exercise": "Stationary Bike", "sessions_28d": 4, "minutes_28d": 100.0, "fastest_pace": None,
          "last_date": "2026-11-05"},
         {"exercise": "Treadmill Walk", "sessions_28d": 4, "minutes_28d": 120.0, "fastest_pace": None,
-         "last_date": "2026-11-10"}]
+         "last_date": "2026-11-10"}]}
 
 
-def test_the_sample_pull_up_is_a_reps_only_lift(user):
-    """G8: the sample's Pull-Up is 3 x 6 at 0 kg in each B session, so no estimated max; reps_only gives 6, on the
+def test_the_pull_up_is_a_reps_only_lift(user):
+    """G8: the seed's Pull-Up is 3 x 6 at 0 kg in each B session, so no estimated max; reps_only gives 6, on the
     first B session, Fri 16 Oct (a tie keeps the earliest)."""
     from app.services import lifts
     added(user)
@@ -591,3 +374,78 @@ def test_the_sample_pull_up_is_a_reps_only_lift(user):
         h = lifts.history(s, user.id, NOW.date())
     assert h["reps_only"] == {"Pull-Up": {"reps": 6, "date": "2026-10-16"}}
     assert "Pull-Up" not in h["best_set"]
+
+
+def test_the_seed_and_the_window_are_the_contracts():
+    assert seed.SEED == 20261110 and seed.DAYS == 28
+    assert seed.TARGETS == {"bodyweight": 77, "lift": 120, "cardio_best": 27.0}
+    assert seed.GOAL_DAYS == {"bodyweight": 56, "lift": 84, "cardio_best": 56}
+
+
+# ---------------------------------------------------------------- refusals
+
+def test_refused_on_an_account_with_its_own_rows(user):
+    services.log_bodyweight(user.id, {"kg": 80}, "web")
+    r = four_weeks(user.id)
+    assert r["error"] == "not_empty"
+    assert rows_of(user.id) == {**{m.__tablename__: 0 for m in MODELS}, "bodyweight": 1, "lift_set": 0}
+    assert four_weeks(987654)["error"] == "no_account"
+
+
+def test_refused_when_a_deleted_saved_food_holds_one_of_its_names(user):
+    """Names are unique per person, deleted ones included: the seed refuses rather than rename a food."""
+    roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1 big roti", "kcal_per_serving": 150}, "web")
+    services.delete_entry(user.id, "saved_food", roti["id"])
+    assert services.account_empty(user.id) == {"empty": True}
+    assert four_weeks(user.id)["error"] == "not_empty"
+    assert rows_of(user.id)["saved_food"] == 1
+
+
+def test_app_never_imports_from_evals():
+    """Decision 6: the seed lives outside app/, and nothing in app/ reaches for it."""
+    for path in (ROOT / "app").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                assert not any(a.name.split(".")[0] == "evals" for a in node.names), path
+            elif isinstance(node, ast.ImportFrom):
+                assert (node.module or "").split(".")[0] != "evals", path
+
+
+# ---------------------------------------------------------------- account_empty: Today's new-account card
+
+@pytest.mark.parametrize("what", ["live saved food", "open goal", "lift session", "food entry", "cardio entry",
+                                  "measurement", "weigh-in"])
+def test_each_live_thing_keeps_an_account_from_being_empty(user, what):
+    goal_date = (users.today_for(user) + timedelta(days=30)).isoformat()
+    {"live saved food": lambda: services.save_food(user.id, {"name": "Toast", "serving_label": "1 slice",
+                                                             "kcal_per_serving": 80}, "web"),
+     "open goal": lambda: services.set_goal(user.id, {"kind": "bodyweight", "target_value": 70, "start_value": 80,
+                                                      "target_date": goal_date}, "web"),
+     "lift session": lambda: services.log_lifts(user.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 100,
+                                                                    "reps": 5}]}, "web"),
+     "food entry": lambda: services.log_food(user.id, {"entries": [{"description": "dal", "kcal": 180}]}, "web"),
+     "cardio entry": lambda: services.log_cardio(user.id, {"exercise": "Elliptical", "minutes": 20}, "web"),
+     "measurement": lambda: services.log_measurement(user.id, {"kind": "waist", "value": 84}, "web"),
+     "weigh-in": lambda: services.log_bodyweight(user.id, {"kg": 80}, "web")}[what]()
+    assert services.account_empty(user.id) == {"empty": False}
+
+
+def test_deleted_entries_deleted_saved_foods_and_closed_goals_do_not_count(user):
+    weigh = services.log_bodyweight(user.id, {"kg": 80}, "web")
+    services.delete_entry(user.id, "bodyweight", weigh["id"])
+    toast = services.save_food(user.id, {"name": "Toast", "serving_label": "1 slice", "kcal_per_serving": 80}, "web")
+    services.delete_entry(user.id, "saved_food", toast["id"])
+    for status in ("dropped", "hit"):   # a closed goal does not count, whichever way it closed
+        gid = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 70, "start_value": 80,
+                                          "target_date": "2027-01-01"}, "web")["id"]
+        assert services.account_empty(user.id) == {"empty": False}
+        services.set_goal(user.id, {"goal_id": gid, "status": status}, "web")
+    assert services.account_empty(user.id) == {"empty": True}
+    assert services.account_empty(987654)["error"] == "no_account"
+
+
+def test_account_empty_reads_one_person_only(make_user):
+    a, b = make_user(), make_user()
+    added(b)
+    assert services.account_empty(a.id) == {"empty": True} and services.account_empty(b.id) == {"empty": False}

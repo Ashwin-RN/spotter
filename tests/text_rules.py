@@ -1030,8 +1030,8 @@ def doc_blocks(text: str) -> list[DocBlock]:
 
 
 def mask_entered(text: str, entered: Iterable[str]) -> str:
-    """text with every value the person entered put out of reach of the checks: each value as given, the
-    value with " (sample)" added (sample.py), and rules.quote of it, cut mark included. Each becomes
+    """text with every value the person entered put out of reach of the checks: each value as given and
+    rules.quote of it, cut mark included. Each becomes
     ENTERED. Longest first; blank values are skipped; a value is matched as a whole, never inside a
     longer word, number or date: beside a digit, ".", ",", ":" and "-" end nothing, so ["80"] leaves
     "80.5 kg" alone and ["11"] leaves "2026-11-10" alone. A value with no letter or digit in it is
@@ -1045,7 +1045,7 @@ def mask_entered(text: str, entered: Iterable[str]) -> str:
         value = str(value)
         if not any(c.isalnum() for c in value):
             raise ValueError(f"an entered value needs a letter or a digit to be masked: {value!r}")
-        variants |= {value, f"{value} (sample)", quote(value)}
+        variants |= {value, quote(value)}
     for variant in sorted(variants, key=len, reverse=True):
         before = r"(?<!\w)(?<!\d[.,:-])" if re.match(r"\w", variant) else ""
         after = r"(?!\w)(?![.,:-]\d)" if re.search(r"\w$", variant) else ""

@@ -504,7 +504,7 @@ def test_template_format_lines_find_number_formatting_in_a_template():
 
 def test_template_text_leaves_out_tests_subscripts_names_and_comments():
     src = """{% extends "base.html" %}{% import "m.html" as m %}
-{% block main %}{% include "sample_banner.html" %}
+{% block main %}{% include "notice_banner.html" %}
 {% if x == "secret one" %}<p>Shown</p>{% endif %}
 {% if y is sameas "secret two" %}{% endif %}
 <p>{{ errors["secret three"] }} {{ a.b }}</p>
@@ -529,11 +529,11 @@ def test_template_text_marks_a_title_block():
 
 
 def test_template_text_skips_an_aria_hidden_roll_and_reads_macros_and_attributes():
-    src = """{% macro tag(r) %}{% if r.s %}<span class="tag">sample</span>{% endif %}{% endmacro %}
+    src = """{% macro tag(r) %}{% if r.s %}<span class="tag">estimate</span>{% endif %}{% endmacro %}
 <p>Total <span aria-hidden="true" class="roll">{{ n }} digits</span> kcal</p>
 <button title="Keep this number as yours">Confirm</button>"""
     pieces = tr.template_text(src)
-    assert texts(pieces, "text") == ["sample", "Total kcal", "Confirm"]
+    assert texts(pieces, "text") == ["estimate", "Total kcal", "Confirm"]
     assert texts(pieces, "attr") == ["Keep this number as yours"]
 
 
@@ -738,9 +738,9 @@ def test_mask_entered_hides_values_the_person_gave():
     assert tr.check(masked, tr.SUMMARY) == []
 
 
-def test_mask_entered_hides_a_sample_name_and_a_quoted_value():
+def test_mask_entered_hides_a_name_and_a_quoted_value():
     from app.rules import QUOTE_MAX, quote
-    assert tr.mask_entered("Oats (sample) 300 kcal", ["Oats"]) == f"{tr.ENTERED} 300 kcal"
+    assert tr.mask_entered("Oats 300 kcal", ["Oats"]) == f"{tr.ENTERED} 300 kcal"
     long = "word " * 40
     cut = quote(long)
     assert len(cut) <= QUOTE_MAX and cut != long

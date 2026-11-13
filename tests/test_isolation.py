@@ -292,13 +292,14 @@ def test_bs_goals_of_every_kind_and_trends_never_reach_a(world):
     assert [f["id"] for f in services.list_saved_foods(b.id)["foods"]] == [world[2]["saved_food"]]
 
 
-def test_sample_data_is_per_person(world):
+def test_the_empty_account_read_and_the_seed_are_per_person(world):
+    from evals.four_weeks import four_weeks
     a, b, _ = world
-    assert services.sample_state(a.id) == {"empty": True, "sample_rows": 0}
-    assert services.add_sample_data(b.id, "web")["error"] == "not_empty"   # B's own rows
-    assert "error" not in services.add_sample_data(a.id, "web")
+    assert services.account_empty(a.id) == {"empty": True}
+    assert services.account_empty(b.id) == {"empty": False}   # B's own rows
     before = {kind: snapshot(model, world[2][kind]) for kind, (model, _) in CASES.items()}
-    services.remove_sample_data(a.id, "web")
+    assert "error" not in four_weeks(a.id)
+    assert services.account_empty(a.id) == {"empty": False}
     assert {kind: snapshot(model, world[2][kind]) for kind, (model, _) in CASES.items()} == before
 
 
@@ -364,7 +365,7 @@ def test_the_web_only_reads_never_show_bs_rows(world):
     assert all(d["kcal"] is None and not d["weighed"] and not d["food_entries"] for d in mine["days"])
     theirs = services.get_days(b.id)
     assert theirs["weight"]["latest"]["kg"] == 90 and theirs["lift_sessions_28d"] == 2
-    assert services.get_cardio(a.id) == {"today": mine["today"], "activities": [], "includes_sample": False}
+    assert services.get_cardio(a.id) == {"today": mine["today"], "activities": []}
     run = services.get_cardio(a.id, "Outdoor Run")
     assert run["sessions"] == [] and run["bests"] == {"fastest_pace": None, "longest": None, "times": []}
     assert run["week"]["minutes"] == 0
@@ -423,7 +424,7 @@ def test_as_import_limit_counts_only_as_own_imported_rows(world):
         s.execute(insert(FoodEntry), [
             {"user_id": b.id, "date": users.today_for(b), "meal": "snack", "description": "x", "kcal": 1,
              "source": "you_said", "estimated": False, "logged_by": IMPORTED, "dedupe_key": "k", "created_at": at,
-             "updated_at": at, "is_sample": False} for _ in range(services.imports.IMPORT_LIMIT)])
+             "updated_at": at} for _ in range(services.imports.IMPORT_LIMIT)])
     r = services.import_entries(a.id, {"rows": [{"kind": "bodyweight", "date": users.today_for(a).isoformat(),
                                                  "weight": 70}], "dry_run": False, "weight_unit": "kg"}, "claude")
     assert r["imported_last_24h"] == 0 and r["within_import_limit"] is True and r["row_outcomes"]["written"] == 1

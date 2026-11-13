@@ -411,7 +411,7 @@ def test_set_goal_query_count(user):
 
 SHAPE = {"goal_id", "label", "kind", "exercise", "measurement_kind", "distance_km", "unit", "start_value",
          "start_date", "direction", "target_value", "target_date", "latest", "status", "needed_per_week",
-         "actual_per_week", "projected_date", "projection", "note", "is_sample",
+         "actual_per_week", "projected_date", "projection", "note",
          "should_be_today", "ahead_by", "days_ahead", "vs_plan", "plan_line"}   # the plan line's five (E1)
 
 
@@ -633,7 +633,7 @@ def test_a_second_open_goal_for_the_same_thing_is_warned(user):
 def test_get_goals_lists_open_goals_and_on_request_closed_ones(user):
     empty = services.get_goals(user.id)
     assert empty["goals"] == [] and empty["closed"] == [] and empty["summary"] == "No open goals."
-    assert empty["includes_sample"] is False and "note" not in empty and set(empty["links"]) == {"goals"}
+    assert "note" not in empty and set(empty["links"]) == {"goals"}
     weigh(user, 1, 80)
     a = goal(user, kind="bodyweight", target_value=75, target_date=day(user, 60))["id"]
     b = goal(user, kind="lift", exercise="Deadlift", start_value=100, target_value=150, target_date=day(user, 60))["id"]
@@ -644,7 +644,7 @@ def test_get_goals_lists_open_goals_and_on_request_closed_ones(user):
     full = services.get_goals(user.id, include_closed=True)
     assert full["closed"] == [{"goal_id": b, "label": "Deadlift 150 kg", "kind": "lift", "status": "hit",
                                "closed_at": full["closed"][0]["closed_at"], "target_value": 150,
-                               "target_date": day(user, 60), "is_sample": False}]
+                               "target_date": day(user, 60)}]
     assert full["closed"][0]["closed_at"] and full["summary"].endswith(" 1 closed.")
     assert "Epley" in r["how"] and "projected_date" in r["how"] and "2 years" in r["how"]
     assert services.get_goals(987654)["error"] == "no_account"
@@ -850,12 +850,12 @@ def half_step_goal(kind: str, start: float, now: float):
     today = datetime(2026, 11, 10).date()
     exercise = Row(name="Outdoor Run")
     measured = {"cm": "waist", "bpm": "resting_hr"}.get(kind)
-    g = Row(id=1, kind="cardio_best" if kind == "time" else "measurement", status="open", is_sample=False,
+    g = Row(id=1, kind="cardio_best" if kind == "time" else "measurement", status="open",
             exercise=exercise if kind == "time" else None, exercise_id=7 if kind == "time" else None,
             measurement_kind=measured, distance_km=5.0 if kind == "time" else None,
             unit={"cm": "cm", "bpm": "bpm", "time": "min"}[kind], start_value=start, start_date=today,
             target_value=start - 5, target_date=today + timedelta(days=50), direction="down")
-    loaded = {"lifts": goal_service.NO_LIFTS, "weigh_ins": [], "sample": False,
+    loaded = {"lifts": goal_service.NO_LIFTS, "weigh_ins": [],
               "measurements": {measured: [Row(date=today, value=now, id=1)]} if measured else {},
               "cardio": {7: [Row(date=today, minutes=now, distance_km=5.0, id=1)]} if kind == "time" else {}}
     return g, loaded, today
@@ -977,8 +977,7 @@ def test_goal_charts_is_get_goals_unrounded_with_path_and_now_basis(user):
         assert "error" not in goal(user, target_date=day(user, 60), **data)
     charts = services.goal_charts(user.id)
     listed = services.get_goals(user.id)
-    assert set(charts) == {"today", "goals", "includes_sample"} and charts["today"] == listed["today"]
-    assert charts["includes_sample"] is False
+    assert set(charts) == {"today", "goals"} and charts["today"] == listed["today"]
     web_only = ("path", "now_basis", "line_ended")
     bare = [{k: v for k, v in n.items() if k not in web_only} for n in charts["goals"]]
     assert goal_service.rounded_numbers(bare) == listed["goals"]

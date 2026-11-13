@@ -2,7 +2,7 @@
 {% block title %}{{ lift.exercise }} · Spotter{% endblock %}
 {% block main %}
 {% import "_parts.html" as parts %}
-{# A lift's page: the head with its link back to Progress, the sample banner, then three tiles that are not
+{# A lift's page: the head with its link back to Progress, then three tiles that are not
    controls, the Estimated max chart card beside the Bests card, and the Sessions card across. Every figure is
    get_progress' own, or lifts.history's reps_only for a lift never done above 0 kg, through the filters. Every
    day is worded against get_progress' today. A lift with no estimated max says why, in the Lifts card's words:
@@ -14,7 +14,6 @@
     <a class="back" href="/progress">Progress</a>
   </nav>
 </div>
-{% include "sample_banner.html" %}
 
 {% if lift.sessions %}
 {% set best, estimated = lift.best_set, lift.current_estimated_max_kg is not none %}

@@ -1,24 +1,23 @@
-"""Sample data: four weeks of everything, in one click, on an empty account; removed in one click.
+"""The four-week account: four weeks of everything and three goals, written into an empty account.
 
-sample_state(user_id) -> {empty, sample_rows}
-    A read. empty: no live row in the five entry tables, no live saved food and no open goal.
-    Soft-deleted rows and closed goals (hit or dropped) do not count: a goal has no delete, so a
-    dropped one must not block sample data for good. sample_rows: every sample row, live or deleted,
-    which is what removal deletes. The pages decide what to offer from it.
-    A deleted saved food keeps its name (names are unique per person, deleted ones included), so a
-    sample food whose name it holds is added as "<name> (sample)".
+The seed two eval cases start from (evals/cases.json, {"service": "four_weeks"}) and the account the page and
+reply tests read on the fixed day 2026-11-10. It lives here, outside app/: Spotter itself never adds it, and
+app/ never imports from evals/.
 
-add_sample_data(user_id, by)
-    A write. Only into an empty account (else not_empty), and never twice (already_sample, checked
-    first). One transaction, after lock_user and check_write_limit. Every row is_sample true and
-    logged_by "web"; settings are never touched. Every row carries the duplicate key its kind uses
-    (lifts.session_key, body.weigh_in_key, measurements.measurement_key, food.entry_key per meal,
-    cardio.cardio_key), so a later real entry is judged the same way.
+four_weeks(user_id)
+    Writes the rows straight through the models, in one transaction: no call-log row, no write limit. Only into
+    an empty account (services.account_empty) whose deleted saved foods hold none of SAVED_FOODS' names (names
+    are unique per person, deleted ones included), else not_empty. Every row is logged_by "web"; settings are never
+    touched. Every row carries the duplicate key its kind uses (lifts.session_key, body.weigh_in_key,
+    measurements.measurement_key, food.entry_key per meal, cardio.cardio_key), so a later entry with the same
+    content is judged a duplicate, as it would be after the person's own.
+    Returns {added {lift_sessions, weigh_ins, measurements, saved_foods, food_entries, cardio_entries, goals},
+    from, to} or {error, message, fix}.
 
-    Deterministic: the 28 days ending today, in the person's zone, and random.Random(SEED). The
-    generator draws in one fixed order: the 28 weigh-ins' noise, oldest first; then for each day,
-    oldest first, the day's total, whether it has a snack, and the snack's kcal when it has one; then
-    the Stationary Bike machine numbers, oldest first. Change that order and every number changes.
+    Deterministic: the 28 days ending today, in the person's zone, and random.Random(SEED). The generator draws
+    in one fixed order: the 28 weigh-ins' noise, oldest first; then for each day, oldest first, the day's total,
+    whether it has a snack, and the snack's kcal when it has one; then the Stationary Bike machine numbers,
+    oldest first. Change that order and every number the tests hold changes.
       weigh-ins     one a day: 80.0 kg - 0.3 kg a week, plus uniform noise of +-0.3 kg, 1 dp
       lift sessions Monday, Wednesday and Friday (any 28 days hold 4 of each weekday: 12 sessions),
                     A and B in turn from A. A: Back Squat 3x5, Bench Press 3x5, Barbell Row 3x8.
@@ -26,7 +25,7 @@ add_sample_data(user_id, by)
                     START_KG and adds STEP_KG each session it is in.
       cardio        Tuesday Treadmill Walk 30 min; Thursday Stationary Bike 25 min with a machine number;
                     Saturday Outdoor Run 5 km, 31.0 minutes then 0.5 less each week. Calorie estimates
-                    use body weight now (metrics.bodyweight_now over the sample weigh-ins), as any
+                    use body weight now (metrics.bodyweight_now over these weigh-ins), as any
                     back-dated entry's do.
       saved foods   SAVED_FOODS
       food          every day: breakfast, lunch and dinner from saved foods and stated numbers, two
@@ -36,24 +35,17 @@ add_sample_data(user_id, by)
       goals         Body weight 77 kg by today + 56; Back Squat 120 kg by today + 84; Outdoor Run 5 km in
                     27:00 by today + 56. Each starts where its own series starts: the first value and its
                     date, what set_goal would have stored that day.
-
-remove_sample_data(user_id, by)
-    A write. Hard-deletes every sample row, live or deleted (a session's sets go with it). Nothing to
-    remove is not an error. A real entry the person logged against a sample food keeps its numbers
-    and its tag but loses the link (ON DELETE SET NULL); the summary counts those.
 """
 
 import random
 from datetime import timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import select
 
-from app import db, formatting, links, metrics, rules, users
-from app.models import (
-    Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, User, entry_models,
-)
-from app.services import body, cardio, food, lifts, measurements
-from app.services.common import check_by, check_write_limit, exercises, lock_user, no_account
+from app import db, metrics, rules, users
+from app.models import Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, User
+from app.services import account, body, cardio, food, lifts, measurements
+from app.services.common import exercises, no_account
 
 SEED = 20261110
 DAYS = 28
@@ -92,36 +84,6 @@ SNACK = "Banana and peanuts"
 FIXED_KCAL = 300 + 80 + 120 * 2 + 180 + 200 + 180  # everything but the two estimates and the snack
 
 COUNTS = ("lift_sessions", "weigh_ins", "measurements", "saved_foods", "food_entries", "cardio_entries", "goals")
-MODELS = {"food_entries": FoodEntry, "cardio_entries": CardioEntry, "lift_sessions": LiftSession,
-          "weigh_ins": Bodyweight, "measurements": Measurement, "goals": Goal, "saved_foods": SavedFood}
-
-
-# ---------------------------------------------------------------- the state
-
-def _sample_rows(s, user_id: int) -> int:
-    return sum(s.scalar(select(func.count()).select_from(m).where(m.user_id == user_id, m.is_sample.is_(True)))
-               for m in MODELS.values())
-
-
-def _is_empty(s, user_id: int) -> bool:
-    for model in (*entry_models(), SavedFood):
-        if s.scalar(select(model.id).where(model.user_id == user_id, model.deleted_at.is_(None)).limit(1)):
-            return False
-    return not s.scalar(select(Goal.id).where(Goal.user_id == user_id, Goal.status == "open").limit(1))
-
-
-def _free_name(name: str, taken: set[str]) -> str:
-    """A sample food's name, or "<name> (sample)" when a deleted saved food of the person's holds it:
-    names are unique per person, deleted ones included, so a deleted one can come back as it was."""
-    return name if name.casefold() not in taken else f"{name} (sample)"
-
-
-def sample_state(user_id: int) -> dict:
-    """Returns {empty, sample_rows} or {error, message, fix}. See the module notes."""
-    with db.new_session() as s:
-        if s.get(User, user_id) is None:
-            return no_account()
-        return {"empty": _is_empty(s, user_id), "sample_rows": _sample_rows(s, user_id)}
 
 
 # ---------------------------------------------------------------- building the rows
@@ -162,8 +124,7 @@ def _food_rows(user_id: int, on, menu: dict, saved: dict) -> list[FoodEntry]:
                                 "estimated": source == "claude_estimate", "saved_food_id": None, "servings": None,
                                 "usda_fdc_id": None, "grams": None})
         key = food.entry_key(on, [food.entry_tuple(e) for e in entries])  # one meal, as one log_food call
-        rows += [FoodEntry(user_id=user_id, date=on, logged_by=BY, dedupe_key=key, is_sample=True, **e)
-                 for e in entries]
+        rows += [FoodEntry(user_id=user_id, date=on, logged_by=BY, dedupe_key=key, **e) for e in entries]
     return rows
 
 
@@ -178,7 +139,7 @@ def _sessions(user_id: int, days: list, by_name: dict) -> list[LiftSession]:
             done[name] = done.get(name, 0) + 1
             sets += [{"exercise": name, "weight_kg": float(weight), "reps": reps}] * count
         keyed = lifts.number_sets(sets, by_name)
-        session = LiftSession(user_id=user_id, date=d, notes="", logged_by=BY, is_sample=True,
+        session = LiftSession(user_id=user_id, date=d, notes="", logged_by=BY,
                               dedupe_key=lifts.session_key(d, "", keyed))
         session.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in keyed]
         out.append(session)
@@ -204,8 +165,8 @@ def _cardio_rows(rng: random.Random, user_id: int, days: list, by_name: dict, kg
             continue
         key = cardio.cardio_key(d, activity.id, values)  # the fields given, as log_cardio keys them
         speed = metrics.speed(values["distance_km"], values["minutes"])
-        row = CardioEntry(user_id=user_id, date=d, exercise_id=activity.id, notes="", logged_by=BY, is_sample=True,
-                          dedupe_key=key, estimated_kcal=metrics.cardio_kcal(activity.met, kg, values["minutes"]),
+        row = CardioEntry(user_id=user_id, date=d, exercise_id=activity.id, notes="", logged_by=BY, dedupe_key=key,
+                          estimated_kcal=metrics.cardio_kcal(activity.met, kg, values["minutes"]),
                           estimate_weight_kg=kg, **{**values, "speed_kmh": speed})
         row.exercise = activity
         out.append(row)
@@ -219,7 +180,7 @@ def _measurement_rows(user_id: int, today) -> list[Measurement]:
         for n, value in enumerate(values):
             d = today - timedelta(days=7 * (len(values) - 1 - n))
             out.append(Measurement(user_id=user_id, date=d, kind=kind, value=value, unit=unit, logged_by=BY,
-                                   is_sample=True, dedupe_key=measurements.measurement_key(d, kind, value)))
+                                   dedupe_key=measurements.measurement_key(d, kind, value)))
     return out
 
 
@@ -229,50 +190,45 @@ def _goals(user_id: int, today, weighed: list, squat_first, run_first, by_name: 
     return [
         Goal(user_id=user_id, kind="bodyweight", unit="kg", start_value=first_weight.kg, start_date=first_weight.date,
              direction="down", target_value=TARGETS["bodyweight"],
-             target_date=today + timedelta(days=GOAL_DAYS["bodyweight"]), status="open", text="", is_sample=True),
+             target_date=today + timedelta(days=GOAL_DAYS["bodyweight"]), status="open", text=""),
         Goal(user_id=user_id, kind="lift", exercise_id=by_name["Back Squat"].id, unit="kg",
              start_value=squat_first[1], start_date=squat_first[0], direction="up", target_value=TARGETS["lift"],
-             target_date=today + timedelta(days=GOAL_DAYS["lift"]), status="open", text="", is_sample=True),
+             target_date=today + timedelta(days=GOAL_DAYS["lift"]), status="open", text=""),
         Goal(user_id=user_id, kind="cardio_best", exercise_id=by_name["Outdoor Run"].id, distance_km=float(RUN_KM),
              unit="min", start_value=run_first.minutes, start_date=run_first.date, direction="down",
              target_value=TARGETS["cardio_best"], target_date=today + timedelta(days=GOAL_DAYS["cardio_best"]),
-             status="open", text="", is_sample=True),
+             status="open", text=""),
     ]
 
 
-# ---------------------------------------------------------------- add and remove
+# ---------------------------------------------------------------- the seed
 
-def add_sample_data(user_id: int, by: str) -> dict:
-    """Returns {added {lift_sessions, weigh_ins, measurements, saved_foods, food_entries, cardio_entries,
-    goals}, from, to, summary, links {today, progress, goals}} or {error, message, fix}."""
-    err = check_by(by)
-    if err:
-        return err
+def four_weeks(user_id: int) -> dict:
+    """Returns {added {the seven counts}, from, to} or {error, message, fix}. See the module notes."""
+    state = account.account_empty(user_id)
+    if "error" in state:
+        return state
+    if not state["empty"]:
+        return rules.error("not_empty", "The four weeks go only into an empty account.",
+                           "Seed a new person: this one already has entries, saved foods or open goals.")
     with db.session_scope() as s:
-        user = lock_user(s, user_id)
+        user = s.get(User, user_id)
         if user is None:
             return no_account()
-        limited = check_write_limit(s, user.id)
-        if limited:
-            return limited
-        if _sample_rows(s, user.id):
-            return rules.error("already_sample", "This account already holds sample data.",
-                               "Nothing to add: it is there already. Remove sample data on Settings clears it.")
-        if not _is_empty(s, user.id):
-            return rules.error("not_empty", "Sample data goes only into an empty account.",
-                               "Delete the entries on the day pages and the saved foods on the Foods page, and mark "
-                               "open goals dropped on the Goals page, first. Or keep logging for real.")
         today = users.today_for(user)
         days = [today - timedelta(days=DAYS - 1 - i) for i in range(DAYS)]
+        names = {name.casefold() for name, _, _ in SAVED_FOODS}
+        if s.scalar(select(SavedFood.id).where(SavedFood.user_id == user.id, SavedFood.name_key.in_(names)).limit(1)):
+            return rules.error("not_empty", "A deleted saved food of this account holds one of the four weeks' names.",
+                               "Seed a new person.")
         rng = random.Random(SEED)
         by_name = {e.name: e for e in exercises(s)}
 
-        weighed = [Bodyweight(user_id=user.id, date=d, kg=kg, logged_by=BY, is_sample=True,
-                              dedupe_key=body.weigh_in_key(d, kg)) for d, kg in zip(days, _weights(rng, days))]
+        weighed = [Bodyweight(user_id=user.id, date=d, kg=kg, logged_by=BY, dedupe_key=body.weigh_in_key(d, kg))
+                   for d, kg in zip(days, _weights(rng, days))]
         menus = _menus(rng, days)
-        taken = set(s.scalars(select(SavedFood.name_key).where(SavedFood.user_id == user.id)))
-        saved = {name: SavedFood(user_id=user.id, name=_free_name(name, taken), name_key=_free_name(name, taken)
-                                 .casefold(), serving_label=label, kcal_per_serving=float(kcal), is_sample=True)
+        saved = {name: SavedFood(user_id=user.id, name=name, name_key=name.casefold(), serving_label=label,
+                                 kcal_per_serving=float(kcal))
                  for name, label, kcal in SAVED_FOODS}
         s.add_all([*weighed, *saved.values()])
         s.flush()  # the saved foods' ids, for the entries that name them
@@ -291,51 +247,4 @@ def add_sample_data(user_id: int, by: str) -> dict:
         added = {"lift_sessions": len(sessions), "weigh_ins": len(weighed), "measurements": len(measured),
                  "saved_foods": len(saved), "food_entries": len(eaten), "cardio_entries": len(moved),
                  "goals": len(goals)}
-        return {"added": added, "from": days[0].isoformat(), "to": today.isoformat(),
-                "summary": (f"Added sample data for {formatting.days(days[0], today, today)}: {_listed(added)}. "
-                            "Every row is marked sample. Remove sample data on Settings clears it all."),
-                "links": {"today": links.page("today"), "progress": links.page("progress"),
-                          "goals": links.page("goals")}}
-
-
-def _listed(counts: dict) -> str:
-    words = {"lift_sessions": "lift sessions", "weigh_ins": "weigh-ins", "measurements": "measurements",
-             "saved_foods": "saved foods", "food_entries": "food entries", "cardio_entries": "cardio entries",
-             "goals": "goals"}
-    return ", ".join(f"{formatting.show(counts[k], 'count')} {words[k]}" for k in COUNTS)
-
-
-def remove_sample_data(user_id: int, by: str) -> dict:
-    """Returns {removed {the same counts as added}, summary, links {today}} or {error, message, fix}."""
-    err = check_by(by)
-    if err:
-        return err
-    with db.session_scope() as s:
-        user = lock_user(s, user_id)
-        if user is None:
-            return no_account()
-        limited = check_write_limit(s, user.id)
-        if limited:
-            return limited
-        # The person's own entries logged against a sample food keep their numbers and tag; the schema
-        # clears their link (ON DELETE SET NULL). Counted first, so the summary can say so.
-        sample_foods = select(SavedFood.id).where(SavedFood.user_id == user.id, SavedFood.is_sample.is_(True))
-        unlinked = s.scalar(select(func.count()).select_from(FoodEntry).where(
-            FoodEntry.user_id == user.id, FoodEntry.is_sample.is_(False), FoodEntry.saved_food_id.in_(sample_foods)))
-        removed = {}
-        # Entries before the saved foods they may name; a session's sets go with it (ON DELETE CASCADE).
-        for name in ("food_entries", "cardio_entries", "lift_sessions", "weigh_ins", "measurements", "goals",
-                     "saved_foods"):
-            model = MODELS[name]
-            removed[name] = s.execute(delete(model).where(model.user_id == user.id, model.is_sample.is_(True))
-                                      .execution_options(synchronize_session=False)).rowcount
-        removed = {k: removed[k] for k in COUNTS}
-        total = sum(removed.values())
-        summary = (f"Removed the sample data: {_listed(removed)}." if total
-                   else "There was no sample data to remove.")
-        if unlinked:
-            one = unlinked == 1
-            summary += (f" {formatting.show(unlinked, 'count')} real {'entry was' if one else 'entries were'} logged "
-                        f"against a sample food. {'It keeps its' if one else 'They keep their'} numbers and "
-                        f"{'loses' if one else 'lose'} the link.")
-        return {"removed": removed, "summary": summary, "links": {"today": links.page("today")}}
+        return {"added": {k: added[k] for k in COUNTS}, "from": days[0].isoformat(), "to": today.isoformat()}

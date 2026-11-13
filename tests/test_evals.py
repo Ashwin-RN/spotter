@@ -63,10 +63,12 @@ def test_case_problems_names_what_is_wrong():
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"},
                                 "db": [{"table": "bodyweight", "state": "gone"}]})
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"},
-                                "seed": [{"service": "add_sample_data"}], "db": [{"table": "goal"}]}) == []
+                                "seed": [{"service": "four_weeks"}], "db": [{"table": "goal"}]}) == []
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"},
-                                "seed": [{"as": "s", "service": "add_sample_data"}]}) == [
-        "seed[0]: add_sample_data takes no data and no as"]
+                                "seed": [{"as": "s", "service": "four_weeks"}]}) == [
+        "seed[0]: four_weeks takes no data and no as"]
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"},
+                                "seed": [{"service": "add_sample_data"}]})   # gone: Spotter adds no sample data
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"reply_has": ["Settings"]}}) == []
 
 
@@ -624,7 +626,7 @@ def test_new_person_sets_the_switch_and_dates_the_seeds(app_settings):
     assert plain == {}
 
 
-def test_new_person_seeds_goals_and_sample_data(app_settings):
+def test_new_person_seeds_goals_and_the_four_weeks(app_settings):
     server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
     server.settings = app_settings
     zone = "Asia/Kolkata"
@@ -637,13 +639,14 @@ def test_new_person_seeds_goals_and_sample_data(app_settings):
     assert goals[seeded["squat"]]["target_date"] == dates["next_month_end:6"]
     assert (goals[seeded["squat"]]["status"], goals[seeded["bench"]]["target_value"]) == ("open", 90)
 
-    sample_id, _, none = server.new_person(zone, cases["how_am_i_doing"]["seed"])
+    assert cases["how_am_i_doing"]["seed"] == cases["on_track"]["seed"] == [{"service": "four_weeks"}]
+    seeded_id, _, none = server.new_person(zone, cases["how_am_i_doing"]["seed"])
     assert none == {}
-    rows = person_rows(sample_id)
+    rows = person_rows(seeded_id)
     assert len(rows["bodyweight"]) == 28 and len(rows["goal"]) == 3
-    assert all(r["is_sample"] for r in rows["bodyweight"] + rows["goal"])
-    assert services.get_trends(sample_id)["bodyweight"]["rate_per_week"] is not None
-    assert len(services.get_goals(sample_id)["goals"]) == 3
+    assert all("is_sample" not in r for r in rows["bodyweight"] + rows["goal"])
+    assert services.get_trends(seeded_id)["bodyweight"]["rate_per_week"] is not None
+    assert len(services.get_goals(seeded_id)["goals"]) == 3
 
     goal_id, _, _ = server.new_person(zone, cases["goal_date"]["seed"])
     assert len(person_rows(goal_id)["bodyweight"]) == 2 and person_rows(goal_id)["goal"] == []
@@ -869,3 +872,15 @@ def test_recorder_keeps_calls_per_token(provider, make_user, token_for):
     assert recorder.calls(b) == [] and recorder.methods(b) == ["tools/list"]
     assert recorder.calls("never-used") == []
     assert a not in json.dumps(recorder._calls) and token_key(a) in recorder._calls
+
+
+def test_a_seed_service_is_found_by_its_name():
+    """four_weeks is the evals' own seed, outside app/; every other seed is Spotter's own service. A name that is
+    neither, add_sample_data among them, is no seed."""
+    from evals.four_weeks import four_weeks
+    assert judge.NO_DATA_SERVICES == {"four_weeks"} and judge.seed_service("four_weeks") is four_weeks
+    assert judge.seed_service("save_food") is services.save_food
+    for name in ("add_sample_data", "remove_sample_data", "drop_table"):
+        with pytest.raises(KeyError):
+            judge.seed_service(name)
+        assert not hasattr(services, name)

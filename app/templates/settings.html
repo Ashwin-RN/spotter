@@ -2,17 +2,15 @@
 {% block title %}Settings · Spotter{% endblock %}
 {% block main %}
 {% import "_parts.html" as parts %}
-{# Settings (section L): the page head, the sample banner, then six titled cards in this order, which is the markup
+{# Settings (section L): the page head, then six titled cards in this order, which is the markup
    order: Your account, Time zone, Targets, What your assistant may do, Your data, More. On a laptop they sit two to a
    row (.settings-page > .card). Each of the three forms posts to its own card's anchor (web.SETTINGS_CARDS), and its
    saved line sits in that card alone, one at most on the page. A refusal is said in the page's own words: in the card
    for the time zone and the switch, under its field for a target, or at the top of the targets form for one tied to
-   none of its fields. What was typed stays. No field is required: the page speaks, not the browser. The sample
-   banner is Settings' own: the others send the person here, and here Remove sample data sits under Your data. #}
+   none of its fields. What was typed stays. No field is required: the page speaks, not the browser. #}
 <div class="page-head">
   <h1>Settings</h1>
 </div>
-{% if sample_rows %}<p class="notice sample-banner">Sample data is on this account. Remove it under Your data.</p>{% endif %}
 
 {# The user row's own words: name, email, zone, the sign-in provider's id and the account's own. #}
 <section class="card" id="account" aria-labelledby="account-title">
@@ -107,13 +105,6 @@
     <button class="secondary">Export my data</button>
   </form>
   <p class="small">A zip of CSV files: everything you have logged, deleted entries included.</p>
-  {% if sample_rows %}
-  <form method="post" action="/settings/sample/remove">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button class="secondary">Remove sample data</button>
-  </form>
-  <p class="small">Sample data is on this account. Removing it leaves your own entries as they are.</p>
-  {% endif %}
   <p><a class="action is-danger" href="/settings/delete">Delete my account</a></p>
   <p class="small">You see what goes before anything is deleted.</p>
 </section>

@@ -29,6 +29,8 @@ from .conftest import TEST_DATABASE_URL, TEST_DIR, alembic_config
 
 ALL_TABLES = {"user", "exercise", "lift_session", "lift_set", "bodyweight", "goal", "call_log", "measurement",
               "saved_food", "food_entry", "cardio_entry", "usda_food", "usda_search"}
+# The seven tables 0001 gave an is_sample column and 0004 took it from.
+MARKED_TABLES = ("food_entry", "cardio_entry", "lift_session", "bodyweight", "measurement", "goal", "saved_food")
 
 
 def _tables(address: str) -> set[str]:
@@ -164,10 +166,11 @@ def test_the_list_of_tables_with_a_user_id_comes_from_the_schema():
                                                          "lift_session", "measurement"]
 
 
-def test_every_entry_table_has_the_five_columns_and_two_indexes():
+def test_every_entry_table_has_the_four_columns_and_two_indexes():
     for model in entry_models():
         table = model.__table__
-        assert {"logged_by", "created_at", "updated_at", "deleted_at", "is_sample"} <= set(table.c.keys())
+        assert {"logged_by", "created_at", "updated_at", "deleted_at"} <= set(table.c.keys())
+        assert "is_sample" not in table.c
         assert table.c.deleted_at.nullable and not table.c.created_at.nullable
         indexed = {tuple(c.name for c in index.columns) for index in table.indexes}
         assert {("user_id", "date"), ("user_id", "created_at")} <= indexed
@@ -230,9 +233,10 @@ def test_the_postgres_sql_carries_the_server_defaults():
     sql = out.getvalue()
     assert "claude_can VARCHAR(16) DEFAULT 'log' NOT NULL" in sql
     assert "add_back_exercise_kcal BOOLEAN DEFAULT false NOT NULL" in sql
-    sample_tables = [t.name for t in Base.metadata.sorted_tables if "is_sample" in t.c]
-    assert len(sample_tables) == 7
-    assert sql.count("is_sample BOOLEAN DEFAULT false NOT NULL") == len(sample_tables)
+    # 0001 built the sample mark on seven tables and 0004 drops it from each: no model carries it now.
+    assert [t.name for t in Base.metadata.sorted_tables if "is_sample" in t.c] == []
+    assert sql.count("is_sample BOOLEAN DEFAULT false NOT NULL") == len(MARKED_TABLES)
+    assert sql.count("DROP COLUMN is_sample") == len(MARKED_TABLES)
 
 
 def test_session_scope_rolls_back_on_an_error():
@@ -311,7 +315,7 @@ def test_0002_applies_on_a_database_that_holds_rows():
             c.exec_driver_sql("INSERT INTO measurement (user_id, date, kind, value, unit, dedupe_key, logged_by, "
                               "created_at, updated_at, is_sample) VALUES (1, '2026-11-09', 'hips', 95, 'cm', 'k', "
                               "'web', ?, ?, 0)", (now, now))
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "0002")
         with engine.connect() as c:
             names = {i["name"] for i in inspect(c).get_indexes("measurement")}
             rows = c.exec_driver_sql("SELECT kind, value, deleted_at IS NULL FROM measurement ORDER BY id").all()
@@ -398,7 +402,7 @@ def test_0003_applies_on_a_database_that_holds_rows_and_comes_down_again():
                                   "VALUES (1, ?, 'kg', 80, '2026-11-01', 'down', ?, '2027-01-01', 'open', 't', ?, ?, 0)",
                                   (kind, target, now, now))
         assert "measurement_kind" not in _goal_columns(engine)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "0003")
         with engine.connect() as c:
             assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0003"
             rows = c.exec_driver_sql("SELECT kind, target_value, measurement_kind FROM goal ORDER BY id").all()
@@ -416,7 +420,7 @@ def test_0003_applies_on_a_database_that_holds_rows_and_comes_down_again():
             keys = {fk["referred_table"] for fk in inspect(c).get_foreign_keys("goal")}
         assert [tuple(r) for r in kept] == [("bodyweight", 75), ("lift", 120), ("measurement", 84)]
         assert "ix_goal_user_id_status" in indexes and keys == {"user", "exercise"}
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "0003")
         assert "measurement_kind" in _goal_columns(engine)
     finally:
         engine.dispose()
@@ -436,7 +440,7 @@ def test_0003_applies_on_an_empty_database_and_follows_0002():
         engine.dispose()
     from alembic.script import ScriptDirectory
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0003").down_revision == "0002" and script.get_current_head() == "0003"
+    assert script.get_revision("0003").down_revision == "0002"
 
 
 def test_the_postgres_sql_adds_the_goal_column():
@@ -454,7 +458,7 @@ def test_the_postgres_sql_adds_the_goal_column():
 
 
 def test_the_models_and_the_migrations_agree_column_by_column():
-    """0001 to 0003 against the models: every table, every column, its type, length and nullability."""
+    """0001 to 0004 against the models: every table, every column, its type, length and nullability."""
     with db.get_engine().connect() as c:
         found = inspect(c)
         for table in Base.metadata.sorted_tables:
@@ -469,3 +473,144 @@ def test_the_models_and_the_migrations_agree_column_by_column():
                     assert got["type"].length == column.type.length, (table.name, column.name)
     goal = Base.metadata.tables["goal"].c.measurement_kind
     assert goal.nullable and goal.type.length == 16
+
+
+# ---------------------------------------------------------------- migration 0004: no sample data
+
+NOW = "2026-11-10 08:00:00.000000"
+
+
+def _columns(engine, table: str) -> list[str]:
+    with engine.connect() as c:
+        return [col["name"] for col in inspect(c).get_columns(table)]
+
+
+def _rows_at_0003(c) -> None:
+    """Two people. Person 1 holds one marked row of every kind and one of their own, live and deleted; a session's
+    sets on both sessions; their own food entry logged against the marked saved food. Person 2 holds only their own."""
+    c.exec_driver_sql("INSERT INTO exercise (id, name, kind, category) VALUES (1, 'Back Squat', 'lift', 'legs')")
+    for user in (1, 2):
+        c.exec_driver_sql("INSERT INTO user (id, provider, subject, claude_can, add_back_exercise_kcal, created_at, "
+                          "updated_at, last_seen_at) VALUES (?, 'workos', ?, 'log', 0, ?, ?, ?)",
+                          (user, f"s{user}", NOW, NOW, NOW))
+    entry = "logged_by, created_at, updated_at, deleted_at, is_sample"
+    rows = [(1, 1, None), (1, 0, None), (1, 1, NOW), (2, 0, None)]   # (user, marked, deleted_at)
+    for n, (user, marked, gone) in enumerate(rows, start=1):
+        times = (NOW, NOW, gone, marked)
+        c.exec_driver_sql(f"INSERT INTO lift_session (id, user_id, date, notes, dedupe_key, {entry}) "
+                          "VALUES (?, ?, '2026-11-09', '', 'k', 'web', ?, ?, ?, ?)", (n, user, *times))
+        c.exec_driver_sql("INSERT INTO lift_set (session_id, exercise_id, set_number, weight_kg, reps) "
+                          "VALUES (?, 1, 1, 100, 5)", (n,))
+        c.exec_driver_sql(f"INSERT INTO bodyweight (user_id, date, kg, dedupe_key, {entry}) "
+                          "VALUES (?, ?, 80, 'k', 'web', ?, ?, ?, ?)", (user, f"2026-11-0{n}", *times))
+        c.exec_driver_sql(f"INSERT INTO measurement (user_id, date, kind, value, unit, dedupe_key, {entry}) "
+                          "VALUES (?, ?, 'waist', 84, 'cm', 'k', 'web', ?, ?, ?, ?)", (user, f"2026-11-0{n}", *times))
+        c.exec_driver_sql(f"INSERT INTO cardio_entry (user_id, date, exercise_id, minutes, notes, dedupe_key, {entry}) "
+                          "VALUES (?, '2026-11-09', 1, 30, '', 'k', 'web', ?, ?, ?, ?)", (user, *times))
+        c.exec_driver_sql("INSERT INTO goal (user_id, kind, unit, start_value, start_date, direction, target_value, "
+                          "target_date, status, text, created_at, updated_at, is_sample) VALUES (?, 'bodyweight', "
+                          "'kg', 80, '2026-11-01', 'down', 75, '2027-01-01', 'open', '', ?, ?, ?)",
+                          (user, NOW, NOW, marked))
+        c.exec_driver_sql("INSERT INTO saved_food (id, user_id, name, name_key, serving_label, kcal_per_serving, "
+                          "created_at, updated_at, deleted_at, is_sample) VALUES (?, ?, ?, ?, '1 bowl', 180, ?, ?, ?, ?)",
+                          (n, user, f"Food {n}", f"food {n}", *times))
+        c.exec_driver_sql(f"INSERT INTO food_entry (user_id, date, meal, description, kcal, source, estimated, "
+                          f"saved_food_id, servings, dedupe_key, {entry}) VALUES (?, '2026-11-09', 'lunch', 'Food', "
+                          "180, 'saved_food', 0, ?, 1, 'k', 'web', ?, ?, ?, ?)", (user, n, *times))
+    # Person 1's own entry, logged against the marked saved food 1: it stays, without the link.
+    c.exec_driver_sql(f"INSERT INTO food_entry (id, user_id, date, meal, description, kcal, source, estimated, "
+                      f"saved_food_id, servings, dedupe_key, {entry}) VALUES (99, 1, '2026-11-10', 'dinner', 'Food 1', "
+                      "540, 'saved_food', 0, 1, 3, 'k', 'web', ?, ?, NULL, 0)", (NOW, NOW))
+
+
+def _left(c) -> dict:
+    """Every table's rows by (user, id), and the sets by session."""
+    out = {t: sorted(tuple(r) for r in c.exec_driver_sql(f"SELECT user_id, id FROM {t} ORDER BY id").all())
+           for t in MARKED_TABLES}
+    out["lift_set"] = [r[0] for r in c.exec_driver_sql("SELECT session_id FROM lift_set ORDER BY session_id").all()]
+    return out
+
+
+def test_0004_deletes_every_marked_row_then_drops_the_column_and_comes_down_again():
+    address = _sqlite_at("marked-rows.db")
+    cfg = alembic_config(address)
+    command.upgrade(cfg, "0003")
+    engine = make_engine(address)
+    try:
+        with engine.begin() as c:
+            _rows_at_0003(c)
+        with engine.connect() as c:
+            before = {t: c.exec_driver_sql(f"SELECT count(*) FROM {t}").scalar() for t in MARKED_TABLES}
+            indexes = {t: {i["name"] for i in inspect(c).get_indexes(t)} for t in MARKED_TABLES}
+            keys = {t: inspect(c).get_foreign_keys(t) for t in (*MARKED_TABLES, "lift_set")}
+        assert before["food_entry"] == 5 and all(before[t] == 4 for t in MARKED_TABLES if t != "food_entry")
+        command.upgrade(cfg, "0004")
+        with engine.connect() as c:
+            assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0004"
+            left = _left(c)
+            link = c.exec_driver_sql("SELECT saved_food_id, kcal, servings, source FROM food_entry WHERE id = 99").one()
+            assert {t: {i["name"] for i in inspect(c).get_indexes(t)} for t in MARKED_TABLES} == indexes
+            assert {t: inspect(c).get_foreign_keys(t) for t in (*MARKED_TABLES, "lift_set")} == keys
+        # Rows 1 and 3 of each kind were marked, live and deleted: both go. Row 2 (person 1's own) and row 4
+        # (person 2's) stay, a session's sets with it.
+        for table in ("lift_session", "saved_food"):
+            assert left[table] == [(1, 2), (2, 4)], table
+        for table in ("bodyweight", "measurement", "cardio_entry", "goal"):
+            assert [user for user, _ in left[table]] == [1, 2], table
+        assert left["lift_set"] == [2, 4]
+        assert [user for user, _ in left["food_entry"]] == [1, 1, 2] and (1, 99) in left["food_entry"]
+        assert tuple(link) == (None, 540, 3, "saved_food")   # keeps its numbers and tag, loses the link
+        for table in MARKED_TABLES:
+            assert "is_sample" not in _columns(engine, table), table
+        with pytest.raises(IntegrityError), engine.begin() as c:   # the live weigh-in index still holds
+            c.exec_driver_sql("INSERT INTO bodyweight (user_id, date, kg, dedupe_key, logged_by, created_at, "
+                              "updated_at) VALUES (1, '2026-11-02', 81, 'k', 'web', ?, ?)", (NOW, NOW))
+        command.downgrade(cfg, "0003")
+        with engine.connect() as c:
+            assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0003"
+            for table in MARKED_TABLES:
+                assert c.exec_driver_sql(f"SELECT DISTINCT is_sample FROM {table}").scalars().all() == [0], table
+            assert _left(c) == left   # the deleted rows stay deleted
+        command.upgrade(cfg, "head")
+        assert all("is_sample" not in _columns(engine, t) for t in MARKED_TABLES)
+    finally:
+        engine.dispose()
+
+
+def test_0004_applies_on_an_empty_database_and_follows_0003():
+    address = _sqlite_at("empty-0004.db")
+    cfg = alembic_config(address)
+    command.upgrade(cfg, "0003")
+    command.upgrade(cfg, "0004")
+    engine = make_engine(address)
+    try:
+        with engine.connect() as c:
+            assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0004"
+        assert all("is_sample" not in _columns(engine, t) for t in MARKED_TABLES)
+    finally:
+        engine.dispose()
+    from alembic.script import ScriptDirectory
+    script = ScriptDirectory.from_config(cfg)
+    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0004"
+
+
+def test_the_postgres_sql_deletes_the_marked_rows_and_drops_the_columns():
+    cfg = alembic_config("postgresql+psycopg://spotter@db.invalid/spotter")
+    out = io.StringIO()
+    with redirect_stdout(out):
+        command.upgrade(cfg, "0003:0004", sql=True)
+    sql = out.getvalue()
+    assert "DELETE FROM lift_set WHERE lift_set.session_id IN (SELECT lift_session.id" in sql
+    assert "UPDATE food_entry SET saved_food_id=NULL WHERE food_entry.saved_food_id IN (SELECT saved_food.id" in sql
+    for table in MARKED_TABLES:
+        assert f"DELETE FROM {table} WHERE {table}.is_sample IS true" in sql, table
+        assert f"ALTER TABLE {table} DROP COLUMN is_sample" in sql, table
+    # Sets first, the saved foods last: after the entries that may name them, and after the links are cleared.
+    assert sql.index("DELETE FROM lift_set") < sql.index("DELETE FROM lift_session")
+    assert sql.index("DELETE FROM food_entry") < sql.index("UPDATE food_entry") < sql.index("DELETE FROM saved_food")
+    assert sql.index("DELETE FROM saved_food") < sql.index("DROP COLUMN")
+    down = io.StringIO()
+    with redirect_stdout(down):
+        command.downgrade(cfg, "0004:0003", sql=True)
+    for table in MARKED_TABLES:
+        assert f"ALTER TABLE {table} ADD COLUMN is_sample BOOLEAN DEFAULT false NOT NULL" in down.getvalue(), table

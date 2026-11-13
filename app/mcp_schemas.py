@@ -135,9 +135,6 @@ class ImportRowIn(BaseModel):
 # ---------------------------------------------------------------- shared pieces
 
 GOAL_KINDS_TEXT = "lift, bodyweight, measurement or cardio_best."
-INCLUDES_SAMPLE_TEXT = ("True when sample rows are in these numbers. Then say so: they are not the person's own, "
-                        "and the Remove sample data button on Settings takes them out.")
-SAMPLE_NOTE_TEXT = "Present when sample rows are in these numbers: what to tell the person."
 
 
 class Projection(BaseModel):
@@ -198,7 +195,6 @@ class GoalNumbers(BaseModel):
                     "away from the target or is flat, or when it reaches it more than 2 years from today.")
     projection: Projection | None = Field(description="The trend line's numbers, or null without enough points.")
     note: str | None = Field(description="Why there is no projection; null when there is one or the goal is reached.")
-    is_sample: bool = Field(description="True when this is a sample goal, not the person's own.")
     # The plan line: a straight line from the start (start_value on start_date) to the target (target_value on
     # target_date). Optional, so a result built before the services carry them still validates.
     should_be_today: float | None = Field(
@@ -318,7 +314,6 @@ class Session(BaseModel):
     created_at: str = Field(description="When it was logged, UTC.")
     updated_at: str = Field(description="When it last changed, UTC.")
     deleted_at: str | None = Field(description="When it was deleted, UTC, or null.")
-    is_sample: bool = Field(description="True only for sample data.")
     sets: list[SetOut] = Field(description="Every set, in the order logged.")
 
 
@@ -364,7 +359,6 @@ class WeighIn(BaseModel):
     created_at: str = Field(description="When it was logged, UTC.")
     updated_at: str = Field(description="When it last changed, UTC.")
     deleted_at: str | None = Field(description="When it was deleted or replaced, UTC, or null.")
-    is_sample: bool = Field(description="True only for sample data.")
 
 
 class DatedKg(BaseModel):
@@ -431,7 +425,6 @@ class Goal(BaseModel):
     created_at: str = Field(description="When it was set, UTC.")
     updated_at: str = Field(description="When it last changed, UTC.")
     closed_at: str | None = Field(description="When it was marked hit or dropped, UTC, or null.")
-    is_sample: bool = Field(description="True only for sample data.")
 
 
 class GoalLinks(BaseModel):
@@ -467,7 +460,6 @@ class FoodEntryOut(BaseModel):
     servings: float | None = Field(description="Servings of the saved food, or null.")
     usda_fdc_id: int | None = Field(description="The USDA food it came from, or null.")
     grams: float | None = Field(description="Grams of the USDA food, or null.")
-    is_sample: bool = Field(description="True only for sample data.")
 
 
 class LogFoodEntry(FoodEntryOut):
@@ -695,11 +687,9 @@ class GetProgressResult(BaseModel):
     lifts: list[LiftLine] | None = Field(default=None, description="Without an exercise: one line per lift logged.")
     cardio: CardioProgress | None = Field(default=None, description="With a cardio activity: its sessions and week.")
     goals: list[GoalNumbers] | None = Field(default=None, description="Without an exercise: every open goal.")
-    includes_sample: bool = Field(description=INCLUDES_SAMPLE_TEXT)
     how: str = Field(description="How the numbers are worked out.")
     links: ProgressLinks = Field(description="Pages to offer the person. Put links last in a reply.")
-    note: str | None = Field(
-        default=None, description="Present when nothing is logged yet, or when sample rows are in these numbers.")
+    note: str | None = Field(default=None, description="Present when nothing is logged yet.")
 
 
 # ---------------------------------------------------------------- update_settings
@@ -732,7 +722,6 @@ class MeasurementOut(BaseModel):
     created_at: str = Field(description="When it was logged, UTC.")
     updated_at: str = Field(description="When it last changed, UTC.")
     deleted_at: str | None = Field(description="When it was deleted or replaced, UTC, or null.")
-    is_sample: bool = Field(description="True only for sample data.")
 
 
 class DatedValue(BaseModel):
@@ -853,10 +842,8 @@ class GetLogResult(BaseModel):
     to: str = Field(description="The last day shown, YYYY-MM-DD.")
     days: list[LogDay] = Field(description="Every day in the range, newest first, empty days included.")
     totals: LogTotals = Field(description="How many entries of each kind the range holds.")
-    includes_sample: bool = Field(description=INCLUDES_SAMPLE_TEXT)
     summary: str = Field(description="The range in a few lines, ready to quote.")
     links: LogLinks = Field(description="Pages to offer the person. Put links last in a reply.")
-    note: str | None = Field(default=None, description=SAMPLE_NOTE_TEXT)
 
 
 # ---------------------------------------------------------------- get_goals
@@ -869,7 +856,6 @@ class ClosedGoal(BaseModel):
     closed_at: str | None = Field(description="When it was marked hit or dropped, UTC.")
     target_value: float | None = Field(description="The target it had, in its unit.")
     target_date: str | None = Field(description="The date it had, YYYY-MM-DD.")
-    is_sample: bool = Field(description="True when this is a sample goal, not the person's own.")
 
 
 class GetGoalsResult(BaseModel):
@@ -881,11 +867,9 @@ class GetGoalsResult(BaseModel):
                     "status.")
     closed: list[ClosedGoal] = Field(
         description="The goals marked hit or dropped, with include_closed; empty without it.")
-    includes_sample: bool = Field(description=INCLUDES_SAMPLE_TEXT)
     how: str = Field(description="How the numbers are worked out.")
     summary: str = Field(description="Every goal in a few lines, ready to quote.")
     links: GoalLinks = Field(description="Pages to offer the person. Put links last in a reply.")
-    note: str | None = Field(default=None, description=SAMPLE_NOTE_TEXT)
 
 
 # ---------------------------------------------------------------- get_trends
@@ -975,13 +959,11 @@ class GetTrendsResult(BaseModel):
         description="The maintenance estimate, or null until 14 of the last 21 days have food logged and there are "
                     "weigh-ins in the last 7 days and around 21 days ago.")
     maintenance_note: str | None = Field(description="What the maintenance estimate still needs, or null.")
-    includes_sample: bool = Field(description=INCLUDES_SAMPLE_TEXT)
     how: str = Field(description="How the numbers are worked out.")
     summary: str = Field(description="How the person is doing, in a few lines, ready to quote.")
     links: TrendsLinks = Field(description="Pages to offer the person. Put links last in a reply.")
     note: str | None = Field(
-        default=None, description="Present when sample rows are in these numbers, or when the rate cannot be "
-                                  "worked out: what to tell the person.")
+        default=None, description="Present when the rate cannot be worked out: what to tell the person.")
 
 
 # ---------------------------------------------------------------- import_entries

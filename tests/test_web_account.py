@@ -1,4 +1,4 @@
-"""Stage 5 on the web, the account side: sample data on Today and Settings, the sample banner and tags,
+"""Stage 5 on the web, the account side: an empty account's Today, no banner and no tag,
 the saved-food line, Foods through list_saved_foods, Export my data, Delete my account, and the
 provider seam's delete_identity.
 
@@ -32,9 +32,6 @@ from .test_web import (  # noqa: F401 - fixtures
 )
 
 
-BANNER = "Sample data is on this account. Remove it on Settings."
-
-
 def plain(page: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", page))
 
@@ -46,10 +43,10 @@ def signed(client):
 
 
 @pytest.fixture
-def sample_state(monkeypatch):
-    """sample_state(empty, rows): what the pages are told about sample data."""
-    def install(empty: bool, rows: int):
-        monkeypatch.setattr(services, "sample_state", lambda *a: {"empty": empty, "sample_rows": rows}, raising=False)
+def empty_state(monkeypatch):
+    """empty_state(empty): what Today is told by account_empty."""
+    def install(empty: bool):
+        monkeypatch.setattr(services, "account_empty", lambda *a: {"empty": empty})
 
     return install
 
@@ -60,89 +57,38 @@ def recorder(monkeypatch, name: str, answer: dict) -> list:
     return sent
 
 
-# ---------------------------------------------------------------- Add sample data on an empty Today
+# ---------------------------------------------------------------- an empty account's Today: what to do first
 
-def test_an_empty_today_offers_sample_data(signed):
+FIRST_STEP = "Tell your assistant what you ate, lifted or did, and it shows here."
+
+
+def test_an_empty_today_says_what_to_do_first_and_holds_no_form(signed):
     today = today_of(only_user()).isoformat()
     page = signed.get(f"/day/{today}").text
-    form = re.search(r'<form method="post" action="/settings/sample">(.*?)</form>', page, re.S).group(1)
-    assert f'name="csrf_token" value="{session_of(signed)["csrf"]}"' in form and "Add sample data" in form
-    assert BANNER not in plain(page)
+    hero = re.search(r'<section class="card hero".*?</section>', page, re.S).group(0)
+    assert "Nothing logged yet" in hero and FIRST_STEP in plain(hero)
+    assert "<form" not in hero and "<button" not in hero and "sample" not in page.casefold()
 
 
-def test_sample_data_is_offered_only_on_an_empty_accounts_today(signed, sample_state):
+def test_the_first_step_shows_only_on_an_empty_accounts_today(signed, empty_state):
     today = today_of(only_user())
     yesterday = (today - timedelta(days=1)).isoformat()
-    assert 'action="/settings/sample"' not in signed.get(f"/day/{yesterday}").text  # not on another day
+    assert FIRST_STEP not in plain(signed.get(f"/day/{yesterday}").text)  # not on another day
     services.log_bodyweight(only_user().id, {"kg": "80", "date": yesterday}, "claude")
-    assert 'action="/settings/sample"' not in signed.get(f"/day/{today.isoformat()}").text  # not once anything is there
-    sample_state(empty=True, rows=0)
-    assert 'action="/settings/sample"' in signed.get(f"/day/{today.isoformat()}").text  # the service decides
+    assert FIRST_STEP not in plain(signed.get(f"/day/{today.isoformat()}").text)  # not once anything is there
+    empty_state(True)
+    assert FIRST_STEP in plain(signed.get(f"/day/{today.isoformat()}").text)  # the service decides
 
 
-def test_add_sample_data_goes_through_the_write_path_then_today(signed, monkeypatch):
-    sent = recorder(monkeypatch, "add_sample_data", {"added": {}, "from": "", "to": "", "summary": "", "links": {}})
-    r = post(signed, "/settings/sample")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/today?saved=sample"
-    assert sent == [(only_user().id, "web")]
-    assert calls(only_user().id) == [("add_sample_data", True, None)]
+# ---------------------------------------------------------------- no banner, no tag
 
-
-@pytest.mark.parametrize("code, says", [
-    ("not_empty", "Sample data goes only into an empty account"),
-    ("already_sample", "Sample data is already on this account."),
-    ("invalid_field", "Sample data could not be added, so nothing was changed."),
-])
-def test_a_refused_sample_add_says_why_in_the_pages_words(signed, monkeypatch, code, says):
-    recorder(monkeypatch, "add_sample_data", {"error": code, "message": "For Claude: not_empty.", "fix": "For Claude."})
-    r = post(signed, "/settings/sample")
-    assert r.status_code in (400, 409) and says in r.text and "For Claude" not in r.text
-    assert calls(only_user().id) == [("add_sample_data", False, code)]
-
-
-def test_settings_offers_remove_only_with_sample_rows(signed, sample_state):
-    assert 'action="/settings/sample/remove"' not in signed.get("/settings").text
-    sample_state(empty=False, rows=12)
-    page = signed.get("/settings").text
-    form = re.search(r'<form method="post" action="/settings/sample/remove">(.*?)</form>', page, re.S).group(1)
-    assert f'value="{session_of(signed)["csrf"]}"' in form and "Remove sample data" in form
-
-
-def test_remove_sample_data_goes_through_the_write_path_then_today(signed, monkeypatch):
-    sent = recorder(monkeypatch, "remove_sample_data", {"removed": {}, "summary": "", "links": {}})
-    r = post(signed, "/settings/sample/remove")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/today?deleted=sample"
-    assert sent == [(only_user().id, "web")] and calls(only_user().id) == [("remove_sample_data", True, None)]
-
-
-def test_a_refused_remove_says_so(signed, monkeypatch):
-    recorder(monkeypatch, "remove_sample_data", {"error": "invalid_field", "message": "x", "fix": "y"})
-    r = post(signed, "/settings/sample/remove")
-    assert r.status_code == 400 and "could not be removed, so nothing was changed" in r.text
-
-
-# ---------------------------------------------------------------- the banner and the tags
-
-def test_every_page_with_entries_carries_the_banner_when_sample_rows_exist(signed, sample_state):
-    today = today_of(only_user()).isoformat()
-    pages = (f"/day/{today}", "/progress", "/goals", "/foods")
-    for path in pages:
-        assert BANNER not in plain(signed.get(path).text), path
-    sample_state(empty=False, rows=3)
-    for path in pages:
-        page = signed.get(path).text
-        assert BANNER in plain(page) and '<p class="notice sample-banner">' in page, path
-        assert 'Remove it on <a href="/settings">Settings</a>.' in page, path
-    assert 'action="/settings/sample"' not in signed.get(f"/day/{today}").text  # no offer on a non-empty account
-
-
-def test_each_sample_row_carries_a_sample_tag(signed, monkeypatch):
+def test_no_row_carries_a_tag_beyond_its_own_even_with_a_stray_mark(signed, monkeypatch):
+    """Decision 1: the sample tag is gone. A read that still carried is_sample (none does) would draw nothing more."""
     uid = only_user().id
     stock_food(only_user())
     services.log_lifts(uid, {"sets": [{"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
     services.log_measurement(uid, {"kind": "waist", "value": "84"}, "claude")
     today = today_of(only_user()).isoformat()
-    assert "tag-sample" not in signed.get(f"/day/{today}").text
     real = services.get_log
 
     def marked(*args):
@@ -157,30 +103,25 @@ def test_each_sample_row_carries_a_sample_tag(signed, monkeypatch):
 
     monkeypatch.setattr(services, "get_log", marked)
     page = signed.get(f"/day/{today}").text
-    # a session, a weigh-in, a measurement, three food entries, one cardio entry
-    assert page.count('<span class="tag tag-sample">sample</span>') == 7
-    # Each on its own entry, in the entry's tag slot: one on each side card, three on the Food card.
-    sample = ("tag-sample", "sample")
-    for title, name, tags in (("Lifts", "Lift session", [sample]),
-                              ("Cardio", "Treadmill Run", [("tag-estimate", "estimate"), sample]),
-                              ("Weigh-in", None, [sample]), ("Measurements", "Waist", [sample])):
+    assert "sample" not in page.casefold()
+    for title, name, tags in (("Lifts", "Lift session", []),
+                              ("Cardio", "Treadmill Run", [("tag-estimate", "estimate")]),
+                              ("Weigh-in", None, []), ("Measurements", "Waist", [])):
         [entry] = entries_of(side_card(page, title))
         assert (entry["name"], entry["tags"]) == (name, tags), title
-        assert set(entry["tag_slots"]) == {("entry-tags",)}, title
     assert entries_of(side_card(page, "Weigh-in"))[0]["big"] == "80\u00a0kg"
-    assert sum(e["tags"][-1] == sample for meal in ("Breakfast", "Lunch") for e in meal_of(page, meal)) == 3
+    assert all(len(e["tags"]) == 1 for meal in ("Breakfast", "Lunch") for e in meal_of(page, meal))
 
 
-def test_real_sample_data_fills_today_and_goes_in_one_click(signed):
+def test_the_four_weeks_fill_the_pages_with_no_word_of_sample_data(signed):
+    from evals.four_weeks import four_weeks  # noqa: PLC0415
+    assert "error" not in four_weeks(only_user().id)
     today = today_of(only_user()).isoformat()
-    assert post(signed, "/settings/sample").status_code == 303
-    page = signed.get(f"/day/{today}").text
-    assert BANNER in plain(page) and "tag-sample" in page and 'action="/settings/sample"' not in page
-    assert BANNER in plain(signed.get("/goals").text) and signed.get("/goals").text.count('value="hit"') == 3
-    assert 'action="/settings/sample/remove"' in signed.get("/settings").text
-    assert post(signed, "/settings/sample/remove").status_code == 303
-    page = signed.get(f"/day/{today}").text
-    assert BANNER not in plain(page) and "tag-sample" not in page and 'action="/settings/sample"' in page
+    for path in (f"/day/{today}", "/progress", "/goals", "/foods", "/settings"):
+        page = signed.get(path).text
+        assert "sample" not in page.casefold(), path
+    assert signed.get("/goals").text.count('value="hit"') == 3
+    assert "Nothing logged yet" not in signed.get(f"/day/{today}").text
 
 
 # ---------------------------------------------------------------- the saved-food line (decision 14)
@@ -246,11 +187,11 @@ def test_a_food_with_no_saved_food_is_its_description(signed):
 
 FOODS = {"foods": [
     {"id": 11, "name": "Dal bowl", "serving_label": "1 bowl", "kcal_per_serving": 180, "grams_per_serving": None,
-     "times_logged": 7, "last_logged": "2026-11-09", "is_sample": True, "deleted_at": None},
+     "times_logged": 7, "last_logged": "2026-11-09", "deleted_at": None},
     {"id": 12, "name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120, "grams_per_serving": 40,
-     "times_logged": 0, "last_logged": None, "is_sample": False, "deleted_at": None},
+     "times_logged": 0, "last_logged": None, "deleted_at": None},
     {"id": 13, "name": "Gone stew", "serving_label": "1 bowl", "kcal_per_serving": 300, "grams_per_serving": None,
-     "times_logged": 2, "last_logged": "2026-10-01", "is_sample": False, "deleted_at": "2026-11-01T00:00:00+00:00"},
+     "times_logged": 2, "last_logged": "2026-10-01", "deleted_at": "2026-11-01T00:00:00+00:00"},
 ], "summary": ""}
 
 
@@ -258,8 +199,7 @@ def test_foods_reads_list_saved_foods_and_shows_live_ones(signed, monkeypatch):
     sent = recorder(monkeypatch, "list_saved_foods", FOODS)
     page = signed.get("/foods").text
     assert sent == [(only_user().id,)]
-    dal = re.search(r'<tr>\s*<td class="lead">Dal bowl <span class="tag tag-sample">sample</span></td>(.*?)</tr>', page,
-                    re.S)
+    dal = re.search(r'<tr>\s*<td class="lead">Dal bowl</td>(.*?)</tr>', page, re.S)
     assert dal and re.findall(r'<td(?: class="num")? data-label="([^"]+)">(.*?)</td>', dal.group(1), re.S)[:3] == [
         ("Serving", "1 bowl"), ("kcal", "180"), ("Times logged", "7")]
     assert '<td class="lead">Roti</td>' in page and "Gone stew" not in page
@@ -277,12 +217,12 @@ FOLD_FIELDS = ["name", "serving_label", "kcal_per_serving", "grams_per_serving"]
 EDIT_FIELDS = FOLD_FIELDS[1:]
 FIGURES = {"foods": [
     {"id": 21, "name": "Ghee rice", "serving_label": "1 plate", "kcal_per_serving": 412.25,
-     "grams_per_serving": 1250.75, "times_logged": 1234, "last_logged": "2026-11-09", "is_sample": False,
+     "grams_per_serving": 1250.75, "times_logged": 1234, "last_logged": "2026-11-09",
      "deleted_at": None},
     {"id": 22, "name": "Black coffee", "serving_label": "1 cup", "kcal_per_serving": 0, "grams_per_serving": None,
-     "times_logged": 0, "last_logged": None, "is_sample": True, "deleted_at": None},
+     "times_logged": 0, "last_logged": None, "deleted_at": None},
     {"id": 23, "name": "Gone stew", "serving_label": "1 bowl", "kcal_per_serving": 300, "grams_per_serving": 10,
-     "times_logged": 2, "last_logged": "2026-10-01", "is_sample": False, "deleted_at": "2026-11-01T00:00:00+00:00"},
+     "times_logged": 2, "last_logged": "2026-10-01", "deleted_at": "2026-11-01T00:00:00+00:00"},
 ], "summary": ""}
 
 
@@ -346,12 +286,11 @@ def real_save_food(monkeypatch):
     return answers
 
 
-def test_foods_in_the_contracts_order(signed, sample_state):
-    """Page head with its h1 and grey line, the sample banner, one strip, Saved foods, Save a food."""
+def test_foods_in_the_contracts_order(signed):
+    """Page head with its h1 and grey line, one strip, Saved foods, Save a food."""
     services.save_food(only_user().id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
-    sample_state(empty=False, rows=3)
     page = signed.get("/foods?saved=saved_food").text
-    assert main_parts(page) == [("div", ["page-head"]), ("p", ["notice", "sample-banner"]), ("p", ["ok"]),
+    assert main_parts(page) == [("div", ["page-head"]), ("p", ["ok"]),
                                 ("section", ["card", "saved-foods"]), ("div", ["card", "save-food"])]
     [head] = parse(page).find_all("div", "page-head")
     assert [(n.tag, n.classes, n.text()) for n in head.elements()] == [("h1", [], "Foods"), ("p", ["lede"], LEDE)]
@@ -371,22 +310,21 @@ def test_the_saved_foods_columns_and_their_order_with_and_without_grams(signed, 
 
 
 def test_each_cell_is_its_reads_own_field_through_its_filter(signed, monkeypatch):
-    """Cell by cell, against list_saved_foods: the name and its sample tag, the serving as written, kcal_per_serving,
+    """Cell by cell, against list_saved_foods: the name, the serving as written, kcal_per_serving,
     times_logged (count) and grams through show, a food with no grams an empty cell: no dash, no 0."""
     recorder(monkeypatch, "list_saved_foods", FIGURES)
     page = signed.get("/foods").text
     _, cells = foods_table(page)
     live = [f for f in FIGURES["foods"] if f["deleted_at"] is None]
-    want = [[f["name"] + (" sample" if f["is_sample"] else ""), f["serving_label"],
+    want = [[f["name"], f["serving_label"],
              show(f["kcal_per_serving"], "kcal_per_serving", page=True, unit=False),
              show(f["times_logged"], "count", page=True),
              "" if f["grams_per_serving"] is None else show(f["grams_per_serving"], "grams", page=True, unit=False),
              "Edit", "Delete"] for f in live]
     assert cells == want
     assert want[0][2:5] == ["412", "1,234", "1,250.75"] and want[1][2:5] == ["0", "0", ""]
-    assert '<td class="lead">Black coffee <span class="tag tag-sample">sample</span></td>' in page
-    assert '<td class="lead">Ghee rice</td>' in page  # a food of the person's own: no tag
-    row = re.search(r'<tr><td class="lead">Black coffee .*?</tr>', page, re.S).group(0)
+    assert '<td class="lead">Black coffee</td>' in page and '<td class="lead">Ghee rice</td>' in page  # no tag
+    row = re.search(r'<tr><td class="lead">Black coffee</td>.*?</tr>', page, re.S).group(0)
     assert '<td class="num" data-label="Grams (g)"></td>' in row and "–" not in row and \
         "-" not in re.sub(r'<[^>]+>', "", row)
     assert '<a class="action" href="/foods/22/edit">Edit</a>' in row
@@ -1031,7 +969,7 @@ def test_signing_in_again_after_a_delete_starts_a_new_account(signed, provider_d
     assert user_count() == 1  # SQLite may hand the new row the old id; what matters is that it is empty
     with db.session_scope() as s:
         assert s.scalars(select(Bodyweight)).all() == []
-    assert 'action="/settings/sample"' in signed.get(f"/day/{today_of(only_user()).isoformat()}").text
+    assert "Nothing logged yet" in signed.get(f"/day/{today_of(only_user()).isoformat()}").text
 
 
 @pytest.mark.parametrize("failure", [web_auth.DeleteFailed("ServerError"), RuntimeError("anything")],
@@ -1119,16 +1057,14 @@ def shown(node: Node) -> str:
     return re.sub(r"\s+", " ", node.text()).strip()
 
 
-def test_settings_in_the_contracts_order(signed, sample_state):
-    """The head, the banner, then the six titled cards in the contract's order, each a section named by its own one
+def test_settings_in_the_contracts_order(signed):
+    """The head, then the six titled cards in the contract's order, each a section named by its own one
     h2. No code word, no function's name, no required and no autofocus anywhere on the page."""
-    sample_state(empty=False, rows=3)
     page = signed.get("/settings").text
     [main] = parse(page).find_all("main")
     kids = main.elements()
     assert kids[0].is_("div", "page-head") and [h.text() for h in kids[0].find_all("h1")] == ["Settings"]
-    assert kids[1].is_("p", "sample-banner")
-    cards = kids[2:]
+    cards = kids[1:]
     assert all(c.is_(cls="card") for c in cards)
     assert [(c.tag, c.classes, c.attrs.get("id"), c.attrs.get("aria-labelledby"), [h.text() for h in c.find_all("h2")])
             for c in cards] == [("section", ["card"], cid, hid, [title]) for cid, hid, title in SETTINGS_CARDS]
@@ -1225,15 +1161,13 @@ def test_targets_update_settings_finds_unchanged_are_marked_unchanged(signed, mo
 
 
 def test_each_form_posts_to_its_cards_anchor_and_each_redirect_names_it(signed):
-    """The three forms' actions end in their card's id, which is on the page. Export, Remove sample data and Sign out
-    carry none, and neither does the automatic zone form. Each redirect that answers one of the three names the same
+    """The three forms' actions end in their card's id, which is on the page. Export and Sign out carry none, and neither does the automatic zone form. Each redirect that answers one of the three names the same
     card: the Time zone card's form carries its own field for it. The automatic save lands as it always did."""
-    services.add_sample_data(only_user().id, "web")
     page = signed.get("/settings").text
     dom = parse(page)
     actions = [f.attrs.get("action") for f in dom.find_all("form")]
     assert actions == ["/sign-out", "/settings#zone", "/settings/targets#targets", "/settings/claude-can#assistant",
-                       "/settings/export", "/settings/sample/remove", "/sign-out", "/settings"]
+                       "/settings/export", "/sign-out", "/settings"]
     ids = {n.attrs.get("id") for n in dom.iter()}
     assert {"zone", "targets", "assistant"} <= ids
     assert re.search(r'<form id="auto-time-zone" method="post" action="/settings" hidden>', page)
@@ -1481,21 +1415,22 @@ def test_the_time_zone_card_holds_the_grouped_list_and_save(signed):
     assert [b.text() for b in card.find_all("button")] == ["Save time zone"]
 
 
-def test_your_data_offers_export_remove_only_with_sample_rows_and_the_delete_link(signed, sample_state):
-    """Export my data, a secondary button, with its line. Remove sample data, secondary, only with sample rows, with
-    its line. Delete my account, a link in the error colour, with its line."""
-    for rows in (0, 4):
-        sample_state(empty=False, rows=rows)
+def test_your_data_offers_export_and_the_delete_link(signed):
+    """Export my data, a secondary button, with its line. Delete my account, a link in the error colour, with its
+    line. Nothing else: no Remove sample data, whatever the account holds."""
+    from evals.four_weeks import four_weeks  # noqa: PLC0415
+    for seeded in (False, True):
+        if seeded:
+            assert "error" not in four_weeks(only_user().id)
         card = card_by_title(signed.get("/settings").text, "Your data")
         buttons = [(b.classes, b.text()) for b in card.find_all("button")]
-        assert buttons == [(["secondary"], "Export my data")] + ([(["secondary"], "Remove sample data")] if rows else [])
+        assert buttons == [(["secondary"], "Export my data")]
         [link] = card.find_all("a")
         assert (link.attrs, link.text()) == ({"class": "action is-danger", "href": "/settings/delete"},
                                              "Delete my account")
         lines = [shown(p) for p in card.find_all("p", "small")]
-        assert lines == ["A zip of CSV files: everything you have logged, deleted entries included."] + \
-            (["Sample data is on this account. Removing it leaves your own entries as they are."] if rows else []) + \
-            ["You see what goes before anything is deleted."]
+        assert lines == ["A zip of CSV files: everything you have logged, deleted entries included.",
+                         "You see what goes before anything is deleted."]
 
 
 def test_the_more_card_links_saved_foods_and_carries_a_sign_out_that_signs_out(signed):
@@ -1606,22 +1541,6 @@ def test_a_refusal_posted_to_an_address_with_a_saved_mark_shows_no_saved_line(si
     assert parse(r.text).find_all(cls="error")
 
 
-def test_settings_says_its_own_sample_banner_and_every_other_page_keeps_its_own(signed, sample_state):
-    """On Settings the banner names the card that holds Remove sample data and links nowhere, since the person is
-    on the page the others link to. Every other page's banner is as it was."""
-    sample_state(empty=False, rows=3)
-    page = signed.get("/settings").text
-    [banner] = parse(page).find_all("p", "sample-banner")
-    assert (banner.classes, banner.text(), banner.elements()) == (
-        ["notice", "sample-banner"], "Sample data is on this account. Remove it under Your data.", [])
-    assert BANNER not in plain(page) and [shown(c.find_all("h2")[0]) for c in settings_cards(page)][4] == "Your data"
-    for path in (f"/day/{today_of(only_user()).isoformat()}", "/progress", "/goals", "/foods"):
-        other = signed.get(path).text
-        assert 'Remove it on <a href="/settings">Settings</a>.' in other and "under Your data" not in other, path
-    sample_state(empty=False, rows=0)
-    assert not parse(signed.get("/settings").text).find_all("p", "sample-banner")
-
-
 @pytest.mark.parametrize("address, card", [("/settings/targets", "targets"), ("/settings/claude-can", "assistant")])
 def test_a_get_of_a_cards_post_address_goes_to_its_card(signed, address, card):
     """rev_b16, the look's 1.5.7: a refused post leaves its own address in the bar, and a GET of it (a reload, the
@@ -1677,17 +1596,6 @@ def test_signed_out_the_delete_page_and_its_post_delete_nothing(client, make_use
 
 # ---------------------------------------------------------------- the write limit and CSRF on every new route
 
-@pytest.mark.parametrize("name, path", [
-    ("add_sample_data", "/settings/sample"),
-    ("remove_sample_data", "/settings/sample/remove"),
-])
-def test_each_new_write_over_the_limit_is_a_429(signed, provider_delete, monkeypatch, name, path):
-    monkeypatch.setattr(services, name, lambda *args: dict(TOO_MANY), raising=False)
-    r = post(signed, path)
-    assert r.status_code == 429 and "Try again in 3 minutes" in r.text
-    assert calls(only_user().id)[-1] == (name, False, "too_many_writes")
-
-
 def test_delete_goes_through_at_the_write_limit(signed, provider_delete):
     """The person can always leave: a full write limit never stops Delete my account."""
     uid = only_user().id
@@ -1699,15 +1607,6 @@ def test_delete_goes_through_at_the_write_limit(signed, provider_delete):
     r = post(signed, "/settings/delete")
     assert r.status_code == 200 and "Your account is deleted" in r.text and user_count() == 0
     assert provider_delete["subjects"] == ["user_01WEB"]
-
-
-@pytest.mark.parametrize("path, name", [("/settings/sample", "add_sample_data"),
-                                        ("/settings/sample/remove", "remove_sample_data")])
-def test_the_sample_forms_need_the_csrf_token(signed, monkeypatch, path, name):
-    sent = recorder(monkeypatch, name, {})
-    for data in ({}, {"csrf_token": "wrong"}):
-        assert signed.post(path, data=data).status_code == 403
-    assert sent == [] and calls(only_user().id) == []
 
 
 def test_the_new_pages_carry_no_script_and_the_same_policy(signed):

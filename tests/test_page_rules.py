@@ -28,6 +28,7 @@ import pytest
 
 from app import db, formatting, services, web
 from app.models import Bodyweight, SavedFood
+from evals.four_weeks import four_weeks
 
 from . import text_rules as tr
 from .test_pages_text import (ACCOUNTS, BUILT, CLAUDE_SKIPS, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids,
@@ -901,9 +902,6 @@ def test_the_page_after_every_write_is_calm(client):
         landed.append((label, address, markup, not only_user().time_zone, today_of(only_user()).isoformat()))
         return address
 
-    # Sample data first: it goes only into an empty account.
-    assert write("add sample data", "/settings/sample").endswith("?saved=sample")
-    assert write("remove sample data", "/settings/sample/remove").endswith("?deleted=sample")
     assert write("the automatic zone save", "/settings", time_zone="Asia/Kolkata", next="/progress") == \
         "/progress?saved=time_zone"
     # The person's today is read again now the zone is saved: before it, it was UTC's date, a day behind
@@ -951,13 +949,12 @@ def test_the_page_after_every_write_is_calm(client):
         findings += [f"{name}: {f}" for f in frame_findings(s)]
         if address.endswith("saved=unchanged") and (s.dom.find_all("p", "ok") or s.dom.find_all("div", "ok")):
             findings.append(f"{name}: {address} shows a strip though nothing changed")
-    assert len(landed) == 25
+    assert len(landed) == 23
     assert not findings, "\n".join(findings)
 
 
 @pytest.mark.parametrize("address", ["/day/{today}?saved=bodyweight", "/day/{today}?saved=confirmed",
-                                     "/day/{today}?restored=cardio_entry", "/day/{today}?saved=sample",
-                                     "/day/{today}?deleted=sample", "/day/{today}?saved=time_zone",
+                                     "/day/{today}?restored=cardio_entry", "/day/{today}?saved=time_zone",
                                      "/day/{today}?saved=unchanged", "/foods?saved=unchanged",
                                      "/settings?saved=unchanged", "/goals?saved=unchanged",
                                      "/progress?saved=time_zone"])
@@ -1101,7 +1098,7 @@ def test_the_token_rule_finds_a_form_that_posts_without_its_token(bad):
 def test_the_token_rule_reads_every_form_on_a_full_day_page(client):
     sign_in(client)
     services.update_settings(only_user().id, {"time_zone": "Asia/Kolkata"}, "web")
-    services.add_sample_data(only_user().id, "web")
+    four_weeks(only_user().id)
     today = today_of(only_user()).isoformat()
     page = client.get(f"/day/{today}").text
     s = Seen(f"/day/{today}", page, True, today=today)
@@ -1125,7 +1122,7 @@ def test_the_sweeps_reach_each_kinds_edit_page_and_its_errors(client):
     assert EDIT_ROUTE in BUILT and EDIT_ROUTE not in CLAUDE_SKIPS
     sign_in(client)
     user = only_user()
-    ACCOUNTS["sample"](user.id)
+    ACCOUNTS["four weeks"](user.id)
     today = today_of(user).isoformat()
     kinds = {kind for kind, _ in ENTRY_MODELS}
     assert {a.split("/")[2] for a in get_paths(user.id)[EDIT_ROUTE]} == kinds
@@ -1141,7 +1138,7 @@ def test_the_sweeps_reach_each_kinds_edit_page_and_its_errors(client):
 
 # ---------------------------------------------------------------- Today's glance block: tiles, twins, sheets
 
-def glance_page(client, account: str = "sample") -> tuple[str, str]:
+def glance_page(client, account: str = "four weeks") -> tuple[str, str]:
     """Today's page on an account, with its glance block: (address, markup)."""
     sign_in(client)
     ACCOUNTS[account](only_user().id)
@@ -1684,7 +1681,7 @@ def goals_renders(client, today: str, nothing_logged: bool) -> list[Seen]:
     return out
 
 
-@pytest.mark.parametrize("state", ["sample", "edge", "nothing logged", "line ended", "no goals"])
+@pytest.mark.parametrize("state", ["four weeks", "edge", "nothing logged", "line ended", "no goals"])
 def test_goals_in_each_state_keeps_every_rule_a_built_route_keeps(client, monkeypatch, state):
     """/goals is in BUILT (pass B14). Each Goals state on the fixed day, with each kind's form and each form sent back
     with its errors: the frame rules, the page rules, T1's text rules, T3's step 4 checks, the card rule and every rule
@@ -1907,7 +1904,7 @@ def test_the_pill_check_holds_each_days_year_and_the_weekday_letters(client, mon
 # ---------------------------------------------------------------- Foods and a saved food's edit page (pass B15)
 
 def _own_foods(user_id: int) -> None:
-    """The person's own foods, none from sample data: one with grams and logged, one without, one at 0 kcal never
+    """The person's own foods: one with grams and logged, one without, one at 0 kcal never
     logged."""
     roti = services.save_food(user_id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
                                         "grams_per_serving": 40}, "web")
@@ -1917,7 +1914,7 @@ def _own_foods(user_id: int) -> None:
                                             "claude")
 
 
-FOOD_STATES = {"no saved foods": ACCOUNTS["empty"], "sample": ACCOUNTS["sample"], "edge": ACCOUNTS["edge"],
+FOOD_STATES = {"no saved foods": ACCOUNTS["empty"], "four weeks": ACCOUNTS["four weeks"], "edge": ACCOUNTS["edge"],
                "own, with and without grams": _own_foods}
 FOOD_CARDS = [("section", ["card", "saved-foods"]), ("div", ["card", "save-food"])]
 NO_FOOD_CARDS = [("div", ["card", "saved-foods", "is-empty"]), ("div", ["card", "save-food"])]
@@ -2017,7 +2014,8 @@ def test_the_save_a_food_fold_out_keeps_its_rule_on_the_real_page(client):
 
 # ---------------------------------------------------------------- Settings and Delete my account (pass B16)
 
-SETTINGS_STATES = {"no zone, nothing logged": ACCOUNTS["empty"], "sample": ACCOUNTS["sample"], "edge": ACCOUNTS["edge"]}
+SETTINGS_STATES = {"no zone, nothing logged": ACCOUNTS["empty"], "four weeks": ACCOUNTS["four weeks"],
+                   "edge": ACCOUNTS["edge"]}
 SETTINGS_CARD_SHAPES = [("section", ["card"], card_id, f"{name}-title") for card_id, name in
                         [("account", "account"), ("zone", "zone"), ("targets", "targets"), ("assistant", "assistant"),
                          (None, "data"), (None, "more")]]

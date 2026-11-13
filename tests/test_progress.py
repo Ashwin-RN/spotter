@@ -167,11 +167,11 @@ def test_no_account():
     assert services.get_progress(987654)["error"] == "no_account"
 
 
-def test_real_rows_are_not_sample_and_say_nothing_of_it(user):
+def test_no_result_says_a_word_of_sample_data(user):
     build_squat_history(user)
     for r in (services.get_progress(user.id), services.get_progress(user.id, "Back Squat"),
               services.get_progress(user.id, "Elliptical")):
-        assert r["includes_sample"] is False and "sample" not in r.get("note", "")
+        assert "includes_sample" not in r and "sample" not in json.dumps(r).casefold()
 
 
 def test_the_body_weight_chart_draws_the_smoothed_line(user):
@@ -257,7 +257,7 @@ def test_every_result_is_plain_json(user):
         services.restore_entry(user.id, "bodyweight", weigh["id"]),
         services.get_entry(user.id, "bodyweight", MISSING_ID),
         services.get_goals(user.id, include_closed=True), services.get_trends(user.id),
-        services.export_data(user.id), services.list_saved_foods(user.id), services.sample_state(user.id),
+        services.export_data(user.id), services.list_saved_foods(user.id), services.account_empty(user.id),
     ]
     for result in results:
         sendable(result)
@@ -364,8 +364,6 @@ def hostile_calls(user_id, goal_id, entry):
         yield "set_goal edit distance_km", lambda: services.set_goal(
             user_id, {"goal_id": goal_id, "distance_km": bad, "target_value": 160}, "web")
         yield "get_goals include_closed", lambda: services.get_goals(user_id, bad)
-        yield "sample by", lambda: services.add_sample_data(user_id, bad)
-        yield "remove sample by", lambda: services.remove_sample_data(user_id, bad)
         yield "set_goal goal_id", lambda: services.set_goal(user_id, {"goal_id": bad, "status": "hit"}, "web")
         yield "set_goal by", lambda: services.set_goal(user_id, new_goal, bad)
         for call in (services.get_entry, services.delete_entry, services.restore_entry):
@@ -450,7 +448,7 @@ OFFERED = ("whoami", "list_exercises", "get_progress", "get_log", "log_lifts", "
            "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries")
 # Functions that exist but Claude cannot call: every other public service function (get_entry,
 # set_claude_can, which is the Settings page's alone, entry_kinds, and stage 5's web-only ones:
-# sample data, export, delete account, the Foods page's list).
+# the empty-account read, export, delete account, the Foods page's list).
 NOT_OFFERED = sorted({name for name in services.__all__ if callable(getattr(services, name))} - set(OFFERED))
 
 
@@ -551,7 +549,7 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
                                          "claude"),
                 services.delete_entry(user.id, "saved_food", roti["id"]),
                 services.get_log(user.id)]
-    # Stage 5: goals of every kind, their refusals, and the two new reads, with and without sample rows.
+    # Stage 5: goals of every kind, their refusals, and the two new reads, on this account and on four weeks.
     services.log_measurement(user.id, {"kind": "resting_hr", "value": 60}, "claude")
     services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5}, "claude")
     results += [goal(kind="measurement", measurement_kind="waist", target_value=80, target_date=day(user, 60)),
@@ -569,18 +567,19 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
                 goal(kind="sessions", target_value=4, target_date=day(user, 60)),
                 services.get_goals(user.id), services.get_goals(user.id, include_closed=True),
                 services.get_trends(user.id)]
-    with db.session_scope() as s:  # sample data needs an empty account: a second person's reads
+    with db.session_scope() as s:  # the four weeks need an empty account: a second person's reads
         from app.models import User
-        fresh = User(provider="workos", subject="user_texts_sample", created_at=db.utcnow(), updated_at=db.utcnow(),
+        fresh = User(provider="workos", subject="user_texts_four_weeks", created_at=db.utcnow(), updated_at=db.utcnow(),
                      last_seen_at=db.utcnow())
         s.add(fresh)
         s.flush()
         fresh_id = fresh.id
-    services.add_sample_data(fresh_id, "web")
+    from evals.four_weeks import four_weeks
+    assert "error" not in four_weeks(fresh_id)
     results += [services.get_trends(fresh_id), services.get_goals(fresh_id), services.get_log(fresh_id),
                 services.get_progress(fresh_id), services.get_progress(fresh_id, "Outdoor Run"),
                 services.find_food(fresh_id, "roti")]
-    assert any(r.get("includes_sample") for r in results)
+    assert not any("includes_sample" in r for r in results)
 
     assert any(r.get("duplicate") for r in results) and any(r.get("replaced") for r in results)
     assert any(g["status"] == "reached" for g in services.get_progress(user.id)["goals"])
@@ -595,7 +594,7 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
                 settings({"claude_can": "log_delete"}), settings({"colour": "blue"}),
                 settings({"time_zone": "UTC"}), settings({"time_zone": "UTC"}), settings({"time_zone": "Asia/Kolkata"})]
     # The import, now offered: a preview with a refused row and a cardio note, a whole-call refusal, and the
-    # sample person's refusal.
+    # four-week person's import.
     # A day the person logged nothing on: 300 days before their own today, in the zone just set.
     on = (datetime.fromisoformat(services.whoami(user.id)["today"]) - timedelta(days=300)).date().isoformat()
     results += [services.import_entries(user.id, {"rows": [
@@ -611,6 +610,7 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
     to_a_page = [t for t in texts if "time zone" in t.casefold()
                  and any(where in t.casefold() for where in ("settings page", "in settings", "links.settings"))]
     assert not to_a_page, to_a_page[:3]
+    assert not [t for t in texts if "sample" in t.casefold()]   # Claude never hears of sample data
     assert any("can be brought back later" in t for t in texts)
     for name in NOT_OFFERED:
         # A whole word: target_cardio_minutes_per_week, a settings field, does not name get_cardio.

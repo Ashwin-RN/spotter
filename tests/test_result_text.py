@@ -1,6 +1,7 @@
 """T2: every summary, note, message and fix the services return, held to the text rules.
 
-Three accounts on a fixed day (2026-11-10): an empty one, one with sample data, and an edge-case one
+Three accounts on a fixed day (2026-11-10): an empty one, one with four weeks of everything
+(evals/four_weeks.py), and an edge-case one
 (a zero weight rate, a day over its calorie target and over 1,000 kcal, a cardio time goal, every
 measurement kind, a new best that widens with the one it beat). On each, every read and write runs,
 and a battery of refused calls gives the messages and fixes.
@@ -26,7 +27,9 @@ from sqlalchemy import select
 from app import db, formatting, services
 from app.models import Bodyweight, CardioEntry, FoodEntry, LiftSession, Measurement, SavedFood
 from app.services import goals as goal_service
-from app.services import lifts, sample
+from app.services import lifts
+from evals import four_weeks as seed
+from evals.four_weeks import four_weeks
 
 from . import text_rules as tr
 
@@ -229,7 +232,7 @@ def every_read(seen: Seen, user_id: int, widened: bool = False):
     seen.add("list_saved_foods", services.list_saved_foods(user_id))
     seen.add("find_food", services.find_food(user_id, "roti"), "roti")
     seen.add("export_data", services.export_data(user_id))
-    seen.add("sample_state", services.sample_state(user_id))
+    seen.add("account_empty", services.account_empty(user_id))
 
 
 # ---------------------------------------------------------------- the three accounts
@@ -239,22 +242,21 @@ def test_an_empty_account(make_user):
     seen = Seen()
     every_read(seen, user.id)
     refusals(seen, user.id)
-    seen.add("remove_sample_data", services.remove_sample_data(user.id, "web"))
     assert {"summary", "note", "message", "fix", "time_zone_note"} <= seen.keys()
     seen.assert_clean()
 
 
-def sample_entered() -> set[str]:
-    names = {name for name, _, _ in sample.SAVED_FOODS} | {label for _, label, _ in sample.SAVED_FOODS}
-    names |= {item[0] for _, items in sample.MEALS for item in items} | {sample.SNACK}
+def seeded_entered() -> set[str]:
+    names = {name for name, _, _ in seed.SAVED_FOODS} | {label for _, label, _ in seed.SAVED_FOODS}
+    names |= {item[0] for _, items in seed.MEALS for item in items} | {seed.SNACK}
     return names
 
 
-def test_a_sample_account(make_user):
+def test_a_four_week_account(make_user):
     user = make_user(time_zone="Europe/London")
     seen = Seen()
-    names = sample_entered()   # the sample's own foods and descriptions: masked only where a call shows them
-    seen.add("add_sample_data", services.add_sample_data(user.id, "web"))
+    names = seeded_entered()   # the seed's own foods and descriptions: masked only where a call shows them
+    assert "error" not in four_weeks(user.id)
     every_read(seen, user.id)
     with db.new_session() as s:
         roti = s.scalar(select(SavedFood.id).where(SavedFood.user_id == user.id, SavedFood.name == "Roti"))
@@ -293,16 +295,14 @@ def test_a_sample_account(make_user):
     for g in services.get_goals(user.id)["goals"]:
         seen.add("close goal", services.set_goal(user.id, {"goal_id": g["goal_id"], "status": "hit"}, "web"))
     every_read(seen, user.id)
-    seen.add("remove_sample_data", services.remove_sample_data(user.id, "web"))
-    assert any(t.endswith(" 1 real entry was logged against a sample food. It keeps its numbers and loses the link.")
-               for t in seen.texts())   # a real entry lost its link to a sample food
     refusals(seen, user.id)
     assert {"summary", "note", "text", "label", "message", "fix"} <= seen.keys()
-    # The web-only reads are walked too: their notes, and every pace string (stage 6, E2 and E3).
+    # The web-only reads are walked too: their notes (get_days has none), and every pace string (stage 6, E2 and E3).
     assert {"pace", "fastest_pace", "min_per_km"} <= seen.keys()
     assert {"5:54", "No Hiking logged yet."} <= seen.texts()
-    assert any(where.startswith("get_days: ") and where.endswith(".note") for _, where, *_ in seen.items)
-    assert assert_plan_lines_part_their_figures(seen) >= 3   # the three sample goals, the body weight one rule 2
+    assert not any(where.startswith("get_days: ") and where.endswith(".note") for _, where, *_ in seen.items)
+    assert assert_plan_lines_part_their_figures(seen) >= 3   # the seed's three goals, the body weight one rule 2
+    assert not [t for t in seen.texts() if "sample" in t.casefold()]   # decision 3
     seen.assert_clean()
 
 
@@ -684,14 +684,14 @@ def test_the_import(make_user):
         assert "error" in r, r
     seen.add("import by", services.import_entries(user.id, {"rows": rows}, "robot"))
     seen.add("import no zone", services.import_entries(make_user().id, {"rows": rows}, "claude"))
-    sample_user = make_user(time_zone="UTC")
-    services.add_sample_data(sample_user.id, "web")
-    seen.add("import sample", services.import_entries(sample_user.id, {"rows": rows}, "claude"))
+    full_user = make_user(time_zone="UTC")
+    assert "error" not in four_weeks(full_user.id)
+    seen.add("import beside four weeks", services.import_entries(full_user.id, {"rows": rows}, "claude"))
     with db.session_scope() as s:
         s.execute(insert(FoodEntry), [
             {"user_id": user.id, "date": TODAY, "meal": "snack", "description": "x", "kcal": 1, "source": "you_said",
              "estimated": False, "logged_by": IMPORTED, "dedupe_key": "k", "created_at": NOW - timedelta(hours=2),
-             "updated_at": NOW, "is_sample": False} for _ in range(imports.IMPORT_LIMIT)])
+             "updated_at": NOW} for _ in range(imports.IMPORT_LIMIT)])
     limited = seen.add("import over the limit", imp(rows[:1]))
     assert limited["error"] == "too_many_imported"
     over = seen.add("import over the limit, preview", imp(rows[:1], True))

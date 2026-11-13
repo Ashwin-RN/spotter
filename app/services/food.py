@@ -80,7 +80,7 @@ def meal_for(now: datetime) -> str:
 def entry_dict(e: FoodEntry) -> dict:
     return {"id": e.id, "date": e.date.isoformat(), "meal": e.meal, "description": e.description,
             "kcal": int(e.kcal), "source": e.source, "estimated": e.estimated, "saved_food_id": e.saved_food_id,
-            "servings": e.servings, "usda_fdc_id": e.usda_fdc_id, "grams": e.grams, "is_sample": e.is_sample}
+            "servings": e.servings, "usda_fdc_id": e.usda_fdc_id, "grams": e.grams}
 
 
 def food_dict(f: SavedFood) -> dict:
@@ -448,7 +448,7 @@ def list_saved_foods(user_id: int) -> dict:
     """Every saved food the person has, for the Foods page: live ones first by name, then the deleted.
 
     Returns {foods [{id, name, serving_label, kcal_per_serving, grams_per_serving, times_logged,
-    last_logged, is_sample, deleted_at}], summary} or {error, message, fix}. A read: no lock."""
+    last_logged, deleted_at}], summary} or {error, message, fix}. A read: no lock."""
     with db.new_session() as s:
         if s.get(User, user_id) is None:
             return no_account()
@@ -456,7 +456,7 @@ def list_saved_foods(user_id: int) -> dict:
         rows = sorted(s.scalars(select(SavedFood).where(SavedFood.user_id == user_id)),
                       key=lambda f: (f.deleted_at is not None, f.name_key, f.id))
         foods = [{**food_dict(f), "times_logged": used.get(f.id, (0, None))[0],
-                  "last_logged": used[f.id][1].isoformat() if f.id in used else None, "is_sample": f.is_sample,
+                  "last_logged": used[f.id][1].isoformat() if f.id in used else None,
                   "deleted_at": f.deleted_at.isoformat() if f.deleted_at else None} for f in rows]
     live = sum(1 for f in foods if f["deleted_at"] is None)
     summary = f"{formatting.show(live, 'count')} saved food{'s' if live != 1 else ''}"

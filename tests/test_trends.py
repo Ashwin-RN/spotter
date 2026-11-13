@@ -36,7 +36,7 @@ def test_an_empty_account(user):
     assert r["cardio"] == {"minutes_this_week": 0, "target_minutes": None, "minutes_per_week_4w": 0.0}
     assert r["maintenance"] is None
     assert r["maintenance_note"] == "Needs food logged on 14 more of the last 21 days."
-    assert r["includes_sample"] is False and "note" not in r
+    assert "note" not in r
     assert set(r["links"]) == {"progress", "goals", "settings"}
     assert r["summary"].startswith("No weigh-ins yet. No food logged in the last 28 days. 0 lift sessions")
     assert services.get_trends(987654)["error"] == "no_account"
@@ -153,9 +153,8 @@ def test_the_how_names_the_rules_it_used(user):
 # ---------------------------------------------------------------- get_days: the 28-day grid (stage 6, E2)
 
 DAYS_KEYS = {"today", "from", "to", "days", "weeks", "weight", "lift_sessions_28d", "lift_days_28d",
-             "cardio_days_28d", "includes_sample"}
-DAY_KEYS = {"date", "lift_sessions", "cardio_entries", "cardio_minutes", "food_entries", "kcal", "weighed",
-            "is_sample"}
+             "cardio_days_28d"}
+DAY_KEYS = {"date", "lift_sessions", "cardio_entries", "cardio_minutes", "food_entries", "kcal", "weighed"}
 
 
 def lift(user, days_ago, kg=100):
@@ -187,11 +186,11 @@ def test_get_days_on_an_empty_account(user):
     assert set(r) == DAYS_KEYS and r["today"] == r["to"] == day(user, 0) and r["from"] == day(user, -27)
     assert [d["date"] for d in r["days"]] == [day(user, n) for n in range(-27, 1)]
     assert all(d == {"date": d["date"], "lift_sessions": 0, "cardio_entries": 0, "cardio_minutes": 0.0,
-                     "food_entries": 0, "kcal": None, "weighed": False, "is_sample": False} for d in r["days"])
+                     "food_entries": 0, "kcal": None, "weighed": False} for d in r["days"])
     assert all(isinstance(d["cardio_minutes"], float) for d in r["days"] + r["weeks"])
     assert r["weeks"] == [{"to": day(user, -21 + 7 * n), "lift_sessions": 0, "cardio_minutes": 0.0} for n in range(4)]
     assert r["weight"] is None and (r["lift_sessions_28d"], r["lift_days_28d"], r["cardio_days_28d"]) == (0, 0, 0)
-    assert r["includes_sample"] is False and "note" not in r
+    assert "note" not in r
     assert services.get_days(987654)["error"] == "no_account"
 
 
@@ -221,16 +220,15 @@ def test_get_days_counts_each_day_by_hand(user, make_user):
     assert {k for d in r["days"] for k in d} == DAY_KEYS
     # 10.1 + 20.2 is 30.299999999999997 as floats: 30.3 at 1 dp, as get_trends rounds.
     assert cell(r, user, 0) == {"date": day(user, 0), "lift_sessions": 2, "cardio_entries": 2,
-                                "cardio_minutes": 30.3, "food_entries": 2, "kcal": 1200, "weighed": False,
-                                "is_sample": False}
+                                "cardio_minutes": 30.3, "food_entries": 2, "kcal": 1200, "weighed": False}
     assert cell(r, user, 27) == {"date": day(user, -27), "lift_sessions": 1, "cardio_entries": 0, "cardio_minutes": 0.0,
-                                 "food_entries": 1, "kcal": 1800, "weighed": False, "is_sample": False}
+                                 "food_entries": 1, "kcal": 1800, "weighed": False}
     assert cell(r, user, 13)["cardio_minutes"] == 45.0 and cell(r, user, 10)["weighed"] is True
     # Deleted rows are out, and the other person's rows on the day before today never show.
     assert cell(r, user, 3)["lift_sessions"] == 0 and cell(r, user, 5)["kcal"] is None
     assert cell(r, user, 9)["cardio_entries"] == 0 and cell(r, user, 4)["weighed"] is False
     assert cell(r, user, 1) == {"date": day(user, -1), "lift_sessions": 0, "cardio_entries": 0, "cardio_minutes": 0.0,
-                                "food_entries": 0, "kcal": None, "weighed": False, "is_sample": False}
+                                "food_entries": 0, "kcal": None, "weighed": False}
     # 28 days: sessions today (2), 6 and 27 days ago; three days with one; cardio on two days.
     assert (r["lift_sessions_28d"], r["lift_days_28d"], r["cardio_days_28d"]) == (4, 3, 2)
     # Weeks end 21, 14, 7 and 0 days ago: 27 days ago is in the first (27 to 21), 13 in the third (13 to 7),
@@ -268,7 +266,7 @@ def test_get_days_counts_an_entry_dated_after_today_as_todays(user, monkeypatch)
     r = services.get_days(user.id)
     today = cell(r, user, 0)
     assert today == {"date": day(user, 0), "lift_sessions": 1, "cardio_entries": 1, "cardio_minutes": 25.0,
-                     "food_entries": 2, "kcal": 1000, "weighed": True, "is_sample": False}
+                     "food_entries": 2, "kcal": 1000, "weighed": True}
     assert r["days"][-1] is today and len(r["days"]) == 28        # no cell of its own
     assert r["weight"]["latest"] == {"date": day(user, 2), "kg": 79.5}   # last in the one order, its real date
     assert r["weight"]["low"] == {"date": day(user, 2), "kg": 79.5}
@@ -276,26 +274,6 @@ def test_get_days_counts_an_entry_dated_after_today_as_todays(user, monkeypatch)
     assert r["weight"]["latest"]["kg"] == services.get_trends(user.id)["bodyweight"]["series"][-1]["kg"]
     # get_log lists it as its own day; get_days counts it as today's (E2).
     assert [d["food"]["total_kcal"] for d in services.get_log(user.id)["days"]] == [400, 600]
-
-
-def test_one_sample_row_in_the_window_says_so_and_an_older_one_does_not(user):
-    from app.models import Bodyweight
-    from app.services.common import SAMPLE_NOTE
-    weigh(user, 40, 85)
-    weigh(user, 3, 80)
-
-    def mark(days_ago):
-        with db.session_scope() as s:
-            s.scalar(select(Bodyweight).where(Bodyweight.user_id == user.id, Bodyweight.date
-                                              == users.today_for(user) - timedelta(days=days_ago))).is_sample = True
-
-    mark(40)
-    r = services.get_days(user.id)
-    assert r["includes_sample"] is False and "note" not in r              # outside the 28 days
-    mark(3)
-    r = services.get_days(user.id)
-    assert r["includes_sample"] is True and r["note"] == SAMPLE_NOTE
-    assert cell(r, user, 3)["is_sample"] is True and cell(r, user, 2)["is_sample"] is False
 
 
 def test_get_days_agrees_with_get_trends_and_get_log(user):
@@ -342,29 +320,6 @@ def test_a_session_today_and_one_after_today_are_one_day(user, monkeypatch):
     assert (r["lift_sessions_28d"], r["lift_days_28d"]) == (2, 1)
     assert r["cardio_days_28d"] == 1
     assert cell(r, user, 0)["lift_sessions"] == 2 and cell(r, user, 0)["cardio_entries"] == 2
-
-
-def test_a_days_only_sample_row_can_be_a_lift_session(user):
-    from app.models import LiftSession
-    sample = lift(user, 4)
-    lift(user, 2)
-    with db.session_scope() as s:
-        s.get(LiftSession, sample).is_sample = True
-    r = services.get_days(user.id)
-    assert cell(r, user, 4)["is_sample"] is True and cell(r, user, 2)["is_sample"] is False
-    assert r["includes_sample"] is True
-
-
-def test_a_days_only_sample_row_can_be_a_food_or_cardio_entry(user):
-    from app.models import CardioEntry, FoodEntry
-    food = eat(user, 5, 900)
-    session = move(user, 6, 30)
-    eat(user, 7, 800, description="real")
-    with db.session_scope() as s:
-        s.get(FoodEntry, food).is_sample = True
-        s.get(CardioEntry, session).is_sample = True
-    r = services.get_days(user.id)
-    assert [cell(r, user, n)["is_sample"] for n in (5, 6, 7)] == [True, True, False]
 
 
 def test_a_restored_row_comes_back_in_the_grid(user):

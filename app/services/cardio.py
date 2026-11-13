@@ -58,7 +58,7 @@ from app.exercises import COMPENDIUM
 from app.models import CardioEntry, User
 from app.services import body
 from app.services.common import (
-    SAMPLE_NOTE, check_by, check_data, check_write_limit, dedupe_key, duplicate_note, exercises, find_duplicate,
+    check_by, check_data, check_write_limit, dedupe_key, duplicate_note, exercises, find_duplicate,
     lock_user, no_account, row_dict, truthy,
 )
 
@@ -360,16 +360,13 @@ def _session(entry: CardioEntry) -> dict:
     shown = cardio_dict(entry)
     return {"id": entry.id, "date": shown["date"], "minutes": entry.minutes, "distance_km": entry.distance_km,
             "pace": metrics.pace(entry.distance_km, entry.minutes), "pace_min_per_km": _pace_min_per_km(entry),
-            "estimate": shown["estimate"], "machine_kcal": entry.machine_kcal, "notes": entry.notes,
-            "is_sample": bool(entry.is_sample)}
+            "estimate": shown["estimate"], "machine_kcal": entry.machine_kcal, "notes": entry.notes}
 
 
-def _with_note(out: dict, sample: bool, note: str | None) -> dict:
-    """includes_sample, and the note: the result's own first, then the sample sentence (rule 16)."""
-    out["includes_sample"] = sample
-    text = " ".join(t for t in (note, SAMPLE_NOTE if sample else None) if t)
-    if text:
-        out["note"] = text
+def _with_note(out: dict, note: str | None) -> dict:
+    """The result, with its note when it has one."""
+    if note:
+        out["note"] = note
     return out
 
 
@@ -392,19 +389,18 @@ def _activities(s, user, today: date) -> dict:
                            "minutes_28d": round(sum((c.minutes for c in recent), 0.0), 1),
                            "fastest_pace": fastest["pace"] if fastest else None,
                            "last_date": mine[-1].date.isoformat()})
-    return _with_note({"today": today.isoformat(), "activities": activities}, any(c.is_sample for c in rows), None)
+    return {"today": today.isoformat(), "activities": activities}
 
 
 def get_cardio(user_id: int, exercise: str | None = None) -> dict:
     """One cardio activity's sessions and bests, or a row for every activity. See the module notes.
 
     With exercise: {today, exercise, sessions [{id, date, minutes, distance_km, pace, pace_min_per_km,
-    estimate, machine_kcal, notes, is_sample}] (newest first, in the one order), bests {fastest_pace {pace,
+    estimate, machine_kcal, notes}] (newest first, in the one order), bests {fastest_pace {pace,
     pace_min_per_km, date, entry_id} | null, longest {distance_km, date, entry_id} | null, times
-    [{distance_km, minutes, date, entry_id}]}, week {minutes, target_minutes}, includes_sample[, note]}.
-    Without: {today, activities [{exercise, sessions_28d, minutes_28d, fastest_pace, last_date}],
-    includes_sample[, note]}. Or {error, message, fix}. Web only: no MCP function returns it. A read: no
-    lock, no write limit."""
+    [{distance_km, minutes, date, entry_id}]}, week {minutes, target_minutes}[, note]}.
+    Without: {today, activities [{exercise, sessions_28d, minutes_28d, fastest_pace, last_date}]}.
+    Or {error, message, fix}. Web only: no MCP function returns it. A read: no lock, no write limit."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
@@ -418,4 +414,4 @@ def get_cardio(user_id: int, exercise: str | None = None) -> dict:
         rows = sessions_of(s, user, activity, today)
         out = {"today": today.isoformat(), "exercise": activity.name, "sessions": [_session(c) for c in rows],
                "bests": _bests(list(reversed(rows))), "week": week_minutes(s, user, today)}
-        return _with_note(out, any(c.is_sample for c in rows), None if rows else f"No {activity.name} logged yet.")
+        return _with_note(out, None if rows else f"No {activity.name} logged yet.")

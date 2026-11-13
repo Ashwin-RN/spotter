@@ -127,7 +127,7 @@
   {
     "id": "how_am_i_doing",
     "say": "How am I doing?",
-    "seed": [{"service": "add_sample_data"}],
+    "seed": [{"service": "four_weeks"}],
     "expect": {
       "function": "get_trends",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
@@ -138,7 +138,7 @@
   {
     "id": "on_track",
     "say": "Am I on track?",
-    "seed": [{"service": "add_sample_data"}],
+    "seed": [{"service": "four_weeks"}],
     "expect": {
       "function": "get_goals",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",

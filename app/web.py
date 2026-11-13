@@ -1,7 +1,7 @@
 """The web pages: the home page, sign-in, Today and every day, editing and deleting entries, Progress,
 and Settings.
 
-    /                              the landing: what Spotter is, a sample exchange and its picture, what you
+    /                              the landing: what Spotter is, an example exchange and its picture, what you
                                    need, the MCP address and how to connect it
     /sign-in                       sends the person to the provider (signed in: on to /today)
     /auth/callback                 checks `state`, finishes the sign-in, finds or creates the user, on to /today
@@ -25,11 +25,9 @@ and Settings.
     /foods/{id}/edit               one saved food's serving, kcal and grams (GET, POST)
     /settings                      six cards: the account, the time zone (POST), the targets (POST to
                                    /settings/targets), the switch for what Claude may do (POST to
-                                   /settings/claude-can), the person's data (export, sample data, delete), and
+                                   /settings/claude-can), the person's data (export, delete), and
                                    More (Saved foods, and Sign out for a phone). Each post lands on its own card,
                                    and a GET of /settings/targets or /settings/claude-can goes to that card
-    /settings/sample               POST: sample data into an empty account, then Today
-    /settings/sample/remove        POST: every sample row removed, then Today
     /settings/export               POST: a zip of CSVs, one per table the person owns
     /settings/delete               GET: what goes; POST: the sign-in at the provider, then every row here,
                                    then the session, then a plain "deleted" page
@@ -99,7 +97,6 @@ from app.models import (
 )
 from app.services import account as account_checks, body, lifts, measurements, progress as progress_data
 from app.services import goals as goal_rules
-from app.services.common import SAMPLE_NOTE
 
 log = logging.getLogger("spotter")
 
@@ -802,12 +799,6 @@ def failed(result: dict) -> bool:
     return "error" in result or "errors" in result
 
 
-def sample_rows_of(state: dict) -> int:
-    """The sample rows sample_state counts, for the sample banner: 0 when the read failed (the account gone
-    between two reads of one request), so the page draws with no banner."""
-    return 0 if failed(state) else state["sample_rows"]
-
-
 def codes(result: dict) -> set[str]:
     """Every error code in a service result, a combined one included."""
     found = {result["error"]} if isinstance(result.get("error"), str) else set()
@@ -936,8 +927,8 @@ README_TABLE = links.REPOSITORY + "#your-assistant"
 ASSISTANTS = ("Claude apps", "Claude Code", "ChatGPT", "Cursor", "VS Code with Copilot", "Gemini app", "Mistral",
               "goose")
 
-# The sample exchange of What it looks like. The landing has no account to ask, so it is this one constant: what
-# get_goals gives the sample account on the fixed day (2026-11-10, tests/test_sample.py), said by the MCP server's
+# The example exchange of What it looks like. The landing has no account to ask, so it is this one constant: what
+# get_goals gives the four-week account on the fixed day (2026-11-10, evals/four_weeks.py), said by the MCP server's
 # own reply rules (mcp_server.REPLY_RULE): one fact a line, each goal's plan_line as written, no figure worked out.
 # The label keeps a no-break space before its unit, the dates are day() of get_goals' own. tests/test_pages_text.py
 # rebuilds every field from get_goals and fails on one character's difference.
@@ -958,7 +949,7 @@ LANDING_EXCHANGE = {
 # The picture: the body weight goal's Goals card on the fixed day, built once by a script. Its address, its own
 # width and height (tests hold them to the file), and its short alt.
 LANDING_PICTURE = {"src": "/static/landing-goals.svg", "width": 340, "height": 375,
-                   "alt": "The Goals card the assistant quoted, on sample data"}
+                   "alt": "The Goals card the assistant quoted, on an example account"}
 
 
 def exchange_answer(exchange: dict = LANDING_EXCHANGE) -> list[list[str]]:
@@ -1125,7 +1116,6 @@ async def settings_view(request: Request, user: User, zone_error: str | None = N
                         typed: dict | None = None, add_back: bool | None = None, status_code: int = 200) -> Response:
     """Settings' six cards. A form sent back with its refusal keeps what was typed (the targets and the add-back box)
     and shows no saved line. Each target's value is the stored one through formatting.field."""
-    state = await _db(services.sample_state, user.id)
     groups, selected = zone_choices(user.time_zone)
     refused = bool(zone_error or switch_error or targets_refused or targets_loose)
     saved = request.query_params.get("saved")
@@ -1142,7 +1132,7 @@ async def settings_view(request: Request, user: User, zone_error: str | None = N
                 add_back=bool(user.add_back_exercise_kcal) if add_back is None else add_back,
                 switch_error=switch_error,
                 choices=[(value, CLAUDE_CAN_LABELS[value], CLAUDE_CAN_LINES[value]) for value in CLAUDE_CAN],
-                sample_rows=sample_rows_of(state), foods_href=page_path("foods"))
+                foods_href=page_path("foods"))
 
 
 async def claude_can_page(request: Request) -> Response:
@@ -1168,7 +1158,7 @@ async def today_page(request: Request) -> Response:
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
-    # The marks of a write that redirected here (sample data added or removed) go on to the day.
+    # Any mark on this address goes on to the day.
     address = links.page("day", date=users.today_for(user))
     for mark in DAY_MARKS:
         if mark in request.query_params:
@@ -1231,7 +1221,7 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     activities = await cardio_names()
     cardio = day.get("cardio") or []
     food = day.get("food")
-    state = await _db(services.sample_state, user.id)
+    state = await _db(services.account_empty, user.id)
     return page(request, "day.html", status_code=status_code, day=day, on=on, today=today,
                 # The glance block, on today's page only: "now" figures, which would mislead on a past day.
                 glance=await glance_of(user.id) if on == today else None,
@@ -1251,9 +1241,9 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
                 has_estimate=any(e.get("source") == "claude_estimate"
                                  for meal in ((food or {}).get("meals") or {}).values() for e in meal),
                 meal_choices=MEAL_CHOICES, typed=typed or {}, adding=request.query_params.getlist("add"),
-                # The Today card's state: a new account (today's page, sample_state empty), or the day's
+                # The Today card's state: a new account (today's page, account_empty), or the day's
                 # food, by whether any meal holds an entry (a day can total 0 kcal with food logged).
-                sample_rows=sample_rows_of(state), new_account=not failed(state) and state["empty"] and on == today,
+                new_account=not failed(state) and state["empty"] and on == today,
                 has_food=bool(food) and any((food.get("meals") or {}).values()),
                 shows_estimate=any(c.get("estimate") for c in cardio))
 
@@ -1327,21 +1317,11 @@ def same_name(description: str | None, name: str | None) -> bool:
 
 
 NBSP = " "
-# What sample data adds to a sample food's name when a deleted saved food of the person's holds it
-# (sample._free_name). The sample tag says it already, so the Food card shows the mark once.
-SAMPLE_SUFFIX = " (sample)"
 
 
 def food_name(entry: dict) -> str:
-    """An entry's line one: the saved food's name, else the description. A sample row's saved food name
-    loses the "(sample)" sample data may have added: the sample tag beside it says so. A description is
-    the person's words, so it is never cut."""
-    name = entry.get("saved_food_name")
-    if not name:
-        return entry.get("description") or ""
-    if entry.get("is_sample") and name.casefold().endswith(SAMPLE_SUFFIX):
-        return name[:-len(SAMPLE_SUFFIX)]
-    return name
+    """An entry's line one: the saved food's name, else the description, as written."""
+    return entry.get("saved_food_name") or entry.get("description") or ""
 
 
 def food_note(entry: dict) -> str | None:
@@ -1354,7 +1334,7 @@ def food_note(entry: dict) -> str | None:
 
 def serving_words(entry: dict) -> str:
     """How much was eaten, after the kcal on line two: a saved food's servings in its own words, a USDA
-    food's grams. Servings whose saved food is gone (Remove sample data unlinks a sample food) are counted:
+    food's grams. Servings whose saved food is gone (its link cleared) are counted:
     "3 servings", "1 serving". Nothing for a number stated or estimated."""
     if entry.get("saved_food_name") is not None and entry.get("servings"):
         return serving_text(entry["servings"], entry.get("serving_label"), page=True)
@@ -1375,8 +1355,7 @@ async def cardio_names() -> list[str]:
 # The day page's strips after a write, by mark and value (section L, the strips table). A mark with no row
 # here shows no strip: saved=unchanged and saved=time_zone only make the page calm, and so does any value
 # the table does not name. deleted={kind}:{id} is the Undo strip, read by undo_target.
-DAY_STRIPS = {("deleted", "sample"): "Sample data removed.", ("saved", "sample"): "Sample data added.",
-              ("saved", "confirmed"): "Estimate confirmed.",
+DAY_STRIPS = {("saved", "confirmed"): "Estimate confirmed.",
               **{("saved", kind): f"{words} saved." for kind, words in ENTRY_WORDS.items()},
               **{("restored", kind): f"{words} restored." for kind, words in ENTRY_WORDS.items()}}
 
@@ -1800,9 +1779,8 @@ async def foods_view(request: Request, user: User, errors: dict | None = None, l
     """Foods: the Saved foods card and the Save a food fold-out. After a refusal, each line under its field or at
     the top (loose), what was typed kept, and the fold-out open. The strip only on a page after a write."""
     saved = await live_foods(user)
-    state = await _db(services.sample_state, user.id)
     return page(request, "foods.html", status_code=status_code, foods=saved, errors=errors or {}, loose=loose or [],
-                typed=typed or {}, sample_rows=sample_rows_of(state), limits=rules.TEXT_LIMITS,
+                typed=typed or {}, limits=rules.TEXT_LIMITS,
                 strip=food_strip(request.query_params) if status_code == 200 else None)
 
 
@@ -1982,13 +1960,12 @@ async def progress_page(request: Request) -> Response:
     cardio = await _db(services.get_cardio, user.id)
     if not failed(cardio) and cardio["today"] != today.isoformat():
         cardio = await _db(services.get_cardio, user.id)
-    state = await _db(services.sample_state, user.id)
     return page(request, "progress.html", lifts=result["lifts"], best_sets=trend["best_sets"],
                 reps_only=trend["reps_only"], glance=glance, bodyweight=trend["bodyweight"],
                 chart=charts.bodyweight_svg(trend["bodyweight"], today=today), slug=links.slug, today=today,
                 trends=None if failed(trends) else trends,
                 activities=None if failed(cardio) or cardio["today"] != today.isoformat() else cardio["activities"],
-                sample_rows=sample_rows_of(state), weight_now_label=weight_now_label, rate_note=rate_note)
+                weight_now_label=weight_now_label, rate_note=rate_note)
 
 
 def weight_now_label(trends: dict) -> str:
@@ -2004,8 +1981,8 @@ def weight_now_label(trends: dict) -> str:
 
 
 def rate_note(trends: dict) -> str:
-    """Why there is no weekly rate, in the service's words: its note without the sample-data sentence."""
-    note = str(trends.get("note") or "").replace(SAMPLE_NOTE, "").strip()
+    """Why there is no weekly rate, in the service's words: its note."""
+    note = str(trends.get("note") or "").strip()
     return note or "No weekly rate yet: it needs more weigh-ins."
 
 
@@ -2036,11 +2013,10 @@ async def progress_lift_page(request: Request) -> Response:
     lift = result["lift"]
     today = date.fromisoformat(result["today"])
     bare = await _db(_reps_only, user.id, lift["exercise"], today)
-    state = await _db(services.sample_state, user.id)
     chart = progress_data.lift_chart(_lift_points(lift), lift["goals"], lift["exercise"])
     return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart, today=today), today=today,
                 bare=bare, sessions=list(reversed(lift["estimated_max_over_time"])), best_widened=best_widened,
-                best_labels=lifts.BEST_LABELS, sample_rows=sample_rows_of(state))
+                best_labels=lifts.BEST_LABELS)
 
 
 def best_widened(best: dict) -> bool:
@@ -2261,7 +2237,6 @@ async def goals_view(request: Request, user: User, kind: str = GOAL_KIND_FIRST, 
     listed, charted = await goal_reads(user.id)
     if failed(listed) or failed(charted):
         return not_found_page(request)
-    state = await _db(services.sample_state, user.id)
     saved = GOAL_SAVED.get(request.query_params.get("saved") or "") if status_code == 200 else None
     notes = goal_notes_shown(request.query_params.get("notes")) if saved else []
     goals, today = charted.get("goals") or [], charted.get("today")
@@ -2274,7 +2249,7 @@ async def goals_view(request: Request, user: User, kind: str = GOAL_KIND_FIRST, 
                 lift_choices=[(n, n) for n in await exercise_names("lift")] if kind == "lift" else [],
                 activity_choices=[(n, n) for n in await cardio_names()] if kind == "cardio_best" else [],
                 measurement_choices=[(k, kind_with_unit(k)) for k in GOAL_MEASUREMENTS],
-                goal_quantity=goal_quantity, closed_words=CLOSED_WORDS, sample_rows=sample_rows_of(state),
+                goal_quantity=goal_quantity, closed_words=CLOSED_WORDS,
                 today=today, zone=user.time_zone)
 
 
@@ -2332,42 +2307,7 @@ async def goal_status_page(request: Request) -> Response:
     return redirect(saved_address(status, result))
 
 
-# ---------------------------------------------------------------- Settings: sample data, export, delete
-
-async def sample_add_page(request: Request) -> Response:
-    """POST from an empty Today: four weeks of sample rows, every one marked, then back to Today."""
-    user = await current_user(request)
-    if user is None:
-        return redirect(links.page("sign_in"))
-    result = await write(user, "add_sample_data", services.add_sample_data, user.id, "web")
-    if "too_many_writes" in codes(result):
-        return too_many(request, result)
-    if "already_sample" in codes(result):
-        return message(request, "Already added", "Sample data is already on this account.",
-                       "Remove it on Settings to start again.", status_code=409)
-    if "not_empty" in codes(result):
-        return message(request, "Not added", "Sample data goes only into an empty account, and this one has "
-                       "entries, saved foods or goals.", "Delete them on the day pages first, or keep your own.",
-                       status_code=409)
-    if failed(result):
-        return message(request, "Not added", "Sample data could not be added, so nothing was changed.",
-                       "Go back to Today and try again.", status_code=400)
-    return redirect(marked(links.page("today"), "saved", "sample"))
-
-
-async def sample_remove_page(request: Request) -> Response:
-    """POST from Settings: every sample row goes, live or deleted. Real entries stay."""
-    user = await current_user(request)
-    if user is None:
-        return redirect(links.page("sign_in"))
-    result = await write(user, "remove_sample_data", services.remove_sample_data, user.id, "web")
-    if "too_many_writes" in codes(result):
-        return too_many(request, result)
-    if failed(result):
-        return message(request, "Not removed", "The sample data could not be removed, so nothing was changed.",
-                       "Go back to Settings and try again.", status_code=400)
-    return redirect(marked(links.page("today"), "deleted", "sample"))
-
+# ---------------------------------------------------------------- Settings: export, delete
 
 def export_zip(files: dict) -> bytes:
     """The CSV texts as one zip, built in memory. Each file keeps only its own name."""
@@ -2481,8 +2421,6 @@ PAGES = [
     ("/progress/{lift}", progress_lift_page, ["GET"]),
     ("/goals", goals_page, ["GET", "POST"]),
     ("/goals/{goal_id}/status", goal_status_page, ["POST"]),
-    ("/settings/sample", sample_add_page, ["POST"]),
-    ("/settings/sample/remove", sample_remove_page, ["POST"]),
     ("/settings/export", export_page, ["POST"]),
     ("/settings/delete", delete_account_page, ["GET", "POST"]),
 ]
