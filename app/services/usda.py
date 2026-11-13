@@ -66,7 +66,8 @@ def normalise(query: str) -> str:
 
 def _get(path: str, params: dict, key: str):
     """The decoded JSON of one GET, or None on any failure."""
-    address = f"{BASE}{path}?{urllib.parse.urlencode(params, doseq=True)}"
+    # Spaces as %20, never "+": FoodData Central answers 400 to "Survey+%28FNDDS%29" (seen 2026-11-13).
+    address = f"{BASE}{path}?{urllib.parse.urlencode(params, doseq=True, quote_via=urllib.parse.quote)}"
     request = urllib.request.Request(address, headers={"X-Api-Key": key, "Accept": "application/json"})
     try:
         with urlopen(request, timeout=TIMEOUT_SECONDS) as response:

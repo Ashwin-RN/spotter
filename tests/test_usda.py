@@ -74,6 +74,9 @@ def test_a_search_hit_is_parsed_cached_and_sent_with_the_key_in_a_header(keyed, 
     request, timeout = f.requests[0]
     assert timeout == 5 and request.get_header("X-api-key") == KEY and KEY not in request.full_url
     assert "query=banana" in request.full_url and "Foundation" in request.full_url
+    # FoodData Central refuses a "+" for a space in a data type: every one goes as %20.
+    assert "+" not in request.full_url
+    assert "dataType=SR%20Legacy" in request.full_url and "dataType=Survey%20%28FNDDS%29" in request.full_url
     with db.new_session() as s:
         cached = s.get(UsdaSearch, "banana")
         assert json.loads(cached.fdc_ids) == [173944, 2] and s.get(UsdaFood, 173944).kcal_per_100g == 89
