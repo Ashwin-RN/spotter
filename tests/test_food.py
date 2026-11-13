@@ -511,3 +511,58 @@ def test_at_the_write_limit_a_usda_log_makes_no_usda_call(user, monkeypatch):
     from app.models import UsdaFood
     with db.new_session() as s:
         assert s.get(UsdaFood, 2002) is None
+
+
+# ---------------------------------------------------------------- the lookups stop at the first that fails
+
+def asking_usda(monkeypatch, answer):
+    """usda.urlopen replaced: answer(fdc_id) is the reply to a food by id, or is raised. Returns the ids asked."""
+    import io
+    import json
+    asked = []
+
+    def fetch(request, timeout=None):
+        fdc_id = int(request.full_url.rsplit("/", 1)[1])
+        asked.append(fdc_id)
+        reply = answer(fdc_id)
+        if isinstance(reply, BaseException):
+            raise reply
+        return io.BytesIO(json.dumps(reply).encode())
+
+    config.use_settings(make_settings(usda_api_key="test-key"))
+    monkeypatch.setattr(usda, "urlopen", fetch)
+    return asked
+
+
+def a_food(fdc_id):
+    return {"fdcId": fdc_id, "dataType": "SR Legacy", "description": "Food",
+            "foodNutrients": [{"nutrient": {"id": 1008, "number": "208", "unitName": "kcal"}, "amount": 100}]}
+
+
+def status(code):
+    import urllib.error
+    return urllib.error.HTTPError("https://x", code, "x", {}, None)
+
+
+THIRTY = [{"usda_fdc_id": 101 + n, "grams": 100} for n in range(30)]
+
+
+@pytest.mark.parametrize("code, requests", [(503, 3), (429, 1)])
+def test_thirty_usda_foods_whose_first_fails_make_only_that_lookup_s_requests(user, monkeypatch, code, requests):
+    asked = asking_usda(monkeypatch, lambda fdc_id: status(code))
+    r = eat(user, *THIRTY)
+    assert r["error"] == "usda_unavailable" and asked == [101] * requests and stored(user.id) == []
+    assert len(r["errors"]) == 30 and {e["message"] for e in r["errors"][1:]} == {"USDA did not answer."}
+
+
+def test_a_first_usda_food_that_answers_and_a_second_that_fails_ask_for_those_two_only(user, monkeypatch):
+    asked = asking_usda(monkeypatch, lambda fdc_id: a_food(fdc_id) if fdc_id == 101 else status(403))
+    r = eat(user, *THIRTY[:3])
+    assert r["error"] == "usda_unavailable" and asked == [101, 102] and stored(user.id) == []
+
+
+def test_when_every_usda_food_answers_every_one_is_looked_up_and_written(user, monkeypatch):
+    asked = asking_usda(monkeypatch, a_food)
+    r = eat(user, *THIRTY)
+    assert "error" not in r, r
+    assert asked == list(range(101, 131)) and len(stored(user.id)) == 30

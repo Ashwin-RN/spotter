@@ -263,7 +263,11 @@ def log_food(user_id: int, data: dict | None, by: str) -> dict:
             limited = check_write_limit(s, user_id)
         if limited:
             return limited
-    resolved = {fdc_id: usda.food(fdc_id) for fdc_id in wanted}
+    resolved = {}
+    for fdc_id in wanted:  # the first that fails ends them: the call is refused on it; an id left out is unavailable
+        resolved[fdc_id] = usda.food(fdc_id)
+        if resolved[fdc_id][1] is not None:
+            break
     with db.session_scope() as s:
         user = lock_user(s, user_id)
         if user is None:

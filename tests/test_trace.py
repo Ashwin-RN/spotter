@@ -366,9 +366,11 @@ def test_each_usda_reason_reaches_the_row_the_log_line_and_the_message(make_clie
     note = result["structuredContent"]["usda_note"]
     assert note == message.removesuffix(".") + ": use a saved food or the person's own number."
     assert note in result["structuredContent"]["summary"]
-    assert last().notes == f"usda={reason}"
-    line = f"WARNING spotter.usda [{r.headers['x-request-id']}]: USDA lookup failed: {reason}\n"
-    assert line in stderr.getvalue()
+    tries = 3 if reason in ("bad_request", "http_503", "no_answer") else 1  # these are tried again
+    assert last().notes == f"usda={reason}" + (f" usda_tries={tries}" if tries > 1 else "")
+    for n in range(1, tries + 1):
+        line = f"WARNING spotter.usda [{r.headers['x-request-id']}]: USDA lookup failed: {reason} (try {n})\n"
+        assert line in stderr.getvalue()
     for text in (stderr.getvalue(), str([getattr(last(), c.key) for c in CallLog.__table__.columns])):
         assert KEY not in text and MARKER not in text and "https://" not in text
     assert usda.unavailable(reason)["message"] == message

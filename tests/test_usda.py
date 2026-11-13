@@ -1,6 +1,7 @@
-"""The USDA client: one GET through a fake urlopen, the cache, every failure as usda_unavailable, the key
-never seen."""
+"""The USDA client: the search as a POST and the food as a GET through a fake urlopen, the tries, the cache,
+every failure as usda_unavailable, the key never seen."""
 
+import contextvars
 import http.client
 import io
 import json
@@ -11,8 +12,8 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from app import config, db, services
-from app.models import UsdaFood, UsdaSearch
+from app import calllog, config, db, services
+from app.models import CallLog, UsdaFood, UsdaSearch
 from app.services import usda
 from tests.conftest import settings as make_settings
 
@@ -29,16 +30,18 @@ def banana(fdc_id=173944, kcal=89, data_type="SR Legacy", shape="search"):
 
 
 class Fake:
-    """Stands in for urllib.request.urlopen: answers with `reply`, or raises it."""
+    """Stands in for urllib.request.urlopen: answers each request with the next reply, the last one again and
+    again, or raises it. Keeps every request (its method, address, headers and body) with its timeout."""
 
-    def __init__(self, reply):
-        self.reply, self.requests = reply, []
+    def __init__(self, *replies):
+        self.replies, self.requests = replies, []
 
     def __call__(self, request, timeout=None):
         self.requests.append((request, timeout))
-        if isinstance(self.reply, BaseException):
-            raise self.reply
-        body = self.reply if isinstance(self.reply, bytes) else json.dumps(self.reply).encode()
+        reply = self.replies[min(len(self.requests), len(self.replies)) - 1]
+        if isinstance(reply, BaseException):
+            raise reply
+        body = reply if isinstance(reply, bytes) else json.dumps(reply).encode()
         return io.BytesIO(body)
 
 
@@ -47,10 +50,30 @@ def keyed():
     config.use_settings(make_settings(usda_api_key=KEY))
 
 
-def fake(monkeypatch, reply):
-    f = Fake(reply)
+def fake(monkeypatch, *replies):
+    f = Fake(*replies)
     monkeypatch.setattr(usda, "urlopen", f)
     return f
+
+
+def status(code):
+    return urllib.error.HTTPError(f"{usda.BASE}/foods/search?api_key={KEY}", code, "x", {}, None)
+
+
+def as_a_call(lookup):
+    """lookup() run as a call is: (its answer, the notes its call-log row gets)."""
+    def call():
+        row = calllog.start("find_food", db.utcnow(), None)
+        notes = calllog.new_notes()
+        answer = lookup()
+        calllog.finish(row, 1, True, None, 1, notes=notes)
+        with db.new_session() as s:
+            return answer, s.get(CallLog, row).notes
+    return contextvars.copy_context().run(call)
+
+
+def usda_lines(logs):
+    return [r.getMessage() for r in logs.records if r.name == "spotter.usda"]
 
 
 def no_key_anywhere(*things):
@@ -71,12 +94,12 @@ def test_a_search_hit_is_parsed_cached_and_sent_with_the_key_in_a_header(keyed, 
     assert err is None and [x["fdc_id"] for x in found] == [173944, 2]   # branded and energyless left out
     assert found[0] == {"fdc_id": 173944, "description": "Bananas, raw", "data_type": "SR Legacy",
                         "kcal_per_100g": 89.0}
-    request, timeout = f.requests[0]
-    assert timeout == 5 and request.get_header("X-api-key") == KEY and KEY not in request.full_url
-    assert "query=banana" in request.full_url and "Foundation" in request.full_url
-    # FoodData Central refuses a "+" for a space in a data type: every one goes as %20.
-    assert "+" not in request.full_url
-    assert "dataType=SR%20Legacy" in request.full_url and "dataType=Survey%20%28FNDDS%29" in request.full_url
+    [(request, timeout)] = f.requests
+    assert timeout == 5 and request.get_method() == "POST" and request.full_url == usda.BASE + "/foods/search"
+    assert "?" not in request.full_url and request.get_header("Content-type") == "application/json"
+    assert json.loads(request.data) == {"query": "banana", "dataType": ["Foundation", "SR Legacy", "Survey (FNDDS)"],
+                                        "pageSize": 25}
+    assert request.get_header("X-api-key") == KEY and KEY not in request.full_url + request.data.decode()
     with db.new_session() as s:
         cached = s.get(UsdaSearch, "banana")
         assert json.loads(cached.fdc_ids) == [173944, 2] and s.get(UsdaFood, 173944).kcal_per_100g == 89
@@ -134,6 +157,8 @@ def test_food_by_id_reads_the_detail_shape_and_caches(keyed, monkeypatch):
     f = fake(monkeypatch, banana(shape="detail"))
     found, err = usda.food(173944)
     assert err is None and found["kcal_per_100g"] == 89 and "/food/173944" in f.requests[0][0].full_url
+    assert f.requests[0][0].get_method() == "GET" and f.requests[0][0].data is None
+    assert f.requests[0][0].full_url == usda.BASE + "/food/173944"  # nothing after the id, not even a "?"
     f2 = fake(monkeypatch, socket.timeout())
     assert usda.food(173944)[0]["kcal_per_100g"] == 89 and f2.requests == []
     with db.session_scope() as s:
@@ -236,3 +261,81 @@ def test_two_first_searches_for_one_query_both_answer_and_leave_one_cache_row(ke
     assert not failures and [r[1] for r in results] == [None, None]
     with db.new_session() as s:
         assert len(list(s.scalars(select(UsdaSearch)))) == 1 and len(list(s.scalars(select(UsdaFood)))) == 1
+
+
+# ---------------------------------------------------------------- tries (contract usda-steady.md)
+
+def test_a_400_then_an_answer_answers_on_the_second_try(keyed, monkeypatch, logs):
+    f = fake(monkeypatch, status(400), {"foods": [banana()]})
+    (found, err), notes = as_a_call(lambda: usda.search("banana"))
+    assert err is None and found[0]["fdc_id"] == 173944 and len(f.requests) == 2 and notes == "usda_tries=2"
+    assert usda_lines(logs) == ["USDA lookup failed: bad_request (try 1)"]
+    f = fake(monkeypatch, status(400), banana(5, shape="detail"))  # the food by id: still a GET, the same rule
+    (found, err), notes = as_a_call(lambda: usda.food(5))
+    assert err is None and found["kcal_per_100g"] == 89 and notes == "usda_tries=2"
+    assert [r.get_method() for r, _ in f.requests] == ["GET", "GET"]
+
+
+def test_three_400s_fail_after_exactly_three_and_say_nothing_of_the_query_the_key_or_the_address(keyed, monkeypatch,
+                                                                                                 logs):
+    query = "marker-query-5521"
+    f = fake(monkeypatch, status(400))
+    (found, err), notes = as_a_call(lambda: usda.search(query))
+    assert found is None and err == usda.unavailable("bad_request") and len(f.requests) == 3
+    assert notes == "usda=bad_request usda_tries=3"
+    assert usda_lines(logs) == [f"USDA lookup failed: bad_request (try {n})" for n in (1, 2, 3)]
+    spotter_lines = [r.getMessage() for r in logs.records if r.name.startswith("spotter")]
+    for text in (notes, json.dumps(err), *spotter_lines):
+        assert KEY not in text and query not in text and "nal.usda.gov" not in text and "https://" not in text, text
+
+
+@pytest.mark.parametrize("failure, reason, tries", [
+    (status(503), "http_503", 3), (status(500), "http_500", 3), (socket.timeout("timed out"), "no_answer", 3),
+    (urllib.error.URLError("no route"), "no_answer", 3), (status(401), "key_refused", 1),
+    (status(403), "key_refused", 1), (status(429), "rate_limited", 1), (status(302), "redirect", 1),
+    (status(404), "http_404", 1), (b"not json at all", "bad_reply", 1), (b'{"unexpected": true}', "bad_reply", 1),
+], ids=["503", "500", "timeout", "network", "401", "403", "429", "redirect", "404", "broken", "wrong-shape"])
+def test_only_bad_request_a_5xx_and_no_answer_are_tried_again(keyed, monkeypatch, failure, reason, tries):
+    for lookup in (lambda: usda.search("banana"), lambda: usda.food(173944)):
+        f = fake(monkeypatch, failure)
+        (found, err), notes = as_a_call(lookup)
+        assert found is None and err == usda.unavailable(reason) and len(f.requests) == tries
+        assert notes == f"usda={reason}" + (f" usda_tries={tries}" if tries > 1 else "")
+
+
+@pytest.mark.parametrize("seconds, tries", [(4.0, 2), (3.9, 3)])
+def test_no_new_try_once_8_seconds_have_gone_since_the_first_began(keyed, monkeypatch, seconds, tries):
+    now = [100.0]
+    monkeypatch.setattr(usda, "clock", lambda: now[0])
+
+    class Slow(Fake):  # each try takes `seconds` by the test's clock
+        def __call__(self, request, timeout=None):
+            now[0] += seconds
+            return super().__call__(request, timeout)
+
+    for lookup in (lambda: usda.search("banana"), lambda: usda.food(173944)):
+        f = Slow(status(503))
+        monkeypatch.setattr(usda, "urlopen", f)
+        (found, err), notes = as_a_call(lookup)
+        assert err["error"] == "usda_unavailable" and len(f.requests) == tries and notes.endswith(f"usda_tries={tries}")
+
+
+def test_a_call_of_several_lookups_notes_the_most_tries_any_one_took(keyed, monkeypatch):
+    def three_then_two():
+        fake(monkeypatch, status(503), status(503), banana(1, shape="detail"))
+        first = usda.food(1)
+        fake(monkeypatch, status(503), banana(2, shape="detail"))
+        return first, usda.food(2)
+
+    (first, second), notes = as_a_call(three_then_two)
+    assert first[1] is None and second[1] is None and notes == "usda_tries=3"
+
+    def two_then_a_refused_key():
+        fake(monkeypatch, status(503), banana(3, shape="detail"))
+        usda.food(3)
+        f = fake(monkeypatch, status(401))
+        return usda.food(4), len(f.requests)
+
+    ((found, err), requests), notes = as_a_call(two_then_a_refused_key)
+    assert err == usda.unavailable("key_refused") and requests == 1
+    assert notes == "usda_tries=2 usda=key_refused"  # the call's most tries, beside the reason of the one that failed

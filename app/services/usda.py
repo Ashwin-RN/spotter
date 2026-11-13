@@ -4,20 +4,28 @@ search(query) -> (results [{fdc_id, description, data_type, kcal_per_100g}], Non
 food(fdc_id)  -> ({fdc_id, description, data_type, kcal_per_100g}, None) or (None, error)
 
 - Off without USDA_API_KEY (config.usda_api_key): every call is usda_off.
-- One GET each, through the standard library (urllib), with a 5-second timeout, on the opener from
-  app.auth that refuses every redirect: following one would carry the key to another host. The key
-  goes in the X-Api-Key header, never in the address, and never into an error, a log line or a result.
+- The search is a POST to /foods/search, its query, data types and page size in a JSON body and the
+  address the path alone; the food by id is a GET of /food/{id}. Through the standard library (urllib),
+  with a 5-second timeout on each try, on the opener from app.auth that refuses every redirect: following
+  one would carry the key to another host. The key goes in the X-Api-Key header, never in the address,
+  and never into an error, a log line or a result.
+- Tries: a try that fails with bad_request, no_answer or a status from 500 to 599 is tried again at
+  once, TRIES (3) in all, and none is begun once TRIES_SECONDS (8) have gone since the first began, by
+  clock(). Any other reason ends the lookup at its first try.
 - Never call these while holding the user lock: a lookup is a network call, and on a cache miss it
-  writes the cache in a session of its own. log_food resolves its USDA ids before it locks.
+  writes the cache in a session of its own. log_food resolves its USDA ids before it locks, and stops
+  at the first that fails.
 - Data types: Foundation, SR Legacy and Survey (FNDDS). Energy: nutrient 1008 (Energy, kcal), by its
   id or by its number, 208; a food with no kcal value is left out of a search and is an error by id.
 - Two shared caches, which hold no user id: usda_search (the normalised query -> the fdc ids it found)
   and usda_food (one row per food). A cached answer is used while it is younger than CACHE_DAYS;
   an older one is fetched again.
 - Every failure is usda_unavailable, with a fix pointing at a saved food or the person's own number. Its
-  reason is one word of REASONS, from the HTTP status or the kind of failure: it goes to the call's row
-  (calllog.note, usda=reason) and to one warning line, and picks the message (MESSAGES, else "USDA did
-  not answer."). Nothing else about the failure is passed on: it could carry the address or the key.
+  reason is the last try's, one word of REASONS, from the HTTP status or the kind of failure: it goes to
+  the call's row (calllog.note, usda=reason) and picks the message (MESSAGES, else "USDA did not
+  answer."). Each failed try is one warning line, its reason and its number. A lookup of more than one
+  try, failed or not, notes usda_tries=N beside it: in a call of several lookups, the most any one
+  took. Nothing else about a failure is passed on: it could carry the address, the key or the query.
 - The cache is best effort. Rows are written with an upsert, so two first searches for one query at
   once both land; if a store fails anyway, the answer is still returned.
 """
@@ -25,6 +33,7 @@ food(fdc_id)  -> ({fdc_id, description, data_type, kcal_per_100g}, None) or (Non
 import http.client
 import json
 import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -52,6 +61,8 @@ DESCRIPTION_MAX = 255
 REASONS = ("key_refused", "rate_limited", "bad_request", "redirect", "no_answer", "bad_reply", "no_energy")
 STATUS_REASONS = {400: "bad_request", 401: "key_refused", 403: "key_refused", 429: "rate_limited"}
 MESSAGES = {"key_refused": "USDA refused Spotter's key.", "rate_limited": "USDA is over its limit for now."}
+AGAIN = ("bad_request", "no_answer")  # tried again, as is a status from 500 to 599 (http_5NN)
+TRIES, TRIES_SECONDS = 3, 8
 
 log = logging.getLogger("spotter.usda")
 urlopen = build_opener().open  # refuses redirects (app.auth); tests replace this, nothing else does
@@ -67,22 +78,32 @@ def unavailable(reason: str | None = None) -> dict:
                  "Use a saved food (find_food lists them) or the person's own number (kcal).")
 
 
-def _failed(reason: str) -> dict:
-    """A failed lookup: the reason on the call's row and on one warning line, and the error for the caller."""
-    calllog.note("usda", reason)
-    log.warning("USDA lookup failed: %s", reason)
-    return unavailable(reason)
-
-
 def normalise(query: str) -> str:
     return " ".join(query.split()).casefold()[:QUERY_MAX]
 
 
+def clock() -> float:
+    """The tries' clock, in seconds. Tests replace it."""
+    return time.monotonic()
+
+
 def _get(path: str, params: dict, key: str):
-    """(the decoded JSON of one GET, None), or (None, why it failed: one of REASONS or http_NNN)."""
-    # Spaces as %20, never "+": FoodData Central answers 400 to "Survey+%28FNDDS%29" (seen 2026-11-13).
-    address = f"{BASE}{path}?{urllib.parse.urlencode(params, doseq=True, quote_via=urllib.parse.quote)}"
-    request = urllib.request.Request(address, headers={"X-Api-Key": key, "Accept": "application/json"})
+    """One GET, its params in the address: _open's answer."""
+    # Measured 2026-11-14: a search with its dataType filter in the address got a 400 at random, with spaces as
+    # %20 as with "+"; with no dataType, 20 of 20 answered. So the search is a POST (_post); the food by id a GET.
+    query = urllib.parse.urlencode(params, doseq=True, quote_via=urllib.parse.quote)
+    address = f"{BASE}{path}?{query}" if query else f"{BASE}{path}"
+    return _open(urllib.request.Request(address, headers={"X-Api-Key": key, "Accept": "application/json"}))
+
+
+def _post(path: str, body: dict, key: str):
+    """One POST of body as JSON, the address the path alone: _open's answer."""
+    return _open(urllib.request.Request(f"{BASE}{path}", json.dumps(body).encode(), method="POST", headers={
+        "X-Api-Key": key, "Accept": "application/json", "Content-Type": "application/json"}))
+
+
+def _open(request):
+    """(the decoded JSON of one try, None), or (None, why it failed: one of REASONS or http_NNN)."""
     try:
         with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8")), None
@@ -92,6 +113,29 @@ def _get(path: str, params: dict, key: str):
         return None, "bad_reply"
     except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
         return None, "no_answer"
+
+
+def _lookup(send, check):
+    """(the reply, None) or (None, the last try's reason). A try is send(); it fails on send's reason or on
+    check(reply)'s. A failed try is tried again when its reason is in AGAIN or a status from 500 to 599: TRIES in
+    all, none begun once TRIES_SECONDS have gone since the first began. One warning line for each failed try;
+    the call's row gets usda=reason when the lookup failed, and usda_tries=N when it took more than one and
+    more than any earlier lookup of the call."""
+    began = clock()
+    for tries in range(1, TRIES + 1):
+        reply, reason = send()
+        reason = reason or check(reply)
+        if reason is None:
+            break
+        log.warning("USDA lookup failed: %s (try %d)", reason, tries)
+        if not (reason in AGAIN or reason.startswith("http_5")) or clock() - began >= TRIES_SECONDS:
+            break
+    if reason is not None:
+        calllog.note("usda", reason)
+    most = calllog.noted("usda_tries") or ""  # the most tries of any lookup in the call so far
+    if tries > (int(most) if most.isdigit() else 1):
+        calllog.note("usda_tries", str(tries))
+    return (reply, None) if reason is None else (None, reason)
 
 
 def _energy(nutrients) -> float | None:
@@ -170,12 +214,11 @@ def search(query: str) -> tuple[list[dict] | None, dict | None]:
             rows = {r.fdc_id: r for r in s.scalars(select(UsdaFood).where(UsdaFood.fdc_id.in_(ids or [])))}
             if ids is not None and all(i in rows for i in ids):
                 return [_as_dict(rows[i]) for i in ids], None
-    reply, reason = _get("/foods/search", {"query": query_key, "dataType": list(DATA_TYPES), "pageSize": PAGE_SIZE},
-                         key)
-    if reason is None and not (isinstance(reply, dict) and isinstance(reply.get("foods"), list)):
-        reason = "bad_reply"
+    reply, reason = _lookup(
+        lambda: _post("/foods/search", {"query": query_key, "dataType": list(DATA_TYPES), "pageSize": PAGE_SIZE}, key),
+        lambda r: None if isinstance(r, dict) and isinstance(r.get("foods"), list) else "bad_reply")
     if reason is not None:
-        return None, _failed(reason)
+        return None, unavailable(reason)
     found = [f for f in (_parsed(item) for item in reply["foods"]) if f is not None]
     _cache(found, query_key)
     return found, None
@@ -189,13 +232,18 @@ def food(fdc_id: int) -> tuple[dict | None, dict | None]:
         row = s.get(UsdaFood, fdc_id)
         if row is not None and _fresh(row.fetched_at):
             return _as_dict(row), None
-    reply, reason = _get(f"/food/{int(fdc_id)}", {}, key)
-    found = _parsed(reply) if reason is None else None
-    if reason is None and (found is None or found["fdc_id"] != fdc_id):
+
+    def check(reply) -> str | None:
+        found = _parsed(reply)
+        if found is not None and found["fdc_id"] == fdc_id:
+            return None
         # The food asked for, with no energy value; anything else is not the reply expected.
         asked = isinstance(reply, dict) and reply.get("fdcId") == fdc_id
-        reason = "no_energy" if asked and _energy(reply.get("foodNutrients")) is None else "bad_reply"
+        return "no_energy" if asked and _energy(reply.get("foodNutrients")) is None else "bad_reply"
+
+    reply, reason = _lookup(lambda: _get(f"/food/{int(fdc_id)}", {}, key), check)
     if reason is not None:
-        return None, _failed(reason)
+        return None, unavailable(reason)
+    found = _parsed(reply)
     _cache([found])
     return found, None

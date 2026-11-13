@@ -9,7 +9,7 @@ data. Beside them, the trace (contract trace.md):
     outcome      read, written, duplicate, preview, refused or failed (outcome)
     step         where a failed call stopped, from its error code (step)
     frame        the innermost frame in app/ of a crash, as file:line function (frame_of)
-    notes        fixed words Spotter's own code set during the call (note), as key=word
+    notes        fixed words Spotter's own code set during the call (note; noted reads one back), as key=word
 
 A call's row is written in two steps, because the write limit counts these rows:
     start(function, started_at, user_id, caller, tried) -> row id    before the service runs: in_progress
@@ -142,6 +142,11 @@ def note(key: str, word: str) -> None:
     notes = _NOTES.get()
     if notes is not None:
         notes[key] = word
+
+
+def noted(key: str) -> str | None:
+    """The word noted under key in the call running, or None."""
+    return (_NOTES.get() or {}).get(key)
 
 
 def tried(function: str, sent) -> str:
