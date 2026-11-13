@@ -10,11 +10,14 @@ Scopes: the metadata advertises SCOPES, and a client asks the provider for what 
 One wrapper runs every function (Wrapper.call below). In order: it notes the start time, reads the
 verified token, finds or creates the person's account (users.user_for_identity), asks the provider's
 userinfo for a missing email or name (at most once per LOOKUP_EVERY seconds per person), starts the
-call's call-log row (calllog.start), checks the person's permission switch against NEEDS, runs the
+call's call-log row (calllog.start), checks the person's permission switch against NEEDS, checks the
+read limit for a read-level function (services.common.check_reads: every read together), runs the
 service with the account id, turns a crash into {error: internal_error, ...}, and completes the row
-(calllog.finish). The row exists before the service runs, so the write limit counts a call from its
-start. The services, the user lookup and the call log are synchronous and use the database, so each
-runs in a worker thread, never on the event loop.
+(calllog.finish). The row exists before the service runs, so the write limit and the read limit count a
+call from its start. A query cancelled by a database limit, a lock wait that ran out or no free pooled
+connection is DATABASE_DOWN: database_unavailable, as for a database that is not there. The services,
+the user lookup and the call log are synchronous and use the database, so each runs in a worker thread,
+never on the event loop.
 
 Every result is the service's own dict, as structured content and as compact JSON text. A service
 error ({error, message, fix}) is flagged is_error. A duplicate is a success.
@@ -38,7 +41,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, StrictBool
-from sqlalchemy.exc import InterfaceError, OperationalError
+from sqlalchemy.exc import InterfaceError, InternalError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.applications import Starlette
 from starlette.routing import Route
@@ -53,6 +56,7 @@ from app.mcp_schemas import (
     SaveFoodResult, SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
 )
 from app.models import User
+from app.services.common import check_reads
 
 log = logging.getLogger("spotter.mcp")
 
@@ -205,6 +209,8 @@ NEEDS = {
     "get_trends": "read", "get_goals": "read",
     "import_entries": "log",
 }
+# The read limit counts these together (services.common.check_reads): every function at the read level.
+READ_FUNCTIONS = tuple(name for name, level in NEEDS.items() if level == "read")
 NOT_ALLOWED_MESSAGES = {"read": "This account lets Claude read only.",
                         "log": "This account lets Claude read and log, not delete."}
 # The one text in Spotter that sends a person to a page: only they can change what Claude may do.
@@ -220,9 +226,10 @@ CAN_AND_CANT = ROOT / "docs" / "can-and-cant.md"
 CAN_AND_CANT_URI = "spotter://can-and-cant"
 EXERCISES_URI = "spotter://exercises"
 
-# Only these mean "the database is not there" (or too busy to answer: every pooled connection is in use).
-# Any other error is a crash.
-DATABASE_DOWN = (OperationalError, InterfaceError, PoolTimeout, db.DatabaseNotConfigured)
+# Only these mean "the database is not there" (or too busy to answer: every pooled connection is in use, or
+# a statement or lock wait ran past its limit, which psycopg raises as an OperationalError, or a transaction
+# left idle past its limit, which psycopg raises as an InternalError). Any other error is a crash.
+DATABASE_DOWN = (OperationalError, InterfaceError, InternalError, PoolTimeout, db.DatabaseNotConfigured)
 
 # The MCP library logs at INFO on every call, and repeats a caller-chosen tool name when it refuses one.
 # Its loggers (under "mcp") are held at WARNING: its warnings and errors still show.
@@ -365,6 +372,8 @@ class Wrapper:
                 result = user
             else:
                 refused = not_allowed(function, user.claude_can)  # before the service: nothing is written
+                if refused is None and function in READ_FUNCTIONS:  # the read limit, before the read's work
+                    refused = await anyio.to_thread.run_sync(check_reads, account_id, READ_FUNCTIONS)
                 result = refused or await anyio.to_thread.run_sync(work, account_id)
                 if add is not None and "error" not in result:
                     result = add(result, token)

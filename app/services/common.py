@@ -30,6 +30,11 @@ imported rows created in any IMPORT_WINDOW_HOURS, which app.services.imports che
 The read throttle. check_read_limit() counts one read function's rows the same way (find_food: more
 than READ_LIMIT in WRITE_WINDOW_MINUTES is too_many_reads). It takes no lock: a read writes nothing.
 
+The read limit. check_reads() counts every read-level function's rows together, the same way: more than
+READS_LIMIT in WRITE_WINDOW_MINUTES is too_many_reads. The MCP wrapper runs it before any read-level
+function's work, in its own short session; find_food keeps its own READ_LIMIT as well. A conversation makes
+a handful of reads, so READS_LIMIT is only ever reached by a loop.
+
 Sample rows. SAMPLE_NOTE is what every read says when sample rows are in its numbers (rule 16).
 
 The duplicate guard. dedupe_key() is a SHA-256 of an entry's defining values, normalised.
@@ -73,6 +78,7 @@ WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food",
 WRITE_LIMIT = 120
 WRITE_WINDOW_MINUTES = 10
 READ_LIMIT = 120  # a throttled read (find_food): its own rows in the same 10 minutes
+READS_LIMIT = 300  # every read-level function through MCP, together, in the same 10 minutes
 # The import's own cap, beside the write limit: one import_entries call is one call-log row, so one write of the
 # 120 however many rows it carries, a dry run too. So the rows themselves are capped here: at most IMPORT_LIMIT
 # rows with logged_by "import" created in any IMPORT_WINDOW_HOURS (app.services.imports).
@@ -218,6 +224,20 @@ def check_read_limit(s: Session, user_id: int, function: str, limit: int = READ_
                  f"the most is {limit}.",
                  f"Wait {wait} minute{'s' if wait != 1 else ''}, then look it up again. A food already found can be "
                  "logged by its id meanwhile.", wait_minutes=wait)
+
+
+def check_reads(user_id: int, functions, limit: int = READS_LIMIT) -> dict | None:
+    """too_many_reads when this person has more than `limit` call-log rows of these functions (every
+    read-level one) started in the last WRITE_WINDOW_MINUTES, this call's own row among them; else None.
+    Its own short session, no lock, nothing written: the MCP wrapper calls it before the read's work."""
+    with db.new_session() as s:
+        count, wait = _counted(s, user_id, tuple(functions))
+    if count <= limit:
+        return None
+    return error("too_many_reads",
+                 f"{count} read calls in the last {WRITE_WINDOW_MINUTES} minutes, this one included; "
+                 f"the most is {limit}.",
+                 f"Wait {wait} minute{'s' if wait != 1 else ''}, then ask again.", wait_minutes=wait)
 
 
 def _plain(value):

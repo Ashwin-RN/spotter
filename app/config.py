@@ -6,6 +6,9 @@ off and MCP still works.
 
 Secret values (DATABASE_URL, WORKOS_API_KEY, SESSION_SECRET, USDA_API_KEY) are never part of a repr
 and are never logged. Without USDA_API_KEY the USDA food lookup is off and everything else works. get_settings() is how the rest of the app reads them; tests swap them with use_settings().
+
+DB_POOL_SIZE and DB_MAX_OVERFLOW size the Postgres connection pool (app/db.py); unset or out of range, the
+defaults hold.
 """
 
 import os
@@ -25,6 +28,13 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE_URL = f"sqlite:///{(ROOT / 'spotter.db').as_posix()}"
 DEFAULT_AUTH_PROVIDER = "workos"
 DEFAULT_SIGNUPS_PER_DAY = 50
+# The Postgres connection pool, per process: kept connections and extra ones on demand. Ten in all stays well
+# under a stock Postgres's 100. DB_POOL_SIZE and DB_MAX_OVERFLOW override them within these bounds; any other
+# value falls back to the default. SQLite ignores both (app/db.py).
+DEFAULT_DB_POOL_SIZE = 5
+DEFAULT_DB_MAX_OVERFLOW = 5
+DB_POOL_SIZE_RANGE = (1, 50)
+DB_MAX_OVERFLOW_RANGE = (0, 50)
 # The fixed label for deriving the session key from WORKOS_API_KEY. Changing it signs everyone out.
 SESSION_KEY_LABEL = b"spotter session cookie v1"
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -52,6 +62,8 @@ class Settings:
     auth_provider: str = DEFAULT_AUTH_PROVIDER
     signups_per_day: int = DEFAULT_SIGNUPS_PER_DAY
     usda_api_key: str | None = field(default=None, repr=False)  # unset: USDA lookup is off
+    db_pool_size: int = DEFAULT_DB_POOL_SIZE  # Postgres only
+    db_max_overflow: int = DEFAULT_DB_MAX_OVERFLOW  # Postgres only
 
     @property
     def site_origin(self) -> str | None:
@@ -151,6 +163,16 @@ def _signups_per_day(value: str | None) -> int:
     return number if number >= 0 else DEFAULT_SIGNUPS_PER_DAY
 
 
+def _whole_number(value: str | None, bounds: tuple[int, int], default: int) -> int:
+    """A whole number within bounds (both ends included), else the default: unset, a fraction, a word or a
+    number out of range all fall back, so a typo on the host never stops the app or empties the pool."""
+    text = (value or "").strip()
+    if not (text.isascii() and text.isdigit()):
+        return default
+    number = int(text)
+    return number if bounds[0] <= number <= bounds[1] else default
+
+
 def _text(env: Mapping[str, str], name: str) -> str | None:
     return (env.get(name) or "").strip() or None
 
@@ -169,6 +191,8 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         auth_provider=_text(env, "AUTH_PROVIDER") or DEFAULT_AUTH_PROVIDER,
         signups_per_day=_signups_per_day(env.get("SIGNUPS_PER_DAY")),
         usda_api_key=_text(env, "USDA_API_KEY"),
+        db_pool_size=_whole_number(env.get("DB_POOL_SIZE"), DB_POOL_SIZE_RANGE, DEFAULT_DB_POOL_SIZE),
+        db_max_overflow=_whole_number(env.get("DB_MAX_OVERFLOW"), DB_MAX_OVERFLOW_RANGE, DEFAULT_DB_MAX_OVERFLOW),
     )
 
 

@@ -999,7 +999,8 @@ CLAUDE_SEEN: dict[str, set[tuple[str, str]]] = {}
 
 
 @pytest.mark.parametrize("account", sorted(ACCOUNTS))
-def test_every_page_passes_the_page_rules(client, account):
+def test_every_page_passes_the_page_rules(client, account, monkeypatch):
+    monkeypatch.setattr(web, "PAGE_LIMIT", 10_000)  # one sweep loads every page: more than the page limit allows
     seen: set[tuple[str, str]] = set()
     out = client.get("/")
     assert out.status_code == 200

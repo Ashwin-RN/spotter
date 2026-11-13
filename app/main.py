@@ -9,6 +9,9 @@ database, the user lookup and the link helper all read them). The two halves fai
 The session cookie is attached only to the web routes, so /mcp and /.well-known/ never read or set it.
 Last of all, web.fallback at "/": /mcp, /.well-known and anything under them go to the MCP app as before,
 and every other path no route answered gets the designed 404 page with the page header.
+
+Around the whole app, BodyLimit: a request body over MAX_BODY_BYTES is answered 413 before any route reads
+it. The largest real body, an import_entries call of 200 rows, is far under it.
 """
 
 import contextlib
@@ -16,9 +19,11 @@ import logging
 
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Mount, Route, Router
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import config, web
 from app.auth import FetchJson, JwksTokenVerifier, UserinfoClient, fetch_json
@@ -26,6 +31,85 @@ from app.config import Settings, load_settings
 from app.mcp_server import build_server
 
 ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+MAX_BODY_BYTES = 1024 * 1024  # 1 MiB
+TOO_LARGE = "That request is larger than Spotter takes (1 MiB)."
+
+
+class _BodyTooLarge(Exception):
+    """Raised into the app when the streamed body passes the limit, after the 413 has been sent."""
+
+
+class BodyLimit:
+    """Refuses a request body over MAX_BODY_BYTES with a plain 413, before the app reads it.
+
+    A Content-Length over the limit is answered at once and the app never runs. With no length (a chunked
+    body), or one that understates, the body is counted as the app receives it: the moment it passes the
+    limit, the 413 is sent, the app's own receive raises, and anything the app still tries to send is
+    dropped, so the 413 is the only answer. A body cut short there can make the app fail; that failure is
+    the refused request's, and is not raised again. If the app had already started its answer, nothing can
+    replace it, and the receive simply raises.
+    """
+
+    def __init__(self, app: ASGIApp, limit: int = MAX_BODY_BYTES) -> None:
+        self.app = app
+        self.limit = limit
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = _content_length(scope)
+        if declared is not None and declared > self.limit:
+            await _too_large(send)
+            return
+        received = 0
+        started = refused = False
+
+        async def counted() -> Message:
+            nonlocal received, refused
+            if refused:  # an app that caught the refusal and reads on hears the client has gone
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.limit:
+                    if not started:
+                        refused = True
+                        await _too_large(send)
+                    raise _BodyTooLarge
+            return message
+
+        async def watched(message: Message) -> None:
+            nonlocal started
+            if refused:
+                return  # the 413 has been sent: the app's own answer goes nowhere
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, counted, watched)
+        except Exception:
+            if not refused:
+                raise
+
+
+def _content_length(scope: Scope) -> int | None:
+    """The request's Content-Length as a number, or None when it has none or it is not a number (the server
+    refuses a malformed one itself)."""
+    for name, value in scope.get("headers") or ():
+        if name.lower() == b"content-length":
+            text = value.decode("latin-1").strip()
+            return int(text) if text.isascii() and text.isdigit() else None
+    return None
+
+
+async def _too_large(send: Send) -> None:
+    body = TOO_LARGE.encode("utf-8")
+    await send({"type": "http.response.start", "status": 413,
+                "headers": [(b"content-type", b"text/plain; charset=utf-8"),
+                            (b"content-length", str(len(body)).encode()), (b"connection", b"close")]})
+    await send({"type": "http.response.body", "body": body})
 
 
 class _NoQueryStrings(logging.Filter):
@@ -93,7 +177,7 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
             *web.routes(settings),
             Route("/mcp", not_configured, methods=ALL_METHODS),
             Mount("/", app=web.fallback(settings, mcp_off)),
-        ])
+        ], middleware=[Middleware(BodyLimit)])
 
     server = build_server(settings, JwksTokenVerifier(settings, fetch), UserinfoClient(settings, fetch))
     mcp_app = server.streamable_http_app(
@@ -117,6 +201,7 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
             # other path no route answered gets the 404 page.
             Mount("/", app=web.fallback(settings, mcp_app)),
         ],
+        middleware=[Middleware(BodyLimit)],  # the outermost of the app's own layers: before any route reads
         lifespan=lifespan,
     )
 

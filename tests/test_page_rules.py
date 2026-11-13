@@ -530,7 +530,8 @@ TEXT_HELD: dict[str, str] = {}
 
 
 @pytest.mark.parametrize("account", sorted(ACCOUNTS))
-def test_every_page_keeps_the_frame_and_page_rules(client, account):
+def test_every_page_keeps_the_frame_and_page_rules(client, account, monkeypatch):
+    monkeypatch.setattr(web, "PAGE_LIMIT", 10_000)  # one sweep loads every page: more than the page limit allows
     seen = sweep(client, account)
     assert len(seen) >= 20
     findings = [f for s in seen for f in frame_findings(s) + page_rule_findings(s)]

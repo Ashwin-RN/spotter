@@ -52,24 +52,33 @@ carries a mark (marked), so the page after it is calm.
 Web sign-in fails closed: without the provider values, a session key or the site address, every page
 but / says sign-in is not set up, no session is kept, and MCP is unaffected.
 
-Database calls are synchronous, so they run in a worker thread, never on the event loop.
+Database calls are synchronous, so they run in a worker thread, never on the event loop. A database that is
+not there, or too busy (no free pooled connection, a query or lock wait past its limit), is the not-set-up
+page, never a 500.
+
+The page limit: more than PAGE_LIMIT loads of the signed-in pages by one person in PAGE_WINDOW_MINUTES is the
+"Too many page loads" page (429), counted in memory (PageLoads). Writes keep the services' write limit.
 """
 
 import hashlib
 import io
 import json
 import logging
+import math
 import re
 import secrets
+import threading
 import time
 import zipfile
+from collections import deque
 from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote as url_quote, urlencode, urlsplit, urlunsplit
 
 from jinja2 import Environment, FileSystemLoader
-from sqlalchemy.exc import InterfaceError, OperationalError
+from sqlalchemy.exc import InterfaceError, InternalError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
@@ -495,9 +504,11 @@ class DatabaseUnavailable(Exception):
     """The database is not there (not configured, or not reachable). Shown as the plain not-set-up page."""
 
 
-# Only these mean "the database is not there". Any other error is a bug and surfaces as a 500.
+# Only these mean "the database is not there", or too busy to answer: no free pooled connection in its wait
+# (PoolTimeout), a statement or lock wait cancelled by its limit (an OperationalError), or a transaction left
+# idle past its limit (an InternalError). The same set as MCP's. Any other error is a bug and surfaces as a 500.
 # The engine hides bound values, so a logged statement never carries a person's data.
-DATABASE_DOWN = (OperationalError, InterfaceError, db.DatabaseNotConfigured)
+DATABASE_DOWN = (OperationalError, InterfaceError, InternalError, PoolTimeout, db.DatabaseNotConfigured)
 
 
 async def _db(function, *args):
@@ -717,6 +728,74 @@ def too_many(request: Request, result: dict) -> Response:
             if isinstance(wait, int) and wait > 0 else "in a few minutes")
     return message(request, "Too many changes", "There have been too many changes to this account in the last "
                    "10 minutes, so nothing was saved.", f"Try again {when}.", status_code=429)
+
+
+# ---------------------------------------------------------------- the page limit
+
+# More than PAGE_LIMIT page loads (GET, and HEAD, which is a GET without its body) of the signed-in pages by one
+# person in PAGE_WINDOW_MINUTES is refused with the "Too many page loads" page. A page read writes no call-log
+# row, so the count lives in memory: one PageLoads per app (routes() makes it), so per process, keyed by the
+# person's id. The signed-out pages, /health, /static and the MCP endpoint are never counted. A refused load is
+# not counted, so the wait is until the oldest counted load leaves the window. Writes keep their write limit.
+PAGE_LIMIT = 300
+PAGE_WINDOW_MINUTES = 10
+PAGE_METHODS = ("GET", "HEAD")
+PAGE_SWEEP_AT = 1024  # people tracked before the ones with no load left in the window are forgotten
+
+
+def page_clock() -> float:
+    """The page limit's clock, in seconds. Tests replace it."""
+    return time.monotonic()
+
+
+class PageLoads:
+    """Each signed-in person's page loads in the last PAGE_WINDOW_MINUTES, in this process's memory."""
+
+    def __init__(self) -> None:
+        self._loads: dict[int, deque[float]] = {}
+        self._lock = threading.Lock()  # the pages run on one event loop today; the lock keeps it right if not
+
+    def take(self, user_id: int) -> int | None:
+        """Count one load and return None; or, when it would be more than PAGE_LIMIT, count nothing and return
+        the minutes until the oldest counted load leaves the window, at least 1."""
+        now = page_clock()
+        window = PAGE_WINDOW_MINUTES * 60
+        with self._lock:
+            loads = self._loads.setdefault(user_id, deque())
+            while loads and loads[0] <= now - window:
+                loads.popleft()
+            if len(loads) >= PAGE_LIMIT:
+                return max(1, math.ceil((loads[0] + window - now) / 60))
+            loads.append(now)
+            if len(self._loads) > PAGE_SWEEP_AT:
+                self._loads = {k: v for k, v in self._loads.items() if v and v[-1] > now - window}
+            return None
+
+
+def too_many_pages(request: Request, wait: int) -> Response:
+    response = message(request, "Too many page loads",
+                       f"There have been more than {formatting.show(PAGE_LIMIT, 'count')} page loads on this account "
+                       f"in the last {PAGE_WINDOW_MINUTES} minutes.",
+                       f"Wait {formatting.show(wait, 'count')} minute{'s' if wait != 1 else ''}, then reload.",
+                       status_code=429)
+    response.headers["Retry-After"] = str(wait * 60)
+    return response
+
+
+def page_limited(endpoint, loads: PageLoads):
+    """The endpoint behind the page limit: a signed-in person's GET is counted first, and refused past the limit.
+    Anything else (a signed-out visitor, a POST) goes straight through."""
+    async def run(request: Request) -> Response:
+        if request.method in PAGE_METHODS:
+            user = await current_user(request)
+            if user is not None:
+                wait = loads.take(user.id)
+                if wait is not None:
+                    return too_many_pages(request, wait)
+        return await endpoint(request)
+
+    run.__name__ = endpoint.__name__
+    return run
 
 
 def failed(result: dict) -> bool:
@@ -2417,13 +2496,15 @@ def routes(settings: Settings) -> list[BaseRoute]:
         stack.append(Middleware(SessionMiddleware, secret_key=settings.session_key,
                                 session_cookie=SESSION_COOKIE, max_age=SESSION_SECONDS,
                                 same_site="lax", https_only=settings.site_origin.startswith("https://")))
+        loads = PageLoads()  # this app's page-load count: one app a process, so one count
         table = [("/", home, ["GET"]),
                  ("/sign-in", sign_in, ["GET"]),
                  ("/auth/callback", callback, ["GET"]),
-                 ("/sign-out", sign_out, ["POST"]),
-                 *PAGES]
+                 ("/sign-out", sign_out, ["POST"])]
+        # The signed-in pages, behind the page limit.
+        table += [(path, page_limited(endpoint, loads), methods) for path, endpoint, methods in PAGES]
         table += [(path, to_card(kind), ["GET"]) for path, kind in CARD_ADDRESSES]
-        table += [(path, placeholder, ["GET"]) for path in PLACEHOLDERS.values()]
+        table += [(path, page_limited(placeholder, loads), ["GET"]) for path in PLACEHOLDERS.values()]
     else:
         off = _off(reason)
         table = [("/", home, ["GET"]),
