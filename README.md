@@ -22,7 +22,7 @@ Live: https://spotter-production-0c0f.up.railway.app
 2. **Add Spotter to your assistant** as a remote MCP server. Some call it a custom connector. The address is `https://spotter-production-0c0f.up.railway.app/mcp`. There is no key to paste: the assistant opens the sign-in page. Use the same account.
 3. **Say what you did**, such as "Back squat, 3 sets of 5 at 80 kg".
 
-Signing in from the assistant first also creates the account. To see it full before you log anything, press "Add sample data" on Today. One click on Settings removes it.
+Signing in from the assistant first also creates the account.
 
 The client must support remote MCP over streamable HTTP with OAuth sign-in.
 

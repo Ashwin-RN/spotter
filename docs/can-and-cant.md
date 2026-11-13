@@ -163,14 +163,6 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 - **The lookup limit.** `find_food` takes at most 120 lookups in any 10 minutes. Past it, a lookup is
   refused with `too_many_reads` and the minutes to wait.
 
-## Sample data
-
-- An empty account can fill itself with four weeks of sample lifts, weigh-ins, meals, cardio,
-  measurements and three goals, from a button on Today. Every sample row is marked sample.
-- Sample rows never mix with the person's own. Every read whose numbers hold sample rows says so:
-  `includes_sample` is true and a note says they are sample data. Say so when quoting them.
-- The Remove sample data button on Settings removes every sample row at once.
-
 ## Importing from another app
 
 `import_entries` brings history over from another app's export: weigh-ins, measurements, lift sessions,
@@ -204,7 +196,6 @@ fields of that kind. Every row it writes is marked `import` in `logged_by`, whoe
 - **Cardio** gets its calorie estimate from body weight now, as every earlier-dated entry's does. With no
   weigh-in, imported cardio has no estimate.
 - **Bests** are worked out from the whole history at read time: `get_progress` shows them after an import.
-- **Sample data.** An account that holds sample data takes no import until the sample rows are removed.
 
 ### How Claude sends an export
 

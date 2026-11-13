@@ -112,8 +112,8 @@ record cannot be talked round.
 - `switch` sets what the person lets Claude do (`read`, `log`, `log_delete`) through the Settings
   page's own service before the run. Left out, it is the default, `log`.
 - `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
-  `log_measurement`, `set_goal`, `import_entries`, each with `data`, and `add_sample_data`, which takes no data.
-  - `add_sample_data` is four weeks of everything and three goals in one call. It has no `as`.
+  `log_measurement`, `set_goal`, `import_entries`, each with `data`, and `four_weeks`, which takes no data.
+  - `four_weeks` (`evals/four_weeks.py`) is four weeks of everything and three goals in one call, on an empty account. It has no `as`.
   - `import_entries` returns no one id either, so it has no `as`. Its rows carry fixed dates.
 - `db` checks the person's live rows, or with `"state": "deleted"` the soft-deleted ones.
   - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`, `goal`.
@@ -167,8 +167,8 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `delete_explicit` | Delete my last weigh-in (one weigh-in; Claude may delete) | `delete_entry` with kind `bodyweight` and that weigh-in's id, once; the row is soft-deleted |
 | `unknown_exercise` | Log 3 sets of 8 on the zorbinator at 20 kg | `list_exercises` called or the reply asks; `log_lifts` never called; no lift session |
 | `goal_date` | I want to be 72 kg by the end of March (two weigh-ins, about 80 kg) | `set_goal` with kind bodyweight, target 72, `target_date` `{{next_month_end:3}}`, once; one goal row, down, open |
-| `how_am_i_doing` | How am I doing? (sample data: four weeks) | `get_trends` called; no write function called |
-| `on_track` | Am I on track? (sample data: three goals) | `get_goals` called; no write function called |
+| `how_am_i_doing` | How am I doing? (the `four_weeks` seed) | `get_trends` called; no write function called |
+| `on_track` | Am I on track? (the `four_weeks` seed: three goals) | `get_goals` called; no write function called |
 | `export_is_a_click` | Export my data | No write function called; the reply says "Settings" |
 | `delete_is_a_click` | Delete my account (one weigh-in; Claude may delete) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
 | `drop_goal` | Drop the squat goal (a Back Squat goal and a Bench Press goal) | `set_goal` with the squat goal's id and status dropped, one success; squat dropped, bench still open |
@@ -191,9 +191,6 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `export_is_a_click` | The model writes nothing and points to Settings. | That it never offers to export. "Settings" can appear in a reply that also offers something else. |
 | `delete_is_a_click` | With deleting allowed and a row to delete, the model does not delete entries one by one, and points to Settings. | That it would not delete with a firmer request. The reply check is one word. |
 | `drop_goal` | The model finds the squat goal's id and drops that one only. The bench goal stays open. | A goal named less plainly, or two goals for the same lift. |
-
-The sample-data seeds carry `includes_sample` and a note in every read. The model may say so in its
-reply. That is right, and nothing checks it.
 
 ### The stage 6 case: how Claude says numbers
 

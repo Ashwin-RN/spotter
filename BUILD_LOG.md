@@ -654,3 +654,22 @@ A bigger pool (15 and 5) gave 101 calls a second: the limit is the one Python pr
 | An idle transaction cut off by Postgres gave a 500 on the web and an internal error through MCP | It gives the busy answer like every other time-out |
 | A libpq setting in the environment, or `?service=` in the URL, could send the load test to a remote database | The tool refuses both |
 | A body over 1 MiB that was already sent in full gets a dropped connection, not the 413 line | Left as it is: the request is refused either way |
+
+## No sample data
+
+The owner's call: Spotter will not be shown to anyone who would press "Add sample data", so it went. The decisions are in `docs/contracts/no-sample.md`.
+
+| Part | What changed |
+|---|---|
+| Pages | No Add offer, no Remove button, no banner, no sample tags. An empty account's Today says "Nothing logged yet" and "Tell your assistant what you ate, lifted or did, and it shows here." The landing's picture is captioned "An example." |
+| Routes | `/settings/sample` and `/settings/sample/remove` are gone and answer as any unknown path does |
+| Assistant's results | No `is_sample`, no `includes_sample`, no sample note. Notes that also said something else keep that |
+| Import and export | An import is no longer refused over sample rows. The export has no `is_sample` column |
+| Database | Migration 0004 deletes every row marked sample (a session's sets with it; a real food entry linked to a sample food keeps its numbers and loses the link), then drops `is_sample` from the seven tables that had it |
+| The four weeks | Moved to `evals/four_weeks.py`, a seed for the tests and two eval cases. Nothing in `app/` imports it |
+
+### The review
+
+A reviewer ran the old generator and the new seed on fresh databases for seven fixed days and compared every column of eight tables: identical, 2,821 rows each day. The migration's Postgres SQL was read offline: one transaction, deletes before the column drops. One finding, a choice rather than a fault: between the migration and the new code going live, the old code still serving fails on the dropped column for a few seconds. Accepted: the owner is the only user today. Later migrations that drop a column ship in two steps, code first.
+
+The full suite: 4,835 tests, plain and with warnings as errors.
