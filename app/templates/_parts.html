@@ -108,7 +108,7 @@
     {% else %}
     {{ tile("calories", "Eaten a day: ", "No food in the last 7 days" if cal else "No food in the last 28 days", empty=true) }}
     {% endif %}
-    {{ tile("training", "Training: ", ses.this_week|show("count"), "lift sessions", "last 7 days", sheet="sheet-training", href=trends_href) }}
+    {{ tile("training", "Training: ", ses.this_week|show("count"), "lift session" if ses.this_week == 1 else "lift sessions", "last 7 days", sheet="sheet-training", href=trends_href) }}
 {%- endmacro %}
 
 {# The Weight, Calories and Training sheets, from the same glance. today is the page's date, for the dates'
@@ -163,7 +163,7 @@
   </div>
   {% endcall %}
   {% endif %}
-  {% call sheet("sheet-training", "Last 7 days", ses.this_week|show("count"), "Lift sessions", link=trends_link) %}
+  {% call sheet("sheet-training", "Last 7 days", ses.this_week|show("count"), "Lift session" if ses.this_week == 1 else "Lift sessions", link=trends_link) %}
   <p class="sentence">{{ ses.per_week_4w|show("count_avg") }} a week over the last 4 weeks. Cardio came to {{ car.minutes_this_week|show("week_minutes") }} in the last 7 days, and {{ car.minutes_per_week_4w|show("week_minutes") }} a week over 4 weeks.{% if ses.target_per_week is not none %} The session target is {{ ses.target_per_week|show("count") }} a week.{% endif %}{% if car.target_minutes is not none %} The cardio target is {{ car.target_minutes|show("week_minutes") }} a week.{% endif %}{% if ses.target_per_week is none and car.target_minutes is none %} No session or cardio target is set.{% endif %}</p>
   <div class="table-wrap">
     <table>

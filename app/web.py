@@ -26,7 +26,8 @@ and Settings.
     /settings                      six cards: the account, the time zone (POST), the targets (POST to
                                    /settings/targets), the switch for what Claude may do (POST to
                                    /settings/claude-can), the person's data (export, sample data, delete), and
-                                   More (Saved foods, and Sign out for a phone). Each post lands on its own card
+                                   More (Saved foods, and Sign out for a phone). Each post lands on its own card,
+                                   and a GET of /settings/targets or /settings/claude-can goes to that card
     /settings/sample               POST: sample data into an empty account, then Today
     /settings/sample/remove        POST: every sample row removed, then Today
     /settings/export               POST: a zip of CSVs, one per table the person owns
@@ -201,14 +202,16 @@ FIELD_HELP = {
     ("cardio_entry", "avg_hr"): "Give the average heart rate, 30 to 240, as a whole number, or leave it empty.",
     ("cardio_entry", "machine_kcal"): "Give the machine's number, 1 to 5,000, as a whole number, or leave it empty.",
     ("cardio_entry", "notes"): "Keep the notes under 2,000 characters.",
-    # Foods' two forms: the limits are save_food's own (rules.TEXT_LIMITS, rules.NUMBERS).
+    # Foods' two forms: the limits are save_food's own (rules.TEXT_LIMITS, rules.NUMBERS). The kcal and grams lines
+    # answer a typed comma or unit ("1,000", "58,5", "40g") as well as the range: save_food takes a plain number only.
     ("saved_food", "name"): f"Give the food a name, up to {rules.TEXT_LIMITS['name']} characters.",
     ("saved_food", "serving_label"): (f"Say what one serving is, such as 1 roti, up to "
                                       f"{rules.TEXT_LIMITS['serving_label']} characters."),
-    ("saved_food", "kcal_per_serving"): ("Give the kcal in one serving, from "
-                                         f"{rules.span(*rules.NUMBERS['kcal_per_serving'][:2], 'kcal_per_serving')}."),
-    ("saved_food", "grams_per_serving"): ("Give the grams in one serving, from "
-                                          f"{rules.span(*rules.NUMBERS['grams_per_serving'][:2], 'grams')}, "
+    ("saved_food", "kcal_per_serving"): ("Give the kcal in one serving as a plain number with no comma, from "
+                                         f"{rules.span(*rules.NUMBERS['kcal_per_serving'][:2], 'kcal_per_serving')}"
+                                         " kcal."),
+    ("saved_food", "grams_per_serving"): ("Give the grams in one serving as a plain number, such as 40, from "
+                                          f"{rules.span(*rules.NUMBERS['grams_per_serving'][:2], 'grams')} g, "
                                           "or leave it empty."),
 }
 FIRST_FIELD = {"bodyweight": "kg", "measurement": "value", "lift_session": "notes", "food_entry": "description",
@@ -217,20 +220,24 @@ FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS}
 
 
 # The switch's words, the person's only (section L, Settings): its label, then what each setting lets the person's
-# assistant do, in one line each. The stored values (models.CLAUDE_CAN) never change. No text a connected model reads
-# comes from these two tables.
+# assistant do, in one line each, which does not repeat the label drawn right above it. Each line says all that
+# mcp_server.NEEDS lets that setting call beyond the one before it: tests/test_web_account.py holds the two side by
+# side. The stored values (models.CLAUDE_CAN) never change. No text a connected model reads comes from these tables.
 CLAUDE_CAN_LINES = {
-    "read": "Read only: your assistant can read what you have logged and change nothing.",
-    "log": "Read and log: your assistant can also log, edit and restore entries and set goals, but not delete.",
-    "log_delete": "Read, log and delete: your assistant can also delete entries. A deleted entry can always be "
-                  "restored.",
+    "read": "Your assistant can read what you have logged and change nothing.",
+    "log": "Your assistant can also log and import entries, edit and restore them, save foods, set goals, and change "
+           "your time zone and targets. It cannot delete.",
+    "log_delete": "Your assistant can also delete entries and saved foods. A deleted one can always be restored.",
 }
 CLAUDE_CAN_LABELS = {"read": "Read only", "log": "Read and log", "log_delete": "Read, log and delete"}
 
 # Settings (section L): each of its three forms posts to its own card's anchor, and every redirect that answers one
 # names that anchor itself, so the person lands on the card that says it was saved. The automatic zone save
-# (base.html's #auto-time-zone, which carries `next`) is not one of them. (the mark's kind, its card's id)
+# (base.html's #auto-time-zone) is not one of them: it posts to /settings too, with `next` only when its page was
+# drawn without an error, so the Time zone card's form carries a field of its own (ZONE_CARD_FIELD, its value the
+# card's id) and only a post that carries it lands on the card. (the mark's kind, its card's id)
 SETTINGS_CARDS = {"time_zone": "zone", "targets": "targets", "claude_can": "assistant"}
+ZONE_CARD_FIELD = "card"
 # Each card's saved line, by the mark's kind: one at most on a page, in its own card.
 SETTINGS_SAVED = {"time_zone": "Time zone saved.", "targets": "Targets saved.",
                   "claude_can": "Your assistant's access saved."}
@@ -239,6 +246,9 @@ SETTINGS_SAVED = {"time_zone": "Time zone saved.", "targets": "Targets saved.",
 # in the card, the targets under each field: their ranges are update_settings' own (rules.NUMBERS).
 ZONE_ERROR_WORDS = {code: "That time zone was not recognised, so nothing was changed. Choose your time zone from the "
                           "list." for code in ("unknown_time_zone", "invalid_field")}
+# A zone refusal of a post that chose nothing (the list's "Choose your time zone", whose value is empty): the person
+# chose no zone, so the line says to choose one, not that their choice was not recognised.
+ZONE_ERROR_EMPTY = "Choose your time zone from the list."
 ZONE_ERROR_GENERAL = "The time zone was not saved. Choose yours from the list and try again."
 SWITCH_ERROR_WORDS = {"invalid_field": "Choose one of the three settings below."}
 SWITCH_ERROR_GENERAL = "What your assistant may do was not saved. Choose one of the three and try again."
@@ -249,15 +259,17 @@ def _target_span(field: str) -> str:
     return rules.span(lo, hi, TARGET_QUANTITIES[field])
 
 
+# The calorie and cardio lines answer a typed comma ("2,000") as well as the range: update_settings takes a plain
+# whole number.
 TARGET_ERROR_WORDS = {
-    ("invalid_field", "calorie_target_kcal"): (f"Give a daily target from {_target_span('calorie_target_kcal')} kcal, "
-                                               "as a whole number, or leave it empty."),
-    ("invalid_field", "target_sessions_per_week"): (f"Give sessions a week from "
-                                                    f"{_target_span('target_sessions_per_week')}, as a whole number, "
-                                                    "or leave it empty."),
-    ("invalid_field", "target_cardio_minutes_per_week"): (f"Give cardio minutes a week from "
-                                                          f"{_target_span('target_cardio_minutes_per_week')}, as a whole "
-                                                          "number, or leave it empty."),
+    ("invalid_field", "calorie_target_kcal"): ("Give the calories as a whole number with no comma, from "
+                                               f"{_target_span('calorie_target_kcal')} kcal, or leave it empty."),
+    ("invalid_field", "target_sessions_per_week"): ("Give lift sessions a week as a whole number from "
+                                                    f"{_target_span('target_sessions_per_week')}, or leave it empty."),
+    ("invalid_field", "target_cardio_minutes_per_week"): ("Give cardio minutes a week as a plain whole number, such "
+                                                          "as 150, from "
+                                                          f"{_target_span('target_cardio_minutes_per_week')}, or leave "
+                                                          "it empty."),
 }
 TARGETS_ERROR_GENERAL = "The targets were not saved. Check each field and try again."
 
@@ -326,12 +338,12 @@ GOAL_ERROR_WORDS: dict[tuple[str, str], str | dict[str, str]] = {
         "lift": "No session of this lift is logged yet: give your estimated max now, or log a session first.",
         "cardio_best": "No session of this activity at this distance or longer is logged yet: give your time for it "
                        "now, or log one first.",
-        "measurement": "No {what} is logged yet: give where you are now, or log one first."},
+        "measurement": "No {what} measurement is logged yet: give where you are now, or log one first."},
     ("invalid_field", "start_value"): {
         "bodyweight": f"Give your weight now in kg, from {_BODYWEIGHT_SPAN}.",
         "lift": f"Give your estimated max now in kg, more than 0 and at most {_LIFT_MOST}.",
         "cardio_best": f"Give your time now in minutes, from {_TIME_SPAN}.",
-        "measurement": "Give where your {what} is now, in {unit}, from {span}{whole}."},
+        "measurement": "Give your {what} measurement now, in {unit}, from {span}{whole}."},
     ("invalid_field", "text"): f"Keep the notes to {formatting.show(rules.TEXT_MAX, 'count')} characters or fewer, "
                                "in plain text.",
 }
@@ -341,10 +353,12 @@ GOAL_ERROR_UNNAMED = {("missing_field", "target_value"): "Give the target you ai
 # A refusal the table does not know, by its code or its field: still something true, at the top of the form.
 GOAL_ERROR_GENERAL = "That goal was not set. Check each field and try again."
 GOAL_SAVED = {"goal": "Goal set.", "hit": "Goal marked as hit.", "dropped": "Goal dropped.", "open": "Goal reopened."}
-# The fragment every redirect that answers the Set a goal form's post ends in: the id base.html gives body. Without
-# one, the address after the redirect keeps the post's #set-goal and lands on the form, out of sight of "Goal set."
-# The status posts (Hit, Drop, Reopen) carry no fragment, so their redirects carry none.
-GOAL_POST_LANDS = "#top"
+# The fragment every redirect that answers a form low on its page ends in, Goals' Set a goal and Foods' Save a food:
+# the id base.html gives body. Without one, the address after the redirect keeps the post's own fragment
+# (#set-goal, #save-food) and lands on the form, out of sight of the strip. The status posts (Hit, Drop, Reopen), a
+# saved food's edit page, Delete and Undo carry no fragment, so their redirects carry none.
+POST_LANDS = "#top"
+GOAL_POST_LANDS = POST_LANDS  # goals.html names it
 # set_goal's warnings, said in the page's own words. A saved goal's warnings travel across the redirect as
 # these codes (as the day page carries its undo): (code, how the warning starts, what the page says).
 GOAL_NOTES = (
@@ -961,22 +975,26 @@ async def settings_page(request: Request) -> Response:
     zone_error = None
     if request.method == "POST":
         form = await request.form()
+        sent = str(form.get("time_zone") or "")
         # The one path that stores a zone, the same one Claude uses; it locks the user row first.
-        result = await write(user, "update_settings", services.update_settings, user.id,
-                             {"time_zone": str(form.get("time_zone") or "")}, "web")
+        result = await write(user, "update_settings", services.update_settings, user.id, {"time_zone": sent}, "web")
         if "too_many_writes" in codes(result):
             return too_many(request, result)
         if not failed(result):  # changed: [] (the same zone again) is a success, marked as no change
             mark = UNCHANGED if result.get("changed") == [] else ("saved", "time_zone")
-            if "next" in form:  # the automatic save (base.html), not the Time zone card's form: as it always was
-                # It carries `next`, the page the person was on: they stay there (decision 1).
-                back = local_path(form.get("next"))
-                if back is not None and urlsplit(back).path != "/settings":
-                    return redirect(marked(get_settings().site_origin + back, *mark))
-                return redirect(marked(links.page("settings"), *mark))
-            return redirect(settings_landing("time_zone", mark))
-        # The service's own text is written for Claude; the page says it in its own words.
+            if form.get(ZONE_CARD_FIELD) == SETTINGS_CARDS["time_zone"]:  # the Time zone card's own form
+                return redirect(settings_landing("time_zone", mark))
+            # The automatic save (base.html), as it always was: back to `next`, the page the person was on
+            # (decision 1), else Settings with no anchor. A page drawn with an error sends no `next`.
+            back = local_path(form.get("next"))
+            if back is not None and urlsplit(back).path != "/settings":
+                return redirect(marked(get_settings().site_origin + back, *mark))
+            return redirect(marked(links.page("settings"), *mark))
+        # The service's own text is written for Claude; the page says it in its own words. A post that chose
+        # nothing is told to choose.
         zone_error = card_error(result, ZONE_ERROR_WORDS, ZONE_ERROR_GENERAL)
+        if not sent.strip() and result.get("error") in ZONE_ERROR_WORDS:
+            zone_error = ZONE_ERROR_EMPTY
     return await settings_view(request, user, zone_error=zone_error, status_code=400 if zone_error else 200)
 
 
@@ -1031,6 +1049,7 @@ async def settings_view(request: Request, user: User, zone_error: str | None = N
                  ("" if stored[f] is None else formatting.field(stored[f], TARGET_QUANTITIES[f])))
              for f in TARGET_FIELDS}
     return page(request, "settings.html", status_code=status_code, user=user, cards=SETTINGS_CARDS,
+                card_field=ZONE_CARD_FIELD,
                 saved_card=saved_card, saved_words=SETTINGS_SAVED.get(saved) if saved_card else None,
                 zone_error=zone_error, zone_groups=groups, selected_zone=selected,
                 targets=shown, target_errors=targets_refused or {}, targets_loose=targets_loose or [],
@@ -1702,10 +1721,12 @@ async def foods_view(request: Request, user: User, errors: dict | None = None, l
 
 async def foods_page(request: Request) -> Response:
     """GET: the saved foods. POST: save one; the same name updates it (save_food's rule). A save that would change
-    nothing writes nothing, and one save_food finds unchanged is marked so: neither says a food was saved."""
+    nothing writes nothing, and one save_food finds unchanged is marked so: neither says a food was saved. The Save a
+    food form posts to /foods#save-food, so a refusal comes back at the form. Every redirect that answers the post
+    ends in POST_LANDS, so the strip is in view."""
     user = await current_user(request)
     if user is None:
-        return redirect(links.page("sign_in"))
+        return redirect(links.page("sign_in") + (POST_LANDS if request.method == "POST" else ""))
     if request.method == "GET":
         return await foods_view(request, user)
     form = await request.form()
@@ -1713,7 +1734,7 @@ async def foods_page(request: Request) -> Response:
     live = await live_foods(user)
     known = next((f for f in live if food_key(f["name"]) == food_key(data["name"])), None)
     if known is not None and not changed_fields(FOOD_FIELDS, known, form):
-        return redirect(marked(links.page("foods"), *UNCHANGED))
+        return redirect(marked(links.page("foods"), *UNCHANGED) + POST_LANDS)
     result = await write(user, "save_food", services.save_food, user.id, data, "web")
     if "too_many_writes" in codes(result):
         return too_many(request, result)
@@ -1723,7 +1744,7 @@ async def foods_page(request: Request) -> Response:
                                 typed={f: str(form.get(f) or "") for f in FOOD_FIELDS}, status_code=400)
     before = next((f for f in live if f["id"] == result.get("id")), None)
     mark = UNCHANGED if same_food(before, result) else ("saved", SAVED_FOOD)
-    return redirect(marked(links.page("foods"), *mark))
+    return redirect(marked(links.page("foods"), *mark) + POST_LANDS)
 
 
 async def food_edit_page(request: Request) -> Response:
@@ -2338,6 +2359,18 @@ def _off(reason: str):
     return off
 
 
+# A refused targets or switch post leaves its own address in the bar. A GET of it goes to Settings at that card's
+# anchor, which signs a signed-out visitor in first: (the address, its card's kind in SETTINGS_CARDS).
+CARD_ADDRESSES = (("/settings/targets", "targets"), ("/settings/claude-can", "claude_can"))
+
+
+def to_card(kind: str):
+    async def back(request: Request) -> Response:
+        return redirect(f"{links.page('settings')}#{SETTINGS_CARDS[kind]}")
+
+    return back
+
+
 # Every signed-in page: (path, endpoint, methods). Each one redirects a signed-out visitor to sign-in.
 PAGES = [
     ("/settings", settings_page, ["GET", "POST"]),
@@ -2381,6 +2414,7 @@ def routes(settings: Settings) -> list[BaseRoute]:
                  ("/auth/callback", callback, ["GET"]),
                  ("/sign-out", sign_out, ["POST"]),
                  *PAGES]
+        table += [(path, to_card(kind), ["GET"]) for path, kind in CARD_ADDRESSES]
         table += [(path, placeholder, ["GET"]) for path in PLACEHOLDERS.values()]
     else:
         off = _off(reason)
@@ -2389,6 +2423,7 @@ def routes(settings: Settings) -> list[BaseRoute]:
                  ("/auth/callback", off, ["GET"]),
                  ("/sign-out", off, ["POST"])]
         table += [(path, off, methods) for path, _, methods in PAGES]
+        table += [(path, off, ["GET"]) for path, _ in CARD_ADDRESSES]
         table += [(path, off, ["GET"]) for path in PLACEHOLDERS.values()]
 
     built: list[BaseRoute] = []

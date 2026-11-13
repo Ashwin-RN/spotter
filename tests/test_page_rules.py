@@ -2109,8 +2109,8 @@ def test_settings_and_delete_my_account_in_each_state_keep_every_rule_a_built_ro
             findings.append(f"{s.address}: the cards are {settings_card_shapes(s)}")
     assert not findings, "\n".join(findings)
     errors = [s for s in seen if s.posted_to]
-    assert len(errors) == 30 and all(s.dom.find_all(cls="error") for s in errors)
-    assert len(seen) == 42
+    assert len(errors) == 32 and all(s.dom.find_all(cls="error") for s in errors)  # two "2,000" target rows
+    assert len(seen) == 44
 
 
 # Every |safe in a template, by template and the count it holds: none. A new one needs a ruling and a line here.

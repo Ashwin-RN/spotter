@@ -16,6 +16,7 @@ from datetime import timedelta
 
 import pytest
 import workos
+from markupsafe import escape
 from sqlalchemy import select
 from workos.user_management._resource import AsyncUserManagement
 
@@ -257,9 +258,11 @@ def test_foods_reads_list_saved_foods_and_shows_live_ones(signed, monkeypatch):
     sent = recorder(monkeypatch, "list_saved_foods", FOODS)
     page = signed.get("/foods").text
     assert sent == [(only_user().id,)]
-    dal = re.search(r'<tr>\s*<td>Dal bowl <span class="tag tag-sample">sample</span></td>(.*?)</tr>', page, re.S)
-    assert dal and re.findall(r"<td>(.*?)</td>", dal.group(1), re.S)[:3] == ["1 bowl", "180", "7"]
-    assert "<td>Roti</td>" in page and "Gone stew" not in page
+    dal = re.search(r'<tr>\s*<td class="lead">Dal bowl <span class="tag tag-sample">sample</span></td>(.*?)</tr>', page,
+                    re.S)
+    assert dal and re.findall(r'<td(?: class="num")? data-label="([^"]+)">(.*?)</td>', dal.group(1), re.S)[:3] == [
+        ("Serving", "1 bowl"), ("kcal", "180"), ("Times logged", "7")]
+    assert '<td class="lead">Roti</td>' in page and "Gone stew" not in page
     assert signed.get("/foods/12/edit").status_code == 200 and signed.get("/foods/13/edit").status_code == 404
 
 
@@ -381,10 +384,11 @@ def test_each_cell_is_its_reads_own_field_through_its_filter(signed, monkeypatch
              "Edit", "Delete"] for f in live]
     assert cells == want
     assert want[0][2:5] == ["412", "1,234", "1,250.75"] and want[1][2:5] == ["0", "0", ""]
-    assert '<td>Black coffee <span class="tag tag-sample">sample</span></td>' in page
-    assert "<td>Ghee rice</td>" in page  # a food of the person's own: no tag
-    row = re.search(r"<tr><td>Black coffee .*?</tr>", page, re.S).group(0)
-    assert "<td></td>" in row and "–" not in row and "-" not in re.sub(r'<[^>]+>', "", row)
+    assert '<td class="lead">Black coffee <span class="tag tag-sample">sample</span></td>' in page
+    assert '<td class="lead">Ghee rice</td>' in page  # a food of the person's own: no tag
+    row = re.search(r'<tr><td class="lead">Black coffee .*?</tr>', page, re.S).group(0)
+    assert '<td class="num" data-label="Grams (g)"></td>' in row and "–" not in row and \
+        "-" not in re.sub(r'<[^>]+>', "", row)
     assert '<a class="action" href="/foods/22/edit">Edit</a>' in row
     assert re.search(r'<form method="post" action="/foods/22/delete" class="inline">\s*<input type="hidden" '
                      r'name="csrf_token" value="[^"]+">\s*<button class="link">Delete</button>\s*</form>', row)
@@ -412,7 +416,7 @@ def test_the_save_a_food_form_holds_its_fields_in_order(signed):
     fold = save_fold(page)
     assert [n.text() for n in fold.elements() if n.tag == "summary"] == ["Save a food"]
     [form] = fold.find_all("form")
-    assert (form.attrs["method"], form.attrs["action"]) == ("post", "/foods")
+    assert (form.attrs["method"], form.attrs["action"]) == ("post", "/foods#save-food")
     fields = [(f.find_all("label")[0].text(), f.find_all("input")[0].attrs) for f in form.find_all("div", "field")]
     assert [(label, attrs["name"]) for label, attrs in fields] == [
         ("Name", "name"), ("One serving is", "serving_label"), ("Calories in one serving (kcal)", "kcal_per_serving"),
@@ -448,7 +452,7 @@ def test_each_mark_shows_its_one_strip_or_none(signed, address, words):
 def test_a_save_a_delete_and_an_undo_land_on_their_strips(signed):
     uid = only_user().id
     r = post(signed, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="58", grams_per_serving="")
-    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert r.headers["location"] == SITE + "/foods?saved=saved_food#top"
     assert strips(signed.get(r.headers["location"]).text) == ["Saved food saved."]
     [food] = rows(SavedFood, uid)
     r = post(signed, f"/foods/{food.id}/delete")
@@ -471,7 +475,7 @@ def test_a_food_saved_again_as_it_is_writes_nothing_and_says_nothing(signed):
                  {"name": " Roti ", "serving_label": " 1 roti ", "kcal_per_serving": "120.0",
                   "grams_per_serving": "40.00"}):
         r = post(signed, "/foods", **data)
-        assert r.headers["location"] == SITE + "/foods?saved=unchanged", data
+        assert r.headers["location"] == SITE + "/foods?saved=unchanged#top", data
         assert strips(signed.get(r.headers["location"]).text) == []
     assert calls(uid) == before and saved_foods(uid) == [("Roti", "1 roti", 120, 40, True)]
 
@@ -482,7 +486,7 @@ def test_a_save_save_food_finds_unchanged_is_marked_unchanged(signed, real_save_
     services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
     real_save_food.clear()
     r = post(signed, "/foods", name="Roti", serving_label="1 roti", kcal_per_serving="120.001")
-    assert r.headers["location"] == SITE + "/foods?saved=unchanged"
+    assert r.headers["location"] == SITE + "/foods?saved=unchanged#top"
     assert [a["food"]["kcal_per_serving"] for a in real_save_food] == [120]
     assert calls(uid)[-1] == ("save_food", True, None)
 
@@ -497,7 +501,7 @@ def test_a_food_saved_again_with_one_change_is_saved(signed, data, stored):
     uid = only_user().id
     services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
     r = post(signed, "/foods", **{"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": "120", **data})
-    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert r.headers["location"] == SITE + "/foods?saved=saved_food#top"
     assert saved_foods(uid) == [stored]
 
 
@@ -506,7 +510,7 @@ def test_a_deleted_food_saved_again_as_it_was_comes_back_and_is_saved(signed):
     food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
     services.delete_entry(uid, "saved_food", food["id"])
     r = post(signed, "/foods", name="Roti", serving_label="1 roti", kcal_per_serving="120")
-    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert r.headers["location"] == SITE + "/foods?saved=saved_food#top"
     assert saved_foods(uid) == [("Roti", "1 roti", 120, None, True)]
 
 
@@ -524,17 +528,24 @@ FOLD_ROWS = [
     ("kcal not a number", {"kcal_per_serving": "lots"}, ["invalid_field"], ["kcal_per_serving"]),
     ("kcal above 5000", {"kcal_per_serving": "5001"}, ["invalid_field"], ["kcal_per_serving"]),
     ("kcal below 0", {"kcal_per_serving": "-1"}, ["invalid_field"], ["kcal_per_serving"]),
+    # A typed comma or unit (rev_b15 M2), each refused as not a number and read with its field's line.
+    ("kcal with a comma", {"kcal_per_serving": "1,000"}, ["invalid_field"], ["kcal_per_serving"]),
+    ("kcal with a decimal comma", {"kcal_per_serving": "58,5"}, ["invalid_field"], ["kcal_per_serving"]),
+    ("kcal with its unit", {"kcal_per_serving": "58 kcal"}, ["invalid_field"], ["kcal_per_serving"]),
     ("grams not a number", {"grams_per_serving": "some"}, ["invalid_field"], ["grams_per_serving"]),
     ("grams below 1", {"grams_per_serving": "0.5"}, ["invalid_field"], ["grams_per_serving"]),
     ("grams above 5000", {"grams_per_serving": "5001"}, ["invalid_field"], ["grams_per_serving"]),
+    ("grams with a decimal comma", {"grams_per_serving": "2,5"}, ["invalid_field"], ["grams_per_serving"]),
+    ("grams with its unit", {"grams_per_serving": "40g"}, ["invalid_field"], ["grams_per_serving"]),
     ("three at once", {"name": "", "kcal_per_serving": "lots", "grams_per_serving": "0"},
      ["missing_field", "invalid_field", "invalid_field"], ["name", "kcal_per_serving", "grams_per_serving"]),
 ]
 FOOD_LINES = {
     "name": "Give the food a name, up to 128 characters.",
     "serving_label": "Say what one serving is, such as 1 roti, up to 64 characters.",
-    "kcal_per_serving": "Give the kcal in one serving, from 0 to 5,000.",
-    "grams_per_serving": "Give the grams in one serving, from 1 to 5,000, or leave it empty.",
+    "kcal_per_serving": "Give the kcal in one serving as a plain number with no comma, from 0 to 5,000\u00a0kcal.",
+    "grams_per_serving": ("Give the grams in one serving as a plain number, such as 40, from 1 to 5,000\u00a0g, or "
+                          "leave it empty."),
 }
 
 
@@ -562,6 +573,7 @@ def test_each_fold_out_refusal_shows_the_pages_own_line_under_its_field(signed, 
     [answer] = real_save_food
     assert [e["error"] for e in answer["errors"]] == codes
     assert [e["message"].split()[0] for e in answer["errors"]] == fields  # what the placement reads
+    assert calls(only_user().id) == [("save_food", False, answer["error"])] and answer["error"] in codes
     assert field_lines(r.text, "food") == {f: FOOD_LINES[f] for f in fields}
     assert top_lines(r.text) == [] and strips(r.text) == []
     assert_none_of_the_services_words(r.text, answer)
@@ -588,6 +600,7 @@ def test_each_edit_refusal_shows_the_pages_own_line_under_its_field(signed, real
     [answer] = real_save_food
     assert [e["error"] for e in answer["errors"]] == codes
     assert [e["message"].split()[0] for e in answer["errors"]] == fields
+    assert calls(uid)[-1] == ("save_food", False, answer["error"]) and answer["error"] in codes
     assert field_lines(r.text, "edit") == {f: FOOD_LINES[f] for f in fields}
     assert top_lines(r.text) == []
     assert_none_of_the_services_words(r.text, answer)
@@ -685,6 +698,204 @@ def test_another_persons_food_is_a_404_on_every_address_and_nothing_of_it_shows(
     assert "Secret stew" not in page and post(signed, f"/foods/{theirs}/restore").status_code == 404
     assert [(f.deleted_at is None) for f in rows(SavedFood, other.id)] == [False]
     assert rows(SavedFood, mine) == []
+
+
+# ---------------------------------------------------------------- Foods, the fix round (the batch after B15)
+
+# The Saved foods table as the contract's row table (line 1172): each cell's tag, classes and data-label, by column.
+ROW_CELLS = {"Food": ("td", ["lead"], None), "Serving": ("td", [], "Serving"), "kcal": ("td", ["num"], "kcal"),
+             "Times logged": ("td", ["num"], "Times logged"), "Grams (g)": ("td", ["num"], "Grams (g)"),
+             "Edit": ("td", [], None), "Delete": ("td", [], None)}
+
+
+def test_the_saved_foods_table_is_the_contracts_row_table(signed, monkeypatch):
+    """rev_b15 section 5 and the fourth look: table.rows in its div.table-wrap, which stacks below 720 px. The Food
+    cell is td.lead, each figure a td.num with its column's header as its data-label (shown above it when stacked),
+    the Serving cell its label too. Edit and Delete each in a cell of their own, no label. With grams and without."""
+    for grams in (True, False):
+        data = FIGURES if grams else {**FIGURES, "foods": [{**f, "grams_per_serving": None} for f in FIGURES["foods"]]}
+        recorder(monkeypatch, "list_saved_foods", data)
+        page = signed.get("/foods").text
+        [card] = parse(page).find_all("section", "saved-foods")
+        [table] = tables(card)
+        assert table.node.classes == ["rows"] and table.node.parent.is_("div", "table-wrap")
+        heads = [r for r in table.node.find_all("tr") if r.find_all("th")][0].elements()
+        assert [(h.text(), h.classes) for h in heads] == [
+            (c, ["num"] if ROW_CELLS[c][1] == ["num"] else []) for c in COLUMNS if grams or c != "Grams (g)"]
+        assert [h.find_all("span", "sr")[0].text() for h in heads[-2:]] == ["Edit", "Delete"]
+        for row in table.rows:
+            assert [(c.tag, c.classes, c.attrs.get("data-label")) for c in row] == \
+                [ROW_CELLS[h] for h in table.headers], row
+            edit, delete = row[-2:]
+            assert [(n.tag, n.classes) for n in edit.elements()] == [("a", ["action"])]
+            assert [(n.tag, n.classes) for n in delete.elements()] == [("form", ["inline"])]
+            assert [(n.tag, n.classes, n.text()) for n in delete.find_all("button")] == [("button", ["link"], "Delete")]
+
+
+def test_neither_foods_form_carries_required_and_each_maxlength_is_the_services_limit(signed):
+    """rev_b15 section 5: a browser's own bubble never stops an empty field, so the page's own line is read, as on
+    Goals and Settings. maxlength stays, each the service's own limit."""
+    uid = only_user().id
+    food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    for address in ("/foods", f"/foods/{food['id']}/edit"):
+        page = signed.get(address).text
+        controls = [n for n in parse(page).iter() if n.tag in ("input", "select", "textarea")]
+        assert controls and not [n for n in controls if "required" in n.attrs], address
+        assert " required" not in page and "autofocus" not in page, address
+    fold = save_fold(signed.get("/foods").text)
+    assert {i.attrs["name"]: i.attrs.get("maxlength") for i in fold.find_all("input") if i.attrs.get("type") is None} \
+        == {"name": str(web.rules.TEXT_LIMITS["name"]), "serving_label": str(web.rules.TEXT_LIMITS["serving_label"]),
+            "kcal_per_serving": None, "grams_per_serving": None}
+    edit = signed.get(f"/foods/{food['id']}/edit").text
+    assert control(edit, "serving_label").attrs.get("maxlength") == str(web.rules.TEXT_LIMITS["serving_label"])
+
+
+def test_a_post_of_the_save_a_food_form_lands_at_the_top_and_its_refusal_at_the_form(signed, real_save_food):
+    """rev_b15 section 5 and the fourth look: the form posts to /foods#save-food, so a refusal comes back at the form,
+    open, with its lines in view. Every redirect that answers that post ends in #top, so the strip is in view. The
+    edit page's form and redirect, Delete and Undo carry no fragment. Nothing carries autofocus."""
+    uid = only_user().id
+    assert web.POST_LANDS == web.GOAL_POST_LANDS == "#top"
+    r = post(signed, "/foods", **{**GOOD_FOOD, "kcal_per_serving": "lots"})
+    assert r.status_code == 400 and '<form method="post" action="/foods#save-food">' in r.text
+    assert 'id="save-food"' in r.text and "open" in save_fold(r.text).attrs and "autofocus" not in r.text
+    r = post(signed, "/foods", **GOOD_FOOD)
+    assert r.headers["location"] == SITE + "/foods?saved=saved_food#top"
+    page = signed.get(r.headers["location"]).text
+    assert strips(page) == ["Saved food saved."] and [n.tag for n in parse(page).iter() if n.attrs.get("id") == "top"] \
+        == ["body"]
+    assert post(signed, "/foods", **GOOD_FOOD).headers["location"] == SITE + "/foods?saved=unchanged#top"
+    [food] = rows(SavedFood, uid)
+    edit = signed.get(f"/foods/{food.id}/edit").text
+    assert re.findall(r'<form class="stack" method="post" action="([^"]+)">', edit) == [f"/foods/{food.id}/edit"]
+    assert post(signed, f"/foods/{food.id}/edit", serving_label="2 idli", kcal_per_serving="116").headers["location"] \
+        == SITE + "/foods?saved=saved_food"
+    assert post(signed, f"/foods/{food.id}/delete").headers["location"] == SITE + f"/foods?deleted=saved_food:{food.id}"
+    assert post(signed, f"/foods/{food.id}/restore").headers["location"] == SITE + "/foods?restored=saved_food"
+
+
+def test_a_save_a_food_post_with_no_person_behind_it_goes_to_sign_in_at_the_top(signed, monkeypatch):
+    """The form's other redirect: a post whose person is gone (the token still good) goes to sign in, and it too ends
+    in #top, as Goals' does. A GET's, and the edit page's, are as they were."""
+    async def nobody(request):
+        return None
+
+    monkeypatch.setattr(web, "current_user", nobody)
+    r = post(signed, "/foods", **GOOD_FOOD)
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/sign-in#top"
+    assert signed.get("/foods").headers["location"] == SITE + "/sign-in"
+    assert post(signed, "/foods/1/edit", **ROTI).headers["location"] == SITE + "/sign-in"
+
+
+# Each field of the two forms at empty, spaces, not a number, a comma, each end of the service's own range and one
+# past it (rev_b15 T1). The ends are save_food's (rules.TEXT_LIMITS, rules.NUMBERS, two decimals kept).
+_KCAL, _GRAMS = web.rules.NUMBERS["kcal_per_serving"][:2], web.rules.NUMBERS["grams_per_serving"][:2]
+FOOD_SWEEP = {
+    "name": ["", "   ", "x" * web.rules.TEXT_LIMITS["name"], "x" * (web.rules.TEXT_LIMITS["name"] + 1)],
+    "serving_label": ["", "   ", "s" * web.rules.TEXT_LIMITS["serving_label"],
+                      "s" * (web.rules.TEXT_LIMITS["serving_label"] + 1)],
+    "kcal_per_serving": ["", "   ", "lots", "1,000", "58,5", str(_KCAL[0]), str(_KCAL[0] - 0.01), str(_KCAL[1]),
+                         str(_KCAL[1] + 0.01)],
+    "grams_per_serving": ["", "   ", "some", "2,5", "40g", str(_GRAMS[0]), str(_GRAMS[0] - 0.01), str(_GRAMS[1]),
+                          str(_GRAMS[1] + 0.01)],
+}
+
+
+def test_every_refusal_of_either_form_lands_under_a_field_it_draws(signed, real_save_food):
+    """rev_b15 T1: placement reads save_food's message, so a refusal save_food gains with no field the form draws
+    would fall to the general line unseen. Each field through the real fold-out and the real edit form, at each value
+    of FOOD_SWEEP: every refusal's every problem lands under that field, in its line, and none at the top."""
+    uid = only_user().id
+    food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    seen = {"refused": 0, "saved": 0}
+    for address, drawn, prefix, good in (("/foods", web.FOOD_FIELDS, "food", GOOD_FOOD),
+                                         (f"/foods/{food['id']}/edit", web.FOOD_EDIT_FIELDS, "edit", ROTI)):
+        for field in drawn:
+            for value in FOOD_SWEEP[field]:
+                real_save_food.clear()
+                r = post(signed, address, **{**good, field: value})
+                if r.status_code == 303:
+                    seen["saved"] += 1
+                    assert all("error" not in a for a in real_save_food), (address, field, value)
+                    continue
+                assert r.status_code == 400, (address, field, value)
+                seen["refused"] += 1
+                [answer] = real_save_food
+                assert web.food_errors(answer, drawn) == ({field: web.FIELD_HELP[("saved_food", field)]}, []), \
+                    (address, field, value, answer)
+                assert field_lines(r.text, prefix) == {field: web.FIELD_HELP[("saved_food", field)]}, (field, value)
+                assert top_lines(r.text) == [], (address, field, value)
+    assert seen["refused"] >= 30 and seen["saved"] >= 15, seen
+
+
+def test_a_refusal_with_no_problems_list_says_the_general_line(signed):
+    """rev_b15 T2: a refusal that is not a combined one carries no errors list. Each is real: save_food for an
+    account that is not there (no_account), with data that is not an object, and by a caller it does not know."""
+    answers = [services.save_food(10**9, dict(GOOD_FOOD), "web"), services.save_food(10**9, "Idli", "web"),
+               services.save_food(10**9, dict(GOOD_FOOD), "api")]
+    assert [a["error"] for a in answers] == ["no_account", "invalid_field", "invalid_by"]
+    for answer in answers:
+        assert "errors" not in answer
+        assert web.food_errors(answer, web.FOOD_FIELDS) == ({}, [web.FOOD_ERROR_GENERAL])
+        assert web.food_errors(answer, web.FOOD_EDIT_FIELDS) == ({}, [web.FOOD_ERROR_GENERAL])
+
+
+def test_a_refusal_with_no_field_opens_the_fold_out_though_foods_are_saved(signed, real_save_food, monkeypatch):
+    """rev_b15 T3: with a saved food the fold-out is closed by default, so only the refusal opens it."""
+    uid = only_user().id
+    services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    assert "open" not in save_fold(signed.get("/foods").text).attrs
+    real_form = web.food_form
+    monkeypatch.setattr(web, "food_form", lambda form: {**real_form(form), "colour": "red"})
+    r = post(signed, "/foods", **GOOD_FOOD)
+    assert r.status_code == 400 and real_save_food[-1]["error"] == "invalid_field" and field_lines(r.text, "food") == {}
+    assert top_lines(r.text) == [web.FOOD_ERROR_GENERAL] and "open" in save_fold(r.text).attrs
+
+
+def test_a_refusal_posted_to_a_marked_address_shows_no_strip(signed, real_save_food):
+    """rev_b15 T4: the strip shows only on a page after a write, never over a refusal."""
+    uid = only_user().id
+    food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    for address in ("/foods?saved=saved_food", "/foods?restored=saved_food", f"/foods?deleted=saved_food:{food['id']}"):
+        r = post(signed, address, **{**GOOD_FOOD, "kcal_per_serving": "lots"})
+        assert r.status_code == 400 and "error" in real_save_food[-1] and strips(r.text) == [], address
+
+
+@pytest.mark.parametrize("data, stored", [
+    ({"kcal_per_serving": "0"}, ("Idli", "1 idli", 0, None)),
+    ({"kcal_per_serving": "5000"}, ("Idli", "1 idli", 5000, None)),
+    ({"kcal_per_serving": "1e3"}, ("Idli", "1 idli", 1000, None)),
+    ({"grams_per_serving": "1"}, ("Idli", "1 idli", 58, 1)),
+    ({"grams_per_serving": "5000"}, ("Idli", "1 idli", 58, 5000)),
+    ({"name": "n" * 128}, ("n" * 128, "1 idli", 58, None)),
+    ({"serving_label": "s" * 64}, ("Idli", "s" * 64, 58, None)),
+], ids=["kcal 0", "kcal 5000", "kcal 1e3", "grams 1", "grams 5000", "name 128", "serving 64"])
+def test_each_accepted_end_is_saved_through_the_fold_out(signed, data, stored):
+    """rev_b15 T6: the ends save_food accepts, posted through the form, are saved and marked so."""
+    uid = only_user().id
+    assert post(signed, "/foods", **{**GOOD_FOOD, **data}).headers["location"] == SITE + "/foods?saved=saved_food#top"
+    assert saved_foods(uid) == [(*stored, True)]
+    assert calls(uid)[-1] == ("save_food", True, None)
+
+
+def test_markup_typed_into_a_food_comes_back_as_typed_escaped_once(signed):
+    """rev_b15 T7: a name and a serving with markup, in the table, the edit page's h1, title and field, and what was
+    typed after a refusal: each escaped once, never drawn as a tag."""
+    uid = only_user().id
+    name, serving = '<b>Dal</b> & "x"', "<i>1 bowl</i> &amp;"
+    food = services.save_food(uid, {"name": name, "serving_label": serving, "kcal_per_serving": 100}, "claude")["id"]
+    page, edit = signed.get("/foods").text, signed.get(f"/foods/{food}/edit").text
+    refused = post(signed, f"/foods/{food}/edit", serving_label="<s>2</s> &", kcal_per_serving="lots")
+    assert refused.status_code == 400
+    assert foods_table(page)[1][0][:2] == [name, serving]
+    once = str(escape(name))  # as the page's autoescape writes it
+    assert f'<td class="lead">{once}</td>' in page
+    assert f"<h1>Edit {once}</h1>" in edit and f"<title>Edit {once} · Spotter</title>" in edit
+    assert control(edit, "serving_label").attrs["value"] == serving
+    assert control(refused.text, "serving_label").attrs["value"] == "<s>2</s> &"
+    for markup in (page, edit, refused.text):
+        assert not any(tag in markup for tag in ("<b>Dal", "<i>1 bowl", "<s>2")), markup[:200]
+        assert "&amp;lt;" not in markup and "&amp;quot;" not in markup and "&amp;amp;amp;" not in markup
 
 
 # ---------------------------------------------------------------- Export my data
@@ -989,8 +1200,8 @@ def test_each_post_that_changes_nothing_lands_on_its_card_marked_unchanged_with_
     assert "error" not in services.update_settings(uid, {"time_zone": "Asia/Kolkata", "calorie_target_kcal": 2000,
                                                          "add_back_exercise_kcal": True}, "web")
     before = (only_user().updated_at, len(calls(uid)))
-    landed = [location_of(post(signed, "/settings", time_zone="Asia/Kolkata")),
-              location_of(post(signed, "/settings", time_zone="Asia/Calcutta")),
+    landed = [location_of(post(signed, "/settings", time_zone="Asia/Kolkata", card="zone")),
+              location_of(post(signed, "/settings", time_zone="Asia/Calcutta", card="zone")),
               location_of(post(signed, "/settings/targets", calorie_target_kcal="2000", add_back_exercise_kcal="on")),
               location_of(post(signed, "/settings/targets", calorie_target_kcal=" 2000.0 ",
                                add_back_exercise_kcal="on")),
@@ -1016,7 +1227,7 @@ def test_targets_update_settings_finds_unchanged_are_marked_unchanged(signed, mo
 def test_each_form_posts_to_its_cards_anchor_and_each_redirect_names_it(signed):
     """The three forms' actions end in their card's id, which is on the page. Export, Remove sample data and Sign out
     carry none, and neither does the automatic zone form. Each redirect that answers one of the three names the same
-    card. The automatic save (it carries next) lands as it always did."""
+    card: the Time zone card's form carries its own field for it. The automatic save lands as it always did."""
     services.add_sample_data(only_user().id, "web")
     page = signed.get("/settings").text
     dom = parse(page)
@@ -1027,7 +1238,11 @@ def test_each_form_posts_to_its_cards_anchor_and_each_redirect_names_it(signed):
     assert {"zone", "targets", "assistant"} <= ids
     assert re.search(r'<form id="auto-time-zone" method="post" action="/settings" hidden>', page)
     assert "autofocus" not in page
-    assert location_of(post(signed, "/settings", time_zone="Europe/London")) == SITE + "/settings?saved=time_zone#zone"
+    [card] = [f for f in dom.find_all("form") if f.attrs.get("action") == "/settings#zone"]
+    assert [(i.attrs.get("type"), i.attrs.get("name"), i.attrs.get("value")) for i in card.find_all("input")][1:] == [
+        ("hidden", web.ZONE_CARD_FIELD, "zone")]
+    assert location_of(post(signed, "/settings", time_zone="Europe/London", card="zone")) == \
+        SITE + "/settings?saved=time_zone#zone"
     assert location_of(post(signed, "/settings/targets", target_sessions_per_week="3")) == \
         SITE + "/settings?saved=targets#targets"
     assert location_of(post(signed, "/settings/claude-can", claude_can="read")) == \
@@ -1042,6 +1257,7 @@ def test_each_form_posts_to_its_cards_anchor_and_each_redirect_names_it(signed):
 # The refusals each card can meet, every one a real refusal from the service: (id, card, the post, the code
 # update_settings or set_claude_can gives, {field: the page's line} or the card's line).
 ZONE_LINE = "That time zone was not recognised, so nothing was changed. Choose your time zone from the list."
+ZONE_EMPTY = "Choose your time zone from the list."  # nothing chosen: the list's own first option
 ZONE_ROWS = [("not a zone", {"time_zone": "Mars/Olympus"}, "unknown_time_zone"),
              ("an abbreviation", {"time_zone": "EST"}, "unknown_time_zone"),
              ("a bare city", {"time_zone": "Kolkata"}, "unknown_time_zone"),
@@ -1049,14 +1265,15 @@ ZONE_ROWS = [("not a zone", {"time_zone": "Mars/Olympus"}, "unknown_time_zone"),
              ("too long", {"time_zone": "x" * 100}, "invalid_field"),
              ("a control character", {"time_zone": "Asia/Kolkata\u0007"}, "invalid_field"),
              ("markup", {"time_zone": "<b>Mars</b>"}, "unknown_time_zone")]
-CALORIE = "Give a daily target from 800 to 10,000 kcal, as a whole number, or leave it empty."
-SESSIONS = "Give sessions a week from 0 to 14, as a whole number, or leave it empty."
-CARDIO = "Give cardio minutes a week from 0 to 3,000, as a whole number, or leave it empty."
+CALORIE = "Give the calories as a whole number with no comma, from 800 to 10,000\u00a0kcal, or leave it empty."
+SESSIONS = "Give lift sessions a week as a whole number from 0 to 14, or leave it empty."
+CARDIO = "Give cardio minutes a week as a plain whole number, such as 150, from 0 to 3,000, or leave it empty."
 TARGET_ROWS = [
     ("calories below 800", {"calorie_target_kcal": "799"}, {"calorie_target_kcal": CALORIE}),
     ("calories above 10000", {"calorie_target_kcal": "10001"}, {"calorie_target_kcal": CALORIE}),
     ("calories not a number", {"calorie_target_kcal": "lots"}, {"calorie_target_kcal": CALORIE}),
     ("calories not whole", {"calorie_target_kcal": "2000.5"}, {"calorie_target_kcal": CALORIE}),
+    ("calories with a comma", {"calorie_target_kcal": "2,000"}, {"calorie_target_kcal": CALORIE}),
     ("sessions below 0", {"target_sessions_per_week": "-1"}, {"target_sessions_per_week": SESSIONS}),
     ("sessions above 14", {"target_sessions_per_week": "15"}, {"target_sessions_per_week": SESSIONS}),
     ("sessions not a number", {"target_sessions_per_week": "four"}, {"target_sessions_per_week": SESSIONS}),
@@ -1065,6 +1282,7 @@ TARGET_ROWS = [
     ("cardio above 3000", {"target_cardio_minutes_per_week": "3001"}, {"target_cardio_minutes_per_week": CARDIO}),
     ("cardio not a number", {"target_cardio_minutes_per_week": "<b>x</b>"}, {"target_cardio_minutes_per_week": CARDIO}),
     ("cardio not whole", {"target_cardio_minutes_per_week": "150.5"}, {"target_cardio_minutes_per_week": CARDIO}),
+    ("cardio with a comma", {"target_cardio_minutes_per_week": "2,000"}, {"target_cardio_minutes_per_week": CARDIO}),
     ("three at once", {"calorie_target_kcal": "100", "target_sessions_per_week": "99",
                        "target_cardio_minutes_per_week": "abc", "add_back_exercise_kcal": "on"},
      {"calorie_target_kcal": CALORIE, "target_sessions_per_week": SESSIONS, "target_cardio_minutes_per_week": CARDIO}),
@@ -1093,7 +1311,9 @@ def real_refusal(function, *args) -> dict:
 @pytest.mark.parametrize("data, code", [row[1:] for row in ZONE_ROWS], ids=[row[0] for row in ZONE_ROWS])
 def test_each_zone_refusal_says_the_pages_line_in_its_card(signed, data, code):
     """The line in a div.error at the top of the Time zone card's form, tied to the select. Never update_settings'
-    message or fix. 400, nothing saved, the call log holds the refusal's code, and no saved line shows."""
+    message or fix. 400, nothing saved, the call log holds the refusal's code, and no saved line shows. A post that
+    chose nothing is told to choose: it chose no zone that could go unrecognised."""
+    line = ZONE_EMPTY if data == {"time_zone": ""} else ZONE_LINE
     result = real_refusal(services.update_settings, dict(data), "web")
     assert result["error"] == code and "field" not in result
     r = post(signed, "/settings", **data)
@@ -1102,10 +1322,10 @@ def test_each_zone_refusal_says_the_pages_line_in_its_card(signed, data, code):
     card = card_by_title(r.text, "Time zone")
     [box] = card.find_all("div", "error")
     assert [(p.classes, p.attrs.get("id"), p.text()) for p in box.elements()] == [(["error"], "time-zone-error",
-                                                                                     ZONE_LINE)]
+                                                                                     line)]
     [select] = card.find_all("select")
     assert (select.attrs.get("aria-invalid"), select.attrs.get("aria-describedby")) == ("true", "time-zone-error")
-    assert [p.text() for p in parse(r.text).find_all(cls="error")] == [ZONE_LINE] * 2  # the box and its line only
+    assert [p.text() for p in parse(r.text).find_all(cls="error")] == [line] * 2  # the box and its line only
     for text in service_messages(result):
         assert text not in r.text, text
     assert "<b>Mars</b>" not in r.text and 'class="ok' not in r.text
@@ -1230,11 +1450,9 @@ def test_the_switch_shows_three_labelled_radio_cards_and_checks_the_stored_one(s
         got.append((radio.attrs["type"], radio.attrs["name"], radio.attrs["value"], "checked" in radio.attrs,
                     bold.text(), shown(choice).removeprefix(bold.text()).strip()))
     assert got == [("radio", "claude_can", v, v == value, label, line) for v, label, line in [
-        ("read", "Read only", "Read only: your assistant can read what you have logged and change nothing."),
-        ("log", "Read and log", "Read and log: your assistant can also log, edit and restore entries and set goals, "
-                                "but not delete."),
-        ("log_delete", "Read, log and delete", "Read, log and delete: your assistant can also delete entries. A deleted "
-                                               "entry can always be restored.")]]
+        ("read", "Read only", SWITCH_ALLOWS["read"][1]), ("log", "Read and log", SWITCH_ALLOWS["log"][1]),
+        ("log_delete", "Read, log and delete", SWITCH_ALLOWS["log_delete"][1])]]
+    assert all(not line.startswith(label) for _, _, _, _, label, line in got)  # no line repeats its label
     assert [b.text() for b in card.find_all("button")] == ["Save"]
 
 
@@ -1295,6 +1513,126 @@ def test_the_more_card_links_saved_foods_and_carries_a_sign_out_that_signs_out(s
     r = signed.post(form.attrs["action"], data={"csrf_token": form.find_all("input")[0].attrs["value"]})
     assert r.status_code == 303 and session_of(signed) == {}
     assert signed.get("/settings").headers["location"] == SITE + "/sign-in"
+
+
+# What each setting lets the assistant call beyond the setting before it, read from mcp_server.NEEDS, beside the line
+# the switch says for it (rev_b16 M2 and T2). A change to either fails here until both are read again: a function
+# NEEDS gains, moves or loses changes its set, and a reworded line changes its words.
+SWITCH_ALLOWS = {
+    "read": ({"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals"},
+             "Your assistant can read what you have logged and change nothing."),
+    "log": ({"log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "import_entries", "edit_entry",
+             "restore_entry", "save_food", "set_goal", "update_settings"},
+            "Your assistant can also log and import entries, edit and restore them, save foods, set goals, and change "
+            "your time zone and targets. It cannot delete."),
+    "log_delete": ({"delete_entry"},
+                   "Your assistant can also delete entries and saved foods. A deleted one can always be restored."),
+}
+
+
+def test_each_switch_line_is_held_beside_what_needs_lets_its_setting_call_beyond_the_one_before():
+    """Each setting in the switch's order, the functions mcp_server.NEEDS gives exactly that level (what it allows
+    beyond the level below), and the line the page says for it."""
+    from app import mcp_server  # noqa: PLC0415
+    from app.models import CLAUDE_CAN  # noqa: PLC0415
+
+    assert list(SWITCH_ALLOWS) == list(CLAUDE_CAN) == list(mcp_server.LEVELS) == list(web.CLAUDE_CAN_LINES)
+    assert {level: ({f for f, need in mcp_server.NEEDS.items() if need == level}, web.CLAUDE_CAN_LINES[level])
+            for level in mcp_server.LEVELS} == SWITCH_ALLOWS
+
+
+def auto_zone_form(page: str) -> tuple[str, dict]:
+    """base.html's automatic zone form as the page draws it: its action and the fields it would post."""
+    [form] = [f for f in parse(page).find_all("form") if f.attrs.get("id") == "auto-time-zone"]
+    return form.attrs["action"], {i.attrs["name"]: i.attrs.get("value", "") for i in form.find_all("input")}
+
+
+@pytest.mark.parametrize("next_, lands", [
+    (None, "/settings?saved=time_zone"),  # as a page drawn with an error sends it: no next
+    ("/goals?kind=x#y", "/goals?kind=x&saved=time_zone#y"),
+    ("", "/settings?saved=time_zone"), ("/settings", "/settings?saved=time_zone"),
+    ("//evil.example", "/settings?saved=time_zone"), ("https://evil.example/x", "/settings?saved=time_zone"),
+], ids=["no next", "a local page", "empty", "settings", "another site", "another site in full"])
+def test_the_automatic_zone_save_lands_as_it_always_did_from_a_page_drawn_with_an_error(signed, next_, lands):
+    """rev_b16 M3: a page drawn with an error (here a refused target, 400) draws the automatic form with no next. Posted
+    as drawn, the browser's zone filled in, it lands on Settings with no anchor, as before pass B16. With each next it
+    lands where it did. Only the Time zone card's own form, which carries its field, lands on the card."""
+    r = post(signed, "/settings/targets", calorie_target_kcal="abc")
+    assert r.status_code == 400 and only_user().time_zone is None
+    action, fields = auto_zone_form(r.text)
+    assert action == "/settings" and set(fields) == {"csrf_token", "time_zone"}  # no next, no card field
+    sent = {**fields, "time_zone": "Asia/Kolkata", **({} if next_ is None else {"next": next_})}
+    assert location_of(signed.post(action, data=sent)) == SITE + lands
+    assert only_user().time_zone == "Asia/Kolkata"
+
+
+def test_a_target_typed_with_a_comma_gets_its_fields_line_with_the_services_range(signed):
+    """rev_b16 M1: "2,000" is refused by update_settings as not a number. Each field's own line shows under it, its
+    range read from the service's limits. Each says what is wrong with a typed comma."""
+    for field, line in (("calorie_target_kcal", CALORIE), ("target_cardio_minutes_per_week", CARDIO)):
+        result = real_refusal(services.update_settings, {field: "2,000"}, "web")
+        assert result["error"] == "invalid_field" and "not a number" in result["message"]
+        r = post(signed, "/settings/targets", **{field: "2,000"})
+        assert r.status_code == 400 and line in html.unescape(r.text) and line == web.TARGET_ERROR_WORDS[
+            ("invalid_field", field)]
+        lo, hi, _ = web.rules.NUMBERS[field]
+        assert web.rules.span(lo, hi, web.TARGET_QUANTITIES[field]) in line
+    assert "as a plain whole number, such as 150," in CARDIO and "as a whole number with no comma," in CALORIE
+
+
+@pytest.mark.parametrize("field, value, stored", [
+    ("calorie_target_kcal", "800", 800), ("calorie_target_kcal", "10000", 10000),
+    ("target_sessions_per_week", "0", 0), ("target_sessions_per_week", "14", 14),
+    ("target_cardio_minutes_per_week", "0", 0), ("target_cardio_minutes_per_week", "3000", 3000),
+])
+def test_each_targets_accepted_ends_are_saved_through_the_form(signed, field, value, stored):
+    """rev_b16 T4: each end of each range, posted through the form, is saved and marked so."""
+    lo, hi, _ = web.rules.NUMBERS[field]
+    assert stored in (lo, hi)  # the service's own ends
+    assert location_of(post(signed, "/settings/targets", **{field: value})) == SITE + "/settings?saved=targets#targets"
+    assert getattr(only_user(), field) == stored
+    assert calls(only_user().id)[-1] == ("update_settings", True, None)
+
+
+@pytest.mark.parametrize("address, data", [
+    ("/settings?saved=time_zone", {"time_zone": "Mars/Olympus", "card": "zone"}),
+    ("/settings/targets?saved=targets", {"calorie_target_kcal": "abc"}),
+    ("/settings/claude-can?saved=claude_can", {"claude_can": "admin"}),
+], ids=["zone", "targets", "switch"])
+def test_a_refusal_posted_to_an_address_with_a_saved_mark_shows_no_saved_line(signed, address, data):
+    """rev_b16 T5: the saved line is the mark's only on a page after a write, never over a refusal."""
+    r = post(signed, address, **data)
+    assert r.status_code == 400 and parse(r.text).find_all("p", "ok") == [] and 'class="ok' not in r.text
+    assert parse(r.text).find_all(cls="error")
+
+
+def test_settings_says_its_own_sample_banner_and_every_other_page_keeps_its_own(signed, sample_state):
+    """On Settings the banner names the card that holds Remove sample data and links nowhere, since the person is
+    on the page the others link to. Every other page's banner is as it was."""
+    sample_state(empty=False, rows=3)
+    page = signed.get("/settings").text
+    [banner] = parse(page).find_all("p", "sample-banner")
+    assert (banner.classes, banner.text(), banner.elements()) == (
+        ["notice", "sample-banner"], "Sample data is on this account. Remove it under Your data.", [])
+    assert BANNER not in plain(page) and [shown(c.find_all("h2")[0]) for c in settings_cards(page)][4] == "Your data"
+    for path in (f"/day/{today_of(only_user()).isoformat()}", "/progress", "/goals", "/foods"):
+        other = signed.get(path).text
+        assert 'Remove it on <a href="/settings">Settings</a>.' in other and "under Your data" not in other, path
+    sample_state(empty=False, rows=0)
+    assert not parse(signed.get("/settings").text).find_all("p", "sample-banner")
+
+
+@pytest.mark.parametrize("address, card", [("/settings/targets", "targets"), ("/settings/claude-can", "assistant")])
+def test_a_get_of_a_cards_post_address_goes_to_its_card(signed, address, card):
+    """rev_b16, the look's 1.5.7: a refused post leaves its own address in the bar, and a GET of it (a reload, the
+    address typed) goes to Settings at that card's anchor rather than a 404. Its post is as it was."""
+    r = signed.get(address)
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/settings#{card}"
+    assert signed.get(r.headers["location"]).status_code == 200
+    signed.cookies.clear()
+    r = signed.get(address)
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/settings#{card}"
+    assert signed.get(r.headers["location"]).headers["location"] == SITE + "/sign-in"
 
 
 # ---------------------------------------------------------------- Delete my account, rebuilt (pass B16)

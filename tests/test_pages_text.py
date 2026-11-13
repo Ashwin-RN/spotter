@@ -270,16 +270,18 @@ SAVED_FOODS_CARD = '<section class="card saved-foods"'
 
 
 def foods_cells(markup: str) -> dict[int, list[str]] | None:
-    """Foods' Saved foods card's places for a true zero: a cell under the kcal or Times logged header (its cells are
-    bare td, so the column is read by its place in the row against the table's own headers), where it holds a bare
-    0. Its Food, Serving and Grams cells, its actions and its closing line hold none."""
+    """Foods' Saved foods card's places for a true zero: a cell whose data-label is kcal or Times logged (the row
+    table's own name for its column, shown above it when the table stacks) and which sits under that same header by
+    its place in the row, where it holds a bare 0. A cell whose label and place disagree holds none. Its Food,
+    Serving and Grams cells, its actions and its closing line hold none."""
     span = _block(markup, SAVED_FOODS_CARD, "section")
     card = markup[span[0]:span[1]] if span else ""
     headers = [tr.squash(re.sub(r"<[^>]+>", "", h)) for h in re.findall(r"<th\b[^>]*>(.*?)</th>", card, re.S)]
 
     def named(row):
-        yield from ((cell, headers[n]) for n, cell in enumerate(row)
-                    if n < len(headers) and headers[n] in FOODS_ZERO_COLUMNS)
+        yield from ((cell, cell[1]["data-label"]) for n, cell in enumerate(row)
+                    if cell[1].get("data-label") in FOODS_ZERO_COLUMNS and n < len(headers)
+                    and headers[n] == cell[1]["data-label"])
     return _zero_cells(markup, SAVED_FOODS_CARD, named)
 
 
@@ -797,26 +799,28 @@ def without_assistants(markup: str) -> str:
     return markup[:start.start()]
 
 
-def claude_sentences(address: str, markup: str, route: str | None = None) -> list[tuple[str, str]]:
+def claude_sentences(address: str, markup: str, route: str | None = None,
+                     entered: list[str] | tuple = ()) -> list[tuple[str, str]]:
     """Every sentence of visible text that says Claude, with its element: page text, the title and read
-    attributes. Only the landing's list of assistants may."""
+    attributes. Only the landing's list of assistants may. The person's own text (entered: their notes,
+    descriptions, names, as page_findings is handed them) is masked first: it is theirs, not the page's."""
     shown = without_assistants(markup) if (route or route_of(address)) == "/" else markup
-    return [(p.tag, sentence) for p in tr.html_text(shown) for sentence in _SENTENCE.split(p.text)
-            if CLAUDE.search(sentence)]
+    return [(p.tag, sentence) for p in tr.html_text(shown)
+            for sentence in _SENTENCE.split(tr.mask_entered(p.text, entered)) if CLAUDE.search(sentence)]
 
 
-def claude_hits(address: str, markup: str, route: str | None = None) -> list[str]:
+def claude_hits(address: str, markup: str, route: str | None = None, entered: list[str] | tuple = ()) -> list[str]:
     return [f"{address} <{tag}>: says Claude: {sentence!r}"
-            for tag, sentence in claude_sentences(address, markup, route)]
+            for tag, sentence in claude_sentences(address, markup, route, entered)]
 
 
 def claude_findings(address: str, markup: str, seen: set[tuple[str, str]] | None = None,
-                    route: str | None = None) -> list[str]:
+                    route: str | None = None, entered: list[str] | tuple = ()) -> list[str]:
     """claude_hits, less the sentences CLAUDE_SKIPS lists for this route. `seen` collects (route, sentence)
     for each skipped sentence the page still says."""
     route = route or route_of(address)
     out = []
-    for tag, sentence in claude_sentences(address, markup, route):
+    for tag, sentence in claude_sentences(address, markup, route, entered):
         if sentence in CLAUDE_SKIPS.get(route, ()):
             if seen is not None:
                 seen.add((route, sentence))
@@ -990,13 +994,13 @@ def entered_notes(user_id: int) -> list[str]:
 
 def step_4_findings(address: str, markup: str, names: Names | None, notes: list[str],
                     seen: set[tuple[str, str]] | None = None, message: bool = False,
-                    route: str | None = None) -> list[str]:
+                    route: str | None = None, entered: list[str] | tuple = ()) -> list[str]:
     """T3's step 4 checks on one page: furniture and Claude on every page, structure on the routes in BUILT.
     `message`: the page is the message template. `route`: the page a form was sent back to, when the
-    address is the one it was posted to."""
+    address is the one it was posted to. `entered`: the person's own text, which the Claude check masks."""
     dom = parse(markup)
     out = (furniture_findings(address, markup, names, dom, message, route)
-           + claude_findings(address, markup, seen, route))
+           + claude_findings(address, markup, seen, route, entered))
     if not message and (route or route_of(address)) in BUILT:
         out += structure_findings(address, markup, notes, dom)
     return out
@@ -1029,7 +1033,7 @@ def test_every_page_passes_the_page_rules(client, account):
             assert r.status_code == 200, (path, r.status_code)
             rendered += 1
             findings += page_findings(path, r.text, entered, user_id)
-            findings += step_4_findings(path, r.text, names, notes, seen)
+            findings += step_4_findings(path, r.text, names, notes, seen, entered=entered)
     assert rendered >= 12
     if account == "edge":  # far_days: a day after today, and a day in another year
         days = [date.fromisoformat(a.split("/")[2]) for a in get_paths(user_id)["/day/{date}"] if "?" not in a]
@@ -1054,15 +1058,25 @@ def test_no_rebuilt_route_keeps_a_claude_skip():
     assert not BUILT & set(CLAUDE_SKIPS), BUILT & set(CLAUDE_SKIPS)
 
 
+# Every field a form_message line can be drawn for (rev_b14 T-2): before, only "date", "kind" and none.
+FORM_MESSAGE_FIELDS = frozenset({"date", "kind", "", *(f for fields in web.FIELDS_OF.values() for f in fields),
+                                 *web.FIRST_FIELD.values()})
+
+
 def test_no_error_line_the_day_edit_and_foods_pages_can_draw_says_claude():
     """The sweeps render each page's form errors from a sample of posts, so the Claude check reads only the lines
     those posts reach. Every line the day page's fold-outs, the edit pages and Foods' two forms draw under a field
     or at the top comes from FIELD_HELP, form_message (each of its branches here) or FOOD_ERROR_GENERAL: each is read
     here. Each Goals line is rendered and checked by tests/test_web_goals.py's row test."""
     drawn = [*web.FIELD_HELP.values(), web.FOOD_ERROR_GENERAL,
-             *(web.form_message(kind, f, m) for kind in (*web.EDIT_FIELDS, "") for f in ("date", "kind", "")
+             *(web.form_message(kind, f, m) for kind in (*web.EDIT_FIELDS, "") for f in FORM_MESSAGE_FIELDS
                for m in (None, *web.rules.MEASUREMENTS))]
     assert [line for line in drawn if CLAUDE.search(line)] == []
+    # Every field error_field can place a refusal on, so every branch form_message has or gains: the fields of
+    # every kind (web.FIELDS_OF), the first fields, and the date, kind and no field, each kind and none.
+    assert {"date", "kind", ""} <= FORM_MESSAGE_FIELDS
+    assert {f for fields in web.FIELDS_OF.values() for f in fields} | set(web.FIRST_FIELD.values()) <= \
+        FORM_MESSAGE_FIELDS
 
 
 # ---------------------------------------------------------------- the checks themselves
@@ -1073,10 +1087,11 @@ def test_a_bare_zero_passes_only_as_a_true_count(client):
     _ok(services.save_food(user_id, {"name": "Black coffee", "serving_label": "1 cup", "kcal_per_serving": 5},
                            "web"))
     page = client.get("/foods").text
-    assert "<td>0</td>" in page  # never logged: a true count
+    assert '<td class="num" data-label="Times logged">0</td>' in page  # never logged: a true count
     assert page_findings("/foods", page, entered_text(user_id), user_id) == []
     # The same 0 where the data holds no zero is an invented figure.
-    invented = page.replace("<td>5</td>", "<td>0</td>")
+    invented = page.replace('<td class="num" data-label="kcal">5</td>', '<td class="num" data-label="kcal">0</td>')
+    assert invented != page
     assert any("true zeros" in f for f in page_findings("/foods", invented, entered_text(user_id), user_id))
     # And a bare 0 anywhere else is an empty figure.
     assert any("empty_figure" in f for f in page_findings("/progress", "<dl><dd>0</dd></dl>", [], user_id))
@@ -1213,6 +1228,30 @@ def test_claude_is_said_only_in_the_landings_list_of_assistants(monkeypatch):
     assert claude_findings(address, f"<p>{sentence}</p>", seen) == [] and seen == {(route, sentence)}
     assert claude_findings(address, f"<p>{sentence} Ask Claude.</p>")  # a new sentence on a skipped page
     assert claude_findings("/privacy", f"<p>{sentence}</p>")  # the sentence on another route
+
+
+def test_the_claude_check_leaves_out_the_persons_own_words_and_still_finds_the_pages(client):
+    """rev_impb, the merged tree's section 9: a note or a description the person wrote that says Claude is theirs,
+    not the page's, so the Claude check masks it as the other text rules do (entered_text). Unmasked it was a finding
+    though the page was right. A sentence of the page's own that says Claude still fails beside it."""
+    sign_in(client)
+    uid = only_user().id
+    on = today_of(only_user()).isoformat()
+    session = _ok(services.log_lifts(uid, {"date": on, "notes": "Claude said rest a day",
+                                           "sets": [{"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude"))
+    _ok(services.log_food(uid, {"entries": [{"description": "Lunch Claude picked", "kcal": 500, "meal": "lunch"}]},
+                          "claude"))
+    entered, names, notes = entered_text(uid), names_of(uid), entered_notes(uid)
+    for address in (f"/day/{on}", f"/entries/lift_session/{session['id']}/edit"):
+        page = client.get(address).text
+        assert claude_hits(address, page), address  # the person's words, unmasked
+        assert claude_findings(address, page, entered=entered) == [], address
+        assert step_4_findings(address, page, names, notes, entered=entered) == [], address
+        own = page.replace("<main", "<p>Ask Claude.</p><main", 1)
+        assert claude_findings(address, own, entered=entered) == [f"{address} <p>: says Claude: 'Ask Claude.'"]
+        assert step_4_findings(address, own, names, notes, entered=entered)
+    # Masked whole, as the text rules mask: a page sentence that only holds the person's word inside it still fails.
+    assert claude_findings("/goals", "<p>Ask Claude now.</p>", entered=["Claude said rest a day"])
 
 
 def test_the_structure_checks_find_what_they_name():
@@ -1704,23 +1743,33 @@ def test_foods_holds_each_true_zero_to_its_own_column(client):
         assert markup.count(old) == 1, old
         return markup.replace(old, new)
 
-    coffee = "<td>Black coffee</td><td>1 cup</td><td>0</td><td>0</td><td></td>"
-    roti_row = "<td>Roti</td><td>1 roti</td><td>120</td><td>1</td><td>40</td>"
+    lead, serving = '<td class="lead">', '<td data-label="Serving">'
+    kcal, times, grams = ('<td class="num" data-label="kcal">', '<td class="num" data-label="Times logged">',
+                          '<td class="num" data-label="Grams (g)">')
+    coffee = f"{lead}Black coffee</td>{serving}1 cup</td>{kcal}0</td>{times}0</td>{grams}</td>"
+    roti_row = f"{lead}Roti</td>{serving}1 roti</td>{kcal}120</td>{times}1</td>{grams}40</td>"
     assert page.count(coffee) == page.count(roti_row) == 1
     cases = {  # name: (the page, the words its finding must hold)
-        "into Grams": (once(page, coffee, coffee.replace("<td>0</td><td>0</td><td></td>",
-                                                         "<td>5</td><td>0</td><td>0</td>")), "empty_figure"),
-        "into Serving": (once(page, coffee, coffee.replace("<td>1 cup</td><td>0</td>", "<td>0</td><td>5</td>")),
-                         "empty_figure"),
-        "into the Food cell": (once(page, coffee, coffee.replace("<td>Black coffee</td><td>1 cup</td><td>0</td>",
-                                                                 "<td>0</td><td>1 cup</td><td>5</td>")),
+        "into Grams": (once(page, coffee, coffee.replace(f"{kcal}0</td>{times}0</td>{grams}</td>",
+                                                         f"{kcal}5</td>{times}0</td>{grams}0</td>")), "empty_figure"),
+        "into Serving": (once(page, coffee, coffee.replace(f"{serving}1 cup</td>{kcal}0</td>",
+                                                           f"{serving}0</td>{kcal}5</td>")), "empty_figure"),
+        "into the Food cell": (once(page, coffee, coffee.replace(f"{lead}Black coffee</td>{serving}1 cup</td>{kcal}0</td>",
+                                                                 f"{lead}0</td>{serving}1 cup</td>{kcal}5</td>")),
                                "empty_figure"),
-        "from kcal to Times logged": (once(once(page, coffee, coffee.replace("<td>1 cup</td><td>0</td>",
-                                                                             "<td>1 cup</td><td>5</td>")),
-                                           roti_row, roti_row.replace("<td>1</td>", "<td>0</td>")),
+        "from kcal to Times logged": (once(once(page, coffee, coffee.replace(f"{kcal}0</td>", f"{kcal}5</td>")),
+                                           roti_row, roti_row.replace(f"{times}1</td>", f"{times}0</td>")),
                                       "in its saved-foods, Times logged, but the data holds 1 true zeros"),
         "outside the card": (page.replace('<p class="lede">', '<p>0</p><p class="lede">'), "empty_figure"),
         "a second row": (once(page, coffee, coffee + "</tr><tr>" + coffee), "true zeros"),
+        # Read by its label as well as its place (the batch after B15): a kcal 0 whose label names another column,
+        # and a cell labelled kcal where the Serving column sits, hold none. By place alone both passed.
+        "its label another column's": (once(page, coffee, coffee.replace(f"{kcal}0</td>",
+                                                                         '<td class="num" data-label="Serving">0</td>')),
+                                       "empty_figure"),
+        "its label not its place": (once(page, coffee, coffee.replace(f"{serving}1 cup</td>{kcal}0</td>",
+                                                                      f"{kcal}0</td>{serving}1 cup</td>")),
+                                    "empty_figure"),
     }
     missed = {name: page_findings("/foods", markup, [], user_id) for name, (markup, said) in cases.items()
               if not any(said in f for f in page_findings("/foods", markup, [], user_id))}
@@ -1730,6 +1779,15 @@ def test_foods_holds_each_true_zero_to_its_own_column(client):
     unclosed = page[:close - len("</section>")] + page[close:]
     assert foods_cells(unclosed) is None
     assert sum("empty_figure" in f for f in page_findings("/foods", unclosed, [], user_id)) == 2
+    # A kcal that shows as 0 but is not 0 (rev_b15 M1, ruled in): counted as a true zero where it shows as "0", the
+    # rule Today's glance and Progress hold. A 0.4 kcal food never logged shows two 0s, and the page passes.
+    _ok(services.save_food(user_id, {"name": "Sugar pinch", "serving_label": "1 pinch", "kcal_per_serving": 0.4}, "web"))
+    page = client.get("/foods").text
+    assert f"{lead}Sugar pinch</td>{serving}1 pinch</td>{kcal}0</td>{times}0</td>" in page
+    live = [f for f in services.list_saved_foods(user_id)["foods"] if f["deleted_at"] is None]
+    assert sum(f["kcal_per_serving"] == 0 for f in live) == 1  # what equals 0
+    assert [foods_zeros(user_id, "/foods", "td", c) for c in FOODS_ZERO_COLUMNS] == [2, 2]  # what shows as 0
+    assert page_findings("/foods", page, [], user_id) == []
 
 
 # ---------------------------------------------------------------- the landing's exchange (pass B17)

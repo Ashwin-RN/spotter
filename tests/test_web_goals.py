@@ -474,7 +474,7 @@ ERROR_ROWS = [
      "No session of this activity at this distance or longer is logged yet: give your time for it now, or log one "
      "first."),
     ("waist, nothing to start from", FORM_WAIST, ("missing_field", "start_value"), "measurement", "start_value",
-     "No waist is logged yet: give where you are now, or log one first."),
+     "No waist measurement is logged yet: give where you are now, or log one first."),
     ("weight start not a number", {**FORM_WEIGHT, "start_value": "eighty"}, ("invalid_field", "start_value"), "bodyweight",
      "start_value", "Give your weight now in kg, from 20 to 400."),
     ("lift start out of range", {**FORM_LIFT, "start_value": "0"}, ("invalid_field", "start_value"), "lift",
@@ -483,16 +483,17 @@ ERROR_ROWS = [
      "start_value", "Give your time now in minutes, from 1 to 600."),
     ("arm start out of range", {**FORM_WAIST, "measurement_kind": "arm", "target_value": "38", "start_value": "5"},
      ("invalid_field", "start_value"), "measurement", "start_value",
-     "Give where your arm is now, in cm, from 10 to 100."),
+     "Give your arm measurement now, in cm, from 10 to 100."),
     ("heart rate start not whole", {**FORM_WAIST, "measurement_kind": "resting_hr", "target_value": "52",
                                     "start_value": "60.5"},
      ("invalid_field", "start_value"), "measurement", "start_value",
-     "Give where your resting heart rate is now, in bpm, from 20 to 250, as a whole number."),
+     "Give your resting heart rate measurement now, in bpm, from 20 to 250, as a whole number."),
     ("notes too long", {**FORM_WEIGHT, "text": "x" * 2001}, ("invalid_field", "text"), "bodyweight", "text",
      "Keep the notes to 2,000 characters or fewer, in plain text."),
     ("notes with a control character", {**FORM_LIFT, "text": "a\x01b"}, ("invalid_field", "text"), "lift", "text",
      "Keep the notes to 2,000 characters or fewer, in plain text."),
 ]
+FREE_TEXT = ("text",)  # the form's one free-text field, drawn back as a textarea's text
 FIELD_IDS = {"exercise": "goal-exercise", "measurement_kind": "goal-measurement", "distance_km": "goal-distance",
              "target_value": "goal-target", "target_date": "goal-date", "start_value": "goal-start",
              "text": "goal-text"}
@@ -514,7 +515,11 @@ def test_each_refusal_shows_the_pages_own_line_under_its_field(signed, real_set_
     assert [(e["error"], e.get("field")) for e in problems(result)] == [key]
     uid = only_user().id
     assert calls(uid) == [("set_goal", False, key[0])]
-    typed = [v for v in filled(data).values() if v]  # what the person typed is theirs, as entered_text is
+    # What the person typed as free text is theirs, as entered_text is: the notes, the one field the page shows back
+    # as text (a textarea). A select's value, a figure and a date are never masked (rev_b14 T-3): before, every
+    # posted value was, short ones like "0" and list values like "waist" among them.
+    typed = [v for f, v in filled(data).items() if f in FREE_TEXT and v]
+    assert set(typed) <= {v for v in filled(data).values() if v}  # never more than before: nothing caught passes
     assert page_findings("/goals", r.text, entered_text(uid) + typed, uid, route="/goals") == []
     assert step_4_findings("/goals", r.text, names_of(uid), entered_notes(uid), route="/goals") == []
     form = form_parts(r.text)
@@ -541,6 +546,43 @@ def test_the_rows_drive_every_line_of_the_table_and_no_other():
     assert {key for key, _ in driven} == set(web.GOAL_ERROR_WORDS)
     by_kind = {(key, kind) for key, words in web.GOAL_ERROR_WORDS.items() if isinstance(words, dict) for kind in words}
     assert {(key, kind) for key, kind in driven if isinstance(web.GOAL_ERROR_WORDS[key], dict)} == by_kind
+
+
+# Each measurement the form's list offers: (its kind, a target inside its range, its two start lines). The lines name
+# it as a measurement, one form for every kind (rev_b14 R3 V1: "No hips is logged yet", "where your hips is now").
+MEASUREMENT_START_LINES = {
+    "waist": ("80", "No waist measurement is logged yet: give where you are now, or log one first.",
+              "Give your waist measurement now, in cm, from 30 to 300."),
+    "hips": ("95", "No hips measurement is logged yet: give where you are now, or log one first.",
+             "Give your hips measurement now, in cm, from 30 to 300."),
+    "chest": ("100", "No chest measurement is logged yet: give where you are now, or log one first.",
+              "Give your chest measurement now, in cm, from 30 to 300."),
+    "arm": ("38", "No arm measurement is logged yet: give where you are now, or log one first.",
+            "Give your arm measurement now, in cm, from 10 to 100."),
+    "thigh": ("60", "No thigh measurement is logged yet: give where you are now, or log one first.",
+              "Give your thigh measurement now, in cm, from 20 to 150."),
+    "resting_hr": ("52", "No resting heart rate measurement is logged yet: give where you are now, or log one first.",
+                   "Give your resting heart rate measurement now, in bpm, from 20 to 250, as a whole number."),
+}
+
+
+@pytest.mark.parametrize("what", sorted(MEASUREMENT_START_LINES))
+def test_each_measurements_start_lines_name_it_as_a_measurement(signed, real_set_goal, what):
+    """Both of Where you are now's lines for every measurement the form offers, each a real set_goal refusal posted
+    through the form with nothing logged: no start (missing_field), then a start below the range (invalid_field)."""
+    assert sorted(MEASUREMENT_START_LINES) == sorted(web.GOAL_MEASUREMENTS)
+    target, missing, invalid = MEASUREMENT_START_LINES[what]
+    form = {**FORM_WAIST, "measurement_kind": what, "target_value": target}
+    for data, key, line in ((form, ("missing_field", "start_value"), missing),
+                            ({**form, "start_value": "5"}, ("invalid_field", "start_value"), invalid)):
+        real_set_goal.clear()
+        r = post(signed, "/goals", **filled(data))
+        assert r.status_code == 400
+        [result] = real_set_goal
+        assert [(e["error"], e.get("field")) for e in problems(result)] == [key], what
+        parts = form_parts(r.text)
+        assert parts["errors"]["start_value"] == line and parts["top"] == [], what
+        assert services_words_shown(r.text, result) == []
 
 
 @pytest.mark.parametrize("what, start", [("sleep_hours", "Sleep cannot be a goal"),
@@ -766,39 +808,53 @@ def service_refusals() -> tuple[dict[tuple, int], dict[str, set]]:
                     out.append(ret.value.value if isinstance(ret.value, ast.Constant) else "<?>")
         return sorted(set(out), key=str) or ["<?>"]
 
+    # Each function's nodes, and the module's own: every node outside every function, so a refusal built at module
+    # level (a constant, a table of builders) is read too. A module-level field is read as it is written.
+    inside = {n for fn in functions.values() for n in ast.walk(fn)}
+    owners = [(fn.name, fn, list(ast.walk(fn))) for fn in functions.values()] + \
+        [("<module>", None, [n for n in ast.walk(tree) if n not in inside])]
     found, outside = Counter(), {}
-    for fn in functions.values():
-        for call in (n for n in ast.walk(fn) if isinstance(n, ast.Call)):
+    for owner, fn, nodes in owners:
+        def field_values(node, fn=fn):
+            return values(node, fn) if fn is not None else [_named(node)]
+
+        for call in (n for n in nodes if isinstance(n, ast.Call)):
+            if not isinstance(call.func, (ast.Name, ast.Attribute)):
+                # A callee no name gives, such as a table's entry or a call's result: what it builds cannot be read,
+                # so it is a site of its own, "<?>", which no key answers.
+                found[(owner, "<?>", None)] += 1
+                continue
             target = _resolve(call.func, scope)
             name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", None)
             if target is rules.error:
                 field = next((k.value for k in call.keywords if k.arg == "field"), None)
-                for value in values(field, fn) if field is not None else [None]:
-                    found[(fn.name, _named(call.args[0]) if call.args else "<?>", value)] += 1
+                for value in field_values(field) if field is not None else [None]:
+                    found[(owner, _named(call.args[0]) if call.args else "<?>", value)] += 1
             elif name == "_at":
-                for value in values(call.args[1], fn):
-                    found[(fn.name, "<_at>", value)] += 1
+                for value in field_values(call.args[1]):
+                    found[(owner, "<_at>", value)] += 1
             elif inspect.isfunction(target) and target.__module__.startswith("app.") and \
                     target.__module__ != goal_rules.__name__ and not dropped(call):
                 codes = codes_built(target)
                 if codes:
                     outside[f"<{target.__name__}>"] = codes
-                    found[(fn.name, f"<{target.__name__}>", None)] += 1
-        if fn.name == "_at":  # the field setter itself: every call of it is read above
+                    found[(owner, f"<{target.__name__}>", None)] += 1
+        if owner == "_at":  # the field setter itself: every call of it is read above
             continue
-        for d in (n for n in ast.walk(fn) if isinstance(n, ast.Dict)):
+        for d in (n for n in nodes if isinstance(n, ast.Dict)):
             keys = {k.value: v for k, v in zip(d.keys, d.values) if isinstance(k, ast.Constant)}
             if "error" in keys or "field" in keys:
                 code = _named(keys["error"]) if "error" in keys else "<dict>"
-                for value in values(keys["field"], fn) if "field" in keys else [None]:
-                    found[(fn.name, code, value)] += 1
+                for value in field_values(keys["field"]) if "field" in keys else [None]:
+                    found[(owner, code, value)] += 1
     return dict(found), outside
 
 
 def test_every_refusal_set_goal_builds_has_a_line_or_a_reason():
     """A refusal set_goal gains fails here until the table gives it a line or this test says why the form never
     reaches it: a new code from a function it calls, a refusal built as a dict literal, a new value of a field passed
-    through a name. Every line a refusal is answered by is in the table, and is about that refusal: its code and
+    through a name, a refusal built at module level, a builder called through a table or a call's result (rev_b14
+    T-1: "<module>" and "<?>" sites, which no key answers). Every line a refusal is answered by is in the table, and is about that refusal: its code and
     field, the field _at or a dict literal sets, or each code an outside function can build."""
     found, outside = service_refusals()
     assert found == {key: SERVICE_REFUSAL_COUNTS.get(key, 1) for key in SERVICE_REFUSALS}

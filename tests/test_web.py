@@ -777,7 +777,7 @@ def test_sign_out_without_a_provider_session_goes_home(client, seam):
 
 def test_the_time_zone_form_sets_a_valid_zone(client):
     sign_in(client)
-    r = client.post("/settings", data={"time_zone": "Asia/Kolkata", "csrf_token": csrf_of(client)})
+    r = client.post("/settings", data={"time_zone": "Asia/Kolkata", "card": "zone", "csrf_token": csrf_of(client)})
     assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=time_zone#zone"
     assert only_user().time_zone == "Asia/Kolkata"
     page = client.get(r.headers["location"]).text
@@ -799,7 +799,10 @@ def test_the_time_zone_form_refuses_a_bad_zone_in_its_own_words(client):
 def test_every_refusal_reads_the_same_on_the_page(client, sent):
     sign_in(client)
     r = set_zone(client, sent)
-    assert r.status_code == 400 and "That time zone was not recognised" in r.text
+    # Nothing chosen has its own line (rev_b16 section 4): the person chose no zone that could go unrecognised.
+    line = web.ZONE_ERROR_EMPTY if sent == "" else "That time zone was not recognised"
+    assert r.status_code == 400 and line in r.text
+    assert sent != "" or "That time zone was not recognised" not in r.text
     assert "Closest zone" not in r.text and "Shorten" not in r.text
 
 
@@ -1186,7 +1189,8 @@ def options(page: str) -> list[tuple[str, bool]]:
 
 
 def set_zone(client: TestClient, zone: str):
-    return client.post("/settings", data={"time_zone": zone, "csrf_token": csrf_of(client)})
+    """The Time zone card's form, posted with its own field."""
+    return client.post("/settings", data={"time_zone": zone, "card": "zone", "csrf_token": csrf_of(client)})
 
 
 def test_a_person_with_no_zone_gets_the_hidden_form_and_the_script_on_every_page(client):
@@ -2511,20 +2515,21 @@ def test_delete_then_undo_food_and_cardio(client, fed, which):
 def test_foods_with_none_saved(client):
     sign_in(client)
     page = client.get("/foods").text
-    assert "No saved foods yet." in page and 'action="/foods"' in page
+    assert "No saved foods yet." in page and 'action="/foods#save-food"' in page
 
 
 def test_foods_lists_name_serving_kcal_and_times_logged(client, fed):
     page = client.get("/foods").text
-    row = re.search(r"<tr>\s*<td>Roti</td>(.*?)</tr>", page, re.S).group(1)
-    assert re.findall(r"<td>(.*?)</td>", row, re.S)[:3] == ["1 roti", "120", "1"]
+    row = re.search(r'<tr>\s*<td class="lead">Roti</td>(.*?)</tr>', page, re.S).group(1)
+    assert re.findall(r'<td(?: class="num")? data-label="([^"]+)">(.*?)</td>', row, re.S)[:3] == [
+        ("Serving", "1 roti"), ("kcal", "120"), ("Times logged", "1")]
     assert f'href="/foods/{fed["roti"]}/edit"' in row and f'action="/foods/{fed["roti"]}/delete"' in row
 
 
 def test_adding_a_food_from_the_page(client):
     sign_in(client)
     r = post(client, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="58", grams_per_serving="")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=saved_food#top"
     [food] = rows(SavedFood, only_user().id)
     assert (food.name, food.serving_label, food.kcal_per_serving, food.grams_per_serving) == ("Idli", "1 idli", 58, None)
     assert '<p class="ok">Saved food saved.</p>' in client.get(r.headers["location"]).text
@@ -2556,12 +2561,12 @@ def test_deleting_a_food_then_undo(client, fed):
     r = post(client, f"/foods/{fed['roti']}/delete")
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/foods?deleted=saved_food:{fed['roti']}"
     page = client.get(r.headers["location"]).text
-    assert "Saved food deleted." in page and "<td>Roti</td>" not in page
+    assert "Saved food deleted." in page and '<td class="lead">Roti</td>' not in page
     token = re.search(rf'action="/foods/{fed["roti"]}/restore" class="inline">\s*'
                       r'<input type="hidden" name="csrf_token" value="([^"]+)">', page).group(1)
     back = client.post(f"/foods/{fed['roti']}/restore", data={"csrf_token": token})
     assert back.status_code == 303 and back.headers["location"] == SITE + "/foods?restored=saved_food"
-    assert "<td>Roti</td>" in client.get("/foods").text
+    assert '<td class="lead">Roti</td>' in client.get("/foods").text
     assert post(client, f"/foods/{fed['roti']}/restore").status_code == 409
 
 
@@ -2603,9 +2608,10 @@ def test_settings_clears_a_target_and_turns_add_back_off(client):
 
 
 @pytest.mark.parametrize("field, value, says", [
-    ("calorie_target_kcal", "100", "Give a daily target from 800 to 10,000 kcal"),
-    ("target_sessions_per_week", "30", "Give sessions a week from 0 to 14"),
-    ("target_cardio_minutes_per_week", "abc", "Give cardio minutes a week from 0 to 3,000"),
+    ("calorie_target_kcal", "100", "Give the calories as a whole number with no comma, from 800 to 10,000 kcal"),
+    ("target_sessions_per_week", "30", "Give lift sessions a week as a whole number from 0 to 14"),
+    ("target_cardio_minutes_per_week", "abc", "Give cardio minutes a week as a plain whole number, such as 150, from 0 to "
+                                              "3,000"),
 ])
 def test_a_refused_target_says_why_beside_the_field(client, field, value, says):
     sign_in(client)
@@ -2688,8 +2694,9 @@ def test_times_logged_counts_live_entries_only(client, fed):
     uid = only_user().id
     second = services.log_food(uid, {"entries": [{"description": "Roti", "saved_food_id": fed["roti"], "servings": 3,
                                                   "meal": "dinner"}]}, "claude")
-    times = lambda: re.findall(r"<td>(.*?)</td>", re.search(r"<tr>\s*<td>Roti</td>(.*?)</tr>",  # noqa: E731
-                                                              client.get("/foods").text, re.S).group(1), re.S)[2]
+    times = lambda: re.findall(r'<td class="num" data-label="Times logged">(.*?)</td>',  # noqa: E731
+                               re.search(r'<tr>\s*<td class="lead">Roti</td>(.*?)</tr>', client.get("/foods").text,
+                                         re.S).group(1), re.S)[0]
     assert times() == "2"
     services.delete_entry(uid, "food_entry", second["ids"][0])
     assert times() == "1"
@@ -3189,13 +3196,14 @@ def test_unchanged_targets_and_an_unchanged_food_are_never_marked_saved(client, 
 def test_the_marks_pages_have_words_for_stay_as_they_are(client, fed):
     # Foods' marks are the rebuilt pages' since pass B15: saved, deleted and restored, each naming its kind.
     assert location(post(client, "/foods", name="Idli", serving_label="1 idli", kcal_per_serving="40")) == \
-        SITE + "/foods?saved=saved_food"
+        SITE + "/foods?saved=saved_food#top"
     assert location(post(client, f"/foods/{fed['roti']}/delete")) == SITE + f"/foods?deleted=saved_food:{fed['roti']}"
     assert location(post(client, f"/foods/{fed['roti']}/restore")) == SITE + "/foods?restored=saved_food"
     # Settings' since pass B16: each card's own mark, at that card's anchor.
     assert location(post(client, "/settings/claude-can", claude_can="read")) == \
         SITE + "/settings?saved=claude_can#assistant"
-    assert location(post(client, "/settings", time_zone="Asia/Kolkata")) == SITE + "/settings?saved=time_zone#zone"
+    assert location(post(client, "/settings", time_zone="Asia/Kolkata", card="zone")) == \
+        SITE + "/settings?saved=time_zone#zone"
 
 
 def test_the_automatic_zone_save_is_marked_time_zone_on_the_page_it_returns_to(client):
@@ -7572,3 +7580,67 @@ def test_the_zero_kg_check_sees_a_tiles_figure_and_unit_in_two_spans(client, pin
     assert lift_tiles(page)[0][3:5] == ("0", "kg, estimated max now")
     assert ZERO_KG.search(main.text())
     assert ZERO_KG.search(f"0{NB}kg") and ZERO_KG.search("0 kg") and not ZERO_KG.search("100 kg")
+
+
+# ---------------------------------------------------------------- the fix round after B15 and B16
+
+def test_weigh_ins_imported_in_lb_read_back_in_kg_once_on_their_day_page_and_on_progress(client):
+    """rev_impb, the merged tree's section 9: no web test read an imported row back through a page, so a pound
+    converted twice passed every one. Weigh-ins imported in lb through import_entries: each stored kg is the pound
+    converted once (lb x the service's own factor, kept at 2 dp), each day page shows get_log's own weigh-in, and
+    Progress shows get_trends' own figures."""
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.update_settings(uid, {"time_zone": "Asia/Kolkata"}, "web")
+    today = today_of(only_user())
+    pounds = {(today - timedelta(days=n)).isoformat(): lb for n, lb in ((6, 176.4), (5, 175.8), (4, 175.2), (3, 174.6),
+                                                                        (2, 174))}
+    result = services.import_entries(uid, {"rows": [{"kind": "bodyweight", "date": d, "weight": lb}
+                                                    for d, lb in pounds.items()],
+                                           "weight_unit": "lb", "dry_run": False}, "claude")
+    assert "error" not in result and result["counts"]["bodyweight"]["written"] == len(pounds), result
+    factor = services.imports.UNITS["weight_unit"]["lb"]
+    for on, lb in pounds.items():
+        [day] = services.get_log(uid, on)["days"]
+        kg = day["weigh_in"]["kg"]
+        assert abs(kg - lb * factor) < 0.005, (on, lb, kg)  # converted once
+        [entry] = entries_of(side_card(client.get(f"/day/{on}").text, "Weigh-in"))
+        assert entry["big"] == formatting.show(kg, "weigh_in", page=True), on
+    bw = services.get_trends(uid)["bodyweight"]
+    page = client.get("/progress").text
+    rows = dict((q, v) for q, v, _ in trends_of(page))
+    assert rows["Smoothed trend"] == formatting.show(bw["smoothed"], "bodyweight_derived", page=True)
+    assert rows["7-day average"] == formatting.show(bw["now"], "bodyweight_derived", page=True)
+    assert rows["Weigh-ins"] == formatting.show(bw["weigh_ins_28d"], "count", page=True) == str(len(pounds))
+    [weight] = [t for t in tiles_of(page) if "tile-weight" in t["classes"] and t["tag"] == "button"]
+    assert weight["value"] == formatting.show(bw["smoothed"], "bodyweight_derived", unit=False, page=True)
+    assert 78 < bw["smoothed"] < 81  # kg, not lb, and not a pound converted twice
+
+
+def test_each_count_on_today_and_progress_takes_its_noun_by_the_count(client):
+    """The merged tree's check: "1 lift sessions last 7 days" on the Training tile. Each count with a noun on Today's
+    and Progress' tiles and sheets, at 0, 1 and 2: the Training tile's label and its sheet's title, the day page's
+    lift sessions in 28 days and the Weight sheet's weigh-ins. Each figure is get_trends' or get_days' own."""
+    sign_in(client)
+    uid = only_user().id
+    assert "error" not in services.update_settings(uid, {"time_zone": "Asia/Kolkata"}, "web")
+    today = today_of(only_user())
+    for n in (0, 1, 2):
+        if n:
+            assert "error" not in services.log_lifts(uid, {"date": today.isoformat(), "sets": [
+                {"exercise": "Back Squat", "weight_kg": 60 + n, "reps": 5}]}, "claude")
+            assert "error" not in services.log_bodyweight(uid, {"kg": 80, "date": (today - timedelta(days=n)).isoformat()},
+                                                          "claude")
+        trends = services.get_trends(uid)
+        assert trends["sessions"]["this_week"] == n and services.get_days(uid)["lift_sessions_28d"] == n
+        sessions = "lift session" if n == 1 else "lift sessions"
+        day = client.get(f"/day/{today.isoformat()}").text
+        for address, page in ((f"/day/{today.isoformat()}", day), ("/progress", client.get("/progress").text)):
+            training = [t for t in tiles_of(page) if "tile-training" in t["classes"]]
+            assert len(training) == 2 and {(t["value"], t["label"]) for t in training} == {(str(n), sessions)}, address
+            sheet = sheets_of(page)["sheet-training"]
+            assert (sheet["giant"], sheet["title"]) == (str(n), sessions.capitalize()), address
+            if n:
+                weigh_ins = "weigh-in" if trends["bodyweight"]["weigh_ins_28d"] == 1 else "weigh-ins"
+                assert f"from {n} {weigh_ins} in 28 days." in sheets_of(page)["sheet-weight"]["sentence"], address
+        assert re.search(r'<span class="aside">([^<]*)</span>', day).group(1) == f"{n} {sessions}"

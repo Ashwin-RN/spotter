@@ -4,9 +4,12 @@
 {% import "_parts.html" as parts %}
 {# Foods (section L): the page head with its grey line, the sample banner, one strip after a write, then the Saved
    foods card in columns 1 to 8 and the Save a food card in 9 to 12. Every figure is list_saved_foods' own field
-   through its filter: kcal_per_serving, grams_per_serving (grams), times_logged (count). The Food cell holds the name
-   and its sample tag. Grams sit in their own column after Times logged, a food with none leaving its cell empty, and
-   with no grams on any food the column is not drawn. No saved foods: a dashed card, and the fold-out open. #}
+   through its filter: kcal_per_serving, grams_per_serving (grams), times_logged (count). The Saved foods table is a
+   row table (table.rows), which stacks below 720 px: the Food cell (td.lead) holds the name and its sample tag and
+   spans the row, each figure is a td.num that shows its data-label above it. Grams sit in their own column after
+   Times logged, a food with none leaving its cell empty (not shown when stacked), and with no grams on any food the
+   column is not drawn. Edit and Delete each sit in a cell of their own, with no label. No saved foods: a dashed
+   card, and the fold-out open. #}
 <div class="page-head">
   <h1>Foods</h1>
   <p class="lede">Foods you save are logged by name and amount: Spotter works out the kcal. Saving one by talking to your assistant works too.</p>
@@ -24,11 +27,11 @@
 <section class="card saved-foods" aria-labelledby="saved-foods-title">
   <h2 id="saved-foods-title">Saved foods</h2>
   <div class="table-wrap">
-    <table aria-labelledby="saved-foods-title">
-      <thead><tr><th scope="col">Food</th><th scope="col">Serving</th><th scope="col">kcal</th><th scope="col">Times logged</th>{% if weighed %}<th scope="col">Grams (g)</th>{% endif %}<th scope="col"><span class="sr">Edit</span></th><th scope="col"><span class="sr">Delete</span></th></tr></thead>
+    <table class="rows" aria-labelledby="saved-foods-title">
+      <thead><tr><th scope="col">Food</th><th scope="col">Serving</th><th scope="col" class="num">kcal</th><th scope="col" class="num">Times logged</th>{% if weighed %}<th scope="col" class="num">Grams (g)</th>{% endif %}<th scope="col"><span class="sr">Edit</span></th><th scope="col"><span class="sr">Delete</span></th></tr></thead>
       <tbody>
         {% for f in foods %}
-        <tr><td>{{ f.name }}{{ parts.sample_tag(f) }}</td><td>{{ f.serving_label }}</td><td>{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td><td>{{ f.times_logged|show("count") }}</td>{% if weighed %}<td>{% if f.grams_per_serving is not none %}{{ f.grams_per_serving|show("grams", unit=False) }}{% endif %}</td>{% endif %}<td><a class="action" href="/foods/{{ f.id }}/edit">Edit</a></td><td><form method="post" action="/foods/{{ f.id }}/delete" class="inline">
+        <tr><td class="lead">{{ f.name }}{{ parts.sample_tag(f) }}</td><td data-label="Serving">{{ f.serving_label }}</td><td class="num" data-label="kcal">{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td><td class="num" data-label="Times logged">{{ f.times_logged|show("count") }}</td>{% if weighed %}<td class="num" data-label="Grams (g)">{% if f.grams_per_serving is not none %}{{ f.grams_per_serving|show("grams", unit=False) }}{% endif %}</td>{% endif %}<td><a class="action" href="/foods/{{ f.id }}/edit">Edit</a></td><td><form method="post" action="/foods/{{ f.id }}/delete" class="inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button class="link">Delete</button>
         </form></td></tr>
@@ -45,15 +48,17 @@
 
 {# Save a food: closed by default, open after a refusal and when there are no saved foods. Each refusal sits under
    its field in the page's own words (web.food_errors), and one tied to no field the form draws at the top. What
-   was typed stays. #}
+   was typed stays. The form posts to its own fold-out's id, so a refusal comes back at the form, and every redirect
+   that answers it ends in web.POST_LANDS, so the strip is in view. No field is required: the page speaks, not the
+   browser. #}
 <div class="card save-food">
   {% call parts.foldout("save-food", "Save a food", errors or loose or not foods) %}
-  <form method="post" action="/foods">
+  <form method="post" action="/foods#save-food">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% if loose %}<div class="error">{% for words in loose %}<p>{{ words }}</p>{% endfor %}</div>{% endif %}
-    {{ parts.field("food-name", "name", "Name", errors.get("name"), typed.get("name"), required=true, maxlength=limits.name) }}
-    {{ parts.field("food-serving_label", "serving_label", "One serving is", errors.get("serving_label"), typed.get("serving_label"), required=true, maxlength=limits.serving_label) }}
-    {{ parts.field("food-kcal_per_serving", "kcal_per_serving", "Calories in one serving (kcal)", errors.get("kcal_per_serving"), typed.get("kcal_per_serving"), inputmode="decimal", required=true) }}
+    {{ parts.field("food-name", "name", "Name", errors.get("name"), typed.get("name"), maxlength=limits.name) }}
+    {{ parts.field("food-serving_label", "serving_label", "One serving is", errors.get("serving_label"), typed.get("serving_label"), maxlength=limits.serving_label) }}
+    {{ parts.field("food-kcal_per_serving", "kcal_per_serving", "Calories in one serving (kcal)", errors.get("kcal_per_serving"), typed.get("kcal_per_serving"), inputmode="decimal") }}
     {{ parts.field("food-grams_per_serving", "grams_per_serving", "Grams in one serving (g)", errors.get("grams_per_serving"), typed.get("grams_per_serving"), inputmode="decimal", hint="Optional") }}
     <div class="form-actions"><button class="primary">Save food</button></div>
     <p class="small">Saving a name you already have updates it.</p>

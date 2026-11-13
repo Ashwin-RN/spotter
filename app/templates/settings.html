@@ -7,11 +7,12 @@
    row (.settings-page > .card). Each of the three forms posts to its own card's anchor (web.SETTINGS_CARDS), and its
    saved line sits in that card alone, one at most on the page. A refusal is said in the page's own words: in the card
    for the time zone and the switch, under its field for a target, or at the top of the targets form for one tied to
-   none of its fields. What was typed stays. No field is required: the page speaks, not the browser. #}
+   none of its fields. What was typed stays. No field is required: the page speaks, not the browser. The sample
+   banner is Settings' own: the others send the person here, and here Remove sample data sits under Your data. #}
 <div class="page-head">
   <h1>Settings</h1>
 </div>
-{% include "sample_banner.html" %}
+{% if sample_rows %}<p class="notice sample-banner">Sample data is on this account. Remove it under Your data.</p>{% endif %}
 
 {# The user row's own words: name, email, zone, the sign-in provider's id and the account's own. #}
 <section class="card" id="account" aria-labelledby="account-title">
@@ -34,8 +35,11 @@
   {% else %}
   <p class="muted">No time zone yet, so today is counted in UTC. Choose yours from the list.</p>
   {% endif %}
+  {# The card's own field: only a post that carries it lands back on this card (web.ZONE_CARD_FIELD). The automatic
+     zone save posts to /settings too, without it. #}
   <form class="stack" method="post" action="/settings#{{ cards.time_zone }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="{{ card_field }}" value="{{ cards.time_zone }}">
     {% if zone_error %}<div class="error"><p class="error" id="time-zone-error">{{ zone_error }}</p></div>{% endif %}
     <div class="field{% if zone_error %} has-error{% endif %}">
       <label for="time-zone">Time zone</label>
@@ -73,7 +77,9 @@
   </form>
 </section>
 
-{# The switch: its stored values as they are, its words from web.CLAUDE_CAN_LABELS and CLAUDE_CAN_LINES. #}
+{# The switch: its stored values as they are, its words from web.CLAUDE_CAN_LABELS and CLAUDE_CAN_LINES. The label
+   is drawn on a line of its own above its line (label.choice strong is a block), and the br at its end says so in
+   the markup, so the label and its line are read as two lines, as they are seen, not as one sentence. #}
 <section class="card" id="{{ cards.claude_can }}" aria-labelledby="assistant-title">
   <h2 id="assistant-title">What your assistant may do</h2>
   {% if saved_card == cards.claude_can %}{{ parts.saved_line(saved_words) }}{% endif %}
@@ -86,7 +92,7 @@
       {% for value, label, line in choices %}
       <label class="choice">
         <input type="radio" name="claude_can" value="{{ value }}"{% if user.claude_can == value %} checked{% endif %}{% if switch_error %} aria-invalid="true" aria-describedby="claude-can-error"{% endif %}>
-        <span><strong>{{ label }}</strong> {{ line }}</span>
+        <span><strong>{{ label }}<br></strong> {{ line }}</span>
       </label>
       {% endfor %}
     </fieldset>
