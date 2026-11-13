@@ -12,10 +12,15 @@ and every other path no route answered gets the designed 404 page with the page 
 
 Around the whole app, BodyLimit: a request body over MAX_BODY_BYTES is answered 413 before any route reads
 it. The largest real body, an import_entries call of 200 rows, is far under it.
+
+Outside everything, Starlette's own error layer included, RequestId (SpotterApp): every request gets one id of
+Spotter's own making, held in calllog.REQUEST_ID while it runs, written on its call-log rows and its log lines,
+and sent back as X-Request-Id on every response, a 413 and an unhandled 500 too.
 """
 
 import contextlib
 import logging
+import secrets
 
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
@@ -25,7 +30,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Mount, Route, Router
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app import config, web
+from app import calllog, config, web
 from app.auth import FetchJson, JwksTokenVerifier, UserinfoClient, fetch_json
 from app.config import Settings, load_settings
 from app.mcp_server import build_server
@@ -33,6 +38,39 @@ from app.mcp_server import build_server
 ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 MAX_BODY_BYTES = 1024 * 1024  # 1 MiB
 TOO_LARGE = "That request is larger than Spotter takes (1 MiB)."
+
+
+class RequestId:
+    """Gives every request one id, 16 hex characters from secrets, never read from the request. It is held in
+    calllog.REQUEST_ID for the length of the request and added to the response's headers as X-Request-Id."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request_id = secrets.token_hex(8)
+        held = calllog.REQUEST_ID.set(request_id)
+
+        async def tagged(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message = {**message, "headers": [*message.get("headers", ()), (b"x-request-id", request_id.encode())]}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tagged)
+        finally:
+            calllog.REQUEST_ID.reset(held)
+
+
+class SpotterApp(Starlette):
+    """Starlette with RequestId outside its whole stack, so the id is on every response: Starlette's own
+    ServerErrorMiddleware sits outside every listed middleware, and its 500 would carry none."""
+
+    def build_middleware_stack(self) -> ASGIApp:
+        return RequestId(super().build_middleware_stack())
 
 
 class _BodyTooLarge(Exception):
@@ -123,16 +161,26 @@ class _NoQueryStrings(logging.Filter):
         return True
 
 
+class _RequestIds(logging.Filter):
+    """Gives each of Spotter's log lines the request's id, or - outside a request."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = calllog.REQUEST_ID.get() or "-"
+        return True
+
+
 def _set_up_logging() -> None:
-    """Spotter's own log lines go to stderr through their own handler, added once. INFO lines are only
-    ever written when AUTH_DEBUG is on; warnings always are. The access log never shows a query string."""
+    """Spotter's own log lines go to stderr through their own handler, added once, each with its request's id.
+    INFO lines are only ever written when AUTH_DEBUG is on; warnings always are. The access log never shows a
+    query string."""
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _NoQueryStrings) for f in access.filters):
         access.addFilter(_NoQueryStrings())
     logger = logging.getLogger("spotter")
     if not logger.handlers:
         handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s [%(request_id)s]: %(message)s"))
+        handler.addFilter(_RequestIds())
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
         logger.propagate = False  # not printed twice when the root logger also has a handler
@@ -172,7 +220,7 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
         # What the fallback hands /mcp/... and /.well-known/... to: they answer as they did with no mount at
         # "/", a redirect from /mcp/ to /mcp and a plain 404 for the rest.
         mcp_off = Router(routes=[Route("/mcp", not_configured, methods=ALL_METHODS)])
-        return Starlette(routes=[
+        return SpotterApp(routes=[
             Route("/health", health),
             *web.routes(settings),
             Route("/mcp", not_configured, methods=ALL_METHODS),
@@ -193,7 +241,7 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
         async with server.session_manager.run():  # without this every MCP call hangs
             yield
 
-    return Starlette(
+    return SpotterApp(
         routes=[
             Route("/health", health),
             *web.routes(settings),
@@ -201,7 +249,7 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
             # other path no route answered gets the 404 page.
             Mount("/", app=web.fallback(settings, mcp_app)),
         ],
-        middleware=[Middleware(BodyLimit)],  # the outermost of the app's own layers: before any route reads
+        middleware=[Middleware(BodyLimit)],  # inside RequestId (SpotterApp), before any route reads
         lifespan=lifespan,
     )
 

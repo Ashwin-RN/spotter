@@ -1,4 +1,4 @@
-"""Spotter's MCP server: nineteen functions and two resources.
+"""Spotter's MCP server: nineteen functions and two resources, and owner_calls for Spotter's owner alone.
 
 The MCP library does the sign-in work: it serves the protected-resource metadata, answers 401 with
 `resource_metadata`, and runs every call through the token verifier. Functions read the verified token
@@ -19,6 +19,12 @@ connection is DATABASE_DOWN: database_unavailable, as for a database that is not
 the user lookup and the call log are synchronous and use the database, so each runs in a worker thread,
 never on the event loop.
 
+The row carries the call's trace (app/calllog.py): what was sent (SpotterServer.call_tool holds the
+arguments as the client sent them), the outcome, the step, the frame and the notes.
+
+owner_calls is listed only for the owner (SpotterServer.list_tools), and a call by anyone else is
+not_allowed: both check the verified token's subject against OWNER_USER_ID (is_owner). Unset, nobody is.
+
 Every result is the service's own dict, as structured content and as compact JSON text. A service
 error ({error, message, fix}) is flagged is_error. A duplicate is a success.
 """
@@ -29,7 +35,8 @@ import logging
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from typing import Annotated
+from contextvars import ContextVar
+from typing import Annotated, Any
 from urllib.parse import urlparse
 
 import anyio.to_thread
@@ -48,15 +55,16 @@ from starlette.routing import Route
 
 from app import calllog, db, links, services, users
 from app.auth import JwksTokenVerifier, UserinfoClient
-from app.config import ROOT, Settings
+from app.config import ROOT, Settings, get_settings
 from app.mcp_schemas import (
     FOOD_NAME_RULE, IMPORT_ROWS, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn,
     GetGoalsResult, GetLogResult, GetProgressResult, GetTrendsResult, ImportEntriesResult, ImportRowIn,
-    LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult, RestoreEntryResult,
-    SaveFoodResult, SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
+    LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult, OwnerCallsResult,
+    RestoreEntryResult, SaveFoodResult, SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
 )
 from app.models import User
 from app.services.common import check_reads
+from app.services.owner import HOURS, LIMIT
 
 log = logging.getLogger("spotter.mcp")
 
@@ -208,13 +216,19 @@ NEEDS = {
     "delete_entry": "log_delete",
     "get_trends": "read", "get_goals": "read",
     "import_entries": "log",
+    "owner_calls": "read",
 }
+# Listed for the owner alone, and refused to anyone else (is_owner).
+OWNER_FUNCTION = "owner_calls"
 # The read limit counts these together (services.common.check_reads): every function at the read level.
 READ_FUNCTIONS = tuple(name for name, level in NEEDS.items() if level == "read")
 NOT_ALLOWED_MESSAGES = {"read": "This account lets Claude read only.",
                         "log": "This account lets Claude read and log, not delete."}
 # The one text in Spotter that sends a person to a page: only they can change what Claude may do.
 NOT_ALLOWED_FIX = "The person can change what Claude may do on the Settings page."
+OWNER_ONLY = {"error": "not_allowed", "message": "This function is for Spotter's owner.", "fix": "Nothing to retry."}
+# The arguments of the call running, as the client sent them (SpotterServer.call_tool): what tried describes.
+_SENT: ContextVar[dict | None] = ContextVar("spotter_sent_arguments", default=None)
 
 LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
 KIND_DESCRIPTION = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
@@ -280,6 +294,12 @@ def not_allowed(function: str, claude_can) -> dict | None:
             "links": {"settings": links.page("settings")}}
 
 
+def is_owner(token: AccessToken | None) -> bool:
+    """True when the verified token's subject is OWNER_USER_ID. Unset, nobody is."""
+    owner = get_settings().owner_user_id
+    return bool(owner) and token is not None and token.subject == owner
+
+
 def _claim(claims: dict, key: str) -> str | None:
     value = claims.get(key)
     return value if isinstance(value, str) else None
@@ -330,6 +350,19 @@ class SpotterServer(MCPServer):
         app.router.routes[found[0]] = routes[0]
         return app
 
+    async def list_tools(self) -> list:
+        """Every function for the owner; for everyone else, all but OWNER_FUNCTION, exactly as before it."""
+        tools = await super().list_tools()
+        return tools if is_owner(get_access_token()) else [t for t in tools if t.name != OWNER_FUNCTION]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context=None):
+        """The library's call, with the arguments as sent held for the wrapper (tried) while it runs."""
+        held = _SENT.set(arguments)
+        try:
+            return await super().call_tool(name, arguments, context)
+        finally:
+            _SENT.reset(held)
+
 
 class Wrapper:
     """Runs one function call from start to call-log row. See the module notes for the order."""
@@ -359,54 +392,62 @@ class Wrapper:
         """Run `work(account_id)` in a worker thread and return its dict as the call's result."""
         started_at = db.utcnow()
         start = time.monotonic()
-        account_id = row_id = None
-        started = False
+        account_id = row_id = done = frame = None  # done: the work's own result, once it has one
+        started = reply = False
+        tried = calllog.tried(function, _SENT.get())
+        notes = calllog.new_notes()  # in the context before the worker thread starts: its notes reach the row
         try:
             token = get_access_token()
             user = await self._account(token)
             account_id = None if isinstance(user, dict) else user.id
             # The row exists before the service runs, so the write limit counts this call from its start.
-            row_id = await _start_row(function, started_at, account_id)
+            row_id = await _start_row(function, started_at, account_id, tried)
             started = True
             if isinstance(user, dict):
                 result = user
             else:
                 refused = not_allowed(function, user.claude_can)  # before the service: nothing is written
+                if refused is None and function == OWNER_FUNCTION and not is_owner(token):
+                    refused = {**OWNER_ONLY}
                 if refused is None and function in READ_FUNCTIONS:  # the read limit, before the read's work
                     refused = await anyio.to_thread.run_sync(check_reads, account_id, READ_FUNCTIONS)
                 result = refused or await anyio.to_thread.run_sync(work, account_id)
                 if add is not None and "error" not in result:
                     result = add(result, token)
+            done, reply = result, True
             is_error = "error" in result
             if not is_error:
                 model.model_validate(result)  # a result that breaks its schema is Spotter's bug, not the caller's
             # Raises on anything that cannot be sent, such as a lone surrogate: then the answer is internal_error.
             text, size = _json_text(result)
+            reply = False
         except DATABASE_DOWN as exc:
             log.warning("MCP %s could not use the database: %s", function, type(exc).__name__)
-            result, is_error = database_unavailable(), True
+            result, is_error, frame = database_unavailable(), True, calllog.frame_of(exc)
             text, size = _json_text(result)
         except Exception as exc:  # noqa: BLE001 - the caller gets a typed error; the log gets type and frames
             log.error("MCP %s crashed: %s", function, calllog.crash_text(exc))
-            result, is_error = internal_error(function), True
+            result, is_error, frame = internal_error(function), True, calllog.frame_of(exc)
             text, size = _json_text(result)
 
         ms = int((time.monotonic() - start) * 1000)
+        code = result.get("error") if is_error else None
+        # A reply that failed after the work finished reads as what the work did: a write that landed is written.
+        trace = (calllog.outcome(done, NEEDS.get(function) != "read"), calllog.step(code, reply), frame, notes)
         try:
             if not started:  # the call failed before its row was written (finding the person, say)
-                row_id = await _start_row(function, started_at, account_id)
-            await anyio.to_thread.run_sync(
-                calllog.finish, row_id, ms, not is_error, result.get("error") if is_error else None, size)
+                row_id = await _start_row(function, started_at, account_id, tried)
+            await anyio.to_thread.run_sync(calllog.finish, row_id, ms, not is_error, code, size, *trace)
         except Exception as exc:  # noqa: BLE001 - a lost log row never costs the person their answer
             log.warning("MCP %s: the call log could not be written: %s", function, type(exc).__name__)
         return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=result,
                               is_error=is_error)
 
 
-async def _start_row(function: str, started_at, account_id: int | None) -> int | None:
+async def _start_row(function: str, started_at, account_id: int | None, tried: str) -> int | None:
     """The call's call-log row, started in a worker thread. Any failure is None: the call still runs."""
     try:
-        return await anyio.to_thread.run_sync(calllog.start, function, started_at, account_id)
+        return await anyio.to_thread.run_sync(calllog.start, function, started_at, account_id, "claude", tried)
     except Exception as exc:  # noqa: BLE001 - a lost log row never costs the person their answer
         log.warning("MCP %s: the call log could not be written: %s", function, type(exc).__name__)
         return None
@@ -939,6 +980,38 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
                      distance_unit=distance_unit, length_unit=length_unit)
         return await wrapper.call("import_entries", ImportEntriesResult,
                                   lambda account: services.import_entries(account, data, "claude"))
+
+    # Last, so everyone else's list is the nineteen above, in their order (SpotterServer.list_tools).
+    @server.tool(
+        name=OWNER_FUNCTION,
+        title="Owner: calls",
+        description=(
+            "For Spotter's owner alone: what calls did, from the call log, never what the person sent. With no "
+            "person named, one line per account with a call in the window, and one for the calls with no account. "
+            "With account_id or email, that person's calls, newest first. With no_account, the calls that had no "
+            "account. With request_id, that request's calls. Each call gives when it "
+            "started, who called (web or claude), the function, ok and the error, the outcome, the step and line "
+            "it stopped at, the field names it sent, notes, its time and size, and its request id."
+        ),
+        annotations=READ_ONLY,
+    )
+    async def owner_calls(
+        account_id: Annotated[int | None, Field(description="An account's id, as a line gives it.")] = None,
+        email: Annotated[str | None, Field(description="An account's email, matched exactly, ignoring case.")] = None,
+        request_id: Annotated[str | None, Field(
+            description="A request's id, from its X-Request-Id header. Goes before account_id and email.")] = None,
+        no_account: Annotated[bool, Field(
+            description="true lists the calls that had no account: a refused sign-in, or a deleted account.")] = False,
+        hours: Annotated[int | None, Field(
+            description="The window, in hours back from now: 1 to 2,160. Leave out for 24.",
+            ge=HOURS[0], le=HOURS[1])] = None,
+        failed_only: Annotated[bool, Field(description="true keeps only the calls that were not ok.")] = False,
+        limit: Annotated[int | None, Field(
+            description="The most lines or calls: 1 to 200. Leave out for 50.", ge=LIMIT[0], le=LIMIT[1])] = None,
+    ) -> Annotated[CallToolResult, OwnerCallsResult]:
+        sent = _sent(account_id=account_id, email=email, request_id=request_id, no_account=no_account or None,
+                     hours=hours, failed_only=failed_only or None, limit=limit)
+        return await wrapper.call(OWNER_FUNCTION, OwnerCallsResult, lambda _account: services.owner_calls(sent))
 
     @server.resource(
         CAN_AND_CANT_URI,

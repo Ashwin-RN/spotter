@@ -192,7 +192,7 @@ def call(http, token: str, name: str, arguments: dict | None = None) -> dict:
 def test_the_read_functions_are_every_read_level_function():
     assert set(mcp_server.READ_FUNCTIONS) == {n for n, level in mcp_server.NEEDS.items() if level == "read"}
     assert {"whoami", "get_log", "get_trends", "get_goals", "find_food", "list_exercises",
-            "get_progress"} == set(mcp_server.READ_FUNCTIONS)
+            "get_progress", "owner_calls"} == set(mcp_server.READ_FUNCTIONS)  # owner_calls: trace.md decision 16
     assert READS_LIMIT == 300 and READ_LIMIT == 120
 
 

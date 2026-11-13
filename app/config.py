@@ -9,6 +9,9 @@ and are never logged. Without USDA_API_KEY the USDA food lookup is off and every
 
 DB_POOL_SIZE and DB_MAX_OVERFLOW size the Postgres connection pool (app/db.py); unset or out of range, the
 defaults hold.
+
+OWNER_USER_ID names the one account that may read other people's calls (owner_calls): the sign-in id whoami
+gives. Unset, nobody is the owner.
 """
 
 import os
@@ -64,6 +67,7 @@ class Settings:
     usda_api_key: str | None = field(default=None, repr=False)  # unset: USDA lookup is off
     db_pool_size: int = DEFAULT_DB_POOL_SIZE  # Postgres only
     db_max_overflow: int = DEFAULT_DB_MAX_OVERFLOW  # Postgres only
+    owner_user_id: str | None = None  # the sign-in id of the one account that may read others' calls; unset: none
 
     @property
     def site_origin(self) -> str | None:
@@ -193,6 +197,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         usda_api_key=_text(env, "USDA_API_KEY"),
         db_pool_size=_whole_number(env.get("DB_POOL_SIZE"), DB_POOL_SIZE_RANGE, DEFAULT_DB_POOL_SIZE),
         db_max_overflow=_whole_number(env.get("DB_MAX_OVERFLOW"), DB_MAX_OVERFLOW_RANGE, DEFAULT_DB_MAX_OVERFLOW),
+        owner_user_id=_text(env, "OWNER_USER_ID"),
     )
 
 

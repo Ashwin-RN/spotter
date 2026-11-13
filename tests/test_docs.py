@@ -92,7 +92,8 @@ def test_the_function_count_is_the_servers(readme):
     from app.mcp_server import NEEDS
     counts = function_counts(readme)
     assert counts, "README.md states no MCP function count"
-    assert set(counts) == {len(NEEDS)}, f"README.md says {counts}, the server has {len(NEEDS)}"
+    offered = len(NEEDS) - 1  # every function but owner_calls, the owner's alone (trace.md decision 16)
+    assert set(counts) == {offered}, f"README.md says {counts}, the server offers {offered}"
 
 
 def test_the_page_list_names_every_top_level_page(readme):

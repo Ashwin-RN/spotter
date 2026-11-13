@@ -220,14 +220,15 @@ class Goal(Base):
 
 
 class CallLog(Base):
-    """One row per MCP call: which function, how long, ok or an error code, the result size.
-    Never an argument and never a result."""
+    """One row per MCP call and web write: which function, how long, ok or an error code, the result size,
+    and its trace (app/calllog.py). Never an argument's value and never a result."""
 
     __tablename__ = "call_log"
     __table_args__ = (
         Index("ix_call_log_started_at", "started_at"),
         Index("ix_call_log_user_id_started_at", "user_id", "started_at"),
         Index("ix_call_log_function_started_at", "function", "started_at"),
+        Index("ix_call_log_request_id", "request_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -238,6 +239,14 @@ class CallLog(Base):
     ok: Mapped[bool] = mapped_column(Boolean)
     error_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     result_bytes: Mapped[int] = mapped_column(Integer)
+    # The trace (migration 0005): null on rows older than it.
+    request_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    caller: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    tried: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    step: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    frame: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class Measurement(EntryColumns, Base):

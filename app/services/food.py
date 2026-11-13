@@ -427,7 +427,7 @@ def find_food(user_id: int, query, limit=8) -> dict:
     else:
         found = None
         usda_note = ("USDA lookup is off: no key is set." if err["error"] == "usda_off"
-                     else "USDA did not answer: use a saved food or the person's own number.")
+                     else err["message"].removesuffix(".") + ": use a saved food or the person's own number.")
     count = lambda n: formatting.show(n, "count")  # noqa: E731
     summary = f"For '{rules.quote(text)}': {count(len(saved))} saved, {count(len(recent))} recent"
     summary += f", {count(len(found))} from USDA." if found is not None else ". " + usda_note

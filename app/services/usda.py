@@ -14,15 +14,17 @@ food(fdc_id)  -> ({fdc_id, description, data_type, kcal_per_100g}, None) or (Non
 - Two shared caches, which hold no user id: usda_search (the normalised query -> the fdc ids it found)
   and usda_food (one row per food). A cached answer is used while it is younger than CACHE_DAYS;
   an older one is fetched again.
-- Every failure (no answer in time, an HTTP error or a redirect, a refused key, a broken reply, a
-  reply that is not the JSON expected, no energy value) is usda_unavailable, with a fix pointing at a
-  saved food or the person's own number. What went wrong is not passed on: it could carry the address.
+- Every failure is usda_unavailable, with a fix pointing at a saved food or the person's own number. Its
+  reason is one word of REASONS, from the HTTP status or the kind of failure: it goes to the call's row
+  (calllog.note, usda=reason) and to one warning line, and picks the message (MESSAGES, else "USDA did
+  not answer."). Nothing else about the failure is passed on: it could carry the address or the key.
 - The cache is best effort. Rows are written with an upsert, so two first searches for one query at
   once both land; if a store fails anyway, the answer is still returned.
 """
 
 import http.client
 import json
+import logging
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,7 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.exc import SQLAlchemyError
 
-from app import db
+from app import calllog, db
 from app.auth import build_opener
 from app.config import get_settings
 from app.models import UsdaFood, UsdaSearch
@@ -46,7 +48,12 @@ ENERGY_ID, ENERGY_NUMBER = 1008, "208"
 PAGE_SIZE = 25
 QUERY_MAX = 128   # usda_search.query_key
 DESCRIPTION_MAX = 255
+# Why a lookup failed: http_NNN for any status not named here.
+REASONS = ("key_refused", "rate_limited", "bad_request", "redirect", "no_answer", "bad_reply", "no_energy")
+STATUS_REASONS = {400: "bad_request", 401: "key_refused", 403: "key_refused", 429: "rate_limited"}
+MESSAGES = {"key_refused": "USDA refused Spotter's key.", "rate_limited": "USDA is over its limit for now."}
 
+log = logging.getLogger("spotter.usda")
 urlopen = build_opener().open  # refuses redirects (app.auth); tests replace this, nothing else does
 
 
@@ -55,9 +62,16 @@ def off() -> dict:
                  "Log it with the person's own number (kcal), or as a saved food.")
 
 
-def unavailable() -> dict:
-    return error("usda_unavailable", "USDA did not answer.",
+def unavailable(reason: str | None = None) -> dict:
+    return error("usda_unavailable", MESSAGES.get(reason, "USDA did not answer."),
                  "Use a saved food (find_food lists them) or the person's own number (kcal).")
+
+
+def _failed(reason: str) -> dict:
+    """A failed lookup: the reason on the call's row and on one warning line, and the error for the caller."""
+    calllog.note("usda", reason)
+    log.warning("USDA lookup failed: %s", reason)
+    return unavailable(reason)
 
 
 def normalise(query: str) -> str:
@@ -65,15 +79,19 @@ def normalise(query: str) -> str:
 
 
 def _get(path: str, params: dict, key: str):
-    """The decoded JSON of one GET, or None on any failure."""
+    """(the decoded JSON of one GET, None), or (None, why it failed: one of REASONS or http_NNN)."""
     # Spaces as %20, never "+": FoodData Central answers 400 to "Survey+%28FNDDS%29" (seen 2026-11-13).
     address = f"{BASE}{path}?{urllib.parse.urlencode(params, doseq=True, quote_via=urllib.parse.quote)}"
     request = urllib.request.Request(address, headers={"X-Api-Key": key, "Accept": "application/json"})
     try:
         with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, ValueError):
-        return None
+            return json.loads(response.read().decode("utf-8")), None
+    except urllib.error.HTTPError as exc:  # a status, or a redirect the opener refused (app.auth)
+        return None, "redirect" if 300 <= exc.code < 400 else STATUS_REASONS.get(exc.code, f"http_{exc.code}")
+    except ValueError:  # not UTF-8, or not JSON
+        return None, "bad_reply"
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
+        return None, "no_answer"
 
 
 def _energy(nutrients) -> float | None:
@@ -152,9 +170,12 @@ def search(query: str) -> tuple[list[dict] | None, dict | None]:
             rows = {r.fdc_id: r for r in s.scalars(select(UsdaFood).where(UsdaFood.fdc_id.in_(ids or [])))}
             if ids is not None and all(i in rows for i in ids):
                 return [_as_dict(rows[i]) for i in ids], None
-    reply = _get("/foods/search", {"query": query_key, "dataType": list(DATA_TYPES), "pageSize": PAGE_SIZE}, key)
-    if not isinstance(reply, dict) or not isinstance(reply.get("foods"), list):
-        return None, unavailable()
+    reply, reason = _get("/foods/search", {"query": query_key, "dataType": list(DATA_TYPES), "pageSize": PAGE_SIZE},
+                         key)
+    if reason is None and not (isinstance(reply, dict) and isinstance(reply.get("foods"), list)):
+        reason = "bad_reply"
+    if reason is not None:
+        return None, _failed(reason)
     found = [f for f in (_parsed(item) for item in reply["foods"]) if f is not None]
     _cache(found, query_key)
     return found, None
@@ -168,9 +189,13 @@ def food(fdc_id: int) -> tuple[dict | None, dict | None]:
         row = s.get(UsdaFood, fdc_id)
         if row is not None and _fresh(row.fetched_at):
             return _as_dict(row), None
-    reply = _get(f"/food/{int(fdc_id)}", {}, key)
-    found = _parsed(reply)
-    if found is None or found["fdc_id"] != fdc_id:
-        return None, unavailable()
+    reply, reason = _get(f"/food/{int(fdc_id)}", {}, key)
+    found = _parsed(reply) if reason is None else None
+    if reason is None and (found is None or found["fdc_id"] != fdc_id):
+        # The food asked for, with no energy value; anything else is not the reply expected.
+        asked = isinstance(reply, dict) and reply.get("fdcId") == fdc_id
+        reason = "no_energy" if asked and _energy(reply.get("foodNutrients")) is None else "bad_reply"
+    if reason is not None:
+        return None, _failed(reason)
     _cache([found])
     return found, None

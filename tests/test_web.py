@@ -40,6 +40,8 @@ WEB = {"workos_client_id": CLIENT, "workos_api_key": API_KEY}
 PROVIDER = "https://provider.example/authorize"
 CODE = "code-one-time-5e2c"
 METADATA_PATH = "/.well-known/oauth-protected-resource/mcp"
+# The functions the landing counts: every one but owner_calls, the owner's alone (trace.md decision 16).
+OFFERED = len(mcp_server.NEEDS) - 1
 
 
 class FakeSeam:
@@ -322,7 +324,7 @@ def test_the_landing_in_its_order_and_words(web_client, state):
     want = " ".join(LANDING_WORDS).format(
         button=BUTTONS[state][0], answer=" ".join(line for lines in web.exchange_answer() for line in lines),
         step_1=STEP_1[state], your_pages=" ".join(YOUR_PAGES) if signed_in else "",
-        functions=len(mcp_server.NEEDS), cases=cases)
+        functions=OFFERED, cases=cases)
     shown = page[page.index("<main"):page.index("</footer>")]
     assert plain_words(shown) == re.sub(" +", " ", want)
     assert page.count("<h1") == 1
@@ -404,7 +406,7 @@ def handed_to_home(client, monkeypatch) -> dict:
 def test_the_two_start_time_counts_equal_their_sources(client, monkeypatch):
     cases = json.loads(CASES.read_text(encoding="utf-8"))
     assert isinstance(cases, list) and cases
-    assert web.FUNCTION_COUNT == len(mcp_server.NEEDS)
+    assert web.FUNCTION_COUNT == OFFERED
     assert web.EVAL_CASES == len(cases) == web.eval_case_count()
     # Read once at start: a render reads neither again.
     def read_again(*args):
@@ -413,7 +415,7 @@ def test_the_two_start_time_counts_equal_their_sources(client, monkeypatch):
     monkeypatch.setattr(web, "eval_case_count", read_again)
     handed = handed_to_home(client, monkeypatch)
     assert (handed["function_count"], handed["eval_cases"], handed["signups_per_day"]) == \
-        (len(mcp_server.NEEDS), len(cases), DEFAULT_SIGNUPS_PER_DAY)
+        (OFFERED, len(cases), DEFAULT_SIGNUPS_PER_DAY)
 
 
 @pytest.mark.parametrize("content", [None, b"", b"not json", b"{}", b'{"cases": [{"id": "a"}]}', b"[]", b"[1, 2]",
@@ -437,15 +439,15 @@ def test_a_cases_file_of_cases_gives_their_number(tmp_path):
 def test_with_no_case_count_the_landing_hands_none_and_still_renders(client, monkeypatch):
     monkeypatch.setattr(web, "EVAL_CASES", None)
     handed = handed_to_home(client, monkeypatch)
-    assert handed["eval_cases"] is None and handed["function_count"] == len(mcp_server.NEEDS)
+    assert handed["eval_cases"] is None and handed["function_count"] == OFFERED
     built = re.search(r'<section class="card built".*?</section>', client.get("/").text, re.S).group(0)
-    assert plain_words(built) == (f"How it is built {len(mcp_server.NEEDS)} functions your assistant can call, over MCP. "
+    assert plain_words(built) == (f"How it is built {OFFERED} functions your assistant can call, over MCP. "
                                   "Read the README")  # the eval line left out, never a typed number
 
 
 def test_no_count_is_typed_into_the_landing_template():
     source = (web.HERE / "templates" / "home.html").read_text(encoding="utf-8")
-    for n in {len(mcp_server.NEEDS), len(json.loads(CASES.read_text(encoding="utf-8"))), DEFAULT_SIGNUPS_PER_DAY}:
+    for n in {OFFERED, len(json.loads(CASES.read_text(encoding="utf-8"))), DEFAULT_SIGNUPS_PER_DAY}:
         assert not re.search(rf"(?<![\d.,]){n}(?![\d.,])", source), n
     for name in ("function_count", "eval_cases", "signups_per_day"):
         assert not re.search(rf"\b{name}\s*(?:[-+*/]|%(?!\}})|\|\s*(?!show\b))", source), name  # drawn as given, or not yet
@@ -3035,7 +3037,7 @@ def answer_before(mcp: bool, method: str, path: str) -> tuple:
 
 
 def headers_of(r) -> dict:
-    out = {k: v for k, v in r.headers.items() if k != "content-length"}
+    out = {k: v for k, v in r.headers.items() if k not in ("content-length", "x-request-id")}  # trace.md 1
     if "allow" in out:
         out["allow"] = {m.strip() for m in out["allow"].split(",")}
     return out

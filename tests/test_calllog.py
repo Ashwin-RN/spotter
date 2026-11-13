@@ -371,7 +371,8 @@ def test_started_at_is_utc_and_ms_is_whole(http):
 
 def test_the_call_log_has_no_column_for_content():
     assert {c.name for c in CallLog.__table__.columns} == {
-        "id", "user_id", "function", "started_at", "ms", "ok", "error_code", "result_bytes"}
+        "id", "user_id", "function", "started_at", "ms", "ok", "error_code", "result_bytes",
+        "request_id", "caller", "tried", "outcome", "step", "frame", "notes"}  # the trace (trace.md decision 3)
 
 
 # ---------------------------------------------------------------- a lone surrogate

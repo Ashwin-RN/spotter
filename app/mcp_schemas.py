@@ -1098,6 +1098,48 @@ class ImportEntriesResult(BaseModel):
                     "calorie estimate, the rows beyond the 50 listed, or that the real run would go past import_limit.")
 
 
+# ---------------------------------------------------------------- owner_calls (Spotter's owner alone)
+
+class OwnerAccount(BaseModel):
+    account_id: int | None = Field(description="The account's id, or null on the line for the calls with no account.")
+    email: str | None = Field(description="The account's email, or null.")
+    name: str | None = Field(description="The account's name, or null.")
+    calls: int = Field(description="Its calls in the window.")
+    failed_calls: int = Field(description="Those that were not ok.")
+    last_call: str | None = Field(description="When its latest call in the window started, in UTC, or null.")
+
+
+class OwnerCall(BaseModel):
+    started_at: str = Field(description="When the call started, in UTC.")
+    caller: str | None = Field(description="web or claude, or null on a row older than the trace.")
+    function: str = Field(description="The function called, or the web write's function.")
+    ok: bool = Field(description="Whether it answered without an error.")
+    error: str | None = Field(description="Its error code, or null.")
+    outcome: str | None = Field(
+        description="read, written, duplicate, preview, refused or failed. Null while it runs, or when the process "
+                    "stopped under it.")
+    step: str | None = Field(description="Where a failed call stopped, or null.")
+    frame: str | None = Field(description="The line in Spotter a crash came from, as file:line function, or null.")
+    tried: str | None = Field(description="What was sent: field names and counts, never a value.")
+    notes: str | None = Field(description="A part that failed inside a call that went on, as key=word, or null.")
+    ms: int = Field(description="How long it took, in milliseconds.")
+    result_bytes: int = Field(description="The size of its answer, in bytes.")
+    request_id: str | None = Field(description="The request's id, as its X-Request-Id header gave it.")
+
+
+class OwnerCallsResult(BaseModel):
+    model_config = TOP
+
+    hours: int | None = Field(description="The window, in hours back from now. Null with request_id: no window applies.")
+    accounts: list[OwnerAccount] | None = Field(
+        description="With no person named: one line per account with a call in the window, and one line with a null "
+                    "account_id for the calls that had no account. With an email that is not one account's: every "
+                    "account it is. Otherwise null.")
+    calls: list[OwnerCall] | None = Field(
+        description="The person's calls in the window, or the request's, newest first. Null when accounts is "
+                    "given.")
+
+
 RESULTS = {
     "whoami": WhoamiResult,
     "list_exercises": ExercisesResult,
@@ -1118,4 +1160,5 @@ RESULTS = {
     "get_trends": GetTrendsResult,
     "get_goals": GetGoalsResult,
     "import_entries": ImportEntriesResult,
+    "owner_calls": OwnerCallsResult,
 }

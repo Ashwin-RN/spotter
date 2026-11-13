@@ -59,6 +59,7 @@ The page limit: more than PAGE_LIMIT loads of the signed-in pages by one person 
 """
 
 import hashlib
+import inspect
 import io
 import json
 import logging
@@ -805,32 +806,53 @@ def codes(result: dict) -> set[str]:
     return found | {e.get("error") for e in result.get("errors") or [] if isinstance(e, dict)}
 
 
+def web_sent(write, args: tuple) -> dict:
+    """The service's arguments as an assistant's call would send them: the form's fields at the top level, beside
+    the entry's kind and entry_id, each named by the service's own parameters. The user id and `by` are left out."""
+    try:
+        bound = list(inspect.signature(write).bind(*args).arguments.items())[1:]
+    except (TypeError, ValueError):  # not a service's signature: nothing to name
+        return {}
+    sent: dict = {}
+    for name, value in bound:
+        if name != "by":
+            sent.update(value if isinstance(value, dict) else {name: value})
+    return sent
+
+
 def logged_write(user_id: int, function: str, write, *args):
-    """Run a service write with its call-log row under `function`, the name MCP uses for the same write.
-    The row is stored (in progress) before the service runs, so the write limit counts this call while
-    it runs, and completed afterwards. Runs in the worker thread with the write. A crash completes the
-    row as internal_error and is raised."""
+    """Run a service write with its call-log row under `function`, the name MCP uses for the same write, and
+    its trace (app/calllog.py). The row is stored (in progress) before the service runs, so the write limit
+    counts this call while it runs, and completed afterwards. Runs in the worker thread with the write. A
+    crash completes the row as internal_error, a lost database as database_unavailable, and is raised."""
     started_at, start = db.utcnow(), time.monotonic()
     row_id = None
+    notes = calllog.new_notes()
     try:
-        row_id = calllog.start(function, started_at, user_id)
+        row_id = calllog.start(function, started_at, user_id, "web", calllog.tried(function, web_sent(write, args)))
     except Exception as exc:  # noqa: BLE001 - a lost log row never costs the person their write
         log.warning("Web %s: the call log could not be started: %s", function, type(exc).__name__)
-    result, crashed = None, True
+    result, code, frame = None, "internal_error", None
     try:
         result = write(*args)
-        crashed = False
         return result
+    except BaseException as exc:
+        code = "database_unavailable" if isinstance(exc, DATABASE_DOWN) else code
+        frame = calllog.frame_of(exc)
+        if isinstance(exc, Exception) and not isinstance(exc, DATABASE_DOWN):  # type and frames, never the message
+            log.error("Web %s crashed: %s", function, calllog.crash_text(exc))
+        raise
     finally:
         ms = int((time.monotonic() - start) * 1000)
-        if crashed:
-            ok, code, size = False, "internal_error", 0
+        if result is None:
+            ok, size = False, 0
         else:
             ok = not failed(result)
             code = None if ok else str(result.get("error") or "invalid")
             size = len(json.dumps(result, default=str).encode("utf-8"))
         try:
-            calllog.finish(row_id, ms, ok, code, size)
+            calllog.finish(row_id, ms, ok, code, size, calllog.outcome(result, True), calllog.step(code), frame,
+                           notes)
         except Exception as exc:  # noqa: BLE001 - a lost log row never costs the person their write
             log.warning("Web %s: the call log could not be finished: %s", function, type(exc).__name__)
 
@@ -978,7 +1000,7 @@ def eval_case_count(path: Path = CASES_FILE) -> int | None:
     return len(cases)
 
 
-FUNCTION_COUNT = len(mcp_server.NEEDS)
+FUNCTION_COUNT = len(mcp_server.NEEDS) - 1  # every function but owner_calls, which only the owner is offered
 EVAL_CASES = eval_case_count()
 
 

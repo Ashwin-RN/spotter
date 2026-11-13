@@ -17,6 +17,8 @@ One module per area, so each later stage adds its own:
   entries       get_entry, edit_entry, delete_entry, restore_entry
   export        export_data (the Settings page's download)
   imports       import_entries (history from another app, many dated rows a call)
+  owner         owner_calls (the call log, for Spotter's owner alone: it reads every account, so it takes no
+                user_id)
   common        the by-id lookup, the user-row lock, the write limit, the read throttle, the duplicate guard
 
 Every public function takes the signed-in person's user_id (the account row id) first, and writes
@@ -43,6 +45,7 @@ from app.services.imports import import_entries
 from app.services.lifts import log_lifts
 from app.services.log import get_log
 from app.services.measurements import log_measurement
+from app.services.owner import owner_calls
 from app.services.progress import get_progress
 from app.services.trends import get_days, get_trends
 
@@ -51,6 +54,6 @@ __all__ = [
     "account_empty", "delete_account", "delete_entry", "edit_entry", "entry_kinds", "export_data", "find_food",
     "get_cardio", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress", "get_trends",
     "import_entries", "list_exercises", "list_saved_foods",
-    "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement",
+    "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "owner_calls",
     "restore_entry", "save_food", "set_claude_can", "set_goal", "update_settings", "whoami",
 ]
