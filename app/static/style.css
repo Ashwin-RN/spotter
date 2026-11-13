@@ -647,8 +647,8 @@ ul.entries { display: block; }
 .entry-line:last-child { border-bottom: 0; }
 .entry-main { grid-column: 1; grid-row: span 2; min-width: 0; padding-top: 2px; }
 .entry-name { display: block; font-size: 16px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
-.entry-figures { display: block; margin-top: 2px; color: var(--text-2); font-size: 14px; }
-.entry-note { display: block; margin-top: 4px; color: var(--text-2); font-size: 14px; }
+.entry-figures { display: block; margin-top: 2px; color: var(--text-2); font-size: 14px; overflow-wrap: anywhere; }
+.entry-note { display: block; margin-top: 4px; color: var(--text-2); font-size: 14px; overflow-wrap: anywhere; }
 .entry-note b { color: var(--text-3); font-weight: 500; }
 .entry-tags { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; padding-top: 3px; }
 .entry-actions { grid-column: 2; display: flex; justify-content: flex-end; margin-right: -10px; }
@@ -818,7 +818,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 input::placeholder, textarea::placeholder { color: var(--text-3); }
 .field.has-error input, .field.has-error select, .field.has-error textarea, [aria-invalid="true"] { border: 1.5px solid var(--err); }
 .field.has-error label { color: var(--err); }
-.field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 2px; }
 
 /* A checkbox or radio row, at least 44 px. In fieldset.choices each is a card: the label in bold, its
@@ -873,7 +873,7 @@ td.remark { color: var(--text-2); font-size: 14px; }
 td.name, th.name { font-weight: 500; }
 td a { text-underline-offset: 3px; }
 table.rows td a { display: inline-flex; align-items: center; min-height: 44px; margin: -12px 0; }
-table.rows td.lead { overflow-wrap: anywhere; }
+table.rows td.lead, table.rows td[data-label] { overflow-wrap: anywhere; }
 table.trends td:first-child { color: var(--text-2); }
 table.trends td.num { font-weight: 600; }
 tr.group td { border-top-color: var(--line-strong); }
