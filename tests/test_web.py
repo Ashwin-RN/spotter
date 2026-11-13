@@ -265,7 +265,7 @@ LANDING_WORDS = (
     'You decide what your assistant may do. A switch on Settings has three settings: "Read only", "Read and log" and '
     '"Read, log and delete". It starts at "Read and log".',
     "Export. Settings gives you everything you have logged, as a zip of CSV files.",
-    "Undo. A deleted entry comes back with Undo, or when you ask your assistant to restore it.",
+    "Undo. Right after a delete, Undo brings the entry back. Your assistant can restore an entry it deleted.",
     "Delete your account. On Settings. It removes every entry and your sign-in, and it cannot be undone.",
     "How it is built",
     "{functions} functions your assistant can call, over MCP.",

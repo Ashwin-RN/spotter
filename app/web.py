@@ -866,13 +866,13 @@ LANDING_EXCHANGE = {
     "you": "You",
     "assistant": "Your assistant",
     "question": "Am I on track for my goals?",
-    "opening": "All three goals are on track at their pace so far.",
+    "opening": "All three goals are on track by projection.",
     "goals": (
-        {"label": "Body weight 77\u00a0kg", "by": "Tue 5 Jan 2027", "status": "on track",
+        {"label": "Body weight 77\u00a0kg", "by": "Tue 5 Jan 2027",
          "plan_line": "79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind.", "reached": "Sat 26 Dec"},
-        {"label": "Back Squat 120\u00a0kg", "by": "Tue 2 Feb 2027", "status": "on track",
+        {"label": "Back Squat 120\u00a0kg", "by": "Tue 2 Feb 2027",
          "plan_line": "107.9 kg now against 99.8 kg on the plan line today: 8.1 kg ahead.", "reached": "Thu 26 Nov"},
-        {"label": "Outdoor Run 5\u00a0km in 27:00", "by": "Tue 5 Jan 2027", "status": "on track",
+        {"label": "Outdoor Run 5\u00a0km in 27:00", "by": "Tue 5 Jan 2027",
          "plan_line": "29:30 now against 29:48 on the plan line today: 18 seconds ahead.", "reached": "Sat 12 Dec"},
     ),
 }
@@ -885,7 +885,7 @@ LANDING_PICTURE = {"src": "/static/landing-goals.svg", "width": 340, "height": 3
 def exchange_answer(exchange: dict = LANDING_EXCHANGE) -> list[list[str]]:
     """Your assistant's answer, a paragraph each of lines: the opening line, then three lines a goal. Every word is
     the exchange's own, as written: nothing here works one out."""
-    return [[exchange["opening"]]] + [[f"{g['label']} by {g['by']}: {g['status']}.", g["plan_line"],
+    return [[exchange["opening"]]] + [[f"{g['label']} by {g['by']}.", g["plan_line"],
                                        f"At this pace it is reached on {g['reached']}."] for g in exchange["goals"]]
 
 

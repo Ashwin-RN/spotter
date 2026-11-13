@@ -2242,17 +2242,20 @@ def test_the_landing_picture_is_served_as_an_image_the_page_draws_at_its_own_siz
 
 def test_the_landing_picture_is_the_body_weight_goals_card_on_the_fixed_day(client, make_user, monkeypatch):
     """The card's words, read from the file in order: the label, the status tag, the date, then the rows, each label
-    with its own value as the Goals page prints it. The only date under the chart is the goal's own."""
-    listed = fixed_day_goals(make_user, monkeypatch)
-    goal, today = listed["goals"][0], listed["today"]
-    assert goal["kind"] == "bodyweight"
+    with its own value as the Goals page prints it: the now figure and Plan line today from goal_charts, the figures
+    the reply's plan_line says, then At this pace. The only date under the chart is the goal's own."""
+    listed, read = fixed_day_goals(make_user, monkeypatch)
+    goal, page_goal, today = listed["goals"][0], read["goals"][0], listed["today"]
+    assert goal["kind"] == page_goal["kind"] == "bodyweight"
     by = formatting.day(goal["target_date"], today)
-    pace = [f"{formatting.show(v, 'rate', page=True)}{tr.NBSP}{goal['unit']} a week"
-            for v in (goal["needed_per_week"], goal["actual_per_week"])]
+    q, widened, now = web.goal_quantity(page_goal), web.now_widened(page_goal), web.now_words(page_goal)
+    rows = [now[0].upper() + now[1:], web.show_filter(page_goal["latest"], q, widened),
+            "Plan line today", web.show_filter(page_goal["should_be_today"], q, widened),
+            "At this pace", formatting.day(goal["projected_date"], today)]
     root = picture_root()
     [chart] = root.findall(f"{{{SVG_NS}}}svg")
     shown, charted = _texts(root), _texts(chart)
     assert shown[:3] == [_no_break_units(goal["label"]), web.STATUS_TAGS[goal["status"]], f"by {by}"]
-    assert shown[3 + len(charted):] == ["Needed", pace[0], "So far", pace[1], "At this pace",
-                                        formatting.day(goal["projected_date"], today)]
+    assert shown[3 + len(charted):] == rows
+    assert f"{rows[1]} now against {rows[3]} on the plan line today:".replace(tr.NBSP, " ") in goal["plan_line"]
     assert [t for t in charted if re.fullmatch(r"\w{3} \d{1,2} \w{3}(?: \d{4})?", t)] == [by]

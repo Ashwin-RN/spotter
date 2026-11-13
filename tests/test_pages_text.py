@@ -1044,6 +1044,11 @@ def test_no_rebuilt_route_keeps_a_claude_skip():
     assert not BUILT & set(CLAUDE_SKIPS), BUILT & set(CLAUDE_SKIPS)
 
 
+def test_every_route_that_draws_a_page_is_rebuilt():
+    # The one exception: /today draws no page, its GET only redirects (to sign-in, or to today's day page).
+    assert set(ROUTES) - BUILT == {"/today"}, set(ROUTES) - BUILT
+
+
 # Every field a form_message line can be drawn for (rev_b14 T-2): before, only "date", "kind" and none.
 FORM_MESSAGE_FIELDS = frozenset({"date", "kind", "", *(f for fields in web.FIELDS_OF.values() for f in fields),
                                  *web.FIRST_FIELD.values()})
@@ -1783,26 +1788,26 @@ def _no_break_units(label: str) -> str:
     return re.sub(r"(\d) (kg|km|cm|bpm)\b", lambda m: m.group(1) + tr.NBSP + m.group(2), label)
 
 
-def fixed_day_goals(make_user, monkeypatch) -> dict:
-    """get_goals for the sample account on the fixed day of tests/test_sample.py: the landing's sample exchange and
-    its picture are both of it."""
+def fixed_day_goals(make_user, monkeypatch) -> tuple[dict, dict]:
+    """get_goals and goal_charts, the Goals page's read, for the sample account on the fixed day of
+    tests/test_sample.py: the landing's sample exchange and its picture are both of it."""
     monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
     user = make_user()
     assert "error" not in services.add_sample_data(user.id, "web")
-    listed = services.get_goals(user.id)
-    assert listed["today"] == "2026-11-10" and len(listed["goals"]) == 3
-    return listed
+    listed, charted = services.get_goals(user.id), services.goal_charts(user.id)
+    assert listed["today"] == charted["today"] == "2026-11-10" and len(listed["goals"]) == 3
+    return listed, charted
 
 
 def test_the_landings_exchange_is_the_fixed_day_sample_goals_line_by_line(client, make_user, monkeypatch):
     """The exchange is one constant (web.LANDING_EXCHANGE): get_goals for the sample account on the fixed day of
     tests/test_sample.py, said by the server's reply rules: one opening line, then three lines a goal, the label and
-    date with the status, the goal's plan_line as get_goals writes it, the projected date. Rebuilt here from get_goals,
-    it must equal the constant character for character, and the page must say it as written."""
-    listed = fixed_day_goals(make_user, monkeypatch)
+    date alone, the goal's plan_line as get_goals writes it, the projected date. Rebuilt here from get_goals, it must
+    equal the constant character for character, and the page must say it as written."""
+    listed, _ = fixed_day_goals(make_user, monkeypatch)
     today = listed["today"]
     rebuilt = [{"label": _no_break_units(g["label"]), "by": formatting.day(g["target_date"], today),
-                "status": g["status"], "plan_line": g["plan_line"], "reached": formatting.day(g["projected_date"], today)}
+                "plan_line": g["plan_line"], "reached": formatting.day(g["projected_date"], today)}
                for g in listed["goals"]]
     held = web.LANDING_EXCHANGE["goals"]
     for want, got in zip(rebuilt, held, strict=True):
@@ -1811,11 +1816,11 @@ def test_the_landings_exchange_is_the_fixed_day_sample_goals_line_by_line(client
         assert set(got) == set(want)
     assert {k: v for k, v in web.LANDING_EXCHANGE.items() if k != "goals"} == {
         "you": "You", "assistant": "Your assistant", "question": "Am I on track for my goals?",
-        "opening": "All three goals are on track at their pace so far."}
-    # The opening line holds only while every goal is on track by its projection.
-    assert all(g["status"] == "on track" for g in listed["goals"])
-    assert web.exchange_answer() == [["All three goals are on track at their pace so far."]] + [
-        [f"{g['label']} by {g['by']}: {g['status']}.", g["plan_line"], f"At this pace it is reached on {g['reached']}."]
+        "opening": "All three goals are on track by projection."}
+    # The opening line holds only while every goal's status, the Goals page's By projection tag, is on track.
+    assert [g["status"] for g in listed["goals"]] == ["on track"] * 3
+    assert web.exchange_answer() == [["All three goals are on track by projection."]] + [
+        [f"{g['label']} by {g['by']}.", g["plan_line"], f"At this pace it is reached on {g['reached']}."]
         for g in rebuilt]
     page = client.get("/").text
     said = re.search(r'<div class="said claude"><span class="who">Your assistant</span>(.*?)</div>', page, re.S)
