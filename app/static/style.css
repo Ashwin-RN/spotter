@@ -197,6 +197,7 @@ nav.tabs {
   line-height: 1.12;
   font-weight: 700;
   letter-spacing: -.025em;
+  overflow-wrap: anywhere;
 }
 .h1-date { display: block; margin-top: 2px; color: var(--text-2); font-size: 17px; font-weight: 500; letter-spacing: -.01em; }
 .page-head .lede { flex-basis: 100%; color: var(--text-2); font-size: 15px; }
@@ -645,7 +646,7 @@ ul.entries { display: block; }
 }
 .entry-line:last-child { border-bottom: 0; }
 .entry-main { grid-column: 1; grid-row: span 2; min-width: 0; padding-top: 2px; }
-.entry-name { display: block; font-size: 16px; font-weight: 500; line-height: 1.35; }
+.entry-name { display: block; font-size: 16px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
 .entry-figures { display: block; margin-top: 2px; color: var(--text-2); font-size: 14px; }
 .entry-note { display: block; margin-top: 4px; color: var(--text-2); font-size: 14px; }
 .entry-note b { color: var(--text-3); font-weight: 500; }
@@ -747,6 +748,7 @@ div.ok.undo button.link { color: var(--text); text-decoration: underline; text-u
 p.error { margin-top: 6px; }
 div.error { padding: 12px 14px; border: 1.5px solid var(--err); border-radius: var(--r-box); }
 div.error p + p { margin-top: 4px; }
+div.error p.error { margin-top: 0; }
 
 /* ---------------------------------------------------------------- forms and fold-outs */
 
@@ -784,6 +786,7 @@ details.add > summary::before {
 details.add[open] > summary::before { rotate: 45deg; }
 details.add > summary:focus-visible { outline-offset: -2px; border-radius: 12px; }
 details.add[open] { padding-bottom: var(--pad); }
+.save-food > details.add:first-child { margin-top: calc(var(--pad) * -1); border-top: 0; }
 details.add > form, form.goal-form, form.stack { display: grid; gap: 14px; }
 
 .field { display: grid; gap: 6px; min-width: 0; }
@@ -805,7 +808,7 @@ textarea { min-height: 80px; resize: vertical; }
 select {
   -webkit-appearance: none;
   appearance: none;
-  padding-right: 40px;
+  padding-right: 32px;
   background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
   background-position: calc(100% - 22px) 52%, calc(100% - 16px) 52%;
   background-size: 6px 6px, 6px 6px;
@@ -870,6 +873,7 @@ td.remark { color: var(--text-2); font-size: 14px; }
 td.name, th.name { font-weight: 500; }
 td a { text-underline-offset: 3px; }
 table.rows td a { display: inline-flex; align-items: center; min-height: 44px; margin: -12px 0; }
+table.rows td.lead { overflow-wrap: anywhere; }
 table.trends td:first-child { color: var(--text-2); }
 table.trends td.num { font-weight: 600; }
 tr.group td { border-top-color: var(--line-strong); }
@@ -894,6 +898,9 @@ tr.group td { border-top-color: var(--line-strong); }
   }
   table.rows td.num { font-weight: 600; white-space: nowrap; }
   table.rows td:empty, table.rows td.is-blank { display: none; }
+  /* Saved foods: Edit (the second-last cell) starts the row's last line, Delete beside it, both at the line's top. */
+  .saved-foods table.rows td:nth-last-child(2) { grid-column: 1; }
+  table.rows td a.action { margin: 0; }
 }
 
 /* ---------------------------------------------------------------- goals */
@@ -1035,7 +1042,7 @@ dl.callouts > div.is-key { border: 1.5px solid var(--text); background: transpar
   font-size: 13px;
   line-height: 1.45;
 }
-.page:has(+ .attribution) { padding-bottom: 8px; }
+.page:has(+ .attribution), .page:has(+ .site-foot) { padding-bottom: 8px; }
 
 .site-foot {
   display: flex;
@@ -1061,7 +1068,7 @@ dl.callouts > div.is-key { border: 1.5px solid var(--text); background: transpar
 .plain-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--text); font-size: 15px; font-weight: 600; text-underline-offset: 4px; }
 
 .showcase { display: grid; gap: 10px; }
-.showcase img { width: 100%; height: auto; border-radius: var(--r-box); }
+.showcase img { width: 100%; max-width: 340px; height: auto; border-radius: var(--r-box); }
 .exchange { display: flex; flex-direction: column; gap: 8px; }
 .said { max-width: 88%; padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.45; }
 .said .who { display: block; margin-bottom: 2px; color: var(--text-3); font-size: 12px; font-weight: 600; }
@@ -1117,6 +1124,9 @@ ul.say li { padding: 12px 14px; border-radius: var(--r-box); background: var(--r
 ul.say q { font-weight: 600; quotes: none; }
 ul.say .does { display: block; margin-top: 2px; color: var(--text-2); font-size: 14px; }
 .list-label { color: var(--text-3); font-size: 13px; font-weight: 500; }
+ul.assistants { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+ul.assistants > li > a { display: inline-flex; align-items: center; min-height: 44px; }
+ul.assistants li > p { margin-top: 2px; }
 ul.plain-list { display: grid; gap: 8px; }
 ul.plain-list li { position: relative; padding-left: 18px; color: var(--text-2); }
 ul.plain-list li::before { content: ""; position: absolute; top: .68em; left: 2px; width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
@@ -1148,6 +1158,8 @@ dl.facts-list dd { padding-left: 16px; color: var(--text-2); }
     backdrop-filter: blur(16px);
     view-transition-name: tabs;
   }
+  /* A card the address lands on clears the sticky bar (75 px), as Set a goal's sticky top does. */
+  :target { scroll-margin-top: 84px; }
   .top .brand { display: inline-flex; }
   .top .sign-out { display: block; margin-left: auto; }
   .card .sign-out { display: none; }
@@ -1227,7 +1239,7 @@ dl.facts-list dd { padding-left: 16px; color: var(--text-2); }
 
   /* Goals: the goals in 1 to 8, Set a goal in 9 to 12, sticky under the top bar. */
   .goals-main { grid-column: 1 / span 8; }
-  .set-goal { grid-column: 9 / -1; position: sticky; top: 84px; }
+  .set-goal { grid-column: 9 / -1; position: sticky; top: 84px; max-height: calc(100vh - 100px); overflow-y: auto; }
   /* A goal card: head, now and standing across; the chart on the left, the facts on the right over two
      rows; the actions under the chart. */
   li.goal {

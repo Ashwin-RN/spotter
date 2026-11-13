@@ -194,7 +194,7 @@
   {% set errors = form_error.get("food_entry", {}) %}
   {% set kept = typed.get("food_entry", {}) %}
   {% call parts.foldout("add-food", "Add food", errors or "food" in adding) %}
-  <form method="post" action="/day/{{ on.isoformat() }}/food">
+  <form method="post" action="/day/{{ on.isoformat() }}/food#add-food">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for field, text in errors.items() if field not in ("description", "kcal", "meal") %}
     <div class="error"><p>{{ text }}</p></div>
@@ -274,7 +274,7 @@
   {% set errors = form_error.get("cardio_entry", {}) %}
   {% set kept = typed.get("cardio_entry", {}) %}
   {% call parts.foldout("add-cardio", "Add cardio", errors or "cardio" in adding) %}
-  <form method="post" action="/day/{{ on.isoformat() }}/cardio">
+  <form method="post" action="/day/{{ on.isoformat() }}/cardio#add-cardio">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for field, text in errors.items() if field not in ("exercise", "minutes", "distance_km") %}
     <div class="error"><p>{{ text }}</p></div>
@@ -306,7 +306,7 @@
   {% set kept = typed.get("bodyweight", {}) %}
   {% set weigh_words = "Replace weigh-in" if day.weigh_in else "Add weigh-in" %}
   {% call parts.foldout("add-weigh-in", weigh_words, errors or "weigh-in" in adding) %}
-  <form method="post" action="/day/{{ on.isoformat() }}/weigh-in">
+  <form method="post" action="/day/{{ on.isoformat() }}/weigh-in#add-weigh-in">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for field, text in errors.items() if field != "kg" %}
     <div class="error"><p>{{ text }}</p></div>
@@ -337,7 +337,7 @@
   {% set errors = form_error.get("measurement", {}) %}
   {% set kept = typed.get("measurement", {}) %}
   {% call parts.foldout("add-measurement", "Add measurement", errors or "measurement" in adding) %}
-  <form method="post" action="/day/{{ on.isoformat() }}/measurement">
+  <form method="post" action="/day/{{ on.isoformat() }}/measurement#add-measurement">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for field, text in errors.items() if field not in ("kind", "value") %}
     <div class="error"><p>{{ text }}</p></div>

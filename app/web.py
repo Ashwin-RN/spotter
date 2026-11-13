@@ -353,7 +353,8 @@ GOAL_ERROR_UNNAMED = {("missing_field", "target_value"): "Give the target you ai
 # A refusal the table does not know, by its code or its field: still something true, at the top of the form.
 GOAL_ERROR_GENERAL = "That goal was not set. Check each field and try again."
 GOAL_SAVED = {"goal": "Goal set.", "hit": "Goal marked as hit.", "dropped": "Goal dropped.", "open": "Goal reopened."}
-# The fragment every redirect that answers a form low on its page ends in, Goals' Set a goal and Foods' Save a food:
+# The fragment every redirect that answers a form low on its page ends in, Goals' Set a goal, Foods' Save a food and
+# the day page's fold-outs:
 # the id base.html gives body. Without one, the address after the redirect keeps the post's own fragment
 # (#set-goal, #save-food) and lands on the form, out of sight of the strip. The status posts (Hit, Drop, Reopen), a
 # saved food's edit page, Delete and Undo carry no fragment, so their redirects carry none.
@@ -1386,10 +1387,11 @@ TYPED_FIELDS = {"bodyweight": ("kg",), "measurement": ("kind", "value"),
 
 
 async def log_on_day(request: Request, kind: str) -> Response:
-    """POST from the day page: a weigh-in, a measurement, a food or a cardio entry for that day."""
+    """POST from the day page: a weigh-in, a measurement, a food or a cardio entry for that day. Each fold-out's form
+    posts to its own id, so a refusal comes back at the form; every redirect that answers it ends in POST_LANDS."""
     user = await current_user(request)
     if user is None:
-        return redirect(links.page("sign_in"))
+        return redirect(links.page("sign_in") + POST_LANDS)
     on = parse_day(request.path_params["date"])
     if on is None:
         return not_found_page(request)
@@ -1424,7 +1426,7 @@ async def log_on_day(request: Request, kind: str) -> Response:
         return shown
     # A duplicate wrote nothing: it is marked, but never as saved.
     mark = UNCHANGED if result.get("duplicate") is True else ("saved", kind)
-    return redirect(marked(links.page("day", date=on), *mark))
+    return redirect(marked(links.page("day", date=on), *mark) + POST_LANDS)
 
 
 async def log_weigh_in(request: Request) -> Response:

@@ -1540,7 +1540,7 @@ def test_every_page_renders_for_a_person_with_no_entries(client):
     page = day_of(client, today)
     assert h1_text(page) == formatting.day_heading(today, today) and "No lifts logged on this day" in page
     assert "No weigh-in on this day" in page and "No measurements on this day" in page
-    assert f'action="/day/{today}/weigh-in"' in page and f'action="/day/{today}/measurement"' in page
+    assert f'action="/day/{today}/weigh-in#add-weigh-in"' in page and f'action="/day/{today}/measurement#add-measurement"' in page
     kinds = re.search(r'<select id="measurement-kind" name="kind" required>(.*?)</select>', page, re.S).group(1)
     assert re.findall(r'<option value="([a-z_]+)">', kinds) == list(web.MEASUREMENT_KINDS)
     assert 'rel="next"' not in page  # nothing after today
@@ -1792,7 +1792,7 @@ def test_someone_elses_entry_is_a_404_that_leaks_nothing(client, stocked, make_u
 def test_the_weigh_in_form_logs_for_that_day(client, stocked):
     on = stocked["yesterday"]
     r = post(client, f"/day/{on}/weigh-in", kg="79.2")
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}?saved=bodyweight"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}?saved=bodyweight#top"
     live = [b for b in rows(Bodyweight, only_user().id) if b.deleted_at is None and b.date.isoformat() == on]
     assert [(b.kg, b.logged_by) for b in live] == [(79.2, "web")]
     assert "79.2\u00a0kg" in day_of(client, on)
@@ -2428,7 +2428,7 @@ def test_the_food_form_logs_one_you_said_entry_and_leaves_the_meal_to_the_clock(
     real = services.log_food
     monkeypatch.setattr(services, "log_food", lambda *args: sent.append(args) or real(*args))
     r = post(client, f"/day/{on}/food", description="Poha", kcal="250", meal="")
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}?saved=food_entry"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{on}?saved=food_entry#top"
     assert sent == [(only_user().id, {"entries": [{"description": "Poha", "kcal": "250"}], "date": on}, "web")]
     [entry] = rows(FoodEntry, only_user().id)
     assert (entry.description, entry.kcal, entry.source, entry.estimated, entry.logged_by) == \
@@ -3179,9 +3179,52 @@ def test_marked_adds_one_mark_before_any_fragment():
 def test_each_day_write_is_marked_saved_with_its_kind_and_a_duplicate_is_not(client, path, data, kind):
     sign_in(client)
     on = today_of(only_user()).isoformat()
-    assert location(post(client, f"/day/{on}/{path}", **data)) == SITE + f"/day/{on}?saved={kind}"
+    assert location(post(client, f"/day/{on}/{path}", **data)) == SITE + f"/day/{on}?saved={kind}#top"
     # The same again within minutes is a duplicate: nothing is written, so it is never marked saved.
-    assert location(post(client, f"/day/{on}/{path}", **data)) == SITE + f"/day/{on}?saved=unchanged"
+    assert location(post(client, f"/day/{on}/{path}", **data)) == SITE + f"/day/{on}?saved=unchanged#top"
+
+
+DAY_REFUSALS = {"food": {"description": "Rice", "kcal": "abc"}, "cardio": {"exercise": "Outdoor Walk", "minutes": "0"},
+                "weigh-in": {"kg": "abc"}, "measurement": {"kind": "waist", "value": "abc"}}
+
+
+def test_each_day_fold_outs_form_posts_to_its_own_id_and_a_refusal_comes_back_open_there(client):
+    """The cleanup pass: as Foods' Save a food, each fold-out's form on the day page posts to its own fold-out's id,
+    so a refused post (a 400 with the page) lands on the form. Its fields stay required and nothing carries
+    autofocus, which Chrome skips when the address has a fragment."""
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    page = day_of(client, on)
+    ids = set(re.findall(r'\sid="([^"]+)"', page))
+    forms = {i: f for i, d in foldouts_of(page).items() for f in d.find_all("form") if f.attrs["method"] == "post"}
+    assert {i: f.attrs["action"] for i, f in forms.items()} == {
+        f"add-{p}": f"/day/{on}/{p}#add-{p}" for p in ("food", "cardio", "weigh-in", "measurement")}
+    assert all(f.attrs["action"].split("#")[1] in ids for f in forms.values())
+    from .test_pages_text import parse  # noqa: PLC0415 - test_pages_text imports this file
+
+    for path, data in DAY_REFUSALS.items():
+        r = post(client, f"/day/{on}/{path}", **data)
+        fold = foldouts_of(r.text)[f"add-{path}"]
+        [form] = fold.find_all("form")
+        assert r.status_code == 400 and "open" in fold.attrs and form.attrs["action"].endswith(f"#add-{path}"), path
+        assert any("required" in c.attrs for c in fold.find_all("input") + fold.find_all("select")), path
+        assert all(n.is_("button", "close") for n in parse(r.text).iter() if "autofocus" in n.attrs), path
+
+
+def test_every_redirect_that_answers_a_day_fold_out_post_ends_in_post_lands(client, monkeypatch):
+    """A save, a duplicate (the test above) and a post with no person behind it each end in web.POST_LANDS, so the
+    strip is in view and not the form the post's own fragment names."""
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    saved = location(post(client, f"/day/{on}/weigh-in", kg="80"))
+    assert saved == SITE + f"/day/{on}?saved=bodyweight" + web.POST_LANDS
+
+    async def nobody(request):
+        return None
+
+    monkeypatch.setattr(web, "current_user", nobody)
+    for path in DAY_REFUSALS:
+        assert location(post(client, f"/day/{on}/{path}", **DAY_REFUSALS[path])) == SITE + "/sign-in" + web.POST_LANDS
 
 
 def test_an_edit_is_marked_with_its_kind_and_an_unchanged_one_is_not(client, stocked):
@@ -3914,7 +3957,7 @@ def test_the_fold_out_holds_the_contracts_fields_and_button(client):
     sign_in(client)
     on = today_of(only_user()).isoformat()
     out = foldout_of(day_of(client, on))
-    assert "<summary>Add food</summary>" in out and f'<form method="post" action="/day/{on}/food">' in out
+    assert "<summary>Add food</summary>" in out and f'<form method="post" action="/day/{on}/food#add-food">' in out
     labels = re.findall(r'<label for="([^"]+)">([^<]+)</label>', out)
     assert labels == [("food-description", "Food"), ("food-kcal", "Calories (kcal)"), ("food-meal", "Meal")]
     assert '<input id="food-kcal" name="kcal" inputmode="numeric" required autocomplete="off">' in out
@@ -4281,11 +4324,11 @@ def test_each_side_fold_out_holds_the_contracts_fields_and_button(client):
     on = today_of(only_user()).isoformat()
     folds = foldouts_of(day_of(client, on))
     want = {
-        "add-cardio": ("Add cardio", f"/day/{on}/cardio",
+        "add-cardio": ("Add cardio", f"/day/{on}/cardio#add-cardio",
                        [("cardio-exercise", "Activity"), ("cardio-minutes", "Time (min)"),
                         ("cardio-distance", "Distance (km)")], "Save cardio"),
-        "add-weigh-in": ("Add weigh-in", f"/day/{on}/weigh-in", [("kg", "Weight (kg)")], "Add weigh-in"),
-        "add-measurement": ("Add measurement", f"/day/{on}/measurement",
+        "add-weigh-in": ("Add weigh-in", f"/day/{on}/weigh-in#add-weigh-in", [("kg", "Weight (kg)")], "Add weigh-in"),
+        "add-measurement": ("Add measurement", f"/day/{on}/measurement#add-measurement",
                             [("measurement-kind", "Kind"), ("measurement-value", "Value")], "Save measurement"),
     }
     for fold_id, (summary, action, labels, button) in want.items():
@@ -5900,7 +5943,7 @@ def test_no_add_form_on_today_takes_a_note(client):
     page = day_of(client, on)
     assert 'name="notes"' not in page and "<textarea" not in page
     r = post(client, f"/day/{on}/cardio", exercise="Outdoor Walk", minutes="30", notes="a\r\nb")
-    assert location(r) == SITE + f"/day/{on}?saved=cardio_entry"
+    assert location(r) == SITE + f"/day/{on}?saved=cardio_entry#top"
     [row] = rows(CardioEntry, only_user().id)
     assert row.notes in (None, "")
 
