@@ -11,6 +11,7 @@
   <link rel="icon" href="/static/favicon.ico" sizes="32x32">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="stylesheet" href="{{ style_href }}">
+  {% block head %}{% endblock %}
 </head>
 <body{% if calm %} class="calm"{% endif %}{% if time_zone_missing %} data-time-zone="missing"{% endif %} id="top">
   {% if signed_in %}

@@ -20,6 +20,7 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -28,10 +29,12 @@ import pytest
 from app import db, formatting, services, web
 from app.models import Bodyweight, SavedFood
 
+from . import text_rules as tr
 from .test_pages_text import (ACCOUNTS, BUILT, CLAUDE_SKIPS, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
                               entered_text, estimate_findings, get_paths, names_of, page_findings, parse,
                               render_error_page, route_of, step_4_findings, structure_findings)
 from .test_web import FIXED_NOW, client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
+from .test_web import LANDING_TOP_END, landing_in
 
 STATIC = Path(web.HERE) / "static"
 
@@ -142,7 +145,7 @@ def script_findings(s: Seen) -> list[str]:
 
 # The head, element for element: the charset, viewport and referrer metas, the two dark-only metas (line
 # 984), the title, the three favicon links (lines 1938 to 1940) and the one stylesheet link (section H), and
-# nothing else. The landing's link-preview tags join it in the landing's own pass.
+# nothing else. The landing's link-preview tags join it on the landing only (LANDING_HEAD).
 HEAD = sorted([("meta", (("charset", "utf-8"),)),
                ("meta", (("content", "width=device-width, initial-scale=1, viewport-fit=cover"), ("name", "viewport"))),
                ("meta", (("content", "no-referrer"), ("name", "referrer"))),
@@ -152,11 +155,24 @@ HEAD = sorted([("meta", (("charset", "utf-8"),)),
                ("link", (("href", "STYLESHEET"), ("rel", "stylesheet"))),
                *(("link", tuple(sorted(link.items()))) for link in FAVICON_LINKS)])
 _STYLESHEET = re.compile(r"/static/style\.css(\?v=[0-9a-f]{12})?")
+# Section L, Head furniture, this page only: on the landing, HEAD and the description with the one line and the
+# second line, og:title, og:description, og:type (website) and og:url (the site's address). No og:image and no
+# og:image:alt (ruled for pass B17: no platform documents an SVG as a link-preview picture).
+LANDING_WORDS = ("A fitness log you keep by talking to your assistant. Tell your assistant what you lifted, ate or "
+                 "weighed. Spotter stores it and works out your bests, trends and goal pace in code, and your "
+                 "assistant quotes those numbers.")
+LANDING_HEAD = sorted(HEAD + [("meta", (("content", LANDING_WORDS), ("name", "description"))),
+                              ("meta", (("content", "Spotter"), ("property", "og:title"))),
+                              ("meta", (("content", LANDING_WORDS), ("property", "og:description"))),
+                              ("meta", (("content", "website"), ("property", "og:type"))),
+                              ("meta", (("content", "SITE"), ("property", "og:url")))])
+_SITE = re.compile(r"https?://[^/\s]+/")
 
 
 def head_findings(s: Seen) -> list[str]:
     """The head holds exactly HEAD: dark only, the favicon set, and the one stylesheet linked once with its
-    version query (section H)."""
+    version query (section H). The landing's holds LANDING_HEAD: HEAD and its own description and link-preview
+    tags, og:url naming a site's address."""
     heads = s.dom.find_all("head")
     if len(heads) != 1:
         return [f"{len(heads)} heads"]
@@ -165,8 +181,11 @@ def head_findings(s: Seen) -> list[str]:
         attrs = dict(n.attrs)
         if n.tag == "link" and attrs.get("rel") == "stylesheet" and _STYLESHEET.fullmatch(attrs.get("href", "")):
             attrs["href"] = "STYLESHEET"
+        if n.tag == "meta" and attrs.get("property") == "og:url" and _SITE.fullmatch(attrs.get("content", "")):
+            attrs["content"] = "SITE"
         got.append((n.tag, tuple(sorted(attrs.items()))))
-    return [] if sorted(got) == HEAD else [f"the head holds {sorted(got)}, not {HEAD}"]
+    want = LANDING_HEAD if s.route == "/" and not s.message else HEAD
+    return [] if sorted(got) == want else [f"the head holds {sorted(got)}, not {want}"]
 
 
 def _tab_shape(node: Node) -> tuple:
@@ -654,6 +673,9 @@ HEAD_HTML = ('<meta charset="utf-8"><meta name="viewport" content="width=device-
              '<link rel="icon" href="/static/favicon.ico" sizes="32x32">'
              '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">'
              '<link rel="stylesheet" href="/static/style.css?v=0123456789ab">')
+LANDING_HEAD_HTML = (f'<meta name="description" content="{LANDING_WORDS}"><meta property="og:title" content="Spotter">'
+                     f'<meta property="og:description" content="{LANDING_WORDS}">'
+                     '<meta property="og:type" content="website"><meta property="og:url" content="https://x.example/">')
 PAGE = ('<!doctype html><html><head>' + HEAD_HTML + '</head><body>'
         '<header class="top"><a class="brand" href="/">Spotter</a><nav class="tabs" aria-label="Main">'
         '<a class="tab tab-today" href="/today">Today</a><a class="tab tab-progress" href="/progress">Progress</a>'
@@ -696,7 +718,7 @@ def test_the_nav_rules_find_a_wrong_tab_bar():
     no_out = PAGE.replace('<form class="sign-out"', '<form class="inline"').replace("{body}", "")
     assert frame_findings(Seen("/goals", no_out, True))
     assert frame_findings(Seen("/goals", PAGE.replace("goals-page", "goals").replace("{body}", ""), True))
-    out = ('<html><head>' + HEAD_HTML + '</head><body><header class="top-out">'
+    out = ('<html><head>' + HEAD_HTML + LANDING_HEAD_HTML + '</head><body><header class="top-out">'
            '<a class="brand" href="/">Spotter</a><a class="plain-link" href="/sign-in">Sign in</a></header>'
            '<main class="page out landing"></main></body></html>')
     assert frame_findings(Seen("/", out, False)) == []
@@ -724,6 +746,27 @@ def test_the_head_and_the_top_bar_are_exact(old, new):
     assert frame_findings(seen()) == []
     assert PAGE.count(old) == 1, old
     assert frame_findings(Seen("/goals", PAGE.replace(old, new).replace("{body}", ""), True))
+
+
+def test_the_head_rule_holds_the_landings_tags_to_the_landing():
+    """Pass B17: the landing's description and link-preview tags, on / only, each exactly once, og:url a site's
+    address, and no og:image."""
+    landing = ('<html><head>' + HEAD_HTML + LANDING_HEAD_HTML + '</head><body><header class="top-out">'
+               '<a class="brand" href="/">Spotter</a><a class="plain-link" href="/sign-in">Sign in</a></header>'
+               '<main class="page out landing"></main></body></html>')
+    assert head_findings(Seen("/", landing, False)) == []
+    assert head_findings(Seen("/", landing.replace(LANDING_HEAD_HTML, ""), False))  # the landing without its tags
+    for tag in re.findall(r"<meta [^>]*>", LANDING_HEAD_HTML):
+        assert head_findings(Seen("/", landing.replace(tag, ""), False)), tag  # each one missing
+        assert head_findings(Seen("/", landing.replace(tag, tag * 2), False)), tag  # or twice
+    assert head_findings(Seen("/", landing.replace('content="Spotter"', 'content="Claude"'), False))
+    assert head_findings(Seen("/", landing.replace("https://x.example/", "/"), False))
+    image = '<meta property="og:image" content="https://x.example/static/landing-goals.svg">'
+    assert head_findings(Seen("/", landing.replace("</head>", image + "</head>"), False))
+    on_goals = PAGE.replace("</head>", LANDING_HEAD_HTML + "</head>").replace("{body}", "")
+    assert head_findings(Seen("/goals", on_goals, True))  # another page with the landing's tags
+    message = landing.replace("page out landing", "page notice-page")
+    assert head_findings(Seen("/", message, False, message=True))  # an error page drawn at /
 
 
 def test_every_srcset_candidate_is_read():
@@ -2086,3 +2129,153 @@ def test_no_template_marks_text_safe_outside_its_allowlist():
             found[path.name] = hits
     assert found == SAFE_ALLOWED
     assert len(list((Path(web.__file__).parent / "templates").glob("*.html"))) >= 14
+
+
+# ---------------------------------------------------------------- the landing's top half (pass B17)
+
+class _Closing(HTMLParser):
+    """Every element opened is closed, in order: a void element is never closed or self-closed."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.open: list[str] = []
+        self.found: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in tr.VOID:
+            self.open.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        if tag not in tr.VOID:
+            self.found.append(f"<{tag} /> is not a void element")
+
+    def handle_endtag(self, tag):
+        if tag in tr.VOID or not self.open or self.open[-1] != tag:
+            self.found.append(f"</{tag}> closes {self.open[-1] if self.open else 'nothing'}")
+        else:
+            self.open.pop()
+
+
+def unclosed_findings(markup: str) -> list[str]:
+    parser = _Closing()
+    parser.feed(markup)
+    parser.close()
+    return parser.found + [f"<{tag}> is never closed" for tag in parser.open]
+
+
+def top_half_of(page: str) -> str:
+    """The page with the steps' card and everything under it in main cut out: the top half in its frame."""
+    return page[:page.index(LANDING_TOP_END)] + page[page.index("</main>"):]
+
+
+TOP_STATES = {"signed out": ("signed out", {}), "signed in": ("signed in", {}),
+              "no web sign-in": ("no web sign-in", {}), "closed to new accounts": ("signed out", {"signups_per_day": 0}),
+              "a large cap": ("signed in", {"signups_per_day": 1000})}
+
+
+@pytest.mark.parametrize("state", sorted(TOP_STATES))
+def test_the_landings_top_half_keeps_every_markup_rule(web_client, state):
+    """The landing joins BUILT with the next pass, so every rule a built route keeps runs here on the top half alone,
+    whether or not BUILT names /, in each state: the frame rules on the whole page, then on the top half the page
+    rules, the card rule, T3's structure checks, every element closed, one h1, no form, no required and no autofocus,
+    and T1's text rules and T3's step 4 checks on the whole page."""
+    how, overrides = TOP_STATES[state]
+    page = landing_in(web_client, how, **overrides)
+    signed_in = how == "signed in"
+    whole = Seen("/", page, signed_in, web_ready=how != "no web sign-in", zone_missing=signed_in)
+    top = Seen("/", top_half_of(page), signed_in, web_ready=how != "no web sign-in", zone_missing=signed_in)
+    findings = frame_findings(whole)
+    findings += [f for rule in PAGE_RULES for f in rule(top)] + titled_card_findings(top)
+    findings += structure_findings("/", top.markup, [], top.dom)
+    half = page[page.index("<main"):page.index(LANDING_TOP_END)] + "</main>"
+    findings += unclosed_findings(half)
+    findings += page_findings("/", page, [], None) + step_4_findings("/", page, None, [])
+    assert not findings, "\n".join(findings)
+    [main] = top.dom.find_all("main")
+    assert len(whole.dom.find_all("h1")) == 1 and not main.find_all("form")
+    assert " required" not in half and "autofocus" not in half
+    cards = [(n.tag, n.classes, n.attrs.get("aria-labelledby")) for n in top.dom.find_all(cls="card")]
+    assert cards == [("section", ["card", "showcase"], "looks-title"), ("section", ["card", "before"], "before-title")]
+
+
+def test_the_closing_check_finds_what_it_names():
+    assert unclosed_findings("<main><div><p>x</p></div></main>") == []
+    assert unclosed_findings("<main><div><p>x</div></main>")
+    assert unclosed_findings("<main><div><p>x</p></main>")
+    assert unclosed_findings("<main><img src='/x'></img></main>")
+    assert unclosed_findings("<main><span/></main>")
+    assert unclosed_findings('<main><img src="/x"><br></main>') == []
+
+
+# The picture of What it looks like: one SVG file, served from /static, built once by a script from the exchange.
+PICTURE = STATIC / "landing-goals.svg"
+FIGURE = re.compile(r"[-+]?\d[\d,]*(?:[.:]\d+)?")
+
+
+def exchange_figures() -> set[str]:
+    """Every figure the exchange's words say: the question, the answer, each goal's fields."""
+    ex = web.LANDING_EXCHANGE
+    said = [ex["you"], ex["assistant"], ex["question"], *web.exchange_answer(ex)]
+    said += [value for goal in ex["goals"] for value in goal.values()]
+    return {figure for words in said for figure in FIGURE.findall(words)}
+
+
+def picture_root() -> ET.Element:
+    return ET.fromstring(PICTURE.read_text(encoding="utf-8"))
+
+
+def _texts(node: ET.Element) -> list[str]:
+    return ["".join(t.itertext()) for t in node.iter(f"{{{SVG_NS}}}text")]
+
+
+def test_the_landing_picture_is_served_as_an_image_the_page_draws_at_its_own_size(client):
+    picture = web.LANDING_PICTURE
+    assert picture["src"] == "/static/" + PICTURE.name
+    r = client.get(picture["src"])
+    assert r.status_code == 200 and r.headers["content-type"].split(";")[0] == "image/svg+xml"
+    assert r.content == PICTURE.read_bytes()
+    root = picture_root()
+    width, height = root.get("width"), root.get("height")
+    assert root.get("viewBox") == f"0 0 {width} {height}"
+    assert (str(picture["width"]), str(picture["height"])) == (width, height)
+    page = client.get("/").text
+    assert re.findall(r"<img\b[^>]*>", page) == [
+        f'<img src="{picture["src"]}" width="{width}" height="{height}" alt="{picture["alt"]}">']
+    assert 0 < len(picture["alt"]) <= 100 and not re.search(r"\d", picture["alt"])
+    assert "og:image" not in page
+
+
+def test_the_landing_picture_is_clean_dark_and_small():
+    text = PICTURE.read_text(encoding="utf-8")
+    assert svg_clean(text) == []
+    assert not re.search(r"<script|<style|<image|<foreignObject|\bon[a-z]+\s*=|\bhref\b|url\(|@font-face|\.woff",
+                         text, re.I)
+    assert not re.search(r"https?://", text.replace(SVG_NS, ""))
+    assert PICTURE.stat().st_size < 20_000
+    root = picture_root()
+    assert "system-ui" in root.get("font-family", "")
+    backdrop = root.find(f"{{{SVG_NS}}}rect")
+    assert (backdrop.get("width"), backdrop.get("height"), backdrop.get("fill")) == \
+        (root.get("width"), root.get("height"), "#000000")
+
+
+def test_every_figure_in_the_landing_picture_is_a_figure_of_the_exchange():
+    said = " ".join(picture_root().itertext())
+    figures = set(FIGURE.findall(said))
+    assert figures and figures <= exchange_figures(), sorted(figures - exchange_figures())
+    assert not re.search(r"\d (?:kg|km|cm|bpm|seconds|kcal)\b", said)  # a no-break space before each unit
+
+
+def test_the_landing_picture_says_the_exchange_word_for_word():
+    ex, root = web.LANDING_EXCHANGE, picture_root()
+    groups = {g.get("id"): g for g in root.iter(f"{{{SVG_NS}}}g") if g.get("id")}
+    assert set(groups) == {"question", "answer", "goal-card"}
+    assert _texts(groups["question"]) == [ex["question"]]
+    assert " ".join(_texts(groups["answer"])) == " ".join(web.exchange_answer(ex))
+    shown = _texts(root)
+    assert ex["you"] in shown and ex["assistant"] in shown
+    first = ex["goals"][0]
+    card = _texts(groups["goal-card"])
+    for words in (first["label"], f"by {first['by']}", first["needed"], first["so_far"], first["reached"],
+                  web.STATUS_TAGS[first["status"]]):
+        assert words in card, words

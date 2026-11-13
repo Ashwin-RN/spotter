@@ -1,9 +1,60 @@
 {% extends "base.html" %}
 {% block title %}A fitness log you keep by talking to your assistant · Spotter{% endblock %}
+{% block head %}
+  <meta name="description" content="{{ landing_lines|join(' ') }}">
+  <meta property="og:title" content="{{ preview.title }}">
+  <meta property="og:description" content="{{ landing_lines|join(' ') }}">
+  <meta property="og:type" content="{{ preview.type }}">
+  {% if site_address %}<meta property="og:url" content="{{ site_address }}">{% endif %}
+{% endblock %}
 {% block main %}
-<h1>Spotter</h1>
-<p class="lead">A personal fitness record you keep by talking to Claude. Tell Claude what you lifted, ate or
-weighed. Spotter stores it, works out your bests and trends, and tracks your goals.</p>
+{# The top half (section L, Landing page): the first screen, What it looks like, Before you start. The words of the
+   first screen and the exchange come from web.py (LANDING_LINES, LANDING_EXCHANGE, exchange_answer), the
+   repository's links from links.REPOSITORY, the cap from the settings at each render. #}
+<div class="landing-hero">
+  <h1>Spotter</h1>
+  <p class="one-line">{{ landing_lines[0] }}</p>
+  <p class="second">{{ landing_lines[1] }}</p>
+  <div class="cta">
+    {% if signed_in %}
+    <a class="button primary" href="/today">Open Today</a>
+    {% elif web_ready %}
+    <a class="button primary" href="/sign-in">Sign in to start</a>
+    {% else %}
+    <p class="notice">Sign-in on the web is not set up on this server yet.</p>
+    {% endif %}
+    <a class="plain-link" href="{{ source_link }}">Source code on GitHub</a>
+  </div>
+</div>
+
+<section class="card showcase" aria-labelledby="looks-title">
+  <div class="card-head">
+    <h2 id="looks-title">What it looks like</h2>
+    <span class="tag tag-sample">sample</span>
+  </div>
+  <img src="{{ picture.src }}" width="{{ picture.width }}" height="{{ picture.height }}" alt="{{ picture.alt }}">
+  <div class="exchange">
+    <div class="said you"><span class="who">{{ exchange.you }}</span><p>{{ exchange.question }}</p></div>
+    <div class="said claude"><span class="who">{{ exchange.assistant }}</span>
+      {% for line in answer %}<p>{{ line }}</p>
+      {% endfor %}
+    </div>
+  </div>
+  <p class="caption">Sample data. The assistant asked Spotter for the goals and quoted them. The Goals page shows the same numbers.</p>
+</section>
+
+<section class="card before" aria-labelledby="before-title">
+  <h2 id="before-title">Before you start</h2>
+  <ul class="plain-list">
+    <li>You need an AI assistant that can add a remote MCP server with sign-in.</li>
+    <li>Each assistant's plan limits are in <a href="{{ readme_table }}">the README's table</a>.</li>
+    {% if signups_per_day %}
+    <li>New accounts are capped at {{ signups_per_day|show("count") }} a day.</li>
+    {% else %}
+    <li>Spotter is not taking new accounts right now.</li>
+    {% endif %}
+  </ul>
+</section>
 
 <div class="card accent-border">
   <h2>{% if signed_in %}Connect Claude and start{% else %}How to start{% endif %}</h2>

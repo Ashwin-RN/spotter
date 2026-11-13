@@ -1044,3 +1044,32 @@ def test_the_settings_pages_parts_each_have_their_rule(css):
     assert css.value(".notice-page > *", "max-width") == "480px"
     assert css.value(".notice-page > *", "justify-self", (LAPTOP,)) == "center"
     assert css.value("dl.facts dt", "color") == "var(--text-2)" and css.value("div.error", "border") ==         "1.5px solid var(--err)"
+
+
+def test_the_landings_top_half_parts_each_have_their_rule(css):
+    """The landing's top half (pass B17): on a laptop the first screen takes columns 1 to 5 and What it looks like 6 to
+    12, Before you start 1 to 5. The h1, the one line and the grey second line, the button row, the plain link 44 px
+    tall, the picture the card's width, the exchange's two bubbles (yours at the right on --raised-2, your
+    assistant's outlined at the left), the caption, the sample tag and the plain list. Each part the top half draws
+    is already styled, so pass B17 adds no rule."""
+    assert css.value(".landing .landing-hero", "grid-column", (LAPTOP,)) == "1 / span 5"
+    assert css.value(".landing .showcase", "grid-column", (LAPTOP,)) == "6 / -1"
+    assert css.value(".landing .before", "grid-column", (LAPTOP,)) == "1 / span 5"
+    assert css.value(".landing-hero h1", "font-size") == "44px"
+    assert css.value(".landing .landing-hero h1", "font-size", (LAPTOP,)) == "64px"
+    assert css.value(".landing-hero .one-line", "font-weight") == "600"
+    assert css.value(".landing-hero .second", "color") == "var(--text-2)"
+    assert css.value(".landing-hero .cta", "display") == "flex" and css.value(".landing-hero .cta", "flex-wrap") == "wrap"
+    assert css.value(".plain-link", "min-height") == "44px"
+    assert css.value(".primary", "background") == "var(--text)" and css.value(".primary", "color") == "var(--on-primary)"
+    assert css.value(".showcase img", "width") == "100%" and css.value(".showcase img", "height") == "auto"
+    assert css.value(".exchange", "display") == "flex" and css.value(".exchange", "flex-direction") == "column"
+    assert css.value(".said.you", "align-self") == "flex-end" and css.value(".said.you", "background") == "var(--raised-2)"
+    assert css.value(".said.claude", "align-self") == "flex-start"
+    assert css.value(".said.claude", "border") == "1px solid var(--line)"
+    assert css.value(".said .who", "display") == "block"
+    assert css.value(".caption", "color") == "var(--text-3)"
+    assert css.value(".tag-sample", "border-style") == "dashed"
+    assert css.value("ul.plain-list li", "color") == "var(--text-2)"
+    assert css.value(".card-head", "display") == "flex"
+    assert css.value("p.notice", "padding") == "12px 16px"  # the line in the button's place without web sign-in

@@ -1,7 +1,8 @@
 """The web pages: the home page, sign-in, Today and every day, editing and deleting entries, Progress,
 and Settings.
 
-    /                              what Spotter is, the MCP address, how to connect it to Claude
+    /                              the landing: what Spotter is, a sample exchange and its picture, what you
+                                   need, the MCP address and how to connect it
     /sign-in                       sends the person to the provider (signed in: on to /today)
     /auth/callback                 checks `state`, finishes the sign-in, finds or creates the user, on to /today
     /sign-out                      POST: ends the session
@@ -81,8 +82,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from sqlalchemy import func, select
 
-from app import calllog, charts, csrf, db, formatting, links, rules, services, users, web_auth
-from app.config import Settings, get_settings
+from app import calllog, charts, csrf, db, formatting, links, mcp_server, rules, services, users, web_auth
+from app.config import ROOT, Settings, get_settings
 from app.models import (
     CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
 )
@@ -827,9 +828,80 @@ def _db_safe(endpoint):
 
 # ---------------------------------------------------------------- pages
 
+# The landing page's top half (section L, Landing page). The one line and the second line: the first screen's words,
+# and the page's description and link-preview text.
+LANDING_LINES = ("A fitness log you keep by talking to your assistant.",
+                 "Tell your assistant what you lifted, ate or weighed. Spotter stores it and works out your bests, "
+                 "trends and goal pace in code, and your assistant quotes those numbers.")
+# The link preview's own words, beside LANDING_LINES. No og:image: no platform documents an SVG as a preview picture.
+LANDING_PREVIEW = {"title": "Spotter", "type": "website"}
+# The README's "Your assistant" table, where each assistant's steps and plan limits live.
+README_TABLE = links.REPOSITORY + "#your-assistant"
+
+# The sample exchange of What it looks like. The landing has no account to ask, so it is this one constant: what
+# get_goals gives the sample account on the fixed day (2026-11-10, tests/test_sample.py), each figure its own field
+# through show or day as the Goals page prints it, with a no-break space before each unit. tests/test_pages_text.py
+# rebuilds every figure from get_goals and fails on one character's difference. The picture
+# (app/static/landing-goals.svg) is built from this constant too, so it cannot say anything the words do not.
+LANDING_EXCHANGE = {
+    "you": "You",
+    "assistant": "Your assistant",
+    "question": "Am I on track for my goals?",
+    "goals": (
+        {"label": "Body weight 77\u00a0kg", "status": "on track", "by": "Tue 5 Jan 2027",
+         "needed": "-0.25\u00a0kg a week", "so_far": "-0.29\u00a0kg a week", "reached": "Sat 26 Dec"},
+        {"label": "Back Squat 120\u00a0kg", "status": "on track", "by": "Tue 2 Feb 2027",
+         "needed": "+1.01\u00a0kg a week", "so_far": "+4.41\u00a0kg a week", "reached": "Thu 26 Nov"},
+        {"label": "Outdoor Run 5\u00a0km in 27:00", "status": "on track", "by": "Tue 5 Jan 2027",
+         "needed": "-19\u00a0seconds a week", "so_far": "-30\u00a0seconds a week", "reached": "Sat 12 Dec"},
+    ),
+}
+# The picture: its address, its own width and height (tests hold them to the file), and its short alt.
+LANDING_PICTURE = {"src": "/static/landing-goals.svg", "width": 720, "height": 445,
+                   "alt": "A chat with your assistant beside the Goals card it quotes, on sample data"}
+
+
+def exchange_answer(exchange: dict = LANDING_EXCHANGE) -> list[str]:
+    """Your assistant's answer, a paragraph each: a first line, then each goal in its own words. Every figure is the
+    exchange's own, as written: nothing here works one out."""
+    lines = ["Yes, each goal is on track."]
+    for g in exchange["goals"]:
+        lines.append(f"{g['label']} by {g['by']}: {g['status']}. Needed {g['needed']}, so far {g['so_far']}. "
+                     f"At this pace it is reached on {g['reached']}.")
+    return lines
+
+
+# The two counts read once, when the app starts (section L, Where the counts come from). The new-account cap is read
+# at each render, from the settings.
+CASES_FILE = ROOT / "evals" / "cases.json"
+
+
+def eval_case_count(path: Path = CASES_FILE) -> int | None:
+    """The number of cases in the eval cases file: a JSON list of cases, each an object. None when the file cannot be
+    read or holds anything else: the page then leaves its line out, never a typed or a guessed number."""
+    try:
+        cases = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        log.warning("The eval cases file could not be read, so the landing leaves its line out.")
+        return None
+    if not isinstance(cases, list) or not cases or not all(isinstance(case, dict) for case in cases):
+        log.warning("The eval cases file is not a list of cases, so the landing leaves its line out.")
+        return None
+    return len(cases)
+
+
+FUNCTION_COUNT = len(mcp_server.NEEDS)
+EVAL_CASES = eval_case_count()
+
+
 async def home(request: Request) -> Response:
     await current_user(request)
-    return page(request, "home.html")
+    settings = get_settings()
+    return page(request, "home.html", landing_lines=LANDING_LINES, preview=LANDING_PREVIEW,
+                site_address=links.page("home") if settings.site_origin else None,
+                source_link=links.REPOSITORY, readme_table=README_TABLE, exchange=LANDING_EXCHANGE,
+                answer=exchange_answer(), picture=LANDING_PICTURE, signups_per_day=settings.signups_per_day,
+                function_count=FUNCTION_COUNT, eval_cases=EVAL_CASES)
 
 
 async def sign_in(request: Request) -> Response:

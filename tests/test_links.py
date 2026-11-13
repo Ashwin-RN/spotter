@@ -83,3 +83,18 @@ def test_without_a_site_address_links_refuse():
     config.use_settings(dataclasses.replace(config.get_settings(), mcp_resource_url=None))
     with pytest.raises(RuntimeError):
         page("home")
+
+
+def test_the_repository_address_is_one_constant_and_never_the_sites():
+    """Section L, Landing page: links.py holds the repository's address once. It names the repository itself, with
+    no slash, query or fragment after it, so a link adds its own part (the README's table, the issues page), and it
+    never follows the site's address."""
+    from urllib.parse import urlsplit
+
+    from app.links import REPOSITORY
+    parts = urlsplit(REPOSITORY)
+    assert (parts.scheme, parts.netloc, parts.query, parts.fragment) == ("https", "github.com", "", "")
+    assert len(parts.path.strip("/").split("/")) == 2 and not REPOSITORY.endswith(("/", ".git"))
+    config.use_settings(dataclasses.replace(config.get_settings(), mcp_resource_url="http://localhost:8000/mcp"))
+    from app import links
+    assert links.REPOSITORY == REPOSITORY and not REPOSITORY.startswith(page("home"))

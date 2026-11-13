@@ -63,7 +63,7 @@ CONFIRMATION = "confirmation"  # this file's own rule: a confirmation names its 
 
 # What today's pages keep through step 2 (contract section C, "Step 2 does not reshape today's pages").
 SKIPS = (
-    Skip("/", tr.CODE_WORD, "whoami", "home.html:37, the first sentence offered, replaced in step 4"),
+    Skip("/", tr.CODE_WORD, "whoami", "home.html:88, in the steps, the first sentence offered, replaced in step 4"),
     # Not figures: the names in the one attribution line (rule 15), "2024 Adult Compendium" and "CC BY-NC-ND 4.0".
     Skip("", tr.THOUSANDS, "2024", "a year in the Compendium's name, web.ATTRIBUTION", tag="footer"),
     Skip("", tr.TRAILING_ZERO, "4.0", "the licence's version, web.ATTRIBUTION", tag="footer"),
@@ -767,9 +767,7 @@ _UL = re.compile(r"<ul\b|</ul\s*>")
 # says Claude fails even on a skipped page. The pass deletes its sentences (and the route once it has none):
 # test_no_claude_skip_outlives_its_page fails on a sentence no page says any more. A route in BUILT has none.
 CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
-    "/": (  # home.html, signed in and out: rebuilt with its list of assistants
-        "A personal fitness record you keep by talking to Claude.",
-        "Tell Claude what you lifted, ate or weighed.",
+    "/": (  # home.html's steps and under them, signed in and out: rebuilt with its list of assistants (pass B18)
         "Connect Claude and start",
         "Connect Claude.",
         "On claude.ai or the Claude desktop app: Customize, then Connectors, then \"+ Add\", then Add custom "
@@ -1732,3 +1730,52 @@ def test_foods_holds_each_true_zero_to_its_own_column(client):
     unclosed = page[:close - len("</section>")] + page[close:]
     assert foods_cells(unclosed) is None
     assert sum("empty_figure" in f for f in page_findings("/foods", unclosed, [], user_id)) == 2
+
+
+# ---------------------------------------------------------------- the landing's exchange (pass B17)
+
+def _no_break_units(label: str) -> str:
+    """A goal's label as a page says it: a no-break space between each number and its unit (section C)."""
+    return re.sub(r"(\d) (kg|km|cm|bpm)\b", lambda m: m.group(1) + tr.NBSP + m.group(2), label)
+
+
+def _pace(goal: dict, value) -> str:
+    """A goal's pace a week, as the Goals page prints it (goals.html's pace macro, through the show filter)."""
+    if goal["kind"] == "cardio_best":
+        return formatting.show(value, "time_pace", page=True)
+    return f"{formatting.show(value, 'rate', page=True)}{tr.NBSP}{goal['unit']} a week"
+
+
+def test_the_landings_exchange_is_the_fixed_day_sample_goals_figure_by_figure(client, make_user, monkeypatch):
+    """The exchange is one constant (web.LANDING_EXCHANGE): get_goals for the sample account on the fixed day of
+    tests/test_sample.py, each figure its own field through show or day. Rebuilt here from get_goals, it must equal the
+    constant character for character, and the page must say it as written."""
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    user = make_user()
+    assert "error" not in services.add_sample_data(user.id, "web")
+    listed = services.get_goals(user.id)
+    today = listed["today"]
+    assert today == "2026-11-10" and len(listed["goals"]) == 3
+    rebuilt = [{"label": _no_break_units(g["label"]), "status": g["status"],
+                "by": formatting.day(g["target_date"], today), "needed": _pace(g, g["needed_per_week"]),
+                "so_far": _pace(g, g["actual_per_week"]), "reached": formatting.day(g["projected_date"], today)}
+               for g in listed["goals"]]
+    held = web.LANDING_EXCHANGE["goals"]
+    for want, got in zip(rebuilt, held, strict=True):
+        for key in want:
+            assert got[key] == want[key], (want["label"], key, got[key], want[key])
+        assert set(got) == set(want)
+    assert list(held) == rebuilt
+    assert {k: v for k, v in web.LANDING_EXCHANGE.items() if k != "goals"} == {
+        "you": "You", "assistant": "Your assistant", "question": "Am I on track for my goals?"}
+    # "Yes, each goal is on track." holds only while every goal is on track by its projection.
+    assert all(g["status"] == "on track" for g in listed["goals"])
+    page = client.get("/").text
+    said = re.search(r'<div class="said claude"><span class="who">Your assistant</span>(.*?)</div>', page, re.S)
+    lines = re.findall(r"<p>(.*?)</p>", said.group(1))
+    assert not re.search(r"[&<>\"']", "".join(web.exchange_answer()))  # nothing an escape would change
+    assert lines == web.exchange_answer() and len(lines) == 4
+    assert web.exchange_answer()[1:] == [
+        f"{g['label']} by {g['by']}: {g['status']}. Needed {g['needed']}, so far {g['so_far']}. "
+        f"At this pace it is reached on {g['reached']}." for g in rebuilt]
+    assert '<div class="said you"><span class="who">You</span><p>Am I on track for my goals?</p></div>' in page

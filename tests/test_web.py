@@ -6,6 +6,7 @@ redirects (a redirect to the provider would otherwise be fed back into this app)
 
 import asyncio
 import base64
+import dataclasses
 import hashlib
 import html
 import json
@@ -22,8 +23,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import InterfaceError, OperationalError
 from starlette.testclient import TestClient
 
-from app import db, formatting, links, rules, services, users, web, web_auth
-from app.config import Settings
+from app import config, db, formatting, links, mcp_server, rules, services, users, web, web_auth
+from app.config import DEFAULT_SIGNUPS_PER_DAY, Settings
 from app.main import create_app
 from app.models import Bodyweight, CallLog, CardioEntry, FoodEntry, LiftSession, Measurement, SavedFood, User
 
@@ -219,6 +220,276 @@ def test_home_shows_no_address_and_no_command_when_the_address_is_unset(provider
     assert "address is not set up" in page
     assert "claude mcp add" not in page and "claude-code-command" not in page and "link-box" not in page
     assert "/mcp" not in page and RESOURCE not in page
+
+
+# ---------------------------------------------------------------- the landing's top half (pass B17)
+
+# Where the landing's top half ends: the steps' card, which the next pass rebuilds. Everything from it to the end of
+# main is the parent commit's, byte for byte (PARENT_TAILS).
+LANDING_TOP_END = '<div class="card accent-border">'
+NO_BREAK = " "
+LANDING_TOP_WORDS = (
+    "Spotter",
+    "A fitness log you keep by talking to your assistant.",
+    "Tell your assistant what you lifted, ate or weighed. Spotter stores it and works out your bests, trends and goal "
+    "pace in code, and your assistant quotes those numbers.",
+    "{button}",
+    "Source code on GitHub",
+    "What it looks like", "sample",
+    "You", "Am I on track for my goals?",
+    "Your assistant", "Yes, each goal is on track.",
+    f"Body weight 77{NO_BREAK}kg by Tue 5 Jan 2027: on track. Needed -0.25{NO_BREAK}kg a week, so far -0.29{NO_BREAK}kg a week. "
+    "At this pace it is reached on Sat 26 Dec.",
+    f"Back Squat 120{NO_BREAK}kg by Tue 2 Feb 2027: on track. Needed +1.01{NO_BREAK}kg a week, so far +4.41{NO_BREAK}kg a week. "
+    "At this pace it is reached on Thu 26 Nov.",
+    f"Outdoor Run 5{NO_BREAK}km in 27:00 by Tue 5 Jan 2027: on track. Needed -19{NO_BREAK}seconds a week, so far "
+    f"-30{NO_BREAK}seconds a week. At this pace it is reached on Sat 12 Dec.",
+    "Sample data. The assistant asked Spotter for the goals and quoted them. The Goals page shows the same numbers.",
+    "Before you start",
+    "You need an AI assistant that can add a remote MCP server with sign-in.",
+    "Each assistant's plan limits are in the README's table.",
+    "{cap}",
+)
+# The white button by state (section L, Landing page): its words and address, or the line in its place.
+BUTTONS = {"signed out": ("Sign in to start", "/sign-in"), "signed in": ("Open Today", "/today"),
+           "no web sign-in": ("Sign-in on the web is not set up on this server yet.", None)}
+NO_WEB = {"workos_client_id": None, "workos_api_key": None}
+
+
+def landing_top(page: str) -> str:
+    """The landing's main up to the steps' card: the top half this pass built."""
+    main = page[page.index("<main"):]
+    return main[:main.index(LANDING_TOP_END)]
+
+
+def landing_tail(page: str) -> str:
+    """The landing's main from the steps' card to its end: the next pass's half."""
+    return page[page.index(LANDING_TOP_END):page.index("</main>")]
+
+
+def plain_words(markup: str) -> str:
+    """The text of some markup, tags taken out, entities decoded, ASCII whitespace squashed. A no-break space stays."""
+    inline = re.sub(r"</?(?:a|span|strong|b|em|code|q)\b[^>]*>", "", markup)
+    return re.sub(r"[ \t\r\n]+", " ", html.unescape(re.sub(r"<[^>]+>", " ", inline))).strip()
+
+
+def landing_in(web_client, state: str, **overrides) -> str:
+    client = web_client(**({**NO_WEB, **overrides} if state == "no web sign-in" else overrides))
+    if state == "signed in":
+        sign_in(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    return r.text
+
+
+@pytest.mark.parametrize("state", sorted(BUTTONS))
+def test_the_landings_top_half_in_its_order_and_words(web_client, state):
+    page = landing_in(web_client, state)
+    top = landing_top(page)
+    blocks = re.findall(r"^<(?:div|section)\b[^>]*>", top, re.M)
+    assert blocks == ['<div class="landing-hero">', '<section class="card showcase" aria-labelledby="looks-title">',
+                      '<section class="card before" aria-labelledby="before-title">']
+    want = " ".join(LANDING_TOP_WORDS).format(button=BUTTONS[state][0], cap="New accounts are capped at 50 a day.")
+    assert plain_words(top) == want
+    assert top.count("<h1>") == 1 and page.count("<h1") == 1
+    hrefs = re.findall(r'<a\b[^>]*\bhref="([^"]*)"', top)
+    button = [BUTTONS[state][1]] if BUTTONS[state][1] else []
+    assert hrefs == button + [links.REPOSITORY, links.REPOSITORY + "#your-assistant"]
+    if state != "signed in":  # signed out, the top half links to no signed-in page
+        assert not [h for h in hrefs if h.startswith(("/today", "/day", "/progress", "/goals", "/foods", "/settings"))]
+    assert re.findall(r"<img\b[^>]*>", top) == [
+        '<img src="/static/landing-goals.svg" width="720" height="445" '
+        'alt="A chat with your assistant beside the Goals card it quotes, on sample data">']
+
+
+@pytest.mark.parametrize("state", sorted(BUTTONS))
+def test_the_white_button_in_its_three_states(web_client, state):
+    page = landing_in(web_client, state)
+    cta = re.search(r'<div class="cta">(.*?)</div>', page, re.S).group(1)
+    words, address = BUTTONS[state]
+    buttons = re.findall(r'<a class="button primary" href="([^"]*)">([^<]*)</a>', cta)
+    if address:
+        assert buttons == [(address, words)] and 'class="notice"' not in cta
+    else:
+        assert buttons == [] and re.findall(r'<p class="notice">([^<]*)</p>', cta) == [words]
+        assert "/sign-in" not in page
+    assert f'<a class="plain-link" href="{links.REPOSITORY}">Source code on GitHub</a>' in cta
+    assert re.sub(r"\s+", " ", plain_words(cta)) == f"{words} Source code on GitHub"
+
+
+def test_every_repository_link_is_built_from_the_one_constant(web_client):
+    assert re.fullmatch(r"https://github\.com/[\w.-]+/[\w.-]+", links.REPOSITORY)
+    for state in sorted(BUTTONS):
+        page = landing_in(web_client, state)
+        repo = [h for h in re.findall(r'\bhref="([^"]*)"', page) if "github" in h.casefold()]
+        assert repo == [links.REPOSITORY, links.REPOSITORY + "#your-assistant"], state
+        assert web.README_TABLE == links.REPOSITORY + "#your-assistant"
+    # No template and no other app file types the address: links.py holds it once.
+    app_dir = web.HERE
+    typed = [p.relative_to(app_dir).as_posix() for p in sorted(app_dir.rglob("*"))
+             if p.suffix in (".py", ".html", ".js", ".css") and "github.com" in p.read_text(encoding="utf-8")]
+    assert typed == ["links.py"]
+    assert (app_dir / "links.py").read_text(encoding="utf-8").count("github.com") == 1
+
+
+@pytest.mark.parametrize("cap, line", [
+    (50, "New accounts are capped at 50 a day."),
+    (7, "New accounts are capped at 7 a day."),
+    (1, "New accounts are capped at 1 a day."),
+    (1000, "New accounts are capped at 1,000 a day."),
+    (0, "Spotter is not taking new accounts right now."),
+], ids=["the default", "seven", "one", "a thousand", "closed"])
+def test_before_you_start_says_the_cap_from_the_settings(web_client, cap, line):
+    for state in ("signed out", "signed in"):
+        page = landing_in(web_client, state, signups_per_day=cap)
+        before = re.search(r'<section class="card before".*?</section>', page, re.S).group(0)
+        items = [plain_words(li) for li in re.findall(r"<li>(.*?)</li>", before, re.S)]
+        assert items == ["You need an AI assistant that can add a remote MCP server with sign-in.",
+                         "Each assistant's plan limits are in the README's table.", line], state
+        assert f'<a href="{links.REPOSITORY}#your-assistant">the README\'s table</a>' in before
+        if cap == 0:
+            assert "capped" not in page
+
+
+def test_the_cap_is_read_at_each_render(client):
+    assert "New accounts are capped at 50 a day." in client.get("/").text
+    config.use_settings(dataclasses.replace(config.get_settings(), signups_per_day=3))
+    assert "New accounts are capped at 3 a day." in client.get("/").text
+    config.use_settings(dataclasses.replace(config.get_settings(), signups_per_day=0))
+    page = client.get("/").text
+    assert "Spotter is not taking new accounts right now." in page and "capped" not in page
+
+
+CASES = web.HERE.parent / "evals" / "cases.json"
+
+
+def handed_to_home(client, monkeypatch) -> dict:
+    """What the landing's view hands its template, on one GET."""
+    handed, real = {}, web.page
+    monkeypatch.setattr(web, "page", lambda request, name, **kw: handed.update(kw) or real(request, name, **kw))
+    assert client.get("/").status_code == 200
+    return handed
+
+
+def test_the_two_start_time_counts_equal_their_sources(client, monkeypatch):
+    cases = json.loads(CASES.read_text(encoding="utf-8"))
+    assert isinstance(cases, list) and cases
+    assert web.FUNCTION_COUNT == len(mcp_server.NEEDS)
+    assert web.EVAL_CASES == len(cases) == web.eval_case_count()
+    # Read once at start: a render reads neither again.
+    def read_again(*args):
+        raise AssertionError("the cases file was read at a render")
+
+    monkeypatch.setattr(web, "eval_case_count", read_again)
+    handed = handed_to_home(client, monkeypatch)
+    assert (handed["function_count"], handed["eval_cases"], handed["signups_per_day"]) == \
+        (len(mcp_server.NEEDS), len(cases), DEFAULT_SIGNUPS_PER_DAY)
+
+
+@pytest.mark.parametrize("content", [None, b"", b"not json", b"{}", b'{"cases": [{"id": "a"}]}', b"[]", b"[1, 2]",
+                                     b'[{"id": "a"}, "b"]', b"\xff\xfe[]"],
+                         ids=["missing", "empty", "not json", "an object", "an object of cases", "no cases",
+                              "not objects", "one not an object", "not utf-8"])
+def test_a_cases_file_that_cannot_be_read_gives_no_count(tmp_path, content, logs):
+    path = tmp_path / "cases.json"
+    if content is not None:
+        path.write_bytes(content)
+    assert web.eval_case_count(path) is None
+    assert "the landing leaves its line out" in logs.text
+
+
+def test_a_cases_file_of_cases_gives_their_number(tmp_path):
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps([{"id": "a"}, {"id": "b"}, {"id": "c"}]), encoding="utf-8")
+    assert web.eval_case_count(path) == 3
+
+
+def test_with_no_case_count_the_landing_hands_none_and_still_renders(client, monkeypatch):
+    monkeypatch.setattr(web, "EVAL_CASES", None)
+    handed = handed_to_home(client, monkeypatch)
+    assert handed["eval_cases"] is None and handed["function_count"] == len(mcp_server.NEEDS)
+
+
+def test_no_count_is_typed_into_the_landing_template():
+    source = (web.HERE / "templates" / "home.html").read_text(encoding="utf-8")
+    for n in {len(mcp_server.NEEDS), len(json.loads(CASES.read_text(encoding="utf-8"))), DEFAULT_SIGNUPS_PER_DAY}:
+        assert not re.search(rf"(?<![\d.,]){n}(?![\d.,])", source), n
+    for name in ("function_count", "eval_cases", "signups_per_day"):
+        assert not re.search(rf"\b{name}\s*(?:[-+*/]|%(?!\}})|\|\s*(?!show\b))", source), name  # drawn as given, or not yet
+
+
+LANDING_DESCRIPTION = ("A fitness log you keep by talking to your assistant. Tell your assistant what you lifted, ate "
+                       "or weighed. Spotter stores it and works out your bests, trends and goal pace in code, and your "
+                       "assistant quotes those numbers.")
+LANDING_HEAD_TAGS = [f'<meta name="description" content="{LANDING_DESCRIPTION}">',
+                     '<meta property="og:title" content="Spotter">',
+                     f'<meta property="og:description" content="{LANDING_DESCRIPTION}">',
+                     '<meta property="og:type" content="website">',
+                     f'<meta property="og:url" content="{SITE}/">']
+_HEAD_TAG = re.compile(r'<meta (?:name="description"|property="og:[^"]*")[^>]*>')
+
+
+def head_tags(page: str) -> list[str]:
+    return _HEAD_TAG.findall(page[:page.index("</head>")])
+
+
+def test_the_landing_carries_its_head_tags_and_no_other_page_does(client):
+    pages = {"/ signed out": client.get("/").text, "a 404": client.get("/no-such-page").text,
+             "Form expired": client.post("/sign-out").text}
+    sign_in(client)
+    today = today_of(only_user()).isoformat()
+    pages["/ signed in"] = client.get("/").text
+    for path in (f"/day/{today}", "/progress", "/progress/back-squat", "/goals", "/foods", "/settings",
+                 "/settings/delete", "/day/abc"):
+        pages[path] = client.get(path).text
+    for name, page in pages.items():
+        if name.startswith("/ "):
+            assert head_tags(page) == LANDING_HEAD_TAGS, name
+            assert "og:image" not in page
+        else:
+            assert head_tags(page) == [] and 'property="og:' not in page and '<meta name="description"' not in page, name
+
+
+def test_without_the_site_address_the_landing_leaves_og_url_out(provider, seam):
+    unconfigured = Settings(None, None, database_url=settings().database_url, **WEB)
+    with TestClient(create_app(unconfigured, fetch=provider.fetch), base_url=SITE, follow_redirects=False) as client:
+        page = client.get("/").text
+    assert head_tags(page) == LANDING_HEAD_TAGS[:4]
+    assert "og:url" not in page and "og:image" not in page
+
+
+@pytest.mark.parametrize("state", sorted(BUTTONS))
+def test_the_top_half_says_no_claude_no_whoami_and_no_privacy(web_client, state):
+    page = landing_in(web_client, state)
+    top = landing_top(page)
+    alts = re.findall(r'\balt="([^"]*)"', top)
+    for words in (plain_words(top), *alts, *head_tags(page)):
+        assert not re.search(r"\bclaude\b", html.unescape(words), re.I), words
+    assert "whoami" not in top.casefold() and "privacy" not in top.casefold()
+    assert "whoami" not in " ".join(head_tags(page)).casefold()
+
+
+# The steps' card and everything under it, as the parent commit (dac88d7) rendered it in each state, by its SHA-256
+# and its length: the next pass rebuilds it, so this pass leaves it byte for byte. Delete with that pass.
+PARENT_TAILS = {
+    "signed out": ("ee4d135adb5164f602dacc90b5baf82b01efcec31cfa06bfd3444452db143183", 2394),
+    "signed in": ("b2ca257b30205d8d66a9f29944fd891c90a5fe930de094703f05481e9499ab22", 1961),
+    "no web sign-in": ("5c1b2ae07ebc8a4090648685e7c9f6180ef0afea771f425e4d7c3c658341e9b3", 2416),
+    "no address": ("10cd78cddc64b8ca74ab3f43105a4ecbbfc2211aba8e6281f5c622186187f2a1", 1822),
+}
+
+
+@pytest.mark.parametrize("state", sorted(PARENT_TAILS))
+def test_the_steps_and_everything_under_them_are_the_parents_byte_for_byte(web_client, provider, state):
+    if state == "no address":
+        unconfigured = Settings(None, None, database_url=settings().database_url, **WEB)
+        with TestClient(create_app(unconfigured, fetch=provider.fetch), base_url=SITE, follow_redirects=False) as c:
+            page = c.get("/").text
+    else:
+        page = landing_in(web_client, state)
+    tail = landing_tail(page)
+    assert (hashlib.sha256(tail.encode()).hexdigest(), len(tail)) == PARENT_TAILS[state]
+    assert page.count(LANDING_TOP_END) == 1 and page.index(LANDING_TOP_END) > page.index('<section class="card before"')
 
 
 # ---------------------------------------------------------------- sign-in

@@ -12,6 +12,10 @@ from datetime import date
 
 from app.config import get_settings
 
+# The repository's address, held here once (section L, Landing page). Every link to the repository is built
+# from it: the source code link, the README's table and anything after them. No template types it.
+REPOSITORY = "https://github.com/Ashwin-RN/spotter"
+
 _PATHS = {
     "home": "/",
     "sign_in": "/sign-in",
