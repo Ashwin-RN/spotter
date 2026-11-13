@@ -4,7 +4,7 @@ A personal fitness record you keep by talking to your AI assistant.
 
 You say what you lifted, ate or weighed. Your assistant logs it through Spotter over MCP. Spotter stores it and does the arithmetic in code: bests, trends, calorie estimates, the pace a goal needs. The assistant is told to quote Spotter's numbers.
 
-**Status: stages 1 to 5 are live.**
+**Status: stages 1 to 6 are live. Every web page is on the new design.**
 
 Live: https://spotter-production-0c0f.up.railway.app
 
