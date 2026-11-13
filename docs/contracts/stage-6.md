@@ -32,7 +32,7 @@
 |---|---|---|---|---|
 | 1 | Finds the repo | The description, the topics and an MIT licence. The README says stages 1 to 5 are live, 18 functions, 17 eval cases, and states no test count | Nothing on the repo page. The README's function count and page list are held against the code (T9). The README's picture is stage 7 | T9 |
 | 2 | Reads the README | Since 2026-11-11, a product page and setup guide for any MCP client: why use it, three setup steps that name no assistant, the `/mcp` address, and a table of eight assistants, each "Tried" or "From its docs" | Nothing beyond T9 | T9 |
-| 3 | Opens the landing page, signed out | Six numbered items in one card. Sample data is fifth. The first sentence offered is "whoami". No picture, no privacy link, no favicon | One line and one Sign in button. One sample picture from `/static`, with the same exchange as text under it. A Before you start block: what an assistant needs, and the daily cap on new accounts, read from the setting (50 by default). Three steps that name no assistant: sign in, add Spotter to your assistant as a remote MCP server with the `/mcp` address shown, say what you did. Then a short list of assistants that links to the README's table. A Things to say first list. A footer with Privacy and Source code | The suite renders it signed out: the step order, no assistant named in a step, the cap read from settings, no "whoami", the footer links (T3). The owner looks at it signed out: the live walk never signs out |
+| 3 | Opens the landing page, signed out | Six numbered items in one card. Sample data is fifth. The first sentence offered is "whoami". No picture, no privacy link, no favicon | One line and one Sign in button. One sample picture from `/static`, with the same exchange as text under it. A Before you start block: what an assistant needs, and the daily cap on new accounts, read from the setting (50 by default). Three steps that name no assistant: sign in, add Spotter to your assistant as a remote MCP server with the `/mcp` address shown, say what you did. Then a short list of assistants that links to the README's table. A Things to say first list. A footer with Privacy and Source code. **Not built in step 4:** the footer's Privacy link, since the privacy page is not in this merge. The exchange's text comes before the picture (as built in step 4, section L) | The suite renders it signed out: the step order, no assistant named in a step, the cap read from settings, no "whoami", the footer links (T3). The owner looks at it signed out: the live walk never signs out |
 | 4 | Signs in | The provider's hosted page on its staging address, with no Spotter name. After it, Today. The time zone saves itself from the browser | No code change. Branding the staging page is the owner's click on the provider's dashboard, at no cost. The move to production comes before strangers are invited, and is also his. Landing on Today and the time-zone save stay as they are; in step 4 the save's redirect gains the `saved=time_zone` mark (section L, Motion) | The owner's look at the hosted page. The suite's sign-in tests for Today after sign-in |
 | 5 | Adds sample data | An empty Today leads with Add sample data | The landing names it in one line under the steps. On an empty Today, the Today card's one white button is Add sample data | The suite: the button only on an empty account. The live walk presses it, then Remove sample data at the end |
 | 6 | Connects an assistant | The address in a box. The claude.ai steps written out by hand. The Claude Code command in a box | Step 2 of the landing names no assistant: add Spotter as a remote MCP server, with the `/mcp` address in a box. Under the steps, a short list of assistants links to the README's table. Two items carry more: Claude Code's holds its command in its box, and Claude's may hold an Add to Claude button, built on the documented link that opens the custom connector dialog with the name and the address filled in. That button ships only if a live click opens the filled dialog before the pages are pushed: before the step 4 push, the lead clicks it on a local build in a signed-in Chrome and stops at the dialog. The address box stays either way | The live walk clicks the button, when the list carries it, in a signed-in Chrome and stops at the filled dialog. It adds nothing. The suite: the address appears whole in one box |
@@ -826,7 +826,7 @@ Strict-Transport-Security: max-age=31536000     (when the site is served over ht
 ```
 
 - It does not change. Anything that would need a change is cut, or goes to the owner first.
-- One addition, shipped in step 3, on `/static` only: `Cache-Control: public, max-age=3600` (`web.STATIC_CACHE`), with every security header and HSTS on https. The page cross-fade runs only when the incoming page gets its stylesheet from the browser's cache, and Chrome drops the fade when the stylesheet has to be fetched. Pages keep `no-store`. A `/static` 404 carries the cache line too.
+- One addition, shipped in step 3, on `/static` only: `Cache-Control: public, max-age=3600` (`web.STATIC_CACHE`), with every security header and HSTS on https. The page cross-fade runs only when the incoming page gets its stylesheet from the browser's cache, and Chrome drops the fade when the stylesheet has to be fetched. Pages keep `no-store`. A `/static` 404 is the plain "Not Found" it was before, with its content type alone and no cache line (as built in step 4: `/static` stays exactly as it was, and `test_web.py` records its answers).
 - The stylesheet link carries a version in its query, so a deploy never serves an old stylesheet from cache. As shipped: `web.style_version()` is the first 12 hex digits of the file's SHA-256, read once when the app starts (`web._environment()`), and `base.html` links `{{ style_href }}`, `/static/style.css?v={version}`. With the file missing, `style_version()` logs one line and returns None, and the link is the plain `/static/style.css`: the pages lose their look, and nothing else stops. The address of `/static/time-zone.js` stays exactly as it is: `test_web.py` pins it.
 - So after a change to `time-zone.js`, a browser can run the old copy for up to an hour. That is accepted.
 - The first move of a visit with an empty cache may not fade. That is accepted.
@@ -917,7 +917,7 @@ Strict-Transport-Security: max-age=31536000     (when the site is served over ht
 ## I. Exit
 
 1. The full suite passes, plain and with `-W error`, on a clean `git archive` export of the commit to be pushed.
-2. A live walk of section B in the owner's signed-in Chrome by an agent that never signs in and never presses Delete account. It adds sample data, reads Today, Progress, Goals and one cardio page, clicks Add to Claude to the filled dialog and stops (when the landing's list carries the button), says "How am I doing?" and "Am I on track for my goals?" in a new chat and compares the figures with the pages, then removes the sample data. It lists CSP violations from the console (expect none).
+2. A live walk of section B in the owner's signed-in Chrome by an agent that never signs in and never presses Delete account. It adds sample data, reads Today, Progress, Goals and one cardio page (**not built in step 4:** an activity's page), clicks Add to Claude to the filled dialog and stops (when the landing's list carries the button), says "How am I doing?" and "Am I on track for my goals?" in a new chat and compares the figures with the pages, then removes the sample data. It lists CSP violations from the console (expect none).
    - It walks at 360, 390 and 1,280 px wide, on the owner's account empty and then with sample data. The suite covers the edge account's pages (T3, T5, `test_page_rules.py`).
    - **The walk's checks on the look**, each at every width unless named, are in the table after this list.
    - It checks whether the cross-fade runs after a form post (either outcome is accepted), and that the eval line shows on the live landing page.
@@ -1442,6 +1442,7 @@ New class names are named here. The kept ones are section H's.
 - {Kind} is the entry kind's one spelling from the tag table, `web.ENTRY_WORDS` as step 2 shipped it: Weigh-in, Measurement, Lift session, Food entry, Cardio session.
 - `/today` passes `saved` and `deleted` on to the day address (`web.py:598` drops them today).
 - These marks also switch on the calm page (see Motion).
+- As built in step 4: a form low on a page (the day page's four fold-outs, Set a goal, Save a food) posts to its own anchor, so a refused post comes back at the form, and each redirect that answers it ends in `#top` (`body` carries `id="top"`), so the strip is in view. Settings' three forms land on their own cards the same way.
 
 #### A past day
 
@@ -1535,12 +1536,13 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 | | Cardio a week | min | 4-week average |
 | Maintenance | Maintenance | kcal, nearest 10 | The estimate tag, then "{days} logged days, {from} to {to}"; or the reason, value blank |
 
+- As built in step 4: Lift sessions a week reads "{n} a week" in every state, so an average that is not whole keeps its unit. A target set reads in the remark as "Last 7 days, target {n}".
 - A value cell holds a number and its unit, or nothing. Words go in the remark.
 - No food in 28 days: the food rows show a blank value and the remark "No food logged in the last 28 days."
 
 #### The Cardio card
 
-- A row table, one row per activity logged, by name: Activity (a link to its page); Sessions; Time (min); Fastest pace (per km); Last (a day link).
+- A row table, one row per activity logged, by name: Activity (a link to its page; **not built in step 4:** the name is plain text, since an activity's page is not built); Sessions; Time (min); Fastest pace (per km); Last (a day link).
 - An activity with no distance logged leaves its pace cell blank. The cell holds no words.
 - Under the table: "Sessions and time cover the last 28 days. Fastest pace is your best ever. A blank pace means no distance is logged for that activity."
 - None logged: "No cardio logged yet. Tell your assistant what you did, or add it on Today."
@@ -1550,7 +1552,7 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 - A row table, one row per lift logged, by name: Lift (a link to its page); Estimated max; Best set; Trend; Last trained (a day link).
 - Best set: "{weight} kg × {reps}".
 - **A lift with no added weight** (no live set above 0 kg, so it is in `reps_only`): Estimated max reads "Needs added weight"; Best set "{reps} reps", from `reps_only`; Trend blank. It never shows "0 kg". On the fixed day, Pull-Up reads "Needs added weight" and "6 reps".
-- A weighted lift with no set of 1 to 10 reps: Estimated max reads "Needs a set of 1 to 10 reps"; Best set and Trend blank.
+- A weighted lift with no set of 1 to 10 reps: Estimated max reads "Needs a weighted set of 1 to 10 reps"; Best set and Trend blank. (As built in step 4: "Needs a set of 1 to 10 reps" was untrue for a person who did such a set at 0 kg.)
 - These two states replace step 2's "No estimated max yet" and "No best set yet": a deliberate step 4 change, since `reps_only` (step 3) tells the two reasons apart.
 - Trend: the slope, "{rate} kg a week"; blank when there is none.
 - Under the table: "Estimated max is worked out from your sets, not a tested max. Trend is its change a week."
@@ -1567,8 +1569,11 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 - A Sessions card: newest first, each "{day}: estimated max {value} kg".
 - Laptop: tiles across; the chart in 8 columns beside Bests in 4; Sessions across.
 - Nothing logged: one card with today's line (`progress_lift.html`), saying "your assistant": "No sets of {lift} logged yet. Tell your assistant what you lifted and it shows here."
+- As built in step 4: a weighted lift with no set of 1 to 10 reps reads "Needs a weighted set of 1 to 10 reps" on the Estimated max tile and "No weighted set of 1 to 10 reps yet" on the Best set tile. The chart card's sub line is "Worked out from your sets, not a tested max". With no chart it says "The chart starts from a set with added weight." or "The chart starts from a weighted set of 1 to 10 reps." The Sessions tile's note is "last trained {day}". An empty Bests card says "No new bests beyond the first session yet.", an empty Sessions card "No session has an estimated max yet."
 
 #### An activity's page, `/progress/cardio/{activity}`
+
+**Not built in step 4:** the page was cut from this merge, so the Cardio card's activity names are plain text. The section stays as the plan.
 
 1. Page head: h1 the activity's name, a back link "Progress".
 2. The sample banner.
@@ -1644,6 +1649,7 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 - **The heading words come from `vs_plan`, and `line_ended` picks "the plan line today" or "the target"**, as `plan_line` does. The page never works out whether the line has ended.
 - **The two statements can disagree, and both show.** The sample body weight goal on the fixed day shows them disagreeing (section E1).
 - What the tag means: On track, "At this pace the target is reached by the date." Behind, "At this pace the target is not reached by the date." Reached, "The target is reached." Not enough data: the goal's own note ("A projection needs 4 points in the last 6 weeks.").
+- As built in step 4: a goal whose tag is Behind shows one line under the facts, "Ask your assistant how to reach this target by its date." It names no label and no figure.
 - **Rule 3.** On the plan line, the card shows the now figure, the heading and `plan_line`, and leaves out the Plan line today row.
 - **Rule 2.** The now figure and Plan line today print exactly the figures `plan_line` prints: through `show` with `page=True`, widened when `formatting.widen([latest, should_be_today], quantity)` is true, from `goal_charts`' unrounded figures. T7 holds that they match `plan_line`.
 - On the plan line, no days line shows.
@@ -1668,9 +1674,9 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 
 | Kind | Fields, in order |
 |---|---|
-| Body weight | Target weight (kg); By (a date); Notes. A grey line: "The goal starts from your 7-day average today." |
+| Body weight | Target weight (kg); By (a date); Notes. A grey line: "The goal starts from your 7-day average today." (As built in step 4: the line is left out when "Where you are now" shows, since the goal then starts from the number given.) |
 | Lift | Lift (the lift list); Target estimated max (kg); By; Notes |
-| Cardio time | Activity (the cardio list); Distance (km); Target time (min), with the hint "Minutes, such as 27.5 for 27:30"; By; Notes |
+| Cardio time | Activity (the cardio list); Distance (km); Target time (min), with the hint "Minutes, such as 27.5 for 27:30"; By; Notes. (As built in step 4: "Where you are now (min)" carries the same hint when it shows.) |
 | Measurement | Measurement (waist, hips, chest, arm, thigh, resting heart rate, each with its unit); Target; By; Notes |
 
 - The empty choices keep step 2's words, "No lift or activity" and "No measurement", until the one-kind form lands. Then each list's empty choice names its own kind: "No lift", "No activity", "No measurement". A deliberate step 4 change.
@@ -1684,7 +1690,7 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 
 #### Empty
 
-- No open goals: one dashed card, "No open goals. Set one below, or tell your assistant what you are aiming for." The form below it.
+- No open goals: one dashed card, "No open goals. Set one, or tell your assistant what you are aiming for." The form below it. (As built in step 4: "below" was untrue on a laptop, where the form sits to the card's right.)
 
 | Check | Proved by |
 |---|---|
@@ -1714,7 +1720,7 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 #### The Saved foods card
 
 - A row table: Food; Serving; kcal; Times logged; Grams (g); then Edit and Delete.
-- The Food cell holds the name and, for a sample food, its sample tag: `<td>Dal bowl <span class="tag tag-sample">sample</span></td>`, as `test_web_account.py:250` reads it.
+- The Food cell holds the name and, for a sample food, its sample tag: `<td class="lead">Dal bowl <span class="tag tag-sample">sample</span></td>`, as `test_web_account.py` reads it. (As built in step 4: `table.rows`, which stacks below 720 px, since the old table scrolled a phone sideways. The Food cell is `td.lead` and spans the row; Serving and each figure (`td.num`) carry a `data-label` shown above them.)
 - Grams come out of the Serving cell into their own column, after Times logged, so the first three cells keep their place. A Grams column blank in every row is not shown.
 - Empty: a dashed card, "No saved foods yet. Tell your assistant a food you eat often and its number, and ask it to save the food."
 
@@ -1731,7 +1737,7 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 
 | Check | Proved by |
 |---|---|
-| The table, the tag in the Food cell, the column order | `test_web_account.py:250-252`, WEB |
+| The table, the tag in the Food cell, the column order | `test_web_account.py`'s saved foods tests, on the row table as built in step 4, WEB |
 | The fold-out's open and closed states | `test_page_rules.py`, WEB |
 | The look | Owner's look |
 
@@ -1746,9 +1752,9 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 | 1 | Your account | A facts list: Name; Email; Time zone; Sign-in id; Account id. A grey line: "When your assistant is connected to this account, asking it who you are shows the same two ids." |
 | 2 | Time zone | "Time zone saved." when saved. The grouped list, "Save time zone". The refusal in a `div.error` |
 | 3 | Targets | "Targets saved." when saved. Calories a day (kcal); Lift sessions a week; Cardio a week (min); each error under its field. The add-back checkbox in a 44 px row: "Add cardio back: show a net total, food minus cardio calories". "Save targets" |
-| 4 | What your assistant may do | "Your assistant's access saved." when saved. "Only you can change this, here: your assistant is never offered this switch." Three radio cards, each at least 44 px tall: the label in bold, its line under it. Labels from the one table: "Read only", "Read and log", "Read, log and delete". Their lines say "your assistant" (`web.py`'s switch table): "Read only: your assistant can read what you have logged and change nothing." and so on. "Save" |
+| 4 | What your assistant may do | "Your assistant's access saved." when saved. "Only you can change this, here: your assistant is never offered this switch." Three radio cards, each at least 44 px tall: the label in bold, its line under it. Labels from the one table: "Read only", "Read and log", "Read, log and delete". Their lines say "your assistant" (`web.py`'s switch table): "Read only: your assistant can read what you have logged and change nothing." and so on. As built in step 4, each line drops the label drawn in bold above it and says all its setting allows (`web.CLAUDE_CAN_LINES`): "Your assistant can read what you have logged and change nothing."; "Your assistant can also log and import entries, edit and restore them, save foods, set goals, and change your time zone and targets. It cannot delete."; "Your assistant can also delete entries and saved foods. A deleted one can always be restored." "Save" |
 | 5 | Your data | "Export my data" (secondary) with its line. "Remove sample data" (secondary), when sample rows exist, with its line. "Delete my account", a link in `--err`, with "You see what goes before anything is deleted." |
-| 6 | More | Links: Saved foods; Privacy. A "Sign out" button, shown on a phone only: on a laptop the top bar carries it |
+| 6 | More | Links: Saved foods; Privacy (**not built in step 4:** the privacy page is not in this merge). A "Sign out" button, shown on a phone only: on a laptop the top bar carries it |
 
 - Laptop: two columns of 6, the cards placed row by row in the order above.
 - The page carries no code words. The account card no longer names a function.
@@ -1785,18 +1791,19 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 |---|---|---|
 | 1 | Header | The brand, and a plain "Sign in" link |
 | 2 | First screen | h1 "Spotter". The one line: "A fitness log you keep by talking to your assistant." The second line: "Tell your assistant what you lifted, ate or weighed. Spotter stores it and works out your bests, trends and goal pace in code, and your assistant quotes those numbers." A white "Sign in to start" to `/sign-in`, and a plain link "Source code on GitHub" |
-| 3 | What it looks like | A card with the sample tag. One picture from `/static`: an assistant's chat beside the Goals card it quotes, on sample data. Then the same exchange as text: "You" asks "Am I on track for my goals?"; "Your assistant" answers. A caption: "Sample data. The assistant asked Spotter for the goals and quoted them. The Goals page shows the same numbers." |
+| 3 | What it looks like | A card with the sample tag. The exchange as text first: "You" asks "Am I on track for my goals?"; "Your assistant" answers. Then one picture from `/static`: the body weight goal's Goals card alone, on sample data, its three rows "Now, the 7-day average", "Plan line today" and "At this pace" (as built in step 4: a chat inside a 720 px picture drew its text under 7 px on a phone, so the chat is the text alone). A caption: "Sample data. The assistant asked Spotter for the goals and quoted them. The Goals page shows the same numbers." |
 | 4 | Before you start | "You need an AI assistant that can add a remote MCP server with sign-in." "Each assistant's plan limits are in the README's table." "New accounts are capped at {cap} a day." |
 | 5 | How to start | `ol.steps`, three steps (below), then the list of assistants |
 | 6 | Things to say first | Three sentences, each with what it does: "Am I on track for my goals?"; "How am I doing?"; "Lunch was two rotis and dal." Then "Everyday logging": three lines, "Back squat, 3 sets of 5 at 60 kg", "I weighed 72.5 kg this morning", "30 minutes on the treadmill" |
-| 7 | Your data | You decide what your assistant may do: the switch's three settings by their one spelling, and where it starts. Export. Undo. Delete your account. A link "Read the privacy page" |
+| 7 | Your data | You decide what your assistant may do: the switch's three settings by their one spelling, and where it starts. Export. Undo. Delete your account. A link "Read the privacy page" (**not built in step 4:** the privacy page is not in this merge) |
 | 8 | How it is built | "{functions} functions your assistant can call, over MCP." "{cases} eval cases. Each checks the calls the server received, not what the assistant says it did." A link "Read the README" |
-| 9 | Footer | Privacy; Source code; Contact; "Spotter is an open project, run by one person." |
+| 9 | Footer | Privacy; Source code; Contact; "Spotter is an open project, run by one person." (**Not built in step 4:** the Privacy link, since the privacy page is not in this merge.) |
 
 - **One address for the repository.** `app/links.py` holds it once, as a constant. "Source code on GitHub", the footer's Source code, "Read the README" and the list of assistants go to it; the list goes to the README's "Your assistant" table. Contact goes to its issues page. No template types the address.
 
-- The picture carries `width` and `height` and a short `alt`. The exchange text under it carries the words.
+- The picture carries `width` and `height` and a short `alt`. The exchange text under it carries the words. (As built in step 4, the text sits above it.)
 - The exchange's figures are the fixed-day sample goals of `tests/test_sample.py:170-192`: their labels, targets, dates, needed and actual paces and projected dates, through `show` and `day`.
+- As built in step 4: the reply keeps the MCP server's own reply rules, one fact a line and no figure worked out, so it carries no pace. It opens "All three goals are on track by projection." Each goal then takes three lines: its label and date alone ("Body weight 77 kg by Tue 5 Jan 2027."), its `plan_line` as `get_goals` writes it, and "At this pace it is reached on {day}." (`web.LANDING_EXCHANGE`).
 - "whoami" is not offered anywhere on the page.
 - Signed out, the page links to no signed-in page (`test_web.py:162`).
 
@@ -1821,7 +1828,7 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 - Then one line: "Any other MCP client that supports remote servers with sign-in is added the same way."
 - The README's table is the one place each assistant's steps and limits live. When a row is added there, the list gains it.
 - **Claude Code's item** holds its command in `code.link-box#claude-code-command` (`test_web.py:179`), with "Run this once, then type /mcp and pick spotter to sign in."
-- **Claude's item** holds the Add to Claude button (secondary) only when section B's live click passed. Otherwise it is a link like the rest.
+- **Claude's item** holds the Add to Claude button (secondary) only when section B's live click passed. Otherwise it is a link like the rest. **Not built in step 4:** the button waits for a check of the live click, so Claude's item is a plain link.
 - The list names assistants as products. That is the one place the page says Claude.
 - Without web sign-in, the white button gives way to "Sign-in on the web is not set up on this server yet."
 
@@ -1837,7 +1844,7 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 |---|---|---|
 | Functions | The MCP server's own list, `len(mcp_server.NEEDS)`: the list T9 holds the README to | Once at start |
 | Eval cases | The number of cases in `evals/cases.json` | Once at start |
-| The new-account cap | `settings.signups_per_day` (`config.py:53`), 50 by default (`config.py:27`). At 0: "Spotter is not taking new accounts just now." | Each render |
+| The new-account cap | `settings.signups_per_day` (`config.py:53`), 50 by default (`config.py:27`). At 0: "Spotter is not taking new accounts right now." (as built in step 4: "just" fails the page's own filler rule) | Each render |
 
 - No count is typed into a template.
 - If the cases file cannot be read, the eval line is left out. The page never shows a typed or a guessed number.
@@ -1853,7 +1860,7 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 #### Head furniture, this page only
 
 - `<meta name="description">` with the one line and the second line.
-- Link-preview tags: `og:title`, `og:description`, `og:type` (website), `og:url` (the site's address), `og:image` (the picture's full address), `og:image:alt`.
+- Link-preview tags: `og:title`, `og:description`, `og:type` (website), `og:url` (the site's address), `og:image` (the picture's full address), `og:image:alt`. **Not built in step 4:** `og:image` and its alt, since the picture is an SVG and no platform documents an SVG as a link-preview picture.
 
 | Check | Proved by |
 |---|---|
@@ -1868,6 +1875,8 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 | The look signed out, at both widths | Owner's look |
 
 ### Privacy page
+
+**Not built in step 4:** the page is not in this merge. Its text is written in `privacy.html`, not routed, and no page links to it.
 
 **Plain facts in plain words. What is stored, where, who can see it, how to export it, how to delete it. It says that it is one person's project and not checked by a lawyer.**
 

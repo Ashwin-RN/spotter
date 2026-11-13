@@ -14,7 +14,7 @@ Live: https://spotter-production-0c0f.up.railway.app
 - **Numbers worked out in code.** Bests, trends and goal pace come from your own log. Every food number is tagged with who supplied it: you, a saved food, the USDA table, or the assistant's estimate.
 - **Your record, not the assistant's.** It lives in Spotter under your sign-in, so the same data is there from any assistant you connect. Use more than one, or switch, with nothing to export or import.
 - **You set the limit.** One switch on Settings says what the assistant may do: read, log, or log and delete. It starts at log. A deleted entry can be restored.
-- **See it and take it with you.** A web app on the same account (Today, Progress with a page per lift, Goals, Foods, Settings, Privacy). From Settings you can export everything as CSV files or delete the account.
+- **See it and take it with you.** A web app on the same account (Today, Progress with a page per lift, Goals, Foods, Settings). From Settings you can export everything as CSV files or delete the account.
 
 ## Set up
 

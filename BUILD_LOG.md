@@ -578,3 +578,46 @@ Five runs of the evals, each on `claude-opus-5-5` through the Claude Code CLI. T
 - **The one failure:** run 2, `import_unknown_lift`, its second run, "the reply asks nothing". The reply wrote nothing, named the lift, would not guess and put the choice to the person, with no question mark, which was then the judge's only sign of asking. The server's record was right: `whoami` and `list_exercises`, no import call. It is a false fail of the question-mark check, kept on purpose as a test fixture.
 - **The judge of each run.** Runs 1 and 2: the question mark. Run 3: a rule that also read fixed waiting phrases. Run 4: that rule, narrowed. A reviewer found wrong replies that each version passed, so the phrase rule was withdrawn and the judge is the question mark again. Runs 3 and 4 kept no replies, so their counts under it are not known. Run 5: the question mark.
 - Every run's handshakes carried the server's instructions: 60 of 60, then 9 of 9 in each of the four later runs.
+
+### Step 4: what was built
+
+**Every page on the new design, 2026-11-11 to 2026-11-13.**
+
+| Group | What |
+|---|---|
+| Frame | The page frame, titles and tabs, the favicon set. Designed 404 and 500 pages and one message template |
+| Today | The page head and Today card, the Food card with its Add food fold-out, the Lifts, Cardio, Weigh-in and Measurements cards, the edit pages for all five kinds, three tiles and their sheets, the last 28 days and the chart pair |
+| Progress | Four tiles and their sheets, the Body weight card, the Trends table, the Cardio and Lifts cards. A page for each lift |
+| Goals | A card for each open goal with its path chart, closed goals, and the Set a goal form, one kind at a time |
+| Foods, Settings | Foods' table and its edit page. Settings in six cards, and Delete my account |
+| Landing | The first screen, a sample exchange above a picture of the Goals card, Before you start, the three steps, the list of assistants, Things to say first, Your data, How it is built, a footer |
+
+- Left out on purpose: the page for a cardio activity, the privacy page, the Add to Claude button, a link-preview picture. The contract marks each.
+- Beside the pages, `import_entries`, the server's 19th function, was merged in with its three eval cases. The entry above records their runs.
+
+### Step 4: the review
+
+Each pass was read by a fresh reviewer on a frozen copy, who broke the code on purpose and counted the breaks a test caught. Each page group was then looked at in headless Chrome at 360 and 1,280 px, with measurements. Fixes were batched by page group and re-checked.
+
+| Finding | Fix |
+|---|---|
+| A form low on a phone page: a refused post landed at the top, its error out of sight. Measured in Chrome: a form whose `action` ends in a fragment lands there on a refusal, and a redirect with no fragment inherits it | Each such form posts to its own anchor, and each redirect that answers it names `#top` |
+| Settings: the line for "Read and log" left out that the assistant may also save foods, import, and change the time zone and targets | The line says all the setting allows. A test holds each line beside what the server allows at that setting |
+| The landing's sample reply broke the server's own reply rules: five facts on a line, no plan line, a pace converted | Rewritten to them |
+| The landing's picture held a chat nobody could read on a phone: its text drew under 7 px | It became the Goals card alone |
+| Foods' table scrolled a phone sideways by 136 px | A row table that stacks |
+| The landing said a deleted entry comes back "when you ask your assistant to restore it". An assistant can restore only an entry whose id it holds | Reworded |
+| Two calorie error lines carried an example figure the page's own number rule refused | They say it in words |
+
+### Step 4: exit
+
+| Check | Status |
+|---|---|
+| The full suite is green, plain and with warnings as errors, on a clean export | 4,806 tests, from 3,286 |
+| A browser look at every page, after the cleanup pass (`2e49d9c`) | Headless Chrome at 360 and 1,280 px, 40 page loads on three accounts: sample data, edge cases, nothing logged. Every load answered 200, none scrolled sideways, none wrote a console message. Nothing sat under the phone's bottom bar or the laptop's top bar. A refused post on the day page landed on its own form with its error in view, and a save landed at the top with its line in view. A second look, on the tree of the last two passes (`ccab5df`), opened the seven tile sheets on Today and Progress, the edit pages of the other four kinds of entry, and the landing's new reply and picture, at both widths: no load scrolled sideways |
+
+### What step 4 taught
+
+- **Measure what the browser does.** Where a refused post lands was settled in Chrome, not by reading. A redirect with no fragment of its own inherits the form's, and no reading of the templates showed that.
+- **A sample is a promise.** The landing's reply was what a stranger would expect from their assistant, and it broke the rules the server gives the assistant. A test now rebuilds it from `get_goals`.
+- **A line about a permission is held against the permission.** The switch's line and the Undo line each said less, or more, than the server allows.

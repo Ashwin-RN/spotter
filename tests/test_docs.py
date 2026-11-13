@@ -2,7 +2,8 @@
 
 - Its MCP function count equals len(mcp_server.NEEDS).
 - Its page list names every top-level page: each parameterless links._PATHS name but home and sign_in.
-  Once privacy is a links._PATHS name, Privacy is one of them. Extra names in the list are allowed.
+  Once privacy is a links._PATHS name, Privacy is one of them, and the README must then name it.
+  Extra names in the list are allowed.
 - Any eval case count it states equals the number of cases in evals/cases.json.
 - It writes no test count by hand.
 """
@@ -148,13 +149,13 @@ def test_top_level_pages_come_from_links():
     assert "Home" not in pages and "Sign in" not in pages and "Day" not in pages
 
 
-def test_privacy_is_required_once_it_is_a_link(readme):
-    """Step 4 adds privacy to links._PATHS. The mapping gives it Privacy, and the README already names it."""
+def test_privacy_is_required_once_it_is_a_link():
+    """When privacy becomes a links._PATHS name the mapping gives it Privacy, and the page-list test then asks
+    the README for it."""
     from app import links
     with_privacy = {**links._PATHS, "privacy": "/privacy"}
     assert "Privacy" in top_level_pages(with_privacy)
     assert missing_pages("Today, Progress, Goals, Foods, Settings", top_level_pages(with_privacy)) == ["Privacy"]
-    assert missing_pages(page_list(readme), top_level_pages(with_privacy)) == []
 
 
 def test_an_extra_name_in_the_list_is_not_a_fault():
