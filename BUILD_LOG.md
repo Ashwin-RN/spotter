@@ -673,3 +673,31 @@ The owner's call: Spotter will not be shown to anyone who would press "Add sampl
 A reviewer ran the old generator and the new seed on fresh databases for seven fixed days and compared every column of eight tables: identical, 2,821 rows each day. The migration's Postgres SQL was read offline: one transaction, deletes before the column drops. One finding, a choice rather than a fault: between the migration and the new code going live, the old code still serving fails on the dropped column for a few seconds. Accepted: the owner is the only user today. Later migrations that drop a column ship in two steps, code first.
 
 The full suite: 4,835 tests, plain and with warnings as errors.
+
+## Know what happened: the call trace
+
+What the owner can see when a call goes wrong for anyone, without seeing what the person said. The decisions are in `docs/contracts/trace.md`.
+
+| Part | What it does |
+|---|---|
+| Request id | Every request gets 16 hex characters of Spotter's own making, never taken from the caller. It is on the call's row, on every Spotter log line, and on the response as `X-Request-Id` |
+| What was sent | Field names and counts only, such as `date entries[2]{description,kcal,meal}`. A name Spotter does not know is counted, never written. One value is written: which table an edit, a delete or a restore was for |
+| Whether it did it | read, written, duplicate, preview, refused or failed. A write that landed before its reply failed reads written |
+| Where it stopped | The step, from the error code, and for a crash the file, line and function. Never the message |
+| USDA | A failed lookup says why: the key refused, over the limit, a bad request, no answer, a bad reply. The assistant hears a message of its own for the first two |
+| Retention | Rows older than 90 days are deleted by the app itself, at most once a day |
+| The owner's read | `owner_calls`, one more function, listed only for the account named in `OWNER_USER_ID`. Everyone else's list is the same as before, byte for byte. Unset, nobody is the owner |
+| Database | Migration 0005 adds seven nullable columns and one index to the call log |
+
+### The review
+
+| Finding | Fix |
+|---|---|
+| With "failed only", a call still running was listed as failed, the owner's own reading call among them | A failed call is one that is not ok and has finished |
+| A web write that crashed had its row but no Spotter log line with its id | It logs one line, the type and the frames only |
+| A 500 from outside the page layer went out with no id | The id layer wraps the whole app |
+| Calls with no account, such as a refused sign-in, could be found only by request id | The summary has a line for them, and `no_account` lists them |
+
+A second reviewer read the fix round as new code: it holds. A non-owner's function list, the instructions and the resources were compared with the build before, as sent on the wire: identical. Not run on a real Postgres: the migration and the owner's queries were read and compiled for it, not executed there.
+
+The full suite: 4,878 tests, plain, at the commit. The files touched also passed with warnings as errors.
