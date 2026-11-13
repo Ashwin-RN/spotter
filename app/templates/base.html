@@ -34,6 +34,7 @@
   </header>
   {% endif %}
   <main class="{{ main_class }}">{% block main %}{% endblock %}</main>
+  {% if site_foot %}{% include "_footer.html" %}{% endif %}
   {% if attribution %}<footer class="attribution">{{ attribution }}</footer>{% endif %}
   {% if time_zone_missing %}
   <form id="auto-time-zone" method="post" action="/settings" hidden>

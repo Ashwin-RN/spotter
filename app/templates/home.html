@@ -8,9 +8,9 @@
   {% if site_address %}<meta property="og:url" content="{{ site_address }}">{% endif %}
 {% endblock %}
 {% block main %}
-{# The top half (section L, Landing page): the first screen, What it looks like, Before you start. The words of the
-   first screen and the exchange come from web.py (LANDING_LINES, LANDING_EXCHANGE, exchange_answer), the
-   repository's links from links.REPOSITORY, the cap from the settings at each render. #}
+{# The landing (section L, Landing page), in the contract's order. The words of the first screen and the exchange
+   come from web.py (LANDING_LINES, LANDING_EXCHANGE, exchange_answer), the list of assistants from ASSISTANTS, the
+   switch's from CLAUDE_CAN_LABELS, every repository link from links.REPOSITORY, the counts and the cap from the view. #}
 <div class="landing-hero">
   <h1>Spotter</h1>
   <p class="one-line">{{ landing_lines[0] }}</p>
@@ -32,14 +32,14 @@
     <h2 id="looks-title">What it looks like</h2>
     <span class="tag tag-sample">sample</span>
   </div>
-  <img src="{{ picture.src }}" width="{{ picture.width }}" height="{{ picture.height }}" alt="{{ picture.alt }}">
   <div class="exchange">
     <div class="said you"><span class="who">{{ exchange.you }}</span><p>{{ exchange.question }}</p></div>
     <div class="said claude"><span class="who">{{ exchange.assistant }}</span>
-      {% for line in answer %}<p>{{ line }}</p>
+      {% for lines in answer %}<p>{% for line in lines %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p>
       {% endfor %}
     </div>
   </div>
+  <img src="{{ picture.src }}" width="{{ picture.width }}" height="{{ picture.height }}" alt="{{ picture.alt }}">
   <p class="caption">Sample data. The assistant asked Spotter for the goals and quoted them. The Goals page shows the same numbers.</p>
 </section>
 
@@ -56,61 +56,94 @@
   </ul>
 </section>
 
-<div class="card accent-border">
-  <h2>{% if signed_in %}Connect Claude and start{% else %}How to start{% endif %}</h2>
+<section class="card start" aria-labelledby="start-title">
+  <h2 id="start-title">How to start</h2>
   <ol class="steps">
-    {% if not signed_in %}
     <li>
-      <p><strong>Sign in here.</strong> The first sign-in creates your account. Your time zone is saved from your browser.</p>
-      {% if web_ready %}
-      <p><a class="button" href="/sign-in">Sign in</a></p>
+      <p class="step-title">Sign in.</p>
+      {% if signed_in %}
+      <p class="muted">You are signed in.</p>
       {% else %}
-      <p class="notice">Sign-in on the web is not set up on this server yet.</p>
+      <p class="muted">Your first sign-in creates your account.</p>
+      {% if web_ready %}<p><a class="plain-link" href="/sign-in">Sign in</a></p>{% endif %}
       {% endif %}
     </li>
-    {% endif %}
     <li>
-      <p><strong>Connect Claude.</strong></p>
+      <p class="step-title">Add Spotter to your assistant.</p>
       {% if mcp_url %}
-      <p>Spotter's address:</p>
+      <p class="muted">Add Spotter to your assistant as a remote MCP server. Some call it a custom connector. Its address:</p>
       <code class="link-box">{{ mcp_url }}</code>
-      <p>On claude.ai or the Claude desktop app: Customize, then Connectors, then "+ Add",
-        then Add custom connector. Enter a name, such as Spotter, and the address above. Press Continue, choose how to
-        sign in, then Add. Sign in with the same account you use here: both reach one account.</p>
-      <p>In Claude Code, run this once, then type <code>/mcp</code> and pick spotter to sign in. It works in every
-        folder:</p>
-      <code class="link-box" id="claude-code-command">claude mcp add --transport http --scope user spotter {{ mcp_url }}</code>
+      <p class="muted">There is no key to paste: your assistant opens the sign-in page. Sign in with the same account you use here.</p>
       {% else %}
       <p class="notice">This server's address is not set up yet, so it cannot be connected.</p>
       {% endif %}
     </li>
     <li>
-      <p><strong>Talk to it.</strong> In a new chat, check that the Spotter connector is switched on for that chat:
-        on claude.ai, press "+" in the message box, then Connectors. Then say "whoami", or start with what you did: "Logged back squat, 3 sets of 5 at 60 kg", or "Lunch: two rotis and dal".</p>
-      <p class="muted">The first time, Claude may ask you to allow each call. Allow it.</p>
+      <p class="step-title">Say what you did.</p>
+      <p class="muted">Start a new chat and say what you did, or one of the sentences below.</p>
+      <p class="small">The first time, your assistant may ask you to allow each call. Allow it.</p>
     </li>
-    <li>
-      <p><strong>What you get.</strong></p>
-      <dl class="facts">
-        {% for path, name, line in [("/today", "Today", "everything you logged, by day."),
-                                    ("/progress", "Progress", "your bests, the weight trend, and how you are doing against your targets."),
-                                    ("/goals", "Goals", "each goal with the pace it needs and the pace so far."),
-                                    ("/foods", "Foods", "your saved foods."),
-                                    ("/settings", "Settings", "your targets, what Claude may do, export and delete.")] %}
-        <dt>{% if signed_in %}<a href="{{ path }}">{{ name }}</a>{% else %}{{ name }}{% endif %}</dt><dd>{{ line }}</dd>
-        {% endfor %}
-      </dl>
-    </li>
-    {% if not signed_in %}
-    <li>
-      <p><strong>Want to see it full first?</strong> Sign in and press "Add sample data" on Today. One click on
-        Settings removes it.</p>
-    </li>
-    <li>
-      <p><strong>You decide what Claude may do.</strong> A switch on Settings: read only, log, or log and delete.
-        It starts at log.</p>
-    </li>
-    {% endif %}
   </ol>
-</div>
+  <p class="muted">To see it full first, press Add sample data on Today. One button on Settings removes it.</p>
+  <p class="list-label">How to add Spotter in each assistant</p>
+  {# The README table's rows (web.ASSISTANTS), each a link to that table: the one place the page names products. #}
+  <ul class="assistants">
+    {% for name in assistants %}
+    <li><a href="{{ readme_table }}">{{ name }}</a>{% if name == "Claude Code" and mcp_url %}
+      <p class="muted">Run this once, then type <code>/mcp</code> and pick spotter to sign in.</p>
+      <code class="link-box" id="claude-code-command">claude mcp add --transport http --scope user spotter {{ mcp_url }}</code>
+    {% endif %}</li>
+    {% endfor %}
+  </ul>
+  <p class="muted">Any other MCP client that supports remote servers with sign-in is added the same way.</p>
+</section>
+
+<section class="card say-first" aria-labelledby="say-title">
+  <h2 id="say-title">Things to say first</h2>
+  <ul class="say">
+    <li><q>{{ exchange.question }}</q> <span class="does">Each goal against its plan line, and the date it is reached at this pace.</span></li>
+    <li><q>How am I doing?</q> <span class="does">Your weight trend, calories a day, lift sessions, cardio and maintenance.</span></li>
+    <li><q>Lunch was two rotis and dal.</q> <span class="does">Logs the meal. Each number is tagged: you said, saved food, USDA or estimate.</span></li>
+  </ul>
+  <p class="list-label">Everyday logging</p>
+  <ul class="plain-list">
+    <li>Back squat, 3 sets of 5 at 60&nbsp;kg</li>
+    <li>I weighed 72.5&nbsp;kg this morning</li>
+    <li>30&nbsp;minutes on the treadmill</li>
+  </ul>
+</section>
+
+{% if signed_in %}
+<section class="card web-pages" aria-labelledby="pages-title">
+  <h2 id="pages-title">Your pages</h2>
+  <dl class="facts">
+    {% for path, name, line in [("/today", "Today", "Everything you logged, by day."),
+                                ("/progress", "Progress", "Your bests, the weight trend, and how you are doing against your targets."),
+                                ("/goals", "Goals", "Each goal with the pace it needs and the pace so far."),
+                                ("/foods", "Foods", "Your saved foods."),
+                                ("/settings", "Settings", "Your targets, what your assistant may do, export and delete.")] %}
+    <dt><a href="{{ path }}">{{ name }}</a></dt><dd>{{ line }}</dd>
+    {% endfor %}
+  </dl>
+</section>
+{% endif %}
+
+<section class="card your-data" aria-labelledby="data-title">
+  <h2 id="data-title">Your data</h2>
+  <ul class="plain-list">
+    <li><b>You decide what your assistant may do.</b> A switch on Settings has three settings: "{{ switch[0] }}", "{{ switch[1] }}" and "{{ switch[2] }}". It starts at "{{ switch_start }}".</li>
+    <li><b>Export.</b> Settings gives you everything you have logged, as a zip of CSV files.</li>
+    <li><b>Undo.</b> A deleted entry comes back with Undo, or when you ask your assistant to restore it.</li>
+    <li><b>Delete your account.</b> On Settings. It removes every entry and your sign-in, and it cannot be undone.</li>
+  </ul>
+</section>
+
+<section class="card built" aria-labelledby="built-title">
+  <h2 id="built-title">How it is built</h2>
+  <dl class="facts-list">
+    <dt>{{ function_count|show("count") }}</dt><dd>functions your assistant can call, over MCP.</dd>
+    {% if eval_cases is not none %}<dt>{{ eval_cases|show("count") }}</dt><dd>eval cases. Each checks the calls the server received, not what the assistant says it did.</dd>{% endif %}
+  </dl>
+  <p><a class="plain-link" href="{{ source_link }}">Read the README</a></p>
+</section>
 {% endblock %}

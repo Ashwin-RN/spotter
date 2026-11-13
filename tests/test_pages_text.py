@@ -63,7 +63,6 @@ CONFIRMATION = "confirmation"  # this file's own rule: a confirmation names its 
 
 # What today's pages keep through step 2 (contract section C, "Step 2 does not reshape today's pages").
 SKIPS = (
-    Skip("/", tr.CODE_WORD, "whoami", "home.html:88, in the steps, the first sentence offered, replaced in step 4"),
     # Not figures: the names in the one attribution line (rule 15), "2024 Adult Compendium" and "CC BY-NC-ND 4.0".
     Skip("", tr.THOUSANDS, "2024", "a year in the Compendium's name, web.ATTRIBUTION", tag="footer"),
     Skip("", tr.TRAILING_ZERO, "4.0", "the licence's version, web.ATTRIBUTION", tag="footer"),
@@ -573,8 +572,9 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # The routes whose page a step 4 pass has rebuilt: "/" or a GET path template from web.PAGES, such as
 # "/day/{date}". The structure checks below and the page rules in tests/test_page_rules.py run on these
 # routes only. A pass adds its own route here when its page lands.
-BUILT: frozenset[str] = frozenset({"/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress", "/progress/{lift}",
-                                   "/goals", "/foods", "/foods/{food_id}/edit", "/settings", "/settings/delete"})
+BUILT: frozenset[str] = frozenset({"/", "/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress",
+                                   "/progress/{lift}", "/goals", "/foods", "/foods/{food_id}/edit", "/settings",
+                                   "/settings/delete"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 
@@ -768,21 +768,7 @@ _UL = re.compile(r"<ul\b|</ul\s*>")
 # ruling of the lead's). A skip covers its exact sentences on its route and nothing else, so a new line that
 # says Claude fails even on a skipped page. The pass deletes its sentences (and the route once it has none):
 # test_no_claude_skip_outlives_its_page fails on a sentence no page says any more. A route in BUILT has none.
-CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {
-    "/": (  # home.html's steps and under them, signed in and out: rebuilt with its list of assistants (pass B18)
-        "Connect Claude and start",
-        "Connect Claude.",
-        "On claude.ai or the Claude desktop app: Customize, then Connectors, then \"+ Add\", then Add custom "
-        "connector.",
-        "In a new chat, check that the Spotter connector is switched on for that chat: on claude.ai, press "
-        "\"+\" in the message box, then Connectors.",
-        "The first time, Claude may ask you to allow each call.",
-        "In Claude Code, run this once, then type /mcp and pick spotter to sign in.",
-        "claude mcp add --transport http --scope user spotter https://spotter.example.app/mcp",
-        "You decide what Claude may do.",
-        "your targets, what Claude may do, export and delete.",
-    ),
-}
+CLAUDE_SKIPS: dict[str, tuple[str, ...]] = {}
 _SENTENCE = re.compile(r"(?<=[.?!])\s+")
 
 
@@ -1219,8 +1205,8 @@ def test_claude_is_said_only_in_the_landings_list_of_assistants(monkeypatch):
     assert claude_hits("/goals", '<a aria-label="Ask Claude" href="/">x</a>')
     assert claude_hits("/goals", "<head><title>Claude · Spotter</title></head>")
     assert claude_hits("/goals", '<span class="tag tag-claude_estimate">estimate</span>') == []
-    # A skip covers its own sentences on its own route, and nothing else. Since pass B16 no route but the landing keeps
-    # one, so the case plants a skip of its own on a route other than the landing's, as the first such skip was.
+    # A skip covers its own sentences on its own route, and nothing else. Since pass B18 no route keeps one, so the
+    # case plants a skip of its own on a route other than the landing's, as the first such skip was.
     route, sentence = "/goals", "Ask Claude to set one."
     monkeypatch.setitem(CLAUDE_SKIPS, route, (sentence,))
     address = route + "?saved=goal"
@@ -1790,50 +1776,49 @@ def test_foods_holds_each_true_zero_to_its_own_column(client):
     assert page_findings("/foods", page, [], user_id) == []
 
 
-# ---------------------------------------------------------------- the landing's exchange (pass B17)
+# ---------------------------------------------------------------- the landing's exchange (passes B17 and B18)
 
 def _no_break_units(label: str) -> str:
     """A goal's label as a page says it: a no-break space between each number and its unit (section C)."""
     return re.sub(r"(\d) (kg|km|cm|bpm)\b", lambda m: m.group(1) + tr.NBSP + m.group(2), label)
 
 
-def _pace(goal: dict, value) -> str:
-    """A goal's pace a week, as the Goals page prints it (goals.html's pace macro, through the show filter)."""
-    if goal["kind"] == "cardio_best":
-        return formatting.show(value, "time_pace", page=True)
-    return f"{formatting.show(value, 'rate', page=True)}{tr.NBSP}{goal['unit']} a week"
-
-
-def test_the_landings_exchange_is_the_fixed_day_sample_goals_figure_by_figure(client, make_user, monkeypatch):
-    """The exchange is one constant (web.LANDING_EXCHANGE): get_goals for the sample account on the fixed day of
-    tests/test_sample.py, each figure its own field through show or day. Rebuilt here from get_goals, it must equal the
-    constant character for character, and the page must say it as written."""
+def fixed_day_goals(make_user, monkeypatch) -> dict:
+    """get_goals for the sample account on the fixed day of tests/test_sample.py: the landing's sample exchange and
+    its picture are both of it."""
     monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
     user = make_user()
     assert "error" not in services.add_sample_data(user.id, "web")
     listed = services.get_goals(user.id)
+    assert listed["today"] == "2026-11-10" and len(listed["goals"]) == 3
+    return listed
+
+
+def test_the_landings_exchange_is_the_fixed_day_sample_goals_line_by_line(client, make_user, monkeypatch):
+    """The exchange is one constant (web.LANDING_EXCHANGE): get_goals for the sample account on the fixed day of
+    tests/test_sample.py, said by the server's reply rules: one opening line, then three lines a goal, the label and
+    date with the status, the goal's plan_line as get_goals writes it, the projected date. Rebuilt here from get_goals,
+    it must equal the constant character for character, and the page must say it as written."""
+    listed = fixed_day_goals(make_user, monkeypatch)
     today = listed["today"]
-    assert today == "2026-11-10" and len(listed["goals"]) == 3
-    rebuilt = [{"label": _no_break_units(g["label"]), "status": g["status"],
-                "by": formatting.day(g["target_date"], today), "needed": _pace(g, g["needed_per_week"]),
-                "so_far": _pace(g, g["actual_per_week"]), "reached": formatting.day(g["projected_date"], today)}
+    rebuilt = [{"label": _no_break_units(g["label"]), "by": formatting.day(g["target_date"], today),
+                "status": g["status"], "plan_line": g["plan_line"], "reached": formatting.day(g["projected_date"], today)}
                for g in listed["goals"]]
     held = web.LANDING_EXCHANGE["goals"]
     for want, got in zip(rebuilt, held, strict=True):
         for key in want:
             assert got[key] == want[key], (want["label"], key, got[key], want[key])
         assert set(got) == set(want)
-    assert list(held) == rebuilt
     assert {k: v for k, v in web.LANDING_EXCHANGE.items() if k != "goals"} == {
-        "you": "You", "assistant": "Your assistant", "question": "Am I on track for my goals?"}
-    # "Yes, each goal is on track." holds only while every goal is on track by its projection.
+        "you": "You", "assistant": "Your assistant", "question": "Am I on track for my goals?",
+        "opening": "All three goals are on track at their pace so far."}
+    # The opening line holds only while every goal is on track by its projection.
     assert all(g["status"] == "on track" for g in listed["goals"])
+    assert web.exchange_answer() == [["All three goals are on track at their pace so far."]] + [
+        [f"{g['label']} by {g['by']}: {g['status']}.", g["plan_line"], f"At this pace it is reached on {g['reached']}."]
+        for g in rebuilt]
     page = client.get("/").text
     said = re.search(r'<div class="said claude"><span class="who">Your assistant</span>(.*?)</div>', page, re.S)
-    lines = re.findall(r"<p>(.*?)</p>", said.group(1))
-    assert not re.search(r"[&<>\"']", "".join(web.exchange_answer()))  # nothing an escape would change
-    assert lines == web.exchange_answer() and len(lines) == 4
-    assert web.exchange_answer()[1:] == [
-        f"{g['label']} by {g['by']}: {g['status']}. Needed {g['needed']}, so far {g['so_far']}. "
-        f"At this pace it is reached on {g['reached']}." for g in rebuilt]
+    assert not re.search(r"[&<>\"']", "".join(map("".join, web.exchange_answer())))  # nothing an escape would change
+    assert [p.split("<br>") for p in re.findall(r"<p>(.*?)</p>", said.group(1))] == web.exchange_answer()
     assert '<div class="said you"><span class="who">You</span><p>Am I on track for my goals?</p></div>' in page

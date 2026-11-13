@@ -183,32 +183,28 @@ def home_steps(page: str) -> list[str]:
 COMMAND = f'<code class="link-box" id="claude-code-command">claude mcp add --transport http --scope user spotter {RESOURCE}</code>'
 
 
-def test_home_walks_a_newcomer_through_setup_in_six_steps(client):
+def test_home_walks_a_newcomer_through_three_steps_that_name_no_assistant(client):
     page = client.get("/").text
-    steps = home_steps(page)
-    assert len(steps) == 6
-    starts = ["Sign in here.", "Connect Claude.", "Talk to it.", "What you get.", "Want to see it full first?",
-              "You decide what Claude may do."]
-    assert all(step.startswith(start) for step, start in zip(steps, starts)), steps
-    assert "The first sign-in creates your account." in steps[0] and 'href="/sign-in"' in page
-    assert "Customize, then Connectors, then \"+ Add\", then Add custom connector." in steps[1]
-    assert "Enter a name, such as Spotter" in steps[1] and "Continue" in steps[1] and "--scope user" in steps[1] and RESOURCE in steps[1]
-    assert COMMAND in page and "/mcp" in steps[1]
-    assert 'press "+" in the message box, then Connectors' in steps[2] and '"whoami"' in steps[2] and "Logged back squat, 3 sets of 5 at 60 kg" in steps[2]
-    assert "allow each call" in steps[2]
-    for name in ("Today", "Progress", "Goals", "Foods", "Settings"):
-        assert name in steps[3]
-    assert '"Add sample data" on Today' in steps[4]
-    assert "read only, log, or log and delete" in steps[5] and "It starts at log." in steps[5]
+    assert home_steps(page) == [
+        "Sign in. Your first sign-in creates your account. Sign in",
+        f"Add Spotter to your assistant. Add Spotter to your assistant as a remote MCP server. Some call it a custom "
+        f"connector. Its address: {RESOURCE} There is no key to paste: your assistant opens the sign-in page. Sign in "
+        "with the same account you use here.",
+        "Say what you did. Start a new chat and say what you did, or one of the sentences below. The first time, your "
+        "assistant may ask you to allow each call. Allow it."]
+    steps = re.search(r'<ol class="steps">(.*?)</ol>', page, re.S).group(1)
+    assert '<a class="plain-link" href="/sign-in">Sign in</a>' in steps and f'<code class="link-box">{RESOURCE}</code>' in steps
+    assert "<ul" not in steps and "<ol" not in steps  # no list nests inside a step
+    assert COMMAND in page and COMMAND not in steps  # the command sits in the list of assistants
     assert "<script" not in page
 
 
-def test_home_signed_in_keeps_the_connect_steps_and_the_pages(client):
+def test_home_signed_in_keeps_the_three_steps_and_the_pages(client):
     sign_in(client)
     page = client.get("/").text
     steps = home_steps(page)
-    assert [s.split(".")[0] for s in steps] == ["Connect Claude", "Talk to it", "What you get"]
-    assert COMMAND in page and "Sign in here" not in page and "Add sample data" not in page
+    assert [s.split(". ")[0] for s in steps] == ["Sign in", "Add Spotter to your assistant", "Say what you did"]
+    assert steps[0] == "Sign in. You are signed in." and COMMAND in page and "Your first sign-in" not in page
     for path in ("/today", "/progress", "/goals", "/foods", "/settings"):
         assert f'<dt><a href="{path}">' in page, path
 
@@ -220,15 +216,16 @@ def test_home_shows_no_address_and_no_command_when_the_address_is_unset(provider
     assert "address is not set up" in page
     assert "claude mcp add" not in page and "claude-code-command" not in page and "link-box" not in page
     assert "/mcp" not in page and RESOURCE not in page
+    assert home_steps(page)[1] == ("Add Spotter to your assistant. This server's address is not set up yet, so it "
+                                   "cannot be connected.")
 
 
-# ---------------------------------------------------------------- the landing's top half (pass B17)
+# ---------------------------------------------------------------- the landing (passes B17 and B18)
 
-# Where the landing's top half ends: the steps' card, which the next pass rebuilds. Everything from it to the end of
-# main is the parent commit's, byte for byte (PARENT_TAILS).
-LANDING_TOP_END = '<div class="card accent-border">'
 NO_BREAK = " "
-LANDING_TOP_WORDS = (
+# The landing's main and the footer after it, as plain words, in markup order (section L, Landing page). Each {name} marks
+# what differs by state or is read from its source.
+LANDING_WORDS = (
     "Spotter",
     "A fitness log you keep by talking to your assistant.",
     "Tell your assistant what you lifted, ate or weighed. Spotter stores it and works out your bests, trends and goal "
@@ -237,34 +234,63 @@ LANDING_TOP_WORDS = (
     "Source code on GitHub",
     "What it looks like", "sample",
     "You", "Am I on track for my goals?",
-    "Your assistant", "Yes, each goal is on track.",
-    f"Body weight 77{NO_BREAK}kg by Tue 5 Jan 2027: on track. Needed -0.25{NO_BREAK}kg a week, so far -0.29{NO_BREAK}kg a week. "
-    "At this pace it is reached on Sat 26 Dec.",
-    f"Back Squat 120{NO_BREAK}kg by Tue 2 Feb 2027: on track. Needed +1.01{NO_BREAK}kg a week, so far +4.41{NO_BREAK}kg a week. "
-    "At this pace it is reached on Thu 26 Nov.",
-    f"Outdoor Run 5{NO_BREAK}km in 27:00 by Tue 5 Jan 2027: on track. Needed -19{NO_BREAK}seconds a week, so far "
-    f"-30{NO_BREAK}seconds a week. At this pace it is reached on Sat 12 Dec.",
+    "Your assistant", "{answer}",
     "Sample data. The assistant asked Spotter for the goals and quoted them. The Goals page shows the same numbers.",
     "Before you start",
     "You need an AI assistant that can add a remote MCP server with sign-in.",
     "Each assistant's plan limits are in the README's table.",
-    "{cap}",
+    "New accounts are capped at 50 a day.",
+    "How to start",
+    "Sign in.", "{step_1}",
+    "Add Spotter to your assistant.",
+    "Add Spotter to your assistant as a remote MCP server. Some call it a custom connector. Its address:", RESOURCE,
+    "There is no key to paste: your assistant opens the sign-in page. Sign in with the same account you use here.",
+    "Say what you did.", "Start a new chat and say what you did, or one of the sentences below.",
+    "The first time, your assistant may ask you to allow each call. Allow it.",
+    "To see it full first, press Add sample data on Today. One button on Settings removes it.",
+    "How to add Spotter in each assistant",
+    "Claude apps", "Claude Code", "Run this once, then type /mcp and pick spotter to sign in.",
+    f"claude mcp add --transport http --scope user spotter {RESOURCE}",
+    "ChatGPT", "Cursor", "VS Code with Copilot", "Gemini app", "Mistral", "goose",
+    "Any other MCP client that supports remote servers with sign-in is added the same way.",
+    "Things to say first",
+    "Am I on track for my goals?", "Each goal against its plan line, and the date it is reached at this pace.",
+    "How am I doing?", "Your weight trend, calories a day, lift sessions, cardio and maintenance.",
+    "Lunch was two rotis and dal.", "Logs the meal. Each number is tagged: you said, saved food, USDA or estimate.",
+    "Everyday logging",
+    f"Back squat, 3 sets of 5 at 60{NO_BREAK}kg", f"I weighed 72.5{NO_BREAK}kg this morning",
+    f"30{NO_BREAK}minutes on the treadmill",
+    "{your_pages}",
+    "Your data",
+    'You decide what your assistant may do. A switch on Settings has three settings: "Read only", "Read and log" and '
+    '"Read, log and delete". It starts at "Read and log".',
+    "Export. Settings gives you everything you have logged, as a zip of CSV files.",
+    "Undo. A deleted entry comes back with Undo, or when you ask your assistant to restore it.",
+    "Delete your account. On Settings. It removes every entry and your sign-in, and it cannot be undone.",
+    "How it is built",
+    "{functions} functions your assistant can call, over MCP.",
+    "{cases} eval cases. Each checks the calls the server received, not what the assistant says it did.",
+    "Read the README",
+    "Source code", "Contact", "Spotter is an open project, run by one person.",
 )
+YOUR_PAGES = ("Your pages", "Today", "Everything you logged, by day.", "Progress",
+              "Your bests, the weight trend, and how you are doing against your targets.", "Goals",
+              "Each goal with the pace it needs and the pace so far.", "Foods", "Your saved foods.", "Settings",
+              "Your targets, what your assistant may do, export and delete.")
+# The sections in markup order: the opening tag of each at column 0 of main. Your pages, signed in only.
+LANDING_SECTIONS = ['<div class="landing-hero">', '<section class="card showcase" aria-labelledby="looks-title">',
+                    '<section class="card before" aria-labelledby="before-title">',
+                    '<section class="card start" aria-labelledby="start-title">',
+                    '<section class="card say-first" aria-labelledby="say-title">',
+                    '<section class="card web-pages" aria-labelledby="pages-title">',
+                    '<section class="card your-data" aria-labelledby="data-title">',
+                    '<section class="card built" aria-labelledby="built-title">']
 # The white button by state (section L, Landing page): its words and address, or the line in its place.
 BUTTONS = {"signed out": ("Sign in to start", "/sign-in"), "signed in": ("Open Today", "/today"),
            "no web sign-in": ("Sign-in on the web is not set up on this server yet.", None)}
+STEP_1 = {"signed out": "Your first sign-in creates your account. Sign in", "signed in": "You are signed in.",
+          "no web sign-in": "Your first sign-in creates your account."}
 NO_WEB = {"workos_client_id": None, "workos_api_key": None}
-
-
-def landing_top(page: str) -> str:
-    """The landing's main up to the steps' card: the top half this pass built."""
-    main = page[page.index("<main"):]
-    return main[:main.index(LANDING_TOP_END)]
-
-
-def landing_tail(page: str) -> str:
-    """The landing's main from the steps' card to its end: the next pass's half."""
-    return page[page.index(LANDING_TOP_END):page.index("</main>")]
 
 
 def plain_words(markup: str) -> str:
@@ -283,23 +309,26 @@ def landing_in(web_client, state: str, **overrides) -> str:
 
 
 @pytest.mark.parametrize("state", sorted(BUTTONS))
-def test_the_landings_top_half_in_its_order_and_words(web_client, state):
+def test_the_landing_in_its_order_and_words(web_client, state):
     page = landing_in(web_client, state)
-    top = landing_top(page)
-    blocks = re.findall(r"^<(?:div|section)\b[^>]*>", top, re.M)
-    assert blocks == ['<div class="landing-hero">', '<section class="card showcase" aria-labelledby="looks-title">',
-                      '<section class="card before" aria-labelledby="before-title">']
-    want = " ".join(LANDING_TOP_WORDS).format(button=BUTTONS[state][0], cap="New accounts are capped at 50 a day.")
-    assert plain_words(top) == want
-    assert top.count("<h1>") == 1 and page.count("<h1") == 1
-    hrefs = re.findall(r'<a\b[^>]*\bhref="([^"]*)"', top)
-    button = [BUTTONS[state][1]] if BUTTONS[state][1] else []
-    assert hrefs == button + [links.REPOSITORY, links.REPOSITORY + "#your-assistant"]
-    if state != "signed in":  # signed out, the top half links to no signed-in page
+    main = page[page.index("<main"):page.index("</main>")]
+    signed_in = state == "signed in"
+    assert re.findall(r"^<(?:div|section)\b[^>]*>", main, re.M) == [
+        s for s in LANDING_SECTIONS if signed_in or "web-pages" not in s]
+    assert re.search(r'</main>\s*<footer class="site-foot">', page) and page.count("<footer") == 1
+    showcase = main[main.index('<section class="card showcase"'):main.index('<section class="card before"')]
+    assert showcase.index('<div class="exchange">') < showcase.index("<img") < showcase.index('<p class="caption">')
+    cases = len(json.loads(CASES.read_text(encoding="utf-8")))
+    want = " ".join(LANDING_WORDS).format(
+        button=BUTTONS[state][0], answer=" ".join(line for lines in web.exchange_answer() for line in lines),
+        step_1=STEP_1[state], your_pages=" ".join(YOUR_PAGES) if signed_in else "",
+        functions=len(mcp_server.NEEDS), cases=cases)
+    shown = page[page.index("<main"):page.index("</footer>")]
+    assert plain_words(shown) == re.sub(" +", " ", want)
+    assert page.count("<h1") == 1
+    if not signed_in:  # signed out, the page links to no signed-in page
+        hrefs = re.findall(r'<a\b[^>]*\bhref="([^"]*)"', page)
         assert not [h for h in hrefs if h.startswith(("/today", "/day", "/progress", "/goals", "/foods", "/settings"))]
-    assert re.findall(r"<img\b[^>]*>", top) == [
-        '<img src="/static/landing-goals.svg" width="720" height="445" '
-        'alt="A chat with your assistant beside the Goals card it quotes, on sample data">']
 
 
 @pytest.mark.parametrize("state", sorted(BUTTONS))
@@ -322,7 +351,8 @@ def test_every_repository_link_is_built_from_the_one_constant(web_client):
     for state in sorted(BUTTONS):
         page = landing_in(web_client, state)
         repo = [h for h in re.findall(r'\bhref="([^"]*)"', page) if "github" in h.casefold()]
-        assert repo == [links.REPOSITORY, links.REPOSITORY + "#your-assistant"], state
+        assert repo == [links.REPOSITORY] + [links.REPOSITORY + "#your-assistant"] * (1 + len(web.ASSISTANTS)) + \
+            [links.REPOSITORY, links.REPOSITORY, links.REPOSITORY + "/issues"], state
         assert web.README_TABLE == links.REPOSITORY + "#your-assistant"
     # No template and no other app file types the address: links.py holds it once.
     app_dir = web.HERE
@@ -408,6 +438,9 @@ def test_with_no_case_count_the_landing_hands_none_and_still_renders(client, mon
     monkeypatch.setattr(web, "EVAL_CASES", None)
     handed = handed_to_home(client, monkeypatch)
     assert handed["eval_cases"] is None and handed["function_count"] == len(mcp_server.NEEDS)
+    built = re.search(r'<section class="card built".*?</section>', client.get("/").text, re.S).group(0)
+    assert plain_words(built) == (f"How it is built {len(mcp_server.NEEDS)} functions your assistant can call, over MCP. "
+                                  "Read the README")  # the eval line left out, never a typed number
 
 
 def test_no_count_is_typed_into_the_landing_template():
@@ -459,37 +492,38 @@ def test_without_the_site_address_the_landing_leaves_og_url_out(provider, seam):
 
 
 @pytest.mark.parametrize("state", sorted(BUTTONS))
-def test_the_top_half_says_no_claude_no_whoami_and_no_privacy(web_client, state):
+def test_the_landing_says_claude_only_in_its_list_of_assistants_and_no_whoami_or_privacy(web_client, state):
     page = landing_in(web_client, state)
-    top = landing_top(page)
-    alts = re.findall(r'\balt="([^"]*)"', top)
-    for words in (plain_words(top), *alts, *head_tags(page)):
+    [listed] = re.findall(r'<ul class="assistants">.*?</ul>', page, re.S)
+    rest = page.replace(listed, "")
+    for words in (plain_words(rest[rest.index("<main"):]), *re.findall(r'\balt="([^"]*)"', rest), *head_tags(page)):
         assert not re.search(r"\bclaude\b", html.unescape(words), re.I), words
-    assert "whoami" not in top.casefold() and "privacy" not in top.casefold()
-    assert "whoami" not in " ".join(head_tags(page)).casefold()
+    assert re.search(r"\bClaude\b", listed)
+    assert "whoami" not in page.casefold() and "privacy" not in page.casefold()
 
 
-# The steps' card and everything under it, as the parent commit (dac88d7) rendered it in each state, by its SHA-256
-# and its length: the next pass rebuilds it, so this pass leaves it byte for byte. Delete with that pass.
-PARENT_TAILS = {
-    "signed out": ("ee4d135adb5164f602dacc90b5baf82b01efcec31cfa06bfd3444452db143183", 2394),
-    "signed in": ("b2ca257b30205d8d66a9f29944fd891c90a5fe930de094703f05481e9499ab22", 1961),
-    "no web sign-in": ("5c1b2ae07ebc8a4090648685e7c9f6180ef0afea771f425e4d7c3c658341e9b3", 2416),
-    "no address": ("10cd78cddc64b8ca74ab3f43105a4ecbbfc2211aba8e6281f5c622186187f2a1", 1822),
-}
+def test_the_list_of_assistants_is_the_readmes_table_and_sits_after_the_steps(client):
+    readme = (web.HERE.parent / "README.md").read_text(encoding="utf-8")
+    table = readme[readme.index("\n## Your assistant\n"):]
+    table = table[:table.index("\n## ", 1)]
+    assert web.ASSISTANTS == tuple(re.findall(r"^\| \[([^\]]+)\]\(", table, re.M))
+    page = client.get("/").text
+    [listed] = re.findall(r'<ul class="assistants">(.*?)</ul>', page, re.S)
+    assert page.index('<ul class="assistants">') > page.index("</ol>", page.index('<ol class="steps">'))
+    items = re.findall(r"<li>(.*?)</li>", listed, re.S)
+    assert [re.findall(r'<a href="([^"]*)">([^<]*)</a>', item) for item in items] == \
+        [[(web.README_TABLE, name)] for name in web.ASSISTANTS]
+    code = [n for n, item in enumerate(items) if "<code" in item]
+    assert code == [web.ASSISTANTS.index("Claude Code")] and COMMAND in items[code[0]]
+    assert "Run this once, then type <code>/mcp</code> and pick spotter to sign in." in items[code[0]]
 
 
-@pytest.mark.parametrize("state", sorted(PARENT_TAILS))
-def test_the_steps_and_everything_under_them_are_the_parents_byte_for_byte(web_client, provider, state):
-    if state == "no address":
-        unconfigured = Settings(None, None, database_url=settings().database_url, **WEB)
-        with TestClient(create_app(unconfigured, fetch=provider.fetch), base_url=SITE, follow_redirects=False) as c:
-            page = c.get("/").text
-    else:
-        page = landing_in(web_client, state)
-    tail = landing_tail(page)
-    assert (hashlib.sha256(tail.encode()).hexdigest(), len(tail)) == PARENT_TAILS[state]
-    assert page.count(LANDING_TOP_END) == 1 and page.index(LANDING_TOP_END) > page.index('<section class="card before"')
+def test_your_data_says_the_switchs_settings_from_its_one_table(client, monkeypatch):
+    for value in web.CLAUDE_CAN:
+        monkeypatch.setitem(web.CLAUDE_CAN_LABELS, value, f"Setting {len(value)}")
+    data = re.search(r'<section class="card your-data".*?</section>', client.get("/").text, re.S).group(0)
+    assert 'A switch on Settings has three settings: "Setting 4", "Setting 3" and "Setting 10". It starts at ' \
+           '"Setting 3".' in plain_words(data)
 
 
 # ---------------------------------------------------------------- sign-in

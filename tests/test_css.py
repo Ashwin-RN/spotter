@@ -1046,12 +1046,14 @@ def test_the_settings_pages_parts_each_have_their_rule(css):
     assert css.value("dl.facts dt", "color") == "var(--text-2)" and css.value("div.error", "border") ==         "1.5px solid var(--err)"
 
 
-def test_the_landings_top_half_parts_each_have_their_rule(css):
-    """The landing's top half (pass B17): on a laptop the first screen takes columns 1 to 5 and What it looks like 6 to
-    12, Before you start 1 to 5. The h1, the one line and the grey second line, the button row, the plain link 44 px
-    tall, the picture the card's width, the exchange's two bubbles (yours at the right on --raised-2, your
-    assistant's outlined at the left), the caption, the sample tag and the plain list. Each part the top half draws
-    is already styled, so pass B17 adds no rule."""
+def test_the_landings_parts_each_have_their_rule(css):
+    """The landing (passes B17 and B18): on a laptop the first screen takes columns 1 to 5 and What it looks like 6 to
+    12, Before you start 1 to 5, How to start 6 to 12 over three rows, Things to say first and Your pages 1 to 5,
+    Your data 1 to 6 and How it is built 7 to 12. The h1, the one line and the grey second line, the button row, the
+    plain link 44 px tall, the picture the card's width, the exchange's two bubbles (yours at the right on
+    --raised-2, your assistant's outlined at the left), the caption, the sample tag and the plain list, the steps,
+    the sentences to say, the facts list and the site footer. Each part the page draws but the list of assistants is
+    already styled, so neither pass adds a rule."""
     assert css.value(".landing .landing-hero", "grid-column", (LAPTOP,)) == "1 / span 5"
     assert css.value(".landing .showcase", "grid-column", (LAPTOP,)) == "6 / -1"
     assert css.value(".landing .before", "grid-column", (LAPTOP,)) == "1 / span 5"
@@ -1073,3 +1075,13 @@ def test_the_landings_top_half_parts_each_have_their_rule(css):
     assert css.value("ul.plain-list li", "color") == "var(--text-2)"
     assert css.value(".card-head", "display") == "flex"
     assert css.value("p.notice", "padding") == "12px 16px"  # the line in the button's place without web sign-in
+    assert css.value(".landing .start", "grid-column", (LAPTOP,)) == "6 / -1"
+    assert css.value(".landing .start", "grid-row", (LAPTOP,)) == "span 3"
+    assert css.value(".landing .say-first", "grid-column", (LAPTOP,)) == "1 / span 5"
+    assert css.value(".landing .web-pages", "grid-column", (LAPTOP,)) == "1 / span 5"
+    assert css.value(".landing .your-data", "grid-column", (LAPTOP,)) == "1 / span 6"
+    assert css.value(".landing .built", "grid-column", (LAPTOP,)) == "7 / -1"
+    assert css.value("ol.steps", "display") == "grid" and css.value("ol.steps .step-title", "font-weight") == "600"
+    assert css.value("ul.say", "display") == "grid" and css.value("ul.say .does", "display") == "block"
+    assert css.value(".list-label", "color") == "var(--text-3)" and css.value("dl.facts-list", "display") == "grid"
+    assert css.value(".site-foot", "display") == "flex" and css.value(".site-foot .by", "flex-basis") == "100%"

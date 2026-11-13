@@ -842,7 +842,7 @@ def _db_safe(endpoint):
 
 # ---------------------------------------------------------------- pages
 
-# The landing page's top half (section L, Landing page). The one line and the second line: the first screen's words,
+# The landing page (section L, Landing page). The one line and the second line: the first screen's words,
 # and the page's description and link-preview text.
 LANDING_LINES = ("A fitness log you keep by talking to your assistant.",
                  "Tell your assistant what you lifted, ate or weighed. Spotter stores it and works out your bests, "
@@ -851,38 +851,41 @@ LANDING_LINES = ("A fitness log you keep by talking to your assistant.",
 LANDING_PREVIEW = {"title": "Spotter", "type": "website"}
 # The README's "Your assistant" table, where each assistant's steps and plan limits live.
 README_TABLE = links.REPOSITORY + "#your-assistant"
+# The landing's list of assistants: the README table's rows, in its order (tests/test_web.py holds the two equal).
+# The page never reads the README. The one place the page names products, so the one place it says Claude.
+ASSISTANTS = ("Claude apps", "Claude Code", "ChatGPT", "Cursor", "VS Code with Copilot", "Gemini app", "Mistral",
+              "goose")
 
 # The sample exchange of What it looks like. The landing has no account to ask, so it is this one constant: what
-# get_goals gives the sample account on the fixed day (2026-11-10, tests/test_sample.py), each figure its own field
-# through show or day as the Goals page prints it, with a no-break space before each unit. tests/test_pages_text.py
-# rebuilds every figure from get_goals and fails on one character's difference. The picture
-# (app/static/landing-goals.svg) is built from this constant too, so it cannot say anything the words do not.
+# get_goals gives the sample account on the fixed day (2026-11-10, tests/test_sample.py), said by the MCP server's
+# own reply rules (mcp_server.REPLY_RULE): one fact a line, each goal's plan_line as written, no figure worked out.
+# The label keeps a no-break space before its unit, the dates are day() of get_goals' own. tests/test_pages_text.py
+# rebuilds every field from get_goals and fails on one character's difference.
 LANDING_EXCHANGE = {
     "you": "You",
     "assistant": "Your assistant",
     "question": "Am I on track for my goals?",
+    "opening": "All three goals are on track at their pace so far.",
     "goals": (
-        {"label": "Body weight 77\u00a0kg", "status": "on track", "by": "Tue 5 Jan 2027",
-         "needed": "-0.25\u00a0kg a week", "so_far": "-0.29\u00a0kg a week", "reached": "Sat 26 Dec"},
-        {"label": "Back Squat 120\u00a0kg", "status": "on track", "by": "Tue 2 Feb 2027",
-         "needed": "+1.01\u00a0kg a week", "so_far": "+4.41\u00a0kg a week", "reached": "Thu 26 Nov"},
-        {"label": "Outdoor Run 5\u00a0km in 27:00", "status": "on track", "by": "Tue 5 Jan 2027",
-         "needed": "-19\u00a0seconds a week", "so_far": "-30\u00a0seconds a week", "reached": "Sat 12 Dec"},
+        {"label": "Body weight 77\u00a0kg", "by": "Tue 5 Jan 2027", "status": "on track",
+         "plan_line": "79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind.", "reached": "Sat 26 Dec"},
+        {"label": "Back Squat 120\u00a0kg", "by": "Tue 2 Feb 2027", "status": "on track",
+         "plan_line": "107.9 kg now against 99.8 kg on the plan line today: 8.1 kg ahead.", "reached": "Thu 26 Nov"},
+        {"label": "Outdoor Run 5\u00a0km in 27:00", "by": "Tue 5 Jan 2027", "status": "on track",
+         "plan_line": "29:30 now against 29:48 on the plan line today: 18 seconds ahead.", "reached": "Sat 12 Dec"},
     ),
 }
-# The picture: its address, its own width and height (tests hold them to the file), and its short alt.
-LANDING_PICTURE = {"src": "/static/landing-goals.svg", "width": 720, "height": 445,
-                   "alt": "A chat with your assistant beside the Goals card it quotes, on sample data"}
+# The picture: the body weight goal's Goals card on the fixed day, built once by a script. Its address, its own
+# width and height (tests hold them to the file), and its short alt.
+LANDING_PICTURE = {"src": "/static/landing-goals.svg", "width": 340, "height": 375,
+                   "alt": "The Goals card the assistant quoted, on sample data"}
 
 
-def exchange_answer(exchange: dict = LANDING_EXCHANGE) -> list[str]:
-    """Your assistant's answer, a paragraph each: a first line, then each goal in its own words. Every figure is the
-    exchange's own, as written: nothing here works one out."""
-    lines = ["Yes, each goal is on track."]
-    for g in exchange["goals"]:
-        lines.append(f"{g['label']} by {g['by']}: {g['status']}. Needed {g['needed']}, so far {g['so_far']}. "
-                     f"At this pace it is reached on {g['reached']}.")
-    return lines
+def exchange_answer(exchange: dict = LANDING_EXCHANGE) -> list[list[str]]:
+    """Your assistant's answer, a paragraph each of lines: the opening line, then three lines a goal. Every word is
+    the exchange's own, as written: nothing here works one out."""
+    return [[exchange["opening"]]] + [[f"{g['label']} by {g['by']}: {g['status']}.", g["plan_line"],
+                                       f"At this pace it is reached on {g['reached']}."] for g in exchange["goals"]]
 
 
 # The two counts read once, when the app starts (section L, Where the counts come from). The new-account cap is read
@@ -915,7 +918,10 @@ async def home(request: Request) -> Response:
                 site_address=links.page("home") if settings.site_origin else None,
                 source_link=links.REPOSITORY, readme_table=README_TABLE, exchange=LANDING_EXCHANGE,
                 answer=exchange_answer(), picture=LANDING_PICTURE, signups_per_day=settings.signups_per_day,
-                function_count=FUNCTION_COUNT, eval_cases=EVAL_CASES)
+                function_count=FUNCTION_COUNT, eval_cases=EVAL_CASES, assistants=ASSISTANTS,
+                switch=[CLAUDE_CAN_LABELS[value] for value in CLAUDE_CAN],
+                switch_start=CLAUDE_CAN_LABELS[User.__table__.c.claude_can.default.arg],
+                site_foot={"source": links.REPOSITORY, "contact": links.REPOSITORY + "/issues"})
 
 
 async def sign_in(request: Request) -> Response:

@@ -30,11 +30,12 @@ from app import db, formatting, services, web
 from app.models import Bodyweight, SavedFood
 
 from . import text_rules as tr
-from .test_pages_text import (ACCOUNTS, BUILT, CLAUDE_SKIPS, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids, entered_notes,
-                              entered_text, estimate_findings, get_paths, names_of, page_findings, parse,
-                              render_error_page, route_of, step_4_findings, structure_findings)
+from .test_pages_text import (ACCOUNTS, BUILT, CLAUDE_SKIPS, ENTRY_MODELS, ERROR_PAGES, FAVICON_LINKS, Node, _ids,
+                              _no_break_units, entered_notes, entered_text, estimate_findings, fixed_day_goals,
+                              get_paths, names_of, page_findings, parse, render_error_page, route_of, step_4_findings,
+                              structure_findings)
 from .test_web import FIXED_NOW, client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
-from .test_web import LANDING_TOP_END, landing_in
+from .test_web import landing_in
 
 STATIC = Path(web.HERE) / "static"
 
@@ -2131,7 +2132,7 @@ def test_no_template_marks_text_safe_outside_its_allowlist():
     assert len(list((Path(web.__file__).parent / "templates").glob("*.html"))) >= 14
 
 
-# ---------------------------------------------------------------- the landing's top half (pass B17)
+# ---------------------------------------------------------------- the landing (passes B17 and B18)
 
 class _Closing(HTMLParser):
     """Every element opened is closed, in order: a void element is never closed or self-closed."""
@@ -2163,39 +2164,40 @@ def unclosed_findings(markup: str) -> list[str]:
     return parser.found + [f"<{tag}> is never closed" for tag in parser.open]
 
 
-def top_half_of(page: str) -> str:
-    """The page with the steps' card and everything under it in main cut out: the top half in its frame."""
-    return page[:page.index(LANDING_TOP_END)] + page[page.index("</main>"):]
+LANDING_STATES = {"signed out": ("signed out", {}), "signed in": ("signed in", {}),
+                  "no web sign-in": ("no web sign-in", {}),
+                  "no server address": ("signed out", {"authkit_domain": None, "mcp_resource_url": None}),
+                  "closed to new accounts": ("signed out", {"signups_per_day": 0})}
+LANDING_CARDS = [("showcase", "looks-title"), ("before", "before-title"), ("start", "start-title"),
+                 ("say-first", "say-title"), ("web-pages", "pages-title"), ("your-data", "data-title"),
+                 ("built", "built-title")]
 
 
-TOP_STATES = {"signed out": ("signed out", {}), "signed in": ("signed in", {}),
-              "no web sign-in": ("no web sign-in", {}), "closed to new accounts": ("signed out", {"signups_per_day": 0}),
-              "a large cap": ("signed in", {"signups_per_day": 1000})}
-
-
-@pytest.mark.parametrize("state", sorted(TOP_STATES))
-def test_the_landings_top_half_keeps_every_markup_rule(web_client, state):
-    """The landing joins BUILT with the next pass, so every rule a built route keeps runs here on the top half alone,
-    whether or not BUILT names /, in each state: the frame rules on the whole page, then on the top half the page
-    rules, the card rule, T3's structure checks, every element closed, one h1, no form, no required and no autofocus,
-    and T1's text rules and T3's step 4 checks on the whole page."""
-    how, overrides = TOP_STATES[state]
+@pytest.mark.parametrize("state", sorted(LANDING_STATES))
+def test_the_landing_keeps_every_rule_a_built_route_keeps(web_client, state):
+    """/ is in BUILT (pass B18). In each state the sweeps never reach, the whole page: the frame rules, the page rules,
+    the card rule, every element in main closed, T1's text rules and T3's step 4 checks, its structure checks among
+    them. One h1, no form in main, no required and no autofocus, and the cards in order, Your pages signed in only."""
+    how, overrides = LANDING_STATES[state]
     page = landing_in(web_client, how, **overrides)
     signed_in = how == "signed in"
-    whole = Seen("/", page, signed_in, web_ready=how != "no web sign-in", zone_missing=signed_in)
-    top = Seen("/", top_half_of(page), signed_in, web_ready=how != "no web sign-in", zone_missing=signed_in)
-    findings = frame_findings(whole)
-    findings += [f for rule in PAGE_RULES for f in rule(top)] + titled_card_findings(top)
-    findings += structure_findings("/", top.markup, [], top.dom)
-    half = page[page.index("<main"):page.index(LANDING_TOP_END)] + "</main>"
-    findings += unclosed_findings(half)
+    s = Seen("/", page, signed_in, web_ready=how != "no web sign-in" and "mcp_resource_url" not in overrides,
+             zone_missing=signed_in)
+    assert "/" in BUILT and "/" not in CLAUDE_SKIPS
+    main = page[page.index("<main"):page.index("</main>") + len("</main>")]
+    # Without the site's address the landing leaves og:url out, which the head rule's LANDING_HEAD never meets in a
+    # sweep: test_web.py's test_without_the_site_address_the_landing_leaves_og_url_out holds that head.
+    frame = [rule for rule in FRAME_RULES if rule is not head_findings or "mcp_resource_url" not in overrides]
+    findings = [f for rule in frame for f in rule(s)] + page_rule_findings(s) + titled_card_findings(s)
+    findings += unclosed_findings(main)
     findings += page_findings("/", page, [], None) + step_4_findings("/", page, None, [])
     assert not findings, "\n".join(findings)
-    [main] = top.dom.find_all("main")
-    assert len(whole.dom.find_all("h1")) == 1 and not main.find_all("form")
-    assert " required" not in half and "autofocus" not in half
-    cards = [(n.tag, n.classes, n.attrs.get("aria-labelledby")) for n in top.dom.find_all(cls="card")]
-    assert cards == [("section", ["card", "showcase"], "looks-title"), ("section", ["card", "before"], "before-title")]
+    [node] = s.dom.find_all("main")
+    assert len(s.dom.find_all("h1")) == 1 and not node.find_all("form")
+    assert " required" not in main and "autofocus" not in main
+    cards = [(n.tag, n.classes, n.attrs.get("aria-labelledby")) for n in s.dom.find_all(cls="card")]
+    assert cards == [("section", ["card", name], title) for name, title in LANDING_CARDS
+                     if signed_in or name != "web-pages"]
 
 
 def test_the_closing_check_finds_what_it_names():
@@ -2207,17 +2209,9 @@ def test_the_closing_check_finds_what_it_names():
     assert unclosed_findings('<main><img src="/x"><br></main>') == []
 
 
-# The picture of What it looks like: one SVG file, served from /static, built once by a script from the exchange.
+# The picture of What it looks like: one SVG file, served from /static, built once by a script: the body weight goal's
+# Goals card on the fixed day.
 PICTURE = STATIC / "landing-goals.svg"
-FIGURE = re.compile(r"[-+]?\d[\d,]*(?:[.:]\d+)?")
-
-
-def exchange_figures() -> set[str]:
-    """Every figure the exchange's words say: the question, the answer, each goal's fields."""
-    ex = web.LANDING_EXCHANGE
-    said = [ex["you"], ex["assistant"], ex["question"], *web.exchange_answer(ex)]
-    said += [value for goal in ex["goals"] for value in goal.values()]
-    return {figure for words in said for figure in FIGURE.findall(words)}
 
 
 def picture_root() -> ET.Element:
@@ -2243,39 +2237,22 @@ def test_the_landing_picture_is_served_as_an_image_the_page_draws_at_its_own_siz
         f'<img src="{picture["src"]}" width="{width}" height="{height}" alt="{picture["alt"]}">']
     assert 0 < len(picture["alt"]) <= 100 and not re.search(r"\d", picture["alt"])
     assert "og:image" not in page
+    assert svg_clean(PICTURE.read_text(encoding="utf-8")) == []  # no script and nothing from outside
 
 
-def test_the_landing_picture_is_clean_dark_and_small():
-    text = PICTURE.read_text(encoding="utf-8")
-    assert svg_clean(text) == []
-    assert not re.search(r"<script|<style|<image|<foreignObject|\bon[a-z]+\s*=|\bhref\b|url\(|@font-face|\.woff",
-                         text, re.I)
-    assert not re.search(r"https?://", text.replace(SVG_NS, ""))
-    assert PICTURE.stat().st_size < 20_000
+def test_the_landing_picture_is_the_body_weight_goals_card_on_the_fixed_day(client, make_user, monkeypatch):
+    """The card's words, read from the file in order: the label, the status tag, the date, then the rows, each label
+    with its own value as the Goals page prints it. The only date under the chart is the goal's own."""
+    listed = fixed_day_goals(make_user, monkeypatch)
+    goal, today = listed["goals"][0], listed["today"]
+    assert goal["kind"] == "bodyweight"
+    by = formatting.day(goal["target_date"], today)
+    pace = [f"{formatting.show(v, 'rate', page=True)}{tr.NBSP}{goal['unit']} a week"
+            for v in (goal["needed_per_week"], goal["actual_per_week"])]
     root = picture_root()
-    assert "system-ui" in root.get("font-family", "")
-    backdrop = root.find(f"{{{SVG_NS}}}rect")
-    assert (backdrop.get("width"), backdrop.get("height"), backdrop.get("fill")) == \
-        (root.get("width"), root.get("height"), "#000000")
-
-
-def test_every_figure_in_the_landing_picture_is_a_figure_of_the_exchange():
-    said = " ".join(picture_root().itertext())
-    figures = set(FIGURE.findall(said))
-    assert figures and figures <= exchange_figures(), sorted(figures - exchange_figures())
-    assert not re.search(r"\d (?:kg|km|cm|bpm|seconds|kcal)\b", said)  # a no-break space before each unit
-
-
-def test_the_landing_picture_says_the_exchange_word_for_word():
-    ex, root = web.LANDING_EXCHANGE, picture_root()
-    groups = {g.get("id"): g for g in root.iter(f"{{{SVG_NS}}}g") if g.get("id")}
-    assert set(groups) == {"question", "answer", "goal-card"}
-    assert _texts(groups["question"]) == [ex["question"]]
-    assert " ".join(_texts(groups["answer"])) == " ".join(web.exchange_answer(ex))
-    shown = _texts(root)
-    assert ex["you"] in shown and ex["assistant"] in shown
-    first = ex["goals"][0]
-    card = _texts(groups["goal-card"])
-    for words in (first["label"], f"by {first['by']}", first["needed"], first["so_far"], first["reached"],
-                  web.STATUS_TAGS[first["status"]]):
-        assert words in card, words
+    [chart] = root.findall(f"{{{SVG_NS}}}svg")
+    shown, charted = _texts(root), _texts(chart)
+    assert shown[:3] == [_no_break_units(goal["label"]), web.STATUS_TAGS[goal["status"]], f"by {by}"]
+    assert shown[3 + len(charted):] == ["Needed", pace[0], "So far", pace[1], "At this pace",
+                                        formatting.day(goal["projected_date"], today)]
+    assert [t for t in charted if re.fullmatch(r"\w{3} \d{1,2} \w{3}(?: \d{4})?", t)] == [by]
