@@ -303,7 +303,8 @@ Each answer holds with the same time zone set at both runs. The last row is the 
   edited or deleted. A food day imported whole is one of these.
 - A row stamped in UTC, ending Z or +00:00, takes the person's own date in the time zone set when it is
   imported. If the person changes their time zone and the same rows are sent again, such a row can land
-  on another date. It is then written again there, beside the first copy. A timestamp with its own
+  on another date. It can then be written again there, beside the first copy. If that date already
+  holds an entry of its kind, it is left out instead, day taken. A timestamp with its own
   offset, such as +05:30, keeps its own date, and so does a plain date: neither moves.
 - If the person moves an imported food day's entries to another day, and a later export holds fewer
   entries for that first day, the entries it still holds are written again on the first day, unless

@@ -2363,6 +2363,7 @@ def test_the_import_description_carries_what_the_long_rule_said(http):
                   "Show the person that, and the units the preview names",  # V7
                   "When the export does not say which unit it uses, ask the person: never guess.",  # V2
                   "One call names one unit for each quantity: rows in another unit go in a separate call.",  # V3
+                  "When one day's sessions, or one session, mix units, ask the person.",  # N1, before the merge
                   # V4
                   "Send a food entry's calories only as the export gives them: never estimate one for an import.",
                   "A food entry with no calories is left out: tell the person how many.",
@@ -2506,7 +2507,9 @@ def test_can_and_cant_states_the_import_as_built():
                   "date: a known limit, below |",
                   "With the same time zone set, the same file brings back no other imported entry",
                   "If the person changes their time zone and the same rows are sent again, such a row can land on "
-                  "another date. It is then written again there, beside the first copy.",
+                  # Was "... It is then written again there, beside the first copy." (N2, before the merge.)
+                  "another date. It can then be written again there, beside the first copy. If that date already "
+                  "holds an entry of its kind, it is left out instead, day taken.",
                   "A timestamp with its own offset, such as +05:30, keeps its own date, and so does a plain date: "
                   "neither moves.",
                   "They also run out first for lifting sent with one item a set and more than 5 sets a session.",

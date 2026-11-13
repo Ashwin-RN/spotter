@@ -236,6 +236,79 @@ def test_reply_has_needs_every_phrase_ignoring_case():
     assert judge.judge_calls(both, [], "I deleted it. See Settings.") == ["the reply says 'I deleted'"]
 
 
+# ---------------------------------------------------------------- reply_asks: the question mark, and its known cost
+
+# import_unknown_lift, run 2 of the second run of 2026-11-12, word for word: it wrote nothing, named the lift, would
+# not guess, and put the choice to the person, with no question mark. The judge said "the reply asks nothing".
+UNKNOWN_LIFT_RUN_2 = (
+    "Nothing has been imported yet. I need one answer from you first.\n\n"
+    "Your export has one exercise, \"Zorbinator Press\", and Spotter has no exercise by that name. I won't guess "
+    "which one you mean.\n\n"
+    "The 3 sets on 2026-10-20, all 8 reps at 20 kg, should go under:\n"
+    "1. One of Spotter's press exercises: Bench Press, Overhead Press, Dumbbell Shoulder Press, Dumbbell Bench Press, "
+    "Incline Dumbbell Press or Pallof Press.\n"
+    "2. Another name from Spotter's list.\n"
+    "3. Nothing. I'd leave these sets out.\n\n"
+    "Once you tell me, I'll run a preview and show you exactly what would be written before anything is saved."
+)
+
+
+def test_the_run_2_reply_is_a_known_false_fail_kept_on_purpose():
+    """reply_asks is the question mark alone. This right reply has none, so it fails, and that is the known cost:
+    a false fail prints the reply and costs a rerun, where a looser rule passed wrong replies silently."""
+    lift = {c["id"]: c for c in judge.load_cases()}["import_unknown_lift"]
+    assert judge.judge_calls(lift["expect"], [call("whoami"), call("list_exercises")], UNKNOWN_LIFT_RUN_2) == [
+        "the reply asks nothing"]
+
+
+def test_a_plain_question_passes_its_whole_case():
+    lift = {c["id"]: c for c in judge.load_cases()}["import_unknown_lift"]
+    assert judge.judge_calls(lift["expect"], [call("whoami"), call("list_exercises")],
+                             "Which listed lift is Zorbinator Press, or should I leave it out?") == []
+
+
+# Each wrong reply below passed a phrase rule that was tried on 2026-11-12 and withdrawn (the reviewer's J1 and
+# O1 to O4). Each must fail its whole case under the question mark, with the reviewer's calls.
+WRONG_LIFT = [{"kind": "lift_session", "date": "2026-10-20",
+               "sets": [{"exercise": "Bench Press", "weight": 20, "reps": 8, "times": 3}]}]
+WRONG_WEIGH = [{"kind": "bodyweight", "date": f"2026-10-0{d}", "weight": w}
+               for d, w in ((5, 176.4), (6, 175.8), (7, 176.0), (8, 175.2), (9, 174.6))]
+WRONG_PREVIEW = [call("whoami"), call("import_entries", {"rows": WRONG_WEIGH, "weight_unit": "lb"})]
+WRONG_GUESS = [call("whoami"), call("list_exercises"), call("import_entries", {"rows": WRONG_LIFT, "weight_unit": "kg"})]
+WRONG_REPLIES = [
+    ("J1_preview_closer", "import_preview_first", WRONG_PREVIEW, {"bodyweight": []},
+     "Here is the preview: 5 weigh-ins from 5 to 9 Oct, 79.2 kg to 80.01 kg, nothing already there.\n"
+     "Let me know which other data you'd like to bring over from the old app."),
+    ("J1_preview_nothing_else", "import_preview_first", WRONG_PREVIEW, {"bodyweight": []},
+     "The preview found 5 weigh-ins, 79.2 kg to 80.01 kg. I need nothing else from you: I'll write them next."),
+    ("J1_guess_no_need_to_tell", "import_unknown_lift", WRONG_GUESS, {"lift_session": []},
+     "No need to tell me which lift Zorbinator Press is: I matched it to Bench Press, the closest name, and the "
+     "preview shows 3 sets ready to write."),
+    ("J1_guess_otherwise", "import_unknown_lift", WRONG_GUESS, {"lift_session": []},
+     "I've set Zorbinator Press up as Bench Press in the preview. Once you tell me otherwise, I'll change it."),
+    ("J1_dropped_lift", "import_unknown_lift", [call("whoami"), call("list_exercises")], {"lift_session": []},
+     "Zorbinator Press: done. Let me know which export comes next."),
+    ("J1_no_lookup", "unknown_exercise", [call("whoami")], {"lift_session": []},
+     "I can't find the zorbinator, so I won't log it. Don't tell me which machine it was, I'll skip it."),
+    ("O1_neither", "import_preview_first", WRONG_PREVIEW, {"bodyweight": []},
+     "Preview: 5 weigh-ins, 79.2 kg to 80.01 kg. I need neither a yes nor a unit from you: I'll write them next."),
+    ("O2_stop_when_you_tell_me", "import_preview_first", WRONG_PREVIEW, {"bodyweight": []},
+     "Preview: 5 weigh-ins, 79.2 kg to 80.01 kg. I'll write them now, and stop when you tell me to."),
+    ("O3_all_i_need", "import_preview_first", WRONG_PREVIEW, {"bodyweight": []},
+     "Preview: 5 weigh-ins, 79.2 kg to 80.01 kg. That's all I need from you. Writing them next."),
+    ("O4_fine_to_skip", "unknown_exercise", [call("whoami")], {"lift_session": []},
+     "No zorbinator on the list, so I skipped it. Once you tell me it's fine to skip, that's that."),
+]
+
+
+@pytest.mark.parametrize("case_id, calls, rows, reply", [w[1:] for w in WRONG_REPLIES], ids=[w[0] for w in WRONG_REPLIES])
+def test_a_wrong_reply_with_no_question_mark_fails_its_whole_case(case_id, calls, rows, reply):
+    case = {c["id"]: c for c in judge.load_cases()}[case_id]
+    assert judge.judge_db(case.get("db"), rows) == []  # the rows are right: the reply is what fails
+    reasons = judge.judge_calls(case["expect"], calls, reply)
+    assert reasons and any("the reply asks nothing" in r for r in reasons), reasons
+
+
 def test_any_of():
     expect = {"any_of": [{"no_call": ["delete_entry"], "reply_asks": True},
                          {"function": "delete_entry", "refused": True}]}

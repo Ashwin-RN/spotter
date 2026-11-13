@@ -39,7 +39,8 @@ import_entries(user_id, data, by)
                      one that was imported, so a row the person deleted never comes back. Or an
                      imported row of this person, on any date, live or deleted, holds the key this row
                      would be stored under: an edit keeps an imported row's key (entries.edit_entry),
-                     so a row the person edited, moved or deleted is never written again
+                     so a row the person edited, moved or deleted is not written again, while the
+                     person's time zone stays as it was (a UTC row can land on another date after a change)
       day taken      no match, and that date holds a live entry of that kind: never added to, never
                      replaced. The result names the entry.
       written        otherwise
