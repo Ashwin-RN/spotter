@@ -431,7 +431,7 @@ Run live by a browser agent in the person's own signed-in browser, every tool ca
 
 **Goal: every page and every number Spotter shows reads as finished work. One formatter and one set of text rules sit behind every page and every summary, and tests hold them. Then every page is rebuilt on one design.** Contract: `docs/contracts/stage-6.md`.
 
-The stage lands in four steps. Step 1 was the design, agreed on a static build before any template changed. Step 2 is the number and text rules on today's pages, pushed on its own. Step 3 is the stylesheet, the charts and the new reads, committed locally and pushed with step 4. Step 4 (every page rebuilt) is added below when it lands.
+The stage lands in four steps. Step 1 was the design, agreed on a static build before any template changed. Step 2 is the number and text rules on today's pages, pushed on its own. Step 3 is the stylesheet, the charts and the new reads, committed locally and pushed with step 4. Step 4 is every page rebuilt on that design.
 
 The contract was reviewed against the code before any builder started: 36 findings on the first draft, 14 of them sentences two builders could have built two ways, then 20 more after the look was merged in. None changed the design. Most were about who hands what to whom, and how a half rounds.
 

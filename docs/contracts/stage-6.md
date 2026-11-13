@@ -1442,7 +1442,7 @@ New class names are named here. The kept ones are section H's.
 - {Kind} is the entry kind's one spelling from the tag table, `web.ENTRY_WORDS` as step 2 shipped it: Weigh-in, Measurement, Lift session, Food entry, Cardio session.
 - `/today` passes `saved` and `deleted` on to the day address (`web.py:598` drops them today).
 - These marks also switch on the calm page (see Motion).
-- As built in step 4: a form low on a page (the day page's four fold-outs, Set a goal, Save a food) posts to its own anchor, so a refused post comes back at the form, and each redirect that answers it ends in `#top` (`body` carries `id="top"`), so the strip is in view. Settings' three forms land on their own cards the same way.
+- As built in step 4: a form low on a page (the day page's four fold-outs, Set a goal, Save a food) posts to its own anchor, so a refused post comes back at the form, and each redirect that answers it ends in `#top` (`body` carries `id="top"`), so the strip is in view. Settings' three forms each post to their own card's anchor, and each redirect that answers one names that anchor, since the saved line sits in the card.
 
 #### A past day
 
@@ -1690,7 +1690,7 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 
 #### Empty
 
-- No open goals: one dashed card, "No open goals. Set one, or tell your assistant what you are aiming for." The form below it. (As built in step 4: "below" was untrue on a laptop, where the form sits to the card's right.)
+- No open goals: one dashed card, "No open goals. Set one, or tell your assistant what you are aiming for." The form follows it. (As built in step 4: "below" was untrue on a laptop, where the form sits to the card's right.)
 
 | Check | Proved by |
 |---|---|
