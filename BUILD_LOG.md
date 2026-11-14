@@ -953,3 +953,26 @@ Not checked: a real browser, so the look of the page has not been seen. Not run 
 Both pieces of work change what a model reads, and `whoami` opens every conversation, so the whole set ran once for the two. All 25 cases, 3 runs each, on `claude-opus-5-5`, at `d108df5`, from 21:16:03 to 21:36:55 on 2026-11-14: 75 of 75 runs passed, $11.6883 at list price. Every case passed all 3 of its runs, the four new ones among them: `feedback_sent`, `feedback_offered`, `hi_there_first_log` and `hi_there_not_again`.
 
 The full suite: 5,308 tests, plain, at the commit `d108df5`. Before the join, every test file also passed with warnings as errors, in separate runs.
+
+## A read that only reads
+
+The owner's `owner_feedback` both listed the notes and, with `delete`, deleted them. So it was marked as a delete, and an assistant app may ask its person to confirm a call so marked: the owner would have been asked before a plain read. He would not have it: "If they want to make a deletion of something, then only should we ask permissions, right?" The change is written into `docs/contracts/feedback.md`.
+
+| Part | What it does |
+|---|---|
+| `owner_feedback` | Only reads. `delete` is gone from it, and it is marked read only, as `owner_calls` is |
+| `owner_delete_feedback` | New, for the owner alone. It deletes for good the notes whose ids it is given, 1 to 100, and is marked as a delete. It answers what was deleted, which ids were no note, and one line to quote |
+| Everyone else | Nothing changes. The list sent to a person who is not the owner is the same bytes as before |
+| The trace | A delete that deleted reads `written`. `ids` is a known name, and `delete` no longer is |
+
+It was found before the feedback work went live, so no one ever held the function in its first shape.
+
+### The review
+
+A separate reviewer, on a frozen copy: clean of blockers. No one but the owner reaches either function, at any setting of the switch or with no owner set. The read deletes nothing whatever is sent to it, an old client's `delete` among it, and is published as read only. The list a person who is not the owner is sent is the parent's 142,762 bytes. A deleted note is in no list, no export and no count of its sender's cap. Sixteen breaks of the code each failed a test.
+
+One finding, older than this work: two deletes of the same note at the same moment both answered that they had deleted it. The delete is now one statement that reads back what it removed, so one call names the note as deleted and the other as no note, and a test holds two calls at a barrier to show it.
+
+Accepted, and the same before this work: a badly shaped call from a person who is not the owner gets the library's own error before the owner check, which shows that the function exists and nothing more.
+
+The full suite: 5,314 tests, plain, on the tree of the commit `e982ba3`. The files this work touched also passed with warnings as errors, in separate runs. Not run on a real Postgres. No eval run: no text that anyone but the owner is sent has changed.
