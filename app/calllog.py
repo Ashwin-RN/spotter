@@ -20,7 +20,8 @@ error is logged by type and swallowed: a lost row never costs the person their a
 
 Retention: a finished call deletes the rows older than CALL_LOG_DAYS, the first time after the process
 starts and then at most once in SWEEP_HOURS (sweep). The same sweep deletes the write keys older than
-KEY_HOURS (contract idempotency.md), at most once in KEY_SWEEP_HOURS.
+KEY_HOURS (contract idempotency.md), at most once in KEY_SWEEP_HOURS, and on the call log's own clock the
+entry versions older than VERSION_DAYS (contract edit-history.md).
 
 crash_text(exc) describes an exception by its type and its stack frames only. It never includes the
 exception's message: a database error's message can carry the statement's values, which are the
@@ -39,7 +40,7 @@ from sqlalchemy import delete, update
 
 from app import db
 from app.mcp_schemas import FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, SetIn
-from app.models import CallLog, WriteKey
+from app.models import CallLog, EntryVersion, WriteKey
 
 log = logging.getLogger("spotter.calllog")
 
@@ -50,6 +51,7 @@ CALL_LOG_DAYS = 90
 SWEEP_HOURS = 24
 KEY_HOURS = 24  # how long a write's key is kept: an older row is absent, swept or not (services.common.lock_user)
 KEY_SWEEP_HOURS = 1
+VERSION_DAYS = 90  # how long an entry's version is kept: an older one is never put back, swept or not
 CALLERS = ("web", "claude")
 # Spotter's seven tables: the one value tried writes (kind=food_entry), and an import's rows counted by kind.
 TABLES = ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "goal")
@@ -63,7 +65,7 @@ KNOWN_NAMES = frozenset({
     "kcal_per_serving", "key", "kg", "kind", "length_unit", "limit", "machine_kcal", "meal", "measurement_kind",
     "minutes", "name", "no_account", "notes", "query", "request_id", "rows", "serving_label", "sets", "speed_kmh",
     "start_value", "status", "target_cardio_minutes_per_week", "target_date", "target_sessions_per_week",
-    "target_value", "text", "time_zone", "value", "weight_unit",
+    "target_value", "text", "time_zone", "undo_edit", "value", "weight_unit",
 }) | {name for model in (SetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn) for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.
 STEPS = {"no_subject": "account", "signups_closed": "account", "no_account": "account",
@@ -71,6 +73,7 @@ STEPS = {"no_subject": "account", "signups_closed": "account", "no_account": "ac
          "invalid_key": "key", "key_reused": "key", "already_done": "key",
          "too_many_reads": "limit", "too_many_writes": "limit", "too_many_imported": "limit",
          "usda_off": "lookup", "usda_unavailable": "lookup",
+         "entry_changed": "check",  # a web edit form older than the entry: the service's check under the lock
          "database_unavailable": "database", "internal_error": "crash"}
 APP = Path(__file__).resolve().parent
 
@@ -120,9 +123,10 @@ def finish(row_id: int | None, ms: int, ok: bool, error_code: str | None, result
 
 
 def sweep() -> None:
-    """Delete the rows older than CALL_LOG_DAYS: the first time, then at most once in SWEEP_HOURS. And the write
-    keys older than KEY_HOURS: the first time, then at most once in KEY_SWEEP_HOURS. Each delete has its own
-    transaction, so one that fails never costs the other. A failure is logged by type and swallowed."""
+    """Delete the rows older than CALL_LOG_DAYS, and the entry versions older than VERSION_DAYS: the first time,
+    then at most once in SWEEP_HOURS. And the write keys older than KEY_HOURS: the first time, then at most once
+    in KEY_SWEEP_HOURS. Each delete has its own transaction, so one that fails never costs another. A failure is
+    logged by type and swallowed."""
     global _swept, _swept_keys
     now = db.utcnow()
     with _sweeping:
@@ -131,6 +135,7 @@ def sweep() -> None:
         _swept, _swept_keys = (now if calls else _swept), (now if keys else _swept_keys)
     if calls:
         _delete_old("call log", CallLog.started_at, now - timedelta(days=CALL_LOG_DAYS))
+        _delete_old("entry versions", EntryVersion.created_at, now - timedelta(days=VERSION_DAYS))
     if keys:
         _delete_old("write keys", WriteKey.created_at, now - timedelta(hours=KEY_HOURS))
 

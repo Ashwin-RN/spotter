@@ -43,6 +43,10 @@ EXEMPT = {
     "write_key": "A write's own key (idempotency.md): no function reads it by id. services.common reads and deletes "
                  "it by the person's id and the key together, and tests/test_idempotency.py holds that one person's "
                  "key never reaches another person's row.",
+    "entry_version": "What an entry held before an edit (edit-history.md): no function takes a version's id. "
+                     "restore_entry reaches one only through the person's own entry, by owned(), and every read and "
+                     "delete names the person's id. tests/test_edit_history.py holds that one person can never "
+                     "undo, read or export another's version.",
 }
 
 # Tables with no user_id of their own, owned through a parent that has one.

@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app import db, services, users
-from app.models import LiftSession, LiftSet, Measurement, entry_models
+from app.models import Bodyweight, LiftSession, LiftSet, Measurement, entry_models
 from app.services.common import MAX_ID, entry_id
 from app.services.entries import entry_kinds
 
@@ -135,6 +135,8 @@ def back(user, days):
 
 def test_editing_a_weigh_in_returns_before_after_and_a_one_line_summary(user):
     w = services.log_bodyweight(user.id, {"kg": 74.8}, "web")
+    with db.session_scope() as s:  # an hour back: a clock that steps 1 to 2 ms gives a log and an edit one reading
+        s.get(Bodyweight, w["id"]).updated_at -= timedelta(hours=1)
     r = edit(user, "bodyweight", w["id"], kg=78.4)
     assert set(r) == {"kind", "id", "changed", "before", "after", "summary", "links"}
     assert r["kind"] == "bodyweight" and r["id"] == w["id"] and r["changed"] == ["kg"]

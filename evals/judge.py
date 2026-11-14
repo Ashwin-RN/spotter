@@ -37,6 +37,9 @@ seed, rows created for the person before the run, through Spotter's own services
    "data": {...}}                   import_entries returns no one id: no "as".
   {"service": "four_weeks"}         a seed that takes no data: four weeks of everything, three goals
                                     (evals/four_weeks.py). No "as": it returns no one id.
+  {"service": "edit_entry", "data": {"kind": "bodyweight", "entry_id": "{{seed.<as>}}", "changes": {...}}}
+                                    an edit of a row seeded before it, so the person has an edit to undo.
+                                    Its data is kind, entry_id and changes, all three.
 
 db, checks on the person's rows after the run:
 
@@ -47,7 +50,9 @@ db, checks on the person's rows after the run:
 Placeholders, as a whole string: "{{today}}" and "{{yesterday}}" (the person's own dates, YYYY-MM-DD),
 and "{{next_month_end:N}}" (N from 1 to 12: the last day of month N, the next one strictly after today
 in the person's zone), anywhere in seed, expect and db; "{{seed.<as>}}" (the id of the seeded row) in
-expect and db. resolve() replaces them before seeding and before judging.
+expect and db, and in the data of a seed that comes after the one it names. A seed that names an "as" no
+earlier seed gave is a problem when the cases are loaded. resolve() replaces them before seeding and before
+judging.
 """
 
 import json
@@ -64,7 +69,8 @@ CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db"}
 DB_KEYS = {"table", "state", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
 SWITCHES = ("read", "log", "log_delete")
-SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "set_goal", "import_entries"}
+SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "set_goal", "import_entries", "edit_entry"}
+EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
 NO_DATA_SERVICES = {"four_weeks"}  # called as seed_service(name)(user_id): see seed_service
 DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal"}
 _PLACEHOLDER = re.compile(r"^\{\{\s*([a-z_]+(?:\.[A-Za-z0-9_]+|:[0-9]+)?)\s*\}\}$")
@@ -95,6 +101,7 @@ def case_problems(case: Any) -> list[str]:
         problems += _expect_problems(case["expect"], "expect")
     if "switch" in case and case["switch"] not in SWITCHES:
         problems.append(f"switch must be one of {', '.join(SWITCHES)}")
+    named: set = set()  # the "as" of the seeds so far: what a later seed's {{seed.<as>}} may name
     for i, seed in enumerate(case.get("seed") or []):
         if isinstance(seed, dict) and seed.get("service") in NO_DATA_SERVICES:
             if set(seed) - {"service"}:
@@ -103,6 +110,13 @@ def case_problems(case: Any) -> list[str]:
                 seed.get("data"), dict):
             problems.append(f"seed[{i}] needs a service ({', '.join(sorted(SEED_SERVICES))}) and a data object, "
                             f"or a service that takes none ({', '.join(sorted(NO_DATA_SERVICES))})")
+        else:
+            if seed["service"] == "edit_entry" and set(seed["data"]) != EDIT_SEED_KEYS:
+                problems.append(f"seed[{i}]: edit_entry's data is kind, entry_id and changes, all three")
+            problems += [f"seed[{i}] names {{{{seed.{name}}}}}, which no earlier seed gave"
+                         for name in sorted(_seed_names(seed["data"]) - named)]
+            if isinstance(seed.get("as"), str):
+                named.add(seed["as"])
     for i, check in enumerate(case.get("db") or []):
         if not isinstance(check, dict) or check.get("table") not in DB_TABLES:
             problems.append(f"db[{i}] needs a table ({', '.join(sorted(DB_TABLES))})")
@@ -111,6 +125,16 @@ def case_problems(case: Any) -> list[str]:
         elif check.get("state", "live") not in DB_STATES:
             problems.append(f"db[{i}] state must be live or deleted")
     return problems
+
+
+def _seed_names(value: Any) -> set[str]:
+    """The <as> of every {{seed.<as>}} placeholder in value."""
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, list):
+        return {name for item in value for name in _seed_names(item)}
+    match = _PLACEHOLDER.match(value) if isinstance(value, str) else None
+    return {match.group(1)[5:]} if match and match.group(1).startswith("seed.") else set()
 
 
 def _expect_problems(expect: Any, where: str) -> list[str]:
@@ -180,8 +204,9 @@ def resolve(value: Any, variables: dict[str, Any]) -> Any:
 
 def seed_service(name: str):
     """The function a seed's service names. four_weeks is evals/four_weeks.py's, called as service(user_id); every
-    other is Spotter's own service, called as service(user_id, data, "web"). Imported only when asked for, so the
-    rest of this module still opens no database."""
+    other is Spotter's own service, called as service(user_id, data, "web"), but edit_entry, which is called as
+    service(user_id, kind, entry_id, changes, "web") from its data (EDIT_SEED_KEYS). Imported only when asked
+    for, so the rest of this module still opens no database."""
     if name in NO_DATA_SERVICES:
         from evals.four_weeks import four_weeks
         return four_weeks

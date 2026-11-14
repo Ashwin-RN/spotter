@@ -6,7 +6,8 @@
    form. The name is not a field: it is how save_food finds the food. Each value is the stored one through
    formatting.field (web.food_values), or what was typed when the form comes back with an error, each error under
    its field in the page's own words and one tied to no field the form draws at the top. No field is required: the
-   page speaks, not the browser. The form and its redirect carry no fragment: the page is one short card. #}
+   page speaks, not the browser. The form and its redirect carry no fragment: the page is one short card. The
+   hidden updated_at is the food's, as this page drew it: a form older than the food's last change is refused. #}
 <div class="page-head">
   <h1>Edit {{ food.name }}</h1>
   <nav class="day-nav" aria-label="Back">
@@ -21,6 +22,7 @@
     {{ parts.field("edit-serving_label", "serving_label", "One serving is", errors.get("serving_label"), values.serving_label, maxlength=limits.serving_label) }}
     {{ parts.field("edit-kcal_per_serving", "kcal_per_serving", "Calories in one serving (kcal)", errors.get("kcal_per_serving"), values.kcal_per_serving, inputmode="decimal") }}
     {{ parts.field("edit-grams_per_serving", "grams_per_serving", "Grams in one serving (g)", errors.get("grams_per_serving"), values.grams_per_serving, inputmode="decimal") }}
+    {% if updated_at %}<input type="hidden" name="updated_at" value="{{ updated_at }}">{% endif %}
     <div class="form-actions">
       <button class="primary">Save</button>
       <a class="action" href="/foods">Cancel</a>

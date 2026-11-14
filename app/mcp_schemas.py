@@ -791,7 +791,21 @@ class RestoreEntryResult(BaseModel):
     replaced: list[dict] = Field(
         description="Live entries for the same day that this one took the place of. They are set aside, not "
                     "erased: restore_entry with their id swaps them back. Empty when none.")
-    note: str | None = Field(default=None, description="Present when a live entry was set aside.")
+    note: str | None = Field(
+        default=None, description="Present when a live entry was set aside, or when an undo changed nothing.")
+    undone: bool | None = Field(
+        default=None, description="With undo_edit: true when the values from before the last edit were put back.")
+    redone: bool | None = Field(
+        default=None, description="With undo_edit: true when this call brought the edit back, after an undo.")
+    duplicate: bool | None = Field(
+        default=None,
+        description="With undo_edit: true when nothing changed: the edit was already undone in the last 10 "
+                    "minutes, or allow_repeat was sent and no edit is undone. entry is the entry as it stands. "
+                    "Say so.")
+    before: dict | None = Field(
+        default=None, description="With undo_edit, when it changed the entry: the entry as it was until then.")
+    summary: str | None = Field(
+        default=None, description="With undo_edit: what happened, in one line, ready to quote.")
 
 
 # ---------------------------------------------------------------- get_log

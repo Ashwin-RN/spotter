@@ -4,7 +4,8 @@
 {% import "_parts.html" as parts %}
 {# An edit page: the head with its link back to the day, then one card holding the form, its fields stacked with
    each label naming its unit. Each value is the stored one through formatting.field, or what was typed when the
-   form comes back with an error. A lift session adds a read-only Sets card. #}
+   form comes back with an error. A lift session adds a read-only Sets card. The hidden updated_at is the entry's,
+   as this page drew it: a form older than the entry's last change is refused. #}
 <div class="page-head">
   <h1>Edit {{ kind_name }}</h1>
   <nav class="day-nav" aria-label="Back">
@@ -40,6 +41,7 @@
     {{ parts.field("edit-notes", "notes", "Notes", errors.get("notes"), values.notes, rows=3) }}
     {% endif %}
     {{ parts.field("edit-date", "date", "Date", errors.get("date"), values.date, type="date", required=true) }}
+    {% if updated_at %}<input type="hidden" name="updated_at" value="{{ updated_at }}">{% endif %}
     <div class="form-actions">
       <button class="primary">Save</button>
       <a class="action" href="{{ day_href }}">Cancel</a>

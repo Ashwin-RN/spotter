@@ -28,7 +28,8 @@ from app.models import (
 from .conftest import TEST_DATABASE_URL, TEST_DIR, alembic_config
 
 ALL_TABLES = {"user", "exercise", "lift_session", "lift_set", "bodyweight", "goal", "call_log", "measurement",
-              "saved_food", "food_entry", "cardio_entry", "usda_food", "usda_search", "write_key"}
+              "saved_food", "food_entry", "cardio_entry", "usda_food", "usda_search", "write_key",
+              "entry_version"}
 # The seven tables 0001 gave an is_sample column and 0004 took it from.
 MARKED_TABLES = ("food_entry", "cardio_entry", "lift_session", "bodyweight", "measurement", "goal", "saved_food")
 
@@ -160,8 +161,8 @@ def test_deleting_a_user_deletes_everything_they_own(make_user, db_session):
 
 def test_the_list_of_tables_with_a_user_id_comes_from_the_schema():
     assert user_tables() == sorted(t.name for t in Base.metadata.tables.values() if "user_id" in t.c)
-    assert user_tables() == ["bodyweight", "call_log", "cardio_entry", "food_entry", "goal", "lift_session",
-                             "measurement", "saved_food", "write_key"]
+    assert user_tables() == ["bodyweight", "call_log", "cardio_entry", "entry_version", "food_entry", "goal",
+                             "lift_session", "measurement", "saved_food", "write_key"]
     assert [m.__tablename__ for m in entry_models()] == ["bodyweight", "cardio_entry", "food_entry",
                                                          "lift_session", "measurement"]
 
@@ -591,7 +592,7 @@ def test_0004_applies_on_an_empty_database_and_follows_0003():
         engine.dispose()
     from alembic.script import ScriptDirectory
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0006"  # idempotency.md 2
+    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0007"  # edit-history.md 1
 
 
 def test_the_postgres_sql_deletes_the_marked_rows_and_drops_the_columns():

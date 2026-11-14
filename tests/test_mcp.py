@@ -362,6 +362,9 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     session_id = next(s["id"] for day in log["days"] for s in day["sessions"])
     keep("edit_entry", {"kind": "lift_session", "entry_id": session_id, "notes": "Edited"})  # a session: note
     keep("edit_entry", {"kind": "measurement", "entry_id": second["id"], "value": 83})
+    undo = {"kind": "measurement", "entry_id": second["id"], "undo_edit": True}
+    keep("restore_entry", undo)  # the edit undone: undone, before, summary
+    keep("restore_entry", undo)  # the same undo again: duplicate, and its note
     set_switch(who["account_id"], "log_delete")
     keep("delete_entry", {"kind": "measurement", "entry_id": second["id"]})
     keep("restore_entry", {"kind": "measurement", "entry_id": second["id"]})  # nothing in its place
@@ -772,12 +775,12 @@ def test_can_and_cant_names_exactly_the_twelve_functions():
     assert set(FUNCTIONS) <= named  # and it names every function Claude has
 
 
-def test_can_and_cant_states_the_limit_the_delete_consent_and_that_edits_keep_nothing():
+def test_can_and_cant_states_the_limit_the_delete_consent_and_that_an_edit_keeps_what_it_replaces():
     text = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
     assert f"at most {services.WRITE_LIMIT} writes in any {services.WRITE_WINDOW_MINUTES} minutes" in text
     assert "a refused one too" in text  # refused writes count against the limit
     assert "Claude can delete only when the person has allowed it" in text
-    assert "An edit keeps no old values" in text
+    assert "An edit keeps the values from before it: `restore_entry` with `undo_edit` brings them back." in text
 
 
 def test_the_instructions_say_how_to_use_spotter(http):
@@ -853,7 +856,7 @@ OPTIONAL_ARGUMENTS = {
     "edit_entry": {"date": "2026-01-02", "notes": "Notes", "sets": squat(105), "kg": 80.5, "value": 84.5,
                    "meal": "lunch", "description": "Dal", "kcal": 150.0, "exercise": "Treadmill Walk", "minutes": 30.0,
                    "distance_km": 3.5, "incline_pct": 2.0, "speed_kmh": 7.0, "avg_hr": 130, "machine_kcal": 210},
-    "restore_entry": {},
+    "restore_entry": {"undo_edit": True, "allow_repeat": True},
     "delete_entry": {},
     "find_food": {"limit": 5},
     "log_food": {"date": "2026-01-02", "allow_repeat": True},
@@ -913,7 +916,10 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
     if name == "edit_entry":
         changes = {k: v for k, v in arguments.items() if k not in ("kind", "entry_id")}
         return (account, arguments["kind"], arguments["entry_id"], changes, "claude"), {}
-    if name in ("restore_entry", "delete_entry"):
+    if name == "restore_entry":  # who calls, for the version an undo keeps, and each flag only when sent
+        flags = {k: v for k, v in arguments.items() if k in ("undo_edit", "allow_repeat")}
+        return (account, arguments["kind"], arguments["entry_id"], "claude"), flags
+    if name == "delete_entry":
         return (account, arguments["kind"], arguments["entry_id"]), {}
     return (account,), {}
 

@@ -3,7 +3,13 @@
 export_data(user_id)
     A read. One CSV per table the person owns, plus account.csv and README.txt:
       account.csv, lift_sessions.csv, lift_sets.csv, bodyweight.csv, measurements.csv, goals.csv,
-      saved_foods.csv, food_entries.csv, cardio_entries.csv
+      saved_foods.csv, food_entries.csv, cardio_entries.csv, entry_versions.csv
+    - entry_versions.csv: what an entry held before each edit, undo or redo still kept (contract
+      edit-history.md): its kind, the entry's id, when, who, why, and the values as JSON (_before): as stored,
+      without LEFT_OUT, and with names as the other files give them. A set is {exercise, set_number,
+      weight_kg, reps}, and a cardio entry's exercise_id is exercise, as in cardio_entries.csv. A food entry's
+      saved food stays an id: saved_foods.csv has it. An id that names no exercise is written as null. The
+      person's own letters are written as they are, never as escapes.
     - Deleted rows are included, with deleted_at; source is included where the table has it.
     - Times are UTC, ISO 8601 with the offset (2026-11-10T08:00:00+00:00). Dates are the person's own.
     - Names, not ids, for what the shared lists hold: a set's exercise, a goal's exercise, a cardio
@@ -24,6 +30,7 @@ puts the files in a zip; nothing here writes a file.
 
 import csv
 import io
+import json
 from datetime import date, datetime
 
 from sqlalchemy import select
@@ -31,7 +38,8 @@ from sqlalchemy.orm import selectinload
 
 from app import db, formatting
 from app.models import (
-    Bodyweight, CardioEntry, Exercise, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, User,
+    Bodyweight, CardioEntry, EntryVersion, Exercise, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood,
+    User,
 )
 from app.services.common import no_account
 
@@ -51,8 +59,9 @@ TABLES = {
 BOM = "\ufeff"           # the byte-order mark each CSV starts with (D16)
 FORMULA_START = "=+-@"   # what a spreadsheet would read as the start of a formula
 SET_COLUMNS = ("session_id", "exercise", "set_number", "weight_kg", "reps")
+VERSION_COLUMNS = ("kind", "entry_id", "created_at", "by", "why", "before")
 ORDER = ("account.csv", "lift_sessions.csv", "lift_sets.csv", "bodyweight.csv", "measurements.csv", "goals.csv",
-         "saved_foods.csv", "food_entries.csv", "cardio_entries.csv")
+         "saved_foods.csv", "food_entries.csv", "cardio_entries.csv", "entry_versions.csv")
 
 README = """Spotter export
 
@@ -70,6 +79,11 @@ Everything Spotter holds for this account, one CSV file per kind of record.
                       claude_estimate (Claude's estimate)
   cardio_entries.csv  each cardio session; estimated_kcal is the app's estimate, machine_kcal the
                       machine's own number
+  entry_versions.csv  what an entry held before each edit, undo or redo: kind and entry_id name the
+                      entry, by says who changed it (web or claude), why is edit, undo or redo, and
+                      before holds the values as JSON: a set's exercise and a cardio activity by
+                      name, a saved food by its id in saved_foods.csv. The newest 10 are kept for
+                      an entry, for 90 days
 
 Deleted rows are included: deleted_at says when.
 logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_entries, says how a row
@@ -122,6 +136,18 @@ def _table(s, model, renamed: dict, user_id: int, names: dict) -> tuple[str, int
     return _csv(header, rows), len(rows)
 
 
+def _before(version: EntryVersion, exercises: dict) -> str:
+    """A version's values for entry_versions.csv. See the module notes."""
+    values = {k: x for k, x in json.loads(version.before).items() if k not in LEFT_OUT}
+    if "sets" in values:
+        values["sets"] = [{"exercise": exercises.get(e), "set_number": n, "weight_kg": w, "reps": r}
+                          for e, n, w, r in values["sets"]]
+    if version.kind == CardioEntry.__tablename__:  # the activity by name, where the id was
+        values = {"exercise" if k == "exercise_id" else k: exercises.get(x) if k == "exercise_id" else x
+                  for k, x in values.items()}
+    return json.dumps(values, ensure_ascii=False)
+
+
 def export_data(user_id: int) -> dict:
     """Every row this person owns, deleted rows included. See the module notes."""
     with db.new_session() as s:
@@ -142,6 +168,9 @@ def export_data(user_id: int) -> dict:
                          .order_by(LiftSet.session_id, LiftSet.id).options(selectinload(LiftSet.exercise)))
         set_rows = [[x.session_id, x.exercise.name, x.set_number, x.weight_kg, x.reps] for x in sets]
         files["lift_sets.csv"], rows["lift_sets.csv"] = _csv(list(SET_COLUMNS), set_rows), len(set_rows)
+        versions = s.scalars(select(EntryVersion).where(EntryVersion.user_id == user.id).order_by(EntryVersion.id))
+        kept = [[v.kind, v.entry_id, v.created_at, v.by, v.why, _before(v, names["exercise"])] for v in versions]
+        files["entry_versions.csv"], rows["entry_versions.csv"] = _csv(list(VERSION_COLUMNS), kept), len(kept)
     files = {name: files[name] for name in ORDER}
     files["README.txt"] = README
     rows = {name: rows[name] for name in ORDER}

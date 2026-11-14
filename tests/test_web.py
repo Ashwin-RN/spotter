@@ -1846,7 +1846,8 @@ def test_a_weigh_in_after_today_is_refused_by_date(client):
 def test_editing_a_weigh_in_moves_it_and_returns_to_its_new_day(client, stocked):
     two_days_ago = (stocked["today"] - timedelta(days=2)).isoformat()
     r = post(client, f"/entries/bodyweight/{stocked['weigh_in']}/edit", kg="77.95", date=two_days_ago)
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}?saved=bodyweight"
+    assert r.status_code == 303 and r.headers["location"] == SITE + (
+        f"/day/{two_days_ago}?saved=bodyweight:{stocked['weigh_in']}")
     row = next(b for b in rows(Bodyweight, only_user().id) if b.id == stocked["weigh_in"])
     assert (row.kg, row.date.isoformat(), row.deleted_at) == (77.95, two_days_ago, None)
     # Today's glance block shows the 7-day average of 77.95 and 78.9, 78.4 kg, so the moved weigh-in's old figure
@@ -1867,7 +1868,8 @@ def test_editing_a_measurement_changes_its_value(client, stocked):
 def test_editing_a_session_changes_its_notes_and_date_and_keeps_its_sets(client, stocked):
     two_days_ago = (stocked["today"] - timedelta(days=2)).isoformat()
     r = post(client, f"/entries/lift_session/{stocked['session']}/edit", notes="heavy day", date=two_days_ago)
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{two_days_ago}?saved=lift_session"
+    assert r.status_code == 303 and r.headers["location"] == SITE + (
+        f"/day/{two_days_ago}?saved=lift_session:{stocked['session']}")
     page = day_of(client, two_days_ago)
     assert "heavy day" in page and page.count('<td class="num">65</td>') == 3
 
@@ -2494,7 +2496,7 @@ def test_the_food_edit_page_says_a_new_kcal_is_a_number_you_said(client, fed):
 def test_editing_a_foods_kcal_makes_it_you_said(client, fed):
     dal = fed["food"][1]
     r = post(client, f"/entries/food_entry/{dal}/edit", description="Dal", kcal="150", meal="lunch", date=fed["today"])
-    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}?saved=food_entry"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}?saved=food_entry:{dal}"
     row = next(e for e in rows(FoodEntry, only_user().id) if e.id == dal)
     assert (row.kcal, row.source, row.estimated) == (150, "you_said", False)
     dal_row = next(e for e in meal_of(day_of(client, fed["today"]), "Lunch") if e["name"] == "Dal")
@@ -2583,7 +2585,7 @@ def test_editing_a_food_updates_it_and_keeps_what_was_logged(client, fed):
     page = client.get(f"/foods/{fed['roti']}/edit").text
     assert 'name="kcal_per_serving" value="120"' in page and 'name="name"' not in page
     r = post(client, f"/foods/{fed['roti']}/edit", serving_label="1 roti", kcal_per_serving="110", grams_per_serving="40")
-    assert r.status_code == 303 and r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert r.status_code == 303 and r.headers["location"] == SITE + f"/foods?saved=saved_food:{fed['roti']}"
     [food] = rows(SavedFood, only_user().id)
     assert (food.kcal_per_serving, food.grams_per_serving) == (110, 40)
     assert next(e.kcal for e in rows(FoodEntry, only_user().id) if e.id == fed["food"][0]) == 240  # history kept
@@ -3227,7 +3229,8 @@ def test_every_redirect_that_answers_a_day_fold_out_post_ends_in_post_lands(clie
 def test_an_edit_is_marked_with_its_kind_and_an_unchanged_one_is_not(client, stocked):
     on = stocked["today"].isoformat()
     edit = f"/entries/measurement/{stocked['measurements'][0]}/edit"
-    assert location(post(client, edit, value="83", date=on)) == SITE + f"/day/{on}?saved=measurement"
+    assert location(post(client, edit, value="83", date=on)) == SITE + (
+        f"/day/{on}?saved=measurement:{stocked['measurements'][0]}")
     assert location(post(client, edit, value="83", date=on)) == SITE + f"/day/{on}?saved=unchanged"
 
 
@@ -4994,7 +4997,7 @@ def test_an_edit_lands_on_the_day_marked_saved_and_the_form_as_drawn_is_unchange
     before = calls(only_user().id)
     assert location(post(client, edit, **sent)) == SITE + f"/day/{on}?saved=unchanged"
     assert calls(only_user().id) == before  # the form sent back as drawn writes nothing
-    assert location(post(client, edit, **{**sent, **change})) == SITE + f"/day/{on}?saved={kind}"
+    assert location(post(client, edit, **{**sent, **change})) == SITE + f"/day/{on}?saved={kind}:{entry_id}"
     redrawn = {f["name"]: f["value"] or "" for f in controls_of(edit_of(client, kind, entry_id))}
     assert redrawn == {**drawn, **change}
     row = next(r for r in rows(EDIT_MODELS[kind], only_user().id) if r.id == entry_id)
@@ -5858,7 +5861,7 @@ def test_a_note_posted_with_crlf_or_a_lone_cr_is_stored_with_lf(client, every_ki
     entry_id = every_kind[kind]
     drawn = {f["name"]: f["value"] or "" for f in controls_of(edit_of(client, kind, entry_id))}
     r = post(client, f"/entries/{kind}/{entry_id}/edit", **{**drawn, "notes": "first\r\nsecond\rthird"})
-    assert location(r) == SITE + f"/day/{every_kind['today']}?saved={kind}"
+    assert location(r) == SITE + f"/day/{every_kind['today']}?saved={kind}:{entry_id}"
     row = next(x for x in rows(EDIT_MODELS[kind], only_user().id) if x.id == entry_id)
     assert row.notes == "first\nsecond\nthird"
     assert next(f["value"] for f in controls_of(edit_of(client, kind, entry_id)) if f["name"] == "notes") \
@@ -7293,7 +7296,7 @@ def test_a_note_stored_with_crlf_is_no_change_when_saved_as_drawn(client, every_
             assert (after.estimated_kcal, after.estimate_weight_kg) == (before.estimated_kcal, before.estimate_weight_kg)
         # A real change to the note is still saved.
         r = post(client, f"/entries/{kind}/{entry_id}/edit", **{**drawn, "notes": "old\r\nnote, new"})
-        assert location(r) == SITE + f"/day/{every_kind['today']}?saved={kind}"
+        assert location(r) == SITE + f"/day/{every_kind['today']}?saved={kind}:{entry_id}"
 
 
 def weight_sheet_panel(page: str) -> list[str]:

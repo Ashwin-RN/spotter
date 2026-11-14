@@ -249,9 +249,11 @@ Key = Annotated[str | None, Field(description=KEY_DESCRIPTION)]
 
 LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
 KIND_DESCRIPTION = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
+RESTORE_KIND_DESCRIPTION = KIND_DESCRIPTION + " With undo_edit, saved_food too."
 ENTRY_ID_DESCRIPTION = ("The entry's id, from log_lifts, log_bodyweight, log_measurement, log_food, log_cardio "
                         "or get_log, "
                         "with the kind it came with.")
+RESTORE_ID_DESCRIPTION = ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or find_food."
 
 CAN_AND_CANT = ROOT / "docs" / "can-and-cant.md"
 CAN_AND_CANT_URI = "spotter://can-and-cant"
@@ -830,17 +832,28 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         title="Restore an entry",
         description=(
             "Brings back a deleted or replaced entry. If the day already has a live one of the same kind, the "
-            "two swap: the live one is set aside and can itself be restored."
+            "two swap: the live one is set aside and can itself be restored. With undo_edit true it undoes the "
+            "last edit of a live entry instead: every value from before that edit comes back, a session's sets, "
+            "a food entry's saved or USDA food and a cardio estimate among them. The same undo again within 10 "
+            "minutes changes nothing, and allow_repeat true only brings back an edit that was undone: it never "
+            "undoes one."
         ),
         annotations=WRITE,
     )
     async def restore_entry(
-        kind: Annotated[str, Field(description=KIND_DESCRIPTION)],
-        entry_id: Annotated[int, Field(description=ENTRY_ID_DESCRIPTION)],
+        kind: Annotated[str, Field(description=RESTORE_KIND_DESCRIPTION)],
+        entry_id: Annotated[int, Field(description=RESTORE_ID_DESCRIPTION)],
+        undo_edit: Annotated[bool, Field(
+            description="true undoes the last edit of this entry, which must be live: the values from before it "
+                        "come back. The newest 10 are kept for an entry, for 90 days.")] = False,
+        allow_repeat: Annotated[bool, Field(
+            description="After an undo, true brings the edit back. It never undoes: sent when no edit is undone, "
+                        "it changes nothing. Send it only when the person asks for the edit back.")] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, RestoreEntryResult]:
+        sent = _sent(undo_edit=undo_edit or None, allow_repeat=allow_repeat or None)
         return await wrapper.call("restore_entry", RestoreEntryResult,
-                                  lambda account: services.restore_entry(account, kind, entry_id))
+                                  lambda account: services.restore_entry(account, kind, entry_id, "claude", **sent))
 
     @server.tool(
         name="delete_entry",

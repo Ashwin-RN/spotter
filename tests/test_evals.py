@@ -8,10 +8,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 from starlette.testclient import TestClient
 
 from app import db, metrics, services
-from app.models import User
+from app.models import EntryVersion, User
 from app.main import create_app
 from evals import judge
 from evals.recorder import CallRecorder, parse_body, token_key
@@ -23,7 +24,7 @@ from tests.conftest import HEADERS, settings
 CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_asked", "yesterday", "treadmill_once",
                   "repeat_sent", "delete_ambiguous", "delete_explicit", "unknown_exercise",
                   "goal_date", "how_am_i_doing", "on_track", "export_is_a_click", "delete_is_a_click", "drop_goal",
-                  "decimals_and_dashes", "import_preview_first", "import_again", "import_unknown_lift"}
+                  "decimals_and_dashes", "import_preview_first", "import_again", "import_unknown_lift", "undo_edit"}
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
           "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries"}
@@ -37,7 +38,7 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert len(cases) == 20  # was 17: import pass B adds the three import cases
+    assert len(cases) == 21  # was 20: edit history adds undo_edit
     assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)
@@ -650,6 +651,69 @@ def test_new_person_seeds_goals_and_the_four_weeks(app_settings):
 
     goal_id, _, _ = server.new_person(zone, cases["goal_date"]["seed"])
     assert len(person_rows(goal_id)["bodyweight"]) == 2 and person_rows(goal_id)["goal"] == []
+
+
+# ---------------------------------------------------------------- edit history: a seed that edits, and undo_edit
+
+def test_a_seed_may_edit_a_row_seeded_before_it_and_names_no_other():
+    case = {"id": "a", "say": "x", "expect": {"function": "f"}}
+    weigh_in = {"as": "w", "service": "log_bodyweight", "data": {"kg": 80}}
+    edit = {"service": "edit_entry", "data": {"kind": "bodyweight", "entry_id": "{{seed.w}}", "changes": {"kg": 85}}}
+    assert judge.case_problems({**case, "seed": [weigh_in, edit]}) == []
+    assert judge.seed_service("edit_entry") is services.edit_entry and "edit_entry" in judge.SEED_SERVICES
+    # An `as` no earlier seed gave is a problem when the cases are loaded, never a KeyError in a run.
+    late = "seed[0] names {{seed.w}}, which no earlier seed gave"
+    assert judge.case_problems({**case, "seed": [edit, weigh_in]}) == [late]
+    assert judge.case_problems({**case, "seed": [edit]}) == [late]
+    own = {"as": "w", "service": "log_bodyweight", "data": {"kg": 80, "date": "{{seed.w}}"}}
+    assert judge.case_problems({**case, "seed": [own]}) == [late]  # nor its own
+    nested = {"service": "edit_entry", "data": {**edit["data"], "changes": {"sets": [{"reps": "{{seed.z}}"}]}}}
+    assert judge.case_problems({**case, "seed": [weigh_in, nested]}) == [
+        "seed[1] names {{seed.z}}, which no earlier seed gave"]
+    for missing in ("kind", "entry_id", "changes"):  # its data is those three, all of them
+        data = {k: v for k, v in edit["data"].items() if k != missing}
+        assert judge.case_problems({**case, "seed": [weigh_in, {**edit, "data": data}]}) == [
+            "seed[1]: edit_entry's data is kind, entry_id and changes, all three"]
+    assert judge.case_problems({**case, "seed": [weigh_in, {**edit, "data": {**edit["data"], "by": "web"}}]})
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "cases.json"
+        path.write_text(json.dumps([{**case, "seed": [edit]}]), encoding="utf-8")
+        with pytest.raises(ValueError, match="which no earlier seed gave"):
+            judge.load_cases(path)
+
+
+def test_the_undo_edit_case_seeds_a_weigh_in_and_an_edit_of_it(app_settings):
+    """The case as it is loaded, its seed run on a test database: a weigh-in of 80 kg edited to 85, so one version
+    holds 80. Then what the case asks of a run holds for the undo, and fails without it."""
+    case = {c["id"]: c for c in judge.load_cases()}["undo_edit"]
+    assert [s["service"] for s in case["seed"]] == ["log_bodyweight", "edit_entry"]
+    server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
+    server.settings = app_settings
+    zone = "Asia/Kolkata"
+    user_id, _, seeded = server.new_person(zone, case["seed"])
+    [weigh_in] = person_rows(user_id)["bodyweight"]
+    assert set(seeded) == {"weigh_in"} and (weigh_in["id"], weigh_in["kg"]) == (seeded["weigh_in"], 85)
+    assert weigh_in["date"] == dates_for(zone)["today"]
+    with db.session_scope() as session:
+        [version] = session.scalars(select(EntryVersion).where(EntryVersion.user_id == user_id)).all()
+        assert (version.kind, version.entry_id, version.by, version.why) == (
+            "bodyweight", seeded["weigh_in"], "web", "edit")
+        assert json.loads(version.before)["kg"] == 80
+    resolved = judge.resolve(case, {**dates_for(zone), "seed.weigh_in": seeded["weigh_in"]})
+    sent = {"kind": "bodyweight", "entry_id": seeded["weigh_in"], "undo_edit": True}
+    assert judge.judge(resolved, [call("restore_entry", sent)], "Undone.", person_rows(user_id))  # not yet undone
+    assert services.restore_entry(user_id, "bodyweight", seeded["weigh_in"], "claude", undo_edit=True)["undone"] is True
+    assert judge.judge(resolved, [call("restore_entry", sent)], "Undone.", person_rows(user_id)) == []
+    # allow_repeat only brings back an edit that was undone: a run that sends it true with its undo does not pass.
+    assert case["expect"]["inputs_forbid"] == {"allow_repeat": True}
+    with_repeat = [call("restore_entry", {**sent, "allow_repeat": True})]
+    assert judge.judge(resolved, with_repeat, "Undone.", person_rows(user_id)) == [
+        "restore_entry sent allow_repeat = true"]
+    without = [call("restore_entry", {**sent, "allow_repeat": False})]
+    assert judge.judge(resolved, without, "Undone.", person_rows(user_id)) == []
+    edited = [call("edit_entry", {"kind": "bodyweight", "entry_id": seeded["weigh_in"], "kg": 80})]
+    assert judge.judge(resolved, edited, "Changed back.", person_rows(user_id)) == [
+        "restore_entry was not called (calls: edit_entry)", "restore_entry succeeded 0 times, expected 1"]
 
 
 # ---------------------------------------------------------------- import pass B: the three import cases

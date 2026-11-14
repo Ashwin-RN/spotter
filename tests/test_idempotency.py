@@ -868,7 +868,9 @@ def test_0006_adds_the_key_table_the_models_match_and_it_comes_down_again():
             assert [u["column_names"] for u in inspect(c).get_unique_constraints("write_key")] == [["user_id", "key"]]
             [owner] = inspect(c).get_foreign_keys("write_key")
             assert (owner["referred_table"], owner["options"]) == ("user", {"ondelete": "CASCADE"})
-            assert compare_metadata(MigrationContext.configure(c), Base.metadata) == []  # the models match
+            # The models match, but for the table and index 0007 adds (tests/test_edit_history.py holds them there).
+            assert sorted((d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
+                == [("add_index", "ix_entry_version_user_id_kind_entry_id_id"), ("add_table", "entry_version")]
         with engine.begin() as c:
             for user, key in ((1, "one-key-01"), (1, "two-key-02"), (2, "one-key-01")):  # one row per person and key
                 c.exec_driver_sql(row, (user, key, now))

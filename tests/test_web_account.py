@@ -439,9 +439,9 @@ def test_a_save_save_food_finds_unchanged_is_marked_unchanged(signed, real_save_
 ])
 def test_a_food_saved_again_with_one_change_is_saved(signed, data, stored):
     uid = only_user().id
-    services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
+    food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
     r = post(signed, "/foods", **{"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": "120", **data})
-    assert r.headers["location"] == SITE + "/foods?saved=saved_food#top"
+    assert r.headers["location"] == SITE + f"/foods?saved=saved_food:{food['id']}#top"
     assert saved_foods(uid) == [stored]
 
 
@@ -604,7 +604,7 @@ def test_an_edit_that_changes_one_field_saves_it_and_one_that_changes_none_write
     food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
     real_save_food.clear()
     r = post(signed, f"/foods/{food['id']}/edit", **{**ROTI, "grams_per_serving": "40"})
-    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert r.headers["location"] == SITE + f"/foods?saved=saved_food:{food['id']}"
     assert saved_foods(uid) == [("Roti", "1 roti", 120, 40, True)]
     assert strips(signed.get(r.headers["location"]).text) == ["Saved food saved."]
     before = calls(uid)
@@ -619,7 +619,7 @@ def test_an_edit_that_changes_one_field_saves_it_and_one_that_changes_none_write
     assert len(real_save_food) == 2 and saved_foods(uid) == [("Roti", "1 roti", 120, 40, True)]
     # Emptying the grams clears them.
     r = post(signed, f"/foods/{food['id']}/edit", serving_label="1 roti", kcal_per_serving="120", grams_per_serving="")
-    assert r.headers["location"] == SITE + "/foods?saved=saved_food"
+    assert r.headers["location"] == SITE + f"/foods?saved=saved_food:{food['id']}"
     assert saved_foods(uid) == [("Roti", "1 roti", 120, None, True)]
 
 
@@ -709,7 +709,7 @@ def test_a_post_of_the_save_a_food_form_lands_at_the_top_and_its_refusal_at_the_
     edit = signed.get(f"/foods/{food.id}/edit").text
     assert re.findall(r'<form class="stack" method="post" action="([^"]+)">', edit) == [f"/foods/{food.id}/edit"]
     assert post(signed, f"/foods/{food.id}/edit", serving_label="2 idli", kcal_per_serving="116").headers["location"] \
-        == SITE + "/foods?saved=saved_food"
+        == SITE + f"/foods?saved=saved_food:{food.id}"
     assert post(signed, f"/foods/{food.id}/delete").headers["location"] == SITE + f"/foods?deleted=saved_food:{food.id}"
     assert post(signed, f"/foods/{food.id}/restore").headers["location"] == SITE + "/foods?restored=saved_food"
 

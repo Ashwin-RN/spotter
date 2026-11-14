@@ -115,6 +115,8 @@ record cannot be talked round.
   `log_measurement`, `set_goal`, `import_entries`, each with `data`, and `four_weeks`, which takes no data.
   - `four_weeks` (`evals/four_weeks.py`) is four weeks of everything and three goals in one call, on an empty account. It has no `as`.
   - `import_entries` returns no one id either, so it has no `as`. Its rows carry fixed dates.
+  - `edit_entry` edits a row seeded before it, so the person has an edit to undo. Its `data` is
+    `{kind, entry_id, changes}`, all three, and `entry_id` is that row's `{{seed.<as>}}`.
 - `db` checks the person's live rows, or with `"state": "deleted"` the soft-deleted ones.
   - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`, `goal`.
   - A goal has no delete, so every goal row is live. Check `status` instead.
@@ -128,7 +130,7 @@ A placeholder is a whole string. It works in `seed`, `expect` and `db`.
 | `{{today}}` | The person's today, `YYYY-MM-DD`, in their zone. |
 | `{{yesterday}}` | The day before. |
 | `{{next_month_end:N}}` | N from 1 to 12. The last day of month N, the next one strictly after today. |
-| `{{seed.<as>}}` | The id of the seeded row named `as`. Not in `seed`. |
+| `{{seed.<as>}}` | The id of the seeded row named `as`. In `seed`, only in the data of a later seed: one that names an `as` no earlier seed gave stops the load. |
 
 `{{next_month_end:N}}` in examples, today 10 November 2026:
 
@@ -176,6 +178,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `import_preview_first` | Bring my weigh-ins over from my old app, with a five-day export, `Date,Weight (lb)` | `import_entries` called with `weight_unit` lb, never with `dry_run` false; the reply asks; no weigh-in, live or deleted |
 | `import_again` | I checked the preview, write them, with the same export (the five rows already imported) | `import_entries` called with `weight_unit` lb; the reply says "already"; 5 live weigh-ins, all `import`, none deleted |
 | `import_unknown_lift` | Import my lifts from a Strong export of three Zorbinator Press sets at 20 kg | `list_exercises` or `import_entries` called; the reply asks and names Zorbinator; no lift session |
+| `undo_edit` | I changed today's weigh-in by mistake. Undo that change. (a weigh-in of 80 kg, then edited to 85) | `restore_entry` with kind `bodyweight`, that weigh-in's id and `undo_edit` true, never with `allow_repeat` true, one success; the weigh-in holds 80 again |
 
 "No write function" is the twelve writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
 `log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,

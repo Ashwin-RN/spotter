@@ -52,6 +52,13 @@ row of a refusal or a preview. A key sent again gets that answer back (keyed), k
 another one, and already_done when the first answer was not kept. A row with no answer yet is waited for, up
 to ANSWER_WAIT, while it is younger than ANSWER_LOST: an older one is already_done at the first look, before
 the work and the lock. Every read and delete of write_key names the person's id.
+
+An entry's versions (contract edit-history.md). An edit keeps the row as it stood: keep_version() writes it to
+entry_version in the edit's own transaction, before the row changes, and drops the entry's versions beyond the
+newest VERSIONS_KEPT. version_of() is the one shape for all six kinds, and put_back() the one way back
+(restore_entry with undo_edit, through newest_version and read_version). A version older than VERSION_DAYS is
+never put back. Every read and delete of entry_version names the person's id. entry_changed() refuses a web
+edit form drawn before the entry's last change.
 """
 
 import hashlib
@@ -63,12 +70,12 @@ import time
 from contextvars import ContextVar
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import Date, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app import db, formatting
-from app.calllog import KEY_HOURS
-from app.models import CALLERS, CallLog, Exercise, User, WriteKey
+from app.calllog import KEY_HOURS, REQUEST_ID, VERSION_DAYS
+from app.models import CALLERS, CallLog, EntryVersion, Exercise, LiftSession, LiftSet, User, WriteKey
 from app.rules import as_sent, error, quote, span, to_float
 
 log = logging.getLogger("spotter.common")
@@ -450,16 +457,96 @@ def exercises(s: Session, kind: str | None = None) -> list[Exercise]:
 HIDDEN_COLUMNS = ("user_id", "dedupe_key")
 
 
-def row_dict(row) -> dict:
+def row_dict(row, hidden=HIDDEN_COLUMNS) -> dict:
     """Every column of a row as JSON-ready values, except the owner and the duplicate key.
     Works for any table, so a new entry kind needs no new code here."""
     out = {}
     for column in row.__table__.columns:
-        if column.name in HIDDEN_COLUMNS:
+        if column.name in hidden:
             continue
         value = getattr(row, column.key)
         out[column.name] = value.isoformat() if isinstance(value, (date, datetime)) else value
     return out
+
+
+# ---------------------------------------------------------------- an entry's versions
+
+VERSIONS_KEPT = 10  # the newest versions kept for one entry
+NOT_KEPT = ("id", "user_id", "created_at", "deleted_at")  # the columns a version leaves out
+
+
+def version_of(row) -> dict:
+    """A row as a version holds it: every stored column but NOT_KEPT, the hidden ones too, and a lift session's
+    sets as [exercise id, set number, weight, reps] in the order they were logged. One shape for all six kinds."""
+    out = row_dict(row, NOT_KEPT)
+    if isinstance(row, LiftSession):
+        out["sets"] = _sets(row)
+    return out
+
+
+def _sets(row: LiftSession) -> list:
+    return [[x.exercise_id, x.set_number, x.weight_kg, x.reps] for x in sorted(row.sets, key=lambda x: x.id)]
+
+
+def _versions(row) -> tuple:
+    return (EntryVersion.user_id == row.user_id, EntryVersion.kind == row.__tablename__,
+            EntryVersion.entry_id == row.id)
+
+
+def keep_version(s: Session, row, by: str, why: str = "edit") -> None:
+    """Keep the row as it stands as its entry's newest version, in the write's own transaction, before the row
+    changes. Then the entry's versions beyond the newest VERSIONS_KEPT are deleted."""
+    s.add(EntryVersion(user_id=row.user_id, kind=row.__tablename__, entry_id=row.id, by=by, why=why,
+                       request_id=REQUEST_ID.get(), before=json.dumps(version_of(row))))
+    s.flush()
+    oldest_kept = s.scalar(select(EntryVersion.id).where(*_versions(row)).order_by(EntryVersion.id.desc())
+                           .offset(VERSIONS_KEPT - 1).limit(1))
+    if oldest_kept is not None:
+        s.execute(delete(EntryVersion).where(*_versions(row), EntryVersion.id < oldest_kept)
+                  .execution_options(synchronize_session=False))
+
+
+def newest_version(s: Session, row) -> EntryVersion | None:
+    """The entry's newest version no older than VERSION_DAYS, or None: an older one is never put back."""
+    return s.scalar(select(EntryVersion).where(
+        *_versions(row), EntryVersion.created_at >= db.utcnow() - timedelta(days=VERSION_DAYS),
+    ).order_by(EntryVersion.id.desc()).limit(1))
+
+
+def read_version(model, version: EntryVersion) -> dict:
+    """A version's values as the row holds them: a date column's text is a date again."""
+    values = json.loads(version.before)
+    for column in model.__table__.columns:
+        if isinstance(column.type, Date) and values.get(column.name) is not None:
+            values[column.name] = date.fromisoformat(values[column.name])
+    return values
+
+
+def put_back(s: Session, row, values: dict) -> None:
+    """The row takes a version's values back (read_version): every column the version holds, and a lift session
+    its sets, which are left as they are when the version's are the row's own. updated_at is now. Never
+    deleted_at: a version does not hold it."""
+    for column in row.__table__.columns:
+        if column.name in values and column.name != "updated_at":
+            setattr(row, column.key, values[column.name])
+    if "sets" in values and values["sets"] != _sets(row):
+        row.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in values["sets"]]
+    row.updated_at = db.utcnow()
+    s.flush()
+    s.expire(row)  # what the row is joined to (its activity, its saved food, its sets) is read again
+
+
+def entry_changed(row, drawn_at) -> dict | None:
+    """entry_changed when the row changed after a web page drew it: drawn_at is the row's updated_at as that page
+    held it, as ISO text. Missing or malformed: None, and the write runs as it would without it."""
+    try:
+        stale = row.updated_at > datetime.fromisoformat(drawn_at)
+    except (TypeError, ValueError):
+        return None
+    if not stale:
+        return None
+    return error("entry_changed", "This entry changed since this page was drawn.",
+                 "Open it again and make the change.")
 
 
 def pair(old, new, quantity: str, unit: bool = True) -> tuple[str, str]:

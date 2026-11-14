@@ -19,9 +19,13 @@ log_food(user_id, data, by)
     - The duplicate guard compares the whole set, as log_lifts does: the same date and the same
       entries within 10 minutes return the first set with duplicate true.
 
-save_food(user_id, data, by)
+save_food(user_id, data, by[, drawn_at])
     data: name, serving_label, kcal_per_serving, grams_per_serving?. The same name (casefolded)
     updates the saved food; a deleted one comes back live.
+    - A save that changes a food that exists keeps the food as it stood (common.keep_version, contract
+      edit-history.md): restore_entry with undo_edit puts it back. A save that changes nothing writes nothing.
+    - drawn_at, from the web's edit form only: the food's updated_at as its page drew it. A food that changed
+      since is refused with entry_changed, and nothing is saved.
 
 find_food(user_id, query, limit=8)
     A read. The person's saved foods whose name holds the query, most logged first, then by name;
@@ -53,7 +57,7 @@ from app.models import IMPORTED, CardioEntry, FoodEntry, SavedFood, User
 from app.services import usda
 from app.services.common import (
     DUPLICATE_MINUTES, check_by, check_data, check_read_limit, check_write_limit, dedupe_key, duplicate_note,
-    entry_id, lock_user, no_account, not_found, owned, truthy,
+    entry_changed, entry_id, keep_version, lock_user, no_account, not_found, owned, truthy,
 )
 
 KIND = "food_entry"
@@ -333,7 +337,7 @@ def _first_set(s, user_id: int, on, key: str, size: int) -> list | None:
 
 # ---------------------------------------------------------------- saved foods
 
-def save_food(user_id: int, data: dict | None, by: str) -> dict:
+def save_food(user_id: int, data: dict | None, by: str, drawn_at=None) -> dict:
     """Keep a food for logging by id. Returns {kind: "saved_food", id, created, food, summary, links {foods}}
     or {error, message, fix}."""
     data, err = check_data(data)
@@ -368,12 +372,20 @@ def save_food(user_id: int, data: dict | None, by: str) -> dict:
         if created:
             food = SavedFood(user_id=user.id, name_key=name_key)
             s.add(food)
+        else:
+            stale = entry_changed(food, drawn_at)
+            if stale:
+                return stale
         was_deleted = not created and food.deleted_at is not None
-        food.name, food.serving_label = values["name"], values["serving_label"]
-        food.kcal_per_serving, food.grams_per_serving = values["kcal_per_serving"], values["grams_per_serving"]
-        food.deleted_at = None
-        food.updated_at = db.utcnow()
-        s.flush()
+        differs = created or any(getattr(food, field) != value for field, value in values.items())
+        if differs and not created:
+            keep_version(s, food, by)  # the food as it stands, before it changes
+        if differs or was_deleted:  # a save that changes nothing writes nothing, and updated_at stays
+            for field, value in values.items():
+                setattr(food, field, value)
+            food.deleted_at = None
+            food.updated_at = db.utcnow()
+            s.flush()
         grams = f", {formatting.show(food.grams_per_serving, 'grams')} a serving" if food.grams_per_serving else ""
         verb = "Saved" if created else ("Brought back and updated" if was_deleted else "Updated")
         return {"kind": "saved_food", "id": food.id, "created": created, "food": food_dict(food),

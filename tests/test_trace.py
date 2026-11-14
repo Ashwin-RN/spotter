@@ -141,9 +141,11 @@ def test_0005_adds_seven_nullable_columns_and_an_index_and_comes_down_again():
             assert "ix_call_log_request_id" in {i["name"] for i in inspect(c).get_indexes("call_log")}
             old = c.exec_driver_sql(f"SELECT function, {', '.join(TRACE)} FROM call_log").one()
             assert tuple(old) == ("whoami", *[None] * len(TRACE))  # the row already there keeps nulls
-            # The models match, but for the table 0006 adds (tests/test_idempotency.py holds them at 0006).
-            assert [(d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
-                ("add_table", "write_key")]
+            # The models match, but for the table 0006 adds and the table and index 0007 adds
+            # (tests/test_idempotency.py and tests/test_edit_history.py hold them there).
+            assert sorted((d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
+                == [("add_index", "ix_entry_version_user_id_kind_entry_id_id"), ("add_table", "entry_version"),
+                    ("add_table", "write_key")]
         command.downgrade(cfg, "0004")
         with engine.connect() as c:
             assert {col["name"] for col in inspect(c).get_columns("call_log")} == set(found) - set(TRACE)

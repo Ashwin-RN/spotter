@@ -206,7 +206,8 @@ class LocalServer:
 
     def new_person(self, zone: str, seeds: list[dict], switch: str | None = None) -> tuple[int, str, dict[str, int]]:
         """A fresh person with this time zone, this switch (None: the default) and these rows, whose
-        data may hold date placeholders. Returns (user id, token, seeded ids)."""
+        data may hold date placeholders and the ids of the rows seeded before them. Returns (user id,
+        token, seeded ids)."""
         from app import db, services
         from app.models import User
 
@@ -229,7 +230,11 @@ class LocalServer:
             if seed["service"] in judge.NO_DATA_SERVICES:
                 result = service(user_id)
             else:
-                result = service(user_id, judge.resolve(dict(seed["data"]), dates), "web")
+                data = judge.resolve(dict(seed["data"]), {**dates, **{f"seed.{k}": v for k, v in seeded.items()}})
+                if seed["service"] == "edit_entry":  # an edit of a row seeded before it
+                    result = service(user_id, data["kind"], data["entry_id"], data["changes"], "web")
+                else:
+                    result = service(user_id, data, "web")
             if "error" in result:
                 raise RuntimeError(f"seed {seed.get('as')} failed: {result['error']}: {result.get('message')}")
             if seed.get("as"):

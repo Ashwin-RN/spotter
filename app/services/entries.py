@@ -4,11 +4,13 @@ The kinds are the entry tables themselves (models.entry_models(), named by table
 later stage adds is readable, deletable and restorable here with no new code. A goal can also be
 read by id; it is never deleted, only closed with set_goal (status dropped).
 
-get_entry(user_id, kind, entry_id)       -> {kind, id, entry, links}
-edit_entry(user_id, kind, entry_id, changes, by)
+get_entry(user_id, kind, entry_id)       -> {kind, id, entry, links, updated_at}
+edit_entry(user_id, kind, entry_id, changes, by[, drawn_at])
                                          -> {kind, id, changed, before, after, summary, links[, note]}
 delete_entry(user_id, kind, entry_id)    -> {kind, id, deleted: true, entry, note}
-restore_entry(user_id, kind, entry_id)   -> {kind, id, restored: true, entry, replaced [entries][, note]}
+restore_entry(user_id, kind, entry_id[, by, undo_edit, allow_repeat])
+                                         -> {kind, id, restored: true, entry, replaced [entries][, note]}
+                                            with undo_edit, also {undone, redone, duplicate, summary[, before]}
 
 - Every lookup goes through common.owned(). Someone else's id, a deleted entry (for read and
   delete) and an id that does not exist all give the same not_found.
@@ -25,10 +27,27 @@ restore_entry(user_id, kind, entry_id)   -> {kind, id, restored: true, entry, re
   weigh-in (or a measurement of that kind) is refused with day_taken; nothing is replaced. The
   dedupe_key is worked out again, so a repeat of the new content is a duplicate. An imported row
   (logged_by "import") keeps the key it was imported under, so the same import never writes it again.
+- An edit keeps the row as it stood before it (common.keep_version, contract edit-history.md), and so does
+  save_food on a food that exists. restore_entry with undo_edit puts the newest kept version back on a live
+  entry: every stored column, a session's sets, a food entry's link, a cardio estimate. It keeps what it
+  replaces in turn. What it does goes by the newest version's why, and allow_repeat never undoes:
+    undo          the edit was undone. With allow_repeat, or once DUPLICATE_MINUTES have passed, the edit
+                  comes back (the way back), and what that replaces is kept as redo. Otherwise nothing
+                  changes: duplicate true.
+    edit or redo  the edit is in place. Without allow_repeat the undo runs, kept as undo. With it nothing
+                  changes: duplicate true.
+  The result says which happened: undone, redone or duplicate. An undo never replaces another entry: one
+  that would move a weigh-in or a measurement onto a day that holds another live one is refused with
+  day_taken, as an edit is, before anything is kept, and replaced is always empty. With undo_edit off,
+  restore_entry is what it was, but for one more sentence in not_deleted's fix.
+- A web edit form sends the entry's updated_at as its page drew it (drawn_at, from get_entry). An entry that
+  changed since is refused with entry_changed, under the lock, and nothing is saved.
 - Edit, delete and restore are writes: lock_user first, then common.check_write_limit.
 - An edit's summary names each change in words, every value through app.formatting: "Weigh-in
   changed: kg from 74.8 to 78.4." The entry's id is the result's id, never in the summary.
 """
+
+from datetime import timedelta
 
 from sqlalchemy import Index, select
 
@@ -39,7 +58,8 @@ from app.models import (
 from app.rules import error, quote
 from app.services import body, cardio, food, lifts, measurements
 from app.services.common import (
-    check_by, check_data, check_write_limit, exercises, lock_user, no_account, not_found, owned, pair, row_dict,
+    DUPLICATE_MINUTES, KIND_LABELS, check_by, check_data, check_write_limit, entry_changed, exercises, keep_version,
+    lock_user, newest_version, no_account, not_found, owned, pair, put_back, read_version, row_dict, truthy,
 )
 from app.services.goals import goal_dict
 from app.services.lifts import session_dict
@@ -61,6 +81,10 @@ SESSION_NOTE = "Bests are worked out from history: get_progress shows them."
 KCAL_NOTE = "The number is now the person's own: tagged you_said."
 REESTIMATE_NOTE = "The calorie estimate was worked out again, from body weight now."
 CARDIO_NUMBERS = ("minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal")
+UNDONE_NOTE = (f"This edit was already undone in the last {DUPLICATE_MINUTES} minutes, so nothing was changed. "
+               "To bring the edit back, send it again with allow_repeat: true.")
+IN_PLACE_NOTE = ("allow_repeat only brings back an edit that was undone, and this entry's last edit is in place. "
+                 "To undo it, send undo_edit without allow_repeat.")
 
 
 def entry_kinds() -> dict[str, type]:
@@ -132,7 +156,8 @@ def get_entry(user_id: int, kind: str, entry_id) -> dict:
         row = owned(s, model, user_id, entry_id)
         if row is None:
             return not_found(kind)
-        return {"kind": kind, "id": row.id, "entry": entry_dict(row), "links": _links(row)}
+        return {"kind": kind, "id": row.id, "entry": entry_dict(row), "links": _links(row),
+                "updated_at": row.updated_at.isoformat()}
 
 
 def delete_entry(user_id: int, kind: str, entry_id) -> dict:
@@ -155,7 +180,8 @@ def delete_entry(user_id: int, kind: str, entry_id) -> dict:
                 "note": "Deleted. restore_entry with the same kind and id brings it back."}
 
 
-def restore_entry(user_id: int, kind: str, entry_id) -> dict:
+def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo_edit: bool = False,
+                  allow_repeat: bool = False) -> dict:
     kinds = _deletable()
     model = _model(kinds, kind)
     if model is None:
@@ -166,12 +192,15 @@ def restore_entry(user_id: int, kind: str, entry_id) -> dict:
         limited = check_write_limit(s, user_id)
         if limited:
             return limited
+        if truthy(undo_edit):
+            return _undo_edit(s, model, kind, user_id, entry_id, by, allow_repeat)
         row = owned(s, model, user_id, entry_id, deleted=True)
         if row is None:
             return not_found(kind)
         if row.deleted_at is None:
             return error("not_deleted", "This entry is not deleted, so there is nothing to restore.",
-                         "Nothing to do: it is live. get_log shows it on its day.")
+                         "Nothing to do: it is live. get_log shows it on its day. To undo its last edit, send "
+                         "undo_edit true.")
         replaced = []
         for columns in _live_unique(model):
             replaced += list(s.scalars(select(model).where(
@@ -189,6 +218,45 @@ def restore_entry(user_id: int, kind: str, entry_id) -> dict:
             out["note"] = ("Restored. It took the place of the live entry for the same day, which is now deleted: "
                            "restore_entry with that id swaps them back.")
         return out
+
+
+def _undo_edit(s, model, kind: str, user_id: int, entry_id, by, allow_repeat) -> dict:
+    """restore_entry with undo_edit, under the lock and after the write limit: a live entry goes back to its
+    newest kept version, and what it held is kept as a version in turn (why undo, or redo for the way back).
+    See the module notes."""
+    err = check_by(by)
+    if err:
+        return err
+    row = owned(s, model, user_id, entry_id)
+    if row is None:
+        return not_found(kind)
+    version = newest_version(s, row)
+    if version is None:
+        return error("nothing_to_undo", "This entry has no earlier values kept.",
+                     f"Edit it with {'save_food' if kind == 'saved_food' else 'edit_entry'}.")
+    label, before = KIND_LABELS[kind][0].capitalize(), entry_dict(row)
+    out = {"kind": kind, "id": row.id, "restored": True, "entry": before, "replaced": [], "undone": False,
+           "redone": False, "duplicate": False}
+    back = version.why == "undo"  # the version to put back is what an undo replaced: this is the way back
+    nothing = None  # why this call changes nothing, and the note that says what to send
+    if truthy(allow_repeat):
+        if not back:  # allow_repeat never undoes: no edit is undone, so there is none to bring back
+            nothing = "the edit is in place", IN_PLACE_NOTE
+    elif back and version.created_at >= db.utcnow() - timedelta(minutes=DUPLICATE_MINUTES):
+        nothing = "the edit was already undone", UNDONE_NOTE  # the same undo, sent again
+    if nothing:
+        return {**out, "duplicate": True, "summary": f"{label}: {nothing[0]}, so nothing changed.",
+                "note": nothing[1]}
+    values = read_version(model, version)
+    if kind in ("bodyweight", "measurement") and values.get("date", row.date) != row.date:
+        # An undo never replaces another entry: a day that holds another live one refuses it, as it does an edit.
+        taken = _day_taken(s, model, row, values["date"], user_id, "then send the same call again")
+        if taken:
+            return taken
+    keep_version(s, row, by, "redo" if back else "undo")
+    put_back(s, row, values)
+    return {**out, "entry": entry_dict(row), "redone" if back else "undone": True, "before": before,
+            "summary": f"{label}: the edit is back." if back else f"{label}: the edit was undone."}
 
 
 # ---------------------------------------------------------------- edit
@@ -253,8 +321,9 @@ def _checked(field: str, value, row, s, today, kind: str) -> tuple[object, dict 
     return rules.bounded(field, value)
 
 
-def _day_taken(s, model, row, on, user_id: int) -> dict | None:
-    """day_taken when another live row of this person (and, for a measurement, this kind) sits on `on`."""
+def _day_taken(s, model, row, on, user_id: int, then: str = "or choose another date") -> dict | None:
+    """day_taken when another live row of this person (and, for a measurement, this kind) sits on `on`. `then` is
+    what the fix says after "first": an edit can choose another date, an undo can only be sent again."""
     same_day = select(model).where(model.user_id == user_id, model.date == on, model.deleted_at.is_(None),
                                    model.id != row.id)
     if model is Measurement:
@@ -264,18 +333,19 @@ def _day_taken(s, model, row, on, user_id: int) -> dict | None:
         return None
     what = "a weigh-in" if model is Bodyweight else f"a {measurements.kind_word(row.kind).lower()} measurement"
     return error("day_taken", f"{on.isoformat()} already has {what} (id {taken.id}).",
-                 f"Edit or delete {taken.id} first, or choose another date. Nothing was changed.",
+                 f"Edit or delete {taken.id} first, {then}. Nothing was changed.",
                  entry_id=taken.id)
 
 
-def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str) -> dict:
+def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str, drawn_at=None) -> dict:
     """Change one entry in place. changes holds only the fields to change:
     lift_session {date?, notes?, sets?}, bodyweight {date?, kg?}, measurement {date?, value?}.
     sets, when given, replace the whole set list, numbered per exercise in the order given.
 
     Returns {kind, id, changed [fields whose stored value differs], before, after, summary,
     links {day}[, note]} or {error, message, fix}. The same values again are a success with
-    changed []. A goal is edited with set_goal.
+    changed []. A goal is edited with set_goal. drawn_at, from a web form only: the entry's updated_at as
+    its page drew it. An entry that changed since is entry_changed.
     """
     if kind == "goal":
         return error("unknown_kind", "A goal is not edited here.",
@@ -309,6 +379,9 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
         row = owned(s, model, user.id, entry_id)
         if row is None:
             return not_found(kind)
+        stale = entry_changed(row, drawn_at)
+        if stale:
+            return stale
         today = users.today_for(user)
         before = entry_dict(row)
         new, errors = {}, []
@@ -385,6 +458,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str)
                 else:
                     old, now = _change(field, current[field], new[field], row, today)
                     parts.append(f"{field} from {old} to {now}{how}")
+        keep_version(s, row, by)  # every check has passed and something changes: the row as it stands is kept
         if "sets" in changed:
             row.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in new["sets"]]
         for field in changed:

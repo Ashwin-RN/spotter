@@ -159,7 +159,14 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
   set list, a weigh-in's kg or date, a measurement's value or date, a food entry's date, meal,
   description or kcal, a cardio entry's fields. Bests are worked out again from the whole history; a
   cardio estimate is worked out again; a food entry given a kcal becomes `you_said`. Moving a weigh-in or a measurement onto a day that already has one is refused, never
-  silently replaced. An edit keeps no old values: it cannot be undone, only edited again.
+  silently replaced. An edit keeps the values from before it: `restore_entry` with `undo_edit`
+  brings them back. The newest 10 are kept per entry, for 90 days. The same undo again within 10
+  minutes changes nothing and comes back with `duplicate` true. `allow_repeat` true brings back an
+  edit that was undone and never undoes one: send it only when the person wants the edit back. An
+  undo is itself an edit, so `undo_edit` again over 10 minutes later brings the edit back, and the
+  result says `redone`. A saved food that `save_food` changed is undone the same way, with kind
+  `saved_food`. An undo that would move a weigh-in or a measurement onto a day that has another
+  one is refused, as an edit is: nothing is replaced.
 - **Deletes.** Nothing is ever erased. Claude can delete only when the person has allowed it in
   Settings, and `restore_entry` undoes a delete.
 - **The write limit.** An account takes at most 120 writes in any 10 minutes, from the web and Claude
@@ -347,7 +354,7 @@ Nineteen functions, nothing else:
 | `get_log` | What the person logged, day by day, for 1 to 14 days. |
 | `log_measurement` | Records one measurement. |
 | `edit_entry` | Changes a session, a weigh-in, a measurement, a food entry or a cardio entry in place. |
-| `restore_entry` | Brings back a deleted or replaced entry. |
+| `restore_entry` | Brings back a deleted or replaced entry, or undoes an entry's last edit. |
 | `delete_entry` | Deletes an entry, when the person allows it. |
 | `find_food` | Looks a food up: saved foods and recent entries first, then USDA when it is on. |
 | `log_food` | Records what the person ate, every food in one call. |

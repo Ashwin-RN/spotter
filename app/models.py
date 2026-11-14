@@ -1,6 +1,7 @@
 """The v1 schema: every table for stages 2 to 5, as the stage 2 contract lists them, and the one column
 stage 5 added (goal.measurement_kind, migration 0003). Migration 0004 dropped one column from seven tables.
-Migration 0005 added the call log's trace columns, and 0006 the write keys (write_key).
+Migration 0005 added the call log's trace columns, 0006 the write keys (write_key), and 0007 the values an
+entry held before each edit (entry_version).
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -265,6 +266,26 @@ class WriteKey(Base):
     fingerprint: Mapped[str] = mapped_column(String(64))
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)  # null until the first answer is kept
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+
+
+class EntryVersion(Base):
+    """The values an entry held before an edit or an undo (migration 0007, contract edit-history.md): the row as it
+    stood, as JSON, a lift session's sets with it. Kept in the write's own transaction, before the row changes
+    (services.common.keep_version). kind is the entry's table and entry_id its id there, with no foreign key: the
+    kinds are six tables. Deleted with the account."""
+
+    __tablename__ = "entry_version"
+    __table_args__ = (Index("ix_entry_version_user_id_kind_entry_id_id", "user_id", "kind", "entry_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = _user_id()
+    kind: Mapped[str] = mapped_column(String(16))
+    entry_id: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+    by: Mapped[str] = mapped_column("by", String(8), quote=True)  # one of CALLERS. Quoted: BY is SQL's own word
+    why: Mapped[str] = mapped_column(String(8))  # edit, undo or redo
+    request_id: Mapped[str | None] = mapped_column(String(16), nullable=True)  # the call log's, null outside a request
+    before: Mapped[str] = mapped_column(Text)  # JSON
 
 
 class Measurement(EntryColumns, Base):

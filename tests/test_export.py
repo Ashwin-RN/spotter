@@ -14,7 +14,7 @@ from evals.four_weeks import four_weeks
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
 BOM = "\ufeff"
 FILES = ["account.csv", "lift_sessions.csv", "lift_sets.csv", "bodyweight.csv", "measurements.csv", "goals.csv",
-         "saved_foods.csv", "food_entries.csv", "cardio_entries.csv", "README.txt"]
+         "saved_foods.csv", "food_entries.csv", "cardio_entries.csv", "entry_versions.csv", "README.txt"]
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +33,8 @@ def one_of_everything(user_id: int) -> dict:
     ids["session"] = services.log_lifts(user_id, {"notes": "heavy, then light", "sets": [
         {"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
         {"exercise": "Bench Press", "weight_kg": 60, "reps": 8}]}, "claude")["id"]
-    ids["weigh_in"] = services.log_bodyweight(user_id, {"kg": 80.5}, "web")["id"]
+    ids["weigh_in"] = services.log_bodyweight(user_id, {"kg": 80.4}, "web")["id"]
+    services.edit_entry(user_id, "bodyweight", ids["weigh_in"], {"kg": 80.5}, "web")  # one row in entry_versions.csv
     ids["gone"] = services.log_bodyweight(user_id, {"kg": 81, "date": "2026-11-01"}, "web")["id"]
     services.delete_entry(user_id, "bodyweight", ids["gone"])
     services.log_measurement(user_id, {"kind": "waist", "value": 84}, "web")
@@ -56,8 +57,8 @@ def test_every_table_and_every_file(make_user):
     assert list(r["files"]) == FILES and list(r["rows"]) == FILES[:-1]
     assert r["rows"] == {"account.csv": 1, "lift_sessions.csv": 1, "lift_sets.csv": 2, "bodyweight.csv": 2,
                          "measurements.csv": 2, "goals.csv": 1, "saved_foods.csv": 1, "food_entries.csv": 2,
-                         "cardio_entries.csv": 1}
-    assert r["summary"] == "13 rows in 9 CSV files, deleted rows included, times in UTC."
+                         "cardio_entries.csv": 1, "entry_versions.csv": 1}
+    assert r["summary"] == "14 rows in 10 CSV files, deleted rows included, times in UTC."
     account = table(r["files"]["account.csv"])
     assert account == [{"account_id": str(user.id), "email": "asha@example.com", "name": "Asha",
                         "time_zone": "Asia/Kolkata", "calorie_target_kcal": "2200", "target_sessions_per_week": "",
@@ -157,7 +158,7 @@ def test_another_persons_rows_are_out(make_user):
 
 def test_every_table_the_person_owns_has_a_file():
     from app.services.export import TABLES
-    exported = {model.__tablename__ for model, _ in TABLES.values()} | {"lift_set"}
+    exported = {model.__tablename__ for model, _ in TABLES.values()} | {"lift_set", "entry_version"}
     # The call log holds no content. A write's key is Spotter's own plumbing, kept 24 hours (idempotency.md).
     owned = set(user_tables()) - {"call_log", "write_key"}
     assert owned <= exported
@@ -172,7 +173,7 @@ def test_no_account():
 
 UNIT_PARTS = {"kg", "kcal", "km", "kmh", "pct", "bpm", "minutes", "grams"}
 # Number columns with no unit to name: ids, counts, and a value whose unit is in its row's unit column.
-UNITLESS = {"id", "account_id", "session_id", "saved_food_id", "usda_fdc_id", "set_number", "reps", "servings",
+UNITLESS = {"id", "account_id", "session_id", "entry_id", "saved_food_id", "usda_fdc_id", "set_number", "reps", "servings",
             "target_sessions_per_week", "value", "start_value", "target_value"}
 NUMBER = re.compile(r"-?\d+(\.\d+)?")
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00")
