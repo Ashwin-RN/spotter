@@ -60,6 +60,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 | "Squat 100 by June" | A goal with a start, a target and the pace it needs |
 | "How am I doing?" | Your weight trend, average calories, sessions and cardio minutes |
 | "Am I on track?" | Each open goal's needed pace, its pace so far and its projected date |
+| "Tell Spotter's maker the progress chart is confusing" | The note is kept for the person who runs Spotter, with what you were doing, what you expected and what happened. No reply comes back through Spotter |
 | "Bring my weigh-ins over from my old app", with its export | A preview first, which writes nothing: what would go in, what is already there, what was refused. The assistant is told to write only when you say yes |
 
 ## Under the hood
@@ -69,6 +70,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 - Every write locks the person's row first, counts against a write limit, and passes the same checks whether it came from the assistant or a form.
 - Every write is safe to send twice. A call may carry a key of its own: the same key and call again writes nothing and gets the first answer back. Every form that writes carries a hidden key, so a double click saves once. Answers are kept for a day.
 - An edit keeps what it replaces. The values from before each edit are kept, the newest 10 an entry for 90 days, and one call or one click undoes the last edit. An edit form older than the entry's last change is refused.
+- Feedback goes through the assistant. A note is sent only when the person asks or says yes to an offer, with a cap a person and the same note saved once. The owner alone reads the notes, each with the names of the functions that account called around then, never what was logged. A note is in the person's export and goes with the account.
 - Safety limits: a sized connection pool, a time limit on every query, lock wait and idle transaction, a read limit and a page limit per person, and a 1 MiB cap on every request. A database that is too busy answers that it is busy, not with a crash.
 - A call log with a trace: one row per call, with a request id that is also on the log lines and the response, the names of the fields sent and never a value, whether it wrote, and where a failed call stopped. Rows are deleted after 90 days.
 - A docs-only change runs the docs tests, and a small code change runs the tests for the code it touches. The whole suite runs with warnings as errors on a clean export before a big push, and about once in every four or five pushes otherwise.

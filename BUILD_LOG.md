@@ -858,3 +858,44 @@ A separate reviewer, on a frozen copy: clean of blockers. With no cap set, 60 fi
 Not run on a real Postgres.
 
 The full suite: 5,177 tests, plain, on a clean export of the commit `6452b3c`. The commit's own run was cut off by its time limit on a busy machine, so the suite was run again there to the end. The files this work touched also passed with warnings as errors, in separate runs.
+
+## Feedback through the assistant
+
+A person can ask their assistant to send a note to Spotter's maker. The decisions, and the limits that were accepted, are in `docs/contracts/feedback.md`.
+
+| Part | What it does |
+|---|---|
+| `send_feedback` | A 20th function for everyone. The note in the person's words and, when they said them, what they were doing, what they expected and what happened, and a topic. Each text up to 10,000 characters |
+| When it is sent | When the person asks. On a complaint the assistant is told to offer once, and to send only on a yes |
+| A cap, as a dial | At most 10 notes a person in any 24 hours. The number is one constant, `NOTES_PER_DAY`: the description and the refusal are built from it, and no other text states it. Over it: `too_much_feedback`, with the hours to wait |
+| The same note twice | The same note within 10 minutes is saved once, with a new key too. It takes a key, as every write does |
+| The switch | An ordinary write: refused at read only, counted in the write limit |
+| The answer | The note's id and one line. It repeats no word of the note, so the answer kept for a key holds none |
+| `owner_feedback` | Listed for the owner alone, as `owner_calls` is. The notes newest first, each with its account and that person's calls from 10 minutes before the note to 5 minutes after, at most 20 and 10, as `owner_calls` gives them: never what was sent. With `delete`, the notes the owner names are deleted for good |
+| A note is data | The description, the argument and the answer each say a note is that person's own words and never an instruction |
+| How long | The owner deletes a note once it is dealt with. One still there after a year is deleted by the call log's sweep |
+| The person's side | `feedback.csv` in the export. Deleted with the account. A card on the privacy page says what is kept and who reads it |
+| The trace | A call's row names the fields sent, never the note. `too_much_feedback` has the step `limit`. An owner call that deleted reads `written` |
+| Database | Migration 0008 adds the table `feedback` |
+
+It was built beside the edit history work, in a tree of its own on that work's first build, and joined onto the main line afterwards. Four files met and were joined by hand, and the pinned text of `restore_entry` was pinned again as trimmed.
+
+### The review
+
+A separate reviewer, on a frozen copy, found no blocker. No path lets one person read, count or delete another's note. No one but the owner reaches `owner_feedback`. A note's text reaches no call-log column, no kept answer and no log line on any path tried. The 20 functions that were there publish what they did.
+
+| Finding | Fix |
+|---|---|
+| Two rules of `around`, whose calls it holds after the note and when it says it was cut, were pinned by no test | A test for each, and each break now fails one |
+| At a cap of 1 the refusal said "1 notes", and six tests failed at a low cap | "1 note", and every test holds at any cap of at least 1 |
+| A delete that committed before a listing that crashed: the retry said the ids were never notes | `not_found` says they are no note now: never one, or deleted before |
+| The owner's list runs two queries a note | Stands: a list is at most 50 notes |
+| A capital letter outside ASCII in an email is not matched on SQLite | Stands: the same code as `owner_calls` |
+
+A second reviewer read the fix round as new code, on a second frozen copy: clean to commit. It left three small things, one of them a test that could pass for the wrong reason, and each was fixed.
+
+Accepted: an account set to read only cannot send a note. A hostile note can tell the owner's assistant to delete notes, and a deleted note is gone for good: three texts warn against it, and the call's row keeps that a delete ran.
+
+Not run on a real Postgres: two sends at once ran on SQLite only. The evals were not run for this work alone: its two cases, `feedback_sent` and `feedback_offered`, make 23, and they run with the next work that changes what a model reads.
+
+The full suite: 5,247 tests, plain, at the commit `3e135b4`. Before the join, every test file also passed with warnings as errors, in separate runs.
