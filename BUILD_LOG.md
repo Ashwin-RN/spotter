@@ -792,3 +792,49 @@ Every write function's schema gained an argument, which is text a model reads. A
 The one failure is `import_unknown_lift`, its first run, "the reply asks nothing". The reply wrote nothing, named the lift, would not guess and put the choice to the person, with no question mark. It is the false fail of the question-mark check that the import's own runs recorded, in a case this work does not touch.
 
 The full suite: 5,059 tests, plain, at the commit. Every test file also passed with warnings as errors, in separate runs.
+
+## An edit keeps what it replaces
+
+An edit used to overwrite the row and keep nothing. Now the values from before each edit are kept, and one call or one click puts the last ones back. The decisions, and the limits that were accepted, are in `docs/contracts/edit-history.md`.
+
+| Part | What it does |
+|---|---|
+| What is kept | Every `edit_entry` that changes something, on the five entry kinds, and every `save_food` that changes a food that exists, keeps the row as it stood: a lift session's sets, a food entry's link to its saved or USDA food, a cardio estimate. It is kept in the edit's own transaction, after every check has passed. An edit that changes nothing keeps nothing |
+| Undo | `restore_entry` takes one new optional argument, `undo_edit`. It puts back the values from before the last edit, and keeps what it replaces, so nothing is lost |
+| Once | A second undo changes nothing, at any age, and comes back with `duplicate` true. To get an edit back, the entry is edited again |
+| A taken day | An undo that would move a weigh-in or a measurement onto a day that holds another one is refused with `day_taken`, as an edit is. Nothing is replaced |
+| How much | The newest 10 versions of an entry, each for 90 days. The call log's sweep deletes older ones |
+| The web | After an edit lands, the page offers Undo, as it does after a delete. After the undo it says so in a plain line with no button |
+| A stale form | Both edit forms carry the entry's `updated_at` as the page drew it. A form older than the entry's last change is refused with `entry_changed`, and nothing is saved. Before this, such a form overwrote the newer change without a word |
+| The export | One file more, `entry_versions.csv`: each kept version, with names for what the shared lists hold |
+| The trace | `undo_edit` is a known field name and `entry_changed` has its step. A version's row holds the request's id, so an edit and its trace row can be joined |
+| The privacy page | A card of its own says what an edit keeps, how many and for how long |
+| Database | Migration 0007 adds the table `entry_version`, deleted with the account |
+
+### Built, then cut back
+
+The first build did more. After an undo it offered a way back: a second argument, a third kind of version, a Redo button and a 10-minute rule to tell a retry from a wish. One of the first review's two main findings, and the re-check's first, were about that way back. The owner read the card and asked for less: an immediate undo, and to get an edit back the entry is edited again. A trim round took the way back out the same day, and the second and third rows of the table below went with it.
+
+### The review
+
+Three separate reviewers, each on a frozen copy: the build, the fix round, and the trim. None found a reach into another account or a refusal that writes.
+
+| Finding | Fix |
+|---|---|
+| On a page, the Undo of an edit could set another weigh-in aside, and the page never said so. No page brings the other one back | An undo never replaces another entry: it is refused with `day_taken`, through the assistant too |
+| An undo sent with the way-back argument, twice, undid and then brought the edit back | Gone with the trim: there is no way back, and a second undo changes nothing |
+| A late plain undo sent twice turned the entry round | The same |
+| The food edit page read its values and its stamp in two reads, so a save between them was overwritten | The stamp is read first. The worst case is a refusal the person did not need |
+| Two decisions were pinned by no test | A test for each |
+| The export wrote a person's own letters as escapes | They are written as typed |
+| An older fault, not of this work: on a page, bringing a deleted weigh-in back onto a day that has another one set that one aside without a word | On a page it is refused, and both stay as they were. Through the assistant the swap is unchanged: its answer names what was set aside |
+
+The re-check of the fix round broke the code 17 times, and each break failed a test. The re-check of the trim found nothing of the way back alive in code or in any text a person or a model reads, and 15 more breaks each failed a test. A last small round made one landing true, Undo pressed again from an old page, and removed leftovers of the way back.
+
+Not run on a real Postgres at this commit: migration 0007 ran up and down on SQLite only.
+
+### The eval run
+
+`restore_entry`'s schema and the can-and-cant resource are text a model reads, and one case was added: a weigh-in edited by mistake, which the person asks to undo. All 21 cases, 3 runs each, on `claude-opus-5-5`, twice on 2026-11-14. At `fde0704`, the build with its fix round: 63 of 63, $9.0927 at list price. After the trim, at `d890103`, from 17:36:49 to 17:51:43: 63 of 63, $9.3467.
+
+The full suite: 5,172 tests, plain, at `d890103` and again at `a04b909`, the last round. The files of the last round also passed with warnings as errors, in separate runs.
