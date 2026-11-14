@@ -38,7 +38,7 @@ changed within a day and one full run cost three times the estimate. Both below 
 | claude-fable-5-2 (later that day) | 8 to 50 | 91,000 to 179,000 | $0.26 to $0.79 | measured: about 17 minutes of runs, $22.41 |
 
 - Most tokens are cached reads of the CLI's own system prompt and the tool schemas: eighteen when this
-  was measured, nineteen since `import_entries`.
+  was measured, nineteen since `import_entries`, twenty since `send_feedback`.
 - The model line under the table says which model ran. Pin one with `--model` to compare runs.
 - The cost is the CLI's list-price figure. On a subscription that is usage against the plan's limits, not
   a bill.
@@ -118,7 +118,9 @@ record cannot be talked round.
   - `edit_entry` edits a row seeded before it, so the person has an edit to undo. Its `data` is
     `{kind, entry_id, changes}`, all three, and `entry_id` is that row's `{{seed.<as>}}`.
 - `db` checks the person's live rows, or with `"state": "deleted"` the soft-deleted ones.
-  - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`, `goal`.
+  - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`, `goal`,
+    `feedback`.
+  - A note is never kept as deleted: a deleted note's row is gone. So every feedback row is live.
   - A goal has no delete, so every goal row is live. Check `status` instead.
 
 ### Placeholders
@@ -179,10 +181,13 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `import_again` | I checked the preview, write them, with the same export (the five rows already imported) | `import_entries` called with `weight_unit` lb; the reply says "already"; 5 live weigh-ins, all `import`, none deleted |
 | `import_unknown_lift` | Import my lifts from a Strong export of three Zorbinator Press sets at 20 kg | `list_exercises` or `import_entries` called; the reply asks and names Zorbinator; no lift session |
 | `undo_edit` | I changed today's weigh-in by mistake. Undo that change. (a weigh-in of 80 kg, then edited to 85) | `restore_entry` with kind `bodyweight`, that weigh-in's id and `undo_edit` true, one success; the weigh-in holds 80 again |
+| `feedback_sent` | Send feedback to Spotter's maker about a confusing progress chart, with what they were doing, what they expected and what happened | `send_feedback` called, one success; one feedback row |
+| `feedback_offered` | The progress chart in Spotter is confusing (a complaint, nothing asked for) | `send_feedback` never called; no feedback row; the reply says "feedback", "maker" or "runs Spotter" |
 
-"No write function" is the twelve writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
+"No write function" is the thirteen writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
 `log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,
-`restore_entry`, `delete_entry`, `import_entries`. A write added later must be added to those lists.
+`restore_entry`, `delete_entry`, `import_entries`, `send_feedback`. A write added later must be added to those
+lists.
 
 ### What the six stage 5 cases prove, and what they do not
 

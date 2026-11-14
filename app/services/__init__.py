@@ -19,10 +19,13 @@ One module per area, so each later stage adds its own:
   imports       import_entries (history from another app, many dated rows a call)
   owner         owner_calls (the call log, for Spotter's owner alone: it reads every account, so it takes no
                 user_id)
+  feedback      send_feedback (a note to Spotter's maker), owner_feedback (the notes, for Spotter's owner alone:
+                no user_id either)
   common        the by-id lookup, the user-row lock, the write limit, the read throttle, the duplicate guard
 
 Every public function takes the signed-in person's user_id (the account row id) first, and writes
-take `by` ("web" or "claude"), stored as logged_by (an import stores "import"). Each returns a plain JSON-ready dict: the result,
+take `by` ("web" or "claude"), stored as logged_by (an import stores "import"), but send_feedback, which only
+MCP calls. Each returns a plain JSON-ready dict: the result,
 or {error, message, fix}, where the fix says what to send instead. A set_goal refusal about one input
 also names it in field. Nothing here takes a request or a
 site address: links come from app.links. Dates come from users.today_for, times from db.utcnow.
@@ -39,6 +42,7 @@ from app.services.common import (
 from app.services.entries import delete_entry, edit_entry, entry_kinds, get_entry, restore_entry
 from app.services.cardio import get_cardio, log_cardio
 from app.services.export import export_data
+from app.services.feedback import owner_feedback, send_feedback
 from app.services.food import find_food, list_saved_foods, log_food, save_food
 from app.services.goals import get_goals, goal_charts, set_goal
 from app.services.imports import import_entries
@@ -54,6 +58,6 @@ __all__ = [
     "account_empty", "delete_account", "delete_entry", "edit_entry", "entry_kinds", "export_data", "find_food",
     "get_cardio", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress", "get_trends",
     "import_entries", "list_exercises", "list_saved_foods",
-    "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "owner_calls",
-    "restore_entry", "save_food", "set_claude_can", "set_goal", "update_settings", "whoami",
+    "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "owner_calls", "owner_feedback",
+    "restore_entry", "save_food", "send_feedback", "set_claude_can", "set_goal", "update_settings", "whoami",
 ]

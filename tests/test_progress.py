@@ -441,11 +441,12 @@ def test_list_exercises_and_filters():
 
 # ---------------------------------------------------------------- texts name only functions Claude has
 
-# The nineteen functions Claude is offered: stage 5's eighteen and stage 6's import_entries. A later stage
-# extends this list.
+# The twenty functions Claude is offered: stage 5's eighteen, stage 6's import_entries and feedback's
+# send_feedback. A later stage extends this list. owner_calls and owner_feedback are the owner's alone.
 OFFERED = ("whoami", "list_exercises", "get_progress", "get_log", "log_lifts", "log_bodyweight", "set_goal",
            "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
-           "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries")
+           "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries",
+           "send_feedback")
 # Functions that exist but Claude cannot call: every other public service function (get_entry,
 # set_claude_can, which is the Settings page's alone, entry_kinds, and stage 5's web-only ones:
 # the empty-account read, export, delete account, the Foods page's list).

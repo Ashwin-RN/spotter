@@ -141,8 +141,10 @@ MARKED_CALLS = [
     ("import_entries", {"rows": [{"kind": MARKER, "date": MARKER, "notes": MARKER, "measurement_kind": MARKER,
                                   "exercise": MARKER}], "weight_unit": MARKER, "distance_unit": MARKER,
                         "length_unit": MARKER}),
+    # Every text of a note, and a topic that is no topic: refused (feedback.md decision 15).
+    ("send_feedback", {"text": MARKER, "doing": MARKER, "expected": MARKER, "happened": MARKER, "topic": MARKER}),
 ]
-REFUSED = 16  # the marked calls the services refuse. Was 15, before import_entries
+REFUSED = 17  # the marked calls the services refuse. Was 16, before send_feedback
 
 
 def string_fields(schema: dict) -> set[str]:

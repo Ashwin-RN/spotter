@@ -12,7 +12,8 @@ owner_calls(data) -> {hours, accounts, calls}, in this order of precedence:
 hours (1 to 2,160, 24 when left out) is the window, limit (1 to 200, 50 when left out) the most lines or calls,
 failed_only keeps the failed calls (and the lines with one). A failed call is not ok and has finished: a call
 still running (calllog.IN_PROGRESS) is not failed. The MCP schema holds the ranges.
-A call gives its trace: never an argument's value (app/calllog.py).
+A call gives its trace: never an argument's value (app/calllog.py). call_row is that one shape of a call, and
+utc its time: owner_feedback's around gives calls the same way (app/services/feedback.py).
 """
 
 from datetime import timedelta
@@ -69,18 +70,18 @@ def _lines(s, since, failed_only: bool, limit: int, ids: list[int] | None = None
     found = [*s.execute(lines), *(s.execute(nobody) if nobody is not None else [])]
     found.sort(key=lambda line: (line[5] is None, -(line[5].timestamp() if line[5] else 0)))
     return [{"account_id": i, "email": email, "name": name, "calls": n, "failed_calls": bad,
-             "last_call": _utc(at)} for i, email, name, n, bad, at in found[:limit]]
+             "last_call": utc(at)} for i, email, name, n, bad, at in found[:limit]]
 
 
 def _answer(hours: int | None, accounts: list | None, calls) -> dict:
-    return {"hours": hours, "accounts": accounts, "calls": None if calls is None else [_call(c) for c in calls]}
+    return {"hours": hours, "accounts": accounts, "calls": None if calls is None else [call_row(c) for c in calls]}
 
 
-def _call(c: CallLog) -> dict:
-    return {"started_at": _utc(c.started_at), "caller": c.caller, "function": c.function, "ok": c.ok,
+def call_row(c: CallLog) -> dict:
+    return {"started_at": utc(c.started_at), "caller": c.caller, "function": c.function, "ok": c.ok,
             "error": c.error_code, "outcome": c.outcome, "step": c.step, "frame": c.frame, "tried": c.tried,
             "notes": c.notes, "ms": c.ms, "result_bytes": c.result_bytes, "request_id": c.request_id}
 
 
-def _utc(at) -> str | None:
+def utc(at) -> str | None:
     return None if at is None else at.strftime("%Y-%m-%dT%H:%M:%SZ")

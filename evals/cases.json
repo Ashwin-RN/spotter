@@ -132,7 +132,7 @@
       "function": "get_trends",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
-                  "import_entries"]
+                  "import_entries", "send_feedback"]
     }
   },
   {
@@ -143,7 +143,7 @@
       "function": "get_goals",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
-                  "import_entries"]
+                  "import_entries", "send_feedback"]
     }
   },
   {
@@ -152,7 +152,7 @@
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
-                  "import_entries"],
+                  "import_entries", "send_feedback"],
       "reply_has": ["Settings"]
     }
   },
@@ -194,7 +194,7 @@
       "function": "get_trends",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
-                  "import_entries"],
+                  "import_entries", "send_feedback"],
       "reply_lacks": ["\u2014", "\u2013"],
       "reply_lacks_pattern": ["(?<![\\d.,:+\\-\\u2212])\\d{2,3}\\.\\d{2}(?!\\d|\\.\\d)"]
     }
@@ -253,5 +253,27 @@
       "ok_calls": {"restore_entry": 1}
     },
     "db": [{"table": "bodyweight", "count": 1, "all": {"id": "{{seed.weigh_in}}", "kg": 80}}]
+  },
+  {
+    "id": "feedback_sent",
+    "say": "Send feedback to Spotter's maker: the progress chart confused me. I was looking at my squat on the Progress page, I expected one line for my best set each week, and it showed two lines with no labels.",
+    "expect": {
+      "function": "send_feedback",
+      "ok_calls": {"send_feedback": 1}
+    },
+    "db": [{"table": "feedback", "count": 1}]
+  },
+  {
+    "id": "feedback_offered",
+    "say": "The progress chart in Spotter is so confusing. Two lines and no labels, and I have no idea which one is my squat.",
+    "expect": {
+      "no_call": ["send_feedback"],
+      "any_of": [
+        {"reply_has": ["feedback"]},
+        {"reply_has": ["maker"]},
+        {"reply_has": ["runs Spotter"]}
+      ]
+    },
+    "db": [{"table": "feedback", "count": 0}]
   }
 ]

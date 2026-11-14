@@ -72,7 +72,8 @@ SWITCHES = ("read", "log", "log_delete")
 SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "set_goal", "import_entries", "edit_entry"}
 EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
 NO_DATA_SERVICES = {"four_weeks"}  # called as seed_service(name)(user_id): see seed_service
-DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal"}
+DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",
+             "feedback"}
 _PLACEHOLDER = re.compile(r"^\{\{\s*([a-z_]+(?:\.[A-Za-z0-9_]+|:[0-9]+)?)\s*\}\}$")
 
 

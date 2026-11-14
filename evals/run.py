@@ -31,7 +31,8 @@ from evals.issuer import DOMAIN, RESOURCE, FakeProvider, Key, claims, sign
 from evals.recorder import CallRecorder
 
 RUN_TIMEOUT = 180  # seconds per CLI run
-TABLES = ("food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal")
+TABLES = ("food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",
+          "feedback")
 
 # Set by the Claude Code session this may be started from. They make a child CLI think it is part of that
 # session (or point it at its IDE and messaging sockets), so they are dropped: each run then is what it

@@ -93,6 +93,7 @@ CALLS = {
     "restore_entry": lambda account: {"kind": "bodyweight", "entry_id": a_deleted_weigh_in(account)},
     "import_entries": lambda account: {"rows": [{"kind": "bodyweight", "date": day(-3), "weight": 80}],
                                        "weight_unit": "kg", "dry_run": False},
+    "send_feedback": lambda account: {"text": "The chart is confusing."},  # feedback.md decision 7
 }
 
 
@@ -106,8 +107,8 @@ def writer(http):
     return http, token, account
 
 
-def test_the_table_of_calls_covers_the_twelve_write_functions():
-    assert set(CALLS) == set(WRITES) and len(WRITES) == 12
+def test_the_table_of_calls_covers_the_thirteen_write_functions():  # was twelve: send_feedback (feedback.md 3)
+    assert set(CALLS) == set(WRITES) and len(WRITES) == 13
 
 
 # ---------------------------------------------------------------- decisions 4, 5 and 14: the same call again
@@ -404,7 +405,11 @@ READS = {"set_goal": "get_goals", "update_settings": "whoami", "save_food": "fin
          "restore_entry": "get_log, or find_food for a saved food"}
 
 
-@pytest.mark.parametrize("name", WRITES)
+# send_feedback has no read to name: tests/test_feedback.py holds its own fix (feedback.md decision 7).
+READ_BACKED = [name for name in WRITES if name != "send_feedback"]
+
+
+@pytest.mark.parametrize("name", READ_BACKED)
 def test_already_done_names_the_read_that_shows_what_the_write_did(writer, name):
     http, token, account = writer
     arguments = {**CALLS[name](account), "key": K}
@@ -416,7 +421,7 @@ def test_already_done_names_the_read_that_shows_what_the_write_did(writer, name)
         "fix": f"Read it back with {read}. Send a new key for a new write."}
     named = re.findall(r"whoami|[a-z]+_[a-z]+", read)  # each a function there is, which a read-only assistant may call
     assert named and all(mcp_server.NEEDS[function] == "read" for function in named)
-    assert sum(common.READ_BACK.get(write, "get_log") == "get_log" for write in WRITES) == 7
+    assert sum(common.READ_BACK.get(write, "get_log") == "get_log" for write in READ_BACKED) == 7
 
 
 @pytest.mark.parametrize("name", sorted(READS))
@@ -868,9 +873,12 @@ def test_0006_adds_the_key_table_the_models_match_and_it_comes_down_again():
             assert [u["column_names"] for u in inspect(c).get_unique_constraints("write_key")] == [["user_id", "key"]]
             [owner] = inspect(c).get_foreign_keys("write_key")
             assert (owner["referred_table"], owner["options"]) == ("user", {"ondelete": "CASCADE"})
-            # The models match, but for the table and index 0007 adds (tests/test_edit_history.py holds them there).
+            # The models match, but for the tables and indexes 0007 and 0008 add (tests/test_edit_history.py and
+            # tests/test_feedback.py hold them there).
             assert sorted((d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
-                == [("add_index", "ix_entry_version_user_id_kind_entry_id_id"), ("add_table", "entry_version")]
+                == [("add_index", "ix_entry_version_user_id_kind_entry_id_id"),
+                    ("add_index", "ix_feedback_user_id_created_at"), ("add_table", "entry_version"),
+                    ("add_table", "feedback")]
         with engine.begin() as c:
             for user, key in ((1, "one-key-01"), (1, "two-key-02"), (2, "one-key-01")):  # one row per person and key
                 c.exec_driver_sql(row, (user, key, now))

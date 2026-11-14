@@ -40,8 +40,8 @@ WEB = {"workos_client_id": CLIENT, "workos_api_key": API_KEY}
 PROVIDER = "https://provider.example/authorize"
 CODE = "code-one-time-5e2c"
 METADATA_PATH = "/.well-known/oauth-protected-resource/mcp"
-# The functions the landing counts: every one but owner_calls, the owner's alone (trace.md decision 16).
-OFFERED = len(mcp_server.NEEDS) - 1
+# The functions the landing counts: every one but the owner's two (feedback.md decision 13).
+OFFERED = len(mcp_server.NEEDS) - len(mcp_server.OWNER_FUNCTIONS)
 
 
 class FakeSeam:

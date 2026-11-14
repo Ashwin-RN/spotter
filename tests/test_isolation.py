@@ -47,6 +47,9 @@ EXEMPT = {
                      "restore_entry reaches one only through the person's own entry, by owned(), and every read and "
                      "delete names the person's id. tests/test_edit_history.py holds that one person can never "
                      "undo, read or export another's version.",
+    "feedback": "A note sent to Spotter's maker (feedback.md): no function takes a note's id but the owner's delete. "
+                "send_feedback reads and writes by the person's id, and tests/test_feedback.py holds that one person "
+                "never reads another's note.",
 }
 
 # Tables with no user_id of their own, owned through a parent that has one.

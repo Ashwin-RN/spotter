@@ -1149,7 +1149,7 @@ def test_the_export_has_a_file_of_the_versions_with_the_values_as_json_and_no_hi
     edit("cardio_entry", uid, run)
     edit("food_entry", uid, dal)
     exported = services.export_data(uid)
-    assert list(exported["files"])[-2:] == ["entry_versions.csv", "README.txt"]
+    assert list(exported["files"])[-3:] == ["entry_versions.csv", "feedback.csv", "README.txt"]  # feedback.md 11
     assert exported["rows"]["entry_versions.csv"] == 5
     kept = table(exported["files"]["entry_versions.csv"])
     assert [list(row) for row in kept] == [["kind", "entry_id", "created_at", "by", "why", "before"]] * 5
@@ -1304,7 +1304,9 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
             [owner] = inspect(c).get_foreign_keys("entry_version")  # the person only: entry_id names one of six tables
             assert (owner["constrained_columns"], owner["referred_table"], owner["options"]) == (
                 ["user_id"], "user", {"ondelete": "CASCADE"})
-            assert compare_metadata(MigrationContext.configure(c), Base.metadata) == []  # the models match
+            # The models match, but for the table and index 0008 adds (tests/test_feedback.py holds them there).
+            assert sorted((d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
+                == [("add_index", "ix_feedback_user_id_created_at"), ("add_table", "feedback")]
         with engine.begin() as c:
             for user, entry in ((1, 5), (1, 5), (2, 5), (2, 999999)):  # many for one entry, and an id no table holds
                 c.exec_driver_sql(row, (user, entry, now))
@@ -1320,7 +1322,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0007"
+    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0008"  # feedback.md
 
 
 def test_every_kind_s_table_name_fits_the_version_s_kind_column():
@@ -1361,4 +1363,4 @@ def test_the_privacy_page_says_what_an_edit_keeps_for_how_long_and_that_it_is_ex
     # The Export card says what is not in the export, and that is still so.
     [exports] = [c for c in cards if ">Export</h2>" in c]
     assert "The log of calls is not in it, and the answers kept for a day are not in it." in exports
-    assert export.ORDER[-1] == "entry_versions.csv"
+    assert export.ORDER[-2:] == ("entry_versions.csv", "feedback.csv")  # feedback.md decision 11 comes after

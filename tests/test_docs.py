@@ -89,10 +89,10 @@ def readme() -> str:
 
 
 def test_the_function_count_is_the_servers(readme):
-    from app.mcp_server import NEEDS
+    from app.mcp_server import NEEDS, OWNER_FUNCTIONS
     counts = function_counts(readme)
     assert counts, "README.md states no MCP function count"
-    offered = len(NEEDS) - 1  # every function but owner_calls, the owner's alone (trace.md decision 16)
+    offered = len(NEEDS) - len(OWNER_FUNCTIONS)  # every function but the owner's two (feedback.md decision 13)
     assert set(counts) == {offered}, f"README.md says {counts}, the server offers {offered}"
 
 

@@ -250,7 +250,8 @@ def test_spotter_logs_through_its_own_handler_added_once(provider):
 
 FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings",
              "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
-             "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries"]
+             "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries",
+             "send_feedback"]  # feedback.md decision 2: the twentieth, after the nineteen
 READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
@@ -402,6 +403,8 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("log_bodyweight", {"kg": 80}, as_token=one_token)
     keep("get_trends", as_token=one_token)
     assert seen["get_trends"][-1]["note"] and seen["get_trends"][-1]["bodyweight"]["rate_per_week"] is None
+    keep("send_feedback", {"text": "The chart is confusing.", "topic": "pages"})  # saved (feedback.md decision 2)
+    keep("send_feedback", {"text": "The chart is confusing.", "topic": "pages"})  # the same note again: duplicate
     # import_entries, last, so no read above sees its rows: a preview, the real run, the same rows again, and a
     # run whose every row fails (no date passed: from, to and the day link are null or absent).
     keep("import_entries", {"rows": import_rows(today), **IMPORT_UNITS})  # dry_run left out: by_row, a null id
@@ -866,6 +869,7 @@ OPTIONAL_ARGUMENTS = {
     "get_trends": {},
     "get_goals": {"include_closed": True},
     "import_entries": {"dry_run": False, "weight_unit": "lb", "distance_unit": "mi", "length_unit": "in"},
+    "send_feedback": {"doing": "Doing", "expected": "Expected", "happened": "Happened", "topic": "pages"},
 }
 REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
             "log_measurement": {"kind": "waist", "value": 84.5},
@@ -882,7 +886,8 @@ REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
                                         {"kind": "food_entry", "date": "2026-01-03",
                                          "entries": [{"description": "Oats", "kcal": 350.0, "meal": "breakfast"}]},
                                         {"kind": "cardio_entry", "date": "2026-01-04", "exercise": "Outdoor Run",
-                                         "minutes": 30.0, "distance": 3.1, "speed": 6.2}]}}
+                                         "minutes": 30.0, "distance": 3.1, "speed": 6.2}]},
+            "send_feedback": {"text": "Text"}}
 DATA_WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "log_food",
                "save_food", "log_cardio", "import_entries"}
 
@@ -921,6 +926,8 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
         return (account, arguments["kind"], arguments["entry_id"], "claude"), flags
     if name == "delete_entry":
         return (account, arguments["kind"], arguments["entry_id"]), {}
+    if name == "send_feedback":  # no by: a note comes only through MCP (feedback.md R3)
+        return (account, arguments), {}
     return (account,), {}
 
 
@@ -1238,15 +1245,17 @@ CONTRACT_NEEDS = {
     "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
     "get_trends": "read", "get_goals": "read",
     "import_entries": "log",
+    "send_feedback": "log",  # feedback.md decision 3
 }
 ALLOWS = {"read": {"read"}, "log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}
 
 
 def test_every_registered_function_has_a_level_and_every_level_a_function(http):
     registered = {t["name"] for t in tool_list(http, sign())}
-    # owner_calls is the owner's alone, at read, and in no one else's list (trace.md decision 16).
-    assert registered == set(mcp_server.NEEDS) - {"owner_calls"} == set(CONTRACT_NEEDS) == set(FUNCTIONS)
-    assert mcp_server.NEEDS == {**CONTRACT_NEEDS, "owner_calls": "read"}
+    # The owner's two are the owner's alone, at read, and in no one else's list (trace.md 16, feedback.md 8).
+    assert registered == set(mcp_server.NEEDS) - set(mcp_server.OWNER_FUNCTIONS) == set(CONTRACT_NEEDS)
+    assert registered == set(FUNCTIONS)
+    assert mcp_server.NEEDS == {**CONTRACT_NEEDS, "owner_calls": "read", "owner_feedback": "read"}
 
 
 def test_a_function_without_a_level_stops_the_server_at_start(app_settings, monkeypatch):
@@ -1452,7 +1461,7 @@ def test_can_and_cant_states_the_tags_the_cardio_formula_and_the_food_tables():
                   "Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
                   "(CC BY-NC-ND 4.0).",
                   "With no weigh-in there is no estimate", "USDA FoodData Central", "IFCT 2017 and INDB",
-                  "not openly licensed", "`net_kcal`", "Nineteen functions"):
+                  "not openly licensed", "`net_kcal`", "Twenty functions"):
         assert words in text, words
 
 
@@ -2048,7 +2057,7 @@ def test_can_and_cant_states_the_goal_kinds_the_trends_and_the_settings_clicks()
                   "more than 2 years from today",
                   "the person's own clicks on Settings", "No function does either", "Claude never offers to do them",
                   "stays valid until it expires, an hour at most", "recreates an empty account",
-                  "`too_many_reads`", "Nineteen functions", "`get_trends`", "`get_goals`"):
+                  "`too_many_reads`", "Twenty functions", "`get_trends`", "`get_goals`"):
         assert words in text, words
     lines = CAN_AND_CANT.read_text(encoding="utf-8").splitlines()
     rows = [m.group(1) for line in lines if (m := re.match(r"\| `([a-z_]+)` \| ", line))]

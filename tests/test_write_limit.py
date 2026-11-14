@@ -11,7 +11,9 @@ import pytest
 from sqlalchemy import delete, func, select
 
 from app import db, services
-from app.models import Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User
+from app.models import (
+    Bodyweight, CallLog, CardioEntry, Feedback, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
+)
 from app.services.common import WRITE_FUNCTIONS, WRITE_LIMIT, WRITE_WINDOW_MINUTES
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
@@ -41,7 +43,7 @@ def counts(user_id) -> dict:
     """How many rows of each kind this person has, live or deleted: what a write would change."""
     with db.new_session() as s:
         out = {m.__tablename__: s.scalar(select(func.count()).select_from(m).where(m.user_id == user_id))
-               for m in (LiftSession, Bodyweight, Measurement, Goal, FoodEntry, CardioEntry, SavedFood)}
+               for m in (LiftSession, Bodyweight, Measurement, Goal, FoodEntry, CardioEntry, SavedFood, Feedback)}
         out["deleted"] = sum(s.scalar(select(func.count()).select_from(m).where(
             m.user_id == user_id, m.deleted_at.is_not(None))) for m in (LiftSession, Bodyweight, Measurement))
         user = s.get(User, user_id)
@@ -77,6 +79,7 @@ WRITES = {
         {"kind": "bodyweight", "date": "2026-11-09", "weight": 79},
         {"kind": "lift_session", "date": "2026-11-09", "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 5}]}],
         "weight_unit": "kg"}, "claude"),   # the unit these weights need since the fix round on 7e95ee9
+    "send_feedback": lambda u, ids: services.send_feedback(u.id, {"text": "The chart is confusing."}),  # feedback.md 3
 }
 
 

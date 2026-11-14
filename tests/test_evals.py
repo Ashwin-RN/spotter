@@ -24,10 +24,12 @@ from tests.conftest import HEADERS, settings
 CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_asked", "yesterday", "treadmill_once",
                   "repeat_sent", "delete_ambiguous", "delete_explicit", "unknown_exercise",
                   "goal_date", "how_am_i_doing", "on_track", "export_is_a_click", "delete_is_a_click", "drop_goal",
-                  "decimals_and_dashes", "import_preview_first", "import_again", "import_unknown_lift", "undo_edit"}
+                  "decimals_and_dashes", "import_preview_first", "import_again", "import_unknown_lift", "undo_edit",
+                  "feedback_sent", "feedback_offered"}
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
-          "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries"}
+          "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries",
+          "send_feedback"}  # feedback.md: a write added later joins the lists (docs/evals.md)
 
 
 def call(name, arguments=None, is_error=False):
@@ -38,7 +40,7 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert len(cases) == 21  # was 20: edit history adds undo_edit
+    assert len(cases) == 23  # was 21: feedback adds feedback_sent and feedback_offered
     assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)

@@ -3,13 +3,15 @@
 export_data(user_id)
     A read. One CSV per table the person owns, plus account.csv and README.txt:
       account.csv, lift_sessions.csv, lift_sets.csv, bodyweight.csv, measurements.csv, goals.csv,
-      saved_foods.csv, food_entries.csv, cardio_entries.csv, entry_versions.csv
+      saved_foods.csv, food_entries.csv, cardio_entries.csv, entry_versions.csv, feedback.csv
     - entry_versions.csv: what an entry held before each edit or undo still kept (contract
       edit-history.md): its kind, the entry's id, when, who, why, and the values as JSON (_before): as stored,
       without LEFT_OUT, and with names as the other files give them. A set is {exercise, set_number,
       weight_kg, reps}, and a cardio entry's exercise_id is exercise, as in cardio_entries.csv. A food entry's
       saved food stays an id: saved_foods.csv has it. An id that names no exercise is written as null. The
       person's own letters are written as they are, never as escapes.
+    - feedback.csv: each note the person sent Spotter's maker that is still kept (contract feedback.md): its id,
+      when, the topic, and the note and its three parts. Never its fingerprint or its request id.
     - Deleted rows are included, with deleted_at; source is included where the table has it.
     - Times are UTC, ISO 8601 with the offset (2026-11-10T08:00:00+00:00). Dates are the person's own.
     - Names, not ids, for what the shared lists hold: a set's exercise, a goal's exercise, a cardio
@@ -38,8 +40,8 @@ from sqlalchemy.orm import selectinload
 
 from app import db, formatting
 from app.models import (
-    Bodyweight, CardioEntry, EntryVersion, Exercise, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood,
-    User,
+    Bodyweight, CardioEntry, EntryVersion, Exercise, Feedback, FoodEntry, Goal, LiftSession, LiftSet, Measurement,
+    SavedFood, User,
 )
 from app.services.common import no_account
 
@@ -60,8 +62,9 @@ BOM = "\ufeff"           # the byte-order mark each CSV starts with (D16)
 FORMULA_START = "=+-@"   # what a spreadsheet would read as the start of a formula
 SET_COLUMNS = ("session_id", "exercise", "set_number", "weight_kg", "reps")
 VERSION_COLUMNS = ("kind", "entry_id", "created_at", "by", "why", "before")
+FEEDBACK_COLUMNS = ("id", "created_at", "topic", "text", "doing", "expected", "happened")
 ORDER = ("account.csv", "lift_sessions.csv", "lift_sets.csv", "bodyweight.csv", "measurements.csv", "goals.csv",
-         "saved_foods.csv", "food_entries.csv", "cardio_entries.csv", "entry_versions.csv")
+         "saved_foods.csv", "food_entries.csv", "cardio_entries.csv", "entry_versions.csv", "feedback.csv")
 
 README = """Spotter export
 
@@ -84,6 +87,9 @@ Everything Spotter holds for this account, one CSV file per kind of record.
                       the values as JSON: a set's exercise and a cardio activity by name, a saved
                       food by its id in saved_foods.csv. The newest 10 are kept for an entry, for
                       90 days
+  feedback.csv        each note sent to Spotter's maker through the assistant and still kept: text
+                      is the note, doing, expected and happened its three parts, and topic what it
+                      is about
 
 Deleted rows are included: deleted_at says when.
 logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_entries, says how a row
@@ -171,6 +177,9 @@ def export_data(user_id: int) -> dict:
         versions = s.scalars(select(EntryVersion).where(EntryVersion.user_id == user.id).order_by(EntryVersion.id))
         kept = [[v.kind, v.entry_id, v.created_at, v.by, v.why, _before(v, names["exercise"])] for v in versions]
         files["entry_versions.csv"], rows["entry_versions.csv"] = _csv(list(VERSION_COLUMNS), kept), len(kept)
+        notes = s.scalars(select(Feedback).where(Feedback.user_id == user.id).order_by(Feedback.id))
+        sent = [[getattr(n, c) for c in FEEDBACK_COLUMNS] for n in notes]
+        files["feedback.csv"], rows["feedback.csv"] = _csv(list(FEEDBACK_COLUMNS), sent), len(sent)
     files = {name: files[name] for name in ORDER}
     files["README.txt"] = README
     rows = {name: rows[name] for name in ORDER}

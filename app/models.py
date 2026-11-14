@@ -1,7 +1,7 @@
 """The v1 schema: every table for stages 2 to 5, as the stage 2 contract lists them, and the one column
 stage 5 added (goal.measurement_kind, migration 0003). Migration 0004 dropped one column from seven tables.
-Migration 0005 added the call log's trace columns, 0006 the write keys (write_key), and 0007 the values an
-entry held before each edit (entry_version).
+Migration 0005 added the call log's trace columns, 0006 the write keys (write_key), 0007 the values an
+entry held before each edit (entry_version), and 0008 the notes people send Spotter's maker (feedback).
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -38,6 +38,7 @@ GOAL_STATUSES = ("open", "hit", "dropped")
 MEASUREMENT_KINDS = ("waist", "hips", "chest", "arm", "thigh", "steps", "sleep_hours", "resting_hr", "water_ml")
 MEALS = ("breakfast", "lunch", "dinner", "snack")
 FOOD_SOURCES = ("you_said", "saved_food", "usda", "claude_estimate")
+FEEDBACK_TOPICS = ("logging", "food", "lifts", "cardio", "goals", "import", "pages", "setup", "other")
 
 
 # ---------------------------------------------------------------- types and base
@@ -286,6 +287,27 @@ class EntryVersion(Base):
     why: Mapped[str] = mapped_column(String(8))  # edit or undo
     request_id: Mapped[str | None] = mapped_column(String(16), nullable=True)  # the call log's, null outside a request
     before: Mapped[str] = mapped_column(Text)  # JSON
+
+
+class Feedback(Base):
+    """A note a person sent Spotter's maker with send_feedback (migration 0008, contract feedback.md): their words,
+    three optional parts and a topic. dedupe_key is a fingerprint of the five, for the 10-minute rule: never shown,
+    never exported. No column says read or done: the owner deletes a note once it is dealt with. Deleted with the
+    account."""
+
+    __tablename__ = "feedback"
+    __table_args__ = (Index("ix_feedback_user_id_created_at", "user_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = _user_id()
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+    text: Mapped[str] = mapped_column(Text)
+    doing: Mapped[str] = mapped_column(Text, default="")
+    expected: Mapped[str] = mapped_column(Text, default="")
+    happened: Mapped[str] = mapped_column(Text, default="")
+    topic: Mapped[str | None] = mapped_column(String(16), nullable=True)  # one of FEEDBACK_TOPICS
+    request_id: Mapped[str | None] = mapped_column(String(16), nullable=True)  # the call log's, null outside a request
+    dedupe_key: Mapped[str] = mapped_column(String(64))
 
 
 class Measurement(EntryColumns, Base):

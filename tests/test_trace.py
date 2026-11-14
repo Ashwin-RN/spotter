@@ -141,11 +141,12 @@ def test_0005_adds_seven_nullable_columns_and_an_index_and_comes_down_again():
             assert "ix_call_log_request_id" in {i["name"] for i in inspect(c).get_indexes("call_log")}
             old = c.exec_driver_sql(f"SELECT function, {', '.join(TRACE)} FROM call_log").one()
             assert tuple(old) == ("whoami", *[None] * len(TRACE))  # the row already there keeps nulls
-            # The models match, but for the table 0006 adds and the table and index 0007 adds
-            # (tests/test_idempotency.py and tests/test_edit_history.py hold them there).
+            # The models match, but for the table 0006 adds and the tables and indexes 0007 and 0008 add
+            # (tests/test_idempotency.py, tests/test_edit_history.py and tests/test_feedback.py hold them there).
             assert sorted((d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
-                == [("add_index", "ix_entry_version_user_id_kind_entry_id_id"), ("add_table", "entry_version"),
-                    ("add_table", "write_key")]
+                == [("add_index", "ix_entry_version_user_id_kind_entry_id_id"),
+                    ("add_index", "ix_feedback_user_id_created_at"), ("add_table", "entry_version"),
+                    ("add_table", "feedback"), ("add_table", "write_key")]
         command.downgrade(cfg, "0004")
         with engine.connect() as c:
             assert {col["name"] for col in inspect(c).get_columns("call_log")} == set(found) - set(TRACE)
@@ -227,7 +228,7 @@ def test_the_known_names_are_every_name_in_the_published_tool_schemas(make_clien
         schema = tool["inputSchema"]
         for obj in [schema, *schema.get("$defs", {}).values()]:
             published |= set(obj.get("properties", {}))
-    assert len(tools) == 20 and published == calllog.KNOWN_NAMES
+    assert len(tools) == 22 and published == calllog.KNOWN_NAMES  # was 20: feedback.md adds two
 
 
 # ---------------------------------------------------------------- decisions 7 to 9: outcome, step, frame
@@ -459,11 +460,11 @@ def test_only_the_owner_s_list_has_owner_calls_and_everyone_else_s_is_the_ninete
                                       ("unset", {}, OWNER)):
         client = make_client(**overrides)
         tool_lists[label] = rpc(client, "tools/list", token=sign_for(subject)).json()["result"]["tools"]
-    assert [t["name"] for t in tool_lists["owner"]] == [*FUNCTIONS, "owner_calls"]
+    assert [t["name"] for t in tool_lists["owner"]] == [*FUNCTIONS, "owner_calls", "owner_feedback"]
     for label in ("someone else", "unset"):
         assert [t["name"] for t in tool_lists[label]] == FUNCTIONS
-        assert json.dumps(tool_lists[label]) == json.dumps(tool_lists["owner"][:-1])  # byte for byte
-    assert web.FUNCTION_COUNT == len(FUNCTIONS) == 19  # the landing's count is unchanged
+        assert json.dumps(tool_lists[label]) == json.dumps(tool_lists["owner"][:-2])  # byte for byte
+    assert web.FUNCTION_COUNT == len(FUNCTIONS) == 20  # was 19: send_feedback (feedback.md decision 13)
 
 
 @pytest.mark.parametrize("overrides, subject", [({"owner_user_id": OWNER}, "user_01OTHER"), ({}, OWNER)],

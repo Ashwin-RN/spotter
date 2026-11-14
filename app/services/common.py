@@ -91,6 +91,8 @@ ANSWER_LOST = 60  # seconds: a kept row older than this with no answer lost it, 
 ENTRY_OR_FOOD = "get_log, or find_food for a saved food"
 READ_BACK = {"set_goal": "get_goals", "update_settings": "whoami", "save_food": "find_food",
              "delete_entry": ENTRY_OR_FOOD, "restore_entry": ENTRY_OR_FOOD}
+# No read shows a note (contract feedback.md), so already_done's fix for send_feedback names none.
+SEND_AGAIN = "Send it again with a new key. The same note within 10 minutes is saved once."
 # The claim of the call running: {key, function, fingerprint, row}. keyed() puts it in the context of the thread
 # the work runs in, and lock_user sets row to the id of the write_key row it wrote.
 _CLAIM: ContextVar[dict | None] = ContextVar("spotter_write_claim", default=None)
@@ -112,7 +114,7 @@ KIND_LABELS = {
 # and set_claude_can. Their call-log rows are written but do not count, and they are never refused.
 WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                    "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
-                   "import_entries")
+                   "import_entries", "send_feedback")
 WRITE_LIMIT = 120
 WRITE_WINDOW_MINUTES = 10
 READ_LIMIT = 120  # a throttled read (find_food): its own rows in the same 10 minutes
@@ -242,6 +244,7 @@ def key_reused() -> dict:
 
 def already_done(function: str) -> dict:
     return error("already_done", "This call already ran. Its answer was not kept.",
+                 SEND_AGAIN if function == "send_feedback" else
                  f"Read it back with {READ_BACK.get(function, 'get_log')}. Send a new key for a new write.")
 
 

@@ -336,9 +336,30 @@ Each answer holds with the same time zone set at both runs. The last row is the 
 - Changing the time zone changes no entry: each keeps the date it was logged with. One that is then
   dated after today still shows, and counts as today's in every number above.
 
+## Feedback
+
+`send_feedback` sends a note to Spotter's maker, the person who runs Spotter: a problem, something
+confusing, an idea.
+
+- Claude sends it only when the person asks, or says yes to an offer, in the person's own words.
+- When the person complains about Spotter, or something in it keeps going wrong, Claude offers once to
+  send it as feedback, and sends it only on a yes.
+- Before sending, Claude asks once for what is missing of three parts: what they were doing, what they
+  expected, what happened.
+- It is a write: an account set to read only answers `not_allowed`.
+- The number of notes in any 24 hours is capped: `send_feedback`'s description gives the number. Past
+  it, a note is refused with `too_much_feedback` and the hours to wait.
+- The same note again within 10 minutes is saved once: it comes back with `duplicate` true. There is
+  no `allow_repeat` for a note.
+- Spotter's maker reads each note with the names of the functions the account used around that time,
+  never what was logged.
+- No reply comes back through Spotter.
+- A note is kept until Spotter's maker deletes it, one year at most. Until then it is in the export,
+  and deleting the account deletes it.
+
 ## What Claude may do
 
-Nineteen functions, nothing else:
+Twenty functions, nothing else:
 
 | Function | What it does |
 |---|---|
@@ -361,6 +382,7 @@ Nineteen functions, nothing else:
 | `get_trends` | How the person is doing: the weight trend and its rate, calories, sessions, cardio, maintenance. |
 | `get_goals` | Whether the person is on track: every open goal, its pace and its projected date. |
 | `import_entries` | Brings history over from another app's export, as dated rows: a preview first, then the rows. |
+| `send_feedback` | Sends a note to Spotter's maker, when the person asks or says yes to the offer. |
 
 `whoami` reports `claude_can`, the person's setting for what Claude may do:
 
