@@ -2166,7 +2166,8 @@ def unclosed_findings(markup: str) -> list[str]:
 LANDING_STATES = {"signed out": ("signed out", {}), "signed in": ("signed in", {}),
                   "no web sign-in": ("no web sign-in", {}),
                   "no server address": ("signed out", {"authkit_domain": None, "mcp_resource_url": None}),
-                  "closed to new accounts": ("signed out", {"signups_per_day": 0})}
+                  "closed to new accounts": ("signed out", {"signups_per_day": 0}),
+                  "a cap set": ("signed out", {"signups_per_day": 1000})}  # no cap by default draws no cap line
 LANDING_CARDS = [("showcase", "looks-title"), ("before", "before-title"), ("start", "start-title"),
                  ("say-first", "say-title"), ("web-pages", "pages-title"), ("your-data", "data-title"),
                  ("built", "built-title")]

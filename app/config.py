@@ -30,7 +30,6 @@ ROOT = Path(__file__).resolve().parent.parent
 # on a public https site an unset DATABASE_URL is a configuration error (Settings.database_problem).
 DEFAULT_DATABASE_URL = f"sqlite:///{(ROOT / 'spotter.db').as_posix()}"
 DEFAULT_AUTH_PROVIDER = "workos"
-DEFAULT_SIGNUPS_PER_DAY = 50
 # The Postgres connection pool, per process: kept connections and extra ones on demand. Ten in all stays well
 # under a stock Postgres's 100. DB_POOL_SIZE and DB_MAX_OVERFLOW override them within these bounds; any other
 # value falls back to the default. SQLite ignores both (app/db.py).
@@ -63,7 +62,7 @@ class Settings:
     workos_api_key: str | None = field(default=None, repr=False)
     session_secret: str | None = field(default=None, repr=False)
     auth_provider: str = DEFAULT_AUTH_PROVIDER
-    signups_per_day: int = DEFAULT_SIGNUPS_PER_DAY
+    signups_per_day: int | None = None  # new accounts a UTC day; None: no cap, 0: closed to new accounts
     usda_api_key: str | None = field(default=None, repr=False)  # unset: USDA lookup is off
     db_pool_size: int = DEFAULT_DB_POOL_SIZE  # Postgres only
     db_max_overflow: int = DEFAULT_DB_MAX_OVERFLOW  # Postgres only
@@ -159,12 +158,17 @@ def database_address(url: str | None) -> str:
     return url
 
 
-def _signups_per_day(value: str | None) -> int:
+def _signups_per_day(value: str | None) -> int | None:
+    """SIGNUPS_PER_DAY: unset or blank, no cap (None). A whole number of 0 or more is the cap; 0 is closed."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    # Set but unreadable closes sign-ups: the variable is only set to hold them back, so a typo never opens the door.
     try:
-        number = int((value or "").strip())
+        number = int(text)
     except ValueError:
-        return DEFAULT_SIGNUPS_PER_DAY
-    return number if number >= 0 else DEFAULT_SIGNUPS_PER_DAY
+        return 0
+    return number if number >= 0 else 0
 
 
 def _whole_number(value: str | None, bounds: tuple[int, int], default: int) -> int:

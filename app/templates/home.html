@@ -47,7 +47,8 @@
   <ul class="plain-list">
     <li>You need an AI assistant that can add a remote MCP server with sign-in.</li>
     <li>Each assistant's plan limits are in <a href="{{ readme_table }}">the README's table</a>.</li>
-    {% if signups_per_day %}
+    {% if signups_per_day is none %}{# no cap: no line #}
+    {% elif signups_per_day %}
     <li>New accounts are capped at {{ signups_per_day|show("count") }} a day.</li>
     {% else %}
     <li>Spotter is not taking new accounts right now.</li>

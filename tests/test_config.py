@@ -23,7 +23,7 @@ def test_defaults_when_nothing_new_is_set():
     assert s.database_url.startswith("sqlite:///") and s.database_url.endswith("/spotter.db")
     assert s.database_url == f"sqlite:///{(ROOT / 'spotter.db').as_posix()}"
     assert s.auth_provider == "workos"
-    assert s.signups_per_day == 50
+    assert s.signups_per_day is None  # no cap on new accounts
     assert not s.web_sign_in_configured and s.session_key is None
 
 
@@ -47,8 +47,13 @@ def test_the_database_address_is_given_the_psycopg_driver(given, used):
     assert load_settings({**BASE, "DATABASE_URL": given}).database_url == used
 
 
-@pytest.mark.parametrize("value, used", [("0", 0), ("12", 12), ("many", 50), ("-3", 50), ("", 50), ("1.5", 50)])
-def test_a_bad_signup_cap_falls_back_to_the_default(value, used):
+def test_an_unset_signup_cap_is_no_cap():
+    assert load_settings(BASE).signups_per_day is None
+
+
+@pytest.mark.parametrize("value, used", [("", None), ("  ", None), ("0", 0), ("12", 12), (" 12 ", 12),
+                                         ("many", 0), ("-3", 0), ("1.5", 0)])
+def test_a_blank_signup_cap_is_no_cap_and_an_unreadable_one_closes_sign_ups(value, used):
     assert load_settings({**BASE, "SIGNUPS_PER_DAY": value}).signups_per_day == used
 
 

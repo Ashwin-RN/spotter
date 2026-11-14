@@ -24,7 +24,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from starlette.testclient import TestClient
 
 from app import config, db, formatting, links, mcp_server, rules, services, users, web, web_auth
-from app.config import DEFAULT_SIGNUPS_PER_DAY, Settings
+from app.config import Settings
 from app.main import create_app
 from app.models import Bodyweight, CallLog, CardioEntry, FoodEntry, LiftSession, Measurement, SavedFood, User
 from evals.four_weeks import four_weeks
@@ -242,7 +242,6 @@ LANDING_WORDS = (
     "Before you start",
     "You need an AI assistant that can add a remote MCP server with sign-in.",
     "Each assistant's plan limits are in the README's table.",
-    "New accounts are capped at 50 a day.",
     "How to start",
     "Sign in.", "{step_1}",
     "Add Spotter to your assistant.",
@@ -364,32 +363,44 @@ def test_every_repository_link_is_built_from_the_one_constant(web_client):
     assert (app_dir / "links.py").read_text(encoding="utf-8").count("github.com") == 1
 
 
+CLOSED_LINE = "Spotter is not taking new accounts right now."
+
+
 @pytest.mark.parametrize("cap, line", [
-    (50, "New accounts are capped at 50 a day."),
+    (None, None),
     (7, "New accounts are capped at 7 a day."),
     (1, "New accounts are capped at 1 a day."),
     (1000, "New accounts are capped at 1,000 a day."),
-    (0, "Spotter is not taking new accounts right now."),
-], ids=["the default", "seven", "one", "a thousand", "closed"])
-def test_before_you_start_says_the_cap_from_the_settings(web_client, cap, line):
+    (0, CLOSED_LINE),
+], ids=["no cap", "seven", "one", "a thousand", "closed"])
+def test_before_you_start_says_the_cap_from_the_settings(web_client, make_user, cap, line):
     for state in ("signed out", "signed in"):
+        if state == "signed in" and cap == 0:
+            make_user("user_01WEB")  # closed to new accounts: the person's account exists before, so the sign-in holds
         page = landing_in(web_client, state, signups_per_day=cap)
+        assert ('href="/settings"' in page) == (state == "signed in"), state
         before = re.search(r'<section class="card before".*?</section>', page, re.S).group(0)
         items = [plain_words(li) for li in re.findall(r"<li>(.*?)</li>", before, re.S)]
         assert items == ["You need an AI assistant that can add a remote MCP server with sign-in.",
-                         "Each assistant's plan limits are in the README's table.", line], state
+                         "Each assistant's plan limits are in the README's table."] + ([line] if line else []), state
         assert f'<a href="{links.REPOSITORY}#your-assistant">the README\'s table</a>' in before
-        if cap == 0:
+        if not cap:
             assert "capped" not in page
+        if cap is None:
+            assert CLOSED_LINE not in page
 
 
 def test_the_cap_is_read_at_each_render(client):
-    assert "New accounts are capped at 50 a day." in client.get("/").text
+    page = client.get("/").text  # no cap set: no line
+    assert "capped" not in page and CLOSED_LINE not in page
     config.use_settings(dataclasses.replace(config.get_settings(), signups_per_day=3))
     assert "New accounts are capped at 3 a day." in client.get("/").text
     config.use_settings(dataclasses.replace(config.get_settings(), signups_per_day=0))
     page = client.get("/").text
-    assert "Spotter is not taking new accounts right now." in page and "capped" not in page
+    assert CLOSED_LINE in page and "capped" not in page
+    config.use_settings(dataclasses.replace(config.get_settings(), signups_per_day=None))
+    page = client.get("/").text
+    assert "capped" not in page and CLOSED_LINE not in page
 
 
 CASES = web.HERE.parent / "evals" / "cases.json"
@@ -415,7 +426,7 @@ def test_the_two_start_time_counts_equal_their_sources(client, monkeypatch):
     monkeypatch.setattr(web, "eval_case_count", read_again)
     handed = handed_to_home(client, monkeypatch)
     assert (handed["function_count"], handed["eval_cases"], handed["signups_per_day"]) == \
-        (OFFERED, len(cases), DEFAULT_SIGNUPS_PER_DAY)
+        (OFFERED, len(cases), None)  # no cap set
 
 
 @pytest.mark.parametrize("content", [None, b"", b"not json", b"{}", b'{"cases": [{"id": "a"}]}', b"[]", b"[1, 2]",
@@ -447,8 +458,10 @@ def test_with_no_case_count_the_landing_hands_none_and_still_renders(client, mon
 
 def test_no_count_is_typed_into_the_landing_template():
     source = (web.HERE / "templates" / "home.html").read_text(encoding="utf-8")
-    for n in {OFFERED, len(json.loads(CASES.read_text(encoding="utf-8"))), DEFAULT_SIGNUPS_PER_DAY}:
+    for n in {OFFERED, len(json.loads(CASES.read_text(encoding="utf-8")))}:
         assert not re.search(rf"(?<![\d.,]){n}(?![\d.,])", source), n
+    before = re.search(r'<section class="card before".*?<ul\b.*?</ul>', source, re.S).group(0)
+    assert not re.search(r"\d", re.sub(r"<[^>]*>", "", before))  # the cap is drawn from the setting, never typed
     for name in ("function_count", "eval_cases", "signups_per_day"):
         assert not re.search(rf"\b{name}\s*(?:[-+*/]|%(?!\}})|\|\s*(?!show\b))", source), name  # drawn as given, or not yet
 

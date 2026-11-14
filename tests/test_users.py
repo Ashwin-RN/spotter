@@ -1,4 +1,4 @@
-"""Identity: one row per person, kept up to date without losing anything, a daily signup cap, a safe
+"""Identity: one row per person, kept up to date without losing anything, a daily signup cap when one is set, a safe
 first-sign-in race, and "today" in the person's own time zone."""
 
 import dataclasses
@@ -80,6 +80,18 @@ def test_last_seen_is_written_at_most_once_a_minute(monkeypatch):
     stored = _reload(user.id)
     assert stored.last_seen_at == start + timedelta(seconds=61)
     assert stored.updated_at == start  # being seen is not an edit
+
+
+def test_with_no_cap_each_first_sign_in_gets_an_account_and_nothing_is_counted(monkeypatch):
+    assert config.get_settings().signups_per_day is None
+
+    def counted(*args):
+        raise AssertionError("today's accounts were counted with no cap set")
+
+    monkeypatch.setattr(users, "_signups_today", counted)
+    made = [user_for_identity(f"user_01N{n}", None, None) for n in range(5)]
+    assert all(isinstance(user, User) for user in made)
+    assert len({user.id for user in made}) == 5 and _count() == 5
 
 
 def test_the_signup_cap_closes_new_accounts_for_the_day(monkeypatch):

@@ -1,6 +1,6 @@
 """The safety work (docs/contracts/safety.md): the Postgres pool and its query limits, what a time-out looks
 like, the read limit through MCP, the page limit on the web, the size limit on every request, the signup
-cap left as it was, and the load tool's refusals.
+cap, off unless set, and the load tool's refusals.
 
 Nothing here connects to Postgres: the engine is built on a Postgres address and its first connection is
 stopped at SQLAlchemy's do_connect hook, before the driver opens a socket.
@@ -18,7 +18,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeout
 
 from app import config, db, mcp_server, services, web, web_auth
 from app.config import (
-    DEFAULT_DB_MAX_OVERFLOW, DEFAULT_DB_POOL_SIZE, DEFAULT_SIGNUPS_PER_DAY, ROOT, load_settings,
+    DEFAULT_DB_MAX_OVERFLOW, DEFAULT_DB_POOL_SIZE, ROOT, load_settings,
 )
 from app.main import MAX_BODY_BYTES, TOO_LARGE, BodyLimit
 from app.models import CallLog
@@ -500,11 +500,12 @@ def test_a_200_row_import_is_under_a_quarter_of_the_limit_and_goes_through(http,
     assert result["isError"] is False, result["structuredContent"]
 
 
-# ---------------------------------------------------------------- 7. new accounts unchanged
+# ---------------------------------------------------------------- 7. new accounts: no cap unless one is set
 
-def test_new_accounts_are_50_a_day_unless_signups_per_day_says_otherwise():
-    assert load_settings(BASE).signups_per_day == DEFAULT_SIGNUPS_PER_DAY == 50
+def test_new_accounts_have_no_cap_unless_signups_per_day_sets_one():
+    assert load_settings(BASE).signups_per_day is None
     assert load_settings({**BASE, "SIGNUPS_PER_DAY": "12"}).signups_per_day == 12
+    assert load_settings({**BASE, "SIGNUPS_PER_DAY": "0"}).signups_per_day == 0
 
 
 # ---------------------------------------------------------------- 8. the load tool's refusals

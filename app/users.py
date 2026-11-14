@@ -70,9 +70,11 @@ def user_for_identity(subject: str | None, email: str | None, name: str | None,
                       issuer: str | None = None) -> User | dict:
     """The user row for this person, created on their first sign-in, or {error, message, fix}.
 
-    The daily signup cap is a soft limit: it counts today's accounts, then inserts, without a lock.
-    Simultaneous first sign-ins can each see room under the cap, so it can be passed by at most the
-    number of first sign-ins in flight at that moment. That is acceptable for a rate limit.
+    With no daily signup cap set (SIGNUPS_PER_DAY unset or blank), every first sign-in gets an account
+    and today's accounts are not counted. A cap set is a soft limit: it counts today's accounts, then
+    inserts, without a lock. Simultaneous first sign-ins can each see room under the cap, so it can be
+    passed by at most the number of first sign-ins in flight at that moment. That is acceptable for a
+    rate limit. A cap of 0 takes no new accounts.
     """
     if not isinstance(subject, str) or not subject.strip():
         return error("no_subject", "The sign-in did not say who this is.",
@@ -94,7 +96,8 @@ def user_for_identity(subject: str | None, email: str | None, name: str | None,
             return user
 
         now = db.utcnow()
-        if _signups_today(session, now) >= settings.signups_per_day:
+        cap = settings.signups_per_day
+        if cap is not None and _signups_today(session, now) >= cap:
             return error("signups_closed", "Spotter is not taking new accounts for the rest of today.",
                          "Try again after midnight UTC.")
         user = User(provider=provider, subject=subject, email=email, name=name, issuer=issuer,
