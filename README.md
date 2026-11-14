@@ -24,6 +24,8 @@ Live: https://spotter-production-0c0f.up.railway.app
 
 Signing in from the assistant first also creates the account.
 
+While nothing is logged yet, your assistant hands you one link, `/hi`: a short page on what to say, what Spotter keeps and how to bring your history over from another app.
+
 The client must support remote MCP over streamable HTTP with OAuth sign-in.
 
 ## Your assistant
@@ -74,7 +76,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 - Safety limits: a sized connection pool, a time limit on every query, lock wait and idle transaction, a read limit and a page limit per person, and a 1 MiB cap on every request. A database that is too busy answers that it is busy, not with a crash.
 - A call log with a trace: one row per call, with a request id that is also on the log lines and the response, the names of the fields sent and never a value, whether it wrote, and where a failed call stopped. Rows are deleted after 90 days.
 - A docs-only change runs the docs tests, and a small code change runs the tests for the code it touches. The whole suite runs with warnings as errors on a clean export before a big push, and about once in every four or five pushes otherwise.
-- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 25 cases, 3 runs each. At stage 5, before stage 6 added four, 48 of 48 runs passed, on `claude-fable-5-2`. On 2026-11-12 the set of that day ran on `claude-opus-5-5`: 60 of 60 runs passed. On 2026-11-14 the set of that day ran: 63 of 63. The runner pins `claude-opus-5-5`. The result is recorded in `BUILD_LOG.md`; how the evals run is in `docs/evals.md`.
+- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 25 cases, 3 runs each. At stage 5, before stage 6 added four, 48 of 48 runs passed, on `claude-fable-5-2`. On 2026-11-12 the set of that day ran on `claude-opus-5-5`: 60 of 60 runs passed. On 2026-11-14 the 25 cases ran: 75 of 75. The runner pins `claude-opus-5-5`. The result is recorded in `BUILD_LOG.md`; how the evals run is in `docs/evals.md`.
 
 ## Read more
 

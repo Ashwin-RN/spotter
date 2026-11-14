@@ -915,3 +915,41 @@ The key, the edit history and feedback had run on SQLite only. On 2026-11-14 the
 How: a copy of the tree, with the tests' database address pointed at that Postgres and each test starting from truncated tables with their id counters set back. Nothing in the repository changed for it. 957 tests in all, with no failure.
 
 It is one machine's Postgres, not the host's. It shows that the SQL, the locks and the migrations hold there. It does not show how the host behaves under load.
+
+## A page for a new person
+
+A new person's assistant hands them one link in its first reply. The decisions, and the limits that were accepted, are in `docs/contracts/hi-there.md`.
+
+| Part | What it does |
+|---|---|
+| The page | `/hi`, "Hi there", open with no sign-in. Four parts: what to say to the assistant, what Spotter keeps, how to bring history over from another app, and where to go next. The person fills in nothing on it |
+| Nothing typed twice | Each fact is drawn from the code's own lists: 41 lifts, 15 cardio activities, 9 measurements, the meals and the 4 kinds of goal. The example sentences are the landing's own |
+| A visitor costs nothing | A visitor with no session reads no database, and a load of the page uses none of a person's page loads |
+| The note | While nothing is logged on an account, `whoami` carries `new_account_note` and `links.hi_there`. The assistant is told to give the link once, last in its reply. The note goes after the first entry, saved food or open goal |
+| One rule for "new" | Today's empty state and the note ask the same helper |
+| The feedback line | The page says how to send feedback while `send_feedback` is offered, read at each render |
+| What an assistant reads | One sentence more in `whoami`'s description, two result fields and a section of the can-and-cant resource. The instructions did not change |
+
+It was built beside the feedback work, in a tree of its own, and joined onto the main line after it. Five files met and were joined by hand, and two pins in the feedback tests were moved: the published text of `whoami` and the count of eval cases.
+
+### The review
+
+A separate reviewer, on a frozen copy: sound. No defect in sign-in, sessions, the form token, one person's data, the page limit or the note. In 31 states of an account the note agreed with Today's empty state. It made 23 breaks of the code to test the tests.
+
+| Finding | Fix |
+|---|---|
+| The landing sent nine extra lines of spaces | It sends what it sent before, but for the count of eval cases |
+| The test of the route tables could not fail | Both tables are written out row by row |
+| The page said "It writes only when you say yes.", which the server cannot hold an assistant to | "Your assistant is told to write only when you say yes." |
+
+A second reviewer read the fix round as new code: clean to join and commit. Three small things, two of them tests that pinned less than they claimed, were fixed in one more round.
+
+Accepted: "once" is not enforced, so a person who logs nothing gets the link in each new conversation. A conversation begun before the deploy, on an empty account, may have `whoami` refused by a client that holds the old schema. The page counts the code's list, not the live table.
+
+Not checked: a real browser, so the look of the page has not been seen. Not run on a real Postgres.
+
+### The eval run, for feedback and this page
+
+Both pieces of work change what a model reads, and `whoami` opens every conversation, so the whole set ran once for the two. All 25 cases, 3 runs each, on `claude-opus-5-5`, at `d108df5`, from 21:16:03 to 21:36:55 on 2026-11-14: 75 of 75 runs passed, $11.6883 at list price. Every case passed all 3 of its runs, the four new ones among them: `feedback_sent`, `feedback_offered`, `hi_there_first_log` and `hi_there_not_again`.
+
+The full suite: 5,308 tests, plain, at the commit `d108df5`. Before the join, every test file also passed with warnings as errors, in separate runs.
