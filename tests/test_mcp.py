@@ -1193,7 +1193,9 @@ def model_texts(client: TestClient, token: str) -> dict[str, str]:
     for resource in rpc(client, "resources/list", token=token).json()["result"]["resources"]:
         texts[f"{resource['uri']} description"] = resource.get("description", "")
         texts[resource["uri"]] = read_resource(client, token, resource["uri"])["text"]
-    texts["whoami time_zone_note"] = whoami(client, token).get("time_zone_note", "")  # the service's own words
+    who = whoami(client, token)  # an empty account with no zone: both notes, in the service's own words
+    texts["whoami time_zone_note"] = who.get("time_zone_note", "")
+    texts["whoami new_account_note"] = who.get("new_account_note", "")
     return texts
 
 

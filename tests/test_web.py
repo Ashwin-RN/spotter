@@ -1193,7 +1193,7 @@ def test_every_link_spotter_hands_out_has_a_page(client):
         r = client.get(path)
         if name == "sign_in":
             assert r.status_code == 303 and r.headers["location"].startswith(PROVIDER), name
-        elif name == "home":
+        elif name in ("home", "hi_there"):
             assert r.status_code == 200, name
         else:
             assert r.status_code == 303 and r.headers["location"] == SITE + "/sign-in", name
@@ -4497,6 +4497,8 @@ def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
             continue
         for piece in tr.template_text(src):
             for word in rules.KIND_WORDS.values():
+                if (name, word) == ("hi.html", "Steps"):  # hi-there.md's "The steps are on the home page": to connect
+                    continue
                 assert not re.search(rf"\b{re.escape(word)}\b", piece.text, re.I), (name, word, piece.text[:80])
     # The edit page and the Goals form read it too.
     sign_in(client)

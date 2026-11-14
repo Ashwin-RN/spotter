@@ -1,8 +1,9 @@
 """Every web link Spotter hands out, built in one place.
 
 The origin is the site address from the settings (the origin of MCP_RESOURCE_URL). It never comes
-from a request, so a forged Host header cannot change a link. Every page is behind sign-in, and no
-link carries an id that grants access, a token or a secret: a link only says where to go.
+from a request, so a forged Host header cannot change a link. Three pages are open: home, sign_in and
+hi_there. Every other page is behind sign-in, and no link carries an id that grants access, a token
+or a secret: a link only says where to go.
 
     page("progress_lift", lift="Back Squat")  ->  https://<site>/progress/back-squat
 """
@@ -18,6 +19,7 @@ REPOSITORY = "https://github.com/Ashwin-RN/spotter"
 
 _PATHS = {
     "home": "/",
+    "hi_there": "/hi",  # the short read whoami hands a new person's assistant (contract hi-there.md)
     "sign_in": "/sign-in",
     "settings": "/settings",
     "today": "/today",

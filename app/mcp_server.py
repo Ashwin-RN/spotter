@@ -558,7 +558,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             "Says whose Spotter account this is: the account id, the sign-in id, email, name, time zone, "
             "today's date for the person, their targets, what Claude may do, and the sign-in itself. "
             "Call it first. If it carries time_zone_note, set the time zone with update_settings before logging "
-            "anything: use the person's zone if you know it, otherwise ask once which city they are in."
+            "anything: use the person's zone if you know it, otherwise ask once which city they are in. "
+            "If it carries new_account_note, do what it says."
         ),
         annotations=READ_ONLY,
     )

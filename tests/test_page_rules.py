@@ -49,6 +49,7 @@ TABS = [("today", "/today", "Today"), ("progress", "/progress", "Progress"), ("g
 # Navigation's current-tab table and the Hooks table's page and width classes: route -> (tab, classes).
 FRAME = {
     "/": (None, {"landing"}),
+    "/hi": (None, {"privacy-page"}),
     "/day/{date}": ("today", {"today"}),
     "/entries/{kind}/{entry_id}/edit": ("today", {"form-page"}),
     "/progress": ("progress", {"progress"}),
@@ -491,7 +492,7 @@ def error_posts(today: str, user_id: int) -> dict[str, list[tuple[str, dict]]]:
 def sweep(client, account: str) -> list[Seen]:
     """Every page the rules read, on one account: / signed out, every GET page signed in, two 404 pages,
     and each page sent back with its form error."""
-    seen = [Seen("/", client.get("/").text, signed_in=False)]
+    seen = [Seen(address, client.get(address).text, signed_in=False) for address in ("/", "/hi")]
     expired = client.post("/sign-out")  # no token: Form expired, signed out
     assert expired.status_code == 403
     seen.append(Seen("/sign-out", expired.text, False, message=True))
@@ -501,7 +502,7 @@ def sweep(client, account: str) -> list[Seen]:
     zone_missing = not only_user().time_zone
     today = today_of(user).isoformat()
     for template, addresses in get_paths(user.id).items():
-        for address in ["/"] + addresses if template == "/settings" else addresses:
+        for address in ["/", "/hi"] + addresses if template == "/settings" else addresses:
             r = client.get(address)
             if template == "/today":
                 assert r.status_code == 303, address

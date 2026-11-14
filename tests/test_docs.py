@@ -1,8 +1,8 @@
 """T9: the README's facts match the code.
 
 - Its MCP function count equals len(mcp_server.NEEDS).
-- Its page list names every top-level page: each parameterless links._PATHS name but home and sign_in.
-  Once privacy is a links._PATHS name, Privacy is one of them, and the README must then name it.
+- Its page list names every top-level page: each parameterless links._PATHS name but home, hi_there and
+  sign_in, the open pages. Once privacy is a links._PATHS name, Privacy is one of them, and the README must then name it.
   Extra names in the list are allowed.
 - Any eval case count it states equals the number of cases in evals/cases.json.
 - It writes no test count by hand.
@@ -26,7 +26,7 @@ NUMBER = r"(\d[\d,]*|" + "|".join(sorted(WORDS, key=len, reverse=True)) + r")"
 # A page name for each links._PATHS name, where the name alone does not give it.
 PAGE_NAMES = {"today": "Today", "progress": "Progress", "goals": "Goals", "foods": "Foods",
               "settings": "Settings"}
-NOT_PAGES = ("home", "sign_in")
+NOT_PAGES = ("home", "hi_there", "sign_in")  # open pages, like the landing: none is an account's page
 
 
 def number(text: str) -> int:
@@ -60,7 +60,7 @@ def page_list(readme: str) -> str | None:
 
 
 def top_level_pages(paths: dict[str, str] | None = None) -> list[str]:
-    """The page name of each parameterless links._PATHS name, home and sign_in left out."""
+    """The page name of each parameterless links._PATHS name, home, hi_there and sign_in left out."""
     if paths is None:
         from app import links
         paths = links._PATHS

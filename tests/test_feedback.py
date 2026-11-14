@@ -59,7 +59,7 @@ OWNER_DESCRIPTION = (
     "that is not a note is named under not_found and changes nothing.")
 # What each function published before this work: the SHA-256 of the tool as compact JSON with sorted keys.
 PUBLISHED = {
-    "whoami": "5669d5c5edd55c2546a5fea6d62cd84fa4abb21e27feb48c174917ca39d656d5",
+    "whoami": "7babf91afa1846f1c1a61e680e4907dfe72fb42db9837c3f2528a25f05d4b69f",  # with the new account's note
     "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
     "log_lifts": "b5a30f70a54848068173b09c0e184b211f86c05c32a0508bf11c2566f0dcbe17",
     "log_bodyweight": "f6d2e5b9ad195b9256152099a072142fdd926c7e176e35fc561e036ff66654b7",
@@ -851,7 +851,7 @@ def test_the_instructions_do_not_change_by_a_character():
 def test_the_two_cases_load_and_judge_as_designed(app_settings, make_user):
     cases = {c["id"]: c for c in judge.load_cases()}
     sent, offered = cases["feedback_sent"], cases["feedback_offered"]
-    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 23
+    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 25
     assert "switch" not in sent and "switch" not in offered  # the default, log
     uid = make_user().id
     rows_now = person_rows(uid)

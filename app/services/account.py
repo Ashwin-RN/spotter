@@ -3,8 +3,10 @@
 whoami(user_id)
     The signed-in person's account: account_id (the row id), user_id (the sign-in provider's subject,
     the same value the token's sub and the Settings page show), email, name, time zone, today's date
-    for them, their targets, what Claude may do, and links. Until a time zone is set, today is the UTC
-    date and time_zone_note tells Claude to set it with update_settings.
+    for them, their targets, what Claude may do, and links, links.hi_there always. Until a time zone is
+    set, today is the UTC date and time_zone_note tells Claude to set it with update_settings. While the
+    account is empty, by account_empty's rule, new_account_note tells Claude to give the person
+    links.hi_there once. A read: no lock, no write limit, no write, so nothing records that it was given.
 
 update_settings(user_id, data, by)
     Change the person's own settings (SETTABLE): time_zone; calorie_target_kcal (800 to 10,000),
@@ -27,7 +29,8 @@ set_claude_can(user_id, value)
 account_empty(user_id)
     Today's read for a new account: empty is true when the person has no live entry in the five entry
     tables, no live saved food and no open goal. Deleted rows and closed goals (hit or dropped) do not
-    count. A read: no lock, no write limit. The page then shows what to do first.
+    count. A read: no lock, no write limit. The page then shows what to do first. whoami asks the same
+    question (_empty), so the two always agree.
 
 list_exercises(kind=None, category=None)
     The names entries must use, filtered by kind (lift, cardio) and category.
@@ -60,6 +63,9 @@ from app.services.common import check_by, check_data, check_write_limit, exercis
 TIME_ZONE_NOTE = ("No time zone is set, so today is the UTC date. Set it now with update_settings: use the "
                   "person's time zone if you know it, otherwise ask once which city they are in. Set it "
                   "yourself; the person has nothing to do.")
+NEW_ACCOUNT_NOTE = ("Nothing is logged on this account yet. Give the person links.hi_there once, last in your reply: "
+                    "it is a short read on what to say, what Spotter keeps and how to bring history over from "
+                    "another app. It has nothing to fill in.")
 TIME_ZONE_MAX = 64  # the column's length
 TIME_ZONE_FIX = ("Use an IANA name such as Asia/Kolkata, worked out from the city the person is in. An "
                  "abbreviation or an offset is not enough, because it does not say when the clocks change.")
@@ -68,7 +74,7 @@ NEVER_SETTABLE = {"claude_can": "what Claude may do"}
 
 def whoami(user_id: int) -> dict:
     """Returns {account_id, user_id, email, name, time_zone, today, targets, claude_can, links[,
-    time_zone_note]} or {error, message, fix}."""
+    time_zone_note][, new_account_note]} or {error, message, fix}."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
@@ -86,11 +92,22 @@ def whoami(user_id: int) -> dict:
                 "target_cardio_minutes_per_week": user.target_cardio_minutes_per_week,
             },
             "claude_can": user.claude_can,
-            "links": {"settings": links.page("settings"), "home": links.page("home")},
+            "links": {"settings": links.page("settings"), "home": links.page("home"),
+                      "hi_there": links.page("hi_there")},
         }
         if not isinstance(users.zone_for(user.time_zone), ZoneInfo):
             out["time_zone_note"] = TIME_ZONE_NOTE
+        if _empty(s, user.id):
+            out["new_account_note"] = NEW_ACCOUNT_NOTE
         return out
+
+
+def _empty(s, user_id: int) -> bool:
+    """True when the account has no live entry in the five entry tables, no live saved food and no open goal."""
+    for model in (*entry_models(), SavedFood):
+        if s.scalar(select(model.id).where(model.user_id == user_id, model.deleted_at.is_(None)).limit(1)):
+            return False
+    return not s.scalar(select(Goal.id).where(Goal.user_id == user_id, Goal.status == "open").limit(1))
 
 
 def account_empty(user_id: int) -> dict:
@@ -98,10 +115,7 @@ def account_empty(user_id: int) -> dict:
     with db.new_session() as s:
         if s.get(User, user_id) is None:
             return no_account()
-        for model in (*entry_models(), SavedFood):
-            if s.scalar(select(model.id).where(model.user_id == user_id, model.deleted_at.is_(None)).limit(1)):
-                return {"empty": False}
-        return {"empty": not s.scalar(select(Goal.id).where(Goal.user_id == user_id, Goal.status == "open").limit(1))}
+        return {"empty": _empty(s, user_id)}
 
 
 # ---------------------------------------------------------------- settings

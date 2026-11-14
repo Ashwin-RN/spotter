@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Hi there · Spotter{% endblock %}
+{% block main %}
+{# The hi there page (contract hi-there.md): the same words for everyone. The first lines are the landing's
+   (web.LANDING_LINES), the sentences to say are its list (web.SAY_FIRST, web.SAY_EVERYDAY), and every count and list
+   of What Spotter keeps comes from web.HI_KEEPS. Nothing here is a form or a step done on the page. #}
+<div class="page-head">
+  <h1>Hi there</h1>
+  {%- for line in landing_lines %}
+  <p class="lede">{{ line }}</p>
+  {%- endfor %}
+</div>
+
+<section class="card" aria-labelledby="hi-say">
+  <h2 id="hi-say">Say it to your assistant</h2>
+  <ul class="say">
+    {%- for said, does in say_first %}
+    <li><q>{{ said }}</q> <span class="does">{{ does }}</span></li>
+    {%- endfor %}
+  </ul>
+  <p class="list-label">Everyday logging</p>
+  <ul class="plain-list">
+    {%- for line in say_everyday %}
+    <li>{{ line }}</li>
+    {%- endfor %}
+  </ul>
+</section>
+
+<section class="card" aria-labelledby="hi-keeps">
+  <h2 id="hi-keeps">What Spotter keeps</h2>
+  <ul class="plain-list">
+    <li><b>Lifts.</b> {{ keeps.lifts|show("count") }} lifts by name, each session with its sets.</li>
+    <li><b>Cardio.</b> {{ keeps.cardio|show("count") }} activities.</li>
+    <li><b>Body.</b> Weigh-ins, and {{ keeps.measurements|show("count") }} measurements: {{ keeps.measurement_words }}.</li>
+    <li><b>Food.</b> What you ate, by meal: {{ keeps.meals }}.</li>
+    <li><b>Goals.</b> {{ keeps.goal_kinds|show("count") }} kinds: {{ keeps.goal_words }}.</li>
+  </ul>
+</section>
+
+<section class="card" aria-labelledby="hi-history">
+  <h2 id="hi-history">Bring your history over</h2>
+  <p>Your assistant can bring your history over from another app.</p>
+  <p>Give it the app's export file and ask.</p>
+  <p>It shows a preview first, and the preview writes nothing.</p>
+  <p>Your assistant is told to write only when you say yes.</p>
+  <p>It takes weigh-ins, measurements, lift sessions, food and cardio.</p>
+</section>
+
+<section class="card" aria-labelledby="hi-more">
+  <h2 id="hi-more">More</h2>
+  <p>Not connected yet? The steps are on <a href="/">the home page</a>.</p>
+  <p>Each assistant's own steps are in <a href="{{ readme_table }}">the README's table</a>.</p>
+  {% if signed_in %}
+  <p>Your pages start at Today.</p>
+  <p><a class="plain-link" href="/today">Open Today</a></p>
+  {% elif web_ready %}
+  <p>Sign in to see what you logged.</p>
+  <p><a class="plain-link" href="/sign-in">Sign in</a></p>
+  {% endif %}
+  {% if feedback %}
+  <p>Something wrong or confusing? Tell your assistant to send feedback. It reaches the person who runs Spotter.</p>
+  {% endif %}
+</section>
+{% endblock %}

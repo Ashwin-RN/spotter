@@ -37,7 +37,7 @@ NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)   # a Tuesday
 TODAY = NOW.date()
 SUMMARY_KEYS = ("summary", "note", "text", "label", "plan_line", "maintenance_note", "usda_note",
                 "pace", "fastest_pace", "min_per_km")
-MESSAGE_KEYS = ("message", "fix", "warnings", "time_zone_note")
+MESSAGE_KEYS = ("message", "fix", "warnings", "time_zone_note", "new_account_note")
 KINDS = ("waist", "hips", "chest", "arm", "thigh", "steps", "sleep_hours", "resting_hr", "water_ml")
 CODE_VALUES = re.compile(r"\b(?:None|True|False|null)\b")
 VALUES = {"waist": 84.5, "hips": 98, "chest": 101.25, "arm": 35.5, "thigh": 58, "steps": 12345,
@@ -242,7 +242,7 @@ def test_an_empty_account(make_user):
     seen = Seen()
     every_read(seen, user.id)
     refusals(seen, user.id)
-    assert {"summary", "note", "message", "fix", "time_zone_note"} <= seen.keys()
+    assert {"summary", "note", "message", "fix", "time_zone_note", "new_account_note"} <= seen.keys()
     seen.assert_clean()
 
 

@@ -99,16 +99,17 @@
 
 <section class="card say-first" aria-labelledby="say-title">
   <h2 id="say-title">Things to say first</h2>
+  {#- web.SAY_FIRST and web.SAY_EVERYDAY, which the hi there page draws from too. #}
   <ul class="say">
-    <li><q>{{ exchange.question }}</q> <span class="does">Each goal against its plan line, and the date it is reached at this pace.</span></li>
-    <li><q>How am I doing?</q> <span class="does">Your weight trend, calories a day, lift sessions, cardio and maintenance.</span></li>
-    <li><q>Lunch was two rotis and dal.</q> <span class="does">Logs the meal. Each number is tagged: you said, saved food, USDA or estimate.</span></li>
+    {%- for said, does in say_first %}
+    <li><q>{{ said }}</q> <span class="does">{{ does }}</span></li>
+    {%- endfor %}
   </ul>
   <p class="list-label">Everyday logging</p>
   <ul class="plain-list">
-    <li>Back squat, 3 sets of 5 at 60&nbsp;kg</li>
-    <li>I weighed 72.5&nbsp;kg this morning</li>
-    <li>30&nbsp;minutes on the treadmill</li>
+    {%- for line in say_everyday %}
+    <li>{{ line }}</li>
+    {%- endfor %}
   </ul>
 </section>
 

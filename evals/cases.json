@@ -275,5 +275,27 @@
       ]
     },
     "db": [{"table": "feedback", "count": 0}]
+  },
+  {
+    "id": "hi_there_first_log",
+    "say": "I weighed 80.4 kg this morning",
+    "expect": {
+      "function": "log_bodyweight",
+      "inputs_include": {"kg": 80.4},
+      "reply_has": ["/hi"]
+    },
+    "db": [{"table": "bodyweight", "count": 1, "all": {"kg": 80.4, "date": "{{today}}"}}]
+  },
+  {
+    "id": "hi_there_not_again",
+    "say": "I weighed 80.4 kg this morning",
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}}],
+    "expect": {
+      "function": "log_bodyweight",
+      "inputs_include": {"kg": 80.4},
+      "reply_lacks": ["/hi"]
+    },
+    "db": [{"table": "bodyweight", "count": 2,
+            "rows": [{"id": "{{seed.earlier}}", "kg": 80.9}, {"kg": 80.4, "date": "{{today}}"}]}]
   }
 ]

@@ -575,7 +575,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # routes only. A pass adds its own route here when its page lands.
 BUILT: frozenset[str] = frozenset({"/", "/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress",
                                    "/progress/{lift}", "/goals", "/foods", "/foods/{food_id}/edit", "/settings",
-                                   "/settings/delete"})
+                                   "/settings/delete", "/hi"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 
@@ -692,7 +692,7 @@ TITLE_SHAPE = re.compile(r"\S(?:.*\S)?" + re.escape(SEPARATOR))
 LANDING = "A fitness log you keep by talking to your assistant"
 # Section L's titles table, for the pages named by a fixed word.
 NAMED = {"/": LANDING, "/progress": "Progress", "/goals": "Goals", "/foods": "Foods", "/settings": "Settings",
-         "/settings/delete": "Delete my account"}
+         "/settings/delete": "Delete my account", "/hi": "Hi there"}
 EDIT_KINDS = {"bodyweight": "weigh-in", "measurement": "measurement", "lift_session": "lift session",
               "food_entry": "food entry", "cardio_entry": "cardio session"}
 
@@ -1003,9 +1003,11 @@ CLAUDE_SEEN: dict[str, set[tuple[str, str]]] = {}
 def test_every_page_passes_the_page_rules(client, account, monkeypatch):
     monkeypatch.setattr(web, "PAGE_LIMIT", 10_000)  # one sweep loads every page: more than the page limit allows
     seen: set[tuple[str, str]] = set()
-    out = client.get("/")
-    assert out.status_code == 200
-    findings = page_findings("/", out.text, [], None) + step_4_findings("/", out.text, None, [], seen)
+    findings = []
+    for address in ("/", "/hi"):
+        out = client.get(address)
+        assert out.status_code == 200
+        findings += page_findings(address, out.text, [], None) + step_4_findings(address, out.text, None, [], seen)
     sign_in(client)
     user_id = only_user().id
     ACCOUNTS[account](user_id)
@@ -1013,7 +1015,7 @@ def test_every_page_passes_the_page_rules(client, account, monkeypatch):
     names, notes = names_of(user_id), entered_notes(user_id)
     rendered = 0
     for template, addresses in get_paths(user_id).items():
-        for path in ["/"] + addresses if template == "/settings" else addresses:
+        for path in ["/", "/hi"] + addresses if template == "/settings" else addresses:
             r = client.get(path)
             if template == "/today":
                 assert r.status_code == 303, path  # only redirects: no text of its own

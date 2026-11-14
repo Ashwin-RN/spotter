@@ -3,6 +3,9 @@ and Settings.
 
     /                              the landing: what Spotter is, an example exchange and its picture, what you
                                    need, the MCP address and how to connect it
+    /hi                            the hi there page whoami hands a new person's assistant: what to say,
+                                   what Spotter keeps and how to bring history over. The same words for
+                                   everyone, signed in or out, with no page limit (contract hi-there.md)
     /sign-in                       sends the person to the provider (signed in: on to /today)
     /auth/callback                 checks `state`, finishes the sign-in, finds or creates the user, on to /today
     /sign-out                      POST: ends the session
@@ -36,7 +39,7 @@ and Settings.
                                    then the session, then a plain "deleted" page
     PLACEHOLDERS                   every other page links.py names, until its real page is built
 
-Every page but / and /sign-in needs sign-in. Every web write calls the service Claude's function calls,
+Every page but /, /hi and /sign-in needs sign-in. Every web write calls the service Claude's function calls,
 then writes a call-log row under the same function name (rule 9 of stage 3), so the write limit counts
 web and Claude together. The services' error texts are written for Claude; the pages say what went
 wrong in their own words.
@@ -59,7 +62,7 @@ form older than the entry's last change (entry_changed, contract edit-history.md
 page says so (changed_page).
 
 Web sign-in fails closed: without the provider values, a session key or the site address, every page
-but / says sign-in is not set up, no session is kept, and MCP is unaffected.
+but / and /hi says sign-in is not set up, no session is kept, and MCP is unaffected.
 
 Database calls are synchronous, so they run in a worker thread, never on the event loop. A database that is
 not there, or too busy (no free pooled connection, a query or lock wait past its limit), is the not-set-up
@@ -103,7 +106,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from sqlalchemy import func, select
 
-from app import calllog, charts, csrf, db, formatting, links, mcp_server, rules, services, users, web_auth
+from app import calllog, charts, csrf, db, exercises as exercise_list, formatting, links, mcp_server, rules, services
+from app import users, web_auth
 from app.config import ROOT, Settings, get_settings
 from app.models import (
     CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
@@ -578,6 +582,7 @@ TABS = (("today", "/today", "Today"), ("progress", "/progress", "Progress"), ("g
 # width_class or current_tab itself to override its row. A template not listed gets none of the three.
 FRAMES = {
     "home.html": ("landing", None, None),
+    "hi.html": (None, "privacy-page", None),  # the stylesheet's one-column 720 px width, no tab
     "day.html": ("today", None, "today"),
     "edit.html": (None, "form-page", "today"),
     "progress.html": ("progress", None, "progress"),
@@ -753,8 +758,9 @@ def too_many(request: Request, result: dict) -> Response:
 # More than PAGE_LIMIT page loads (GET, and HEAD, which is a GET without its body) of the signed-in pages by one
 # person in PAGE_WINDOW_MINUTES is refused with the "Too many page loads" page. A page read writes no call-log
 # row, so the count lives in memory: one PageLoads per app (routes() makes it), so per process, keyed by the
-# person's id. The signed-out pages, /health, /static and the MCP endpoint are never counted. A refused load is
-# not counted, so the wait is until the oldest counted load leaves the window. Writes keep their write limit.
+# person's id. The signed-out pages, / and /hi signed in or out, /health, /static and the MCP endpoint are never
+# counted. A refused load is not counted, so the wait is until the oldest counted load leaves the window. Writes keep
+# their write limit.
 PAGE_LIMIT = 300
 PAGE_WINDOW_MINUTES = 10
 PAGE_METHODS = ("GET", "HEAD")
@@ -1048,6 +1054,16 @@ LANDING_EXCHANGE = {
 # width and height (tests hold them to the file), and its short alt.
 LANDING_PICTURE = {"src": "/static/landing-goals.svg", "width": 340, "height": 375,
                    "alt": "The Goals card the assistant quoted, on an example account"}
+# The landing's Things to say first, which the hi there page says too: (what to say, what it does). The first is the
+# exchange's own question. Then the Everyday logging lines, a no-break space before each unit.
+SAY_FIRST = ((LANDING_EXCHANGE["question"], "Each goal against its plan line, and the date it is reached at this pace."),
+             ("How am I doing?", "Your weight trend, calories a day, lift sessions, cardio and maintenance."),
+             ("Lunch was two rotis and dal.",
+              "Logs the meal. Each number is tagged: you said, saved food, USDA or estimate."))
+SAY_EVERYDAY = ("Back squat, 3 sets of 5 at 60\u00a0kg", "I weighed 72.5\u00a0kg this morning",
+                "30\u00a0minutes on the treadmill")
+# The site footer's links, on the landing and the hi there page.
+SITE_FOOT = {"source": links.REPOSITORY, "contact": links.REPOSITORY + "/issues"}
 
 
 def exchange_answer(exchange: dict = LANDING_EXCHANGE) -> list[list[str]]:
@@ -1090,7 +1106,34 @@ async def home(request: Request) -> Response:
                 function_count=FUNCTION_COUNT, eval_cases=EVAL_CASES, assistants=ASSISTANTS,
                 switch=[CLAUDE_CAN_LABELS[value] for value in CLAUDE_CAN],
                 switch_start=CLAUDE_CAN_LABELS[User.__table__.c.claude_can.default.arg],
-                site_foot={"source": links.REPOSITORY, "contact": links.REPOSITORY + "/issues"})
+                say_first=SAY_FIRST, say_everyday=SAY_EVERYDAY, site_foot=SITE_FOOT)
+
+
+def in_words(items) -> str:
+    """A list in a sentence, "a, b and c", each word lowered where its source gives it a capital."""
+    words = [str(item).lower() for item in items]
+    return ", ".join(words[:-1]) + " and " + words[-1] if len(words) > 1 else "".join(words)
+
+
+# The hi there page's What Spotter keeps (contract hi-there.md, section 3): each count and list read from the
+# table that holds it. Its template types none of them.
+HI_KEEPS = {"lifts": len(exercise_list.LIFTS), "cardio": len(exercise_list.CARDIO),
+            "measurements": len(MEASUREMENT_KINDS),
+            "measurement_words": in_words(measurements.kind_word(kind) for kind in MEASUREMENT_KINDS),
+            "meals": in_words(MEALS), "goal_kinds": len(GOAL_KINDS),
+            "goal_words": in_words(words for _, words in GOAL_KINDS)}
+# The function the feedback line asks the assistant to use, read from mcp_server.NEEDS at each render.
+FEEDBACK_FUNCTION = "send_feedback"
+
+
+async def hi_there(request: Request) -> Response:
+    """The hi there page: the same words for everyone. A visitor with no session reads no database. A session naming a
+    person who is gone costs one read and is cleared, as on the landing. It builds no link with links.page, so it
+    draws with no site address too."""
+    await current_user(request)
+    return page(request, "hi.html", landing_lines=LANDING_LINES, say_first=SAY_FIRST, say_everyday=SAY_EVERYDAY,
+                keeps=HI_KEEPS, readme_table=README_TABLE, feedback=FEEDBACK_FUNCTION in mcp_server.NEEDS,
+                site_foot=SITE_FOOT)
 
 
 async def sign_in(request: Request) -> Response:
@@ -2614,6 +2657,7 @@ def routes(settings: Settings) -> list[BaseRoute]:
                                 same_site="lax", https_only=settings.site_origin.startswith("https://")))
         loads = PageLoads()  # this app's page-load count: one app a process, so one count
         table = [("/", home, ["GET"]),
+                 ("/hi", hi_there, ["GET"]),
                  ("/sign-in", sign_in, ["GET"]),
                  ("/auth/callback", callback, ["GET"]),
                  ("/sign-out", sign_out, ["POST"])]
@@ -2624,6 +2668,7 @@ def routes(settings: Settings) -> list[BaseRoute]:
     else:
         off = _off(reason)
         table = [("/", home, ["GET"]),
+                 ("/hi", hi_there, ["GET"]),
                  ("/sign-in", off, ["GET"]),
                  ("/auth/callback", off, ["GET"]),
                  ("/sign-out", off, ["POST"])]

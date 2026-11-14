@@ -246,6 +246,10 @@ class Targets(BaseModel):
 class WhoamiLinks(BaseModel):
     settings: str = Field(description="The Settings page: the person's account details.")
     home: str = Field(description="Spotter's home page.")
+    hi_there: str = Field(
+        description="A short read for the person: what to say, what Spotter keeps and how to bring history over "
+                    "from another app. Give it when new_account_note is present, or when the person asks what "
+                    "Spotter can do.")
 
 
 class SignIn(BaseModel):
@@ -276,6 +280,10 @@ class WhoamiResult(BaseModel):
         description="Present only when no time zone is set: today is then the UTC date. Set it with "
                     "update_settings before logging anything: use the person's zone if you know it, otherwise ask "
                     "once which city they are in.")
+    new_account_note: str | None = Field(
+        default=None,
+        description="Present only while nothing is logged on the account: no entry, no saved food, no open goal. "
+                    "Give the person links.hi_there once, last in your reply.")
 
 
 # ---------------------------------------------------------------- list_exercises

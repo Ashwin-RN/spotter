@@ -404,7 +404,7 @@ def test_whoami_returns_the_account_and_asks_for_a_time_zone(user):
     assert r["targets"] == {"calorie_target_kcal": None, "target_sessions_per_week": None,
                             "target_cardio_minutes_per_week": None}
     assert r["claude_can"] == "log"
-    assert r["links"] == {"settings": f"{SITE}/settings", "home": f"{SITE}/"}
+    assert r["links"] == {"settings": f"{SITE}/settings", "home": f"{SITE}/", "hi_there": f"{SITE}/hi"}
 
 
 def test_whoami_with_a_time_zone_and_targets(make_user):

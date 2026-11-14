@@ -25,7 +25,8 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "repeat_sent", "delete_ambiguous", "delete_explicit", "unknown_exercise",
                   "goal_date", "how_am_i_doing", "on_track", "export_is_a_click", "delete_is_a_click", "drop_goal",
                   "decimals_and_dashes", "import_preview_first", "import_again", "import_unknown_lift", "undo_edit",
-                  "feedback_sent", "feedback_offered"}
+                  "feedback_sent", "feedback_offered",
+                  "hi_there_first_log", "hi_there_not_again"}
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
           "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries",
@@ -40,7 +41,8 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert len(cases) == 23  # was 21: feedback adds feedback_sent and feedback_offered
+    assert len(cases) == 25  # was 21: feedback adds feedback_sent and feedback_offered, and the hi there page
+    # adds hi_there_first_log and hi_there_not_again
     assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)

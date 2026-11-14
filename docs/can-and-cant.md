@@ -357,6 +357,14 @@ confusing, an idea.
 - A note is kept until Spotter's maker deletes it, one year at most. Until then it is in the export,
   and deleting the account deletes it.
 
+## A new person
+
+- While nothing is logged, `whoami` carries `new_account_note`: no live entry, no saved food and no open goal.
+- Claude then gives the person `links.hi_there` once, last in the reply.
+- The link is a short read: what to say, what Spotter keeps and how to bring history over. It has nothing to fill in.
+- The note goes after the first entry, saved food or open goal. It comes back if the account is emptied again.
+- `links.hi_there` is always there. Give it when the person asks what Spotter can do.
+
 ## What Claude may do
 
 Twenty functions, nothing else:
