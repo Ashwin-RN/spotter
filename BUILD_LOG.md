@@ -899,3 +899,19 @@ Accepted: an account set to read only cannot send a note. A hostile note can tel
 Not run on a real Postgres: two sends at once ran on SQLite only. The evals were not run for this work alone: its two cases, `feedback_sent` and `feedback_offered`, make 23, and they run with the next work that changes what a model reads.
 
 The full suite: 5,247 tests, plain, at the commit `3e135b4`. Before the join, every test file also passed with warnings as errors, in separate runs.
+
+## On a real Postgres
+
+The key, the edit history and feedback had run on SQLite only. On 2026-11-14 the tree at `a7ba6d3` ran against Postgres 17.12, in a throwaway container on the build machine.
+
+| Check | Result |
+|---|---|
+| Migrations from empty to head | 0001 to 0008 ran, and the models match the database |
+| Down to the live revision and up again | 0008, 0007 and 0006 each came down and went up again, one at a time, over a person's row written at 0005. The row was still there, and the models matched again |
+| The key's tests | `tests/test_idempotency.py`: 164 passed, two sends at once and a retry during the first send among them |
+| The edit history's and feedback's tests | `tests/test_edit_history.py` and `tests/test_feedback.py`: 169 passed |
+| The write path around them | Nine more files, the ones for users, the write limit, entries, isolation, the trace, the call log, the export and MCP: 624 passed |
+
+How: a copy of the tree, with the tests' database address pointed at that Postgres and each test starting from truncated tables with their id counters set back. Nothing in the repository changed for it. 957 tests in all, with no failure.
+
+It is one machine's Postgres, not the host's. It shows that the SQL, the locks and the migrations hold there. It does not show how the host behaves under load.
