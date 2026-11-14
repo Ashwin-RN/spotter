@@ -701,3 +701,47 @@ What the owner can see when a call goes wrong for anyone, without seeing what th
 A second reviewer read the fix round as new code: it holds. A non-owner's function list, the instructions and the resources were compared with the build before, as sent on the wire: identical. Not run on a real Postgres: the migration and the owner's queries were read and compiled for it, not executed there.
 
 The full suite: 4,878 tests, plain, at the commit. The files touched also passed with warnings as errors.
+
+## A USDA lookup that answers
+
+On the live site, `find_food` said "USDA did not answer" for more than half of first lookups, with a working key. The decisions are in `docs/contracts/usda-steady.md`.
+
+### What was measured, 2026-11-14
+
+| Where | Request | Result |
+|---|---|---|
+| The live site, through `find_food` | 25 words nobody had looked up before | About 15 said "USDA did not answer". A failed word answered on a second try. One word sent four times at once: three answered, one did not |
+| Another network, USDA's public demo key | The live request: a GET with three `dataType` values in the address, 8 words | 3 got "400 Bad Request", an nginx page and not USDA's JSON. Unencoded brackets changed nothing |
+| The same | That GET with no `dataType`, 20 words, 6 of them two words long | 20 of 20 answered |
+| The build machine, the owner's key, the two forms in turn in one run | The live GET, 20 words | 11 answered. 9 got the same 400 page, each in about 1.1 seconds |
+| The same run | The new POST, the filter in a JSON body, 20 words | 20 of 20 answered, each naming the three data types as the filter it applied. Median 2.3 seconds, slowest 3.1 |
+
+So the key is right and the request is well formed. USDA's own front end rejects the search at random when the filter rides in the address, and did not once when it rode in the body. The fix before this one, spaces as `%20` in place of `+`, had met this same random 400.
+
+The contract asked for the last run with the public demo key. That key allows too few requests: one POST with it answered, and the next was over its limit. The run used the owner's key, read from a file by the measuring script, sent in the header only and never printed.
+
+### What changed
+
+| Part | What changed |
+|---|---|
+| The search | A POST to `/foods/search`: the query, the three data types as a list and the page size in a JSON body. The address is the path alone, so the person's query is no longer in it. The key stays in the `X-Api-Key` header |
+| Tries | A try that fails with a 400, a status from 500 to 599 or no answer is tried again at once: three tries at most, and none begun once 8 seconds have gone. A refused key, a spent limit, a redirect and a broken reply are never tried again |
+| Food by id | Still a GET, with the same rule |
+| A food log | `log_food` stops looking up at the first food that fails. The call is refused on that food anyway |
+| The call's row | `usda_tries=N` when a lookup took more than one try: in a call of several lookups, the most any one took. One warning line for each failed try, with its number |
+| The assistant | Nothing it reads changed: the same messages and the same fixes |
+
+### The review
+
+| Finding | Fix |
+|---|---|
+| One `log_food` call can name 30 USDA foods. With three tries each it could make 90 requests, every one after the first failure spent for nothing | It stops at the first lookup that fails |
+| A row could pair one lookup's tries with another lookup's reason | The row keeps the most tries of any lookup in the call |
+| The food-by-id address ended in a bare `?` | The `?` is written only with something after it |
+| A tries note that was not a number would have crashed a lookup after USDA had answered. Nothing writes such a note today | It is read with a guard |
+
+A second reviewer read the fix round as new code: it holds. Over every path tried, the result, the call's row and the log lines held no key, no query and no address. The longest one lookup can take is just under 13 seconds: two tries inside the 8 seconds, then a third of up to 5. Accepted.
+
+Not known until this is live: whether the live site's failures were this 400. The pattern matches, and the call's row will say: `usda=bad_request` for a lookup that failed, `usda_tries` for one that needed more than one try.
+
+The full suite: 4,898 tests, plain, at the commit. The files touched also passed with warnings as errors.
