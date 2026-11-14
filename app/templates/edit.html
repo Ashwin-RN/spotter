@@ -44,6 +44,7 @@
       <button class="primary">Save</button>
       <a class="action" href="{{ day_href }}">Cancel</a>
     </div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
   {% if estimate_kcal is not none %}
   <p class="small">Calorie estimate now: {{ estimate_kcal|show("kcal") }}. It is worked out again when you save.</p>

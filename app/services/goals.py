@@ -30,7 +30,10 @@ set_goal(user_id, data, by)
       unit         kg, cm or bpm (the measurement's own), or min.
     The direction is never worked out again. An edit that would point the target the other way is
     refused: drop the goal and set a new one. A second open goal for the same thing (kind, exercise,
-    measurement kind, distance) is warned about, not refused.
+    measurement kind, distance) is warned about, not refused. The same goal again (the same thing, target,
+    date and text, and the start the first has) within DUPLICATE_MINUTES of the first is not written: the
+    first comes back, with a warning that says so, and the call's row notes goal=duplicate and reads
+    duplicate.
 
     With goal_id: one of the person's own goals. status (open, hit, dropped), target_value,
     target_date and text change; kind, exercise, measurement_kind and distance_km cannot. Closing a
@@ -83,12 +86,12 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app import db, formatting, links, metrics, rules, users
+from app import calllog, db, formatting, links, metrics, rules, users
 from app.models import GOAL_STATUSES, CardioEntry, Goal, Measurement, User
 from app.services import body, cardio, lifts, measurements
 from app.services.common import (
-    check_by, check_data, check_write_limit, exercises, in_range, lock_user, no_account, not_found,
-    owned, row_dict, truthy,
+    DUPLICATE_MINUTES, check_by, check_data, check_write_limit, exercises, in_range, lock_user, no_account,
+    not_found, owned, row_dict, truthy,
 )
 
 KIND = "goal"
@@ -730,12 +733,22 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
                                   (Goal.distance_km, distance)):
                 same = same.where(column == value if value is not None else column.is_(None))
             same = list(s.scalars(same.order_by(Goal.id).options(selectinload(Goal.exercise))))
-            goal.start_value, goal.direction = start, direction
-            s.add(goal)
-            s.flush()
-            for g in same:
-                warnings.append(f"There is already an open goal {_text(g)} (id {g.id}). Both are kept; "
-                                f"if the new one replaces it, mark goal {g.id} dropped.")
+            since = db.utcnow() - timedelta(minutes=DUPLICATE_MINUTES)
+            new = (target, target_date, text or "", start)  # with what it is of, what makes it the same goal
+            first = next((g for g in same if g.created_at >= since
+                          and (g.target_value, g.target_date, g.text, g.start_value) == new), None)
+            if first is not None:  # the same goal as one set a moment ago: the guard the logs have
+                goal = first
+                warnings.append(f"This goal was already set in the last {DUPLICATE_MINUTES} minutes, so it was not "
+                                "set twice: this is the first one.")
+                calllog.note("goal", "duplicate")  # the result has no duplicate field, so the call's row says it
+            else:
+                goal.start_value, goal.direction = start, direction
+                s.add(goal)
+                s.flush()
+                for g in same:
+                    warnings.append(f"There is already an open goal {_text(g)} (id {g.id}). Both are kept; "
+                                    f"if the new one replaces it, mark goal {g.id} dropped.")
         else:
             loaded = load_numbers(s, user.id, today, [goal])
             if target is not None:

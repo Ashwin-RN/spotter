@@ -10,6 +10,7 @@
   <form method="post" action="{{ action }}" class="inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="link">Undo</button>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
 </div>{% endmacro %}
 
@@ -18,11 +19,13 @@
   {% if confirm %}<form method="post" action="/entries/{{ kind }}/{{ id }}/confirm" class="inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="link" title="Keep this number as yours">Confirm</button>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
   {% endif %}<a class="action" href="/entries/{{ kind }}/{{ id }}/edit">Edit</a>
   <form method="post" action="/entries/{{ kind }}/{{ id }}/delete" class="inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="link">Delete</button>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
 </span>{% endmacro %}
 

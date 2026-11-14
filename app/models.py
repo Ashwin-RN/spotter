@@ -1,5 +1,6 @@
 """The v1 schema: every table for stages 2 to 5, as the stage 2 contract lists them, and the one column
 stage 5 added (goal.measurement_kind, migration 0003). Migration 0004 dropped one column from seven tables.
+Migration 0005 added the call log's trace columns, and 0006 the write keys (write_key).
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -247,6 +248,23 @@ class CallLog(Base):
     step: Mapped[str | None] = mapped_column(String(16), nullable=True)
     frame: Mapped[str | None] = mapped_column(String(128), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class WriteKey(Base):
+    """One row per person and key a write carried (migration 0006): which function, a fingerprint of what was
+    sent, and the first answer once it is kept. Written in the write's own transaction, under the person's lock
+    (services.common.lock_user). Never an argument. Deleted with the account."""
+
+    __tablename__ = "write_key"
+    __table_args__ = (UniqueConstraint("user_id", "key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = _user_id()
+    key: Mapped[str] = mapped_column(String(64))
+    function: Mapped[str] = mapped_column(String(64))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)  # null until the first answer is kept
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
 
 
 class Measurement(EntryColumns, Base):

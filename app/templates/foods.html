@@ -33,6 +33,7 @@
         <tr><td class="lead">{{ f.name }}</td><td data-label="Serving">{{ f.serving_label }}</td><td class="num" data-label="kcal">{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td><td class="num" data-label="Times logged">{{ f.times_logged|show("count") }}</td>{% if weighed %}<td class="num" data-label="Grams (g)">{% if f.grams_per_serving is not none %}{{ f.grams_per_serving|show("grams", unit=False) }}{% endif %}</td>{% endif %}<td><a class="action" href="/foods/{{ f.id }}/edit">Edit</a></td><td><form method="post" action="/foods/{{ f.id }}/delete" class="inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button class="link">Delete</button>
+          <input type="hidden" name="key" value="{{ form_key() }}">
         </form></td></tr>
         {% endfor %}
       </tbody>
@@ -61,6 +62,7 @@
     {{ parts.field("food-grams_per_serving", "grams_per_serving", "Grams in one serving (g)", errors.get("grams_per_serving"), typed.get("grams_per_serving"), inputmode="decimal", hint="Optional") }}
     <div class="form-actions"><button class="primary">Save food</button></div>
     <p class="small">Saving a name you already have updates it.</p>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
   {% endcall %}
 </div>

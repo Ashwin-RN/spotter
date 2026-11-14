@@ -6,7 +6,7 @@ data. Beside them, the trace (contract trace.md):
     request_id   the request's own id (REQUEST_ID), set by main.RequestId; the X-Request-Id header
     caller       web or claude (CALLERS)
     tried        what was sent, as names and counts only (tried): only KNOWN_NAMES are written
-    outcome      read, written, duplicate, preview, refused or failed (outcome)
+    outcome      read, written, duplicate, preview, refused or failed, or repeat for a key sent again (outcome)
     step         where a failed call stopped, from its error code (step)
     frame        the innermost frame in app/ of a crash, as file:line function (frame_of)
     notes        fixed words Spotter's own code set during the call (note; noted reads one back), as key=word
@@ -19,7 +19,8 @@ other. Both are synchronous and use the database: callers run them in a worker t
 error is logged by type and swallowed: a lost row never costs the person their answer.
 
 Retention: a finished call deletes the rows older than CALL_LOG_DAYS, the first time after the process
-starts and then at most once in SWEEP_HOURS (sweep).
+starts and then at most once in SWEEP_HOURS (sweep). The same sweep deletes the write keys older than
+KEY_HOURS (contract idempotency.md), at most once in KEY_SWEEP_HOURS.
 
 crash_text(exc) describes an exception by its type and its stack frames only. It never includes the
 exception's message: a database error's message can carry the statement's values, which are the
@@ -38,7 +39,7 @@ from sqlalchemy import delete, update
 
 from app import db
 from app.mcp_schemas import FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, SetIn
-from app.models import CallLog
+from app.models import CallLog, WriteKey
 
 log = logging.getLogger("spotter.calllog")
 
@@ -47,6 +48,8 @@ IN_PROGRESS = "in_progress"  # a started row's error code until finish() records
 TRIED_MAX, FRAME_MAX, NOTES_MAX = 400, 128, 128  # the columns' lengths
 CALL_LOG_DAYS = 90
 SWEEP_HOURS = 24
+KEY_HOURS = 24  # how long a write's key is kept: an older row is absent, swept or not (services.common.lock_user)
+KEY_SWEEP_HOURS = 1
 CALLERS = ("web", "claude")
 # Spotter's seven tables: the one value tried writes (kind=food_entry), and an import's rows counted by kind.
 TABLES = ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "goal")
@@ -57,7 +60,7 @@ KNOWN_NAMES = frozenset({
     "account_id", "add_back_exercise_kcal", "allow_repeat", "avg_hr", "calorie_target_kcal", "category", "date", "days",
     "description", "distance_km", "distance_unit", "dry_run", "email", "entries", "entry_id", "exercise",
     "failed_only", "goal_id", "grams_per_serving", "hours", "include_closed", "incline_pct", "kcal",
-    "kcal_per_serving", "kg", "kind", "length_unit", "limit", "machine_kcal", "meal", "measurement_kind",
+    "kcal_per_serving", "key", "kg", "kind", "length_unit", "limit", "machine_kcal", "meal", "measurement_kind",
     "minutes", "name", "no_account", "notes", "query", "request_id", "rows", "serving_label", "sets", "speed_kmh",
     "start_value", "status", "target_cardio_minutes_per_week", "target_date", "target_sessions_per_week",
     "target_value", "text", "time_zone", "value", "weight_unit",
@@ -65,6 +68,7 @@ KNOWN_NAMES = frozenset({
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.
 STEPS = {"no_subject": "account", "signups_closed": "account", "no_account": "account",
          "not_allowed": "permission",
+         "invalid_key": "key", "key_reused": "key", "already_done": "key",
          "too_many_reads": "limit", "too_many_writes": "limit", "too_many_imported": "limit",
          "usda_off": "lookup", "usda_unavailable": "lookup",
          "database_unavailable": "database", "internal_error": "crash"}
@@ -76,6 +80,7 @@ REQUEST_ID: ContextVar[str | None] = ContextVar("spotter_request_id", default=No
 # in the thread reaches the row.
 _NOTES: ContextVar[dict | None] = ContextVar("spotter_call_notes", default=None)
 _swept: datetime | None = None
+_swept_keys: datetime | None = None
 _sweeping = threading.Lock()
 
 
@@ -115,19 +120,28 @@ def finish(row_id: int | None, ms: int, ok: bool, error_code: str | None, result
 
 
 def sweep() -> None:
-    """Delete the rows older than CALL_LOG_DAYS: the first time, then at most once in SWEEP_HOURS. A failure
-    is logged by type and swallowed."""
-    global _swept
+    """Delete the rows older than CALL_LOG_DAYS: the first time, then at most once in SWEEP_HOURS. And the write
+    keys older than KEY_HOURS: the first time, then at most once in KEY_SWEEP_HOURS. Each delete has its own
+    transaction, so one that fails never costs the other. A failure is logged by type and swallowed."""
+    global _swept, _swept_keys
     now = db.utcnow()
     with _sweeping:
-        if _swept is not None and now - _swept < timedelta(hours=SWEEP_HOURS):
-            return
-        _swept = now
+        calls = _swept is None or now - _swept >= timedelta(hours=SWEEP_HOURS)
+        keys = _swept_keys is None or now - _swept_keys >= timedelta(hours=KEY_SWEEP_HOURS)
+        _swept, _swept_keys = (now if calls else _swept), (now if keys else _swept_keys)
+    if calls:
+        _delete_old("call log", CallLog.started_at, now - timedelta(days=CALL_LOG_DAYS))
+    if keys:
+        _delete_old("write keys", WriteKey.created_at, now - timedelta(hours=KEY_HOURS))
+
+
+def _delete_old(what: str, column, before: datetime) -> None:
+    """One of the sweep's deletes: the rows of the column's table older than `before`."""
     try:
         with db.session_scope() as session:
-            session.execute(delete(CallLog).where(CallLog.started_at < now - timedelta(days=CALL_LOG_DAYS)))
+            session.execute(delete(column.class_).where(column < before))
     except Exception as exc:  # noqa: BLE001 - the sweep never fails a call
-        log.warning("The call log could not be swept: %s", type(exc).__name__)
+        log.warning("The %s could not be swept: %s", what, type(exc).__name__)
 
 
 def new_notes() -> dict:
@@ -191,13 +205,17 @@ def tried(function: str, sent) -> str:
     return " ".join([*kept, "+more"])
 
 
-def outcome(result: dict | None, write: bool) -> str:
-    """Whether the call did it, from the work's result: None when the work itself crashed or lost the database."""
+def outcome(result: dict | None, write: bool, repeat: bool = False) -> str:
+    """Whether the call did it, from the work's result: None when the work itself crashed or lost the database.
+    repeat: a key sent again got its first answer back, and nothing ran. A new goal the guard did not set twice
+    is a duplicate: its result has no duplicate field, so the call's own note says it (goal=duplicate)."""
+    if repeat:
+        return "repeat"
     if result is None:
         return "failed"
     if "error" in result or "errors" in result:
         return "refused"
-    if result.get("duplicate") is True:
+    if result.get("duplicate") is True or noted("goal") == "duplicate":
         return "duplicate"
     if result.get("dry_run") is True:
         return "preview"

@@ -51,6 +51,7 @@
       </select>
     </div>
     <div class="form-actions"><button class="primary">Save time zone</button></div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
 </section>
 
@@ -72,6 +73,7 @@
       <span>Add cardio back: show a net total, food minus cardio calories</span>
     </label>
     <div class="form-actions"><button class="primary">Save targets</button></div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
 </section>
 
@@ -95,6 +97,7 @@
       {% endfor %}
     </fieldset>
     <div class="form-actions"><button class="primary">Save</button></div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
 </section>
 

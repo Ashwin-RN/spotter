@@ -40,6 +40,9 @@ CASES = {
 # has no user_id, so it never appears in user_tables().)
 EXEMPT = {
     "call_log": "Written by the MCP wrapper, never read back by id, and holds no content.",
+    "write_key": "A write's own key (idempotency.md): no function reads it by id. services.common reads and deletes "
+                 "it by the person's id and the key together, and tests/test_idempotency.py holds that one person's "
+                 "key never reaches another person's row.",
 }
 
 # Tables with no user_id of their own, owned through a parent that has one.

@@ -1116,8 +1116,8 @@ class OwnerCall(BaseModel):
     ok: bool = Field(description="Whether it answered without an error.")
     error: str | None = Field(description="Its error code, or null.")
     outcome: str | None = Field(
-        description="read, written, duplicate, preview, refused or failed. Null while it runs, or when the process "
-                    "stopped under it.")
+        description="read, written, duplicate, preview, repeat, refused or failed. Null while it runs, or when the "
+                    "process stopped under it.")
     step: str | None = Field(description="Where a failed call stopped, or null.")
     frame: str | None = Field(description="The line in Spotter a crash came from, as file:line function, or null.")
     tried: str | None = Field(description="What was sent: field names and counts, never a value.")

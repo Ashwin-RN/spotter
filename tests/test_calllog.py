@@ -173,7 +173,10 @@ def marked_fields(arguments: dict) -> set[str]:
 def test_the_marker_table_covers_every_string_argument(http):
     for tool in tool_list(http, sign()):
         marked = set().union(*(marked_fields(a) for name, a in MARKED_CALLS if name == tool["name"]))
-        assert string_fields(tool["inputSchema"]) == marked, tool["name"]
+        # A write's key is a string argument too. Its marker is sent in tests/test_idempotency.py, for every write
+        # function: sent here, it would refuse the calls after the first one that kept it (key_reused).
+        own_key = {"key"} if tool["name"] in services.common.WRITE_FUNCTIONS else set()
+        assert string_fields(tool["inputSchema"]) - own_key == marked, tool["name"]
 
 
 def test_a_marker_in_every_argument_reaches_no_log_row_and_no_log_line(make_client, logs):

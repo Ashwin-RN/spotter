@@ -47,6 +47,10 @@ A path no route answers gets the designed 404 page (fallback, mounted last by ma
 in a page route the designed 500 page (PageErrors), both with the page header. Every web write's redirect
 carries a mark (marked), so the page after it is calm.
 
+Every form that writes carries a hidden key as its last field, new each time its page is drawn (form_key). The
+same form sent again with the same fields writes nothing and lands where the first send did (logged_write,
+contract idempotency.md). Sign out and the export write nothing through a service, and carry none.
+
 Web sign-in fails closed: without the provider values, a session key or the site address, every page
 but / says sign-in is not set up, no session is kept, and MCP is unaffected.
 
@@ -70,6 +74,7 @@ import threading
 import time
 import zipfile
 from collections import deque
+from contextvars import ContextVar
 from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
@@ -96,7 +101,7 @@ from app.config import ROOT, Settings, get_settings
 from app.models import (
     CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
 )
-from app.services import account as account_checks, body, lifts, measurements, progress as progress_data
+from app.services import account as account_checks, body, common, lifts, measurements, progress as progress_data
 from app.services import goals as goal_rules
 
 log = logging.getLogger("spotter")
@@ -138,10 +143,17 @@ def style_href(path: Path = STYLESHEET) -> str:
     return "/static/style.css" if version is None else f"/static/style.css?v={version}"
 
 
+def form_key() -> str:
+    """A fresh key for one drawn form (contract idempotency.md, decision 11). Every form that writes carries one
+    in a hidden field named key, so the same form sent twice writes once (logged_write)."""
+    return secrets.token_urlsafe(16)
+
+
 def _environment() -> Environment:
     env = Environment(loader=FileSystemLoader(str(HERE / "templates")), autoescape=True)
     env.filters.update(FILTERS)
     env.globals["style_href"] = style_href()
+    env.globals["form_key"] = form_key
     return env
 
 
@@ -370,6 +382,7 @@ GOAL_POST_LANDS = POST_LANDS  # goals.html names it
 # set_goal's warnings, said in the page's own words. A saved goal's warnings travel across the redirect as
 # these codes (as the day page carries its undo): (code, how the warning starts, what the page says).
 GOAL_NOTES = (
+    ("twice", "This goal was already set", "This goal was already set, so it was not set twice."),
     ("duplicate", "There is already an open goal",
      "You already had an open goal like this one. Both are kept: drop the one you no longer want."),
     ("start", "start_value was ignored",
@@ -820,21 +833,63 @@ def web_sent(write, args: tuple) -> dict:
     return sent
 
 
+# The posted form's key (the hidden field form_key() filled), held for the request's writes: with_form_key sets it,
+# and logged_write reads its worker thread's copy.
+_FORM_KEY: ContextVar[object] = ContextVar("spotter_form_key", default=None)
+
+
+def with_form_key(endpoint):
+    """The endpoint with its posted form's key held for the writes it makes. After the CSRF check, which has
+    parsed the form."""
+    async def run(request: Request) -> Response:
+        posted = request.method not in csrf.SAFE_METHODS
+        held = _FORM_KEY.set((await request.form()).get("key") if posted else None)
+        try:
+            return await endpoint(request)
+        finally:
+            _FORM_KEY.reset(held)
+
+    run.__name__ = endpoint.__name__
+    return run
+
+
+def kept_text(result: dict) -> str | None:
+    """A web write's result as the text kept under its key, the text MCP would send. None when it is not JSON."""
+    try:
+        return mcp_server._json_text(result)[0]
+    except (TypeError, ValueError):
+        return None
+
+
 def logged_write(user_id: int, function: str, write, *args):
     """Run a service write with its call-log row under `function`, the name MCP uses for the same write, and
     its trace (app/calllog.py). The row is stored (in progress) before the service runs, so the write limit
     counts this call while it runs, and completed afterwards. Runs in the worker thread with the write. A
-    crash completes the row as internal_error, a lost database as database_unavailable, and is raised."""
+    crash completes the row as internal_error, a lost database as database_unavailable, and is raised.
+
+    A form's key makes the write a keyed one (services.common.keyed). The write's own key is worked out: the
+    start of the SHA-256 of the form's key and the write's fingerprint. So the same form sent again with the
+    same fields gets the first result back and its row reads repeat, a form sent again with a field changed is
+    a new write, and two writes of one form have two keys. A missing or malformed form key: no key, as before."""
     started_at, start = db.utcnow(), time.monotonic()
     row_id = None
     notes = calllog.new_notes()
+    sent, form, claim, kept = web_sent(write, args), _FORM_KEY.get(), None, None
+    if common.is_key(form):
+        mark = common.fingerprint(function, sent)
+        claim = common.new_claim(function, hashlib.sha256(f"{form}:{mark}".encode()).hexdigest()[:40], mark)
+        sent = {**sent, "key": True}  # for tried: the row says a key was sent, and never holds its value
     try:
-        row_id = calllog.start(function, started_at, user_id, "web", calllog.tried(function, web_sent(write, args)))
+        row_id = calllog.start(function, started_at, user_id, "web", calllog.tried(function, sent))
     except Exception as exc:  # noqa: BLE001 - a lost log row never costs the person their write
         log.warning("Web %s: the call log could not be started: %s", function, type(exc).__name__)
     result, code, frame = None, "internal_error", None
     try:
-        result = write(*args)
+        if claim is None:
+            result = write(*args)
+        else:
+            result, kept = common.keyed(user_id, claim, lambda: write(*args))
+            result = json.loads(kept) if kept is not None else result
         return result
     except BaseException as exc:
         code = "database_unavailable" if isinstance(exc, DATABASE_DOWN) else code
@@ -850,16 +905,26 @@ def logged_write(user_id: int, function: str, write, *args):
             ok = not failed(result)
             code = None if ok else str(result.get("error") or "invalid")
             size = len(json.dumps(result, default=str).encode("utf-8"))
+            if claim is not None and claim["row"] is not None:  # this write claimed its key: keep or free it
+                common.settle(user_id, claim, result, kept_text(result))
         try:
-            calllog.finish(row_id, ms, ok, code, size, calllog.outcome(result, True), calllog.step(code), frame,
-                           notes)
+            calllog.finish(row_id, ms, ok, code, size, calllog.outcome(result, True, kept is not None),
+                           calllog.step(code), frame, notes)
         except Exception as exc:  # noqa: BLE001 - a lost log row never costs the person their write
             log.warning("Web %s: the call log could not be finished: %s", function, type(exc).__name__)
 
 
+class AlreadyDone(Exception):
+    """A form sent again whose first send was done and whose result was not kept (already_done). Shown as its own
+    page, whichever form it was."""
+
+
 async def write(user: User, function: str, service, *args) -> dict:
     """A web write: its call-log row, the service, the row completed, in a worker thread."""
-    return await _db(logged_write, user.id, function, service, *args)
+    result = await _db(logged_write, user.id, function, service, *args)
+    if result.get("error") == "already_done":
+        raise AlreadyDone
+    return result
 
 
 def local_path(value: object) -> str | None:
@@ -928,6 +993,9 @@ def _db_safe(endpoint):
             return await endpoint(request)
         except DatabaseUnavailable:
             return not_set_up(request, "Spotter cannot reach its database right now.")
+        except AlreadyDone:
+            return message(request, "Already done", "This form was already sent, and what it asked for was done then.",
+                           "Nothing was done a second time. Go back and reload the page to see it.", status_code=409)
 
     run.__name__ = endpoint.__name__
     return run
@@ -2479,7 +2547,7 @@ def routes(settings: Settings) -> list[BaseRoute]:
     for path, endpoint, methods in table:
         handler = endpoint
         if any(m not in csrf.SAFE_METHODS for m in methods):
-            handler = csrf.protect(handler, refuse)
+            handler = csrf.protect(with_form_key(handler), refuse)
         # Outermost, so a database outage while refusing a form is the not-set-up page, not a 500.
         handler = _db_safe(handler)
         built.append(Route(path, handler, methods=methods, middleware=stack))

@@ -198,6 +198,7 @@
       {{ parts.field("food-meal", "meal", "Meal", errors.get("meal"), kept.get("meal"), choices=meal_choices, empty="By the clock") }}
     </div>
     <div class="form-actions"><button class="primary">Save food</button></div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
   {% endcall %}
 </section>
@@ -277,6 +278,7 @@
       {{ parts.field("cardio-distance", "distance_km", "Distance (km)", errors.get("distance_km"), kept.get("distance_km"), inputmode="decimal") }}
     </div>
     <div class="form-actions"><button class="primary">Save cardio</button></div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
   {% endcall %}
 </section>
@@ -304,6 +306,7 @@
     {% endfor %}
     {{ parts.field("kg", "kg", "Weight (kg)", errors.get("kg"), kept.get("kg"), inputmode="decimal", required=true) }}
     <div class="form-actions"><button class="primary">{{ weigh_words }}</button></div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
   {% endcall %}
 </section>
@@ -335,6 +338,7 @@
     {{ parts.field("measurement-kind", "kind", "Kind", errors.get("kind"), kept.get("kind"), choices=kind_choices, required=true) }}
     {{ parts.field("measurement-value", "value", "Value", errors.get("value"), kept.get("value"), inputmode="decimal", required=true) }}
     <div class="form-actions"><button class="primary">Save measurement</button></div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
   {% endcall %}
 </section>

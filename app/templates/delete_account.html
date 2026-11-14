@@ -22,6 +22,7 @@
       <button class="danger">Delete my account</button>
       <a class="action" href="{{ settings_href }}">Keep my account</a>
     </div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
 </div>
 {% endblock %}

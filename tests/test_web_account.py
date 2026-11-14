@@ -329,7 +329,8 @@ def test_each_cell_is_its_reads_own_field_through_its_filter(signed, monkeypatch
         "-" not in re.sub(r'<[^>]+>', "", row)
     assert '<a class="action" href="/foods/22/edit">Edit</a>' in row
     assert re.search(r'<form method="post" action="/foods/22/delete" class="inline">\s*<input type="hidden" '
-                     r'name="csrf_token" value="[^"]+">\s*<button class="link">Delete</button>\s*</form>', row)
+                     r'name="csrf_token" value="[^"]+">\s*<button class="link">Delete</button>\s*'
+                     r'<input type="hidden" name="key" value="[^"]+">\s*</form>', row)
 
 
 def test_no_saved_foods_is_a_dashed_card_and_the_fold_out_open(signed):
@@ -365,7 +366,7 @@ def test_the_save_a_food_form_holds_its_fields_in_order(signed):
     [button] = form.find_all("button")
     assert (button.classes, button.text()) == (["primary"], "Save food")
     assert [p.text() for p in form.find_all("p", "small")] == ["Saving a name you already have updates it."]
-    assert [n.tag for n in form.elements()][-2:] == ["div", "p"]  # the button, then the grey line
+    assert [n.tag for n in form.elements()][-3:] == ["div", "p", "input"]  # the button, the grey line, the hidden key
 
 
 @pytest.mark.parametrize("address, words", [
@@ -383,7 +384,8 @@ def test_each_mark_shows_its_one_strip_or_none(signed, address, words):
     if "deleted=saved_food:" in address and words:
         undo = re.search(r'<div class="ok undo">\s*Saved food deleted\.\s*<form method="post" '
                          rf'action="/foods/{food}/restore" class="inline">\s*<input type="hidden" name="csrf_token" '
-                         r'value="([^"]+)">\s*<button class="link">Undo</button>\s*</form>\s*</div>', page)
+                         r'value="([^"]+)">\s*<button class="link">Undo</button>\s*<input type="hidden" name="key" '
+                         r'value="[^"]+">\s*</form>\s*</div>', page)
         assert undo and undo.group(1) == session_of(signed)["csrf"]
 
 
@@ -1173,8 +1175,9 @@ def test_each_form_posts_to_its_cards_anchor_and_each_redirect_names_it(signed):
     assert re.search(r'<form id="auto-time-zone" method="post" action="/settings" hidden>', page)
     assert "autofocus" not in page
     [card] = [f for f in dom.find_all("form") if f.attrs.get("action") == "/settings#zone"]
-    assert [(i.attrs.get("type"), i.attrs.get("name"), i.attrs.get("value")) for i in card.find_all("input")][1:] == [
+    assert [(i.attrs.get("type"), i.attrs.get("name"), i.attrs.get("value")) for i in card.find_all("input")][1:-1] == [
         ("hidden", web.ZONE_CARD_FIELD, "zone")]
+    assert card.find_all("input")[-1].attrs.get("name") == "key"  # the form's key, its last field
     assert location_of(post(signed, "/settings", time_zone="Europe/London", card="zone")) == \
         SITE + "/settings?saved=time_zone#zone"
     assert location_of(post(signed, "/settings/targets", target_sessions_per_week="3")) == \
@@ -1496,7 +1499,7 @@ def test_the_automatic_zone_save_lands_as_it_always_did_from_a_page_drawn_with_a
     r = post(signed, "/settings/targets", calorie_target_kcal="abc")
     assert r.status_code == 400 and only_user().time_zone is None
     action, fields = auto_zone_form(r.text)
-    assert action == "/settings" and set(fields) == {"csrf_token", "time_zone"}  # no next, no card field
+    assert action == "/settings" and set(fields) == {"csrf_token", "time_zone", "key"}  # no next, no card field
     sent = {**fields, "time_zone": "Asia/Kolkata", **({} if next_ is None else {"next": next_})}
     assert location_of(signed.post(action, data=sent)) == SITE + lands
     assert only_user().time_zone == "Asia/Kolkata"

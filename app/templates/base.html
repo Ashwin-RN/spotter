@@ -41,6 +41,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="time_zone" value="">
     {% if next_path %}<input type="hidden" name="next" value="{{ next_path }}">{% endif %}
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
   <script src="/static/time-zone.js"></script>
   {% endif %}

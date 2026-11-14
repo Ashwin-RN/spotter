@@ -158,7 +158,8 @@ def test_another_persons_rows_are_out(make_user):
 def test_every_table_the_person_owns_has_a_file():
     from app.services.export import TABLES
     exported = {model.__tablename__ for model, _ in TABLES.values()} | {"lift_set"}
-    owned = set(user_tables()) - {"call_log"}   # the call log holds no content
+    # The call log holds no content. A write's key is Spotter's own plumbing, kept 24 hours (idempotency.md).
+    owned = set(user_tables()) - {"call_log", "write_key"}
     assert owned <= exported
     assert "lift_set" in Base.metadata.tables
 

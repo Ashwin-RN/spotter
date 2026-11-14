@@ -11,13 +11,15 @@ One wrapper runs every function (Wrapper.call below). In order: it notes the sta
 verified token, finds or creates the person's account (users.user_for_identity), asks the provider's
 userinfo for a missing email or name (at most once per LOOKUP_EVERY seconds per person), starts the
 call's call-log row (calllog.start), checks the person's permission switch against NEEDS, checks the
-read limit for a read-level function (services.common.check_reads: every read together), runs the
-service with the account id, turns a crash into {error: internal_error, ...}, and completes the row
-(calllog.finish). The row exists before the service runs, so the write limit and the read limit count a
-call from its start. A query cancelled by a database limit, a lock wait that ran out or no free pooled
-connection is DATABASE_DOWN: database_unavailable, as for a database that is not there. The services,
-the user lookup and the call log are synchronous and use the database, so each runs in a worker thread,
-never on the event loop.
+read limit for a read-level function (services.common.check_reads: every read together), checks the
+shape of a write's key when one was sent (invalid_key), runs the service with the account id (a keyed
+write through services.common.keyed: one look for the key with no lock, then the work), turns a crash
+into {error: internal_error, ...}, keeps a keyed write's first answer or frees its key
+(services.common.settle), and completes the row (calllog.finish). The row exists before the service
+runs, so the write limit and the read limit count a call from its start. A query cancelled by a
+database limit, a lock wait that ran out or no free pooled connection is DATABASE_DOWN:
+database_unavailable, as for a database that is not there. The services, the user lookup and the call
+log are synchronous and use the database, so each runs in a worker thread, never on the event loop.
 
 The row carries the call's trace (app/calllog.py): what was sent (SpotterServer.call_tool holds the
 arguments as the client sent them), the outcome, the step, the frame and the notes.
@@ -27,6 +29,10 @@ not_allowed: both check the verified token's subject against OWNER_USER_ID (is_o
 
 Every result is the service's own dict, as structured content and as compact JSON text. A service
 error ({error, message, fix}) is flagged is_error. A duplicate is a success.
+
+A write's own key (contract idempotency.md): each of the twelve write functions takes key (Key). The wrapper
+reads it from the arguments as sent, and no service is passed it. The same key with the same call again gets
+the first answer's text back, word for word, and its row reads repeat.
 """
 
 import functools
@@ -63,6 +69,7 @@ from app.mcp_schemas import (
     RestoreEntryResult, SaveFoodResult, SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
 )
 from app.models import User
+from app.services import common
 from app.services.common import check_reads
 from app.services.owner import HOURS, LIMIT
 
@@ -230,6 +237,16 @@ OWNER_ONLY = {"error": "not_allowed", "message": "This function is for Spotter's
 # The arguments of the call running, as the client sent them (SpotterServer.call_tool): what tried describes.
 _SENT: ContextVar[dict | None] = ContextVar("spotter_sent_arguments", default=None)
 
+# A write's own key: the same argument, with the same words, on each of the twelve write functions. No pattern and
+# no length in the schema: Spotter's own check answers invalid_key, with its fix. The wrapper reads the key from
+# the arguments as sent (_SENT), so a function declares it and never passes it on.
+KEY_DESCRIPTION = (
+    "Optional. A key of your own for this one write: 8 to 64 letters, digits, - or _. Send the same key when you "
+    "send the same call again: nothing is written twice and the first answer comes back. A new write takes a new "
+    "key."
+)
+Key = Annotated[str | None, Field(description=KEY_DESCRIPTION)]
+
 LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
 KIND_DESCRIPTION = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
 ENTRY_ID_DESCRIPTION = ("The entry's id, from log_lifts, log_bodyweight, log_measurement, log_food, log_cardio "
@@ -393,8 +410,10 @@ class Wrapper:
         started_at = db.utcnow()
         start = time.monotonic()
         account_id = row_id = done = frame = None  # done: the work's own result, once it has one
+        claim = kept = None  # a keyed write's claim, and the first answer's text when this call is a repeat
         started = reply = False
-        tried = calllog.tried(function, _SENT.get())
+        sent = _SENT.get() or {}
+        tried = calllog.tried(function, sent)
         notes = calllog.new_notes()  # in the context before the worker thread starts: its notes reach the row
         try:
             token = get_access_token()
@@ -411,15 +430,29 @@ class Wrapper:
                     refused = {**OWNER_ONLY}
                 if refused is None and function in READ_FUNCTIONS:  # the read limit, before the read's work
                     refused = await anyio.to_thread.run_sync(check_reads, account_id, READ_FUNCTIONS)
-                result = refused or await anyio.to_thread.run_sync(work, account_id)
+                key = sent.get("key") if function in common.WRITE_FUNCTIONS else None
+                if refused is None and key is not None:  # a write's own key: its shape, before anything looks it up
+                    if common.is_key(key):
+                        claim = common.new_claim(function, key, common.fingerprint(function, sent))
+                    else:
+                        refused = common.invalid_key()
+                if claim is None:
+                    result = refused or await anyio.to_thread.run_sync(work, account_id)
+                else:
+                    result, kept = await anyio.to_thread.run_sync(common.keyed, account_id, claim,
+                                                                  functools.partial(work, account_id))
+                    result = json.loads(kept) if kept is not None else result
                 if add is not None and "error" not in result:
                     result = add(result, token)
             done, reply = result, True
             is_error = "error" in result
-            if not is_error:
-                model.model_validate(result)  # a result that breaks its schema is Spotter's bug, not the caller's
-            # Raises on anything that cannot be sent, such as a lone surrogate: then the answer is internal_error.
-            text, size = _json_text(result)
+            if kept is not None:  # the same key and the same call again: the first answer, word for word
+                text, size = kept, len(kept.encode("utf-8"))
+            else:
+                if not is_error:
+                    model.model_validate(result)  # a result that breaks its schema is Spotter's bug, not the caller's
+                # Raises on anything that cannot be sent, such as a lone surrogate: then the answer is internal_error.
+                text, size = _json_text(result)
             reply = False
         except DATABASE_DOWN as exc:
             log.warning("MCP %s could not use the database: %s", function, type(exc).__name__)
@@ -433,8 +466,12 @@ class Wrapper:
         ms = int((time.monotonic() - start) * 1000)
         code = result.get("error") if is_error else None
         # A reply that failed after the work finished reads as what the work did: a write that landed is written.
-        trace = (calllog.outcome(done, NEEDS.get(function) != "read"), calllog.step(code, reply), frame, notes)
+        trace = (calllog.outcome(done, NEEDS.get(function) != "read", kept is not None and not is_error),
+                 calllog.step(code, reply), frame, notes)
         try:
+            if claim is not None and claim["row"] is not None and done is not None:  # the work claimed the key:
+                # keep its answer, or free the key of a refusal. A reply that failed keeps none.
+                await anyio.to_thread.run_sync(common.settle, account_id, claim, done, None if reply else text)
             if not started:  # the call failed before its row was written (finding the person, say)
                 row_id = await _start_row(function, started_at, account_id, tried)
             await anyio.to_thread.run_sync(calllog.finish, row_id, ms, not is_error, code, size, *trace)
@@ -559,6 +596,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         allow_repeat: Annotated[bool, Field(
             description="true logs it even when it matches a session from the last 10 minutes. Send it only "
                         "when the person confirms it was a separate session.")] = False,
+        key: Key = None,
     ) -> Annotated[CallToolResult, LogLiftsResult]:
         data = _sent(sets=[s.model_dump() for s in sets], date=date, notes=notes, allow_repeat=allow_repeat or None)
         return await wrapper.call("log_lifts", LogLiftsResult,
@@ -580,6 +618,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
         allow_repeat: Annotated[bool, Field(
             description="true logs it even when it matches a weigh-in from the last 10 minutes.")] = False,
+        key: Key = None,
     ) -> Annotated[CallToolResult, LogBodyweightResult]:
         data = _sent(kg=kg, date=date, allow_repeat=allow_repeat or None)
         return await wrapper.call("log_bodyweight", LogBodyweightResult,
@@ -626,6 +665,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
                         "goal.")] = None,
         status: Annotated[str | None, Field(
             description="With goal_id: hit (reached), dropped, or open (reopen).")] = None,
+        key: Key = None,
     ) -> Annotated[CallToolResult, SetGoalResult]:
         data = _sent(kind=kind, exercise=exercise, measurement_kind=measurement_kind, distance_km=distance_km,
                      target_value=target_value, target_date=target_date, text=text, start_value=start_value,
@@ -675,6 +715,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         add_back_exercise_kcal: Annotated[bool | None, Field(
             description="true adds cardio calories back to the day's food total (net calories); false stops it.")]
             = not_sent(),
+        key: Key = None,
     ) -> Annotated[CallToolResult, UpdateSettingsResult]:
         # A target sent as null is passed on, so the service clears it; one left out is not passed at all.
         data = {**_sent(time_zone=time_zone),
@@ -725,6 +766,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
         allow_repeat: Annotated[bool, Field(
             description="true logs it even when it matches a measurement from the last 10 minutes.")] = False,
+        key: Key = None,
     ) -> Annotated[CallToolResult, LogMeasurementResult]:
         data = _sent(kind=kind, value=value, date=date, allow_repeat=allow_repeat or None)
         return await wrapper.call("log_measurement", LogMeasurementResult,
@@ -771,6 +813,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             description="A cardio entry's average heart rate in bpm. null clears it.")] = not_sent(),
         machine_kcal: Annotated[int | None, Field(
             description="The calories the machine or watch showed. null clears it.")] = not_sent(),
+        key: Key = None,
     ) -> Annotated[CallToolResult, EditEntryResult]:
         # The cardio extras and notes pass an explicit null on (it clears them, or works the speed out); every
         # other field sent as null is the same as not sent.
@@ -794,6 +837,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     async def restore_entry(
         kind: Annotated[str, Field(description=KIND_DESCRIPTION)],
         entry_id: Annotated[int, Field(description=ENTRY_ID_DESCRIPTION)],
+        key: Key = None,
     ) -> Annotated[CallToolResult, RestoreEntryResult]:
         return await wrapper.call("restore_entry", RestoreEntryResult,
                                   lambda account: services.restore_entry(account, kind, entry_id))
@@ -811,6 +855,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     async def delete_entry(
         kind: Annotated[str, Field(description=KIND_DESCRIPTION)],
         entry_id: Annotated[int, Field(description=ENTRY_ID_DESCRIPTION)],
+        key: Key = None,
     ) -> Annotated[CallToolResult, DeleteEntryResult]:
         return await wrapper.call("delete_entry", DeleteEntryResult,
                                   lambda account: services.delete_entry(account, kind, entry_id))
@@ -853,6 +898,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         allow_repeat: Annotated[bool, Field(
             description="true logs it even when it matches food logged in the last 10 minutes. Send it only "
                         "when the person confirms they ate it again.")] = False,
+        key: Key = None,
     ) -> Annotated[CallToolResult, LogFoodResult]:
         data = _sent(entries=[x.model_dump(exclude_none=True) for x in entries], date=date,
                      allow_repeat=allow_repeat or None)
@@ -874,6 +920,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         kcal_per_serving: Annotated[float, Field(
             description="Calories in one serving, as the person gave them, 0 to 5,000.")],
         grams_per_serving: Annotated[float | None, Field(description="Grams in one serving, if known.")] = None,
+        key: Key = None,
     ) -> Annotated[CallToolResult, SaveFoodResult]:
         data = _sent(name=name, serving_label=serving_label, kcal_per_serving=kcal_per_serving,
                      grams_per_serving=grams_per_serving)
@@ -907,6 +954,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         notes: Annotated[str | None, Field(description="How it went, in the person's words.")] = None,
         allow_repeat: Annotated[bool, Field(
             description="true logs it even when it matches a session from the last 10 minutes.")] = False,
+        key: Key = None,
     ) -> Annotated[CallToolResult, LogCardioResult]:
         data = _sent(exercise=exercise, minutes=minutes, date=date, distance_km=distance_km, incline_pct=incline_pct,
                      speed_kmh=speed_kmh, avg_hr=avg_hr, machine_kcal=machine_kcal, notes=notes,
@@ -974,6 +1022,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         length_unit: Annotated[str | None, Field(
             description="cm or in: the unit of every body size (waist, hips, chest, arm, thigh) in these rows. "
                         "Needed when a row holds a body size: a call without it is refused.")] = None,
+        key: Key = None,
     ) -> Annotated[CallToolResult, ImportEntriesResult]:
         # The five fields the service takes and nothing else: it refuses any other. A row's fields go as sent.
         data = _sent(rows=[r.model_dump(exclude_none=True) for r in rows], dry_run=dry_run, weight_unit=weight_unit,

@@ -109,7 +109,8 @@ def test_goals_with_none_offers_the_body_weight_form(signed, fake_goals):
     assert r.status_code == 200 and "No open goals." in r.text and "Closed goals" not in r.text
     assert seen == [(only_user().id, True)]  # closed goals asked for too
     form = form_parts(r.text)
-    assert form["hidden"] == [("csrf_token", session_of(signed)["csrf"]), ("kind", "bodyweight")]
+    assert form["hidden"][:2] == [("csrf_token", session_of(signed)["csrf"]), ("kind", "bodyweight")]
+    assert [name for name, _ in form["hidden"]] == ["csrf_token", "kind", "key"]  # the form's key, its last field
     assert form["fields"] == FORM_FIELDS["bodyweight"]
     assert '<input id="goal-date" name="target_date" type="date" autocomplete="off">' in r.text
 
@@ -1052,7 +1053,9 @@ def test_the_form_posts_to_its_card_and_a_set_goal_lands_at_the_top_with_no_auto
     assert body.attrs.get("id") == "top"
     assert [n.tag for n in parse(page).iter() if n.attrs.get("id") == "top"] == ["body"]  # the one id="top"
     assert '<p class="ok">Goal set.</p>' in page and autofocused(page) == []
-    again = post(signed, "/goals", **filled({**FORM_WEIGHT, "start_value": "80"}))  # a second, with its note
+    # A second for the same thing, with its note. Another target: the very same goal again is not set twice
+    # (idempotency.md decision 12).
+    again = post(signed, "/goals", **filled({**FORM_WEIGHT, "target_value": "74", "start_value": "80"}))
     assert again.headers["location"] == SITE + "/goals?saved=goal&notes=duplicate#top"
     first, second = [g.id for g in rows(Goal, only_user().id)]
     r = post(signed, f"/goals/{first}/status", status="dropped")
@@ -2310,8 +2313,8 @@ def test_a_reopen_among_several_goals_reads_that_goal_alone(signed):
     by = (today_of(only_user()) + timedelta(days=30)).isoformat()
     first = services.set_goal(uid, {"kind": "bodyweight", "target_value": 75, "start_value": 80, "target_date": by},
                               "claude")["id"]
-    for _ in range(11):
-        made = services.set_goal(uid, {"kind": "lift", "exercise": "Back Squat", "target_value": 140,
+    for n in range(11):  # each its own target: the same goal again is not set twice (idempotency.md decision 12)
+        made = services.set_goal(uid, {"kind": "lift", "exercise": "Back Squat", "target_value": 140 + n,
                                        "start_value": 100, "target_date": by}, "claude")["id"]
     services.set_goal(uid, {"goal_id": first, "status": "dropped"}, "claude")
     assert (first, made) == (1, 12)

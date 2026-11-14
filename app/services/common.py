@@ -39,21 +39,55 @@ The duplicate guard. dedupe_key() is a SHA-256 of an entry's defining values, no
 find_duplicate() looks for a live entry of the same person with the same date and key, created in
 the last DUPLICATE_MINUTES. It reads the entry's own created_at, and runs for the web and for
 Claude alike.
+
+A write's own key (contract idempotency.md). A caller may send a key with any write. The MCP wrapper and
+the web run such a write through keyed(), which puts the call's claim in the context: the key, the
+function's name, a fingerprint of what was sent, and the id of its write_key row once there is one.
+lock_user() reads the claim. With the person's row held it looks for their row for that key, older than
+KEY_HOURS counting as absent. A live row raises KeyKept: nothing else runs and the transaction rolls back.
+No row: it writes one with an empty answer, in the write's own transaction, so the key is there if and
+only if the write committed, and two sends at once cannot both pass. With no claim in the context
+lock_user() does what it always did. Afterwards settle() keeps the first answer on the row, or deletes the
+row of a refusal or a preview. A key sent again gets that answer back (keyed), key_reused when the call is
+another one, and already_done when the first answer was not kept. A row with no answer yet is waited for, up
+to ANSWER_WAIT, while it is younger than ANSWER_LOST: an older one is already_done at the first look, before
+the work and the lock. Every read and delete of write_key names the person's id.
 """
 
 import hashlib
 import json
+import logging
 import math
+import re
+import time
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app import db, formatting
-from app.models import CALLERS, CallLog, Exercise, User
+from app.calllog import KEY_HOURS
+from app.models import CALLERS, CallLog, Exercise, User, WriteKey
 from app.rules import as_sent, error, quote, span, to_float
 
+log = logging.getLogger("spotter.common")
+
 DUPLICATE_MINUTES = 10
+KEY_SHAPE = re.compile(r"[A-Za-z0-9_-]{8,64}")  # a write's key: 8 to 64 letters, digits, - or _
+ANSWER_MAX = 65_536  # bytes of UTF-8: a first answer larger than this is not kept
+ANSWER_WAIT = 2.0  # seconds a key sent again waits for a first send that has written and not yet kept its answer
+ANSWER_EVERY = 0.1  # seconds between its looks
+ANSWER_LOST = 60  # seconds: a kept row older than this with no answer lost it, so no send waits for it
+# The read that shows what a write did, named in already_done's fix. Any other write: get_log. A delete or a
+# restore takes a saved food too, which get_log does not show.
+ENTRY_OR_FOOD = "get_log, or find_food for a saved food"
+READ_BACK = {"set_goal": "get_goals", "update_settings": "whoami", "save_food": "find_food",
+             "delete_entry": ENTRY_OR_FOOD, "restore_entry": ENTRY_OR_FOOD}
+# The claim of the call running: {key, function, fingerprint, row}. keyed() puts it in the context of the thread
+# the work runs in, and lock_user sets row to the id of the write_key row it wrote.
+_CLAIM: ContextVar[dict | None] = ContextVar("spotter_write_claim", default=None)
+KEPT = (WriteKey.function, WriteKey.fingerprint, WriteKey.answer, WriteKey.created_at)  # what a look reads of a row
 
 # How each kind is named in messages, and where Claude finds its ids.
 KIND_LABELS = {
@@ -164,14 +198,156 @@ def lock_statement(dialect: str, user_id: int):
 
 def lock_user(s: Session, user_id: int) -> User | None:
     """Lock this person's row for the rest of the transaction, then return it. None if there is no
-    such account. Call it first, before anything else reads in this session (see the module notes)."""
+    such account. Call it first, before anything else reads in this session (see the module notes).
+    With a claim in the context that has no row yet, the call's key is claimed here, under the lock:
+    KeyKept when the person's row for that key is already there."""
     dialect = s.get_bind().dialect.name
     if dialect == "sqlite":
         if s.execute(lock_statement(dialect, user_id)).rowcount != 1:
             return None
     elif s.scalar(lock_statement(dialect, user_id)) is None:
         return None
+    claim = _CLAIM.get()
+    if claim is not None and claim["row"] is None:
+        _claim_key(s, user_id, claim)
     return s.get(User, user_id)
+
+
+# ---------------------------------------------------------------- a write's own key
+
+class KeyKept(Exception):
+    """lock_user's signal: this person's row for the call's key is already there. It carries that row's function,
+    fingerprint, answer and created_at. No service catches it: it reaches keyed(), and the transaction rolls back."""
+
+    def __init__(self, function: str, fingerprint: str, answer: str | None, created_at: datetime) -> None:
+        super().__init__()
+        self.kept = (function, fingerprint, answer, created_at)
+
+
+def invalid_key() -> dict:
+    return error("invalid_key", "key must be 8 to 64 letters, digits, - or _.",
+                 "Send 8 to 64 letters, digits, - or _, or leave the key out.")
+
+
+def key_reused() -> dict:
+    return error("key_reused", "This key was used for another call.", "Send a new key for a new write.")
+
+
+def already_done(function: str) -> dict:
+    return error("already_done", "This call already ran. Its answer was not kept.",
+                 f"Read it back with {READ_BACK.get(function, 'get_log')}. Send a new key for a new write.")
+
+
+def is_key(value) -> bool:
+    return isinstance(value, str) and KEY_SHAPE.fullmatch(value) is not None
+
+
+def fingerprint(function: str, sent) -> str:
+    """SHA-256 of the function's name and the arguments as sent, without the key, as canonical JSON."""
+    plain = {k: v for k, v in sent.items() if k != "key"} if isinstance(sent, dict) else {}
+    text = json.dumps([function, plain], sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def new_claim(function: str, key: str, mark: str) -> dict:
+    """The claim of a call that sent this key: mark is its fingerprint."""
+    return {"key": key, "function": function, "fingerprint": mark, "row": None}
+
+
+def _claim_key(s: Session, user_id: int, claim: dict) -> None:
+    """Under the person's lock: an expired row for the key is deleted, a live one raises KeyKept, and with none
+    the call's own row is written, its answer empty. It commits with the write or not at all."""
+    mine = (WriteKey.user_id == user_id, WriteKey.key == claim["key"])
+    s.execute(delete(WriteKey).where(*mine, WriteKey.created_at < db.utcnow() - timedelta(hours=KEY_HOURS))
+              .execution_options(synchronize_session=False))
+    kept = s.execute(select(*KEPT).where(*mine)).first()
+    if kept is not None:
+        raise KeyKept(*kept)
+    row = WriteKey(user_id=user_id, key=claim["key"], function=claim["function"], fingerprint=claim["fingerprint"])
+    s.add(row)
+    s.flush()
+    claim["row"] = row.id
+
+
+def _kept(user_id: int, key: str):
+    """This person's live row for the key, as (function, fingerprint, answer, created_at), or None. No lock."""
+    with db.new_session() as s:
+        return s.execute(select(*KEPT).where(
+            WriteKey.user_id == user_id, WriteKey.key == key,
+            WriteKey.created_at >= db.utcnow() - timedelta(hours=KEY_HOURS))).first()
+
+
+def _answer(claim: dict, kept) -> tuple[dict | None, str | None] | None:
+    """What a kept row answers this call: key_reused for another call, the first answer for the same one, and
+    already_done when it has no answer and is older than ANSWER_LOST. None when there is no row, or a younger one
+    with no answer on it yet."""
+    if kept is None:
+        return None
+    function, mark, answer, created_at = kept
+    if (function, mark) != (claim["function"], claim["fingerprint"]):
+        return key_reused(), None
+    if answer is not None:
+        return None, answer
+    lost = db.utcnow() - created_at > timedelta(seconds=ANSWER_LOST)
+    return (already_done(function), None) if lost else None
+
+
+def _waited(user_id: int, claim: dict, kept) -> tuple[dict | None, str | None] | None:
+    """After lock_user's signal. The first send may sit between its commit and keeping its answer, so a young row
+    is read again, with no lock, every ANSWER_EVERY for up to ANSWER_WAIT: still empty then is already_done. A row
+    older than ANSWER_LOST is not waited for. None when the row has gone: the first send was refused, and its key
+    is free."""
+    until = time.monotonic() + ANSWER_WAIT
+    while kept is not None:
+        found = _answer(claim, kept)
+        if found is not None:
+            return found
+        if time.monotonic() >= until:
+            return already_done(claim["function"]), None
+        time.sleep(ANSWER_EVERY)
+        kept = _kept(user_id, claim["key"])
+    return None
+
+
+def keyed(user_id: int, claim: dict, work) -> tuple[dict | None, str | None]:
+    """Run a write that carries a key, in the worker thread: (the work's result, None), or (None, the first
+    answer's text) for the same call sent again, or (key_reused or already_done, None). First one look with no
+    lock, which answers a kept key at once, before any of the work. Then the work, where lock_user decides. The
+    work runs once more when the first send was refused while this one waited."""
+    held = _CLAIM.set(claim)
+    try:
+        found = _answer(claim, _kept(user_id, claim["key"]))
+        for _ in range(2):
+            if found is not None:
+                return found
+            try:
+                return work(), None
+            except KeyKept as signal:
+                found = _waited(user_id, claim, signal.kept)
+        return found or (already_done(claim["function"]), None)
+    finally:
+        _CLAIM.reset(held)
+
+
+def settle(user_id: int, claim: dict, result: dict, text: str | None) -> None:
+    """After the work, when this call claimed its key's row. A typed error or a preview frees the key: the row is
+    deleted. A good result keeps its answer: text, the reply as it is sent, when that is at most ANSWER_MAX
+    bytes. Larger, or None because the reply failed, the answer stays empty and the next send is already_done.
+    Its own short transaction. A failure is logged by type and swallowed."""
+    if claim["row"] is None:
+        return
+    mine = (WriteKey.id == claim["row"], WriteKey.user_id == user_id)
+    if "error" in result or "errors" in result or result.get("dry_run") is True:
+        change = delete(WriteKey).where(*mine)
+    elif text is not None and len(text.encode("utf-8")) <= ANSWER_MAX:
+        change = update(WriteKey).where(*mine).values(answer=text)
+    else:
+        return
+    try:
+        with db.session_scope() as s:
+            s.execute(change.execution_options(synchronize_session=False))
+    except Exception as exc:  # noqa: BLE001 - a key that could not be settled never costs the person their answer
+        log.warning("A write's key could not be settled: %s", type(exc).__name__)
 
 
 def check_write_limit(s: Session, user_id: int) -> dict | None:

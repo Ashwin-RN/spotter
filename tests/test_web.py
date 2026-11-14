@@ -2820,13 +2820,13 @@ def test_the_rendered_confirm_form_carries_a_token_that_works(client, fed):
 
 @pytest.mark.parametrize("which", [0, 1, 2])
 def test_the_rendered_delete_form_carries_a_token_that_works(client, fed, which):
-    """Each Food entry's Delete form, posted as drawn: its own fields only, the token among them."""
+    """Each Food entry's Delete form, posted as drawn: its own fields only, the token and the form's key."""
     entry_id = fed["food"][which]
     card = food_card(day_of(client, fed["today"]))
     form = re.search(rf'<form method="post" action="/entries/food_entry/{entry_id}/delete" class="inline">(.*?)</form>',
                      card, re.S).group(1)
     fields = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', form))
-    assert set(fields) == {"csrf_token"} and fields["csrf_token"]
+    assert set(fields) == {"csrf_token", "key"} and fields["csrf_token"] and fields["key"]
     r = client.post(f"/entries/food_entry/{entry_id}/delete", data=fields)
     assert r.status_code == 303 and r.headers["location"] == SITE + f"/day/{fed['today']}?deleted=food_entry:{entry_id}"
     assert next(e.deleted_at for e in rows(FoodEntry, only_user().id) if e.id == entry_id) is not None
@@ -4745,7 +4745,8 @@ def test_each_edit_page_has_its_head_one_card_its_fields_and_save_and_cancel(cli
     save, cancel = actions.elements()
     assert save.is_("button", "primary") and save.text() == "Save"
     assert cancel.is_("a", "action") and cancel.attrs["href"] == f"/day/{today}" and cancel.text() == "Cancel"
-    assert form.elements()[-1] is actions
+    assert form.elements()[-2] is actions  # after it, only the form's hidden key (idempotency.md decision 11)
+    assert form.elements()[-1].attrs.get("type") == "hidden" and form.elements()[-1].attrs.get("name") == "key"
     assert claude_findings(f"/entries/{kind}/{entry_id}/edit", page) == []
     assert "claude" not in re.sub(r"<[^>]+>", " ", page).casefold()
 

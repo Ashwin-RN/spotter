@@ -461,12 +461,12 @@ def test_every_result_field_is_described(http):
 
 def test_the_arguments_are_typed_parameters(http):
     schemas = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}
-    assert list(schemas["log_lifts"]["properties"]) == ["sets", "date", "notes", "allow_repeat"]
+    assert list(schemas["log_lifts"]["properties"]) == ["sets", "date", "notes", "allow_repeat", "key"]
     assert schemas["log_lifts"]["required"] == ["sets"]
-    assert list(schemas["log_bodyweight"]["properties"]) == ["kg", "date", "allow_repeat"]
+    assert list(schemas["log_bodyweight"]["properties"]) == ["kg", "date", "allow_repeat", "key"]
     assert list(schemas["set_goal"]["properties"]) == ["kind", "exercise", "measurement_kind", "distance_km",
                                                        "target_value", "target_date", "text", "start_value", "goal_id",
-                                                       "status"]
+                                                       "status", "key"]
     assert not schemas["set_goal"].get("required")
     assert schemas["get_trends"]["properties"] == {}
     assert list(schemas["get_goals"]["properties"]) == ["include_closed"]
@@ -474,15 +474,16 @@ def test_the_arguments_are_typed_parameters(http):
     assert list(schemas["get_progress"]["properties"]) == ["exercise"]
     assert list(schemas["update_settings"]["properties"]) == [
         "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
-        "add_back_exercise_kcal"]
+        "add_back_exercise_kcal", "key"]
     assert list(schemas["find_food"]["properties"]) == ["query", "limit"]
-    assert list(schemas["log_food"]["properties"]) == ["entries", "date", "allow_repeat"]
+    assert list(schemas["log_food"]["properties"]) == ["entries", "date", "allow_repeat", "key"]
     assert list(schemas["log_food"]["$defs"]["FoodEntryIn"]["properties"]) == [
         "description", "meal", "kcal", "estimated", "saved_food_id", "servings", "usda_fdc_id", "grams"]
-    assert list(schemas["save_food"]["properties"]) == ["name", "serving_label", "kcal_per_serving", "grams_per_serving"]
+    assert list(schemas["save_food"]["properties"]) == ["name", "serving_label", "kcal_per_serving", "grams_per_serving",
+                                                        "key"]
     assert list(schemas["log_cardio"]["properties"]) == [
         "exercise", "minutes", "date", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal", "notes",
-        "allow_repeat"]
+        "allow_repeat", "key"]
     assert list(schemas["list_exercises"]["properties"]) == ["kind", "category"]
     assert schemas["whoami"]["properties"] == {}
     one_set = schemas["log_lifts"]["$defs"]["SetIn"]
@@ -921,7 +922,10 @@ def test_the_argument_table_lists_every_optional_argument(http):
     for tool in tool_list(http, sign()):
         schema = tool["inputSchema"]
         optional = set(schema["properties"]) - set(schema.get("required", []))
-        assert optional == set(OPTIONAL_ARGUMENTS[tool["name"]]), tool["name"]
+        # Every write function also takes key (idempotency.md decision 10). It is no service's argument, so it is
+        # not in the table: tests/test_idempotency.py sends it to every write function and holds that it stops here.
+        keyed = {"key"} if tool["name"] in services.WRITE_FUNCTIONS else set()
+        assert optional == set(OPTIONAL_ARGUMENTS[tool["name"]]) | keyed, tool["name"]
         assert set(schema.get("required", [])) == set(REQUIRED.get(tool["name"], {})), tool["name"]
 
 
@@ -1120,7 +1124,7 @@ def test_the_permission_switch_cannot_be_set_through_update_settings(http, monke
     schema = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["update_settings"]
     assert "claude_can" not in schema["properties"] and set(schema["properties"]) == {
         "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
-        "add_back_exercise_kcal"}
+        "add_back_exercise_kcal", "key"}
     assert not any("claude_can" in t["inputSchema"].get("properties", {}) for t in tool_list(http, sign()))
     # And in practice: an extra claude_can is dropped before the service; the stored switch is unchanged.
     token = sign()
@@ -2173,8 +2177,9 @@ def test_import_entries_publishes_named_fields_and_a_strict_dry_run_with_no_defa
     from app.services import imports
 
     schema = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["import_entries"]
-    assert list(schema["properties"]) == ["rows", "dry_run", "weight_unit", "distance_unit", "length_unit"]
-    assert set(schema["properties"]) == set(imports.CALL_FIELDS) and schema["required"] == ["rows"]
+    assert list(schema["properties"]) == ["rows", "dry_run", "weight_unit", "distance_unit", "length_unit", "key"]
+    # key is the wrapper's, never the service's (idempotency.md decision 10): the service still takes its five.
+    assert set(schema["properties"]) - {"key"} == set(imports.CALL_FIELDS) and schema["required"] == ["rows"]
     dry = schema["properties"]["dry_run"]
     assert dry["type"] == "boolean" and "default" not in dry and "anyOf" not in dry  # left out is the preview
     rows = schema["properties"]["rows"]

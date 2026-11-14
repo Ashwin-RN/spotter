@@ -9,6 +9,7 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="status" value="{{ status }}">
   <button class="{{ button }}">{{ label }}</button>
+  <input type="hidden" name="key" value="{{ form_key() }}">
 </form>
 {% endmacro %}
 
@@ -130,6 +131,7 @@
     {% if kind == "bodyweight" and not shows_start %}<p class="small">The goal starts from your 7-day average today.</p>
     {% endif %}
     <div class="form-actions"><button class="primary">Set goal</button></div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
 </aside>
 {% endblock %}

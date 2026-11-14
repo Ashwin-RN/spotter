@@ -141,7 +141,9 @@ def test_0005_adds_seven_nullable_columns_and_an_index_and_comes_down_again():
             assert "ix_call_log_request_id" in {i["name"] for i in inspect(c).get_indexes("call_log")}
             old = c.exec_driver_sql(f"SELECT function, {', '.join(TRACE)} FROM call_log").one()
             assert tuple(old) == ("whoami", *[None] * len(TRACE))  # the row already there keeps nulls
-            assert compare_metadata(MigrationContext.configure(c), Base.metadata) == []  # the models match
+            # The models match, but for the table 0006 adds (tests/test_idempotency.py holds them at 0006).
+            assert [(d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
+                ("add_table", "write_key")]
         command.downgrade(cfg, "0004")
         with engine.connect() as c:
             assert {col["name"] for col in inspect(c).get_columns("call_log")} == set(found) - set(TRACE)
