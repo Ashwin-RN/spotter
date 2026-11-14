@@ -147,6 +147,12 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
   same day, the same set of foods or the same cardio session, logged again within 10 minutes comes
   back with `duplicate` true. Nothing new is written.
   Send `allow_repeat` true only when the person confirms it happened twice.
+  The same new goal set again within 10 minutes is not set twice: the first comes back with a warning.
+- **Sending a write twice.** Any write takes an optional `key` of your own: 8 to 64 letters, digits,
+  `-` or `_`. The same key with the same call again writes nothing and returns the first answer. The
+  same key with a different call is refused with `key_reused`. A key whose first answer was not kept
+  answers `already_done`: read the entry back before sending anything new. Keys are kept for a day.
+  A new write takes a new key. With no key, the 10-minute rule above is the only guard.
 - **Replacements.** A second, different weigh-in on the same day replaces the first; so does a second
   value of the same measurement kind. The first is kept, not erased, and `restore_entry` brings it back.
 - **Edits.** `edit_entry` changes an entry in place and keeps its id: a session's date, notes or whole

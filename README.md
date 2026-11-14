@@ -67,6 +67,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 - 19 MCP functions and two resources, over streamable HTTP.
 - Python 3.12, Starlette, SQLAlchemy, Alembic, the `mcp` library and Postgres. Sign-in goes through an outside provider (WorkOS AuthKit) for the web and the assistant, so both reach one account.
 - Every write locks the person's row first, counts against a write limit, and passes the same checks whether it came from the assistant or a form.
+- Every write is safe to send twice. A call may carry a key of its own: the same key and call again writes nothing and gets the first answer back. Every form that writes carries a hidden key, so a double click saves once. Answers are kept for a day.
 - Safety limits: a sized connection pool, a time limit on every query, lock wait and idle transaction, a read limit and a page limit per person, and a 1 MiB cap on every request. A database that is too busy answers that it is busy, not with a crash.
 - A call log with a trace: one row per call, with a request id that is also on the log lines and the response, the names of the fields sent and never a value, whether it wrote, and where a failed call stopped. Rows are deleted after 90 days.
 - A docs-only change runs the docs tests, and a small code change runs the tests for the code it touches. The whole suite runs with warnings as errors on a clean export before a big push, and about once in every four or five pushes otherwise.
