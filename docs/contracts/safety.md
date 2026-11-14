@@ -33,6 +33,8 @@ What exists before this work, read in the code on `d72602f`:
 | 8 | **A load test, local only.** `tools/load.py` starts the app in-process on 127.0.0.1 with the eval's fake provider (`evals/issuer.py`), makes N throwaway people with signed tokens, and has them all call MCP at once: `whoami`, `log_food`, `log_lifts`, `get_log`, `get_trends`, `get_goals`, in a loop for a set time. It prints, for each function and in all: calls, errors by code, p50, p95 and the slowest, in ms. It takes `--people` (default 10), `--seconds` (default 30) and uses `DATABASE_URL`. It refuses to run against anything but a local address and refuses a database URL whose host is not local. No new package | We learn where it bends, on a copy, never on the live site |
 | 9 | **What the load test is not.** It is a tool, not a test in the suite, and its numbers are not asserted. One run on SQLite proves it works; the run that counts is on a local Postgres, recorded in `BUILD_LOG.md` with the machine it ran on | A laptop is not the host. The numbers show the shape, not the host's ceiling |
 
+**Changed on 2026-11-14, on the owner's word: decision 7.** New accounts have no cap unless one is set. `SIGNUPS_PER_DAY` unset or blank: no cap, today's accounts are not counted, and the landing says nothing of a cap. A whole number of 1 or more is the cap for a UTC day, as before. 0 closes sign-ups, as before. A value that is set and cannot be read closes sign-ups too: the variable is only ever set to hold sign-ups back, so a slip of the keys must not open the door. `signups_closed` is unchanged.
+
 ## Errors added
 
 | Code | When | Fix text, in the spirit of the existing ones |

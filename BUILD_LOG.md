@@ -838,3 +838,23 @@ Not run on a real Postgres at this commit: migration 0007 ran up and down on SQL
 `restore_entry`'s schema and the can-and-cant resource are text a model reads, and one case was added: a weigh-in edited by mistake, which the person asks to undo. All 21 cases, 3 runs each, on `claude-opus-5-5`, twice on 2026-11-14. At `fde0704`, the build with its fix round: 63 of 63, $9.0927 at list price. After the trim, at `d890103`, from 17:36:49 to 17:51:43: 63 of 63, $9.3467.
 
 The full suite: 5,172 tests, plain, at `d890103` and again at `a04b909`, the last round. The files of the last round also passed with warnings as errors, in separate runs.
+
+## No cap on new accounts
+
+New accounts were capped at 50 a day unless `SIGNUPS_PER_DAY` said otherwise. The owner asked for the cap to go. The change to decision 7 is written into `docs/contracts/safety.md`.
+
+| Part | What it does |
+|---|---|
+| No cap unless one is set | `SIGNUPS_PER_DAY` unset or blank: every first sign-in gets an account, and today's accounts are not counted |
+| The dial stays | A whole number of 1 or more caps new accounts for a UTC day, as before. 0 closes sign-ups, as before |
+| A value that cannot be read | It closes sign-ups. The variable is only ever set to hold sign-ups back, so a slip of the keys must not open the door |
+| The landing | With no cap, "Before you start" has its two lines and no cap line. With a cap, or at 0, the line as before |
+| `signups_closed` | Unchanged: its code, message, fix and page |
+
+### The review
+
+A separate reviewer, on a frozen copy: clean of blockers. With no cap set, 60 first sign-ins on the web, 60 through the assistant's path and 16 at once all got accounts. Caps of 1, 7 and 0 held on both paths. Ten breaks of the code each failed a test. One gap in a test, older than this work, was closed: at 0 the signed-in landing was never drawn signed in, and now the test says which page it drew.
+
+Not run on a real Postgres.
+
+The full suite: 5,177 tests, plain, on a clean export of the commit `6452b3c`. The commit's own run was cut off by its time limit on a busy machine, so the suite was run again there to the end. The files this work touched also passed with warnings as errors, in separate runs.
