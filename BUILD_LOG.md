@@ -976,3 +976,42 @@ One finding, older than this work: two deletes of the same note at the same mome
 Accepted, and the same before this work: a badly shaped call from a person who is not the owner gets the library's own error before the owner check, which shows that the function exists and nothing more.
 
 The full suite: 5,314 tests, plain, on the tree of the commit `e982ba3`. The files this work touched also passed with warnings as errors, in separate runs. Not run on a real Postgres. No eval run: no text that anyone but the owner is sent has changed.
+
+## Two settings, and a delete that asks first
+
+The switch for what an assistant may do had three settings and started at "Read and log". The owner called read only useless and asked for deleting to be on from the start, with one more confirmation from the person. The decisions, and the limits that were accepted, are in `docs/contracts/switch.md`.
+
+| Part | What it does |
+|---|---|
+| Two settings | "Read, log and delete", which every account starts with, and "Read and log", which turns deleting off. Read only is gone from the code, the pages and every text |
+| A delete takes two calls | `delete_entry` with no `confirm` deletes nothing: it answers with the entry as it stands and a `confirm` code. The same kind and id with that code deletes. One call can no longer delete |
+| The code | The first 12 hex characters of a SHA-256 over the account, the kind, the id and the entry's last change. It is worked out each time and never stored. Any change of the entry makes an older code stale: it deletes nothing and answers with the preview again |
+| What the assistant is told | To show the person the entry and ask, and to delete only on a yes. When a person did not want something deleted, to restore it and say deleting can be turned off on Settings |
+| The pages | Their own deletes are unchanged: a click on a page was already the person's own act |
+| The accounts that exist | Migration 0009 moves every one to "Read, log and delete", on the owner's word, in one statement that touches no other column. Its downgrade changes no row: nothing records what a row held |
+| The trace and the key | A delete's first call reads `preview` and keeps no key. The second reads `written` and keeps its key, so the same delete sent twice runs once |
+| Feedback | With read only gone, every account can send a note. The privacy page and the can-and-cant resource say so |
+
+### The review
+
+A separate reviewer, on a frozen copy: clean of blockers. No path deletes in one call. No preview writes anything. No code outlives a change of its entry. No person reaches another's entry.
+
+| Finding | Fix |
+|---|---|
+| A function missing from the table of levels is refused only at "Read and log", and two comments said it was always refused | The comments say what is true, and a test holds it. The server already refuses to start when a function has no level |
+| A row still holding a word outside the two settings is gated as "Read and log", while Settings checks no button for it | Stands, as a known limit. The migration leaves no such row |
+| One assertion checked a marker that was never sent | Removed |
+
+A second reviewer read the fix round as new code: it holds. One sentence in the evals doc was made exact.
+
+Accepted: Spotter cannot see the person, so an assistant that makes both calls with no person between them still deletes. What Spotter holds is that one call never deletes and that the assistant was shown the entry and told to ask. The code is not a secret and has no end date. A conversation begun before the deploy holds the old shape of `delete_entry`, and its first delete now deletes nothing.
+
+On a real Postgres, 17.12 in a throwaway container on the build machine: migration 0009 moved three accounts, written at the live revision with read only, read and log, and delete on, to delete on. It moved no `updated_at`, and going down and up again changed no row. A new account starts with deleting on. Of 400 tests of this work and its neighbours run there, 391 passed. The 9 that failed compare a statement with SQLite's own lock on the person's row, which Postgres takes with another statement. Six of them are this work's test that a preview writes nothing but the lock: on Postgres the preview sends no write at all, and the checks before that one passed.
+
+### The eval run
+
+The instructions changed, and every conversation reads them, so the whole set ran. `delete_explicit` became `delete_asks_first`: asked to delete a weigh-in, the model must make the first call, send no `confirm`, and ask. `delete_regretted` is new: told that a delete was not wanted, the model deletes nothing and names Settings.
+
+All 26 cases, 3 runs each, on `claude-opus-5-5`, at `97e634c`, from 00:48:24 to 01:19:45 on 2026-11-15: 77 of 78 runs passed, $12.7761 at list price. The one failure is `delete_regretted`, its third run: the CLI hit the runner's limit of 180 seconds and printed no reply. It had called `whoami` and `get_log`, and never `delete_entry`. That case and `delete_asks_first` were then run again, 3 runs each: 6 of 6, $2.5368. `delete_regretted` is slow, 40 to 152 seconds in the runs that passed: a new conversation looks for the deleted entry, and no read lists deleted ones.
+
+The full suite: 5,377 tests, plain, at the commit `97e634c`. Before the join, every test file also passed with warnings as errors, in separate runs.
