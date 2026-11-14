@@ -1,7 +1,8 @@
 """The v1 schema: every table for stages 2 to 5, as the stage 2 contract lists them, and the one column
 stage 5 added (goal.measurement_kind, migration 0003). Migration 0004 dropped one column from seven tables.
 Migration 0005 added the call log's trace columns, 0006 the write keys (write_key), 0007 the values an
-entry held before each edit (entry_version), and 0008 the notes people send Spotter's maker (feedback).
+entry held before each edit (entry_version), and 0008 the notes people send Spotter's maker (feedback). 0009
+changes data only: every account's claude_can becomes log_delete.
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -30,7 +31,7 @@ from app import db
 IMPORTED = "import"  # logged_by of every row import_entries writes, whoever called it
 LOGGED_BY = ("web", "claude", IMPORTED)
 CALLERS = ("web", "claude")  # who a write's `by` may name: the import's mark is never a caller
-CLAUDE_CAN = ("read", "log", "log_delete")
+CLAUDE_CAN = ("log_delete", "log")  # the two settings, the default first (contract switch: read only is gone)
 EXERCISE_KINDS = ("lift", "cardio")
 GOAL_KINDS = ("bodyweight", "lift", "measurement", "cardio_best", "cardio_weekly", "calories", "sessions")
 GOAL_DIRECTIONS = ("up", "down")
@@ -121,7 +122,8 @@ class User(Base):
     calorie_target_kcal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_sessions_per_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_cardio_minutes_per_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    claude_can: Mapped[str] = mapped_column(String(16), default="log", server_default=text("'log'"))
+    # The model's default decides every new account. The database's stays 'log': SQLite would have to rebuild user.
+    claude_can: Mapped[str] = mapped_column(String(16), default="log_delete", server_default=text("'log'"))
     add_back_exercise_kcal: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
     # Set by the code that edits the row; a last_seen_at touch is not an edit.

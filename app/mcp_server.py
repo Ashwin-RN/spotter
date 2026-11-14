@@ -71,7 +71,7 @@ from app.mcp_schemas import (
     OwnerDeleteFeedbackResult, OwnerFeedbackResult, RestoreEntryResult, SaveFoodResult, SendFeedbackResult,
     SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
 )
-from app.models import User
+from app.models import CLAUDE_CAN, User
 from app.services import common, feedback
 from app.services.common import check_reads
 from app.services.owner import HOURS, LIMIT
@@ -137,10 +137,14 @@ IMPORT_DESCRIPTION = (
     "rows stamped in UTC after the person's time zone changed."
 )
 
-# Which entry to delete. Unlike the activity, a delete is never a guess.
+# Which entry to delete, and the two calls. Unlike the activity, a delete is never a guess, and the first call deletes
+# nothing (contract switch, decisions 7 and 15). The instructions and delete_entry's description carry the same text.
 DELETE_RULE = (
-    "Delete only the entry the person named. When their words fit more than one entry, ask which; never "
-    "delete on a guess. After a delete, say what was deleted and that restore_entry brings it back."
+    "Delete only the entry the person named. When their words fit more than one entry, ask which first: never call "
+    "delete_entry on a guess. The first delete_entry call deletes nothing and returns the entry: show it to the "
+    "person and ask, and delete only when they say yes. After a delete, say what was deleted and that restore_entry "
+    "brings it back. If the person did not want it deleted, restore it, and say they can turn deleting off on "
+    "Settings."
 )
 
 FOOD_RULE = (
@@ -213,10 +217,12 @@ READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempot
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 # Setting the same value twice changes nothing the second time.
 SETTING = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
-# A delete is undone by restore_entry, but it still needs the person's go-ahead: the description says so too.
+# A delete is undone by restore_entry, but it still needs the person's go-ahead: it takes two calls, and the first
+# deletes nothing. Both carry this hint, since the second deletes.
 DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False)
 
-# What each function needs the person's permission switch (claude_can) to be at least.
+# What each function needs the person's permission switch (claude_can) to be at least, in order. The switch has two
+# settings, log and log_delete (models.CLAUDE_CAN): read is a need only, of the functions the read limit counts.
 LEVELS = ("read", "log", "log_delete")
 NEEDS = {
     "whoami": "read", "list_exercises": "read", "get_progress": "read", "get_log": "read",
@@ -234,8 +240,7 @@ NEEDS = {
 OWNER_FUNCTIONS = ("owner_calls", "owner_feedback", "owner_delete_feedback")
 # The read limit counts these together (services.common.check_reads): every function at the read level.
 READ_FUNCTIONS = tuple(name for name, level in NEEDS.items() if level == "read")
-NOT_ALLOWED_MESSAGES = {"read": "This account lets Claude read only.",
-                        "log": "This account lets Claude read and log, not delete."}
+NOT_ALLOWED_MESSAGES = {"log": "This account lets Claude read and log, not delete."}
 # The one text in Spotter that sends a person to a page: only they can change what Claude may do.
 NOT_ALLOWED_FIX = "The person can change what Claude may do on the Settings page."
 OWNER_ONLY = {"error": "not_allowed", "message": "This function is for Spotter's owner.", "fix": "Nothing to retry."}
@@ -255,6 +260,7 @@ Key = Annotated[str | None, Field(description=KEY_DESCRIPTION)]
 LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
 KIND_DESCRIPTION = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
 RESTORE_KIND_DESCRIPTION = KIND_DESCRIPTION + " With undo_edit, saved_food too."
+DELETE_KIND_DESCRIPTION = KIND_DESCRIPTION + " Or saved_food."  # delete_entry takes a saved food (switch, ruling 1)
 ENTRY_ID_DESCRIPTION = ("The entry's id, from log_lifts, log_bodyweight, log_measurement, log_food, log_cardio "
                         "or get_log, "
                         "with the kind it came with.")
@@ -304,13 +310,14 @@ def _json_text(result: dict) -> tuple[str, int]:
 
 
 def level_of(claude_can) -> str:
-    """The switch's level. Anything that is not one of LEVELS counts as the lowest, read."""
-    return claude_can if claude_can in LEVELS else "read"
+    """The switch's level: one of the two settings (models.CLAUDE_CAN). Anything else counts as the lower, log,
+    which never lets a delete through."""
+    return claude_can if claude_can in CLAUDE_CAN else "log"
 
 
 def not_allowed(function: str, claude_can) -> dict | None:
     """None when the switch allows this function; else the not_allowed answer. A function missing
-    from NEEDS needs the most, so a new function is refused rather than let through."""
+    from NEEDS counts as needing the most: log refuses it. The server does not start with one (build_server)."""
     have = level_of(claude_can)
     if LEVELS.index(have) >= LEVELS.index(NEEDS.get(function, LEVELS[-1])):
         return None
@@ -861,19 +868,25 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="delete_entry",
         title="Delete an entry",
         description=(
-            "Deletes one of the person's entries. Nothing is erased: restore_entry brings it back, but a delete "
-            "still needs the person's go-ahead first. " + DELETE_RULE + " Allowed only when the person lets Claude "
-            "delete; otherwise the answer is not_allowed."
+            "Deletes one of the person's entries or saved foods, in two calls. With no confirm, nothing is deleted: "
+            "the answer is a preview, with dry_run true, the entry as it stands and a confirm code. Send the same "
+            "kind and id with that confirm to delete. A confirm that does not match the entry as it stands deletes "
+            "nothing and returns the preview again. Nothing is erased: restore_entry brings a deleted entry back. "
+            + DELETE_RULE + " Allowed only when the person lets Claude delete; otherwise the answer is not_allowed."
         ),
         annotations=DELETE,
     )
     async def delete_entry(
-        kind: Annotated[str, Field(description=KIND_DESCRIPTION)],
-        entry_id: Annotated[int, Field(description=ENTRY_ID_DESCRIPTION)],
+        kind: Annotated[str, Field(description=DELETE_KIND_DESCRIPTION)],
+        entry_id: Annotated[int, Field(description=RESTORE_ID_DESCRIPTION)],
+        confirm: Annotated[str | None, Field(
+            description="The confirm code from this entry's preview. Leave it out on the first call. Send it only "
+                        "after the person has seen the entry and said yes.")] = None,
         key: Key = None,
     ) -> Annotated[CallToolResult, DeleteEntryResult]:
+        sent = _sent(confirm=confirm)
         return await wrapper.call("delete_entry", DeleteEntryResult,
-                                  lambda account: services.delete_entry(account, kind, entry_id))
+                                  lambda account: services.delete_entry(account, kind, entry_id, "claude", **sent))
 
     @server.tool(
         name="find_food",
@@ -1179,7 +1192,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         return await _resource(lambda: json.dumps(services.list_exercises(), separators=(",", ":")))
 
     registered = {tool.name for tool in server._tool_manager.list_tools()}
-    if registered != set(NEEDS):  # a function without a level would be refused; fail at start, not per call
+    # This check is the guard: the switch alone would let a function without a level through at log_delete.
+    if registered != set(NEEDS):
         raise RuntimeError(f"NEEDS does not match the functions: {sorted(registered ^ set(NEEDS))}")
     return server
 

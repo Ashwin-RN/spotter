@@ -575,7 +575,7 @@ def test_the_page_sending_test_reads_the_note_and_keeps_its_one_exception(http):
     assert texts["whoami new_account_note"] == NOTE and texts["whoami time_zone_note"]
     sending = [(where, s) for where, text in texts.items() for s in sentences(text) if sends_to_a_page(s)]
     assert sending == []  # the one exception is the not_allowed fix, read by the test in test_mcp.py
-    assert len(mcp_server.INSTRUCTIONS) == 3678
+    assert len(mcp_server.INSTRUCTIONS) == 3927  # switch decision 18
 
 
 def test_the_new_names_are_in_whoami_alone_in_the_published_list(http):

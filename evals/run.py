@@ -206,9 +206,9 @@ class LocalServer:
     # ------------------------------------------------------------ people
 
     def new_person(self, zone: str, seeds: list[dict], switch: str | None = None) -> tuple[int, str, dict[str, int]]:
-        """A fresh person with this time zone, this switch (None: the default) and these rows, whose
-        data may hold date placeholders and the ids of the rows seeded before them. Returns (user id,
-        token, seeded ids)."""
+        """A fresh person with this time zone, this switch (None: the model's default, log_delete) and these
+        rows, whose data may hold date placeholders and the ids of the rows seeded before them. Returns (user
+        id, token, seeded ids)."""
         from app import db, services
         from app.models import User
 

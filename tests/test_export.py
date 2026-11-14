@@ -64,7 +64,7 @@ def test_every_table_and_every_file(make_user):
     account = table(r["files"]["account.csv"])
     assert account == [{"account_id": str(user.id), "email": "asha@example.com", "name": "Asha",
                         "time_zone": "Asia/Kolkata", "calorie_target_kcal": "2200", "target_sessions_per_week": "",
-                        "target_cardio_minutes_per_week": "", "add_back_exercise_kcal": "false", "claude_can": "log",
+                        "target_cardio_minutes_per_week": "", "add_back_exercise_kcal": "false", "claude_can": "log_delete",
                         "created_at": account[0]["created_at"]}]
     sets = table(r["files"]["lift_sets.csv"])
     assert sets == [{"session_id": str(ids["session"]), "exercise": "Back Squat", "set_number": "1",

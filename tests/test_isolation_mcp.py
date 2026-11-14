@@ -61,7 +61,8 @@ def bob(http) -> dict:
     weigh_in = ok(http, t, "log_bodyweight", {"kg": 91.5})
     measurement = ok(http, t, "log_measurement", {"kind": "waist", "value": 97.25})
     gone = ok(http, t, "log_measurement", {"kind": "hips", "value": 103.75})
-    ok(http, t, "delete_entry", {"kind": "measurement", "entry_id": gone["id"]})
+    code = ok(http, t, "delete_entry", {"kind": "measurement", "entry_id": gone["id"]})["confirm"]  # switch: two calls
+    ok(http, t, "delete_entry", {"kind": "measurement", "entry_id": gone["id"], "confirm": code})
     goal = ok(http, t, "set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 180,
                                     "target_date": (today + timedelta(days=90)).isoformat(), "text": "Bob's goal"})
     saved = ok(http, t, "save_food", {"name": "Bob's roti", "serving_label": "1 roti", "kcal_per_serving": 123})

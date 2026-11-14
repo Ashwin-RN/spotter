@@ -633,14 +633,15 @@ def test_restore_entry_publishes_undo_edit_and_no_allow_repeat_and_the_instructi
     # Its entry_id has words of its own too: where a saved food's id comes from.
     ids = {t["name"]: t["inputSchema"]["properties"]["entry_id"]["description"] for t in tool_list(http, sign())
            if "entry_id" in t["inputSchema"]["properties"]}
-    assert ids == {**dict.fromkeys(("edit_entry", "delete_entry"), mcp_server.ENTRY_ID_DESCRIPTION),
-                   "restore_entry": mcp_server.ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or "
-                                                                      "find_food."}
+    assert ids == {"edit_entry": mcp_server.ENTRY_ID_DESCRIPTION,
+                   **dict.fromkeys(("restore_entry", "delete_entry"),  # switch, ruling 1: delete_entry takes these
+                                   mcp_server.ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or "
+                                                                     "find_food.")}
     # restore_entry's kind has words of its own: an undo takes a saved food too. The other two keep the shared ones.
     kinds = {t["name"]: t["inputSchema"]["properties"]["kind"]["description"] for t in tool_list(http, sign())
              if "kind" in t["inputSchema"]["properties"] and t["name"].endswith("_entry")}
     shared = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
-    assert kinds == {"edit_entry": shared, "delete_entry": shared,
+    assert kinds == {"edit_entry": shared, "delete_entry": shared + " Or saved_food.",  # switch, ruling 1
                      "restore_entry": shared + " With undo_edit, saved_food too."}
     assert tool["description"] == (
         "Brings back a deleted or replaced entry. If the day already has a live one of the same kind, the two swap: "
@@ -656,7 +657,7 @@ def test_restore_entry_publishes_undo_edit_and_no_allow_repeat_and_the_instructi
     results = tool["outputSchema"]["properties"]
     assert "redone" not in results and results["duplicate"]["description"] == (
         "With undo_edit: true when the last edit was already undone, so nothing changed. Say so.")
-    assert len(mcp_server.INSTRUCTIONS) == 3678 and "undo" not in mcp_server.INSTRUCTIONS
+    assert len(mcp_server.INSTRUCTIONS) == 3927 and "undo" not in mcp_server.INSTRUCTIONS  # switch decision 18
     # No other function's arguments changed: the stale form's field is the web's alone.
     names = {name for t in tool_list(http, sign()) for name in t["inputSchema"]["properties"]}
     assert "undo_edit" in names and not {"updated_at", "drawn_at", "by"} & names
@@ -1322,7 +1323,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0008"  # feedback.md
+    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0009"  # switch 0009
 
 
 def test_every_kind_s_table_name_fits_the_version_s_kind_column():

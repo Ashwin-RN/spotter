@@ -936,7 +936,7 @@ def test_the_page_after_every_write_is_calm(client):
     write("restore a saved food", f"/foods/{food}/restore")
     write("the targets", "/settings/targets", calorie_target_kcal="2000")
     assert write("unchanged targets", "/settings/targets", calorie_target_kcal="2000") == "/settings?saved=unchanged"
-    write("the switch", "/settings/claude-can", claude_can="read")
+    write("the switch", "/settings/claude-can", claude_can="log")  # switch decision 1: was read
     write("the zone", "/settings", time_zone="Asia/Kolkata")
     write("a goal", "/goals", kind="bodyweight", target_value="70", target_date="2099-01-01")
     goal = services.get_goals(user.id)["goals"][0]["goal_id"]
@@ -2062,13 +2062,13 @@ def settings_renders(client, monkeypatch, uid: int, today: str) -> list[Seen]:
     with monkeypatch.context() as m:  # set_claude_can for an account that is not there: no_account
         real_switch = services.set_claude_can
         m.setattr(services, "set_claude_can", lambda u, value: real_switch(u + 10**6, value))
-        general.append(("/settings/claude-can", post(client, "/settings/claude-can", claude_can="read"),
+        general.append(("/settings/claude-can", post(client, "/settings/claude-can", claude_can="log"),  # switch 1
                         web.SWITCH_ERROR_GENERAL))
     for address, r, line in general:
         assert r.status_code == 400 and line in r.text, address
         out.append(Seen(address, r.text, True, zone_missing=zone(), calm=True, today=today, posted_to="/settings"))
     other = "Europe/London" if only_user().time_zone != "Europe/London" else "Asia/Kolkata"
-    switch = "read" if only_user().claude_can != "read" else "log"
+    switch = "log" if only_user().claude_can != "log" else "log_delete"  # switch decision 1: was read
     landed = [follow(client, post(client, "/settings", time_zone=other)),
               follow(client, post(client, "/settings", time_zone=other)),
               follow(client, post(client, "/settings/targets", target_sessions_per_week="6")),

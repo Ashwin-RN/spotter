@@ -129,7 +129,8 @@ MARKED_CALLS = [
                     "sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}], "meal": MARKER,
                     "description": MARKER, "exercise": MARKER}),
     ("restore_entry", {"kind": MARKER, "entry_id": 1}),
-    ("delete_entry", {"kind": MARKER, "entry_id": 1}),  # refused by the switch at log, before the service
+    # Refused at the service, an unknown kind: a new account may delete (switch decision 2), and confirm is marked too.
+    ("delete_entry", {"kind": MARKER, "entry_id": 1, "confirm": MARKER}),
     ("find_food", {"query": MARKER}),  # a read: it answers, with nothing found
     ("log_food", {"entries": [{"description": MARKER, "meal": MARKER, "kcal": 100}], "date": MARKER}),
     ("log_food", {"entries": [{"description": MARKER, "kcal": 100}]}),  # succeeds: the marker is the person's text
@@ -301,9 +302,9 @@ def test_a_refused_call_has_a_completed_row_too(http):
 
     token = sign()
     call(http, token, "whoami")
-    set_switch(one_user().id, "read")
-    call(http, token, "log_lifts", {"sets": squat(100)})
-    assert [(r.function, r.error_code) for r in rows()] == [("whoami", None), ("log_lifts", "not_allowed")]
+    set_switch(one_user().id, "log")  # switch decision 14: the one refusal left is delete_entry at log
+    call(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": 1})
+    assert [(r.function, r.error_code) for r in rows()] == [("whoami", None), ("delete_entry", "not_allowed")]
 
 
 # ---------------------------------------------------------------- the write limit under concurrent calls

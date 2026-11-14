@@ -270,9 +270,8 @@ class WhoamiResult(BaseModel):
     today: str = Field(description="Today's date for the person, YYYY-MM-DD. Dates you leave out mean this day.")
     targets: Targets = Field(description="The person's targets. Not used by any function yet.")
     claude_can: str = Field(
-        description="What the person allows Claude to do. read: read only. log (the default): read and every "
-                    "write except delete_entry. log_delete: everything, delete_entry too. Only the person "
-                    "can change it; Claude cannot.")
+        description="What the person allows Claude to do. log_delete (the default): everything, delete_entry too. "
+                    "log: everything except delete_entry. Only the person can change it; Claude cannot.")
     links: WhoamiLinks = Field(description="Pages to offer the person. Put links last in a reply.")
     sign_in: SignIn = Field(description="The sign-in this call came with.")
     time_zone_note: str | None = Field(
@@ -782,11 +781,16 @@ class EditEntryResult(BaseModel):
 class DeleteEntryResult(BaseModel):
     model_config = TOP
 
-    kind: str = Field(description="The kind of entry deleted.")
+    kind: str = Field(description="The entry's kind.")
     id: int = Field(description="The entry's id. restore_entry takes it, with the same kind.")
-    deleted: bool = Field(description="True: the entry is deleted. Nothing is erased.")
-    entry: dict = Field(description="The entry as it was, with the fields of its kind.")
-    note: str | None = Field(default=None, description="How to undo it.")
+    deleted: bool = Field(
+        description="True: the entry is deleted. False: a preview, and nothing was deleted. Nothing is ever erased.")
+    dry_run: bool = Field(description="True: a preview, and nothing was deleted. False: the entry was deleted.")
+    entry: dict = Field(description="The entry as it stands, with the fields of its kind.")
+    confirm: str | None = Field(
+        default=None, description="On a preview: the code to send back as confirm, with the same kind and id, once "
+                                  "the person has said yes.")
+    note: str | None = Field(default=None, description="What to do next on a preview, or how to undo a delete.")
 
 
 class RestoreEntryResult(BaseModel):

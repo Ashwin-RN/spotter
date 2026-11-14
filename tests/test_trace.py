@@ -273,9 +273,9 @@ def test_each_step(make_client, monkeypatch, usda_reply):
     http = make_client(usda_api_key=KEY)
     token = sign()
     tools_call(http, token, "whoami")
-    set_switch(last().user_id, "read")
-    tools_call(http, token, "log_lifts", {"sets": squat(100)})
-    set_switch(last().user_id, "log")
+    set_switch(last().user_id, "log")  # switch decision 14: the one refusal left is delete_entry at log
+    tools_call(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": 1})
+    set_switch(last().user_id, "log_delete")
     tools_call(http, token, "log_lifts", {"sets": squat(100), "date": "soon"})
     usda_reply(socket.timeout("timed out"))
     tools_call(http, token, "log_food", {"entries": [{"usda_fdc_id": 173944, "grams": 100}]})

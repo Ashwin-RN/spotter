@@ -7,7 +7,10 @@ read by id; it is never deleted, only closed with set_goal (status dropped).
 get_entry(user_id, kind, entry_id)       -> {kind, id, entry, links, updated_at}
 edit_entry(user_id, kind, entry_id, changes, by[, drawn_at])
                                          -> {kind, id, changed, before, after, summary, links[, note]}
-delete_entry(user_id, kind, entry_id)    -> {kind, id, deleted: true, entry, note}
+delete_entry(user_id, kind, entry_id[, by, confirm])
+                                         -> {kind, id, deleted: true, entry, note}
+                                            by claude: also dry_run false, or a preview
+                                            {kind, id, deleted: false, dry_run: true, entry, confirm, note}
 restore_entry(user_id, kind, entry_id[, by, undo_edit])
                                          -> {kind, id, restored: true, entry, replaced [entries][, note]}
                                             with undo_edit, also {undone, duplicate, summary[, before]}
@@ -16,6 +19,13 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit])
   delete) and an id that does not exist all give the same not_found.
 - Delete is soft: it sets deleted_at. Restore clears it. A restore of an entry that is not deleted
   is refused with not_deleted.
+- A delete through an assistant (by claude) takes two calls (contract switch). After the lock, the write limit and
+  the lookup, a call whose confirm is not the entry's code (confirm_code) is a preview: nothing of the row is set,
+  and the answer carries the entry, the code and a note. With the code, it deletes. The code is worked out from the
+  account, the kind, the id and updated_at, which moves with every change of the row, a delete and a restore among
+  them, so the code holds only for the entry as the person saw it. It is not a secret: it guards against a skipped
+  step, not against a caller that means to skip it. Any other caller (the web's own clicks, a direct call) deletes at
+  once, as before, and its answer has no dry_run.
 - One live entry per day. A table with a partial unique index on live rows (bodyweight: one per
   person and date) cannot hold two live rows for the same values. Restoring an entry there
   soft-deletes the live one in its place, and the result names it under "replaced", so the swap
@@ -44,6 +54,9 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit])
 - An edit's summary names each change in words, every value through app.formatting: "Weigh-in
   changed: kg from 74.8 to 78.4." The entry's id is the result's id, never in the summary.
 """
+
+import hashlib
+from datetime import timezone
 
 from sqlalchemy import Index, select
 
@@ -78,6 +91,11 @@ KCAL_NOTE = "The number is now the person's own: tagged you_said."
 REESTIMATE_NOTE = "The calorie estimate was worked out again, from body weight now."
 CARDIO_NUMBERS = ("minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal")
 ONE_A_DAY = ("bodyweight", "measurement")  # the kinds _day_taken is asked about: one live entry a day
+# A delete through an assistant: the preview's two notes (contract switch, "A delete, call by call").
+PREVIEW_NOTE = ("Nothing was deleted. Show the person this entry and ask. Send the same kind and id with this confirm "
+                "only when they say yes.")
+MISMATCH_NOTE = ("That confirm does not match this entry as it stands, so nothing was deleted. Show the person the "
+                 "entry and ask again.")
 
 
 def entry_kinds() -> dict[str, type]:
@@ -153,7 +171,14 @@ def get_entry(user_id: int, kind: str, entry_id) -> dict:
                 "updated_at": row.updated_at.isoformat()}
 
 
-def delete_entry(user_id: int, kind: str, entry_id) -> dict:
+def confirm_code(user_id: int, kind: str, row) -> str:
+    """The code a delete through an assistant must send back: the first 12 hex characters of a SHA-256 over the
+    account, the kind, the row's id and its updated_at. Worked out, never stored. Not a secret: see the module notes."""
+    at = row.updated_at.astimezone(timezone.utc).isoformat()
+    return hashlib.sha256(f"{user_id}|{kind}|{row.id}|{at}".encode()).hexdigest()[:12]
+
+
+def delete_entry(user_id: int, kind: str, entry_id, by: str | None = None, confirm=None) -> dict:
     kinds = _deletable()
     model = _model(kinds, kind)
     if model is None:
@@ -167,10 +192,16 @@ def delete_entry(user_id: int, kind: str, entry_id) -> dict:
         row = owned(s, model, user_id, entry_id)
         if row is None:
             return not_found(kind)
+        if by == "claude":
+            code = confirm_code(user_id, kind, row)
+            if confirm != code:  # a preview: nothing of the row is set
+                return {"kind": kind, "id": row.id, "deleted": False, "dry_run": True, "entry": entry_dict(row),
+                        "confirm": code, "note": PREVIEW_NOTE if confirm is None else MISMATCH_NOTE}
         row.deleted_at = db.utcnow()
         s.flush()
-        return {"kind": kind, "id": row.id, "deleted": True, "entry": entry_dict(row),
-                "note": "Deleted. restore_entry with the same kind and id brings it back."}
+        out = {"kind": kind, "id": row.id, "deleted": True, "entry": entry_dict(row),
+               "note": "Deleted. restore_entry with the same kind and id brings it back."}
+        return {**out, "dry_run": False} if by == "claude" else out
 
 
 def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo_edit: bool = False) -> dict:

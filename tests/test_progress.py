@@ -403,7 +403,7 @@ def test_whoami_returns_the_account_and_asks_for_a_time_zone(user):
     assert "page" not in rest and "settings" not in rest and "/" not in rest, note
     assert r["targets"] == {"calorie_target_kcal": None, "target_sessions_per_week": None,
                             "target_cardio_minutes_per_week": None}
-    assert r["claude_can"] == "log"
+    assert r["claude_can"] == "log_delete"  # switch decision 2: a new account's
     assert r["links"] == {"settings": f"{SITE}/settings", "home": f"{SITE}/", "hi_there": f"{SITE}/hi"}
 
 

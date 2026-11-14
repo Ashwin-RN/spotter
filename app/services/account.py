@@ -16,7 +16,8 @@ update_settings(user_id, data, by)
     calls: only the person changes it, on the Settings page, through set_claude_can.
 
 set_claude_can(user_id, value)
-    The Settings page's switch: read, log or log_delete. Nothing else calls it.
+    The Settings page's switch: log_delete (a new account's) or log, models.CLAUDE_CAN. Any other value,
+    read among them, is refused. Nothing else calls it.
 
     time_zone must be a real IANA zone name, such as Asia/Kolkata, or UTC. The form is forgiven
     (surrounding spaces, letter case, spaces for underscores); the meaning is not. An abbreviation
@@ -231,7 +232,7 @@ def update_settings(user_id: int, data: dict | None, by: str) -> dict:
 
 
 def set_claude_can(user_id: int, value) -> dict:
-    """What Claude may do: read, log or log_delete. The Settings page calls this, and nothing else
+    """What Claude may do: log_delete or log, nothing else. The Settings page calls this, and nothing else
     does: update_settings refuses the field, and no MCP function reaches it.
 
     It is the person's own switch, on the web only, and it is exempt from the write limit on purpose:

@@ -1146,7 +1146,7 @@ def test_each_post_that_changes_nothing_lands_on_its_card_marked_unchanged_with_
               location_of(post(signed, "/settings/targets", calorie_target_kcal="2000", add_back_exercise_kcal="on")),
               location_of(post(signed, "/settings/targets", calorie_target_kcal=" 2000.0 ",
                                add_back_exercise_kcal="on")),
-              location_of(post(signed, "/settings/claude-can", claude_can="log"))]
+              location_of(post(signed, "/settings/claude-can", claude_can="log_delete"))]  # switch 2: the default
     assert landed == [SITE + "/settings?saved=unchanged#zone"] * 2 + [SITE + "/settings?saved=unchanged#targets"] * 2 \
         + [SITE + "/settings?saved=unchanged#assistant"]
     assert only_user().updated_at == before[0]
@@ -1185,8 +1185,8 @@ def test_each_form_posts_to_its_cards_anchor_and_each_redirect_names_it(signed):
         SITE + "/settings?saved=time_zone#zone"
     assert location_of(post(signed, "/settings/targets", target_sessions_per_week="3")) == \
         SITE + "/settings?saved=targets#targets"
-    assert location_of(post(signed, "/settings/claude-can", claude_can="read")) == \
-        SITE + "/settings?saved=claude_can#assistant"
+    assert location_of(post(signed, "/settings/claude-can", claude_can="log")) == \
+        SITE + "/settings?saved=claude_can#assistant"  # switch decision 1: was read
     # The automatic save, as before: next=/settings and a next that is not local land on Settings with no anchor.
     assert location_of(post(signed, "/settings", time_zone="Asia/Kolkata", next="/settings")) == \
         SITE + "/settings?saved=time_zone"
@@ -1229,7 +1229,7 @@ TARGET_ROWS = [
     ("one of two", {"calorie_target_kcal": "2100", "target_sessions_per_week": "99"},
      {"target_sessions_per_week": SESSIONS}),
 ]
-SWITCH_LINE = "Choose one of the three settings below."
+SWITCH_LINE = "Choose one of the two settings below."  # switch decision 19
 SWITCH_ROWS = [("another word", {"claude_can": "admin"}), ("empty", {"claude_can": ""}), ("none sent", {}),
                ("another case", {"claude_can": "LOG"}), ("a space after", {"claude_can": "log_delete "}),
                ("markup", {"claude_can": "<b>read</b>"})]
@@ -1344,15 +1344,15 @@ def test_each_switch_refusal_says_the_pages_line_in_its_card(signed, data):
     result = real_refusal(services.set_claude_can, data.get("claude_can"))
     assert result["error"] == "invalid_field" and "field" not in result
     r = post(signed, "/settings/claude-can", **data)
-    assert r.status_code == 400 and only_user().claude_can == "log"
+    assert r.status_code == 400 and only_user().claude_can == "log_delete"  # switch decision 2
     assert calls(only_user().id)[-1] == ("set_claude_can", False, "invalid_field")
     card = card_by_title(r.text, "What your assistant may do")
     [box] = card.find_all("div", "error")
     assert [(p.attrs.get("id"), p.text()) for p in box.elements()] == [("claude-can-error", SWITCH_LINE)]
     radios = [i for i in card.find_all("input") if i.attrs.get("type") == "radio"]
     assert [(i.attrs.get("aria-invalid"), i.attrs.get("aria-describedby")) for i in radios] == \
-        [("true", "claude-can-error")] * 3
-    assert [i.attrs["value"] for i in radios if "checked" in i.attrs] == ["log"]
+        [("true", "claude-can-error")] * 2  # switch decision 1: two settings
+    assert [i.attrs["value"] for i in radios if "checked" in i.attrs] == ["log_delete"]
     for text in service_messages(result):
         assert text not in r.text, text
     assert "<b>read</b>" not in r.text and 'class="ok' not in r.text
@@ -1363,18 +1363,19 @@ def test_a_switch_refusal_with_another_code_says_the_cards_general_line(signed, 
     account that does not exist, takes the card's general line."""
     real = services.set_claude_can
     monkeypatch.setattr(services, "set_claude_can", lambda uid, value: real(uid + 10**6, value))
-    r = post(signed, "/settings/claude-can", claude_can="read")
-    result = real(only_user().id + 10**6, "read")
-    assert r.status_code == 400 and result["error"] == "no_account" and only_user().claude_can == "log"
+    r = post(signed, "/settings/claude-can", claude_can="log")  # switch decision 1: was read
+    result = real(only_user().id + 10**6, "log")
+    assert r.status_code == 400 and result["error"] == "no_account" and only_user().claude_can == "log_delete"
     [box] = card_by_title(r.text, "What your assistant may do").find_all("div", "error")
     assert box.text() == web.SWITCH_ERROR_GENERAL
     for text in service_messages(result):
         assert text not in r.text, text
 
 
-@pytest.mark.parametrize("value", ["read", "log", "log_delete"])
-def test_the_switch_shows_three_labelled_radio_cards_and_checks_the_stored_one(signed, value):
-    """The three settings by their stored values, in order, each a label.choice in fieldset.choices with its legend:
+@pytest.mark.parametrize("value", ["log", "log_delete"])
+def test_the_switch_shows_two_labelled_radio_cards_and_checks_the_stored_one(signed, value):
+    """The two settings by their stored values, the default first, each a label.choice in fieldset.choices with its
+    legend (switch decisions 1 and 19: was three):
     the label in bold, its line after it, saying your assistant. The current one is checked."""
     services.set_claude_can(only_user().id, value)
     card = card_by_title(signed.get("/settings").text, "What your assistant may do")
@@ -1390,8 +1391,8 @@ def test_the_switch_shows_three_labelled_radio_cards_and_checks_the_stored_one(s
         got.append((radio.attrs["type"], radio.attrs["name"], radio.attrs["value"], "checked" in radio.attrs,
                     bold.text(), shown(choice).removeprefix(bold.text()).strip()))
     assert got == [("radio", "claude_can", v, v == value, label, line) for v, label, line in [
-        ("read", "Read only", SWITCH_ALLOWS["read"][1]), ("log", "Read and log", SWITCH_ALLOWS["log"][1]),
-        ("log_delete", "Read, log and delete", SWITCH_ALLOWS["log_delete"][1])]]
+        ("log_delete", "Read, log and delete", SWITCH_ALLOWS["log_delete"][1]),
+        ("log", "Read and log", SWITCH_ALLOWS["log"][1])]]
     assert all(not line.startswith(label) for _, _, _, _, label, line in got)  # no line repeats its label
     assert [b.text() for b in card.find_all("button")] == ["Save"]
 
@@ -1456,31 +1457,36 @@ def test_the_more_card_links_saved_foods_and_carries_a_sign_out_that_signs_out(s
     assert signed.get("/settings").headers["location"] == SITE + "/sign-in"
 
 
-# What each setting lets the assistant call beyond the setting before it, read from mcp_server.NEEDS, beside the line
-# the switch says for it (rev_b16 M2 and T2). A change to either fails here until both are read again: a function
-# NEEDS gains, moves or loses changes its set, and a reworded line changes its words.
+# What each of the two settings lets the assistant call, read from the switch's own gate (mcp_server.not_allowed),
+# beside the line the switch says for it (rev_b16 M2 and T2). The default comes first and its line says everything;
+# the other's says what it takes away (switch decisions 1, 5 and 19: was three, each beyond the one before). A change
+# to either fails here until both are read again: a function NEEDS gains, moves or loses changes a set, and a
+# reworded line changes its words.
+SWITCH_EVERYTHING = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals",
+                     "owner_calls", "owner_feedback", "owner_delete_feedback",  # trace.md 16, feedback.md 8:
+                     # the owner's alone, at read
+                     "log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "import_entries",
+                     "edit_entry", "restore_entry", "save_food", "set_goal", "update_settings",
+                     "send_feedback"}  # feedback.md decision 3
 SWITCH_ALLOWS = {
-    "read": ({"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals",
-              "owner_calls", "owner_feedback", "owner_delete_feedback"},  # trace.md 16, feedback.md 8: the owner's
-             "Your assistant can read what you have logged and change nothing."),
-    "log": ({"log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "import_entries", "edit_entry",
-             "restore_entry", "save_food", "set_goal", "update_settings", "send_feedback"},  # feedback.md decision 3
-            "Your assistant can also log and import entries, edit and restore them, save foods, set goals, and change "
-            "your time zone and targets. It cannot delete."),
-    "log_delete": ({"delete_entry"},
-                   "Your assistant can also delete entries and saved foods. A deleted one can always be restored."),
+    "log_delete": (SWITCH_EVERYTHING | {"delete_entry"},
+                   "Your assistant can log and import entries, edit and restore them, save foods and set goals. It can "
+                   "change your time zone and targets, and delete entries and saved foods. Before a delete it is shown "
+                   "the entry and told to ask you. Nothing is erased: a deleted one can be restored."),
+    "log": (SWITCH_EVERYTHING,
+            "Everything above except deleting: your assistant cannot delete an entry or a saved food."),
 }
 
 
-def test_each_switch_line_is_held_beside_what_needs_lets_its_setting_call_beyond_the_one_before():
-    """Each setting in the switch's order, the functions mcp_server.NEEDS gives exactly that level (what it allows
-    beyond the level below), and the line the page says for it."""
+def test_each_switch_line_is_held_beside_what_the_gate_lets_its_setting_call():
+    """Each setting in the switch's order, the default first, every function the gate lets it call, and the line the
+    page says for it."""
     from app import mcp_server  # noqa: PLC0415
     from app.models import CLAUDE_CAN  # noqa: PLC0415
 
-    assert list(SWITCH_ALLOWS) == list(CLAUDE_CAN) == list(mcp_server.LEVELS) == list(web.CLAUDE_CAN_LINES)
-    assert {level: ({f for f, need in mcp_server.NEEDS.items() if need == level}, web.CLAUDE_CAN_LINES[level])
-            for level in mcp_server.LEVELS} == SWITCH_ALLOWS
+    assert list(SWITCH_ALLOWS) == list(CLAUDE_CAN) == list(web.CLAUDE_CAN_LINES) == ["log_delete", "log"]
+    assert {level: ({f for f in mcp_server.NEEDS if mcp_server.not_allowed(f, level) is None},
+                    web.CLAUDE_CAN_LINES[level]) for level in CLAUDE_CAN} == SWITCH_ALLOWS
 
 
 def auto_zone_form(page: str) -> tuple[str, dict]:

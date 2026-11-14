@@ -6,8 +6,9 @@ A case (evals/cases.json):
 
   {"id": "...", "say": "what the person types", "expect": {...}, "switch": "..."?, "seed": [...]?, "db": [...]?}
 
-switch, what the person lets Claude do (read, log or log_delete), set through services.set_claude_can
-before the run, as the Settings page sets it. Left out: the default, log.
+switch, what the person lets Claude do (log or log_delete), set through services.set_claude_can
+before the run, as the Settings page sets it. Left out: the default, log_delete. Any other value, read among
+them, is a problem when the cases are loaded.
 
 expect, every key optional, all of them must hold:
 
@@ -68,7 +69,7 @@ EXPECT_KEYS = {"function", "inputs_include", "inputs_exclude", "inputs_forbid", 
 CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db"}
 DB_KEYS = {"table", "state", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
-SWITCHES = ("read", "log", "log_delete")
+SWITCHES = ("log", "log_delete")
 SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "set_goal", "import_entries", "edit_entry"}
 EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
 NO_DATA_SERVICES = {"four_weeks"}  # called as seed_service(name)(user_id): see seed_service

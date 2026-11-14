@@ -65,7 +65,7 @@ READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": T
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 # What each function published before this work: the SHA-256 of the tool as compact JSON with sorted keys.
 PUBLISHED = {
-    "whoami": "7babf91afa1846f1c1a61e680e4907dfe72fb42db9837c3f2528a25f05d4b69f",  # with the new account's note
+    "whoami": "559251413fd3472e201f2b7185b2134ed2c959239709e20281e98025a7b4c466",  # switch: claude_can's two values
     "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
     "log_lifts": "b5a30f70a54848068173b09c0e184b211f86c05c32a0508bf11c2566f0dcbe17",
     "log_bodyweight": "f6d2e5b9ad195b9256152099a072142fdd926c7e176e35fc561e036ff66654b7",
@@ -76,7 +76,7 @@ PUBLISHED = {
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
     "edit_entry": "3fbe15511d1b775980d1d89c5e24414a52b5cf4ccf1def94133f0b7d29673e7e",
     "restore_entry": "387046ab52a01f54010b144d3e326d87ac8b36f75617c8fda446f9fb9e332fe4",  # as trimmed: one undo
-    "delete_entry": "40312bed5a2ad2a1d3e829f2067f419f8ab749e4c718474f2defbcfc3760a902",
+    "delete_entry": "9f44f254de2d734c647c15921809df43fd2310a3ee9a914e307ad545c47a0143",  # switch: two calls, confirm
     "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",
     "log_food": "6ffc9850d580f531c6cf3bd6d961b186936aa00b5bf3b9af19198a3a8e7acd56",
     "save_food": "0a8e5b4526af8bc103af661c711ad6719ab8588579dc64ceb4b6b4ed6cb218cc",
@@ -86,7 +86,7 @@ PUBLISHED = {
     "import_entries": "8e1bce9821e8547d62c9768c5b05b9a7c686c7437e2f34e80d8275a4a82d5ffd",
     "owner_calls": "79ec889297b107ba7f25781a2ace0a058b712960510d994d36788485da57d787",
 }
-INSTRUCTIONS_AT_FDE0704 = "1eb1802eccd48059b20ac06203e19299a836ff22043b5465bac2991e4e241516"
+INSTRUCTIONS_AS_BUILT = "d1ef2d4d6491bea09aeda32d4106a5bd5a9fa6fb4c761f70e9ba7d0059c86704"  # switch decision 18
 
 
 def notes() -> list[Feedback]:
@@ -203,7 +203,7 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0008"
+    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0009"  # switch 0009
 
 
 def test_the_topics_are_a_tuple_in_the_models_and_no_status_is():
@@ -235,18 +235,6 @@ def test_a_note_sent_at_log_or_log_delete_is_saved_and_its_row_reads_written_by_
     row = rows()[-1]
     assert (row.function, row.outcome, row.caller, row.ok, row.tried) == ("send_feedback", "written", "claude", True,
                                                                          "text topic")
-
-
-def test_at_read_only_the_answer_is_not_allowed_and_the_service_never_runs(http, monkeypatch):
-    token = sign()
-    account = ok(http, token, "whoami")["account_id"]
-    set_switch(account, "read")
-    monkeypatch.setattr(services, "send_feedback", lambda *a: pytest.fail("the service ran"))
-    refused = failed(http, token, "send_feedback", {"text": "The chart is confusing."})
-    assert refused["error"] == "not_allowed" and notes() == []
-    assert (rows()[-1].outcome, rows()[-1].step) == ("refused", "permission")
-    assert mcp_server.NEEDS["send_feedback"] == "log" and "send_feedback" in common.WRITE_FUNCTIONS
-    assert "send_feedback" not in mcp_server.READ_FUNCTIONS
 
 
 def test_a_note_counts_toward_the_write_limit_and_at_the_limit_nothing_is_saved(http):
@@ -938,8 +926,8 @@ def test_the_privacy_page_says_what_a_note_holds_who_reads_it_and_how_long_it_is
             "deleted then. Until then it is in your export, and deleting your account deletes it."]
     assert re.findall(r"<p>(.*?)</p>", card) == said and all(tr.check(s, tr.PAGE) == [] for s in said)
     assert page.index(">What an edit replaces</h2>") < page.index(">Feedback you send</h2>")
-    for line in ("It gets what each function returns. It can always read. What else it may do is your choice on "
-                 "Settings. Unless you set it to read only, it can also send feedback when you ask.",
+    for line in ("It gets what each function returns. It can read and log. Whether it can delete is your choice on "
+                 "Settings. It can also send feedback when you ask.",  # switch decision 19
                  "They can reach the database to keep it running. They read the feedback you send."):
         assert line in page and tr.check(line, tr.PAGE) == []
     assert "Claude" not in card and '<time datetime="2026-11-14">Sat 14 Nov 2026</time>' in page
@@ -950,13 +938,12 @@ def test_can_and_cant_says_what_feedback_is_for_the_offer_and_the_rules():
     for said in ("`send_feedback` sends a note to Spotter's maker, the person who runs Spotter",
                  "Claude sends it only when the person asks, or says yes to an offer, in the person's own words.",
                  "Claude offers once to send it as feedback, and sends it only on a yes.",
-                 "It is a write: an account set to read only answers `not_allowed`.",
+                 "It is a write, allowed at both settings.",  # switch decision 1: was "read only answers"
                  "`send_feedback`'s description gives the number", "`too_much_feedback` and the hours to wait",
                  "no `allow_repeat` for a note", "never what was logged", "No reply comes back through Spotter.",
                  "A note is kept until Spotter's maker deletes it, one year at most.", "Twenty functions",
                  "| `send_feedback` | Sends a note to Spotter's maker, when the person asks or says yes to the offer. |",
-                 "| `read` | Read only: `whoami`, `list_exercises`, `get_progress`, `get_log`, `find_food`, "
-                 "`get_trends`, `get_goals`. |"):
+                 "| `log` | Everything except `delete_entry`. |"):  # switch decision 1: the row for read went
         assert said in text, said
     assert "owner_feedback" not in text
 
@@ -976,8 +963,9 @@ def test_every_new_text_keeps_the_text_rules():
         assert tr.check(feedback._summary(*counts), tr.SUMMARY) == [], counts
 
 
-def test_the_instructions_do_not_change_by_a_character():
-    assert hashlib.sha256(mcp_server.INSTRUCTIONS.encode()).hexdigest() == INSTRUCTIONS_AT_FDE0704
+def test_the_instructions_do_not_change_by_a_character():  # but for the switch's rule on deleting (decision 18)
+    assert hashlib.sha256(mcp_server.INSTRUCTIONS.encode()).hexdigest() == INSTRUCTIONS_AS_BUILT
+    assert "feedback" not in mcp_server.INSTRUCTIONS.lower()
 
 
 # ---------------------------------------------------------------- decision 16: the eval cases
@@ -985,8 +973,8 @@ def test_the_instructions_do_not_change_by_a_character():
 def test_the_two_cases_load_and_judge_as_designed(app_settings, make_user):
     cases = {c["id"]: c for c in judge.load_cases()}
     sent, offered = cases["feedback_sent"], cases["feedback_offered"]
-    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 25
-    assert "switch" not in sent and "switch" not in offered  # the default, log
+    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 26  # switch: was 25
+    assert "switch" not in sent and "switch" not in offered  # the default, log_delete since the switch
     uid = make_user().id
     rows_now = person_rows(uid)
     assert rows_now["feedback"] == []

@@ -61,8 +61,8 @@ TABLES = ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_ent
 TABLE_KINDS = frozenset({"edit_entry", "delete_entry", "restore_entry"})
 # Every argument name of the MCP functions, and every field of their input models. tried writes no other name.
 KNOWN_NAMES = frozenset({
-    "account_id", "add_back_exercise_kcal", "allow_repeat", "avg_hr", "calorie_target_kcal", "category", "date", "days",
-    "description", "distance_km", "distance_unit", "doing", "dry_run", "email", "entries", "entry_id",
+    "account_id", "add_back_exercise_kcal", "allow_repeat", "avg_hr", "calorie_target_kcal", "category", "confirm",
+    "date", "days", "description", "distance_km", "distance_unit", "doing", "dry_run", "email", "entries", "entry_id",
     "exercise", "expected", "failed_only", "goal_id", "grams_per_serving", "happened", "hours", "ids", "include_closed",
     "incline_pct", "kcal", "kcal_per_serving", "key", "kg", "kind", "length_unit", "limit", "machine_kcal", "meal",
     "measurement_kind", "minutes", "name", "no_account", "notes", "query", "request_id", "rows", "serving_label",

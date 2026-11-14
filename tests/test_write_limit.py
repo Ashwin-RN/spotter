@@ -195,7 +195,7 @@ def test_one_under_the_limit_with_its_own_row_is_allowed(user, name):
 def test_the_web_side_the_switch_is_not_a_limited_write(user):
     """set_claude_can belongs to the Settings page; it is not in WRITE_FUNCTIONS and is not limited."""
     calls(user.id, WRITE_LIMIT * 2)
-    assert services.set_claude_can(user.id, "log_delete") == {"claude_can": "log_delete", "changed": True}
+    assert services.set_claude_can(user.id, "log") == {"claude_can": "log", "changed": True}  # switch 2: from log_delete
 
 
 def test_deleting_the_account_is_never_limited(user):

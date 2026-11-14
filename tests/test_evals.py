@@ -22,11 +22,12 @@ from evals.run import (
 from tests.conftest import HEADERS, settings
 
 CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_asked", "yesterday", "treadmill_once",
-                  "repeat_sent", "delete_ambiguous", "delete_explicit", "unknown_exercise",
+                  "repeat_sent", "delete_ambiguous", "delete_asks_first", "unknown_exercise",
                   "goal_date", "how_am_i_doing", "on_track", "export_is_a_click", "delete_is_a_click", "drop_goal",
                   "decimals_and_dashes", "import_preview_first", "import_again", "import_unknown_lift", "undo_edit",
                   "feedback_sent", "feedback_offered",
-                  "hi_there_first_log", "hi_there_not_again"}
+                  "hi_there_first_log", "hi_there_not_again",
+                  "delete_regretted"}  # switch decision 21: delete_explicit became delete_asks_first
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
           "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries",
@@ -41,8 +42,8 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert len(cases) == 25  # was 21: feedback adds feedback_sent and feedback_offered, and the hi there page
-    # adds hi_there_first_log and hi_there_not_again
+    assert len(cases) == 26  # was 21: feedback adds feedback_sent and feedback_offered, the hi there page
+    # adds hi_there_first_log and hi_there_not_again, and the switch delete_regretted
     assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)
@@ -63,7 +64,9 @@ def test_case_problems_names_what_is_wrong():
                                 "seed": [{"service": "drop_table", "data": {}}]})
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"}, "db": [{"table": "user"}]})
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"}, "switch": "everything"}) == [
-        "switch must be one of read, log, log_delete"]
+        "switch must be one of log, log_delete"]  # switch decision 21: read went
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"}, "switch": "read"}) == [
+        "switch must be one of log, log_delete"]
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"}, "switch": "log_delete"}) == []
     assert judge.case_problems({"id": "a", "say": "x", "expect": {"function": "f"},
                                 "db": [{"table": "bodyweight", "state": "gone"}]})
@@ -336,12 +339,28 @@ def test_the_real_cases_judge_as_designed():
     assert ambiguous["switch"] == "log_delete"
     assert judge.judge_calls(ambiguous["expect"], [call("get_log")], "Which one, 72 or 71.5 kg?") == []
     assert judge.judge_calls(ambiguous["expect"], [call("delete_entry", {"kind": "bodyweight", "entry_id": 2})], "")
-    explicit = cases["delete_explicit"]
-    assert explicit["switch"] == "log_delete"
-    expect = judge.resolve(explicit["expect"], {"seed.weigh_in": 5})
-    assert judge.judge_calls(expect, [call("get_log"), call("delete_entry", {"kind": "bodyweight",
-                                                                             "entry_id": 5})], "Deleted.") == []
-    assert judge.judge_calls(expect, [call("delete_entry", {"kind": "bodyweight", "entry_id": 5}, is_error=True)], "")
+    asks = cases["delete_asks_first"]  # switch decision 21: was delete_explicit, which deleted in one call
+    assert asks["switch"] == "log_delete"
+    expect = judge.resolve(asks["expect"], {"seed.weigh_in": 5})
+    preview = call("delete_entry", {"kind": "bodyweight", "entry_id": 5})
+    assert judge.judge_calls(expect, [call("get_log"), preview], "Delete the 71.5 kg weigh-in?") == []
+    assert judge.judge_calls(expect, [preview, call("delete_entry", {"kind": "bodyweight", "entry_id": 5,
+                                                                     "confirm": "0123456789ab"})], "Deleted.")
+    assert judge.judge_calls(expect, [], "Delete the 71.5 kg weigh-in?")
+    assert judge.judge_calls(expect, [preview], "Deleted.")  # no question
+    assert judge.judge_calls(expect, [call("delete_entry", {"kind": "bodyweight", "entry_id": 5}, is_error=True)], "?")
+    db = judge.resolve(asks["db"], {"seed.weigh_in": 5})
+    assert judge.judge_db(db, {"bodyweight": [{"id": 5, "kg": 71.5, "deleted_at": None}]}) == []
+    assert judge.judge_db(db, {"bodyweight": [{"id": 5, "kg": 71.5, "deleted_at": "2026-11-14T08:00:00+00:00"}]})
+    regretted = cases["delete_regretted"]
+    assert "switch" not in regretted  # the default, log_delete
+    assert judge.judge_calls(regretted["expect"], [call("get_log")], "You can turn deleting off on Settings.") == []
+    assert judge.judge_calls(regretted["expect"], [call("delete_entry", {"kind": "bodyweight", "entry_id": 5})],
+                             "You can turn deleting off on Settings.")
+    assert judge.judge_calls(regretted["expect"], [], "Sorry about that.")
+    db = judge.resolve(regretted["db"], {"seed.weigh_in": 5})
+    assert judge.judge_db(db, {"bodyweight": [{"id": 5, "kg": 80.0, "deleted_at": None}]}) == []
+    assert judge.judge_db(db, {"bodyweight": []})
     unknown = cases["unknown_exercise"]["expect"]
     assert judge.judge_calls(unknown, [call("list_exercises")], "There is no zorbinator.") == []
     assert judge.judge_calls(unknown, [], "Which machine is that?") == []
@@ -911,7 +930,7 @@ def test_parse_body_reads_json_and_event_streams():
 
 
 def test_recorder_keeps_calls_per_token(provider, make_user, token_for):
-    make_user(subject="user_rec_a", email="a@example.com", name="A")
+    make_user(subject="user_rec_a", email="a@example.com", name="A", claude_can="log")  # switch: deleting off
     make_user(subject="user_rec_b", email="b@example.com", name="B")
     recorder = CallRecorder(create_app(settings(), fetch=provider.fetch))
     a, b = token_for("user_rec_a"), token_for("user_rec_b")
@@ -930,7 +949,7 @@ def test_recorder_keeps_calls_per_token(provider, make_user, token_for):
     assert [c["name"] for c in calls] == ["whoami", "log_bodyweight", "delete_entry"]
     assert calls[0]["is_error"] is False
     assert calls[1]["arguments"] == {"kg": 70, "date": "2001-01-01"} and calls[1]["is_error"] is True
-    assert calls[2]["is_error"] is True and calls[2]["error"] == "not_allowed"  # the switch defaults to log
+    assert calls[2]["is_error"] is True and calls[2]["error"] == "not_allowed"  # the switch set to log
     assert recorder.calls(b) == [] and recorder.methods(b) == ["tools/list"]
     assert recorder.calls("never-used") == []
     assert a not in json.dumps(recorder._calls) and token_key(a) in recorder._calls

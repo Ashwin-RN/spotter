@@ -32,7 +32,7 @@ def test_the_same_identity_twice_gives_one_row():
     assert isinstance(first, User) and isinstance(second, User)
     assert first.id == second.id and _count() == 1
     assert first.provider == "workos" and first.subject == "user_01A"
-    assert first.claude_can == "log" and first.add_back_exercise_kcal is False and first.time_zone is None
+    assert first.claude_can == "log_delete" and first.add_back_exercise_kcal is False and first.time_zone is None
 
 
 def test_the_provider_comes_from_the_settings_not_the_issuer():

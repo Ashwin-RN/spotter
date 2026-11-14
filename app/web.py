@@ -249,17 +249,18 @@ FIRST_FIELD = {"bodyweight": "kg", "measurement": "value", "lift_session": "note
 FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS}
 
 
-# The switch's words, the person's only (section L, Settings): its label, then what each setting lets the person's
-# assistant do, in one line each, which does not repeat the label drawn right above it. Each line says all that
-# mcp_server.NEEDS lets that setting call beyond the one before it: tests/test_web_account.py holds the two side by
-# side. The stored values (models.CLAUDE_CAN) never change. No text a connected model reads comes from these tables.
+# The switch's words, the person's only (section L, Settings): its label, then what each of the two settings lets the
+# person's assistant do, in one line each, which does not repeat the label drawn right above it. The default comes
+# first (models.CLAUDE_CAN): its line says all that mcp_server.NEEDS lets it call, and the other's says what it takes
+# away, deleting: tests/test_web_account.py holds the two side by side. The stored values never change. No text a
+# connected model reads comes from these tables.
 CLAUDE_CAN_LINES = {
-    "read": "Your assistant can read what you have logged and change nothing.",
-    "log": "Your assistant can also log and import entries, edit and restore them, save foods, set goals, and change "
-           "your time zone and targets. It cannot delete.",
-    "log_delete": "Your assistant can also delete entries and saved foods. A deleted one can always be restored.",
+    "log_delete": "Your assistant can log and import entries, edit and restore them, save foods and set goals. It can "
+                  "change your time zone and targets, and delete entries and saved foods. Before a delete it is shown "
+                  "the entry and told to ask you. Nothing is erased: a deleted one can be restored.",
+    "log": "Everything above except deleting: your assistant cannot delete an entry or a saved food.",
 }
-CLAUDE_CAN_LABELS = {"read": "Read only", "log": "Read and log", "log_delete": "Read, log and delete"}
+CLAUDE_CAN_LABELS = {"log_delete": "Read, log and delete", "log": "Read and log"}
 
 # Settings (section L): each of its three forms posts to its own card's anchor, and every redirect that answers one
 # names that anchor itself, so the person lands on the card that says it was saved. The automatic zone save
@@ -280,8 +281,8 @@ ZONE_ERROR_WORDS = {code: "That time zone was not recognised, so nothing was cha
 # chose no zone, so the line says to choose one, not that their choice was not recognised.
 ZONE_ERROR_EMPTY = "Choose your time zone from the list."
 ZONE_ERROR_GENERAL = "The time zone was not saved. Choose yours from the list and try again."
-SWITCH_ERROR_WORDS = {"invalid_field": "Choose one of the three settings below."}
-SWITCH_ERROR_GENERAL = "What your assistant may do was not saved. Choose one of the three and try again."
+SWITCH_ERROR_WORDS = {"invalid_field": "Choose one of the two settings below."}
+SWITCH_ERROR_GENERAL = "What your assistant may do was not saved. Choose one of the two and try again."
 
 
 def _target_span(field: str) -> str:

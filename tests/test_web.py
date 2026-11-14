@@ -263,8 +263,8 @@ LANDING_WORDS = (
     f"30{NO_BREAK}minutes on the treadmill",
     "{your_pages}",
     "Your data",
-    'You decide what your assistant may do. A switch on Settings has three settings: "Read only", "Read and log" and '
-    '"Read, log and delete". It starts at "Read and log".',
+    'You decide what your assistant may do. A switch on Settings has two settings: "Read, log and delete" and '
+    '"Read and log". It starts at "Read, log and delete".',  # switch decision 19
     "Export. Settings gives you everything you have logged, as a zip of CSV files.",
     "Undo. Right after a delete, Undo brings the entry back. Your assistant can restore an entry it deleted.",
     "Delete your account. On Settings. It removes every entry and your sign-in, and it cannot be undone.",
@@ -537,8 +537,8 @@ def test_your_data_says_the_switchs_settings_from_its_one_table(client, monkeypa
     for value in web.CLAUDE_CAN:
         monkeypatch.setitem(web.CLAUDE_CAN_LABELS, value, f"Setting {len(value)}")
     data = re.search(r'<section class="card your-data".*?</section>', client.get("/").text, re.S).group(0)
-    assert 'A switch on Settings has three settings: "Setting 4", "Setting 3" and "Setting 10". It starts at ' \
-           '"Setting 3".' in plain_words(data)
+    assert 'A switch on Settings has two settings: "Setting 10" and "Setting 3". It starts at ' \
+           '"Setting 10".' in plain_words(data)  # switch decision 19: two settings, the default first
 
 
 # ---------------------------------------------------------------- sign-in
@@ -1562,7 +1562,8 @@ def test_every_page_renders_for_a_person_with_no_entries(client):
     lift = client.get("/progress/back-squat")
     assert lift.status_code == 200 and "No sets of Back Squat logged yet" in lift.text
     settings_page = client.get("/settings")
-    assert settings_page.status_code == 200 and 'name="claude_can" value="log" checked' in settings_page.text
+    assert settings_page.status_code == 200 and 'name="claude_can" value="log_delete" checked' in \
+        settings_page.text  # switch decision 2: a new account's
 
 
 @pytest.mark.parametrize("on, heading", [("2026-11-10", "Today, Tuesday 10 November"),
@@ -1964,11 +1965,11 @@ def test_a_day_after_today_left_by_a_zone_change_still_has_a_page(client):
 
 # ---------------------------------------------------------------- the switch
 
-@pytest.mark.parametrize("value", ["read", "log_delete", "log"])
+@pytest.mark.parametrize("value", ["log_delete", "log"])  # switch decision 1: read went
 def test_the_switch_changes_claude_can_and_nothing_else(client, value):
     sign_in(client)
     services.update_settings(only_user().id, {"time_zone": "Asia/Kolkata"}, "web")
-    services.set_claude_can(only_user().id, "read" if value != "read" else "log")  # so the post changes it
+    services.set_claude_can(only_user().id, "log" if value != "log" else "log_delete")  # so the post changes it
     before = {c.name: getattr(only_user(), c.key) for c in User.__table__.columns}
     r = post(client, "/settings/claude-can", claude_can=value)
     assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=claude_can#assistant"
@@ -1981,22 +1982,22 @@ def test_the_switch_changes_claude_can_and_nothing_else(client, value):
     assert '<p class="ok">Your assistant&#39;s access saved.</p>' in page
 
 
-@pytest.mark.parametrize("value", [None, "", "LOG", "admin", "log_delete ", "everything", "delete"])
-def test_every_other_switch_value_is_refused(client, value):
+@pytest.mark.parametrize("value", [None, "", "LOG", "admin", "log_delete ", "everything", "delete", "read"])
+def test_every_other_switch_value_is_refused(client, value):  # switch decision 6: read too
     sign_in(client)
     data = {} if value is None else {"claude_can": value}
     r = post(client, "/settings/claude-can", **data)
-    assert r.status_code == 400 and "Choose one of the three settings below." in r.text
-    assert only_user().claude_can == "log"
+    assert r.status_code == 400 and "Choose one of the two settings below." in r.text
+    assert only_user().claude_can == "log_delete"
 
 
 def test_settings_says_what_each_setting_allows_and_that_claude_never_gets_the_switch(client):
     sign_in(client)
     page = client.get("/settings").text
     assert "Only you can change this, here: your assistant is never offered this switch." in page
-    for value in ("read", "log", "log_delete"):
+    for value in ("log_delete", "log"):  # switch decision 1: two settings
         assert f'value="{value}"' in page and web.CLAUDE_CAN_LINES[value] in page
-    assert page.count('type="radio" name="claude_can"') == 3
+    assert page.count('type="radio" name="claude_can"') == 2
 
 
 # ---------------------------------------------------------------- the zone save comes back to `next`
@@ -2035,7 +2036,7 @@ def test_every_web_write_leaves_a_call_log_row_under_the_mcp_name(client, stocke
     post(client, f"/entries/bodyweight/{stocked['weigh_in']}/delete")
     post(client, f"/entries/bodyweight/{stocked['weigh_in']}/restore")
     post(client, "/settings", time_zone="Europe/London")
-    post(client, "/settings/claude-can", claude_can="read")
+    post(client, "/settings/claude-can", claude_can="log")  # switch decision 1: was read
     post(client, f"/day/{on}/weigh-in", kg="999")  # refused: still a row
     assert calls(uid)[start:] == [
         ("log_bodyweight", True, None), ("log_measurement", True, None), ("edit_entry", True, None),
@@ -2069,7 +2070,7 @@ TOO_MANY = {"error": "too_many_writes", "message": "120 writes in the last 10 mi
     ("delete_entry", "/entries/bodyweight/{weigh_in}/delete", {}),
     ("restore_entry", "/entries/bodyweight/{weigh_in}/restore", {}),
     ("update_settings", "/settings", {"time_zone": "Asia/Kolkata"}),
-    ("set_claude_can", "/settings/claude-can", {"claude_can": "read"}),
+    ("set_claude_can", "/settings/claude-can", {"claude_can": "log"}),  # switch decision 1: was read
     ("log_food", "/day/{today}/food", {"description": "Apple", "kcal": "80"}),
     ("log_cardio", "/day/{today}/cardio", {"exercise": "Outdoor Walk", "minutes": "20"}),
     ("save_food", "/foods", {"name": "Dosa", "serving_label": "1 dosa", "kcal_per_serving": "170"}),
@@ -3290,8 +3291,8 @@ def test_the_marks_pages_have_words_for_stay_as_they_are(client, fed):
     assert location(post(client, f"/foods/{fed['roti']}/delete")) == SITE + f"/foods?deleted=saved_food:{fed['roti']}"
     assert location(post(client, f"/foods/{fed['roti']}/restore")) == SITE + "/foods?restored=saved_food"
     # Settings' since pass B16: each card's own mark, at that card's anchor.
-    assert location(post(client, "/settings/claude-can", claude_can="read")) == \
-        SITE + "/settings?saved=claude_can#assistant"
+    assert location(post(client, "/settings/claude-can", claude_can="log")) == \
+        SITE + "/settings?saved=claude_can#assistant"  # switch decision 1: was read
     assert location(post(client, "/settings", time_zone="Asia/Kolkata", card="zone")) == \
         SITE + "/settings?saved=time_zone#zone"
 
@@ -3329,8 +3330,8 @@ def test_today_passes_the_marks_on_to_the_day(client, query, passed):
 
 def test_the_same_switch_again_is_marked_unchanged_with_no_strip(client):
     sign_in(client)
-    assert only_user().claude_can == "log"
-    r = post(client, "/settings/claude-can", claude_can="log")
+    assert only_user().claude_can == "log_delete"  # switch decision 2: a new account's
+    r = post(client, "/settings/claude-can", claude_can="log_delete")
     assert location(r) == SITE + "/settings?saved=unchanged#assistant"
     assert 'class="ok' not in client.get(location(r)).text
 

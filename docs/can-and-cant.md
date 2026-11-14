@@ -165,8 +165,13 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
   entry again. A saved food that `save_food` changed is undone the same way, with kind
   `saved_food`. An undo that would move a weigh-in or a measurement onto a day that has another
   one is refused, as an edit is: nothing is replaced.
-- **Deletes.** Nothing is ever erased. Claude can delete only when the person has allowed it in
-  Settings, and `restore_entry` undoes a delete.
+- **Deletes.** Nothing is ever erased. A delete takes two calls. `delete_entry` with no `confirm`
+  deletes nothing: it answers with `dry_run` true, the entry as it stands and a `confirm` code.
+  Claude shows the person the entry and asks, and sends the same kind and id with that `confirm`
+  only when they say yes. A `confirm` that does not match the entry as it stands deletes nothing and
+  answers with the preview again. `restore_entry` undoes a delete. Claude can delete unless the
+  person has turned deleting off in Settings: then `delete_entry` answers `not_allowed`. When a
+  person did not want an entry deleted, Claude restores it and says deleting can be turned off there.
 - **The write limit.** An account takes at most 120 writes in any 10 minutes, from the web and Claude
   together. Every write call counts, a refused one too (`not_allowed`, `too_many_writes` or any other
   error). Past the limit, a write is refused with `too_many_writes` and the minutes to wait. The
@@ -346,7 +351,7 @@ confusing, an idea.
   send it as feedback, and sends it only on a yes.
 - Before sending, Claude asks once for what is missing of three parts: what they were doing, what they
   expected, what happened.
-- It is a write: an account set to read only answers `not_allowed`.
+- It is a write, allowed at both settings.
 - The number of notes in any 24 hours is capped: `send_feedback`'s description gives the number. Past
   it, a note is refused with `too_much_feedback` and the hours to wait.
 - The same note again within 10 minutes is saved once: it comes back with `duplicate` true. There is
@@ -382,7 +387,7 @@ Twenty functions, nothing else:
 | `log_measurement` | Records one measurement. |
 | `edit_entry` | Changes a session, a weigh-in, a measurement, a food entry or a cardio entry in place. |
 | `restore_entry` | Brings back a deleted or replaced entry, or undoes an entry's last edit. |
-| `delete_entry` | Deletes an entry, when the person allows it. |
+| `delete_entry` | Deletes an entry in two calls: a preview, then the delete once the person says yes. |
 | `find_food` | Looks a food up: saved foods and recent entries first, then USDA when it is on. |
 | `log_food` | Records what the person ate, every food in one call. |
 | `save_food` | Saves a food with its serving and calories, or updates one. |
@@ -396,9 +401,8 @@ Twenty functions, nothing else:
 
 | Setting | Claude may |
 |---|---|
-| `read` | Read only: `whoami`, `list_exercises`, `get_progress`, `get_log`, `find_food`, `get_trends`, `get_goals`. |
-| `log` (the default) | Read, and every write except `delete_entry`. `import_entries` is one of the writes. |
-| `log_delete` | Everything, `delete_entry` too. |
+| `log_delete` (the default) | Everything, `delete_entry` too. |
+| `log` | Everything except `delete_entry`. |
 
-A function the setting does not allow answers `not_allowed`, and nothing is written. Claude cannot
-change the setting: only the person can.
+With `log`, `delete_entry` answers `not_allowed`, and nothing is deleted. Claude cannot change the
+setting: only the person can.

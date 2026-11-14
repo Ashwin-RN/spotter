@@ -367,7 +367,8 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("restore_entry", undo)  # the edit undone: undone, before, summary
     keep("restore_entry", undo)  # the same undo again: duplicate, and its note
     set_switch(who["account_id"], "log_delete")
-    keep("delete_entry", {"kind": "measurement", "entry_id": second["id"]})
+    preview = keep("delete_entry", {"kind": "measurement", "entry_id": second["id"]})  # switch: a preview first
+    keep("delete_entry", {"kind": "measurement", "entry_id": second["id"], "confirm": preview["confirm"]})
     keep("restore_entry", {"kind": "measurement", "entry_id": second["id"]})  # nothing in its place
     keep("restore_entry", {"kind": "measurement", "entry_id": first["id"]})  # swaps: replaced and note
     roti = keep("save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120})  # created
@@ -605,7 +606,7 @@ def test_whoami_user_id_is_the_tokens_sub_and_account_id_is_the_row(http):
     who = whoami(http, sign(claims(sub="user_01OTHER")))
     row = one_user()
     assert who["user_id"] == "user_01OTHER" == row.subject and who["account_id"] == row.id
-    assert who["claude_can"] == "log"
+    assert who["claude_can"] == "log_delete"  # switch decision 2: was log
 
 
 def test_whoami_notes_the_time_zone_until_one_is_set(http):
@@ -782,7 +783,7 @@ def test_can_and_cant_states_the_limit_the_delete_consent_and_that_an_edit_keeps
     text = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
     assert f"at most {services.WRITE_LIMIT} writes in any {services.WRITE_WINDOW_MINUTES} minutes" in text
     assert "a refused one too" in text  # refused writes count against the limit
-    assert "Claude can delete only when the person has allowed it" in text
+    assert "Claude can delete unless the person has turned deleting off in Settings" in text  # switch: was "only when"
     assert "An edit keeps the values from before it: `restore_entry` with `undo_edit` brings them back." in text
 
 
@@ -794,9 +795,12 @@ def test_the_instructions_say_how_to_use_spotter(http):
     for words in ("Call whoami first", "list_exercises", "time_zone_note", "update_settings", "which city",
                   "Never send the person to a page", "fix", "allow_repeat", "links last"):
         assert words in instructions
-    # Settings is named only to say that export and delete are the person's own clicks there.
+    # Settings is named for three acts: export and deleting the account are the person's own clicks there, and
+    # deleting can be turned off there (switch decision 16: the last was added).
     naming = [s for s in sentences(instructions) if "Settings" in s]
-    assert naming and set(naming) <= set(sentences(mcp_server.SETTINGS_ONLY_RULE)), naming
+    off = "If the person did not want it deleted, restore it, and say they can turn deleting off on Settings."
+    assert off in sentences(mcp_server.DELETE_RULE)
+    assert naming and set(naming) <= set(sentences(mcp_server.SETTINGS_ONLY_RULE)) | {off}, naming
 
 
 # ---------------------------------------------------------------- tools/mcp_call.py
@@ -860,7 +864,7 @@ OPTIONAL_ARGUMENTS = {
                    "meal": "lunch", "description": "Dal", "kcal": 150.0, "exercise": "Treadmill Walk", "minutes": 30.0,
                    "distance_km": 3.5, "incline_pct": 2.0, "speed_kmh": 7.0, "avg_hr": 130, "machine_kcal": 210},
     "restore_entry": {"undo_edit": True},
-    "delete_entry": {},
+    "delete_entry": {"confirm": "0123456789ab"},  # switch decision 7: the second call's code
     "find_food": {"limit": 5},
     "log_food": {"date": "2026-01-02", "allow_repeat": True},
     "save_food": {"grams_per_serving": 40.0},
@@ -924,8 +928,9 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
     if name == "restore_entry":  # who calls, for the version an undo keeps, and undo_edit only when sent
         flags = {k: v for k, v in arguments.items() if k == "undo_edit"}
         return (account, arguments["kind"], arguments["entry_id"], "claude"), flags
-    if name == "delete_entry":
-        return (account, arguments["kind"], arguments["entry_id"]), {}
+    if name == "delete_entry":  # who calls, so a delete takes two calls (switch decision 7), and confirm when sent
+        flags = {k: v for k, v in arguments.items() if k == "confirm"}
+        return (account, arguments["kind"], arguments["entry_id"], "claude"), flags
     if name == "send_feedback":  # no by: a note comes only through MCP (feedback.md R3)
         return (account, arguments), {}
     return (account,), {}
@@ -1142,10 +1147,10 @@ def test_the_permission_switch_cannot_be_set_through_update_settings(http, monke
     # And in practice: an extra claude_can is dropped before the service; the stored switch is unchanged.
     token = sign()
     whoami(http, token)
-    ok(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log_delete"})
-    assert one_user().claude_can == "log" and whoami(http, token)["claude_can"] == "log"
+    ok(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log"})  # switch: the default
+    assert one_user().claude_can == "log_delete" and whoami(http, token)["claude_can"] == "log_delete"  # is log_delete
     received = spy_on_services(monkeypatch)
-    failed(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log_delete"})
+    failed(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log"})
     assert received["update_settings"][0][1] == {"time_zone": "Europe/London"}
 
 
@@ -1208,8 +1213,8 @@ def sentences(text: str) -> list[str]:
 def test_nothing_the_model_reads_sends_the_person_to_a_page_but_the_permission_switch(http):
     token = sign()
     texts = model_texts(http, token)
-    set_switch(one_user().id, "read")
-    refused = failed(http, token, "log_bodyweight", {"kg": 80})  # the not_allowed answer is read too
+    set_switch(one_user().id, "log")  # switch decision 14: the one refusal left is delete_entry at log
+    refused = failed(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": 1})  # the not_allowed answer
     texts["not_allowed message"], texts["not_allowed fix"] = refused["message"], refused["fix"]
     sending = [(where, s) for where, text in texts.items() for s in sentences(text) if sends_to_a_page(s)]
     assert sending == [("not_allowed fix", PAGE_SEND_EXCEPTION)]  # the permission switch, and nothing else
@@ -1249,7 +1254,7 @@ CONTRACT_NEEDS = {
     "import_entries": "log",
     "send_feedback": "log",  # feedback.md decision 3
 }
-ALLOWS = {"read": {"read"}, "log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}
+ALLOWS = {"log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}  # switch decision 1: two settings
 
 
 def test_every_registered_function_has_a_level_and_every_level_a_function(http):
@@ -1270,7 +1275,7 @@ def test_a_function_without_a_level_stops_the_server_at_start(app_settings, monk
         mcp_server.build_server(app_settings, JwksTokenVerifier(app_settings), UserinfoClient(app_settings))
 
 
-@pytest.mark.parametrize("level", ["read", "log", "log_delete"])
+@pytest.mark.parametrize("level", ["log", "log_delete"])
 def test_the_switch_gates_every_function_as_the_contract_says(http, monkeypatch, level):
     token = sign()
     whoami(http, token)
@@ -1291,33 +1296,39 @@ def test_the_switch_gates_every_function_as_the_contract_says(http, monkeypatch,
 
 def test_a_refused_write_writes_nothing_and_leaves_a_call_log_row(http):
     token = sign()
-    ok(http, token, "log_lifts", {"sets": squat(100)})
+    logged = ok(http, token, "log_lifts", {"sets": squat(100)})
     account = one_user().id
-    set_switch(account, "read")
-    result = call(http, token, "log_lifts", {"sets": squat(110)})
+    set_switch(account, "log")  # switch decision 14: the one refused write is delete_entry at log
+    result = call(http, token, "delete_entry", {"kind": "lift_session", "entry_id": logged["id"]})
     assert result["isError"] is True and result["structuredContent"]["error"] == "not_allowed"
     assert result["content"][0]["text"] == compact(result["structuredContent"])
     assert sessions_logged() == 1
     with db.session_scope() as session:
+        assert session.get(LiftSession, logged["id"]).deleted_at is None
         row = session.scalars(select(CallLog).order_by(CallLog.id.desc())).first()
-        assert (row.function, row.ok, row.error_code, row.user_id) == ("log_lifts", False, "not_allowed", account)
+        assert (row.function, row.ok, row.error_code, row.user_id) == ("delete_entry", False, "not_allowed", account)
 
 
 def test_delete_is_refused_at_log_and_the_entry_stays(http):
     token = sign()
     logged = ok(http, token, "log_bodyweight", {"kg": 80})
+    set_switch(one_user().id, "log")  # switch decision 2: a new account starts at log_delete
     error = failed(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": logged["id"]})
     assert error["error"] == "not_allowed" and error["message"] == "This account lets Claude read and log, not delete."
     with db.session_scope() as session:
         assert session.get(Bodyweight, logged["id"]).deleted_at is None
     set_switch(one_user().id, "log_delete")
-    assert ok(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": logged["id"]})["deleted"] is True
+    preview = ok(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": logged["id"]})  # switch decision 7
+    assert ok(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": logged["id"],
+                                            "confirm": preview["confirm"]})["deleted"] is True
     assert ok(http, token, "restore_entry", {"kind": "bodyweight", "entry_id": logged["id"]})["restored"] is True
 
 
-def test_an_unknown_switch_value_counts_as_read_only():
-    assert mcp_server.level_of("everything") == "read" and mcp_server.level_of(None) == "read"
-    assert mcp_server.not_allowed("log_lifts", "everything")["error"] == "not_allowed"
+def test_an_unknown_switch_value_counts_as_log():  # switch decision 4: was read
+    assert mcp_server.level_of("everything") == "log" and mcp_server.level_of(None) == "log"
+    assert mcp_server.level_of("read") == "log"
+    assert mcp_server.not_allowed("delete_entry", "everything")["error"] == "not_allowed"
+    assert mcp_server.not_allowed("log_lifts", "everything") is None
     assert mcp_server.not_allowed("whoami", "everything") is None
 
 
@@ -1326,11 +1337,12 @@ def test_delete_carries_the_destructive_hint_and_no_other_function_does(http):
     assert {name for name, destructive in hints.items() if destructive} == {"delete_entry"}
 
 
-def test_whoami_explains_the_three_switch_values(http):
+def test_whoami_explains_the_two_switch_values(http):  # switch decisions 1 and 17: was three
     schema = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}["whoami"]
     text = schema["properties"]["claude_can"]["description"]
-    for word in ("read", "log", "log_delete", "delete_entry"):
+    for word in ("log_delete (the default)", "log:", "delete_entry"):
         assert word in text
+    assert "read" not in text
 
 
 def test_the_instructions_say_what_to_do_on_not_allowed_and_how_to_look_back():
@@ -1562,8 +1574,9 @@ def test_the_targets_say_null_clears_them_and_publish_no_default(http):
 CARDIO_WORDS = ("When the person's words fit more than one activity", "more than 7 km/h is a run, otherwise a walk",
                 "with nothing to go on, the walk", "Say in your reply which one was taken", "edit_entry",
                 "Never ask first")
-DELETE_WORDS = ("Delete only the entry the person named", "ask which", "never delete on a guess",
-                "say what was deleted and that restore_entry brings it back")
+DELETE_WORDS = ("Delete only the entry the person named", "ask which first", "never call delete_entry on a guess",
+                "The first delete_entry call deletes nothing and returns the entry",
+                "say what was deleted and that restore_entry brings it back")  # switch decision 15: the new rule
 
 
 def test_the_instructions_say_log_the_activity_dont_ask_and_never_delete_on_a_guess():
@@ -1577,7 +1590,7 @@ def test_log_cardio_and_delete_entry_carry_the_same_rules(http):
     for words in CARDIO_WORDS:
         assert words in exercise, words
     delete = tools["delete_entry"]["description"]
-    for words in DELETE_WORDS + ("still needs the person's go-ahead first",):
+    for words in DELETE_WORDS + ("in two calls", "With no confirm, nothing is deleted"):  # switch decision 15
         assert words in delete, words
 
 
@@ -1958,10 +1971,11 @@ def test_set_goal_of_every_kind_answers_through_the_wrapper(http, monkeypatch, g
     assert received == [arguments]  # every argument sent, and nothing left out sent as null
 
 
-def test_the_new_reads_run_at_read_only(http, monkeypatch):
+@pytest.mark.parametrize("level", ["log", "log_delete"])
+def test_the_new_reads_run_at_both_settings(http, monkeypatch, level):  # switch decision 1: was at read only
     token = sign()
     whoami(http, token)
-    set_switch(one_user().id, "read")
+    set_switch(one_user().id, level)
     received = spy_on_services(monkeypatch)
     for name in ("get_trends", "get_goals"):
         assert failed(http, token, name)["error"] == "spy" and name in received, name
@@ -2066,9 +2080,9 @@ def test_can_and_cant_states_the_goal_kinds_the_trends_and_the_settings_clicks()
     lines = CAN_AND_CANT.read_text(encoding="utf-8").splitlines()
     rows = [m.group(1) for line in lines if (m := re.match(r"\| `([a-z_]+)` \| ", line))]
     assert [r for r in rows if r in FUNCTIONS] == FUNCTIONS  # the function table: one row each, in order
-    read_row = next(line for line in lines if line.startswith("| `read` |"))
-    assert set(re.findall(r"`([a-z_]+)`", read_row)) - {"read"} == {n for n, level in CONTRACT_NEEDS.items()
-                                                                     if level == "read"}
+    # switch decision 1: two settings, the default first, and no row for read
+    assert [line for line in lines if re.match(r"\| `(read|log|log_delete)`", line)] == [
+        "| `log_delete` (the default) | Everything, `delete_entry` too. |", "| `log` | Everything except `delete_entry`. |"]
 
 
 # ---------------------------------------------------------------- stage 5: find_food's read limit
@@ -2493,7 +2507,9 @@ def test_an_imported_row_of_every_kind_reads_back_through_mcp_as_import(http):
                "food_entry": {"kcal": 360}, "cardio_entry": {"minutes": 31}}
     for kind, entry_id in ids.items():
         edited = read("edit_entry", {"kind": kind, "entry_id": entry_id, **changes[kind]})
-        entries = [edited["before"], edited["after"], read("delete_entry", {"kind": kind, "entry_id": entry_id})["entry"],
+        code = read("delete_entry", {"kind": kind, "entry_id": entry_id})["confirm"]  # switch decision 7: two calls
+        entries = [edited["before"], edited["after"],
+                   read("delete_entry", {"kind": kind, "entry_id": entry_id, "confirm": code})["entry"],
                    read("restore_entry", {"kind": kind, "entry_id": entry_id})["entry"]]
         # A food entry's shape carries no logged_by anywhere (FoodEntryOut, food.entry_dict): its tag says who
         # supplied the number instead. Every other kind says import, before and after the edit, deleted and back.

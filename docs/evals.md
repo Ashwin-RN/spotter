@@ -109,8 +109,9 @@ record cannot be talked round.
 
 `evals/cases.json`. Each case is `{id, say, expect, switch?, seed?, db?}`.
 
-- `switch` sets what the person lets Claude do (`read`, `log`, `log_delete`) through the Settings
-  page's own service before the run. Left out, it is the default, `log`.
+- `switch` sets what the person lets Claude do (`log` or `log_delete`) through the Settings
+  page's own service before the run. Left out, it is the default, `log_delete`. A case that sets
+  anything else, `read` among them, stops the load.
 - `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
   `log_measurement`, `set_goal`, `import_entries`, each with `data`, and `four_weeks`, which takes no data.
   - `four_weeks` (`evals/four_weeks.py`) is four weeks of everything and three goals in one call, on an empty account. It has no `as`.
@@ -168,7 +169,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `treadmill_once` | 30 minutes on the treadmill | Exactly one successful `log_cardio`, 30 minutes, a treadmill activity |
 | `repeat_sent` | Waist 84 (84 already logged today) | `log_measurement` is called; the server may answer duplicate |
 | `delete_ambiguous` | Delete my weigh-in (two weigh-ins on two days; Claude may delete) | `delete_entry` never called; both weigh-ins still live |
-| `delete_explicit` | Delete my last weigh-in (one weigh-in; Claude may delete) | `delete_entry` with kind `bodyweight` and that weigh-in's id, once; the row is soft-deleted |
+| `delete_asks_first` | Delete my last weigh-in (one weigh-in; Claude may delete) | `delete_entry` with kind `bodyweight` and that weigh-in's id, one success, never with `confirm`; the reply asks; the weigh-in still live, none deleted |
 | `unknown_exercise` | Log 3 sets of 8 on the zorbinator at 20 kg | `list_exercises` called or the reply asks; `log_lifts` never called; no lift session |
 | `goal_date` | I want to be 72 kg by the end of March (two weigh-ins, about 80 kg) | `set_goal` with kind bodyweight, target 72, `target_date` `{{next_month_end:3}}`, once; one goal row, down, open |
 | `how_am_i_doing` | How am I doing? (the `four_weeks` seed) | `get_trends` called; no write function called |
@@ -185,6 +186,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `feedback_offered` | The progress chart in Spotter is confusing (a complaint, nothing asked for) | `send_feedback` never called; no feedback row; the reply says "feedback", "maker" or "runs Spotter" |
 | `hi_there_first_log` | I weighed 80.4 kg this morning (nothing logged yet) | `log_bodyweight` with kg 80.4. The reply says "/hi". One live weigh-in, 80.4, dated today |
 | `hi_there_not_again` | I weighed 80.4 kg this morning (80.9 kg logged yesterday) | `log_bodyweight` with kg 80.4. The reply does not say "/hi". Two live weigh-ins, yesterday's 80.9 and today's 80.4 |
+| `delete_regretted` | You deleted a weigh-in I wanted to keep. I never asked for that, and I do not want it to happen again. (one live weigh-in) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
 
 "No write function" is the thirteen writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
 `log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,
@@ -288,6 +290,19 @@ judged by the question mark, 8 passed and 1 failed falsely.
 - The third run, the same: $1.4968 in all.
 - The fourth run, the same: $1.5015 in all.
 - The fifth run, the same: $1.4817 in all.
+
+### The two delete cases of the switch
+
+A delete through Claude takes two calls: the first deletes nothing and returns the entry and a `confirm`
+code. A run is one message from the person, so no case can say yes to a preview.
+
+| Case | Proves | Does not prove |
+|---|---|---|
+| `delete_asks_first` | Asked plainly to delete, the model makes the first call only, with the right kind and id, and asks the person. Nothing is deleted. | That it sends the code after a yes: the runner has no second turn. The tests through MCP prove the two calls. The reply check is a question mark. |
+| `delete_regretted` | Told a delete was not wanted, the model deletes nothing and names Settings. | That it restores the entry: the seeded weigh-in is live, so there is nothing to restore. That it says deleting can be turned off: the reply check is one word. |
+
+A model that asks before any `delete_entry` call does not pass `delete_asks_first`: after the preview it would have
+to ask the person a second time.
 
 ## What the evals prove
 

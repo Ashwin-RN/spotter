@@ -71,6 +71,13 @@ def a_weigh_in(account: int) -> int:
     return services.log_bodyweight(account, {"kg": 80}, "claude")["id"]
 
 
+def a_delete_s_second_call(account: int) -> dict:
+    """A weigh-in's delete as its second call: the kind, the id and the code its preview gives (switch decision 7)."""
+    entry = a_weigh_in(account)
+    return {"kind": "bodyweight", "entry_id": entry,
+            "confirm": services.delete_entry(account, "bodyweight", entry, "claude")["confirm"]}
+
+
 def a_deleted_weigh_in(account: int) -> int:
     entry = a_weigh_in(account)
     assert services.delete_entry(account, "bodyweight", entry)["deleted"] is True
@@ -89,7 +96,7 @@ CALLS = {
     "set_goal": lambda account: {"kind": "bodyweight", "target_value": 75, "start_value": 80, "target_date": FAR},
     "update_settings": lambda account: {"time_zone": "Asia/Kolkata"},
     "edit_entry": lambda account: {"kind": "bodyweight", "entry_id": a_weigh_in(account), "kg": 81},
-    "delete_entry": lambda account: {"kind": "bodyweight", "entry_id": a_weigh_in(account)},
+    "delete_entry": a_delete_s_second_call,  # switch decision 13: a keyed delete is the second call, with its code
     "restore_entry": lambda account: {"kind": "bodyweight", "entry_id": a_deleted_weigh_in(account)},
     "import_entries": lambda account: {"rows": [{"kind": "bodyweight", "date": day(-3), "weight": 80}],
                                        "weight_unit": "kg", "dry_run": False},
@@ -721,7 +728,7 @@ def test_each_write_function_publishes_key_with_the_contract_s_words_and_no_othe
         assert properties["key"] == {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None,
                                      "description": words, "title": "Key"}, tool["name"]
     assert mcp_server.KEY_DESCRIPTION == words and tr.check(words, tr.CLAUDE) == []
-    assert len(mcp_server.INSTRUCTIONS) == 3678 and " key" not in mcp_server.INSTRUCTIONS  # they do not change
+    assert len(mcp_server.INSTRUCTIONS) == 3927 and " key" not in mcp_server.INSTRUCTIONS  # but for switch decision 18
 
 
 @pytest.mark.parametrize("name", WRITES)
@@ -783,12 +790,13 @@ def test_a_repeat_of_log_food_makes_no_usda_call(make_client, monkeypatch):
 
 def test_a_kept_answer_is_returned_only_after_the_permission_check_and_the_key_s_shape_comes_after_it(writer):
     http, token, account = writer
-    kept = call(http, token, "log_bodyweight", {"kg": 80, "key": K})
-    set_switch(account, "read")
-    assert failed(http, token, "log_bodyweight", {"kg": 80, "key": K})["error"] == "not_allowed"
-    assert failed(http, token, "log_bodyweight", {"kg": 80, "key": "bad"})["error"] == "not_allowed"
+    second = a_delete_s_second_call(account)  # switch decision 14: the one refusal left is a delete at log
+    kept = call(http, token, "delete_entry", {**second, "key": K})
     set_switch(account, "log")
-    assert call(http, token, "log_bodyweight", {"kg": 80, "key": K}) == kept
+    assert failed(http, token, "delete_entry", {**second, "key": K})["error"] == "not_allowed"
+    assert failed(http, token, "delete_entry", {**second, "key": "bad"})["error"] == "not_allowed"
+    set_switch(account, "log_delete")
+    assert call(http, token, "delete_entry", {**second, "key": K}) == kept
     assert [(r.step, r.outcome) for r in rows()[-3:]] == [("permission", "refused"), ("permission", "refused"),
                                                          (None, "repeat")]
 
@@ -1099,7 +1107,7 @@ FORMS = {
     "the time zone card": (None, "/settings", "/settings#zone", "", {"time_zone": "Asia/Kolkata", "card": "zone"},
                            True),
     "the targets": (None, "/settings", "/settings/targets#targets", "", {"calorie_target_kcal": "2200"}, False),
-    "what the assistant may do": (None, "/settings", "/settings/claude-can#assistant", "", {"claude_can": "read"},
+    "what the assistant may do": (None, "/settings", "/settings/claude-can#assistant", "", {"claude_can": "log"},
                                   True),
     "a food entry": (None, "/day/{day}", "/day/{day}/food#add-food", "", {"description": "Dal", "kcal": "300"},
                      True),

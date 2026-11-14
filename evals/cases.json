@@ -86,17 +86,19 @@
             "rows": [{"id": "{{seed.earlier}}", "kg": 72}, {"id": "{{seed.latest}}", "kg": 71.5}]}]
   },
   {
-    "id": "delete_explicit",
+    "id": "delete_asks_first",
     "say": "Delete my last weigh-in",
     "switch": "log_delete",
     "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 71.5}}],
     "expect": {
       "function": "delete_entry",
       "inputs_include": {"kind": "bodyweight", "entry_id": "{{seed.weigh_in}}"},
-      "ok_calls": {"delete_entry": 1}
+      "inputs_exclude": ["confirm"],
+      "ok_calls": {"delete_entry": 1},
+      "reply_asks": true
     },
-    "db": [{"table": "bodyweight", "count": 0},
-           {"table": "bodyweight", "state": "deleted", "count": 1, "all": {"id": "{{seed.weigh_in}}", "kg": 71.5}}]
+    "db": [{"table": "bodyweight", "count": 1, "all": {"id": "{{seed.weigh_in}}", "kg": 71.5}},
+           {"table": "bodyweight", "state": "deleted", "count": 0}]
   },
   {
     "id": "unknown_exercise",
@@ -297,5 +299,15 @@
     },
     "db": [{"table": "bodyweight", "count": 2,
             "rows": [{"id": "{{seed.earlier}}", "kg": 80.9}, {"kg": 80.4, "date": "{{today}}"}]}]
+  },
+  {
+    "id": "delete_regretted",
+    "say": "You deleted a weigh-in I wanted to keep. I never asked for that, and I do not want it to happen again.",
+    "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 80}}],
+    "expect": {
+      "no_call": ["delete_entry"],
+      "reply_has": ["Settings"]
+    },
+    "db": [{"table": "bodyweight", "count": 1, "all": {"id": "{{seed.weigh_in}}"}}]
   }
 ]

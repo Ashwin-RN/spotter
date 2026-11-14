@@ -105,7 +105,7 @@ def test_what_claude_may_do_can_never_be_set_here(user, by):
         assert r["error"] == "not_allowed", r
         assert "Only the person" in r["fix"] and "Settings page" in r["fix"]
     row = stored(user.id)
-    assert row.claude_can == "log" and row.time_zone is None  # nothing stored, the zone included
+    assert row.claude_can == "log_delete" and row.time_zone is None  # nothing stored, the zone included (switch 2)
 
 
 def test_bad_arguments(user):
@@ -300,28 +300,28 @@ def test_order_free_numbers_do_not_move_as_the_days_pass(user, monkeypatch):
 
 # ---------------------------------------------------------------- set_claude_can: the Settings page's switch
 
-@pytest.mark.parametrize("value", ["read", "log", "log_delete"])
-def test_the_switch_takes_each_of_its_three_values(user, value):
+@pytest.mark.parametrize("value", ["log", "log_delete"])
+def test_the_switch_takes_each_of_its_two_values(user, value):  # switch decisions 1, 2 and 6: was three, from log
     r = services.set_claude_can(user.id, value)
-    assert r == {"claude_can": value, "changed": value != "log"}
+    assert r == {"claude_can": value, "changed": value != "log_delete"}
     assert stored(user.id).claude_can == value
     assert services.set_claude_can(user.id, value) == {"claude_can": value, "changed": False}
 
 
 def test_the_switch_refuses_anything_else_and_changes_nothing(user):
-    for bad in ("delete", "LOG", "", None, ["log"], True, "x" * 10_000):
+    for bad in ("read", "delete", "LOG", "", None, ["log"], True, "x" * 10_000):  # switch decision 6: read too
         r = services.set_claude_can(user.id, bad)
-        assert r["error"] == "invalid_field" and "read, log, log_delete" in r["fix"] and len(str(r)) < 1_000
-    assert stored(user.id).claude_can == "log"
-    assert services.set_claude_can(987654, "read")["error"] == "no_account"
+        assert r["error"] == "invalid_field" and r["fix"] == "Use one of: log_delete, log." and len(str(r)) < 1_000
+    assert stored(user.id).claude_can == "log_delete"
+    assert services.set_claude_can(987654, "log")["error"] == "no_account"
 
 
 def test_update_settings_still_never_sets_the_switch(user):
-    services.set_claude_can(user.id, "read")
+    services.set_claude_can(user.id, "log")  # switch decision 1: was read
     for by in ("claude", "web"):
         r = services.update_settings(user.id, {"claude_can": "log_delete"}, by)
         assert r["error"] == "not_allowed"
-    assert stored(user.id).claude_can == "read"
+    assert stored(user.id).claude_can == "log"
     assert "claude_can" not in account.SETTABLE
 
 
