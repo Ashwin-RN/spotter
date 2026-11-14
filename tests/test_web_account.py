@@ -204,7 +204,7 @@ def test_foods_reads_list_saved_foods_and_shows_live_ones(signed, monkeypatch):
         ("Serving", "1 bowl"), ("kcal", "180"), ("Times logged", "7")]
     assert '<td class="lead">Roti</td>' in page and "Gone stew" not in page
     # The list is a stand-in and the database holds none of its foods, so the stamp the edit page reads first is a
-    # stand-in too: with no stamp found the page is the 404, and never a form with no stamp (edit-history.md).
+    # stand-in too: with no stamp found a GET is the 404, and never a form with no stamp (edit-history.md).
     recorder(monkeypatch, "get_entry", {"updated_at": "2026-11-10T08:00:00+00:00"})
     assert signed.get("/foods/12/edit").status_code == 200 and signed.get("/foods/13/edit").status_code == 404
 

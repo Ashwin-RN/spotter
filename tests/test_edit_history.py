@@ -130,7 +130,7 @@ def set_back(kind: str, row_id: int, **ago) -> None:
         s.execute(update(model).where(model.id == row_id).values(updated_at=db.utcnow() - timedelta(**ago)))
 
 
-# ---------------------------------------------------------------- decisions 2 to 4: an edit, its undo, and back
+# ---------------------------------------------------------------- decisions 2 to 4: an edit and its undo
 
 @pytest.mark.parametrize("kind", KINDS)
 def test_an_edit_then_its_undo_puts_every_stored_column_back_and_the_undo_again_changes_nothing(make_user, kind):
@@ -837,9 +837,11 @@ def test_a_save_that_lands_while_the_food_edit_page_is_drawn_is_never_overwritte
         130, "1 roti")
 
 
-def test_a_food_deleted_or_brought_back_while_its_edit_page_is_drawn_gets_the_404_and_no_form(client, monkeypatch):
+def test_a_get_of_the_edit_page_of_a_food_deleted_or_brought_back_meanwhile_is_the_404_and_no_form(client,
+                                                                                                 monkeypatch):
     """The stamp read finds no live food and the values read finds one, when the food is brought back between
-    them. A form drawn then would carry no stamp, and a form with no stamp is not checked: so none is drawn."""
+    them. A form drawn then would carry no stamp, and a form with no stamp is not checked: so a GET draws none.
+    (A POST with no stamp and a refused field draws its form again with none, as ruled.)"""
     uid = web_person(client)
     roti = make("saved_food", uid)
     real = services.list_saved_foods
@@ -890,7 +892,7 @@ def test_a_second_click_of_save_lands_on_the_day_unchanged_though_the_first_made
     assert len(versions()) == 1 and [r.outcome for r in rows() if r.function == "edit_entry"] == ["written"]
 
 
-# ---------------------------------------------------------------- decision 9: Undo on the page, and the way back
+# ---------------------------------------------------------------- decision 9: Undo on the page
 
 def strip_form(client, address: str) -> tuple[str, str, str, dict]:
     """The strip a page shows: (its words, its form's address, its button, its hidden fields but the token)."""
@@ -956,7 +958,11 @@ def test_undo_runs_once_whether_clicked_twice_or_sent_from_a_page_drawn_again_at
         age(EntryVersion, versions()[-1].id, **ago)
         _, _, _, drawn_again = strip_form(client, saved.headers["location"])
         again = post(client, action, **drawn_again)
-        assert again.headers["location"] == SITE + f"/day/{day()}?saved=unchanged"
+        # Nothing changes, and it lands where the first undo did: the plain line, which is true.
+        assert again.headers["location"] == first.headers["location"] == SITE + (
+            f"/day/{day()}?restored=bodyweight:{entry}")
+    landed = client.get(again.headers["location"].removeprefix(SITE)).text
+    assert '<p class="ok">Weigh-in edit undone.</p>' in landed and '<div class="ok undo">' not in landed
     assert stored("bodyweight", entry)["kg"] == 80
     assert [r.outcome for r in rows() if r.function == "restore_entry"] == ["written", "repeat"] + ["duplicate"] * 3
     assert [v.why for v in versions()] == ["edit", "undo"]
@@ -1107,7 +1113,8 @@ def test_after_a_food_s_edit_foods_offers_undo_and_after_the_undo_a_plain_line(c
     assert [(v.kind, v.by, v.why) for v in versions()] == [("saved_food", "web", why) for why in ("edit", "undo")]
     assert rows()[-1].tried == "entry_id key kind=saved_food undo_edit"
     _, _, _, again = strip_form(client, saved.headers["location"])  # Undo from the saved page drawn again
-    assert post(client, action, **again).headers["location"] == SITE + "/foods?saved=unchanged"
+    assert post(client, action, **again).headers["location"] == undone.headers["location"]  # the same line
+    assert rows()[-1].outcome == "duplicate"
     assert stored("saved_food", roti) == first and tr.check("Saved food edit undone.", tr.PAGE) == []
 
 

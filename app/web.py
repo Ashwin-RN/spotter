@@ -1465,8 +1465,8 @@ def edit_strip(params, words: dict) -> dict | None:
     for mark, said in (("saved", "saved."), ("restored", "edit undone.")):
         kind, _, entry_id = str(params.get(mark) or "").partition(":")
         if kind in words and plain_id(entry_id):
-            return {"words": f"{words[kind]} {said}", "undo": (kind, entry_id) if mark == "saved" else None,
-                    "fields": ("undo_edit",)}
+            line = {"words": f"{words[kind]} {said}", "undo": None}
+            return {**line, "undo": (kind, entry_id), "fields": ("undo_edit",)} if mark == "saved" else line
     return None
 
 
@@ -1478,15 +1478,15 @@ def undo_sent(form) -> tuple:
 
 def undo_mark(kind: str, result: dict, undo: tuple) -> tuple[str, str]:
     """The mark after restore_entry. A restore: restored. An edit's undo: restored, with the entry's id, which reads
-    "{Kind} edit undone.". An undo that changed nothing: unchanged."""
-    if not undo:
-        return "restored", kind
-    return UNCHANGED if result.get("duplicate") is True else ("restored", f"{kind}:{result['id']}")
+    "{Kind} edit undone.". The same when the last edit was already undone (Undo pressed again from the saved page,
+    by Back): nothing changed, and the line is true."""
+    return "restored", (f"{kind}:{result['id']}" if undo else kind)
 
 
 # The page when an undo (True) or the web's restore (False) would land on a day that holds another entry: what it
-# would have done, and what the person can do next. No page offers the undo or the restore again, so neither
-# says to try again: each names what a page does offer.
+# would have done, and what the person can do next. Only the page the button was pressed on offers it again, by
+# Back, and pressed there again it is refused again while the other entry holds the day. No link reaches that
+# page, so neither says to try again: each names what a link does reach.
 DAY_TAKEN_WORDS = {
     True: ("move the entry", "Edit or delete the other one first. Then edit this entry and set its date by hand."),
     False: ("bring the entry back", "The deleted one stays deleted and the other one stays. To change that day, "
@@ -1985,7 +1985,8 @@ async def food_edit_page(request: Request) -> Response:
     # values, so a save that lands between the two reads can only make the form older than what it shows, and the
     # worst that comes of it is a refusal the person did not need. A POST carries the stamp its page drew. A GET
     # that finds no stamp (the food was deleted, or brought back between the reads) is the 404: a form with no
-    # stamp is never drawn.
+    # stamp is never drawn by a GET. A POST that carries none and has a refused field draws its form again with
+    # none, as an entry's does: a missing stamp runs the write as it always ran.
     posted = request.method == "POST"
     drawn_at = None if posted else (await _db(services.get_entry, user.id, SAVED_FOOD, food_id)).get("updated_at")
     food = next((f for f in await live_foods(user) if str(f["id"]) == food_id), None)
