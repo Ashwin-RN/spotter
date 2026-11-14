@@ -4,7 +4,7 @@ export_data(user_id)
     A read. One CSV per table the person owns, plus account.csv and README.txt:
       account.csv, lift_sessions.csv, lift_sets.csv, bodyweight.csv, measurements.csv, goals.csv,
       saved_foods.csv, food_entries.csv, cardio_entries.csv, entry_versions.csv
-    - entry_versions.csv: what an entry held before each edit, undo or redo still kept (contract
+    - entry_versions.csv: what an entry held before each edit or undo still kept (contract
       edit-history.md): its kind, the entry's id, when, who, why, and the values as JSON (_before): as stored,
       without LEFT_OUT, and with names as the other files give them. A set is {exercise, set_number,
       weight_kg, reps}, and a cardio entry's exercise_id is exercise, as in cardio_entries.csv. A food entry's
@@ -79,11 +79,11 @@ Everything Spotter holds for this account, one CSV file per kind of record.
                       claude_estimate (Claude's estimate)
   cardio_entries.csv  each cardio session; estimated_kcal is the app's estimate, machine_kcal the
                       machine's own number
-  entry_versions.csv  what an entry held before each edit, undo or redo: kind and entry_id name the
-                      entry, by says who changed it (web or claude), why is edit, undo or redo, and
-                      before holds the values as JSON: a set's exercise and a cardio activity by
-                      name, a saved food by its id in saved_foods.csv. The newest 10 are kept for
-                      an entry, for 90 days
+  entry_versions.csv  what an entry held before each edit or undo: kind and entry_id name the entry,
+                      by says who changed it (web or claude), why is edit or undo, and before holds
+                      the values as JSON: a set's exercise and a cardio activity by name, a saved
+                      food by its id in saved_foods.csv. The newest 10 are kept for an entry, for
+                      90 days
 
 Deleted rows are included: deleted_at says when.
 logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_entries, says how a row

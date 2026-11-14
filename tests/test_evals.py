@@ -704,13 +704,7 @@ def test_the_undo_edit_case_seeds_a_weigh_in_and_an_edit_of_it(app_settings):
     assert judge.judge(resolved, [call("restore_entry", sent)], "Undone.", person_rows(user_id))  # not yet undone
     assert services.restore_entry(user_id, "bodyweight", seeded["weigh_in"], "claude", undo_edit=True)["undone"] is True
     assert judge.judge(resolved, [call("restore_entry", sent)], "Undone.", person_rows(user_id)) == []
-    # allow_repeat only brings back an edit that was undone: a run that sends it true with its undo does not pass.
-    assert case["expect"]["inputs_forbid"] == {"allow_repeat": True}
-    with_repeat = [call("restore_entry", {**sent, "allow_repeat": True})]
-    assert judge.judge(resolved, with_repeat, "Undone.", person_rows(user_id)) == [
-        "restore_entry sent allow_repeat = true"]
-    without = [call("restore_entry", {**sent, "allow_repeat": False})]
-    assert judge.judge(resolved, without, "Undone.", person_rows(user_id)) == []
+    assert "inputs_forbid" not in case["expect"]  # restore_entry takes no allow_repeat now: nothing to forbid
     edited = [call("edit_entry", {"kind": "bodyweight", "entry_id": seeded["weigh_in"], "kg": 80})]
     assert judge.judge(resolved, edited, "Changed back.", person_rows(user_id)) == [
         "restore_entry was not called (calls: edit_entry)", "restore_entry succeeded 0 times, expected 1"]

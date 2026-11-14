@@ -856,7 +856,7 @@ OPTIONAL_ARGUMENTS = {
     "edit_entry": {"date": "2026-01-02", "notes": "Notes", "sets": squat(105), "kg": 80.5, "value": 84.5,
                    "meal": "lunch", "description": "Dal", "kcal": 150.0, "exercise": "Treadmill Walk", "minutes": 30.0,
                    "distance_km": 3.5, "incline_pct": 2.0, "speed_kmh": 7.0, "avg_hr": 130, "machine_kcal": 210},
-    "restore_entry": {"undo_edit": True, "allow_repeat": True},
+    "restore_entry": {"undo_edit": True},
     "delete_entry": {},
     "find_food": {"limit": 5},
     "log_food": {"date": "2026-01-02", "allow_repeat": True},
@@ -916,8 +916,8 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
     if name == "edit_entry":
         changes = {k: v for k, v in arguments.items() if k not in ("kind", "entry_id")}
         return (account, arguments["kind"], arguments["entry_id"], changes, "claude"), {}
-    if name == "restore_entry":  # who calls, for the version an undo keeps, and each flag only when sent
-        flags = {k: v for k, v in arguments.items() if k in ("undo_edit", "allow_repeat")}
+    if name == "restore_entry":  # who calls, for the version an undo keeps, and undo_edit only when sent
+        flags = {k: v for k, v in arguments.items() if k == "undo_edit"}
         return (account, arguments["kind"], arguments["entry_id"], "claude"), flags
     if name == "delete_entry":
         return (account, arguments["kind"], arguments["entry_id"]), {}

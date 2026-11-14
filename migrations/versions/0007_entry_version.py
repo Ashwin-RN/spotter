@@ -3,8 +3,8 @@
 Revision: 0007
 Follows: 0006
 
-One row per edit, undo or redo that changed an entry: the person, the entry's table (kind) and its id there, when,
-who (web or claude), why (edit, undo or redo), the request's id, and the row as it stood before, as JSON
+One row per edit or undo that changed an entry: the person, the entry's table (kind) and its id there, when, who
+(web or claude), why (edit or undo), the request's id, and the row as it stood before, as JSON
 (app/services/common.py says how one is kept and put back). entry_id has no foreign key: the kinds are six
 tables. One index serves the newest versions of a person's entry. The rows go with the account (ON DELETE
 CASCADE).

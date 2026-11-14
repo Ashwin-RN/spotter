@@ -88,8 +88,8 @@ def edit(kind: str, uid: int, entry_id: int, by: str = "claude") -> dict:
     return services.edit_entry(uid, kind, entry_id, EDITS[kind](), by)
 
 
-def undo(uid: int, kind: str, entry_id, **more) -> dict:
-    return services.restore_entry(uid, kind, entry_id, "claude", undo_edit=True, **more)
+def undo(uid: int, kind: str, entry_id) -> dict:
+    return services.restore_entry(uid, kind, entry_id, "claude", undo_edit=True)
 
 
 def stored(kind: str, row_id: int, but: tuple = ("updated_at",)) -> dict:
@@ -114,8 +114,8 @@ def shown(uid: int, kind: str, entry_id: int) -> dict:
 
 
 def flags(result: dict) -> tuple:
-    """What an undo's result says happened: (undone, redone, duplicate). One of them is true."""
-    return result["undone"], result["redone"], result["duplicate"]
+    """What an undo's result says happened: (undone, duplicate). One of them is true."""
+    return result["undone"], result["duplicate"]
 
 
 def but_when(entry: dict) -> dict:
@@ -133,7 +133,7 @@ def set_back(kind: str, row_id: int, **ago) -> None:
 # ---------------------------------------------------------------- decisions 2 to 4: an edit, its undo, and back
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_an_edit_then_its_undo_puts_every_stored_column_back_and_the_undo_again_brings_the_edit_back(make_user, kind):
+def test_an_edit_then_its_undo_puts_every_stored_column_back_and_the_undo_again_changes_nothing(make_user, kind):
     uid = make_user().id
     entry = make(kind, uid)
     set_back(kind, entry, hours=1)
@@ -151,19 +151,24 @@ def test_an_edit_then_its_undo_puts_every_stored_column_back_and_the_undo_again_
             "saved_food": {"name", "serving_label", "kcal_per_serving", "grams_per_serving"}}[kind] == changed
     undone = undo(uid, kind, entry)
     assert stored(kind, entry) == first  # every column, the sets, the food link and the cardio estimate among them
-    assert flags(undone) == (True, False, False) and (undone["restored"], undone["replaced"]) == (True, [])
+    assert flags(undone) == (True, False) and (undone["restored"], undone["replaced"]) == (True, [])
     assert undone["before"] == as_edited and undone["entry"] == shown(uid, kind, entry) != as_edited
     assert undone["summary"].endswith(": the edit was undone.") and "note" not in undone
-    back = undo(uid, kind, entry, allow_repeat=True)  # the way back: the edit's own values, kept by the undo
-    assert stored(kind, entry) == edited and flags(back) == (False, True, False)
-    assert but_when(back["entry"]) == but_when(as_edited) and back["before"] == undone["entry"]
-    assert back["summary"].endswith(": the edit is back.")
-    again = undo(uid, kind, entry)  # a plain undo right after the way back runs at once, and says what it did
-    assert stored(kind, entry) == first and flags(again) == (True, False, False)
-    assert again["summary"] == undone["summary"] and again["before"] == back["entry"]
+    held = stored(kind, entry, but=())
+    again = undo(uid, kind, entry)  # one step, once: the last edit is already undone, and there is no way back
+    assert flags(again) == (False, True) and "before" not in again and again["entry"] == undone["entry"]
+    assert again["summary"].endswith(": the last edit was already undone, so nothing changed.")
+    assert again["note"] == ("There is nothing more to undo. To change it, use "
+                             f"{'save_food' if kind == 'saved_food' else 'edit_entry'}.")
+    assert stored(kind, entry, but=()) == held and tr.check(again["note"], tr.SUMMARY) == []
     assert [(v.kind, v.entry_id, v.user_id, v.by, v.why) for v in versions()] == [
-        (kind, entry, uid, "claude", why) for why in ("edit", "undo", "redo", "undo")]
-    for result in (undone, back, again):
+        (kind, entry, uid, "claude", why) for why in ("edit", "undo")]
+    # To get the edit back the entry is edited again. That edit keeps a version as any does, and is undone as any is.
+    assert "error" not in edit(kind, uid, entry) and stored(kind, entry) == edited
+    third = undo(uid, kind, entry)
+    assert flags(third) == (True, False) and stored(kind, entry) == first
+    assert [v.why for v in versions()] == ["edit", "undo", "edit", "undo"]
+    for result in (undone, again, third):
         RestoreEntryResult.model_validate(result)
         text = result["summary"]
         assert tr.check(text, tr.SUMMARY) == [] and text.startswith(common.KIND_LABELS[kind][0].capitalize() + ": ")
@@ -226,7 +231,6 @@ def test_an_undo_of_an_edit_that_left_the_sets_alone_leaves_them_alone_too(make_
     ids = set_ids(session)
     assert services.edit_entry(uid, "lift_session", session, {"notes": "Light"}, "claude")["changed"] == ["notes"]
     assert undo(uid, "lift_session", session)["entry"]["notes"] == "Heavy" and set_ids(session) == ids
-    assert undo(uid, "lift_session", session, allow_repeat=True)["redone"] is True and set_ids(session) == ids
     assert len(ids) == 3
     edit("lift_session", uid, session)  # an edit of the sets: its undo writes them again, as it must
     assert undo(uid, "lift_session", session)["undone"] is True and len(set_ids(session)) == 3
@@ -306,7 +310,7 @@ def test_a_deleted_food_brought_back_keeps_a_version_only_when_the_save_also_cha
 
 # ---------------------------------------------------------------- decision 5: an undo sent twice is run once
 
-def test_an_undo_sent_twice_within_10_minutes_runs_once_and_its_second_row_reads_duplicate(writer):
+def test_an_undo_sent_twice_runs_once_at_any_age_and_its_second_row_reads_duplicate(writer):
     http, token, account = writer
     entry = make("bodyweight", account)
     edit("bodyweight", account, entry)
@@ -315,94 +319,47 @@ def test_an_undo_sent_twice_within_10_minutes_runs_once_and_its_second_row_reads
     after = stored("bodyweight", entry, but=())
     again = ok(http, token, "restore_entry", sent)
     assert first["undone"] is True and stored("bodyweight", entry, but=()) == after and len(versions()) == 2
-    assert again == {"kind": "bodyweight", "id": entry, "restored": True, "entry": first["entry"], "replaced": [],
-                     "undone": False, "redone": False, "duplicate": True,
-                     "summary": "Weigh-in: the edit was already undone, so nothing changed.",
-                     "note": "This edit was already undone in the last 10 minutes, so nothing was changed. To bring "
-                             "the edit back, send it again with allow_repeat: true."}
+    nothing = {"kind": "bodyweight", "id": entry, "restored": True, "entry": first["entry"], "replaced": [],
+               "undone": False, "duplicate": True,
+               "summary": "Weigh-in: the last edit was already undone, so nothing changed.",
+               "note": "There is nothing more to undo. To change it, use edit_entry."}
+    assert again == nothing
     assert [(r.function, r.outcome, r.ok, r.tried) for r in rows()[-2:]] == [
         ("restore_entry", "written", True, "entry_id kind=bodyweight undo_edit"),
         ("restore_entry", "duplicate", True, "entry_id kind=bodyweight undo_edit")]
     assert tr.check(again["note"], tr.SUMMARY) == [] and tr.check(again["summary"], tr.SUMMARY) == []
-    assert common.DUPLICATE_MINUTES == 10 and entries.UNDONE_NOTE == again["note"]
-    redo = {**sent, "allow_repeat": True}
-    back = ok(http, token, "restore_entry", redo)  # with allow_repeat the edit comes back
-    assert flags(back) == (False, True, False) and back["entry"]["kg"] == 81.5 and rows()[-1].outcome == "written"
-    assert rows()[-1].tried == "allow_repeat entry_id kind=bodyweight undo_edit"
-    held = stored("bodyweight", entry, but=())
-    twice = ok(http, token, "restore_entry", redo)  # the way back sent again with no key, as a retry is: it runs once
-    assert twice == {"kind": "bodyweight", "id": entry, "restored": True, "entry": back["entry"], "replaced": [],
-                     "undone": False, "redone": False, "duplicate": True,
-                     "summary": "Weigh-in: the edit is in place, so nothing changed.",
-                     "note": "allow_repeat only brings back an edit that was undone, and this entry's last edit is "
-                             "in place. To undo it, send undo_edit without allow_repeat."}
-    assert stored("bodyweight", entry, but=()) == held and [v.why for v in versions()] == ["edit", "undo", "redo"]
-    assert rows()[-1].outcome == "duplicate" and entries.IN_PLACE_NOTE == twice["note"]
-    assert tr.check(twice["note"], tr.SUMMARY) == [] and tr.check(twice["summary"], tr.SUMMARY) == []
-    plain = ok(http, token, "restore_entry", sent)  # a plain undo right after the way back runs, and its words are true
-    assert flags(plain) == (True, False, False) and plain["entry"]["kg"] == 80 and plain["before"] == back["entry"]
-    assert plain["summary"] == "Weigh-in: the edit was undone." and rows()[-1].outcome == "written"
-    assert stored("bodyweight", entry)["kg"] == 80
+    # At any age: no 10 minutes here. An undo is never undone, 11 minutes on, a day on or 89 days on.
+    for ago in ({"minutes": 11}, {"days": 1}, {"days": 89}):
+        age(EntryVersion, versions()[-1].id, **ago)
+        assert ok(http, token, "restore_entry", sent) == nothing and rows()[-1].outcome == "duplicate"
+    assert stored("bodyweight", entry, but=()) == after and [v.why for v in versions()] == ["edit", "undo"]
+    # An edit after the undo keeps a version as any edit does, so the next undo runs.
+    assert ok(http, token, "edit_entry", {"kind": "bodyweight", "entry_id": entry, "kg": 82})["changed"] == ["kg"]
+    plain = ok(http, token, "restore_entry", sent)
+    assert (flags(plain), plain["entry"]["kg"]) == ((True, False), 80)
+    assert plain["summary"] == "Weigh-in: the edit was undone."
+    assert [v.why for v in versions()] == ["edit", "undo", "edit", "undo"] and rows()[-1].outcome == "written"
 
 
-def test_what_an_undo_does_goes_by_the_newest_version_and_allow_repeat_never_undoes(make_user):
-    """Every row of the table in app/services/entries.py's notes, at both ages where the age is any."""
-    uid = make_user().id
-    entry = make("bodyweight", uid)
-    edit("bodyweight", uid, entry)  # 80 to 81.5
-
-    def in_place(why: str) -> None:  # allow_repeat when no edit is undone: nothing changes, at any age
-        for minutes in (0, 11):
-            age(EntryVersion, versions()[-1].id, minutes=minutes)
-            still = undo(uid, "bodyweight", entry, allow_repeat=True)
-            assert flags(still) == (False, False, True) and "before" not in still and still["entry"]["kg"] == 81.5
-            assert still["summary"] == "Weigh-in: the edit is in place, so nothing changed."
-            assert still["note"] == entries.IN_PLACE_NOTE and versions()[-1].why == why
-
-    in_place("edit")  # an edit's, with allow_repeat
-    first = undo(uid, "bodyweight", entry)  # an edit's, without it, 11 minutes old: the undo runs
-    assert (flags(first), first["entry"]["kg"]) == ((True, False, False), 80)
-    age(EntryVersion, versions()[-1].id, minutes=9)  # an undo's, without it, within 10 minutes: already undone
-    same = undo(uid, "bodyweight", entry)
-    assert flags(same) == (False, False, True)
-    assert same["summary"] == "Weigh-in: the edit was already undone, so nothing changed."
-    age(EntryVersion, versions()[-1].id, minutes=11)  # over 10 minutes: an undo is itself an edit, and is undone
-    late = undo(uid, "bodyweight", entry)
-    assert (flags(late), late["entry"]["kg"]) == ((False, True, False), 81.5)
-    assert late["summary"] == "Weigh-in: the edit is back."
-    in_place("redo")  # a redo's, with allow_repeat
-    old = undo(uid, "bodyweight", entry)  # a redo's, without it, 11 minutes old: the undo runs
-    assert (flags(old), old["entry"]["kg"]) == ((True, False, False), 80)
-    age(EntryVersion, versions()[-1].id, minutes=11)  # an undo's, with allow_repeat, over 10 minutes: the edit is back
-    back = undo(uid, "bodyweight", entry, allow_repeat=True)
-    assert (flags(back), back["entry"]["kg"]) == ((False, True, False), 81.5)
-    assert [v.why for v in versions()] == ["edit", "undo", "redo", "undo", "redo"]
-    assert services.edit_entry(uid, "bodyweight", entry, {"kg": 82}, "claude")["changed"] == ["kg"]
-    fresh = undo(uid, "bodyweight", entry)  # a new edit's: its undo runs at once
-    assert (flags(fresh), fresh["entry"]["kg"], fresh["summary"]) == (
-        (True, False, False), 81.5, "Weigh-in: the edit was undone.")
-
-
-def test_allow_repeat_sent_with_the_first_undo_twice_through_mcp_changes_nothing_either_time(writer):
-    """A model that sends allow_repeat with its first undo, and a client that sends the call again: before this the
-    first undid the edit and the second brought it back."""
+def test_restore_entry_takes_no_allow_repeat_and_one_sent_anyway_is_dropped(writer):
+    """The published schema names no allow_repeat. The MCP library drops an argument the schema does not name and
+    runs the call as if it were not sent: it is not refused. So an undo sent with one undoes, and sent again it
+    changes nothing, as any undo sent twice. The call's row still says the name was sent. The service takes none."""
     http, token, account = writer
+    [tool] = [t for t in tool_list(http, sign()) if t["name"] == "restore_entry"]
+    assert "allow_repeat" not in tool["inputSchema"]["properties"]
     entry = make("bodyweight", account)
     edit("bodyweight", account, entry)  # 80 to 81.5
-    held, as_edited = stored("bodyweight", entry, but=()), shown(account, "bodyweight", entry)
     sent = {"kind": "bodyweight", "entry_id": entry, "undo_edit": True, "allow_repeat": True}
     first, second = ok(http, token, "restore_entry", sent), ok(http, token, "restore_entry", sent)
-    assert first == second == {
-        "kind": "bodyweight", "id": entry, "restored": True, "entry": as_edited, "replaced": [],
-        "undone": False, "redone": False, "duplicate": True,
-        "summary": "Weigh-in: the edit is in place, so nothing changed.",
-        "note": "allow_repeat only brings back an edit that was undone, and this entry's last edit is in place. To "
-                "undo it, send undo_edit without allow_repeat."}
-    assert [(r.function, r.outcome, r.ok) for r in rows()[-2:]] == [("restore_entry", "duplicate", True)] * 2
-    assert stored("bodyweight", entry, but=()) == held and held["kg"] == 81.5
-    assert [v.why for v in versions()] == ["edit"]
-    assert tr.check(first["note"], tr.SUMMARY) == [] and tr.check(first["summary"], tr.SUMMARY) == []
-    RestoreEntryResult.model_validate(first)
+    assert (flags(first), first["entry"]["kg"]) == ((True, False), 80)
+    assert (flags(second), second["entry"]["kg"]) == ((False, True), 80)
+    assert [(r.outcome, r.tried) for r in rows()[-2:]] == [
+        ("written", "allow_repeat entry_id kind=bodyweight undo_edit"),
+        ("duplicate", "allow_repeat entry_id kind=bodyweight undo_edit")]
+    assert stored("bodyweight", entry)["kg"] == 80 and [v.why for v in versions()] == ["edit", "undo"]
+    with pytest.raises(TypeError):
+        services.restore_entry(account, "bodyweight", entry, "claude", undo_edit=True, allow_repeat=True)
 
 
 def test_an_undo_sent_twice_with_one_key_runs_once_and_its_second_row_reads_repeat(writer):
@@ -508,14 +465,14 @@ def test_a_plain_restore_answers_with_the_fields_it_always_had_and_no_others(mak
      "a weigh-in"),
     ("measurement", lambda uid, value, on: services.log_measurement(
         uid, {"kind": "waist", "value": value, "date": on}, "claude"), "a waist measurement")])
-def test_an_undo_or_the_way_back_onto_a_day_that_holds_another_is_refused_and_nothing_is_kept(make_user, kind, log,
-                                                                                             what):
+def test_an_undo_onto_a_day_that_holds_another_is_refused_and_nothing_is_kept(make_user, kind, log, what):
     uid = make_user().id
     moved = log(uid, 80, day(-3))["id"]
     assert services.edit_entry(uid, kind, moved, {"date": day(-2)}, "claude")["changed"] == ["date"]
     there = log(uid, 70, day(-3))["id"]  # the day it left now holds another live one
+    hips = None
     if kind == "measurement":  # a measurement of another kind on that day is no part of it
-        assert "error" not in services.log_measurement(uid, {"kind": "hips", "value": 95, "date": day(-3)}, "claude")
+        hips = services.log_measurement(uid, {"kind": "hips", "value": 95, "date": day(-3)}, "claude")["id"]
 
     def state(other: int) -> tuple:
         return stored(kind, moved, but=()), stored(kind, other, but=()), [(v.id, v.why) for v in versions()]
@@ -535,15 +492,16 @@ def test_an_undo_or_the_way_back_onto_a_day_that_holds_another_is_refused_and_no
     # With the other one out of the way the undo runs, and replaces nothing.
     assert services.delete_entry(uid, kind, there)["deleted"] is True
     undone = undo(uid, kind, moved)
-    assert flags(undone) == (True, False, False) and undone["replaced"] == [] and "note" not in undone
-    assert undone["entry"]["date"] == day(-3)
-    # The way back is refused the same way: the day the undo left holds another by now.
-    other = log(uid, 60, day(-2))["id"]
-    held = state(other)
-    back = undo(uid, kind, moved, allow_repeat=True)
-    assert (back["error"], back["entry_id"], back["fix"]) == (
-        "day_taken", other, f"Edit or delete {other} first, then send the same call again. Nothing was changed.")
-    assert state(other) == held and held[1]["deleted_at"] is None and [why for _, why in held[2]] == ["edit", "undo"]
+    assert flags(undone) == (True, False) and undone["replaced"] == [] and "note" not in undone
+    assert undone["entry"]["date"] == day(-3) and [v.why for v in versions()] == ["edit", "undo"]
+    assert hips is None or stored("measurement", hips)["deleted_at"] is None  # the other kind, never touched
+
+
+def test_the_kinds_asked_about_a_taken_day_are_the_ones_with_a_unique_index_on_live_rows():
+    """An edit, an undo and the web's restore each ask _day_taken for the kinds in ONE_A_DAY. A later table
+    with such an index and no place there would let an undo run into the index."""
+    indexed = {kind for kind, model in entries._deletable().items() if entries._live_unique(model)}
+    assert indexed == set(entries.ONE_A_DAY) == {"bodyweight", "measurement"}
 
 
 def test_an_undo_refused_for_its_day_through_mcp_names_the_entry_in_the_way_and_its_row_reads_refused(writer):
@@ -662,20 +620,16 @@ def test_one_delete_of_the_sweep_that_fails_never_costs_the_other_two(make_user,
 
 # ---------------------------------------------------------------- decisions 3 and 13: through MCP
 
-def test_restore_entry_publishes_undo_edit_and_allow_repeat_and_the_instructions_do_not_change(http):
+def test_restore_entry_publishes_undo_edit_and_no_allow_repeat_and_the_instructions_do_not_change(http):
     [tool] = [t for t in tool_list(http, sign()) if t["name"] == "restore_entry"]
     schema = tool["inputSchema"]
-    assert list(schema["properties"]) == ["kind", "entry_id", "undo_edit", "allow_repeat", "key"]
+    assert list(schema["properties"]) == ["kind", "entry_id", "undo_edit", "key"]  # one undo, and no way back
     assert schema["required"] == ["kind", "entry_id"]
-    for name in ("undo_edit", "allow_repeat"):
-        assert {k: v for k, v in schema["properties"][name].items() if k != "description"} == {
-            "default": False, "title": name.replace("_", " ").title(), "type": "boolean"}
+    assert {k: v for k, v in schema["properties"]["undo_edit"].items() if k != "description"} == {
+        "default": False, "title": "Undo Edit", "type": "boolean"}
     assert schema["properties"]["undo_edit"]["description"] == (
-        "true undoes the last edit of this entry, which must be live: the values from before it come back. The "
-        "newest 10 are kept for an entry, for 90 days.")
-    assert schema["properties"]["allow_repeat"]["description"] == (
-        "After an undo, true brings the edit back. It never undoes: sent when no edit is undone, it changes nothing. "
-        "Send it only when the person asks for the edit back.")
+        "true undoes the last edit of this entry, which must be live: the values from before it come back. An edit "
+        "can be undone for 90 days.")
     # Its entry_id has words of its own too: where a saved food's id comes from.
     ids = {t["name"]: t["inputSchema"]["properties"]["entry_id"]["description"] for t in tool_list(http, sign())
            if "entry_id" in t["inputSchema"]["properties"]}
@@ -692,24 +646,21 @@ def test_restore_entry_publishes_undo_edit_and_allow_repeat_and_the_instructions
         "Brings back a deleted or replaced entry. If the day already has a live one of the same kind, the two swap: "
         "the live one is set aside and can itself be restored. With undo_edit true it undoes the last edit of a live "
         "entry instead: every value from before that edit comes back, a session's sets, a food entry's saved or USDA "
-        "food and a cardio estimate among them. The same undo again within 10 minutes changes nothing, and "
-        "allow_repeat true only brings back an edit that was undone: it never undoes one.")
+        "food and a cardio estimate among them. It undoes one edit: sent again, it changes nothing.")
     texts = [tool["description"], *(p["description"] for p in schema["properties"].values()),
              *(p["description"] for p in tool["outputSchema"]["properties"].values())]
     assert all(tr.check(text, tr.CLAUDE) == [] for text in texts)
     optional = {name for name, field in RestoreEntryResult.model_fields.items() if not field.is_required()}
     # No result gains a required field.
-    assert optional == {"note", "undone", "redone", "duplicate", "before", "summary"}
-    assert tool["outputSchema"]["properties"]["duplicate"]["description"] == (
-        "With undo_edit: true when nothing changed: the edit was already undone in the last 10 minutes, or "
-        "allow_repeat was sent and no edit is undone. entry is the entry as it stands. Say so.")
-    assert tool["outputSchema"]["properties"]["redone"]["description"] == (
-        "With undo_edit: true when this call brought the edit back, after an undo.")
+    assert optional == {"note", "undone", "duplicate", "before", "summary"}
+    results = tool["outputSchema"]["properties"]
+    assert "redone" not in results and results["duplicate"]["description"] == (
+        "With undo_edit: true when the last edit was already undone, so nothing changed. Say so.")
     assert len(mcp_server.INSTRUCTIONS) == 3678 and "undo" not in mcp_server.INSTRUCTIONS
     # No other function's arguments changed: the stale form's field is the web's alone.
     names = {name for t in tool_list(http, sign()) for name in t["inputSchema"]["properties"]}
-    assert {"undo_edit", "allow_repeat"} <= names and not {"updated_at", "drawn_at", "by"} & names
-    assert {"undo_edit", "allow_repeat"} <= calllog.KNOWN_NAMES and not {"updated_at", "drawn_at"} & calllog.KNOWN_NAMES
+    assert "undo_edit" in names and not {"updated_at", "drawn_at", "by"} & names
+    assert "undo_edit" in calllog.KNOWN_NAMES and not {"updated_at", "drawn_at"} & calllog.KNOWN_NAMES
 
 
 def test_an_edit_and_its_undo_through_mcp_keep_versions_by_claude_with_the_request_s_id(writer):
@@ -731,11 +682,12 @@ def test_a_saved_food_s_edit_is_undone_through_mcp_with_kind_saved_food(writer):
     assert ok(http, token, "save_food", {**ROTI, "kcal_per_serving": 130})["created"] is False
     sent = {"kind": "saved_food", "entry_id": roti, "undo_edit": True}
     undone = ok(http, token, "restore_entry", sent)
-    assert flags(undone) == (True, False, False) and undone["entry"]["kcal_per_serving"] == 120
+    assert flags(undone) == (True, False) and undone["entry"]["kcal_per_serving"] == 120
     assert undone["summary"] == "Saved food: the edit was undone." and rows()[-1].tried == (
         "entry_id kind=saved_food undo_edit")
-    back = ok(http, token, "restore_entry", {**sent, "allow_repeat": True})
-    assert flags(back) == (False, True, False) and stored("saved_food", roti)["kcal_per_serving"] == 130
+    again = ok(http, token, "restore_entry", sent)  # once: to get the edit back the food is saved again
+    assert flags(again) == (False, True) and stored("saved_food", roti)["kcal_per_serving"] == 120
+    assert again["note"] == "There is nothing more to undo. To change it, use save_food."
 
 
 def test_the_new_refusals_keep_the_text_rules_and_entry_changed_has_its_step(make_user):
@@ -885,6 +837,33 @@ def test_a_save_that_lands_while_the_food_edit_page_is_drawn_is_never_overwritte
         130, "1 roti")
 
 
+def test_a_food_deleted_or_brought_back_while_its_edit_page_is_drawn_gets_the_404_and_no_form(client, monkeypatch):
+    """The stamp read finds no live food and the values read finds one, when the food is brought back between
+    them. A form drawn then would carry no stamp, and a form with no stamp is not checked: so none is drawn."""
+    uid = web_person(client)
+    roti = make("saved_food", uid)
+    real = services.list_saved_foods
+
+    def then(change):
+        def run(*args, **kwargs):  # the change lands after the page's stamp read and before its values read
+            change(uid, "saved_food", roti)
+            return real(*args, **kwargs)
+        return run
+
+    monkeypatch.setattr(services, "list_saved_foods", then(services.delete_entry))
+    gone = client.get(f"/foods/{roti}/edit")
+    assert gone.status_code == 404 and stored("saved_food", roti)["deleted_at"] is not None
+    monkeypatch.setattr(services, "list_saved_foods", then(services.restore_entry))
+    back = client.get(f"/foods/{roti}/edit")
+    monkeypatch.undo()
+    assert stored("saved_food", roti)["deleted_at"] is None  # it is live again, and the page drew no form for it
+    assert back.status_code == 404 and 'name="kcal_per_serving"' not in back.text
+    assert '<h1 class="title">Page not found</h1>' in back.text
+    page = client.get(f"/foods/{roti}/edit")  # opened again, the form has its stamp
+    assert page.status_code == 200
+    assert drawn_stamp(page.text) == services.get_entry(uid, "saved_food", roti)["updated_at"]
+
+
 def test_an_entry_s_refused_field_comes_back_with_the_stamp_the_form_was_sent_with(client):
     uid = web_person(client)
     entry = make("bodyweight", uid)
@@ -936,7 +915,7 @@ WORDS = {"bodyweight": "Weigh-in", "measurement": "Measurement", "lift_session":
 
 
 @pytest.mark.parametrize("kind", sorted(WEB_EDITS))
-def test_after_an_edit_the_day_offers_undo_and_after_the_undo_the_way_back(client, kind):
+def test_after_an_edit_the_day_offers_undo_and_after_the_undo_a_plain_line(client, kind):
     uid = web_person(client)
     entry = make(kind, uid)
     first = stored(kind, entry)
@@ -950,29 +929,22 @@ def test_after_an_edit_the_day_offers_undo_and_after_the_undo_the_way_back(clien
     undone = post(client, action, **fields)  # one click
     assert undone.status_code == 303 and undone.headers["location"] == SITE + f"/day/{day()}?restored={kind}:{entry}"
     assert stored(kind, entry) == first
-    words, back, button, again = strip_form(client, undone.headers["location"])
-    assert (words, back, button) == (f"{WORDS[kind]} edit undone.", action, "Redo")
-    assert {k: v for k, v in again.items() if k != "key"} == {"undo_edit": "1", "allow_repeat": "1"}
-    redone = post(client, back, **again)  # the way back: the undo with allow_repeat
-    assert redone.status_code == 303 and redone.headers["location"] == SITE + f"/day/{day()}?saved={kind}:{entry}"
-    assert stored(kind, entry) == edited and [(v.by, v.why, v.request_id) for v in versions()] == [
-        ("web", why, r.headers["x-request-id"]) for why, r in (("edit", saved), ("undo", undone), ("redo", redone))]
-    # The page after Redo offers Undo again, and each button goes on doing what it says.
-    words, action, button, fields = strip_form(client, redone.headers["location"])
-    assert (words, button, set(fields)) == (f"{WORDS[kind]} saved.", "Undo", {"undo_edit", "key"})
-    second = post(client, action, **fields)
-    assert second.headers["location"] == undone.headers["location"] and stored(kind, entry) == first
-    _, back, button, again = strip_form(client, second.headers["location"])
-    assert button == "Redo" and post(client, back, **again).headers["location"] == redone.headers["location"]
-    assert stored(kind, entry) == edited and [v.why for v in versions()] == ["edit", "undo", "redo", "undo", "redo"]
-    assert [(r.function, r.caller, r.outcome, r.tried) for r in rows()[-4:]] == [
-        ("restore_entry", "web", "written", f"entry_id key kind={kind} undo_edit"),
-        ("restore_entry", "web", "written", f"allow_repeat entry_id key kind={kind} undo_edit")] * 2
-    for text in (f"{WORDS[kind]} edit undone.", "Undo", "Redo"):
+    landed = undone.headers["location"].removeprefix(SITE)
+    page = client.get(landed).text  # the plain line: no button, and no way back but to edit again
+    assert f'<p class="ok">{WORDS[kind]} edit undone.</p>' in page
+    assert '<div class="ok undo">' not in page and "/restore" not in page and "Redo" not in page
+    findings = page_findings(landed, page, entered_text(uid), uid)
+    assert not findings, "\n".join(findings)
+    assert [(v.by, v.why, v.request_id) for v in versions()] == [
+        ("web", why, r.headers["x-request-id"]) for why, r in (("edit", saved), ("undo", undone))]
+    row = rows()[-1]
+    assert (row.function, row.caller, row.outcome, row.tried) == (
+        "restore_entry", "web", "written", f"entry_id key kind={kind} undo_edit")
+    for text in (f"{WORDS[kind]} edit undone.", "Undo"):
         assert tr.check(text, tr.PAGE) == []
 
 
-def test_undo_and_redo_each_run_once_whether_clicked_twice_or_sent_from_a_page_drawn_again(client):
+def test_undo_runs_once_whether_clicked_twice_or_sent_from_a_page_drawn_again_at_any_age(client):
     uid = web_person(client)
     entry = make("bodyweight", uid)
     address = f"/entries/bodyweight/{entry}/edit"
@@ -980,78 +952,105 @@ def test_undo_and_redo_each_run_once_whether_clicked_twice_or_sent_from_a_page_d
     _, action, _, fields = strip_form(client, saved.headers["location"])
     first, second = post(client, action, **fields), post(client, action, **fields)  # a double click: one key
     assert second.headers["location"] == first.headers["location"] and stored("bodyweight", entry)["kg"] == 80
-    _, _, _, drawn_again = strip_form(client, saved.headers["location"])  # the saved page again: a new key
-    third = post(client, action, **drawn_again)
-    assert third.headers["location"] == SITE + f"/day/{day()}?saved=unchanged"
+    for ago in ({}, {"minutes": 11}, {"days": 1}):  # the saved page again, at once and later: a new key each time
+        age(EntryVersion, versions()[-1].id, **ago)
+        _, _, _, drawn_again = strip_form(client, saved.headers["location"])
+        again = post(client, action, **drawn_again)
+        assert again.headers["location"] == SITE + f"/day/{day()}?saved=unchanged"
     assert stored("bodyweight", entry)["kg"] == 80
-    # Redo, then Redo from its page drawn again, as Back shows it: the edit comes back once, and stays.
-    _, _, button, redo = strip_form(client, first.headers["location"])
-    assert button == "Redo" and post(client, action, **redo).headers["location"] == saved.headers["location"]
-    _, _, _, redo_again = strip_form(client, first.headers["location"])  # the undone page again: a new key
-    fourth = post(client, action, **redo_again)
-    assert redo_again["key"] != redo["key"] and fourth.headers["location"] == SITE + f"/day/{day()}?saved=unchanged"
-    assert stored("bodyweight", entry)["kg"] == 82
-    assert [r.outcome for r in rows() if r.function == "restore_entry"] == [
-        "written", "repeat", "duplicate", "written", "duplicate"]
-    assert [v.why for v in versions()] == ["edit", "undo", "redo"]
+    assert [r.outcome for r in rows() if r.function == "restore_entry"] == ["written", "repeat"] + ["duplicate"] * 3
+    assert [v.why for v in versions()] == ["edit", "undo"]
 
 
-def test_the_page_lands_by_what_happened_and_not_by_the_button_that_was_pressed(client):
-    uid = web_person(client)
-    entry = make("bodyweight", uid)
-    saved = post(client, f"/entries/bodyweight/{entry}/edit", kg="82", date=day())
-    _, action, _, fields = strip_form(client, saved.headers["location"])
-    undone = post(client, action, **fields)
-    _, _, _, old_redo = strip_form(client, undone.headers["location"])  # the Redo page, left open
-    # Undo from the saved page drawn again, 11 minutes after the undo: by the table the edit comes back. The form
-    # asked for an undo and the result says redone, so the page says saved and offers Undo.
-    age(EntryVersion, versions()[-1].id, minutes=11)
-    _, _, button, old_undo = strip_form(client, saved.headers["location"])
-    late = post(client, action, **old_undo)
-    assert button == "Undo" and set(old_undo) == {"undo_edit", "key"}
-    assert late.headers["location"] == SITE + f"/day/{day()}?saved=bodyweight:{entry}"
-    assert stored("bodyweight", entry)["kg"] == 82 and versions()[-1].why == "redo"
-    # Redo from the old page after a newer edit: no edit is undone, so nothing changes and the newer edit stays.
-    assert services.edit_entry(uid, "bodyweight", entry, {"kg": 85}, "claude")["changed"] == ["kg"]
-    stale = post(client, action, **old_redo)
-    assert set(old_redo) == {"undo_edit", "allow_repeat", "key"}
-    assert stale.headers["location"] == SITE + f"/day/{day()}?saved=unchanged" and rows()[-1].outcome == "duplicate"
-    assert stored("bodyweight", entry)["kg"] == 85 and [v.why for v in versions()] == ["edit", "undo", "redo", "edit"]
-
-
-def test_undo_and_redo_onto_a_day_that_holds_another_entry_say_so_and_change_nothing(client):
+def test_undo_onto_a_day_that_holds_another_entry_says_so_and_changes_nothing(client):
     uid = web_person(client)
     moved = services.log_bodyweight(uid, {"kg": 80, "date": day(-3)}, "web")["id"]
     address = f"/entries/bodyweight/{moved}/edit"
     saved = post(client, address, kg="80", date=day(-2), updated_at=drawn_stamp(client.get(address).text))
     assert saved.headers["location"] == SITE + f"/day/{day(-2)}?saved=bodyweight:{moved}"
     there = services.log_bodyweight(uid, {"kg": 70, "date": day(-3)}, "web")["id"]  # the day it left is taken now
-
-    def refused(location: str, pressed: str, other: int) -> None:
-        _, action, button, fields = strip_form(client, location)
-        held = stored("bodyweight", moved, but=()), stored("bodyweight", other, but=()), len(versions())
-        r = post(client, action, **fields)
-        assert button == pressed and r.status_code == 409 and '<h1 class="title">Nothing changed</h1>' in r.text
-        for said in ("That would move the entry onto a day that has another one, so nothing was changed.",
-                     "Edit or delete the other one first, then try again."):
-            assert said in r.text and tr.check(said, tr.PAGE) == []
-        assert (stored("bodyweight", moved, but=()), stored("bodyweight", other, but=()), len(versions())) == held
-        assert held[1]["deleted_at"] is None  # the other one is still live
-        row = rows()[-1]
-        assert (row.function, row.caller, row.error_code, row.outcome, row.step) == (
-            "restore_entry", "web", "day_taken", "refused", "check")
-        findings = error_page_findings(Rendered(action, r, True, user_id=uid))
-        assert not findings, "\n".join(findings)
-
-    refused(saved.headers["location"], "Undo", there)
-    # The other one out of the way, the undo runs. Then the day the undo left is taken in its turn, and Redo is refused.
-    assert services.delete_entry(uid, "bodyweight", there)["deleted"] is True
+    _, action, button, fields = strip_form(client, saved.headers["location"])
+    held = stored("bodyweight", moved, but=()), stored("bodyweight", there, but=()), len(versions())
+    r = post(client, action, **fields)
+    assert button == "Undo" and r.status_code == 409 and '<h1 class="title">Nothing changed</h1>' in r.text
+    for said in ("That would move the entry onto a day that has another one, so nothing was changed.",
+                 "Edit or delete the other one first. Then edit this entry and set its date by hand."):
+        assert said in r.text and tr.check(said, tr.PAGE) == []
+    assert "try again" not in r.text  # no page offers this Undo again: the words name what a page does offer
+    assert (stored("bodyweight", moved, but=()), stored("bodyweight", there, but=()), len(versions())) == held
+    assert held[1]["deleted_at"] is None  # the other one is still live
+    row = rows()[-1]
+    assert (row.function, row.caller, row.error_code, row.outcome, row.step) == (
+        "restore_entry", "web", "day_taken", "refused", "check")
+    findings = error_page_findings(Rendered(action, r, True, user_id=uid))
+    assert not findings, "\n".join(findings)
+    assert services.delete_entry(uid, "bodyweight", there)["deleted"] is True  # the other one out of the way
     _, action, _, fields = strip_form(client, saved.headers["location"])
     undone = post(client, action, **fields)
     assert undone.headers["location"] == SITE + f"/day/{day(-3)}?restored=bodyweight:{moved}"
-    other = services.log_bodyweight(uid, {"kg": 60, "date": day(-2)}, "web")["id"]
-    refused(undone.headers["location"], "Redo", other)
     assert [v.why for v in versions()] == ["edit", "undo"]
+
+
+@pytest.mark.parametrize("kind, log, words, what", [
+    ("bodyweight", lambda uid, value, on: services.log_bodyweight(uid, {"kg": value, "date": on}, "web"),
+     "Weigh-in", "a weigh-in"),
+    ("measurement", lambda uid, value, on: services.log_measurement(
+        uid, {"kind": "waist", "value": value, "date": on}, "web"), "Measurement", "a waist measurement")])
+def test_the_web_s_undo_of_a_delete_onto_a_day_that_holds_another_is_refused_and_both_stay_as_they_were(
+        client, kind, log, words, what):
+    """The older fault: the page's Undo after a delete set the day's new entry aside and said only "restored". No
+    page brings a set-aside entry back, so on the web a restore never replaces one."""
+    uid = web_person(client)
+    gone = log(uid, 80, day(-3))["id"]
+    deleted = post(client, f"/entries/{kind}/{gone}/delete")
+    assert deleted.headers["location"] == SITE + f"/day/{day(-3)}?deleted={kind}:{gone}"
+    there = log(uid, 70, day(-3))["id"]  # the day gains another live one while the Undo strip is on the page
+    said, action, button, fields = strip_form(client, deleted.headers["location"])
+    assert (said, action, button, set(fields)) == (
+        f"{words} deleted.", f"/entries/{kind}/{gone}/restore", "Undo", {"key"})
+    held = stored(kind, gone, but=()), stored(kind, there, but=())
+    r = post(client, action, **fields)
+    assert r.status_code == 409 and '<h1 class="title">Nothing changed</h1>' in r.text
+    for line in ("That would bring the entry back onto a day that has another one, so nothing was changed.",
+                 "The deleted one stays deleted and the other one stays. To change that day, edit the entry that is "
+                 "there."):
+        assert line in r.text and tr.check(line, tr.PAGE) == []
+    assert "try again" not in r.text and re.findall(r'<a class="button[^"]*" href="([^"]+)"', r.text) == ["/today"]
+    assert (stored(kind, gone, but=()), stored(kind, there, but=())) == held
+    assert held[0]["deleted_at"] is not None and held[1]["deleted_at"] is None  # deleted stays deleted, live stays live
+    row = rows()[-1]
+    assert (row.function, row.caller, row.error_code, row.outcome, row.step, row.tried) == (
+        "restore_entry", "web", "day_taken", "refused", "check", f"entry_id key kind={kind}")
+    findings = error_page_findings(Rendered(action, r, True, user_id=uid))
+    assert not findings, "\n".join(findings)
+    # The refusal as the service gives it to the page: an edit's words, but for what to do next.
+    refused = services.restore_entry(uid, kind, gone, "web")
+    assert refused == {"error": "day_taken", "message": f"{day(-3)} already has {what} (id {there}).",
+                       "fix": f"Edit or delete {there} first, then restore this one again. Nothing was changed.",
+                       "entry_id": there}
+    assert tr.check(refused["fix"], tr.MESSAGE) == []
+    # A restore onto a free day is as before.
+    assert services.delete_entry(uid, kind, there)["deleted"] is True
+    _, action, _, fields = strip_form(client, deleted.headers["location"])
+    back = post(client, action, **fields)
+    assert back.headers["location"] == SITE + f"/day/{day(-3)}?restored={kind}" and rows()[-1].outcome == "written"
+    assert stored(kind, gone)["deleted_at"] is None
+
+
+def test_the_same_restore_through_mcp_still_swaps_and_names_the_one_set_aside(writer):
+    http, token, account = writer
+    gone = services.log_bodyweight(account, {"kg": 80, "date": day(-3)}, "claude")["id"]
+    assert services.delete_entry(account, "bodyweight", gone)["deleted"] is True
+    there = services.log_bodyweight(account, {"kg": 70, "date": day(-3)}, "claude")["id"]
+    swapped = ok(http, token, "restore_entry", {"kind": "bodyweight", "entry_id": gone})
+    assert list(swapped) == ["kind", "id", "restored", "entry", "replaced", "note"]
+    assert [r["id"] for r in swapped["replaced"]] == [there] and swapped["entry"]["deleted_at"] is None
+    assert swapped["note"] == ("Restored. It took the place of the live entry for the same day, which is now deleted: "
+                               "restore_entry with that id swaps them back.")
+    assert stored("bodyweight", there)["deleted_at"] is not None and rows()[-1].outcome == "written"
+    # And with no caller named, or the assistant named, the service swaps as it always did.
+    assert [r["id"] for r in services.restore_entry(account, "bodyweight", there)["replaced"]] == [gone]
+    assert [r["id"] for r in services.restore_entry(account, "bodyweight", gone, "claude")["replaced"]] == [there]
 
 
 def test_an_edit_that_saves_nothing_new_and_a_log_offer_no_undo(client):
@@ -1067,7 +1066,7 @@ def test_an_edit_that_saves_nothing_new_and_a_log_offer_no_undo(client):
 
 @pytest.mark.parametrize("query", ["saved=goal:1", "saved=bodyweight:abc", "saved=bodyweight:0", "saved=bodyweight:007",
                                    "restored=saved_food:1", "restored=bodyweight:", "saved=<b>:1", "restored=x:1"])
-def test_a_forged_mark_shows_no_undo_and_no_way_back(client, query):
+def test_a_forged_mark_shows_no_undo_and_no_line(client, query):
     web_person(client)
     page = client.get(f"/day/{day()}", params=dict([query.split("=", 1)])).text
     assert 'class="ok' not in page and "/restore" not in page and "<b>:1" not in page
@@ -1088,7 +1087,7 @@ def test_undo_from_a_page_for_an_entry_with_nothing_kept_says_so_on_its_own_page
     assert post(client, f"/entries/bodyweight/{10 ** 9}/restore", undo_edit="1").status_code == 404
 
 
-def test_after_a_food_s_edit_foods_offers_undo_and_after_the_undo_the_way_back(client):
+def test_after_a_food_s_edit_foods_offers_undo_and_after_the_undo_a_plain_line(client):
     uid = web_person(client)
     roti = make("saved_food", uid)
     first = stored("saved_food", roti)
@@ -1096,25 +1095,20 @@ def test_after_a_food_s_edit_foods_offers_undo_and_after_the_undo_the_way_back(c
     saved = post(client, address, serving_label="2 rotis", kcal_per_serving="250", grams_per_serving="",
                  updated_at=drawn_stamp(client.get(address).text))
     assert saved.status_code == 303 and saved.headers["location"] == SITE + f"/foods?saved=saved_food:{roti}"
-    edited = stored("saved_food", roti)
     words, action, button, fields = strip_form(client, saved.headers["location"])
     assert (words, action, button) == ("Saved food saved.", f"/foods/{roti}/restore", "Undo")
     assert {k: v for k, v in fields.items() if k != "key"} == {"undo_edit": "1"}
     undone = post(client, action, **fields)
     assert undone.headers["location"] == SITE + f"/foods?restored=saved_food:{roti}"
     assert stored("saved_food", roti) == first
-    words, back, button, again = strip_form(client, undone.headers["location"])
-    assert (words, back, button) == ("Saved food edit undone.", action, "Redo")
-    assert {k: v for k, v in again.items() if k != "key"} == {"undo_edit": "1", "allow_repeat": "1"}
-    redone = post(client, back, **again)
-    assert redone.headers["location"] == saved.headers["location"] and stored("saved_food", roti) == edited
-    assert [(v.kind, v.by, v.why) for v in versions()] == [
-        ("saved_food", "web", why) for why in ("edit", "undo", "redo")]
-    assert rows()[-1].tried == "allow_repeat entry_id key kind=saved_food undo_edit"
-    _, action, button, fields = strip_form(client, redone.headers["location"])  # after Redo, Undo again
-    assert button == "Undo" and post(client, action, **fields).headers["location"] == undone.headers["location"]
-    assert stored("saved_food", roti) == first
-    assert tr.check("Saved food edit undone.", tr.PAGE) == []
+    page = client.get(undone.headers["location"].removeprefix(SITE)).text  # the plain line, and no button
+    assert '<p class="ok">Saved food edit undone.</p>' in page
+    assert '<div class="ok undo">' not in page and "Redo" not in page
+    assert [(v.kind, v.by, v.why) for v in versions()] == [("saved_food", "web", why) for why in ("edit", "undo")]
+    assert rows()[-1].tried == "entry_id key kind=saved_food undo_edit"
+    _, _, _, again = strip_form(client, saved.headers["location"])  # Undo from the saved page drawn again
+    assert post(client, action, **again).headers["location"] == SITE + "/foods?saved=unchanged"
+    assert stored("saved_food", roti) == first and tr.check("Saved food edit undone.", tr.PAGE) == []
 
 
 def test_saving_a_name_already_there_offers_undo_and_a_new_food_does_not(client):
@@ -1145,18 +1139,17 @@ def test_the_export_has_a_file_of_the_versions_with_the_values_as_json_and_no_hi
     edit("lift_session", uid, session)
     edit("saved_food", uid, roti)
     undo(uid, "saved_food", roti)
-    undo(uid, "saved_food", roti, allow_repeat=True)
     edit("cardio_entry", uid, run)
     edit("food_entry", uid, dal)
     exported = services.export_data(uid)
     assert list(exported["files"])[-2:] == ["entry_versions.csv", "README.txt"]
-    assert exported["rows"]["entry_versions.csv"] == 6
+    assert exported["rows"]["entry_versions.csv"] == 5
     kept = table(exported["files"]["entry_versions.csv"])
-    assert [list(row) for row in kept] == [["kind", "entry_id", "created_at", "by", "why", "before"]] * 6
+    assert [list(row) for row in kept] == [["kind", "entry_id", "created_at", "by", "why", "before"]] * 5
     assert [(row["kind"], row["entry_id"], row["by"], row["why"]) for row in kept] == [
         ("lift_session", str(session), "claude", "edit"), ("saved_food", str(roti), "claude", "edit"),
-        ("saved_food", str(roti), "claude", "undo"), ("saved_food", str(roti), "claude", "redo"),
-        ("cardio_entry", str(run), "claude", "edit"), ("food_entry", str(dal), "claude", "edit")]
+        ("saved_food", str(roti), "claude", "undo"), ("cardio_entry", str(run), "claude", "edit"),
+        ("food_entry", str(dal), "claude", "edit")]
     assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00", row["created_at"]) for row in kept)
     values = [json.loads(row["before"]) for row in kept]
     assert not any({"user_id", "dedupe_key", "name_key", "id"} & set(v) for v in values)
@@ -1170,23 +1163,23 @@ def test_the_export_has_a_file_of_the_versions_with_the_values_as_json_and_no_hi
     assert list(values[0]["sets"][0]) == list(export.SET_COLUMNS[1:])
     # A cardio entry's activity by name, under the name cardio_entries.csv gives its column, where the id was.
     ran, columns = first["cardio_entry"], [c.name for c in CardioEntry.__table__.columns]
-    assert list(values[4]) == ["exercise" if name == "exercise_id" else name for name in columns
+    assert list(values[3]) == ["exercise" if name == "exercise_id" else name for name in columns
                                if name not in NOT_KEPT | {"dedupe_key"}]
-    assert (values[4]["exercise"], values[4]["minutes"], values[4]["estimated_kcal"]) == (
+    assert (values[3]["exercise"], values[3]["minutes"], values[3]["estimated_kcal"]) == (
         "Outdoor Run", ran["minutes"], ran["estimated_kcal"])
     assert "exercise" in table(exported["files"]["cardio_entries.csv"])[0]
     # A food entry's saved food stays an id: saved_foods.csv carries the id it names.
-    assert values[5]["saved_food_id"] == roti and table(exported["files"]["saved_foods.csv"])[0]["id"] == str(roti)
+    assert values[4]["saved_food_id"] == roti and table(exported["files"]["saved_foods.csv"])[0]["id"] == str(roti)
     # The row itself holds what was stored: the ids.
     assert json.loads(versions()[0].before)["sets"] == [list(x) for x in was["sets"]]
-    assert json.loads(versions()[4].before)["exercise_id"] == ran["exercise_id"]
+    assert json.loads(versions()[3].before)["exercise_id"] == ran["exercise_id"]
     assert values[1] == {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120, "grams_per_serving": 40,
                          "updated_at": first["saved_food"]["updated_at"].isoformat()}
     assert values[2]["name"] == "roti" and values[2]["kcal_per_serving"] == 250
     assert json.loads(versions()[0].before)["dedupe_key"] == was["dedupe_key"]  # kept in the row, left out of the file
     readme = " ".join(exported["files"]["README.txt"].split())
-    assert ("entry_versions.csv what an entry held before each edit, undo or redo: kind and entry_id name the entry, "
-            "by says who changed it (web or claude), why is edit, undo or redo, and before holds the values as JSON: "
+    assert ("entry_versions.csv what an entry held before each edit or undo: kind and entry_id name the entry, "
+            "by says who changed it (web or claude), why is edit or undo, and before holds the values as JSON: "
             "a set's exercise and a cardio activity by name, a saved food by its id in saved_foods.csv. The newest "
             "10 are kept for an entry, for 90 days") in readme
 
@@ -1235,9 +1228,7 @@ def two(make_user):
 def test_one_person_can_never_undo_another_s_edit(two, kind):
     a, b, theirs = two
     before, kept = stored(kind, theirs[kind], but=()), [(v.id, v.before) for v in versions()]
-    for more in ({}, {"allow_repeat": True}):
-        refused = undo(a, kind, theirs[kind], **more)
-        assert refused == undo(a, kind, 10 ** 9, **more) == common.not_found(kind)  # word for word a missing id
+    assert undo(a, kind, theirs[kind]) == undo(a, kind, 10 ** 9) == common.not_found(kind)  # as a missing id
     assert stored(kind, theirs[kind], but=()) == before and [(v.id, v.before) for v in versions()] == kept
     assert undo(b, kind, theirs[kind])["undone"] is True  # the owner can
 
@@ -1336,17 +1327,19 @@ def test_every_kind_s_table_name_fits_the_version_s_kind_column():
 
 # ---------------------------------------------------------------- decisions 13 and 15: what is said
 
-def test_can_and_cant_says_an_edit_is_kept_how_to_undo_it_and_the_10_minute_rule():
+def test_can_and_cant_says_an_edit_is_kept_that_its_undo_is_one_step_and_how_to_get_it_back():
     text = " ".join(mcp_server.CAN_AND_CANT.read_text(encoding="utf-8").split())
     assert ("An edit keeps the values from before it: `restore_entry` with `undo_edit` brings them back. The newest "
-            "10 are kept per entry, for 90 days. The same undo again within 10 minutes changes nothing and comes back "
-            "with `duplicate` true. `allow_repeat` true brings back an edit that was undone and never undoes one: "
-            "send it only when the person wants the edit back. An undo is itself an edit, so `undo_edit` again over "
-            "10 minutes later brings the edit back, and the result says `redone`. A saved food that `save_food` "
-            "changed is undone the same way, with kind `saved_food`.") in text
+            "10 are kept per entry, for 90 days. It undoes the last edit, once: sent again it changes nothing and "
+            "comes back with `duplicate` true. To get an edit back, edit the entry again. A saved food that "
+            "`save_food` changed is undone the same way, with kind `saved_food`. An undo that would move a "
+            "weigh-in or a measurement onto a day that has another one is refused, as an edit is: nothing is "
+            "replaced.") in text
+    edits = text[text.index("**Edits.**"):text.index("**Deletes.**")]
+    assert not any(word in edits for word in ("allow_repeat", "redone", "10 minutes"))
     assert "| `restore_entry` | Brings back a deleted or replaced entry, or undoes an entry's last edit. |" in text
     assert "keeps no old values" not in text and "cannot be undone, only edited again" not in text
-    assert (common.VERSIONS_KEPT, common.VERSION_DAYS, common.DUPLICATE_MINUTES) == (10, 90, 10)
+    assert (common.VERSIONS_KEPT, common.VERSION_DAYS) == (10, 90)
 
 
 def test_the_privacy_page_says_what_an_edit_keeps_for_how_long_and_that_it_is_exported_and_deleted():

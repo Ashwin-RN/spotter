@@ -14,8 +14,7 @@ and Settings.
                                    the day with "{Kind} saved." and Undo
     /entries/{kind}/{id}/delete    POST: delete, back to the day with "{Kind} deleted." and Undo
     /entries/{kind}/{id}/restore   POST: undo a delete, back to the day; with undo_edit, undo the last edit,
-                                   back to the day with "{Kind} edit undone." and Redo (undo_edit and
-                                   allow_repeat: the way back, which lands on "{Kind} saved." and Undo again)
+                                   back to the day with "{Kind} edit undone."
     /progress                      one line per lift, the Trends card (get_trends), and the body weight
                                    chart with its smoothed line
     /progress/{lift}               one lift: its chart, bests and sessions
@@ -25,7 +24,7 @@ and Settings.
                                    goal (POST), one kind at a time (?kind=)
     /foods                         the saved foods as a table (list_saved_foods), a fold-out that saves one
                                    (POST, save_food); delete and Undo POST to /foods/{id}/delete and /restore,
-                                   and so do the Undo and Redo of a food's edit, as an entry's do
+                                   and so does the Undo of a food's edit, as an entry's does
     /foods/{id}/edit               one saved food's serving, kcal and grams (GET, POST)
     /settings                      six cards: the account, the time zone (POST), the targets (POST to
                                    /settings/targets), the switch for what Claude may do (POST to
@@ -1459,40 +1458,40 @@ DAY_STRIPS = {("saved", "confirmed"): "Estimate confirmed.",
               **{("restored", kind): f"{words} restored." for kind, words in ENTRY_WORDS.items()}}
 
 
-# After an edit or its way back, and after its undo, the strip carries a form too (contract edit-history.md,
-# decision 9), read by edit_strip from a mark whose value is {kind}:{id}: (the mark, its words after the kind's,
-# its button, the fields its form posts to the restore address for restore_entry).
-EDIT_STRIPS = (("saved", "saved.", "Undo", ("undo_edit",)),
-               ("restored", "edit undone.", "Redo", ("undo_edit", "allow_repeat")))
-
-
 def edit_strip(params, words: dict) -> dict | None:
-    """The strip after an edit or its way back, with Undo, or after its undo, with Redo: {"words", "undo" (kind, id),
-    "button", "fields"}. Only for a kind `words` names and an id plain_id takes."""
-    for mark, said, button, fields in EDIT_STRIPS:
+    """After an edit (contract edit-history.md, decision 9), from a mark whose value is {kind}:{id}: "{Kind} saved."
+    with Undo, whose form posts undo_edit to the restore address. After its undo: the plain line "{Kind} edit
+    undone.", with no button. Only for a kind `words` names and an id plain_id takes."""
+    for mark, said in (("saved", "saved."), ("restored", "edit undone.")):
         kind, _, entry_id = str(params.get(mark) or "").partition(":")
         if kind in words and plain_id(entry_id):
-            return {"words": f"{words[kind]} {said}", "undo": (kind, entry_id), "button": button, "fields": fields}
+            return {"words": f"{words[kind]} {said}", "undo": (kind, entry_id) if mark == "saved" else None,
+                    "fields": ("undo_edit",)}
     return None
 
 
 def undo_sent(form) -> tuple:
-    """What a strip's form asks of restore_entry beyond a restore, as its arguments after `by`: nothing, undo_edit,
-    or undo_edit with allow_repeat (the way back)."""
-    if not common.truthy(form.get("undo_edit")):
-        return ()
-    return (True, True) if common.truthy(form.get("allow_repeat")) else (True,)
+    """What a strip's form asks of restore_entry beyond a restore, as its arguments after `by`: nothing, or
+    undo_edit."""
+    return (True,) if common.truthy(form.get("undo_edit")) else ()
 
 
 def undo_mark(kind: str, result: dict, undo: tuple) -> tuple[str, str]:
-    """The mark after restore_entry, read from its result and never from what the form asked. A restore: restored.
-    An undo that ran: restored, with the entry's id, so the strip offers Redo. The way back: saved, with the id, so
-    the strip offers Undo again. A call that changed nothing: unchanged."""
+    """The mark after restore_entry. A restore: restored. An edit's undo: restored, with the entry's id, which reads
+    "{Kind} edit undone.". An undo that changed nothing: unchanged."""
     if not undo:
         return "restored", kind
-    if result.get("duplicate") is True:
-        return UNCHANGED
-    return ("saved" if result.get("redone") else "restored"), f"{kind}:{result['id']}"
+    return UNCHANGED if result.get("duplicate") is True else ("restored", f"{kind}:{result['id']}")
+
+
+# The page when an undo (True) or the web's restore (False) would land on a day that holds another entry: what it
+# would have done, and what the person can do next. No page offers the undo or the restore again, so neither
+# says to try again: each names what a page does offer.
+DAY_TAKEN_WORDS = {
+    True: ("move the entry", "Edit or delete the other one first. Then edit this entry and set its date by hand."),
+    False: ("bring the entry back", "The deleted one stays deleted and the other one stays. To change that day, "
+                                    "edit the entry that is there."),
+}
 
 
 def changed_page(request: Request, what: str = "entry", where: str = "the day") -> Response:
@@ -1841,10 +1840,10 @@ async def restore_page(request: Request) -> Response:
     if "nothing_to_undo" in codes(result):
         return message(request, "Nothing to undo", "That entry has no earlier values kept, so nothing was changed.",
                        "Go back to the day to see it.", status_code=409)
-    if "day_taken" in codes(result):  # an undo or a Redo never replaces another entry
-        return message(request, "Nothing changed", "That would move the entry onto a day that has another one, so "
-                       "nothing was changed.", "Edit or delete the other one first, then try again.",
-                       status_code=409)
+    if "day_taken" in codes(result):  # neither an undo nor the web's restore ever replaces another entry
+        how, then = DAY_TAKEN_WORDS[bool(undo)]
+        return message(request, "Nothing changed", f"That would {how} onto a day that has another one, so nothing "
+                       "was changed.", then, status_code=409)
     if failed(result):
         return not_found_page(request)
     return redirect(marked(links.page("day", date=result["entry"]["date"]), *undo_mark(kind, result, undo)))
@@ -1920,7 +1919,7 @@ def food_strip(params) -> dict | None:
         return {"words": f"{SAVED_FOOD_WORDS} deleted.", "undo": food_id}
     edited = edit_strip(params, {SAVED_FOOD: SAVED_FOOD_WORDS})  # after a food's edit, and after its undo
     if edited is not None:
-        return {**edited, "undo": edited["undo"][1]}
+        return {**edited, "undo": edited["undo"] and edited["undo"][1]}
     for mark in ("saved", "restored"):
         words = FOOD_STRIPS.get((mark, params.get(mark)))
         if words is not None:
@@ -1984,14 +1983,16 @@ async def food_edit_page(request: Request) -> Response:
     food_id = request.path_params["food_id"]
     # The food's updated_at, for the form's hidden field: list_saved_foods does not give it. It is read before the
     # values, so a save that lands between the two reads can only make the form older than what it shows, and the
-    # worst that comes of it is a refusal the person did not need. A POST carries the stamp its page drew.
-    drawn_at = None if request.method == "POST" else (
-        await _db(services.get_entry, user.id, SAVED_FOOD, food_id)).get("updated_at")
+    # worst that comes of it is a refusal the person did not need. A POST carries the stamp its page drew. A GET
+    # that finds no stamp (the food was deleted, or brought back between the reads) is the 404: a form with no
+    # stamp is never drawn.
+    posted = request.method == "POST"
+    drawn_at = None if posted else (await _db(services.get_entry, user.id, SAVED_FOOD, food_id)).get("updated_at")
     food = next((f for f in await live_foods(user) if str(f["id"]) == food_id), None)
-    if food is None:
+    if food is None or not (posted or drawn_at):
         return not_found_page(request)
     errors, loose, status, values = {}, [], 200, food_values(food)
-    if request.method == "POST":
+    if posted:
         form = await request.form()
         drawn_at = str(form.get("updated_at") or "")  # as the page that sent this form drew it
         if not changed_fields(FOOD_EDIT_FIELDS, food, form):
@@ -2027,7 +2028,7 @@ async def food_delete_page(request: Request) -> Response:
 
 async def food_restore_page(request: Request) -> Response:
     """POST: Undo after a delete, back to Foods, which says the food is restored. With undo_edit: Undo after an
-    edit, or the way back after that, as an entry's (restore_page)."""
+    edit, as an entry's (restore_page)."""
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))

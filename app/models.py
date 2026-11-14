@@ -283,7 +283,7 @@ class EntryVersion(Base):
     entry_id: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
     by: Mapped[str] = mapped_column("by", String(8), quote=True)  # one of CALLERS. Quoted: BY is SQL's own word
-    why: Mapped[str] = mapped_column(String(8))  # edit, undo or redo
+    why: Mapped[str] = mapped_column(String(8))  # edit or undo
     request_id: Mapped[str | None] = mapped_column(String(16), nullable=True)  # the call log's, null outside a request
     before: Mapped[str] = mapped_column(Text)  # JSON
 

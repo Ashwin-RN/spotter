@@ -18,7 +18,7 @@
 </div>
 
 {% if strip and strip.undo %}
-{{ parts.undo_strip(strip.words, "/entries/" ~ strip.undo[0] ~ "/" ~ strip.undo[1] ~ "/restore", csrf_token, strip.button|default("Undo"), strip.fields|default(())) }}
+{{ parts.undo_strip(strip.words, "/entries/" ~ strip.undo[0] ~ "/" ~ strip.undo[1] ~ "/restore", csrf_token, strip.fields|default(())) }}
 {% elif strip %}
 {{ parts.saved_line(strip.words) }}
 {% endif %}

@@ -250,7 +250,6 @@
     "expect": {
       "function": "restore_entry",
       "inputs_include": {"kind": "bodyweight", "entry_id": "{{seed.weigh_in}}", "undo_edit": true},
-      "inputs_forbid": {"allow_repeat": true},
       "ok_calls": {"restore_entry": 1}
     },
     "db": [{"table": "bodyweight", "count": 1, "all": {"id": "{{seed.weigh_in}}", "kg": 80}}]

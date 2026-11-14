@@ -178,7 +178,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `import_preview_first` | Bring my weigh-ins over from my old app, with a five-day export, `Date,Weight (lb)` | `import_entries` called with `weight_unit` lb, never with `dry_run` false; the reply asks; no weigh-in, live or deleted |
 | `import_again` | I checked the preview, write them, with the same export (the five rows already imported) | `import_entries` called with `weight_unit` lb; the reply says "already"; 5 live weigh-ins, all `import`, none deleted |
 | `import_unknown_lift` | Import my lifts from a Strong export of three Zorbinator Press sets at 20 kg | `list_exercises` or `import_entries` called; the reply asks and names Zorbinator; no lift session |
-| `undo_edit` | I changed today's weigh-in by mistake. Undo that change. (a weigh-in of 80 kg, then edited to 85) | `restore_entry` with kind `bodyweight`, that weigh-in's id and `undo_edit` true, never with `allow_repeat` true, one success; the weigh-in holds 80 again |
+| `undo_edit` | I changed today's weigh-in by mistake. Undo that change. (a weigh-in of 80 kg, then edited to 85) | `restore_entry` with kind `bodyweight`, that weigh-in's id and `undo_edit` true, one success; the weigh-in holds 80 again |
 
 "No write function" is the twelve writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
 `log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,

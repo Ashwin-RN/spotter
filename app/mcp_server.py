@@ -834,9 +834,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             "Brings back a deleted or replaced entry. If the day already has a live one of the same kind, the "
             "two swap: the live one is set aside and can itself be restored. With undo_edit true it undoes the "
             "last edit of a live entry instead: every value from before that edit comes back, a session's sets, "
-            "a food entry's saved or USDA food and a cardio estimate among them. The same undo again within 10 "
-            "minutes changes nothing, and allow_repeat true only brings back an edit that was undone: it never "
-            "undoes one."
+            "a food entry's saved or USDA food and a cardio estimate among them. It undoes one edit: sent again, "
+            "it changes nothing."
         ),
         annotations=WRITE,
     )
@@ -845,13 +844,10 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         entry_id: Annotated[int, Field(description=RESTORE_ID_DESCRIPTION)],
         undo_edit: Annotated[bool, Field(
             description="true undoes the last edit of this entry, which must be live: the values from before it "
-                        "come back. The newest 10 are kept for an entry, for 90 days.")] = False,
-        allow_repeat: Annotated[bool, Field(
-            description="After an undo, true brings the edit back. It never undoes: sent when no edit is undone, "
-                        "it changes nothing. Send it only when the person asks for the edit back.")] = False,
+                        "come back. An edit can be undone for 90 days.")] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, RestoreEntryResult]:
-        sent = _sent(undo_edit=undo_edit or None, allow_repeat=allow_repeat or None)
+        sent = _sent(undo_edit=undo_edit or None)
         return await wrapper.call("restore_entry", RestoreEntryResult,
                                   lambda account: services.restore_entry(account, kind, entry_id, "claude", **sent))
 

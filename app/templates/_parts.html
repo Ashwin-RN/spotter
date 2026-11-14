@@ -5,13 +5,13 @@
 {% macro saved_line(words) %}<p class="ok">{{ words }}</p>{% endmacro %}
 
 {# The Undo strip after a delete: its words, then the one-button form that brings the entry back. After an edit,
-   and after its undo, the same strip: the button's word, and each of fields as a hidden field of the form. #}
-{% macro undo_strip(words, action, csrf_token, button="Undo", fields=()) %}<div class="ok undo">
+   the same strip, with each of fields as a hidden field of the form. #}
+{% macro undo_strip(words, action, csrf_token, fields=()) %}<div class="ok undo">
   {{ words }}
   <form method="post" action="{{ action }}" class="inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for name in fields %}<input type="hidden" name="{{ name }}" value="1">
-    {% endfor %}<button class="link">{{ button }}</button>
+    {% endfor %}<button class="link">Undo</button>
     <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
 </div>{% endmacro %}

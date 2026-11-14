@@ -795,13 +795,9 @@ class RestoreEntryResult(BaseModel):
         default=None, description="Present when a live entry was set aside, or when an undo changed nothing.")
     undone: bool | None = Field(
         default=None, description="With undo_edit: true when the values from before the last edit were put back.")
-    redone: bool | None = Field(
-        default=None, description="With undo_edit: true when this call brought the edit back, after an undo.")
     duplicate: bool | None = Field(
         default=None,
-        description="With undo_edit: true when nothing changed: the edit was already undone in the last 10 "
-                    "minutes, or allow_repeat was sent and no edit is undone. entry is the entry as it stands. "
-                    "Say so.")
+        description="With undo_edit: true when the last edit was already undone, so nothing changed. Say so.")
     before: dict | None = Field(
         default=None, description="With undo_edit, when it changed the entry: the entry as it was until then.")
     summary: str | None = Field(

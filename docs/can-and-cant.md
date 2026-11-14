@@ -160,11 +160,9 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
   description or kcal, a cardio entry's fields. Bests are worked out again from the whole history; a
   cardio estimate is worked out again; a food entry given a kcal becomes `you_said`. Moving a weigh-in or a measurement onto a day that already has one is refused, never
   silently replaced. An edit keeps the values from before it: `restore_entry` with `undo_edit`
-  brings them back. The newest 10 are kept per entry, for 90 days. The same undo again within 10
-  minutes changes nothing and comes back with `duplicate` true. `allow_repeat` true brings back an
-  edit that was undone and never undoes one: send it only when the person wants the edit back. An
-  undo is itself an edit, so `undo_edit` again over 10 minutes later brings the edit back, and the
-  result says `redone`. A saved food that `save_food` changed is undone the same way, with kind
+  brings them back. The newest 10 are kept per entry, for 90 days. It undoes the last edit, once:
+  sent again it changes nothing and comes back with `duplicate` true. To get an edit back, edit the
+  entry again. A saved food that `save_food` changed is undone the same way, with kind
   `saved_food`. An undo that would move a weigh-in or a measurement onto a day that has another
   one is refused, as an edit is: nothing is replaced.
 - **Deletes.** Nothing is ever erased. Claude can delete only when the person has allowed it in

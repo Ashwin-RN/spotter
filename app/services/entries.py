@@ -8,9 +8,9 @@ get_entry(user_id, kind, entry_id)       -> {kind, id, entry, links, updated_at}
 edit_entry(user_id, kind, entry_id, changes, by[, drawn_at])
                                          -> {kind, id, changed, before, after, summary, links[, note]}
 delete_entry(user_id, kind, entry_id)    -> {kind, id, deleted: true, entry, note}
-restore_entry(user_id, kind, entry_id[, by, undo_edit, allow_repeat])
+restore_entry(user_id, kind, entry_id[, by, undo_edit])
                                          -> {kind, id, restored: true, entry, replaced [entries][, note]}
-                                            with undo_edit, also {undone, redone, duplicate, summary[, before]}
+                                            with undo_edit, also {undone, duplicate, summary[, before]}
 
 - Every lookup goes through common.owned(). Someone else's id, a deleted entry (for read and
   delete) and an id that does not exist all give the same not_found.
@@ -20,7 +20,9 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit, allow_repeat])
   person and date) cannot hold two live rows for the same values. Restoring an entry there
   soft-deletes the live one in its place, and the result names it under "replaced", so the swap
   can itself be undone with another restore. The live one leaves the index before the restored
-  one returns, because SQLite checks the index statement by statement.
+  one returns, because SQLite checks the index statement by statement. From the web (by web) the
+  restore is refused with day_taken instead, and nothing changes: no page brings a set-aside
+  entry back.
 - An edit changes the entry in place (the id stays): a session's date, notes or whole set list; a
   weigh-in's date or kg; a measurement's date or value. Every value passes the same check a log
   would, so an edit can never store what logging refuses. A new date that already holds a live
@@ -29,25 +31,19 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit, allow_repeat])
   (logged_by "import") keeps the key it was imported under, so the same import never writes it again.
 - An edit keeps the row as it stood before it (common.keep_version, contract edit-history.md), and so does
   save_food on a food that exists. restore_entry with undo_edit puts the newest kept version back on a live
-  entry: every stored column, a session's sets, a food entry's link, a cardio estimate. It keeps what it
-  replaces in turn. What it does goes by the newest version's why, and allow_repeat never undoes:
-    undo          the edit was undone. With allow_repeat, or once DUPLICATE_MINUTES have passed, the edit
-                  comes back (the way back), and what that replaces is kept as redo. Otherwise nothing
-                  changes: duplicate true.
-    edit or redo  the edit is in place. Without allow_repeat the undo runs, kept as undo. With it nothing
-                  changes: duplicate true.
-  The result says which happened: undone, redone or duplicate. An undo never replaces another entry: one
-  that would move a weigh-in or a measurement onto a day that holds another live one is refused with
+  entry: every stored column, a session's sets, a food entry's link, a cardio estimate. What it replaces is
+  kept as a version in turn (why undo). An undo is one step, once: when the newest version is an undo's,
+  the last edit is already undone and nothing changes (duplicate true), at any age. To get an edit back the
+  entry is edited again, and that edit can be undone like any other. An undo never replaces another entry:
+  one that would move a weigh-in or a measurement onto a day that holds another live one is refused with
   day_taken, as an edit is, before anything is kept, and replaced is always empty. With undo_edit off,
-  restore_entry is what it was, but for one more sentence in not_deleted's fix.
+  restore_entry is what it was, but for one more sentence in not_deleted's fix and the web's refusal above.
 - A web edit form sends the entry's updated_at as its page drew it (drawn_at, from get_entry). An entry that
   changed since is refused with entry_changed, under the lock, and nothing is saved.
 - Edit, delete and restore are writes: lock_user first, then common.check_write_limit.
 - An edit's summary names each change in words, every value through app.formatting: "Weigh-in
   changed: kg from 74.8 to 78.4." The entry's id is the result's id, never in the summary.
 """
-
-from datetime import timedelta
 
 from sqlalchemy import Index, select
 
@@ -58,8 +54,8 @@ from app.models import (
 from app.rules import error, quote
 from app.services import body, cardio, food, lifts, measurements
 from app.services.common import (
-    DUPLICATE_MINUTES, KIND_LABELS, check_by, check_data, check_write_limit, entry_changed, exercises, keep_version,
-    lock_user, newest_version, no_account, not_found, owned, pair, put_back, read_version, row_dict, truthy,
+    KIND_LABELS, check_by, check_data, check_write_limit, entry_changed, exercises, keep_version, lock_user,
+    newest_version, no_account, not_found, owned, pair, put_back, read_version, row_dict, truthy,
 )
 from app.services.goals import goal_dict
 from app.services.lifts import session_dict
@@ -81,10 +77,7 @@ SESSION_NOTE = "Bests are worked out from history: get_progress shows them."
 KCAL_NOTE = "The number is now the person's own: tagged you_said."
 REESTIMATE_NOTE = "The calorie estimate was worked out again, from body weight now."
 CARDIO_NUMBERS = ("minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal")
-UNDONE_NOTE = (f"This edit was already undone in the last {DUPLICATE_MINUTES} minutes, so nothing was changed. "
-               "To bring the edit back, send it again with allow_repeat: true.")
-IN_PLACE_NOTE = ("allow_repeat only brings back an edit that was undone, and this entry's last edit is in place. "
-                 "To undo it, send undo_edit without allow_repeat.")
+ONE_A_DAY = ("bodyweight", "measurement")  # the kinds _day_taken is asked about: one live entry a day
 
 
 def entry_kinds() -> dict[str, type]:
@@ -180,8 +173,7 @@ def delete_entry(user_id: int, kind: str, entry_id) -> dict:
                 "note": "Deleted. restore_entry with the same kind and id brings it back."}
 
 
-def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo_edit: bool = False,
-                  allow_repeat: bool = False) -> dict:
+def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo_edit: bool = False) -> dict:
     kinds = _deletable()
     model = _model(kinds, kind)
     if model is None:
@@ -193,7 +185,7 @@ def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo
         if limited:
             return limited
         if truthy(undo_edit):
-            return _undo_edit(s, model, kind, user_id, entry_id, by, allow_repeat)
+            return _undo_edit(s, model, kind, user_id, entry_id, by)
         row = owned(s, model, user_id, entry_id, deleted=True)
         if row is None:
             return not_found(kind)
@@ -201,6 +193,11 @@ def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo
             return error("not_deleted", "This entry is not deleted, so there is nothing to restore.",
                          "Nothing to do: it is live. get_log shows it on its day. To undo its last edit, send "
                          "undo_edit true.")
+        if by == "web" and kind in ONE_A_DAY:
+            # No page brings a set-aside entry back, so the web's restore never replaces another entry.
+            taken = _day_taken(s, model, row, row.date, user_id, "then restore this one again")
+            if taken:
+                return taken
         replaced = []
         for columns in _live_unique(model):
             replaced += list(s.scalars(select(model).where(
@@ -220,10 +217,9 @@ def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo
         return out
 
 
-def _undo_edit(s, model, kind: str, user_id: int, entry_id, by, allow_repeat) -> dict:
+def _undo_edit(s, model, kind: str, user_id: int, entry_id, by) -> dict:
     """restore_entry with undo_edit, under the lock and after the write limit: a live entry goes back to its
-    newest kept version, and what it held is kept as a version in turn (why undo, or redo for the way back).
-    See the module notes."""
+    newest kept version, and what it held is kept as a version in turn (why undo). See the module notes."""
     err = check_by(by)
     if err:
         return err
@@ -231,32 +227,25 @@ def _undo_edit(s, model, kind: str, user_id: int, entry_id, by, allow_repeat) ->
     if row is None:
         return not_found(kind)
     version = newest_version(s, row)
+    editor = "save_food" if kind == "saved_food" else "edit_entry"
     if version is None:
-        return error("nothing_to_undo", "This entry has no earlier values kept.",
-                     f"Edit it with {'save_food' if kind == 'saved_food' else 'edit_entry'}.")
+        return error("nothing_to_undo", "This entry has no earlier values kept.", f"Edit it with {editor}.")
     label, before = KIND_LABELS[kind][0].capitalize(), entry_dict(row)
     out = {"kind": kind, "id": row.id, "restored": True, "entry": before, "replaced": [], "undone": False,
-           "redone": False, "duplicate": False}
-    back = version.why == "undo"  # the version to put back is what an undo replaced: this is the way back
-    nothing = None  # why this call changes nothing, and the note that says what to send
-    if truthy(allow_repeat):
-        if not back:  # allow_repeat never undoes: no edit is undone, so there is none to bring back
-            nothing = "the edit is in place", IN_PLACE_NOTE
-    elif back and version.created_at >= db.utcnow() - timedelta(minutes=DUPLICATE_MINUTES):
-        nothing = "the edit was already undone", UNDONE_NOTE  # the same undo, sent again
-    if nothing:
-        return {**out, "duplicate": True, "summary": f"{label}: {nothing[0]}, so nothing changed.",
-                "note": nothing[1]}
+           "duplicate": False}
+    if version.why == "undo":  # one step, once: the newest version is what that undo replaced
+        return {**out, "duplicate": True, "summary": f"{label}: the last edit was already undone, so nothing changed.",
+                "note": f"There is nothing more to undo. To change it, use {editor}."}
     values = read_version(model, version)
-    if kind in ("bodyweight", "measurement") and values.get("date", row.date) != row.date:
+    if kind in ONE_A_DAY and values.get("date", row.date) != row.date:
         # An undo never replaces another entry: a day that holds another live one refuses it, as it does an edit.
         taken = _day_taken(s, model, row, values["date"], user_id, "then send the same call again")
         if taken:
             return taken
-    keep_version(s, row, by, "redo" if back else "undo")
+    keep_version(s, row, by, "undo")
     put_back(s, row, values)
-    return {**out, "entry": entry_dict(row), "redone" if back else "undone": True, "before": before,
-            "summary": f"{label}: the edit is back." if back else f"{label}: the edit was undone."}
+    return {**out, "entry": entry_dict(row), "undone": True, "before": before,
+            "summary": f"{label}: the edit was undone."}
 
 
 # ---------------------------------------------------------------- edit
@@ -412,7 +401,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
             if kind == "lift_session":
                 out["note"] = SESSION_NOTE
             return out
-        if "date" in changed and kind in ("bodyweight", "measurement"):
+        if "date" in changed and kind in ONE_A_DAY:
             taken = _day_taken(s, model, row, new["date"], user.id)
             if taken:
                 return taken
