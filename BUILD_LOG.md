@@ -745,3 +745,50 @@ A second reviewer read the fix round as new code: it holds. Over every path trie
 Not known until this is live: whether the live site's failures were this 400. The pattern matches, and the call's row will say: `usda=bad_request` for a lookup that failed, `usda_tries` for one that needed more than one try.
 
 The full suite: 4,898 tests, plain, at the commit. The files touched also passed with warnings as errors.
+
+## Safe to send twice: the key
+
+A write that is sent twice is done once. The decisions, and the limits that were accepted, are in `docs/contracts/idempotency.md`.
+
+| Part | What it does |
+|---|---|
+| The key | Each of the 12 write functions takes an optional `key` of the caller's own: 8 to 64 letters, digits, `-` or `_`. With no key a call runs as before: no statement of the write names the new table |
+| The same call again | The same key and the same call writes nothing and gets the first answer back, the same bytes. Its row in the call log reads `repeat` |
+| A key used wrongly | Another call under a kept key is `key_reused`. A key of another shape is `invalid_key`. Nothing is written for either |
+| Where the key is claimed | Under the person's lock, in the write's own transaction, in the new table `write_key`. So the key exists only if the write committed, and two sends at once cannot both pass. No service was edited for it |
+| What keeps no key | A refused call, an import preview and a crash. The same key can be sent again for each |
+| A retry during the first send | It waits for the first answer, a look every 100 ms for up to 2 seconds, and gets it |
+| A lost answer | A kept key with no answer is `already_done`, with the function that reads the thing back. After the first minute it answers at once |
+| How long | 24 hours. An older key is never honoured, and the app deletes old keys at most once an hour |
+| The web | 18 of the 21 forms carry a hidden key, new each time the page is drawn. The other three write nothing. A double click saves once. The same form sent again with a field changed is a new write |
+| A new goal | The same new goal set again within 10 minutes is not set twice: the first comes back with a warning, and the Goals page says so |
+| The trace | `outcome` gains `repeat` and `step` gains `key`. The key's value is in no column and on no log line |
+| The privacy page | A card of its own says an answer is kept for a day, and that these answers go with the account and are not in the export |
+| Database | Migration 0006 adds the table `write_key`: one row per person and key, deleted with the account |
+
+Three calls were made where the contract was silent, put to the owner and approved the same day: on the web a form sent again with a field changed is a new write, a retry during the first send waits for its answer, and old keys are swept hourly.
+
+### The review
+
+A separate reviewer found no second write, no claim that leaks into another call and no reach into another account. It broke the code 18 times to test the tests: 14 breaks failed a test, 3 changed no behaviour, and 1 showed a missing test.
+
+| Finding | Fix |
+|---|---|
+| A key whose answer was lost made every later send wait 2 seconds, and the write limit never stopped them | A kept key with no answer and older than 60 seconds is `already_done` at once, before any work. Measured after: 0.015 seconds and one look, against 2.05 seconds and 22 |
+| No test held the second run of the work, when the first send is refused while a second waits | A test holds it |
+| A failed sweep of old keys cost the call log its own 90-day delete for a day | Each delete has its own transaction |
+| The goal guard compared six fields, so the same goal with another text or another start came back as the first | It also compares the text and the start. Only a true re-send is stopped |
+| A goal the guard stopped read `written` in the call log | It reads `duplicate` |
+| `already_done` named `get_log` for every function | It names the read that shows the thing: `get_goals`, `whoami`, `find_food`, or `get_log` |
+
+A second reviewer read the fix round as new code: clean to commit. Six sends at once through the assistant's path, and six clicks at once on a form, wrote once or not at all. Of 19 more breaks, 16 failed a test, and tests were added for the other 3.
+
+Not run on a real Postgres: two sends at once ran on SQLite only. On Postgres the unique rule on person and key means the worst case is an error, never two writes. The migration's SQL for Postgres was read, not run there.
+
+### The eval run
+
+Every write function's schema gained an argument, which is text a model reads. All 20 cases, 3 runs each, on `claude-opus-5-5`, at `f1bceeb`, from 13:20:22 to 13:34:18 on 2026-11-14: 59 of 60 runs passed, $8.6592 at list price. Every case passed at least 2 of its 3 runs.
+
+The one failure is `import_unknown_lift`, its first run, "the reply asks nothing". The reply wrote nothing, named the lift, would not guess and put the choice to the person, with no question mark. It is the false fail of the question-mark check that the import's own runs recorded, in a case this work does not touch.
+
+The full suite: 5,059 tests, plain, at the commit. Every test file also passed with warnings as errors, in separate runs.
