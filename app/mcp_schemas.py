@@ -1158,7 +1158,7 @@ class OwnerCallsResult(BaseModel):
                     "given.")
 
 
-# ---------------------------------------------------------------- send_feedback and owner_feedback
+# ---------------------------------------------------------------- send_feedback and the owner's two on notes
 
 class SendFeedbackResult(BaseModel):
     model_config = TOP
@@ -1177,7 +1177,7 @@ class NoteAccount(BaseModel):
 
 
 class OwnerNote(BaseModel):
-    id: int = Field(description="The note's id, for delete.")
+    id: int = Field(description="The note's id, for owner_delete_feedback.")
     created_at: str = Field(description="When it was sent, in UTC.")
     account: NoteAccount = Field(description="Who sent it.")
     topic: str | None = Field(description="What it is about, from the topics, or null.")
@@ -1195,13 +1195,19 @@ class OwnerNote(BaseModel):
 class OwnerFeedbackResult(BaseModel):
     model_config = TOP
 
-    deleted: list[int] = Field(description="The ids delete deleted for good, in id order. Empty without delete.")
-    not_found: list[int] = Field(
-        description="The ids delete named that are no note now, each once, in the order sent: never a note, or "
-                    "deleted before. Nothing changed for them.")
-    total: int = Field(description="How many notes match, listed or not, after the delete.")
+    total: int = Field(description="How many notes match, listed or not.")
     how: str = Field(description="How to read the notes.")
     notes: list[OwnerNote] = Field(description="The notes, newest first.")
+
+
+class OwnerDeleteFeedbackResult(BaseModel):
+    model_config = TOP
+
+    deleted: list[int] = Field(description="The ids deleted for good, in id order.")
+    not_found: list[int] = Field(
+        description="The ids sent that are no note now, each once, in the order sent: never a note, or deleted "
+                    "before. Nothing changed for them.")
+    summary: str = Field(description="What happened, in one line, ready to quote.")
 
 
 RESULTS = {
@@ -1227,4 +1233,5 @@ RESULTS = {
     "send_feedback": SendFeedbackResult,
     "owner_calls": OwnerCallsResult,
     "owner_feedback": OwnerFeedbackResult,
+    "owner_delete_feedback": OwnerDeleteFeedbackResult,
 }

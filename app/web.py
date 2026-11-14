@@ -1092,7 +1092,7 @@ def eval_case_count(path: Path = CASES_FILE) -> int | None:
     return len(cases)
 
 
-FUNCTION_COUNT = len(mcp_server.NEEDS) - len(mcp_server.OWNER_FUNCTIONS)  # but the two only the owner is offered
+FUNCTION_COUNT = len(mcp_server.NEEDS) - len(mcp_server.OWNER_FUNCTIONS)  # but OWNER_FUNCTIONS, the owner's alone
 EVAL_CASES = eval_case_count()
 
 

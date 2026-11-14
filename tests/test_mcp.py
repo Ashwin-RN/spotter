@@ -1254,10 +1254,12 @@ ALLOWS = {"read": {"read"}, "log": {"read", "log"}, "log_delete": {"read", "log"
 
 def test_every_registered_function_has_a_level_and_every_level_a_function(http):
     registered = {t["name"] for t in tool_list(http, sign())}
-    # The owner's two are the owner's alone, at read, and in no one else's list (trace.md 16, feedback.md 8).
+    # OWNER_FUNCTIONS, the owner's three, are the owner's alone, at read, in no one else's list (trace.md 16,
+    # feedback.md 8).
     assert registered == set(mcp_server.NEEDS) - set(mcp_server.OWNER_FUNCTIONS) == set(CONTRACT_NEEDS)
     assert registered == set(FUNCTIONS)
-    assert mcp_server.NEEDS == {**CONTRACT_NEEDS, "owner_calls": "read", "owner_feedback": "read"}
+    assert mcp_server.NEEDS == {**CONTRACT_NEEDS, "owner_calls": "read", "owner_feedback": "read",
+                                "owner_delete_feedback": "read"}
 
 
 def test_a_function_without_a_level_stops_the_server_at_start(app_settings, monkeypatch):

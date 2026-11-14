@@ -228,7 +228,7 @@ def test_the_known_names_are_every_name_in_the_published_tool_schemas(make_clien
         schema = tool["inputSchema"]
         for obj in [schema, *schema.get("$defs", {}).values()]:
             published |= set(obj.get("properties", {}))
-    assert len(tools) == 22 and published == calllog.KNOWN_NAMES  # was 20: feedback.md adds two
+    assert len(tools) == 23 and published == calllog.KNOWN_NAMES  # was 20: feedback.md adds two, its split a third
 
 
 # ---------------------------------------------------------------- decisions 7 to 9: outcome, step, frame
@@ -460,10 +460,11 @@ def test_only_the_owner_s_list_has_owner_calls_and_everyone_else_s_is_the_ninete
                                       ("unset", {}, OWNER)):
         client = make_client(**overrides)
         tool_lists[label] = rpc(client, "tools/list", token=sign_for(subject)).json()["result"]["tools"]
-    assert [t["name"] for t in tool_lists["owner"]] == [*FUNCTIONS, "owner_calls", "owner_feedback"]
+    assert [t["name"] for t in tool_lists["owner"]] == [*FUNCTIONS, "owner_calls", "owner_feedback",
+                                                        "owner_delete_feedback"]
     for label in ("someone else", "unset"):
         assert [t["name"] for t in tool_lists[label]] == FUNCTIONS
-        assert json.dumps(tool_lists[label]) == json.dumps(tool_lists["owner"][:-2])  # byte for byte
+        assert json.dumps(tool_lists[label]) == json.dumps(tool_lists["owner"][:-3])  # byte for byte
     assert web.FUNCTION_COUNT == len(FUNCTIONS) == 20  # was 19: send_feedback (feedback.md decision 13)
 
 

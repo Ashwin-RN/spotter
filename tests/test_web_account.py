@@ -1461,7 +1461,7 @@ def test_the_more_card_links_saved_foods_and_carries_a_sign_out_that_signs_out(s
 # NEEDS gains, moves or loses changes its set, and a reworded line changes its words.
 SWITCH_ALLOWS = {
     "read": ({"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals",
-              "owner_calls", "owner_feedback"},  # trace.md 16 and feedback.md 8: the owner's alone, at read
+              "owner_calls", "owner_feedback", "owner_delete_feedback"},  # trace.md 16, feedback.md 8: the owner's
              "Your assistant can read what you have logged and change nothing."),
     "log": ({"log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "import_entries", "edit_entry",
              "restore_entry", "save_food", "set_goal", "update_settings", "send_feedback"},  # feedback.md decision 3

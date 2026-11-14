@@ -40,7 +40,7 @@ WEB = {"workos_client_id": CLIENT, "workos_api_key": API_KEY}
 PROVIDER = "https://provider.example/authorize"
 CODE = "code-one-time-5e2c"
 METADATA_PATH = "/.well-known/oauth-protected-resource/mcp"
-# The functions the landing counts: every one but the owner's two (feedback.md decision 13).
+# The functions the landing counts: every one but the owner's three, OWNER_FUNCTIONS (feedback.md decision 13).
 OFFERED = len(mcp_server.NEEDS) - len(mcp_server.OWNER_FUNCTIONS)
 
 
