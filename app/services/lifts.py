@@ -1,15 +1,21 @@
-"""Lift sessions: logging one, and reading every session back as numbers.
+"""Lift sessions: logging sets, and reading every session back as numbers.
 
 log_lifts(user_id, data, by)
     data: date (YYYY-MM-DD; blank = the person's today; never after today, at most two years back),
     sets [{exercise, weight_kg, reps}] (1 to 60), notes (optional, up to 2,000 characters),
-    allow_repeat (optional).
-    Sets are numbered per exercise in the order given. New bests are found against every earlier
-    set of each lift: every session that comes before this one in the one order (see
-    metrics.on_or_before). For a session dated today that is every session, a later-dated one
-    included; for a back-dated session, the ones on or before its date.
-    The duplicate guard: the same date, notes and sets as a live session logged in the last
-    10 minutes returns that session with duplicate true, and nothing is written.
+    new_session (optional). allow_repeat is read by nothing: an old client may still send it.
+    Which session (contract gym-logging.md): the person's live session with that date as stored, the
+    highest id, under the lock. new_session true, or no such session: a new one, its sets numbered per
+    exercise in the order given. Otherwise an add to it, whoever started it (web, import, assistant).
+    An add is an edit of the session: the session as it stands is kept as a version (why edit), the new
+    sets are appended and carry each exercise's set numbers on, the notes are joined on a new line, the
+    key is worked out again over the whole session (an imported one keeps its key), and updated_at moves.
+    It is refused, with nothing written, when the session would pass 60 sets or its notes 2,000
+    characters. There is no duplicate guard: a set said again is added, and duplicate is always false.
+    New bests are found against every earlier set of each lift: every session that comes before this
+    one in the one order (see metrics.on_or_before). For a new session dated today that is every
+    session, a later-dated one included; for a back-dated one, the ones on or before its date. An add
+    reports the bests of the whole session that it did not hold before the add.
 
 history(s, user_id, today)
     Every live session, whatever its date, worked through in the one order (effective date, then
@@ -28,14 +34,14 @@ Every write here locks the user row first (common.lock_user), then checks the wr
 
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import db, formatting, links, metrics, rules, users
-from app.models import LiftSession, LiftSet
+from app.models import IMPORTED, LiftSession, LiftSet
 from app.services.common import (
-    check_by, check_data, check_write_limit, dedupe_key, duplicate_note, exercises, find_duplicate, lock_user,
-    no_account, row_dict, truthy,
+    check_by, check_data, check_write_limit, dedupe_key, exercises, keep_version, lock_user, no_account, row_dict,
+    truthy,
 )
 
 KIND = "lift_session"
@@ -115,14 +121,16 @@ def session_dict(t: LiftSession) -> dict:
     return out
 
 
-def number_sets(sets: list[dict], by_name: dict) -> list[tuple[int, int, float, int]]:
+def number_sets(sets: list[dict], by_name: dict, after: dict | None = None) -> list[tuple[int, int, float, int]]:
     """(exercise_id, set_number, weight_kg, reps) for checked sets, numbered per exercise in the
-    order given. Logging and editing both use it."""
-    counts: dict[str, int] = {}
+    order given, from 1 or on from after {exercise_id: highest set number held}. Logging and editing
+    both use it."""
+    counts = dict(after or {})
     keyed = []
     for x in sets:
-        counts[x["exercise"]] = counts.get(x["exercise"], 0) + 1
-        keyed.append((by_name[x["exercise"]].id, counts[x["exercise"]], x["weight_kg"], x["reps"]))
+        ex_id = by_name[x["exercise"]].id
+        counts[ex_id] = counts.get(ex_id, 0) + 1
+        keyed.append((ex_id, counts[ex_id], x["weight_kg"], x["reps"]))
     return keyed
 
 
@@ -197,9 +205,100 @@ def history(s: Session, user_id: int, today: date) -> dict:
             "reps_only": reps_only, "bests": bests}
 
 
+def _prior(s: Session, user_id: int, exercise_ids: set, name_of: dict, on: date, today: date,
+           before: int | None = None) -> dict[str, list[tuple[float, int]]]:
+    """{lift: [(weight, reps)]}: every set of these lifts in the person's live sessions that come before the
+    session in the one order (effective date, then id). A new session (before None): every session whose effective
+    date is on or before its date, so for one dated today every session, a later-dated one included. An add to
+    session `before`: the sessions dated before it, and those of its effective date with a lower id. One query."""
+    query = select(LiftSet.exercise_id, LiftSet.weight_kg, LiftSet.reps).join(LiftSession).where(
+        LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None), LiftSet.exercise_id.in_(exercise_ids))
+    if before is not None:
+        same_day = LiftSession.date == on if on < today else LiftSession.date >= on  # after today counts as today
+        query = query.where(or_(LiftSession.date < on, and_(same_day, LiftSession.id < before)))
+    elif on < today:
+        query = query.where(LiftSession.date <= on)
+    prior: dict[str, list[tuple[float, int]]] = {}
+    for exercise_id, weight, reps in s.execute(query):
+        prior.setdefault(name_of[exercise_id], []).append((weight, reps))
+    return prior
+
+
+def _best(lift: str, hit: dict) -> dict:
+    p = rounded_best({"exercise": lift, **hit})
+    return {**p, "text": best_text(p)}
+
+
+def _tail(new_bests: list[dict], firsts: list[str]) -> str:
+    """What follows the sets in a summary. A lift's first session has nothing to beat, so it sets the mark rather
+    than a best; the summary says so, or "No new bests" reads as a missed one."""
+    tail = "".join(f" New best: {p['text']}." for p in new_bests)
+    if firsts:
+        tail += " " + " ".join(firsts)
+    return tail or " No new bests."
+
+
+def _count(n: int) -> str:
+    return formatting.show(n, "count")
+
+
+def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name: dict, by: str, today: date) -> dict:
+    """The call's sets added to the date's session, as an edit of it (see the module notes). Refused past
+    rules.SESSION_SETS[1] sets or rules.TEXT_MAX characters of notes, before anything is kept or written."""
+    on, had = session.date, sorted(session.sets, key=lambda x: x.id)
+    joined = "\n".join(t for t in (session.notes, notes) if t)
+    most, errors = rules.SESSION_SETS[1], []
+    if len(had) + len(sets) > most:
+        errors.append(rules.error(
+            "sets_count_out_of_range",
+            f"The session on {formatting.day(on, today)} has {_count(len(had))} set{'' if len(had) == 1 else 's'}; "
+            f"{_count(len(sets))} more would "
+            f"make {_count(len(had) + len(sets))}, and a session holds at most {_count(most)}.",
+            "Send new_session true to start another session that day, or send fewer sets."))
+    if len(joined) > rules.TEXT_MAX:
+        errors.append(rules.error(
+            "invalid_field", f"The session's notes would be {_count(len(joined))} characters; the most is "
+                             f"{_count(rules.TEXT_MAX)}.",
+            "Send shorter notes, or change the session's notes with edit_entry."))
+    if errors:
+        return rules.combine(errors)
+
+    name_of = {e.id: name for name, e in by_name.items()}
+    held = [(x.exercise_id, x.set_number, x.weight_kg, x.reps) for x in had]
+    top: dict[int, int] = {}
+    for ex_id, n, _, _ in held:
+        top[ex_id] = max(top.get(ex_id, 0), n)
+    keyed = number_sets(sets, by_name, top)
+    prior = _prior(s, session.user_id, {k[0] for k in keyed}, name_of, on, today, before=session.id)
+    new_bests, firsts = [], []
+    for lift in dict.fromkeys(x["exercise"] for x in sets):
+        was = [(w, r) for ex_id, _, w, r in held if name_of.get(ex_id) == lift]
+        now = was + [(x["weight_kg"], x["reps"]) for x in sets if x["exercise"] == lift]
+        if not prior.get(lift):
+            firsts.append(first_text(lift, now))
+            continue
+        before = {b["kind"]: b["value"] for b in metrics.prs(prior[lift], was)}
+        new_bests += [_best(lift, hit) for hit in metrics.prs(prior[lift], now)
+                      if hit["kind"] not in before or hit["value"] > before[hit["kind"]]]
+
+    keep_version(s, session, by)  # every check has passed: the session as it stands is kept
+    session.sets.extend(LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in keyed)
+    if notes:
+        session.notes = joined
+    if session.logged_by != IMPORTED:  # an imported session keeps the key it was imported under, as an edit does
+        session.dedupe_key = session_key(on, session.notes, held + keyed)
+    session.updated_at = db.utcnow()
+    s.flush()
+    summary = (f"Added {sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets])} to the session on "
+               f"{formatting.day(on, today)}. It now has {_count(len(held) + len(keyed))} sets.")
+    lifts = list(dict.fromkeys(name_of.get(ex_id) for ex_id, *_ in held + keyed))
+    return {"kind": KIND, "id": session.id, "duplicate": False, "session": session_dict(session),
+            "new_bests": new_bests, "summary": summary + _tail(new_bests, firsts), "links": _links(on, lifts)}
+
+
 def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
-    """Log one lift session. Returns {kind, id, duplicate, session, new_bests, summary, links[, note]}
-    or {error, message, fix}. See the module notes for the rules."""
+    """Log sets of lifting: into the date's session, or a new one. Returns {kind, id, duplicate (always false),
+    session, new_bests, summary, links} or {error, message, fix}. See the module notes for the rules."""
     data, err = check_data(data)
     err = err or check_by(by)
     if err:
@@ -218,39 +317,22 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         if err or notes_err:
             return rules.combine((err["errors"] if err else []) + ([notes_err] if notes_err else []))
 
+        # Which session: the person's live one with this date as stored, the latest by id (module notes).
+        target = None if truthy(data.get("new_session")) else s.scalar(
+            select(LiftSession).where(LiftSession.user_id == user.id, LiftSession.date == on,
+                                      LiftSession.deleted_at.is_(None)).order_by(LiftSession.id.desc()).limit(1))
+        if target is not None:
+            return _add(s, target, sets, notes, by_name, by, today)
+
         keyed = number_sets(sets, by_name)
         key = session_key(on, notes, keyed)
         lifts = list(dict.fromkeys(x["exercise"] for x in sets))
-
-        if not truthy(data.get("allow_repeat")):
-            first = find_duplicate(s, LiftSession, user.id, on, key)
-            if first is not None:
-                done = sets_text([(x.exercise.name, x.weight_kg, x.reps) for x in sorted(first.sets, key=lambda x: x.id)])
-                return {"kind": KIND, "id": first.id, "duplicate": True, "session": session_dict(first),
-                        "new_bests": [],
-                        "summary": f"Already logged: {done} on {formatting.day(first.date, today)}.",
-                        "note": duplicate_note("session"), "links": _links(first.date, lifts)}
-
-        # New bests against every set that comes before this session in the one order: every
-        # session whose effective date is on or before this one's (all logged before it). For a
-        # session dated today that is every session; a later-dated one counts as today's.
-        name_of = {e.id: name for name, e in by_name.items()}
-        prior: dict[str, list[tuple[float, int]]] = {}
-        earlier = select(LiftSet.exercise_id, LiftSet.weight_kg, LiftSet.reps).join(LiftSession).where(
-            LiftSession.user_id == user.id, LiftSession.deleted_at.is_(None),
-            LiftSet.exercise_id.in_({k[0] for k in keyed}))
-        if on < today:
-            earlier = earlier.where(LiftSession.date <= on)
-        for exercise_id, weight, reps in s.execute(earlier):
-            prior.setdefault(name_of[exercise_id], []).append((weight, reps))
+        prior = _prior(s, user.id, {k[0] for k in keyed}, {e.id: name for name, e in by_name.items()}, on, today)
         grouped: dict[str, list[tuple[float, int]]] = {}
         for x in sets:
             grouped.setdefault(x["exercise"], []).append((x["weight_kg"], x["reps"]))
-        new_bests = []
-        for lift, lift_sets in grouped.items():
-            for hit in metrics.prs(prior.get(lift, []), lift_sets):
-                p = rounded_best({"exercise": lift, **hit})
-                new_bests.append({**p, "text": best_text(p)})
+        new_bests = [_best(lift, hit) for lift, lift_sets in grouped.items()
+                     for hit in metrics.prs(prior.get(lift, []), lift_sets)]
 
         session = LiftSession(user_id=user.id, date=on, notes=notes, logged_by=by, dedupe_key=key)
         session.sets = [LiftSet(exercise_id=ex_id, set_number=n, weight_kg=w, reps=r) for ex_id, n, w, r in keyed]
@@ -259,14 +341,6 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
 
         summary = (f"{sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets])} on "
                    f"{formatting.day(on, today)}.")
-        # A lift's first session has nothing to beat, so it sets the mark rather than a best; the
-        # summary says so, or "No new bests" reads as a missed one.
         firsts = [first_text(lift, lift_sets) for lift, lift_sets in grouped.items() if not prior.get(lift)]
-        if new_bests:
-            summary += "".join(f" New best: {p['text']}." for p in new_bests)
-        if firsts:
-            summary += " " + " ".join(firsts)
-        if not new_bests and not firsts:
-            summary += " No new bests."
         return {"kind": KIND, "id": session.id, "duplicate": False, "session": session_dict(session),
-                "new_bests": new_bests, "summary": summary, "links": _links(on, lifts)}
+                "new_bests": new_bests, "summary": summary + _tail(new_bests, firsts), "links": _links(on, lifts)}

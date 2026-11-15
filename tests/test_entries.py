@@ -242,7 +242,12 @@ def test_an_edit_re_keys_so_a_repeat_of_the_new_content_is_a_duplicate(user):
     s = log_session(user)
     new_sets = [{"exercise": "Deadlift", "weight_kg": 110, "reps": 5}]
     edit(user, "lift_session", s["id"], sets=new_sets)
-    assert services.log_lifts(user.id, {"sets": new_sets}, "web")["id"] == s["id"]
+    # A lift session has no guard (gym-logging.md decision 3): the edit's new key is the key of its new content.
+    from app.services.lifts import session_key
+    with db.new_session() as session:
+        row = session.get(LiftSession, s["id"])
+        keyed = [(x.exercise_id, x.set_number, x.weight_kg, x.reps) for x in row.sets]
+        assert len(keyed) == 1 and row.dedupe_key == session_key(row.date, row.notes, keyed)
 
 
 def test_a_deleted_or_missing_entry_is_not_found(user):

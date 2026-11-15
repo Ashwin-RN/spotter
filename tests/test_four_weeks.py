@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 
 from app import db, services, users
 from app.config import ROOT
+from app.services import lifts
 from app.models import (
     Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, User,
 )
@@ -155,7 +156,12 @@ def test_each_row_carries_its_kinds_own_duplicate_key(user):
                                                timedelta(days=1)))
         sets = [{"exercise": x.exercise.name, "weight_kg": x.weight_kg, "reps": x.reps}
                 for x in sorted(t.sets, key=lambda x: x.id)]
-    assert services.log_lifts(user.id, {"date": monday, "sets": sets}, "web")["duplicate"] is True
+        own_key = t.dedupe_key == lifts.session_key(t.date, t.notes, [(x.exercise_id, x.set_number, x.weight_kg,
+                                                                        x.reps) for x in t.sets])
+        session_id = t.id
+    # A lift has no guard now (gym-logging.md decision 3): the same sets are added to that day's session.
+    added_to = services.log_lifts(user.id, {"date": monday, "sets": sets}, "web")
+    assert own_key and added_to["duplicate"] is False and added_to["id"] == session_id
     assert rows_of(user.id)["bodyweight"] == 28   # nothing was written
 
 

@@ -342,18 +342,15 @@ class LogLiftsResult(BaseModel):
 
     kind: str = Field(description="What was logged: lift_session.")
     id: int = Field(description="The session's id.")
-    duplicate: bool = Field(
-        description="True when the same session was already logged in the last 10 minutes. Then nothing was "
-                    "written and this is the earlier session. Say so; send allow_repeat: true only when the "
-                    "person confirms it was a separate session.")
-    session: Session = Field(description="The session as saved.")
+    duplicate: bool = Field(description="Always false: a set said again is added, never refused.")
+    session: Session = Field(description="The session as saved, with every set in it.")
     new_bests: list[NewBest] = Field(
-        description="New bests this session set, against every earlier set of the lift. A lift's first session "
-                    "never sets one. Empty on a duplicate.")
-    summary: str = Field(description="The session in one line, ready to quote: its new bests, or for a lift's "
-                                     "first session the mark it sets (a first session is never a new best).")
+        description="New bests this call's sets set, for the session as a whole, against every earlier session of "
+                    "the lift. A lift's first session never sets one.")
+    summary: str = Field(description="What this call did, in one line, ready to quote: the sets logged or added, "
+                                     "then new bests, or for a lift's first session the mark it sets (a first "
+                                     "session is never a new best).")
     links: LiftLinks = Field(description="Pages to offer the person. Put links last in a reply.")
-    note: str | None = Field(default=None, description="Present on a duplicate: what happened and what to do.")
 
 
 # ---------------------------------------------------------------- log_bodyweight

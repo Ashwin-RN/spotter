@@ -53,8 +53,8 @@ def test_a_success_writes_one_row_with_every_column(http):
 
 def test_a_duplicate_is_an_ok_row(http):
     token = sign()
-    call(http, token, "log_lifts", {"sets": squat(100)})
-    result = call(http, token, "log_lifts", {"sets": squat(100)})
+    call(http, token, "log_bodyweight", {"kg": 80.5})  # a lift is never a duplicate now (gym-logging.md decision 3)
+    result = call(http, token, "log_bodyweight", {"kg": 80.5})
     assert result["structuredContent"]["duplicate"] is True
     assert [(r.ok, r.error_code) for r in rows()] == [(True, None), (True, None)]
 

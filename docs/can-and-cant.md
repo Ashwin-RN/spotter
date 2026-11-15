@@ -5,7 +5,9 @@ from it. It knows nothing else.
 
 ## What it records today
 
-- **Lift sessions:** the date, the sets (exercise, weight in kg, reps) and optional notes.
+- **Lift sessions:** the date, the sets (exercise, weight in kg, reps) and optional notes. Sets
+  logged for a date go into that date's session, call by call. A second workout that day is a second
+  session when the person says so.
 - **Body weight:** one weigh-in a day, in kg.
 - **Measurements:** nine kinds, each with its own unit: waist, hips, chest, arm and thigh in cm,
   steps, sleep_hours in hours, resting_hr in bpm, and water_ml in ml. One value per kind a day.
@@ -143,16 +145,19 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 
 ## Duplicates, replacements, edits and deletes
 
-- **Duplicates.** The same session, the same weight on the same day, the same measurement on the
-  same day, the same set of foods or the same cardio session, logged again within 10 minutes comes
-  back with `duplicate` true. Nothing new is written.
-  Send `allow_repeat` true only when the person confirms it happened twice.
+- **Duplicates.** The same weight on the same day, the same measurement on the same day, the same
+  set of foods or the same cardio session, logged again within 10 minutes comes back with
+  `duplicate` true. Nothing new is written.
+  Send `allow_repeat` true only when the person confirms it happened twice. Lifts are the exception:
+  every `log_lifts` call adds its sets to that day's session, so a set said twice is logged twice.
+  `restore_entry` with `undo_edit` takes back the last sets added.
   The same new goal set again within 10 minutes is not set twice: the first comes back with a warning.
 - **Sending a write twice.** Any write takes an optional `key` of your own: 8 to 64 letters, digits,
   `-` or `_`. The same key with the same call again writes nothing and returns the first answer. The
   same key with a different call is refused with `key_reused`. A key whose first answer was not kept
   answers `already_done`: read the entry back before sending anything new. Keys are kept for a day.
-  A new write takes a new key. With no key, the 10-minute rule above is the only guard.
+  A new write takes a new key. With no key, the 10-minute rule above is the only guard, and lifts
+  have none.
 - **Replacements.** A second, different weigh-in on the same day replaces the first; so does a second
   value of the same measurement kind. The first is kept, not erased, and `restore_entry` brings it back.
 - **Edits.** `edit_entry` changes an entry in place and keeps its id: a session's date, notes or whole
@@ -378,7 +383,7 @@ Twenty functions, nothing else:
 |---|---|
 | `whoami` | Says whose account this is, today's date for them, and what Claude may do. Call it first. |
 | `list_exercises` | The exercise names to use. |
-| `log_lifts` | Records one lift session. |
+| `log_lifts` | Records sets of lifting, into that day's session. |
 | `log_bodyweight` | Records one weigh-in. |
 | `set_goal` | Sets a goal of any of the four kinds, or changes or closes one. |
 | `get_progress` | Reads progress back: one lift over time, or every lift. |

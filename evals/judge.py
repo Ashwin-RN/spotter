@@ -34,8 +34,8 @@ expect, every key optional, all of them must hold:
 
 seed, rows created for the person before the run, through Spotter's own services, in order:
 
-  {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "set_goal" | "import_entries",
-   "data": {...}}                   import_entries returns no one id: no "as".
+  {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "log_lifts" | "set_goal" |
+   "import_entries", "data": {...}} import_entries returns no one id: no "as".
   {"service": "four_weeks"}         a seed that takes no data: four weeks of everything, three goals
                                     (evals/four_weeks.py). No "as": it returns no one id.
   {"service": "edit_entry", "data": {"kind": "bodyweight", "entry_id": "{{seed.<as>}}", "changes": {...}}}
@@ -47,6 +47,7 @@ db, checks on the person's rows after the run:
   {"table": "food_entry", "state": "live", "count": 1, "all": {...}, "rows": [{...}, ...]}
   state: live (the default: rows not deleted) or deleted (soft-deleted rows only);
   count: exactly this many such rows; all: every one matches; rows: each matcher matches some row.
+  A lift_session row carries set_count: how many sets it holds (evals/run.py's person_rows counts them).
 
 Placeholders, as a whole string: "{{today}}" and "{{yesterday}}" (the person's own dates, YYYY-MM-DD),
 and "{{next_month_end:N}}" (N from 1 to 12: the last day of month N, the next one strictly after today
@@ -70,7 +71,8 @@ CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db"}
 DB_KEYS = {"table", "state", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
 SWITCHES = ("log", "log_delete")
-SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "set_goal", "import_entries", "edit_entry"}
+SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "log_lifts", "set_goal", "import_entries",
+                 "edit_entry"}
 EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
 NO_DATA_SERVICES = {"four_weeks"}  # called as seed_service(name)(user_id): see seed_service
 DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",
@@ -335,7 +337,8 @@ def judge_db(checks: list[dict], rows: dict[str, list[dict]]) -> list[str]:
 
 def _rows_text(rows: list[dict]) -> str:
     keep = ("date", "kind", "value", "kg", "meal", "description", "kcal", "source", "estimated", "saved_food_id",
-            "servings", "minutes", "exercise_id", "estimated_kcal", "id", "status", "target_value", "target_date")
+            "servings", "minutes", "exercise_id", "estimated_kcal", "id", "status", "target_value", "target_date",
+            "set_count")
     return "; ".join(json.dumps({k: r[k] for k in keep if k in r}) for r in rows)
 
 

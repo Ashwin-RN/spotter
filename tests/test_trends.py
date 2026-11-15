@@ -157,8 +157,8 @@ DAYS_KEYS = {"today", "from", "to", "days", "weeks", "weight", "lift_sessions_28
 DAY_KEYS = {"date", "lift_sessions", "cardio_entries", "cardio_minutes", "food_entries", "kcal", "weighed"}
 
 
-def lift(user, days_ago, kg=100):
-    r = services.log_lifts(user.id, {"date": day(user, -days_ago), "allow_repeat": True, "sets": [
+def lift(user, days_ago, kg=100, **data):
+    r = services.log_lifts(user.id, {"date": day(user, -days_ago), "allow_repeat": True, **data, "sets": [
         {"exercise": "Deadlift", "weight_kg": kg, "reps": 5}]}, "web")
     assert "error" not in r, r
     return r["id"]
@@ -196,7 +196,7 @@ def test_get_days_on_an_empty_account(user):
 
 def test_get_days_counts_each_day_by_hand(user, make_user):
     for days_ago in (0, 0, 6, 27, 28):                         # two sessions today; 28 days ago is outside
-        lift(user, days_ago)
+        lift(user, days_ago, new_session=True)
     gone = lift(user, 3)
     services.delete_entry(user.id, "lift_session", gone)       # a deleted row is out
     for days_ago, minutes in ((0, 10.1), (0, 20.2), (13, 45), (28, 60)):

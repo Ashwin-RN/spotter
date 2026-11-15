@@ -113,7 +113,8 @@ record cannot be talked round.
   page's own service before the run. Left out, it is the default, `log_delete`. A case that sets
   anything else, `read` among them, stops the load.
 - `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
-  `log_measurement`, `set_goal`, `import_entries`, each with `data`, and `four_weeks`, which takes no data.
+  `log_measurement`, `log_lifts`, `set_goal`, `import_entries`, each with `data`, and `four_weeks`, which
+  takes no data.
   - `four_weeks` (`evals/four_weeks.py`) is four weeks of everything and three goals in one call, on an empty account. It has no `as`.
   - `import_entries` returns no one id either, so it has no `as`. Its rows carry fixed dates.
   - `edit_entry` edits a row seeded before it, so the person has an edit to undo. Its `data` is
@@ -121,6 +122,7 @@ record cannot be talked round.
 - `db` checks the person's live rows, or with `"state": "deleted"` the soft-deleted ones.
   - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`, `goal`,
     `feedback`.
+  - A `lift_session` row carries `set_count`: how many sets it holds.
   - A note is never kept as deleted: a deleted note's row is gone. So every feedback row is live.
   - A goal has no delete, so every goal row is live. Check `status` instead.
 
@@ -187,6 +189,9 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `hi_there_first_log` | I weighed 80.4 kg this morning (nothing logged yet) | `log_bodyweight` with kg 80.4. The reply says "/hi". One live weigh-in, 80.4, dated today |
 | `hi_there_not_again` | I weighed 80.4 kg this morning (80.9 kg logged yesterday) | `log_bodyweight` with kg 80.4. The reply does not say "/hi". Two live weigh-ins, yesterday's 80.9 and today's 80.4 |
 | `delete_regretted` | You deleted a weigh-in I wanted to keep. I never asked for that, and I do not want it to happen again. (one live weigh-in) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
+| `lift_one_sentence` | Back squat 3 sets of 5 at 100 kg, then bench press 80 kg for 8, 8 and 6 | One successful `log_lifts`, its sets holding Back Squat 100 × 5, Bench Press 80 × 8 and Bench Press 80 × 6. One live session, `set_count` 6 |
+| `lift_set_by_set` | Bench press 80 kg for 5 (Bench Press 80 × 5 logged today) | One successful `log_lifts` with Bench Press 80 × 5, never `new_session` true. One live session, the seeded one, `set_count` 2 |
+| `lift_added_later` | Also did barbell rows, 3 sets of 10 at 50 kg (Back Squat 100 × 5, three sets, logged today) | One successful `log_lifts` with Barbell Row 50 × 10, never a Back Squat set, never `new_session` true. One live session, the seeded one, `set_count` 6 |
 
 "No write function" is the thirteen writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
 `log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,
@@ -303,6 +308,17 @@ code. A run is one message from the person, so no case can say yes to a preview.
 
 A model that asks before any `delete_entry` call does not pass `delete_asks_first`: after the preview it would have
 to ask the person a second time.
+
+### The three gym logging cases
+
+Every `log_lifts` call for a date adds its sets to that date's session. `lift_set` cannot be a `db` table, so
+the set count is read from `set_count` on the session row.
+
+| Case | Proves | Does not prove |
+|---|---|---|
+| `lift_one_sentence` | A workout said in one sentence becomes one call, one session, six sets, with the person's numbers | That three equal sets are sent as three items: `inputs_include` cannot count, so the set count is read from the row |
+| `lift_set_by_set` | A set equal to one already logged that day is added to the same session, with no question and no second session. Before this work it failed: the call came back duplicate | That the assistant keeps doing it over five sets in one conversation: a run is one message. The seed stands in for the earlier sets, made before the run, so the assistant did not see them logged |
+| `lift_added_later` | Told of one more lift, the assistant sends only the new sets, and they land in the day's session | That it never resends earlier sets it logged itself in the same conversation: no second turn. Only one phrasing |
 
 ## What the evals prove
 

@@ -28,8 +28,8 @@ def page_day(user, offset):
     return f"{d:%a} {d.day} {d:%b}" + ("" if d.year == today.year else f" {d.year}")
 
 
-def squat(user, days_ago, kg, reps=5):
-    r = services.log_lifts(user.id, {"date": day(user, -days_ago),
+def squat(user, days_ago, kg, reps=5, **data):
+    r = services.log_lifts(user.id, {"date": day(user, -days_ago), **data,
                                      "sets": [{"exercise": "Back Squat", "weight_kg": kg, "reps": reps}]}, "claude")
     assert "error" not in r, r
 
@@ -695,7 +695,7 @@ def test_get_goals_query_count_stays_small(user):
 
 def test_points_on_one_day_get_a_note_that_says_so(user):
     for kg in (60, 62.5, 65, 67.5):                                # four sessions, all today
-        squat(user, 0, kg)
+        squat(user, 0, kg, new_session=True)
     r = goal(user, kind="lift", exercise="Back Squat", target_value=100, target_date=day(user, 30))
     assert r["progress"]["projection"] is None
     assert r["progress"]["note"] == "A projection needs points on at least 2 different days."

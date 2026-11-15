@@ -4123,7 +4123,7 @@ def test_a_set_at_0_kg_leaves_its_weight_blank_and_a_session_with_none_weighted_
     pull = [{"exercise": "Pull-Up", "weight_kg": 0, "reps": 6}] * 2
     mixed = [{"exercise": "Deadlift", "weight_kg": 100, "reps": 5}, {"exercise": "Pull-Up", "weight_kg": 0, "reps": 8}]
     for sets in (pull, mixed):
-        assert "error" not in services.log_lifts(uid, {"sets": sets}, "claude")
+        assert "error" not in services.log_lifts(uid, {"sets": sets, "new_session": True}, "claude")
     first, second = sessions_of(side_card(day_of(client, today_of(only_user()).isoformat()), "Lifts"))
     assert table_of(first) == (["Exercise", "Set", "Reps"], [["Pull-Up", "1", "6"], ["Pull-Up", "2", "6"]])
     assert table_of(second) == (["Exercise", "Set", "Weight (kg)", "Reps"],
@@ -5630,7 +5630,7 @@ def test_the_aside_counts_lift_sessions_not_days_and_says_one_in_the_singular(cl
     assert "error" not in services.log_lifts(uid, {"date": on, "sets": [
         {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
     assert daygrid_of(day_of(client, today.isoformat()))["head"][1][3] == "1 lift session"
-    assert "error" not in services.log_lifts(uid, {"date": on, "sets": [
+    assert "error" not in services.log_lifts(uid, {"date": on, "new_session": True, "sets": [
         {"exercise": "Bench Press", "weight_kg": 40, "reps": 5}]}, "claude")
     days = services.get_days(uid)
     assert (days["lift_sessions_28d"], days["lift_days_28d"]) == (2, 1)
@@ -7630,7 +7630,7 @@ def test_each_count_on_today_and_progress_takes_its_noun_by_the_count(client):
     today = today_of(only_user())
     for n in (0, 1, 2):
         if n:
-            assert "error" not in services.log_lifts(uid, {"date": today.isoformat(), "sets": [
+            assert "error" not in services.log_lifts(uid, {"date": today.isoformat(), "new_session": True, "sets": [
                 {"exercise": "Back Squat", "weight_kg": 60 + n, "reps": 5}]}, "claude")
             assert "error" not in services.log_bodyweight(uid, {"kg": 80, "date": (today - timedelta(days=n)).isoformat()},
                                                           "claude")

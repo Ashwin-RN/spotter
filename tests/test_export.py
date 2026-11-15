@@ -183,8 +183,8 @@ TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00")
 
 def hostile(user_id: int) -> None:
     """Text a spreadsheet would run as a formula, in every kind of text cell the person writes."""
-    services.log_lifts(user_id, {"notes": "=SUM(A1:A9)", "sets": [{"exercise": "Deadlift", "weight_kg": 100,
-                                                                    "reps": 5}]}, "claude")
+    services.log_lifts(user_id, {"notes": "=SUM(A1:A9)", "new_session": True,
+                                 "sets": [{"exercise": "Deadlift", "weight_kg": 100, "reps": 5}]}, "claude")
     services.log_food(user_id, {"entries": [{"description": "+cmd", "kcal": 10},
                                             {"description": "-2 dal", "kcal": 20}]}, "claude")
     services.save_food(user_id, {"name": "@home roti", "serving_label": "=1 roti", "kcal_per_serving": 90,

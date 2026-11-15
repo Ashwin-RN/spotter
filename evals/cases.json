@@ -309,5 +309,45 @@
       "reply_has": ["Settings"]
     },
     "db": [{"table": "bodyweight", "count": 1, "all": {"id": "{{seed.weigh_in}}"}}]
+  },
+  {
+    "id": "lift_one_sentence",
+    "say": "Back squat 3 sets of 5 at 100 kg, then bench press 80 kg for 8, 8 and 6",
+    "expect": {
+      "function": "log_lifts",
+      "ok_calls": {"log_lifts": 1},
+      "inputs_include": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
+                                  {"exercise": "Bench Press", "weight_kg": 80, "reps": 8},
+                                  {"exercise": "Bench Press", "weight_kg": 80, "reps": 6}]}
+    },
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}]
+  },
+  {
+    "id": "lift_set_by_set",
+    "say": "Bench press 80 kg for 5",
+    "seed": [{"as": "bench", "service": "log_lifts",
+              "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}]}}],
+    "expect": {
+      "function": "log_lifts",
+      "ok_calls": {"log_lifts": 1},
+      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}]},
+      "inputs_forbid": {"new_session": true}
+    },
+    "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.bench}}", "set_count": 2}}]
+  },
+  {
+    "id": "lift_added_later",
+    "say": "Also did barbell rows, 3 sets of 10 at 50 kg",
+    "seed": [{"as": "squat", "service": "log_lifts",
+              "data": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
+                                {"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
+                                {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}}],
+    "expect": {
+      "function": "log_lifts",
+      "ok_calls": {"log_lifts": 1},
+      "inputs_include": {"sets": [{"exercise": "Barbell Row", "weight_kg": 50, "reps": 10}]},
+      "inputs_forbid": {"sets.*.exercise": "Back Squat", "new_session": true}
+    },
+    "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.squat}}", "set_count": 6}}]
   }
 ]

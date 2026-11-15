@@ -104,7 +104,7 @@ No new code.
 
 | Code | When | Message | Fix |
 |---|---|---|---|
-| `sets_count_out_of_range` | An add would take the session past 60 sets | "The session on {day} has {n} sets; {k} more would make {n + k}, and a session holds at most 60." | "Send new_session true to start another session that day, or send fewer sets." |
+| `sets_count_out_of_range` | An add would take the session past 60 sets | "The session on {day} has {n} sets; {k} more would make {n + k}, and a session holds at most 60." With one set held: "has 1 set" | "Send new_session true to start another session that day, or send fewer sets." |
 | `invalid_field` | An add's notes would take the session's notes past 2,000 characters | "The session's notes would be {n} characters; the most is 2,000." | "Send shorter notes, or change the session's notes with edit_entry." |
 
 ## The eval cases
@@ -148,7 +148,7 @@ No new code.
 | Case | Proves | Does not prove |
 |---|---|---|
 | `lift_one_sentence` | A workout said in one sentence becomes one call, one session, six sets, with the person's numbers | That three equal sets are sent as three items: `inputs_include` cannot count, so the set count is read from the row |
-| `lift_set_by_set` | A set equal to one already logged that day is added to the same session, with no question and no second session. Today it fails: the call comes back duplicate | That the assistant keeps doing it over five sets in one conversation: a run is one message. The seed stands in for the earlier sets, made before the run, so the assistant did not see them logged |
+| `lift_set_by_set` | A set equal to one already logged that day is added to the same session, with no question and no second session. Before this work it failed: the call came back duplicate | That the assistant keeps doing it over five sets in one conversation: a run is one message. The seed stands in for the earlier sets, made before the run, so the assistant did not see them logged |
 | `lift_added_later` | Told of one more lift, the assistant sends only the new sets, and they land in the day's session | That it never resends earlier sets it logged itself in the same conversation: no second turn. Only one phrasing |
 
 On what a case can check: `lift_set` cannot be a `db` table (no `user_id`, not in `DB_TABLES`), so the set count comes from `set_count` on the session row. Two tables in one case is fine: each check names its own. `"weight_kg": 80` matches a stored 80.0. The pounds case is left out: units are another item.
@@ -177,3 +177,5 @@ Each new case goes into `evals/cases.json`, the case table of `docs/evals.md`, t
 Not in this work: pounds and miles on a log (another item); the confirm card and "same as last time" (item 5, his re-look); timed holds, carries and sets over 30 reps; a web form that logs lifts; the exercise list; the guard of any other kind; telling assistants to always send a key; a second turn in the eval runner; a change to the instructions.
 
 **An eval run follows the build.** `log_lifts`' description and arguments change, and every conversation holds the tool list. So the whole set runs: 29 cases, 3 runs each, on `claude-opus-5-5`. The last whole run of 26 cases cost $12.78 at list price, about $0.49 a case. 29 cases are about $14.25. A run of only the three new cases and the two that already touch lifts (`unknown_exercise`, `import_unknown_lift`) would be about $2.45.
+
+**As built, 2026-11-15.** Two comment lines outside the file list, in `app/services/food.py` and `app/services/entries.py`, were made true: they named the lifts' guard. The first call of a day starts a session and has nothing for `undo_edit` to take back: it answers `nothing_to_undo`, and `delete_entry` takes it back. The same notes sent twice are joined twice.

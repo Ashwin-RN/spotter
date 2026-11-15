@@ -247,8 +247,10 @@ class LocalServer:
 
 def person_rows(user_id: int) -> dict[str, list[dict]]:
     """The person's rows, deleted ones too (judge_db tells them apart by deleted_at), in every table a
-    case can check, from the running settings' database. Dates and times come back as ISO strings."""
-    from sqlalchemy import select
+    case can check, from the running settings' database. Dates and times come back as ISO strings. A
+    lift_session row also carries set_count: how many lift_set rows it holds (0 for none), from one counted
+    query over all of the person's sessions."""
+    from sqlalchemy import func, select
 
     from app import db
     from app.models import Base
@@ -259,6 +261,12 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
             table = Base.metadata.tables[name]
             query = select(table).where(table.c.user_id == user_id)
             found[name] =[{k: _plain(v) for k, v in row._mapping.items()} for row in connection.execute(query)]
+        sets, sessions = Base.metadata.tables["lift_set"], Base.metadata.tables["lift_session"]
+        counted = dict(connection.execute(
+            select(sets.c.session_id, func.count()).join(sessions, sets.c.session_id == sessions.c.id)
+            .where(sessions.c.user_id == user_id).group_by(sets.c.session_id)).all())
+    for row in found["lift_session"]:
+        row["set_count"] = counted.get(row["id"], 0)
     return found
 
 

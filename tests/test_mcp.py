@@ -340,7 +340,7 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
         keep("log_lifts", {"sets": squat(weight), "date": (today - timedelta(days=days_ago)).isoformat()})
     sets = squat(110) + [{"exercise": "Bench Press", "weight_kg": 60, "reps": 8}]
     keep("log_lifts", {"sets": sets, "notes": "Felt strong"})  # new bests
-    keep("log_lifts", {"sets": sets, "notes": "Felt strong"})  # duplicate: note
+    keep("log_lifts", {"sets": sets, "notes": "Felt strong"})  # an add to today's session (gym-logging.md)
     keep("log_bodyweight", {"kg": 82, "date": (today - timedelta(days=30)).isoformat()})
     keep("log_bodyweight", {"kg": 80.4})
     keep("log_bodyweight", {"kg": 80.4})  # duplicate: note
@@ -468,7 +468,7 @@ def test_every_result_field_is_described(http):
 
 def test_the_arguments_are_typed_parameters(http):
     schemas = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}
-    assert list(schemas["log_lifts"]["properties"]) == ["sets", "date", "notes", "allow_repeat", "key"]
+    assert list(schemas["log_lifts"]["properties"]) == ["sets", "date", "notes", "allow_repeat", "new_session", "key"]
     assert schemas["log_lifts"]["required"] == ["sets"]
     assert list(schemas["log_bodyweight"]["properties"]) == ["kg", "date", "allow_repeat", "key"]
     assert list(schemas["set_goal"]["properties"]) == ["kind", "exercise", "measurement_kind", "distance_km",
@@ -575,14 +575,14 @@ def test_a_list_exercises_error_is_flagged(http):
     assert error["error"] == "invalid_field" and "lift" in error["fix"]
 
 
-def test_log_lifts_twice_is_a_duplicate_and_allow_repeat_logs_it_again(http):
+def test_log_lifts_twice_adds_to_the_session_and_new_session_logs_another(http):
     token = sign()
     first = ok(http, token, "log_lifts", {"sets": squat(100), "notes": "Easy"})
     again = ok(http, token, "log_lifts", {"sets": squat(100), "notes": "Easy"})
-    assert first["duplicate"] is False and again["duplicate"] is True
-    assert again["id"] == first["id"] and "nothing was written" in again["note"]
+    assert first["duplicate"] is False and again["duplicate"] is False
+    assert again["id"] == first["id"] and "note" not in again and len(again["session"]["sets"]) == 6
     assert sessions_logged() == 1
-    repeat = ok(http, token, "log_lifts", {"sets": squat(100), "notes": "Easy", "allow_repeat": True})
+    repeat = ok(http, token, "log_lifts", {"sets": squat(100), "notes": "Easy", "new_session": True})
     assert repeat["duplicate"] is False and repeat["id"] != first["id"]
     assert sessions_logged() == 2
 
@@ -850,7 +850,7 @@ def test_mcp_call_needs_the_token_in_the_environment(monkeypatch, capsys):
 OPTIONAL_ARGUMENTS = {
     "whoami": {},
     "list_exercises": {"kind": "lift", "category": "push"},
-    "log_lifts": {"date": "2026-01-02", "notes": "Notes", "allow_repeat": True},
+    "log_lifts": {"date": "2026-01-02", "notes": "Notes", "allow_repeat": True, "new_session": True},
     "log_bodyweight": {"date": "2026-01-02", "allow_repeat": True},
     "set_goal": {"kind": "lift", "exercise": "Back Squat", "measurement_kind": "waist", "distance_km": 5.5,
                  "target_value": 150.5, "target_date": "2099-01-01", "text": "Text", "start_value": 100.5, "goal_id": 7,
@@ -910,6 +910,8 @@ def spy_on_services(monkeypatch) -> dict[str, tuple]:
 
 def service_input(name: str, account: int, arguments: dict) -> tuple:
     """What the service should receive for these arguments: (positional, keyword)."""
+    if name == "log_lifts":  # allow_repeat is taken and read by nothing, so it is not passed on (gym-logging.md 3)
+        return (account, {k: v for k, v in arguments.items() if k != "allow_repeat"}, "claude"), {}
     if name in DATA_WRITES:
         return (account, arguments, "claude"), {}
     if name == "list_exercises":

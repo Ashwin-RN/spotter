@@ -67,7 +67,7 @@ DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint":
 PUBLISHED = {
     "whoami": "559251413fd3472e201f2b7185b2134ed2c959239709e20281e98025a7b4c466",  # switch: claude_can's two values
     "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
-    "log_lifts": "b5a30f70a54848068173b09c0e184b211f86c05c32a0508bf11c2566f0dcbe17",
+    "log_lifts": "9e95e0445afc3a57390021fcc57a0c9774146be42ff37d4447c51b1ac995fe18",  # gym logging: adds to a day
     "log_bodyweight": "f6d2e5b9ad195b9256152099a072142fdd926c7e176e35fc561e036ff66654b7",
     "set_goal": "266f24d8d1467cc4080c620386262b4f5108ce61c002c9975f830028eabc759f",
     "get_progress": "e01a7b022248ac56d33d1d9a812e1c3b582187af14ee63bb7a6789bd0cd359e0",
@@ -973,7 +973,7 @@ def test_the_instructions_do_not_change_by_a_character():  # but for the switch'
 def test_the_two_cases_load_and_judge_as_designed(app_settings, make_user):
     cases = {c["id"]: c for c in judge.load_cases()}
     sent, offered = cases["feedback_sent"], cases["feedback_offered"]
-    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 26  # switch: was 25
+    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 29  # gym logging: was 26
     assert "switch" not in sent and "switch" not in offered  # the default, log_delete since the switch
     uid = make_user().id
     rows_now = person_rows(uid)

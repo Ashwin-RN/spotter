@@ -1,4 +1,4 @@
-"""log_lifts: validation, set numbering, new bests, the duplicate guard, today, and the user-row lock."""
+"""log_lifts: validation, set numbering, new bests, the add to a date's session, today, and the user-row lock."""
 
 import json
 import math
@@ -49,7 +49,9 @@ def user(make_user):
 
 
 def log(user, *rows, by="claude", **data):
-    return services.log_lifts(user.id, {"sets": sets(*rows), **data}, by)
+    """Each call its own session (new_session true), as these tests mean it: a call for a date that holds a
+    session adds to it (contract gym-logging.md)."""
+    return services.log_lifts(user.id, {"sets": sets(*rows), "new_session": True, **data}, by)
 
 
 # ---------------------------------------------------------------- logging
@@ -282,7 +284,8 @@ def test_a_datetime_date_and_negative_zero_weight(user):
     assert r["session"]["date"] == when.date().isoformat() and str(r["session"]["sets"][0]["weight_kg"]) == "0.0"
     same = services.log_lifts(user.id, {"date": when.date().isoformat(),
                                         "sets": [{"exercise": "Push-Up", "weight_kg": 0, "reps": 10}]}, "web")
-    assert same["duplicate"] is True and same["id"] == r["id"]  # -0.0 and 0 are the same entry
+    assert same["id"] == r["id"]  # the same date: the same session
+    assert [str(x["weight_kg"]) for x in same["session"]["sets"]] == ["0.0", "0.0"]  # -0.0 and 0 are both 0.0
 
 
 def test_bad_arguments_get_an_error_with_a_fix(user):
@@ -317,7 +320,7 @@ def test_a_time_zone_behind_utc_is_still_on_the_day_before(make_user, monkeypatc
     assert log(west, ("Deadlift", 85, 5), date="2026-11-10")["error"] == "date_in_future"
 
 
-# ---------------------------------------------------------------- the duplicate guard
+# ---------------------------------------------------------------- no duplicate guard: a date's calls add up
 
 def age_all(model, user_id, minutes):
     """created_at is a UTC time; move every row of this person back by `minutes`."""
@@ -329,66 +332,77 @@ def age_all(model, user_id, minutes):
 NARRATED = {"sets": sets(("Back Squat", 60, 5), ("Back Squat", 60, 4)), "notes": "felt heavy"}
 
 
-def test_the_same_session_within_ten_minutes_is_not_logged_twice(user):
+def set_count(user_id):
+    with db.new_session() as s:
+        return s.scalar(select(func.count(LiftSet.id)).join(LiftSession).where(LiftSession.user_id == user_id))
+
+
+def test_the_same_session_said_again_within_ten_minutes_is_added_to_it(user):
     first = services.log_lifts(user.id, NARRATED, "claude")
     again = services.log_lifts(user.id, NARRATED, "claude")
-    assert again["duplicate"] is True and again["id"] == first["id"] and again["kind"] == "lift_session"
-    assert again["session"] == first["session"] and again["new_bests"] == []
-    assert "allow_repeat" in again["note"] and session_count(user.id) == 1
-    # Not a duplicate: different sets, or different notes.
+    assert again["duplicate"] is False and again["id"] == first["id"] and again["kind"] == "lift_session"
+    assert len(again["session"]["sets"]) == 4 and again["new_bests"] == []
+    assert "note" not in again and session_count(user.id) == 1
+    # Other sets or other notes: added too.
     assert services.log_lifts(user.id, {**NARRATED, "sets": sets(("Back Squat", 60, 5))}, "claude")["duplicate"] is False
     assert services.log_lifts(user.id, {**NARRATED, "notes": "second time"}, "claude")["duplicate"] is False
-    assert session_count(user.id) == 3
-    # Older than 10 minutes: logged again. The guard reads the entry's own created_at.
+    assert session_count(user.id) == 1 and set_count(user.id) == 7
+    # Older than 10 minutes: added the same way. No clock is read.
     age_all(LiftSession, user.id, 11)
-    assert services.log_lifts(user.id, NARRATED, "claude")["duplicate"] is False
-    assert session_count(user.id) == 4
+    assert services.log_lifts(user.id, NARRATED, "claude")["id"] == first["id"]
+    assert session_count(user.id) == 1 and set_count(user.id) == 9
 
 
-def test_the_guard_runs_for_the_web_too_and_across_both(user):
+def test_the_add_runs_for_the_web_too_and_across_both(user):
     first = services.log_lifts(user.id, NARRATED, "web")
     assert services.log_lifts(user.id, NARRATED, "web")["id"] == first["id"]
     from_claude = services.log_lifts(user.id, NARRATED, "claude")
-    assert from_claude["duplicate"] is True and from_claude["session"]["logged_by"] == "web"
-    assert session_count(user.id) == 1
+    assert from_claude["duplicate"] is False and from_claude["session"]["logged_by"] == "web"
+    assert session_count(user.id) == 1 and set_count(user.id) == 6
 
 
-def test_allow_repeat_logs_it_anyway(user):
+def test_allow_repeat_is_read_by_nothing(user):
     first = services.log_lifts(user.id, NARRATED, "claude")
     second = services.log_lifts(user.id, {**NARRATED, "allow_repeat": True}, "claude")
-    assert second["duplicate"] is False and second["id"] != first["id"]
-    with db.new_session() as s:
-        keys = list(s.scalars(select(LiftSession.dedupe_key).where(LiftSession.user_id == user.id)))
-    assert len(keys) == 2 and keys[0] == keys[1]
-    # A third copy, without allow_repeat, is a duplicate of the first.
-    assert services.log_lifts(user.id, NARRATED, "web")["id"] == first["id"]
+    assert second["duplicate"] is False and second["id"] == first["id"] and len(second["session"]["sets"]) == 4
+    # new_session is what starts another session.
+    third = services.log_lifts(user.id, {**NARRATED, "new_session": True}, "web")
+    assert third["id"] != first["id"] and len(third["session"]["sets"]) == 2 and session_count(user.id) == 2
 
 
-def test_the_order_of_lifts_does_not_matter_but_the_order_within_a_lift_does(user):
-    first = log(user, ("Back Squat", 60, 5), ("Bench Press", 40, 8), ("Back Squat", 60, 4))
-    assert log(user, ("Bench Press", 40, 8), ("Back Squat", 60, 5), ("Back Squat", 60, 4))["id"] == first["id"]
-    assert log(user, ("Back Squat", 60, 4), ("Back Squat", 60, 5), ("Bench Press", 40, 8))["duplicate"] is False
+def test_the_order_of_lifts_does_not_matter_to_the_key_but_the_order_within_a_lift_does():
+    from types import SimpleNamespace
+    from app.services.lifts import number_sets, session_key
+    by_name = {"Back Squat": SimpleNamespace(id=1), "Bench Press": SimpleNamespace(id=2)}
+
+    def key(*rows):
+        return session_key(datetime(2026, 11, 15).date(), "", number_sets(sets(*rows), by_name))
+
+    first = key(("Back Squat", 60, 5), ("Bench Press", 40, 8), ("Back Squat", 60, 4))
+    assert key(("Bench Press", 40, 8), ("Back Squat", 60, 5), ("Back Squat", 60, 4)) == first
+    assert key(("Back Squat", 60, 4), ("Back Squat", 60, 5), ("Bench Press", 40, 8)) != first
 
 
-def test_a_deleted_session_is_not_a_duplicate(user):
+def test_a_deleted_session_is_not_added_to(user):
     first = services.log_lifts(user.id, NARRATED, "claude")
     services.delete_entry(user.id, "lift_session", first["id"])
     again = services.log_lifts(user.id, NARRATED, "claude")
-    assert again["duplicate"] is False and again["id"] != first["id"]
+    assert again["duplicate"] is False and again["id"] != first["id"] and len(again["session"]["sets"]) == 2
 
 
-def test_a_date_is_part_of_the_entry(user):
+def test_a_date_picks_the_session(user):
     today = users.today_for(user)
     first = services.log_lifts(user.id, NARRATED, "claude")
     yesterday = services.log_lifts(user.id, {**NARRATED, "date": (today - timedelta(days=1)).isoformat()}, "claude")
     assert yesterday["duplicate"] is False and yesterday["id"] != first["id"]
+    assert len(yesterday["session"]["sets"]) == 2
 
 
 # ---------------------------------------------------------------- the lock and the query count
 
 def test_log_lifts_query_count(user):
-    log(user, ("Back Squat", 60, 5))  # some history
-    r, statements = count_queries(lambda: log(user, ("Deadlift", 80, 5), ("Deadlift", 80, 5)))
+    log(user, ("Back Squat", 60, 5), date=on(user, 1))  # some history, on another day: this call starts a session
+    r, statements = count_queries(lambda: log(user, ("Deadlift", 80, 5), ("Deadlift", 80, 5), new_session=False))
     assert "error" not in r and len(statements) <= 12, statements
 
 
@@ -428,18 +442,18 @@ def test_the_postgres_lock_is_select_for_update_on_the_user_row():
     assert sqlite_sql.startswith("UPDATE user SET claude_can"), sqlite_sql
 
 
-def test_two_retries_at_once_give_one_session(user, monkeypatch):
-    # Hold each call inside the guard for a moment, so without the lock both would pass it before
-    # either wrote. With the lock, the second waits for the first to commit, then sees it.
+def test_two_retries_at_once_give_one_session_holding_both(user, monkeypatch):
+    # Hold each call for a moment after it has looked for the date's session, so without the lock both
+    # would find none and start one each. With the lock, the second waits for the first to commit, then adds to it.
     from app.services import lifts
-    guard = lifts.find_duplicate
+    numbered = lifts.number_sets
 
-    def slow_guard(*args, **kwargs):
-        found = guard(*args, **kwargs)
+    def slow_numbers(*args, **kwargs):
+        found = numbered(*args, **kwargs)
         time.sleep(0.2)
         return found
 
-    monkeypatch.setattr(lifts, "find_duplicate", slow_guard)
+    monkeypatch.setattr(lifts, "number_sets", slow_numbers)
     barrier = threading.Barrier(2)
     results, failures = [], []
 
@@ -456,8 +470,10 @@ def test_two_retries_at_once_give_one_session(user, monkeypatch):
     for t in threads:
         t.join(timeout=20)
     assert not failures, failures
-    assert sorted(r["duplicate"] for r in results) == [False, True]
+    assert sorted(r["duplicate"] for r in results) == [False, False]
     assert len({r["id"] for r in results}) == 1 and session_count(user.id) == 1
+    last = max(results, key=lambda r: len(r["session"]["sets"]))["session"]["sets"]
+    assert [(x["set_number"], x["reps"]) for x in last] == [(1, 5), (2, 4), (3, 5), (4, 4)]
 
 
 def test_another_persons_sets_never_count_toward_new_bests(make_user):

@@ -596,24 +596,28 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="log_lifts",
         title="Log a lift session",
         description=(
-            "Records one lift session: its sets, and optional date and notes. Returns the saved session, any new "
-            "bests, and a one-line summary. If the same session was logged in the last 10 minutes, nothing is "
-            "written and duplicate is true."
+            "Records sets of lifting. Sets for a date go into that date's session: the first call starts it, and "
+            "each later call adds its sets to it. So send only the sets not yet logged. Returns the whole session, "
+            "any new bests, and a one-line summary. restore_entry with undo_edit takes back the last sets added."
         ),
         annotations=WRITE,
     )
     async def log_lifts(
-        sets: Annotated[list[SetIn], Field(description="Every set done, in order: 1 to 60 sets.")],
+        sets: Annotated[list[SetIn], Field(
+            description="The sets to log, in order: 1 to 60. Only sets not yet logged: earlier sets of that date are "
+                        "already in its session. A session holds at most 60 sets.")],
         date: Annotated[str | None, Field(
             description="The day it happened, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
         notes: Annotated[str | None, Field(
-            description="How it went, in the person's words. Up to 2,000 characters.")] = None,
-        allow_repeat: Annotated[bool, Field(
-            description="true logs it even when it matches a session from the last 10 minutes. Send it only "
-                        "when the person confirms it was a separate session.")] = False,
+            description="How it went, in the person's words. Up to 2,000 characters. On a later call for the same "
+                        "date, they are added to the session's notes.")] = None,
+        allow_repeat: Annotated[bool, Field(description="Not needed: every call adds its sets. Ignored.")] = False,
+        new_session: Annotated[bool, Field(
+            description="true starts a new session for that date, even when one is logged. Send it only when the "
+                        "person says this is a separate workout.")] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogLiftsResult]:
-        data = _sent(sets=[s.model_dump() for s in sets], date=date, notes=notes, allow_repeat=allow_repeat or None)
+        data = _sent(sets=[s.model_dump() for s in sets], date=date, notes=notes, new_session=new_session or None)
         return await wrapper.call("log_lifts", LogLiftsResult,
                                   lambda account: services.log_lifts(account, data, "claude"))
 

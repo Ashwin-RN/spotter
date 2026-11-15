@@ -475,9 +475,11 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
                services.list_exercises(category="legs"), services.get_progress(user.id),
                services.get_progress(user.id, "Deadlift"), services.get_progress(user.id, "Bak Squat")]
 
-    # Lifts: a first session, new bests, a duplicate, and each error cheap to cause.
+    # Lifts: a first session, new bests, an add to the day's session and its two refusals (gym-logging.md), and
+    # each error cheap to cause.
     results += [lifts(("Back Squat", 60, 5), date=day(user, -14)), lifts(("Back Squat", 70, 5), date=day(user, -7)),
-                lifts(("Back Squat", 80, 5)), lifts(("Back Squat", 80, 5)),
+                lifts(("Back Squat", 80, 5)), lifts(("Back Squat", 80, 5), notes="Easy"),
+                lifts(*[("Back Squat", 80, 5)] * 59), lifts(("Back Squat", 80, 5), notes="n" * 2000),
                 lifts(("Bak Squat", 60, 5)), lifts(("Back Squat", 501, 31)), lifts(("Back Squat", "x", 5.5)),
                 lifts(("Back Squat", 60, 5), date=day(user, 1)), lifts(("Back Squat", 60, 5), date="0001-01-01"),
                 lifts(("Back Squat", 60, 5), date="soon"), lifts(("Back Squat", 60, 5), notes="a\x00b"),

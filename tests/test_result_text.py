@@ -390,10 +390,18 @@ def test_the_other_paths(make_user):
         "claude"))
     assert "First Back Squat session: 60 kg is the mark to beat. First Pull-Up session." in first["summary"]
     same = say("no new bests", services.log_lifts(user.id, {"date": ago(1), "sets": [
-        {"exercise": "Back Squat", "weight_kg": 60, "reps": 12}], "allow_repeat": True}, "claude"))
+        {"exercise": "Back Squat", "weight_kg": 60, "reps": 12}], "new_session": True}, "claude"))
     assert same["summary"].endswith(" No new bests.")
-    say("lifts duplicate", services.log_lifts(user.id, {"date": ago(1), "sets": [
+    added = say("lifts add", services.log_lifts(user.id, {"date": ago(1), "notes": "Felt fine", "sets": [
+        {"exercise": "Back Squat", "weight_kg": 60, "reps": 12}]}, "claude"), "Felt fine")
+    assert added["summary"].startswith("Added Back Squat 1 × 12 at 60 kg to the session on Mon 9 Nov. It now has 2 "
+                                       "sets.")
+    # An add's two refusals (gym-logging.md "Errors"), alone and at once.
+    many = [{"exercise": "Back Squat", "weight_kg": 60, "reps": 12}] * 59
+    say("lifts add, too many sets", services.log_lifts(user.id, {"date": ago(1), "sets": many}, "claude"))
+    say("lifts add, notes too long", services.log_lifts(user.id, {"date": ago(1), "notes": "n" * 2000, "sets": [
         {"exercise": "Back Squat", "weight_kg": 60, "reps": 12}]}, "claude"))
+    say("lifts add, both", services.log_lifts(user.id, {"date": ago(1), "notes": "n" * 2000, "sets": many}, "claude"))
     # Food: a saved food, its duplicate, a USDA-off search, saved foods with one deleted.
     roti = say("save_food", services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti (big)",
                                                          "kcal_per_serving": 120.5, "grams_per_serving": 40},
@@ -435,7 +443,9 @@ def test_the_other_paths(make_user):
     every_read(seen, user.id)
     texts_seen = seen.texts()
     assert any(t.startswith("Replaced the ") and "weigh-in of 80.5 kg" in t for t in texts_seen)
-    assert any(t.startswith("Already logged: Back Squat 1 × 12 at 60 kg on ") for t in texts_seen)
+    assert any(t.startswith("Added Back Squat 1 × 12 at 60 kg to the session on ") for t in texts_seen)
+    assert "The session on Mon 9 Nov has 2 sets; 59 more would make 61, and a session holds at most 60." in texts_seen
+    assert "The session's notes would be 2,010 characters; the most is 2,000." in texts_seen
     assert "Weigh-in: nothing changed. Every value given is already stored." in texts_seen
     assert "Roti" in str(roti["summary"]) and ", 40 g a serving." in roti["summary"]
     assert "1 saved food, 1 deleted." in texts_seen

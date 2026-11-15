@@ -37,8 +37,9 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit])
   weigh-in's date or kg; a measurement's date or value. Every value passes the same check a log
   would, so an edit can never store what logging refuses. A new date that already holds a live
   weigh-in (or a measurement of that kind) is refused with day_taken; nothing is replaced. The
-  dedupe_key is worked out again, so a repeat of the new content is a duplicate. An imported row
-  (logged_by "import") keeps the key it was imported under, so the same import never writes it again.
+  dedupe_key is worked out again, so a repeat of the new content is a duplicate (a lift session has
+  no guard). An imported row (logged_by "import") keeps the key it was imported under, so the same
+  import never writes it again.
 - An edit keeps the row as it stood before it (common.keep_version, contract edit-history.md), and so does
   save_food on a food that exists. restore_entry with undo_edit puts the newest kept version back on a live
   entry: every stored column, a session's sets, a food entry's link, a cardio estimate. What it replaces is

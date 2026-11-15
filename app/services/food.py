@@ -16,7 +16,7 @@ log_food(user_id, data, by)
     - A meal slot not given comes from the person's clock (users.now_for): 04:00 to 11:00 breakfast,
       11:00 to 16:00 lunch, 16:00 to 22:00 dinner, 22:00 to 04:00 snack.
     - All or nothing: every entry is checked first, every problem comes back at once.
-    - The duplicate guard compares the whole set, as log_lifts does: the same date and the same
+    - The duplicate guard compares the whole set: the same date and the same
       entries within 10 minutes return the first set with duplicate true.
 
 save_food(user_id, data, by[, drawn_at])

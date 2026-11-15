@@ -85,9 +85,10 @@ def a_deleted_weigh_in(account: int) -> int:
 
 
 # One call of each write function that writes, as arguments. allow_repeat on the logs: the 10-minute guard is
-# off, so only the key stands between a second send and a second entry.
+# off, so only the key stands between a second send and a second entry. A lift has no guard: new_session makes
+# a second send a second session (gym-logging.md).
 CALLS = {
-    "log_lifts": lambda account: {"sets": squat(100), "allow_repeat": True},
+    "log_lifts": lambda account: {"sets": squat(100), "new_session": True},
     "log_bodyweight": lambda account: {"kg": 80.5, "allow_repeat": True},
     "log_measurement": lambda account: {"kind": "waist", "value": 84.5, "allow_repeat": True},
     "log_food": lambda account: {"entries": [{"description": "Dal", "kcal": 180}], "allow_repeat": True},
@@ -161,7 +162,7 @@ def test_the_key_row_holds_a_fingerprint_and_never_an_argument(writer):
 
 def test_two_sends_at_once_with_one_key_write_once_and_both_get_the_first_answer(writer):
     http, token, _ = writer
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     barrier = threading.Barrier(4)
     answers: list[dict] = []
 
@@ -182,7 +183,7 @@ def test_two_sends_at_once_with_one_key_write_once_and_both_get_the_first_answer
 
 def test_a_retry_that_arrives_while_the_first_send_is_still_writing_gets_the_first_answer(writer, monkeypatch):
     http, token, _ = writer
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     inside, go = threading.Event(), threading.Event()
     real = lifts.check_write_limit
     answers: dict[str, dict] = {}
@@ -214,7 +215,7 @@ def test_a_retry_that_arrives_before_the_first_answer_is_kept_waits_for_it_and_g
     """The first send has committed and not yet kept its answer: its row is there, its answer empty. The retry
     is stopped under the lock, reads the row again every 100 ms, and answers with the first answer once it is in."""
     http, token, account = writer
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     first = call(http, token, "log_lifts", arguments)
     text = first["content"][0]["text"]
     with db.session_scope() as s:
@@ -236,7 +237,7 @@ def test_a_send_stopped_by_the_key_of_a_first_send_that_is_then_refused_runs_the
     freed. A second send of the same key is stopped under the lock by that row. Once the row has gone it runs the
     work once more, so it gets its own answer, never the first one's refusal and never already_done."""
     http, token, _ = writer
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     inside, go, stopped = threading.Event(), threading.Event(), threading.Event()
     real_limit, real_waited, real_settle = lifts.check_write_limit, common._waited, common.settle
     limits: list[int] = []
@@ -375,7 +376,7 @@ def test_one_person_s_key_never_reaches_another_person_s_row(http):
 
 def test_a_kept_key_whose_answer_was_not_kept_is_already_done_and_writes_nothing(writer, monkeypatch):
     http, token, _ = writer
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     ok(http, token, "log_lifts", arguments)
     with db.session_scope() as s:  # as when the process stopped between the write and keeping its answer
         s.execute(update(WriteKey).values(answer=None))
@@ -467,7 +468,7 @@ def test_a_send_stopped_twice_by_a_row_that_goes_each_time_is_already_done_and_n
 def test_a_lost_answer_over_60_seconds_old_is_already_done_in_one_look_with_no_wait_and_no_work(
         writer, statements, monkeypatch):
     http, token, _ = writer
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     ok(http, token, "log_lifts", arguments)
     lose_the_answer(seconds=61)
     slept, received = no_sleep(monkeypatch), spy_on_services(monkeypatch)
@@ -527,7 +528,7 @@ def test_a_lost_answer_over_60_seconds_old_asks_usda_nothing(make_client, monkey
 def test_a_row_59_seconds_old_with_no_answer_is_still_waited_for_and_gets_the_answer_when_it_arrives(
         writer, monkeypatch):
     http, token, account = writer
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     first = call(http, token, "log_lifts", arguments)
     text = first["content"][0]["text"]
     now = db.utcnow()
@@ -550,7 +551,7 @@ def test_130_sends_of_a_key_whose_answer_was_lost_hold_no_thread_and_reach_no_lo
     2 seconds. The write limit still never refuses one, and each one's row still counts toward it."""
     http, token, _ = writer
     monkeypatch.setattr(calllog, "_swept_keys", db.utcnow())  # the sweep is not a send: none in this test
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     ok(http, token, "log_lifts", arguments)
     lose_the_answer(seconds=61)
     slept = no_sleep(monkeypatch)
@@ -575,7 +576,7 @@ def test_an_answer_too_large_to_keep_is_already_done_on_the_next_send(writer, mo
     http, token, _ = writer
     monkeypatch.setattr(common, "ANSWER_MAX", 10)
     monkeypatch.setattr(common, "ANSWER_WAIT", 0)
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     assert ok(http, token, "log_lifts", arguments)["duplicate"] is False
     assert [k.answer for k in keys()] == [None]
     assert failed(http, token, "log_lifts", arguments)["error"] == "already_done" and count(LiftSession) == 1
@@ -613,7 +614,7 @@ def test_a_key_that_cannot_be_settled_is_logged_by_type_and_swallowed(make_user,
 def test_an_expired_key_is_never_honoured_swept_or_not(writer, monkeypatch):
     http, token, _ = writer
     monkeypatch.setattr(calllog, "_swept_keys", db.utcnow())  # no sweep in this test
-    arguments = {"sets": squat(100), "allow_repeat": True, "key": K}
+    arguments = {"sets": squat(100), "new_session": True, "key": K}
     first = ok(http, token, "log_lifts", arguments)
     age(WriteKey, keys()[0].id, hours=23, minutes=59)
     assert ok(http, token, "log_lifts", arguments) == first and count(LiftSession) == 1  # still kept

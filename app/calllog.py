@@ -65,8 +65,8 @@ KNOWN_NAMES = frozenset({
     "date", "days", "description", "distance_km", "distance_unit", "doing", "dry_run", "email", "entries", "entry_id",
     "exercise", "expected", "failed_only", "goal_id", "grams_per_serving", "happened", "hours", "ids", "include_closed",
     "incline_pct", "kcal", "kcal_per_serving", "key", "kg", "kind", "length_unit", "limit", "machine_kcal", "meal",
-    "measurement_kind", "minutes", "name", "no_account", "notes", "query", "request_id", "rows", "serving_label",
-    "sets", "speed_kmh", "start_value", "status", "target_cardio_minutes_per_week", "target_date",
+    "measurement_kind", "minutes", "name", "new_session", "no_account", "notes", "query", "request_id", "rows",
+    "serving_label", "sets", "speed_kmh", "start_value", "status", "target_cardio_minutes_per_week", "target_date",
     "target_sessions_per_week", "target_value", "text", "time_zone", "topic", "undo_edit", "value", "weight_unit",
 }) | {name for model in (SetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn) for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.

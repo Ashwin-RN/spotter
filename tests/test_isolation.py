@@ -175,12 +175,14 @@ def test_bs_open_goals_never_appear_in_as_warnings(world):
     assert "error" not in mine and mine["warnings"] == []  # B's open Deadlift goal is not A's
 
 
-def test_the_same_session_as_b_is_not_a_duplicate_for_a(world):
+def test_a_call_of_as_never_adds_to_bs_session_of_the_same_date(world):
     a, _, ids = world
+    before = snapshot(LiftSession, ids["lift_session"])
     same = services.log_lifts(a.id, {"notes": "B only", "sets": [
         {"exercise": "Deadlift", "weight_kg": 140, "reps": 5},
         {"exercise": "Deadlift", "weight_kg": 140, "reps": 5}]}, "claude")
     assert same["duplicate"] is False and same["id"] != ids["lift_session"] and same["new_bests"] == []
+    assert len(same["session"]["sets"]) == 2 and snapshot(LiftSession, ids["lift_session"]) == before
 
 
 def test_a_cannot_reach_bs_sets(world):
@@ -368,7 +370,7 @@ def test_the_web_only_reads_never_show_bs_rows(world):
     """get_days, get_cardio and lifts.history's reps_only read only the person's own rows (stage 6)."""
     from app.services import lifts
     a, b, _ = world
-    services.log_lifts(b.id, {"sets": [{"exercise": "Pull-Up", "weight_kg": 0, "reps": 9}]}, "web")
+    services.log_lifts(b.id, {"sets": [{"exercise": "Pull-Up", "weight_kg": 0, "reps": 9}], "new_session": True}, "web")
     mine = services.get_days(a.id)
     counts = (mine["lift_sessions_28d"], mine["lift_days_28d"], mine["cardio_days_28d"])
     assert mine["weight"] is None and counts == (0, 0, 0)

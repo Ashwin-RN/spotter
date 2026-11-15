@@ -240,11 +240,14 @@ def test_each_kind_is_written_with_the_import_mark_and_its_own_kinds_key(user):
         assert session.dedupe_key == lifts.session_key(session.date, session.notes, keyed)
 
 
-def test_a_hand_log_of_the_same_thing_soon_after_is_a_duplicate_as_now(user):
+def test_a_hand_log_of_the_same_thing_soon_after_is_a_duplicate_as_now_and_a_lift_adds_to_the_imported_session(user):
     imp(user, weigh(TODAY.isoformat(), 80.5), lift(TODAY.isoformat(), ("Deadlift", 100, 5)))
     assert services.log_bodyweight(user.id, {"kg": 80.5}, "claude")["duplicate"] is True
-    assert services.log_lifts(user.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 100, "reps": 5}]},
-                              "claude")["duplicate"] is True
+    [imported] = rows_of(LiftSession, user.id)
+    added = services.log_lifts(user.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 100, "reps": 5}]}, "claude")
+    assert added["duplicate"] is False and added["id"] == imported.id and len(added["session"]["sets"]) == 2
+    [after] = rows_of(LiftSession, user.id)
+    assert after.dedupe_key == imported.dedupe_key  # an imported session keeps its key (gym-logging.md 5, 12)
 
 
 @pytest.mark.parametrize("kind", list(KINDS))

@@ -27,7 +27,8 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "decimals_and_dashes", "import_preview_first", "import_again", "import_unknown_lift", "undo_edit",
                   "feedback_sent", "feedback_offered",
                   "hi_there_first_log", "hi_there_not_again",
-                  "delete_regretted"}  # switch decision 21: delete_explicit became delete_asks_first
+                  "delete_regretted",  # switch decision 21: delete_explicit became delete_asks_first
+                  "lift_one_sentence", "lift_set_by_set", "lift_added_later"}  # gym logging, decision 17
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
           "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries",
@@ -42,8 +43,8 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert len(cases) == 26  # was 21: feedback adds feedback_sent and feedback_offered, the hi there page
-    # adds hi_there_first_log and hi_there_not_again, and the switch delete_regretted
+    assert len(cases) == 29  # was 21: feedback adds feedback_sent and feedback_offered, the hi there page
+    # adds hi_there_first_log and hi_there_not_again, the switch delete_regretted, and gym logging three
     assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)
@@ -849,6 +850,104 @@ def test_the_import_again_seed_writes_the_five_rows_as_an_import(app_settings, m
     preview = services.import_entries(empty_id, {"rows": case["seed"][0]["data"]["rows"], "weight_unit": "lb"}, "claude")
     assert preview["dry_run"] is True and preview["row_outcomes"]["written"] == 5
     assert judge.judge_db(_import_cases()["import_preview_first"]["db"], person_rows(empty_id)) == []
+
+
+# ---------------------------------------------------------------- gym logging: the three lift cases (decision 17)
+
+def _lift_server(app_settings) -> LocalServer:
+    server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
+    server.settings = app_settings
+    return server
+
+
+def _lift_case(server: LocalServer, case_id: str) -> tuple[dict, int]:
+    """The case, resolved for a fresh person seeded as the case says, through LocalServer.new_person: (case, id)."""
+    case = {c["id"]: c for c in judge.load_cases()}[case_id]
+    zone = "Asia/Kolkata"
+    user_id, _, seeded = server.new_person(zone, case.get("seed") or [])
+    return judge.resolve(case, {**dates_for(zone), **{f"seed.{k}": v for k, v in seeded.items()}}), user_id
+
+
+def _lifted(user_id: int, rows: list[tuple], **extra) -> dict:
+    """One log_lifts call through the service, as the recorder would hold it."""
+    sent = {"sets": [{"exercise": e, "weight_kg": w, "reps": r} for e, w, r in rows], **extra}
+    return call("log_lifts", sent, is_error="error" in services.log_lifts(user_id, sent, "claude"))
+
+
+SQUATS = [("Back Squat", 100, 5)] * 3
+BENCHES = [("Bench Press", 80, 8), ("Bench Press", 80, 8), ("Bench Press", 80, 6)]
+ROWS = [("Barbell Row", 50, 10)] * 3
+
+
+def test_the_lift_one_sentence_case_judges_as_designed(app_settings):
+    server = _lift_server(app_settings)
+    case, person = _lift_case(server, "lift_one_sentence")
+    calls = [_lifted(person, SQUATS + BENCHES)]
+    assert person_rows(person)["lift_session"][0]["set_count"] == 6
+    assert judge.judge(case, calls, "Logged.", person_rows(person)) == []
+    _, five = _lift_case(server, "lift_one_sentence")  # one Bench Press 80 x 8 short: set_count 5
+    short = [_lifted(five, SQUATS + BENCHES[1:])]
+    assert judge.judge_calls(case["expect"], short, "Logged.") == [] and judge.judge_db(case["db"], person_rows(five))
+    _, two = _lift_case(server, "lift_one_sentence")  # the same six sets, in two sessions
+    split = [_lifted(two, SQUATS), _lifted(two, BENCHES, new_session=True)]
+    assert judge.judge_db(case["db"], person_rows(two)) and judge.judge(case, split, "Logged.", person_rows(two))
+
+
+def test_the_lift_set_by_set_case_judges_as_designed(app_settings):
+    server = _lift_server(app_settings)
+    case, person = _lift_case(server, "lift_set_by_set")
+    [seeded] = person_rows(person)["lift_session"]
+    assert (seeded["set_count"], seeded["logged_by"]) == (1, "web")
+    calls = [_lifted(person, [("Bench Press", 80, 5)])]
+    assert judge.judge(case, calls, "Added.", person_rows(person)) == []
+    _, second = _lift_case(server, "lift_set_by_set")  # new_session true: a second session
+    apart = [_lifted(second, [("Bench Press", 80, 5)], new_session=True)]
+    assert judge.judge_calls(case["expect"], apart, "Logged.") == ["log_lifts sent new_session = true"]
+    assert judge.judge_db(case["db"], person_rows(second))
+    _, rows = _lift_case(server, "lift_set_by_set")  # two rows, though the run's one call adds
+    services.log_lifts(rows, {"sets": [{"exercise": "Back Squat", "weight_kg": 60, "reps": 5}], "new_session": True},
+                       "web")
+    assert judge.judge_db(case["db"], person_rows(rows)) and judge.judge(
+        case, [_lifted(rows, [("Bench Press", 80, 5)])], "Added.", person_rows(rows))
+    _, refused = _lift_case(server, "lift_set_by_set")  # a refused call: nothing added
+    no = [_lifted(refused, [("Bench Press", 80, 31)])]
+    assert no[0]["is_error"] is True and judge.judge(case, no, "Sorry.", person_rows(refused))
+    assert person_rows(refused)["lift_session"][0]["set_count"] == 1
+
+
+def test_the_lift_added_later_case_judges_as_designed(app_settings):
+    server = _lift_server(app_settings)
+    case, person = _lift_case(server, "lift_added_later")
+    assert person_rows(person)["lift_session"][0]["set_count"] == 3
+    assert judge.judge(case, [_lifted(person, ROWS)], "Added.", person_rows(person)) == []
+    _, again = _lift_case(server, "lift_added_later")  # the squats sent again beside the rows
+    both = [_lifted(again, SQUATS[:1] + ROWS)]
+    assert judge.judge_calls(case["expect"], both, "Added.") == ['log_lifts sent sets.*.exercise = "Back Squat"']
+    assert judge.judge(case, both, "Added.", person_rows(again))
+    _, apart = _lift_case(server, "lift_added_later")  # new_session true
+    assert judge.judge(case, [_lifted(apart, ROWS, new_session=True)], "Logged.", person_rows(apart))
+
+
+def test_person_rows_gives_each_session_its_own_set_count_and_never_another_person_s(make_user):
+    mine, theirs = make_user(), make_user()
+    three = services.log_lifts(mine.id, {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}] * 3},
+                               "claude")["id"]
+    one = services.log_lifts(mine.id, {"new_session": True,
+                                       "sets": [{"exercise": "Deadlift", "weight_kg": 120, "reps": 3}]}, "claude")["id"]
+    gone = services.log_lifts(mine.id, {"new_session": True, "sets": [
+        {"exercise": "Bench Press", "weight_kg": 60, "reps": 8}] * 2}, "claude")["id"]
+    services.delete_entry(mine.id, "lift_session", gone)
+    services.log_lifts(theirs.id, {"sets": [{"exercise": "Back Squat", "weight_kg": 50, "reps": 5}] * 7}, "claude")
+    from app.models import LiftSession
+    with db.session_scope() as session:  # a session with no set reads 0
+        empty = LiftSession(user_id=mine.id, date=dt.date(2026, 11, 1), notes="", logged_by="web", dedupe_key="e" * 64)
+        session.add(empty)
+        session.flush()
+        empty_id = empty.id
+    counts = {r["id"]: (r["set_count"], r["deleted_at"] is None) for r in person_rows(mine.id)["lift_session"]}
+    assert counts == {three: (3, True), one: (1, True), gone: (2, False), empty_id: (0, True)}
+    assert [r["set_count"] for r in person_rows(theirs.id)["lift_session"]] == [7]
+    assert "set_count" in judge._rows_text([{"set_count": 6}])
 
 
 # ---------------------------------------------------------------- the CLI's output

@@ -194,8 +194,8 @@ def clock(monkeypatch, when):
     monkeypatch.setattr(db, "utcnow", lambda: when)
 
 
-def squat(user, kg, on=None):
-    data = {"sets": [{"exercise": "Back Squat", "weight_kg": kg, "reps": 5}]}
+def squat(user, kg, on=None, **extra):
+    data = {"sets": [{"exercise": "Back Squat", "weight_kg": kg, "reps": 5}], **extra}
     if on:
         data["date"] = on
     return services.log_lifts(user.id, data, "claude")
@@ -225,7 +225,7 @@ def test_a_session_after_a_later_dated_one_is_compared_with_it(user, monkeypatch
     assert all(b["previous"] < epley(120, 5) or b["kind"] == "weight" for b in one["bests"])
     assert [b["value"] for b in one["bests"]][-2:] == [epley(120, 5), 120]  # the 120 was the last new best
     assert one["last_trained"] == "2026-11-09"                         # the latest in the one order
-    nxt = squat(user, 125)                                             # the next best is measured from the 120
+    nxt = squat(user, 125, new_session=True)                           # the next best is measured from the 120
     assert {(b["kind"], b["previous"]) for b in nxt["new_bests"]} == {("estimated_max", epley(120, 5)),
                                                                        ("weight", 120)}
     assert heavy["id"] < light["id"] < nxt["id"]
