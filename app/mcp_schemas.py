@@ -4,7 +4,8 @@ Each result model is published as that function's result schema, and the MCP lib
 successful result against it. The top-level fields match the service's keys exactly, and a top-level
 model forbids anything else, so a field a service adds without a schema entry fails a test instead
 of passing silently. Fields that appear only sometimes default to None and are left out of the result
-when absent. Every field has a description: that text is what the calling model reads.
+when absent. Every field has a description: that text is what the calling model reads. whoami's setup
+names the setup steps on offer (account.setup_steps of the server's functions), and a test holds the two equal.
 
 An error result is not checked against these models. It is {error, message, fix}, sometimes with
 `errors` (every problem at once) or `closest` (the nearest exercise names).
@@ -252,6 +253,11 @@ class WhoamiLinks(BaseModel):
                     "Spotter can do.")
 
 
+class Setup(BaseModel):
+    missing: list[str] = Field(description="The setup steps not done yet, in the order to ask them.")
+    how: str = Field(description="When to bring setup up, and how to ask.")
+
+
 class SignIn(BaseModel):
     client_id: str = Field(description="The app the person signed in through.")
     scopes: list[str] = Field(description="The scopes the sign-in carries.")
@@ -268,7 +274,7 @@ class WhoamiResult(BaseModel):
     name: str | None = Field(description="Their name, or null when the provider has not said.")
     time_zone: str | None = Field(description="Their time zone (an IANA name such as Asia/Kolkata), or null.")
     today: str = Field(description="Today's date for the person, YYYY-MM-DD. Dates you leave out mean this day.")
-    targets: Targets = Field(description="The person's targets. Not used by any function yet.")
+    targets: Targets = Field(description="The person's targets.")
     claude_can: str = Field(
         description="What the person allows Claude to do. log_delete (the default): everything, delete_entry too. "
                     "log: everything except delete_entry. Only the person can change it; Claude cannot.")
@@ -283,6 +289,12 @@ class WhoamiResult(BaseModel):
         default=None,
         description="Present only while nothing is logged on the account: no entry, no saved food, no open goal. "
                     "Give the person links.hi_there once, last in your reply.")
+    setup: Setup | None = Field(
+        default=None,
+        description="Present while a setup step other than import is not done yet. missing: those steps, in the "
+                    "order to ask them: "
+                    "time_zone, weigh_in, lift_session, goal, calorie_target, sessions_target, cardio_target, "
+                    "saved_food, import. how: when and how to ask.")
 
 
 # ---------------------------------------------------------------- list_exercises

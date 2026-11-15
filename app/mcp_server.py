@@ -568,11 +568,13 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             "Call it first. If it carries time_zone_note, set the time zone with update_settings before logging "
             "anything: use the person's zone if you know it, otherwise ask once which city they are in. "
             "If it carries new_account_note, do what it says."
+            " If it carries setup, walk setup.missing as setup.how says."
         ),
         annotations=READ_ONLY,
     )
     async def whoami() -> Annotated[CallToolResult, WhoamiResult]:
-        return await wrapper.call("whoami", WhoamiResult, services.whoami, add=_sign_in)
+        return await wrapper.call("whoami", WhoamiResult, lambda account_id: services.whoami(account_id, NEEDS),
+                                  add=_sign_in)
 
     @server.tool(
         name="list_exercises",

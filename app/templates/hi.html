@@ -1,28 +1,60 @@
 {% extends "base.html" %}
 {% block title %}Hi there · Spotter{% endblock %}
 {% block main %}
-{# The hi there page (contract hi-there.md): the same words for everyone. The first lines are the landing's
-   (web.LANDING_LINES), the sentences to say are its list (web.SAY_FIRST, web.SAY_EVERYDAY), and every count and list
-   of What Spotter keeps comes from web.HI_KEEPS. Nothing here is a form or a step done on the page. #}
+{# The hi there page (contracts hi-there.md and first-day.md): the same words for everyone, in six cards. The first
+   line is the landing's (web.LANDING_LINES), every saying is a constant of web.py (SETUP_SAY, FIRST_DAY, SAY_GROUPS,
+   the landing's own SAY_FIRST and SAY_EVERYDAY among them), the first day's items are the setup steps on offer
+   (account.setup_steps), every number of What Spotter works out comes from web.HI_WORKS, every count and list of
+   What Spotter keeps from web.HI_KEEPS, and Your say is the landing's web.YOUR_DATA. Nothing here is a form or a
+   step done on the page. #}
 <div class="page-head">
   <h1>Hi there</h1>
-  {%- for line in landing_lines %}
-  <p class="lede">{{ line }}</p>
-  {%- endfor %}
+  <p class="lede">{{ landing_line }}</p>
+  <p class="lede">To start, say this to your assistant: <q>{{ setup_say }}</q></p>
 </div>
 
+<section class="card" aria-labelledby="hi-first-day">
+  <h2 id="hi-first-day">Your first day</h2>
+  <p>Your assistant asks one thing at a time, and saves each answer as you give it.</p>
+  <p>Skip any step. Say it again another day, and it asks only for what is still missing.</p>
+  <ol class="steps">
+    {%- for item in first_day %}
+    <li>
+      <p class="step-title">{{ item.title }}</p>
+      <p><q>{{ item.say }}</q></p>
+      <p class="muted">{% for piece in item.does %}{% if loop.cycle(false, true) %} <q>{{ piece }}</q> {% else %}{{ piece }}{% endif %}{% endfor %}</p>
+    </li>
+    {%- endfor %}
+  </ol>
+  <p class="small">If your assistant does not know your time zone, it asks once which city you are in.</p>
+</section>
+
 <section class="card" aria-labelledby="hi-say">
-  <h2 id="hi-say">Say it to your assistant</h2>
+  <h2 id="hi-say">What you can say</h2>
+  {%- for label, rows in say_groups %}
+  <p class="list-label">{{ label }}</p>
   <ul class="say">
-    {%- for said, does in say_first %}
-    <li><q>{{ said }}</q> <span class="does">{{ does }}</span></li>
+    {%- for said, does in rows %}
+    <li><q>{{ said }}</q>{% if does %} <span class="does">{{ does }}</span>{% endif %}</li>
     {%- endfor %}
   </ul>
-  <p class="list-label">Everyday logging</p>
+  {%- endfor %}
+</section>
+
+<section class="card" aria-labelledby="hi-works">
+  <h2 id="hi-works">What Spotter works out</h2>
+  <p>Spotter works out every number in code, from what you logged.</p>
+  <p>Your assistant is told to quote them. The one number it may estimate is a food's calories, and it must say so.</p>
   <ul class="plain-list">
-    {%- for line in say_everyday %}
-    <li>{{ line }}</li>
-    {%- endfor %}
+    <li><b>Bests.</b> Each weighted set of {{ works.epley_min|show("count") }} to {{ works.epley_max|show("count") }} reps gives an estimated one-rep max, by the Epley formula. A new best beats every earlier set of that lift, by that estimate or by weight. Your lift now is your best session of the last {{ works.recent_days|show("count") }} days, or your latest before that. One light day does not pull it down.</li>
+    <li><b>Body weight now.</b> The average of your weigh-ins in the last {{ works.average_days|show("count") }} days, or your latest when that week has none.</li>
+    <li><b>The weight trend.</b> A smoothed line through every weigh-in: each one moves it a tenth of the way. Its rate a week needs a weigh-in in the last {{ works.rate_latest_days|show("count") }} days and one from {{ works.rate_from|show("count") }} to {{ works.rate_to|show("count") }} days ago.</li>
+    <li><b>Goal pace.</b> Each goal shows the pace a week it needs to make its date, and your pace so far. Your pace so far is a straight line fitted through the last {{ works.fit_weeks|show("count") }} weeks, from at least {{ works.fit_points|show("count") }} points on {{ works.fit_days|show("count") }} days.</li>
+    <li><b>Where you land.</b> That line gives the day you reach the target at this pace. It says on track when the line reaches the target by your date, and behind when it does not. There is no day when the line is flat, points away, or gets there more than {{ works.max_years|show("count") }} years out.</li>
+    <li><b>The plan line.</b> A straight line from your start to your target, by their dates. It says how far ahead of it or behind it you are today.</li>
+    <li><b>Calories.</b> Your average a day over the last {{ works.week_days|show("count") }} and {{ works.window_days|show("count") }} days, counting only days with food logged. It says how much of that is estimates.</li>
+    <li><b>Cardio calories.</b> From the activity's MET value, the minutes and your own body weight now. With no weigh-in there is no estimate.</li>
+    <li><b>Maintenance.</b> About what you eat to stay the same weight: your food, less your weight change, over {{ works.maintenance_days|show("count") }} days. It needs food on {{ works.maintenance_logged|show("count") }} of those days, a weigh-in in the last {{ works.maintenance_latest|show("count") }} days and one from {{ works.maintenance_from|show("count") }} to {{ works.maintenance_to|show("count") }} days ago. It is an estimate, and it never changes your target.</li>
   </ul>
 </section>
 
@@ -34,16 +66,28 @@
     <li><b>Body.</b> Weigh-ins, and {{ keeps.measurements|show("count") }} measurements: {{ keeps.measurement_words }}.</li>
     <li><b>Food.</b> What you ate, by meal: {{ keeps.meals }}.</li>
     <li><b>Goals.</b> {{ keeps.goal_kinds|show("count") }} kinds: {{ keeps.goal_words }}.</li>
+    <li><b>Targets.</b> Calories a day, lift sessions a week and cardio minutes a week.</li>
+    {%- if routines %}
+    <li><b>Routines.</b> Your fixed workouts by name, each with its lifts and usual sets.</li>
+    {%- endif %}
+  </ul>
+  <p class="list-label">What it does not do</p>
+  <ul class="plain-list">
+    <li>It gives no medical advice, and knows nothing of injury, pain, form or recovery.</li>
+    <li>It logs weights in kg and distances in km. An import from another app converts pounds and miles.</li>
+    <li>It counts calories, not protein, carbs or fat.</li>
+    <li>It knows lifts by its own list of {{ keeps.lifts|show("count") }} names. A name not on the list is refused, never guessed.</li>
+    <li>It sends no reminders and no email, and does not sync with a phone or a watch.</li>
   </ul>
 </section>
 
-<section class="card" aria-labelledby="hi-history">
-  <h2 id="hi-history">Bring your history over</h2>
-  <p>Your assistant can bring your history over from another app.</p>
-  <p>Give it the app's export file and ask.</p>
-  <p>It shows a preview first, and the preview writes nothing.</p>
-  <p>Your assistant is told to write only when you say yes.</p>
-  <p>It takes weigh-ins, measurements, lift sessions, food and cardio.</p>
+<section class="card" aria-labelledby="hi-yours">
+  <h2 id="hi-yours">Your say</h2>
+  <ul class="plain-list">
+    {%- for bold, line in your_data %}
+    <li><b>{{ bold }}</b> {{ line }}</li>
+    {%- endfor %}
+  </ul>
 </section>
 
 <section class="card" aria-labelledby="hi-more">
@@ -56,9 +100,6 @@
   {% elif web_ready %}
   <p>Sign in to see what you logged.</p>
   <p><a class="plain-link" href="/sign-in">Sign in</a></p>
-  {% endif %}
-  {% if feedback %}
-  <p>Something wrong or confusing? Tell your assistant to send feedback. It reaches the person who runs Spotter.</p>
   {% endif %}
 </section>
 {% endblock %}

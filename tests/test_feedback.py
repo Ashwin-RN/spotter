@@ -65,7 +65,7 @@ READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": T
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 # What each function published before this work: the SHA-256 of the tool as compact JSON with sorted keys.
 PUBLISHED = {
-    "whoami": "559251413fd3472e201f2b7185b2134ed2c959239709e20281e98025a7b4c466",  # switch: claude_can's two values
+    "whoami": "2afb942c1c4d04691599987f4df754cfc34e7ff424b1df1f43bbd6a813cb4ca9",  # first day: setup
     "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
     "log_lifts": "9e95e0445afc3a57390021fcc57a0c9774146be42ff37d4447c51b1ac995fe18",  # gym logging: adds to a day
     "log_bodyweight": "f6d2e5b9ad195b9256152099a072142fdd926c7e176e35fc561e036ff66654b7",
@@ -973,7 +973,7 @@ def test_the_instructions_do_not_change_by_a_character():  # but for the switch'
 def test_the_two_cases_load_and_judge_as_designed(app_settings, make_user):
     cases = {c["id"]: c for c in judge.load_cases()}
     sent, offered = cases["feedback_sent"], cases["feedback_offered"]
-    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 29  # gym logging: was 26
+    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 32  # gym logging and first day: was 26
     assert "switch" not in sent and "switch" not in offered  # the default, log_delete since the switch
     uid = make_user().id
     rows_now = person_rows(uid)

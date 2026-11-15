@@ -131,10 +131,9 @@
 <section class="card your-data" aria-labelledby="data-title">
   <h2 id="data-title">Your data</h2>
   <ul class="plain-list">
-    <li><b>You decide what your assistant may do.</b> A switch on Settings has two settings: "{{ switch[0] }}" and "{{ switch[1] }}". It starts at "{{ switch_start }}".</li>
-    <li><b>Export.</b> Settings gives you everything you have logged, as a zip of CSV files.</li>
-    <li><b>Undo.</b> Right after a delete, Undo brings the entry back. Your assistant can restore an entry it deleted.</li>
-    <li><b>Delete your account.</b> On Settings. It removes every entry and your sign-in, and it cannot be undone.</li>
+    {%- for bold, line in your_data %}
+    <li><b>{{ bold }}</b> {{ line }}</li>
+    {%- endfor %}
   </ul>
 </section>
 

@@ -935,6 +935,8 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
         return (account, arguments["kind"], arguments["entry_id"], "claude"), flags
     if name == "send_feedback":  # no by: a note comes only through MCP (feedback.md R3)
         return (account, arguments), {}
+    if name == "whoami":  # what is offered, for its setup steps (first-day.md R9)
+        return (account, mcp_server.NEEDS), {}
     return (account,), {}
 
 

@@ -139,7 +139,7 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 
 ## What it cannot tell you
 
-- It knows nothing about injury, pain, sleep, recovery, form or health.
+- It knows nothing about injury, pain, recovery, form or health.
 - It gives no medical advice. A trend that looks bad is a number, not a diagnosis.
 - It does not know why a session was light, missed or skipped.
 
@@ -374,6 +374,12 @@ confusing, an idea.
 - The link is a short read: what to say, what Spotter keeps and how to bring history over. It has nothing to fill in.
 - The note goes after the first entry, saved food or open goal. It comes back if the account is emptied again.
 - `links.hi_there` is always there. Give it when the person asks what Spotter can do.
+
+## Setting up
+
+- While a setup step other than the import is not done, `whoami` carries `setup`: `missing`, the steps not done yet in order, and `how`.
+- A step is done when the account holds it: a time zone, a live weigh-in, a live lift session, an open goal, each target set, a live saved food, a live imported row.
+- Claude walks the steps only when the person asks to set up, or once on a new account. One question at a time. Any step can be skipped, and comes back the next time the person asks.
 
 ## What Claude may do
 

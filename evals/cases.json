@@ -301,6 +301,32 @@
             "rows": [{"id": "{{seed.earlier}}", "kg": 80.9}, {"kg": 80.4, "date": "{{today}}"}]}]
   },
   {
+    "id": "setup_asks_first",
+    "say": "Hi Spotter, help me set up",
+    "expect": {
+      "function": "whoami",
+      "reply_asks": true,
+      "reply_has": ["weigh"],
+      "no_call": ["log_bodyweight", "log_lifts", "set_goal", "update_settings", "save_food", "log_food",
+                  "log_cardio", "log_measurement", "import_entries"]
+    },
+    "db": [{"table": "bodyweight", "count": 0}, {"table": "goal", "count": 0}]
+  },
+  {
+    "id": "setup_picks_up",
+    "say": "Help me finish setting up Spotter",
+    "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}},
+             {"as": "goal", "service": "set_goal",
+              "data": {"kind": "bodyweight", "target_value": 77, "target_date": "{{next_month_end:3}}"}}],
+    "expect": {
+      "function": "whoami",
+      "reply_asks": true,
+      "reply_has": ["lift"],
+      "no_call": ["log_bodyweight", "set_goal", "log_lifts", "update_settings", "save_food", "import_entries"]
+    },
+    "db": [{"table": "bodyweight", "count": 1}, {"table": "goal", "count": 1}]
+  },
+  {
     "id": "delete_regretted",
     "say": "You deleted a weigh-in I wanted to keep. I never asked for that, and I do not want it to happen again.",
     "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 80}}],
@@ -349,5 +375,19 @@
       "inputs_forbid": {"sets.*.exercise": "Back Squat", "new_session": true}
     },
     "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.squat}}", "set_count": 6}}]
+  },
+  {
+    "id": "setup_stays_quiet",
+    "say": "I weighed 80.4 kg this morning",
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}}],
+    "expect": {
+      "function": "log_bodyweight",
+      "inputs_include": {"kg": 80.4},
+      "no_call": ["log_lifts", "set_goal", "update_settings", "save_food", "import_entries"],
+      "reply_lacks": ["?"],
+      "reply_lacks_pattern": ["\\bset(ting)?[ -]?up\\b"]
+    },
+    "db": [{"table": "bodyweight", "count": 2,
+            "rows": [{"id": "{{seed.earlier}}", "kg": 80.9}, {"kg": 80.4, "date": "{{today}}"}]}]
   }
 ]

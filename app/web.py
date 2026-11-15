@@ -3,9 +3,11 @@ and Settings.
 
     /                              the landing: what Spotter is, an example exchange and its picture, what you
                                    need, the MCP address and how to connect it
-    /hi                            the hi there page whoami hands a new person's assistant: what to say,
-                                   what Spotter keeps and how to bring history over. The same words for
-                                   everyone, signed in or out, with no page limit (contract hi-there.md)
+    /hi                            the hi there page whoami hands a new person's assistant: how to set up,
+                                   in setup's own order, what to say, what Spotter works out, what it keeps
+                                   and does not do, and what stays the person's own. The same words for
+                                   everyone, signed in or out, with no page limit (contracts hi-there.md
+                                   and first-day.md)
     /sign-in                       sends the person to the provider (signed in: on to /today)
     /auth/callback                 checks `state`, finishes the sign-in, finds or creates the user, on to /today
     /sign-out                      POST: ends the session
@@ -107,13 +109,13 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from sqlalchemy import func, select
 
 from app import calllog, charts, csrf, db, exercises as exercise_list, formatting, links, mcp_server, rules, services
-from app import users, web_auth
+from app import metrics, users, web_auth
 from app.config import ROOT, Settings, get_settings
 from app.models import (
     CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
 )
 from app.services import account as account_checks, body, common, lifts, measurements, progress as progress_data
-from app.services import goals as goal_rules
+from app.services import goals as goal_rules, trends as trend_rules
 
 log = logging.getLogger("spotter")
 
@@ -1063,6 +1065,15 @@ SAY_FIRST = ((LANDING_EXCHANGE["question"], "Each goal against its plan line, an
               "Logs the meal. Each number is tagged: you said, saved food, USDA or estimate."))
 SAY_EVERYDAY = ("Back squat, 3 sets of 5 at 60\u00a0kg", "I weighed 72.5\u00a0kg this morning",
                 "30\u00a0minutes on the treadmill")
+# The landing's Your data lines, which the hi there page's Your say draws too: (the bold words, the sentence). The
+# switch's sentence names CLAUDE_CAN_LABELS in models.CLAUDE_CAN's order and the column's default, filled at each
+# render by your_data().
+YOUR_DATA = (("You decide what your assistant may do.",
+              'A switch on Settings has two settings: "{0}" and "{1}". It starts at "{start}".'),
+             ("Export.", "Settings gives you everything you have logged, as a zip of CSV files."),
+             ("Undo.",
+              "Right after a delete, Undo brings the entry back. Your assistant can restore an entry it deleted."),
+             ("Delete your account.", "On Settings. It removes every entry and your sign-in, and it cannot be undone."))
 # The site footer's links, on the landing and the hi there page.
 SITE_FOOT = {"source": links.REPOSITORY, "contact": links.REPOSITORY + "/issues"}
 
@@ -1072,6 +1083,13 @@ def exchange_answer(exchange: dict = LANDING_EXCHANGE) -> list[list[str]]:
     the exchange's own, as written: nothing here works one out."""
     return [[exchange["opening"]]] + [[f"{g['label']} by {g['by']}.", g["plan_line"],
                                        f"At this pace it is reached on {g['reached']}."] for g in exchange["goals"]]
+
+
+def your_data() -> list[tuple[str, str]]:
+    """YOUR_DATA with the switch's settings filled in, read at each render as the landing always read them."""
+    labels = [CLAUDE_CAN_LABELS[value] for value in CLAUDE_CAN]
+    start = CLAUDE_CAN_LABELS[User.__table__.c.claude_can.default.arg]
+    return [(bold, line.format(*labels, start=start)) for bold, line in YOUR_DATA]
 
 
 # The two counts read once, when the app starts (section L, Where the counts come from). The new-account cap is read
@@ -1105,9 +1123,7 @@ async def home(request: Request) -> Response:
                 source_link=links.REPOSITORY, readme_table=README_TABLE, exchange=LANDING_EXCHANGE,
                 answer=exchange_answer(), picture=LANDING_PICTURE, signups_per_day=settings.signups_per_day,
                 function_count=FUNCTION_COUNT, eval_cases=EVAL_CASES, assistants=ASSISTANTS,
-                switch=[CLAUDE_CAN_LABELS[value] for value in CLAUDE_CAN],
-                switch_start=CLAUDE_CAN_LABELS[User.__table__.c.claude_can.default.arg],
-                say_first=SAY_FIRST, say_everyday=SAY_EVERYDAY, site_foot=SITE_FOOT)
+                your_data=your_data(), say_first=SAY_FIRST, say_everyday=SAY_EVERYDAY, site_foot=SITE_FOOT)
 
 
 def in_words(items) -> str:
@@ -1123,18 +1139,75 @@ HI_KEEPS = {"lifts": len(exercise_list.LIFTS), "cardio": len(exercise_list.CARDI
             "measurement_words": in_words(measurements.kind_word(kind) for kind in MEASUREMENT_KINDS),
             "meals": in_words(MEALS), "goal_kinds": len(GOAL_KINDS),
             "goal_words": in_words(words for _, words in GOAL_KINDS)}
-# The function the feedback line asks the assistant to use, read from mcp_server.NEEDS at each render.
+# The function the feedback group asks the assistant to use, read from mcp_server.NEEDS at each render.
 FEEDBACK_FUNCTION = "send_feedback"
+
+# The hi there page's words (contract first-day.md, section 4). Each saying is here, a no-break space before each unit.
+SETUP_SAY = "Hi Spotter, help me set up."
+# Your first day: one item each, with the setup steps it stands for (account.SETUP_STEPS). An item is drawn while
+# every one of its steps is on offer. does: the line under the saying, a saying of its own at every second piece.
+FIRST_DAY = (
+    {"title": "Where you stand.", "steps": ("weigh_in", "lift_session"),
+     "say": "I weigh 82 kg. Yesterday I squatted 3 sets of 5 at 80 kg.",
+     "does": ("Spotter keeps the weigh-in, and the session's best becomes the mark to beat.",)},
+    {"title": "A goal with a date.", "steps": ("goal",), "say": "I want to weigh 78 kg by the end of March.",
+     "does": ("Spotter keeps where you start, and works out the pace a week the goal needs.",)},
+    {"title": "Your targets.", "steps": ("calorie_target", "sessions_target", "cardio_target"),
+     "say": "2,200 kcal a day, 4 lift sessions a week, 150 minutes of cardio a week.",
+     "does": ("Each day's food is shown against the calories, and each week against the other two.",)},
+    {"title": "Foods you eat often.", "steps": ("saved_food",), "say": "Save roti: one roti is 120 kcal.",
+     "does": ("After that, two rotis are logged from the saved food, not from a guess.",)},
+    {"title": "Your fixed routines.", "steps": ("routine",),
+     "say": "Save my push day: bench press 3 sets of 8 at 60 kg, then dips 3 sets of 10.",
+     "does": ("After that,", "log my push day", "logs those sets.")},
+    {"title": "Your old data.", "steps": ("import",), "say": "Here is the export file from my old app.",
+     "does": ("Your assistant shows a preview first, and is told to write only when you say yes.",)},
+)
+# What you can say: (label, rows), each row (what to say, what comes back or None). The landing's sayings are its
+# own objects. A group in SAY_GROUP_NEEDS is drawn only while its function is offered, read at each render.
+SAY_GROUPS = (
+    ("Log it", ((SAY_EVERYDAY[0], "Sets said one by one go into that day's session."), (SAY_EVERYDAY[1], None),
+                SAY_FIRST[2], (SAY_EVERYDAY[2], "Its calories are estimated from your own body weight."))),
+    ("Ask", (SAY_FIRST[0], SAY_FIRST[1],
+             ("How is my bench press going?", "Its best each session, its new bests and its trend."),
+             ("What did I do this week?", "Each day's lifts, food, weigh-in, measurements and cardio, up to "
+              f"{formatting.show(mcp_server.LOG_DAYS[1], 'count')} days at a time."))),
+    ("Fix or undo", (("That was 85 kg, not 80.", "The entry is changed where it stands."),
+                     ("Undo that change.", "The entry's last change is put back, once."),
+                     ("Delete yesterday's lunch.", "Your assistant shows you the entry and asks first."),
+                     ("Bring back the lunch I deleted.", "Nothing is erased, so it comes back."))),
+    ("Goals", (("I want to bench 100 kg by the end of June.", "A lift goal is an estimated one-rep max."),
+               ("I hit my squat goal.", "The goal is closed as reached."))),
+    ("Tell the maker", (("Send feedback: the weight chart confuses me.", "It reaches the person who runs Spotter."),)),
+)
+SAY_GROUP_NEEDS = {"Tell the maker": FEEDBACK_FUNCTION}
+# What Spotter works out: each number read from the constant the code uses. Two have none: the Epley line's lower
+# end, as metrics.epley gives a value from 1 rep, and the 2 days the fitted line needs its points on, as
+# metrics.projection asks for 2 different dates. A test holds each against the function.
+HI_WORKS = {"epley_min": 1, "epley_max": metrics.EPLEY_MAX_REPS, "recent_days": metrics.RECENT_BEST_DAYS,
+            "average_days": metrics.BODYWEIGHT_AVG_DAYS, "rate_latest_days": metrics.RATE_LATEST_DAYS,
+            "rate_from": metrics.RATE_REFERENCE_DAYS[0], "rate_to": metrics.RATE_REFERENCE_DAYS[1],
+            "fit_weeks": metrics.PROJECTION_DAYS // 7, "fit_points": metrics.PROJECTION_MIN_POINTS, "fit_days": 2,
+            "max_years": metrics.PROJECTED_MAX_DAYS // 365, "week_days": trend_rules.WEEK_DAYS,
+            "window_days": trend_rules.WINDOW_DAYS, "maintenance_days": metrics.MAINTENANCE_DAYS,
+            "maintenance_logged": metrics.MAINTENANCE_MIN_LOGGED, "maintenance_latest": metrics.BODYWEIGHT_AVG_DAYS,
+            "maintenance_from": metrics.MAINTENANCE_DAYS,
+            "maintenance_to": metrics.MAINTENANCE_DAYS + metrics.BODYWEIGHT_AVG_DAYS - 1}
 
 
 async def hi_there(request: Request) -> Response:
     """The hi there page: the same words for everyone. A visitor with no session reads no database. A session naming a
     person who is gone costs one read and is cleared, as on the landing. It builds no link with links.page, so it
-    draws with no site address too."""
+    draws with no site address too. The setup steps on offer, and so the first day's items and the Routines line, and
+    the feedback group, are read from mcp_server.NEEDS at each render."""
     await current_user(request)
-    return page(request, "hi.html", landing_lines=LANDING_LINES, say_first=SAY_FIRST, say_everyday=SAY_EVERYDAY,
-                keeps=HI_KEEPS, readme_table=README_TABLE, feedback=FEEDBACK_FUNCTION in mcp_server.NEEDS,
-                site_foot=SITE_FOOT)
+    steps = account_checks.setup_steps(mcp_server.NEEDS)
+    return page(request, "hi.html", landing_line=LANDING_LINES[0], setup_say=SETUP_SAY,
+                first_day=[item for item in FIRST_DAY if all(step in steps for step in item["steps"])],
+                say_groups=[(label, rows) for label, rows in SAY_GROUPS
+                            if label not in SAY_GROUP_NEEDS or SAY_GROUP_NEEDS[label] in mcp_server.NEEDS],
+                works=HI_WORKS, keeps=HI_KEEPS, routines="routine" in steps, your_data=your_data(),
+                readme_table=README_TABLE, site_foot=SITE_FOOT)
 
 
 async def sign_in(request: Request) -> Response:

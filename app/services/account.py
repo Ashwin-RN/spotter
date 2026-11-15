@@ -1,12 +1,16 @@
 """The account, its settings, and the shared exercise list.
 
-whoami(user_id)
+whoami(user_id, offered=())
     The signed-in person's account: account_id (the row id), user_id (the sign-in provider's subject,
     the same value the token's sub and the Settings page show), email, name, time zone, today's date
     for them, their targets, what Claude may do, and links, links.hi_there always. Until a time zone is
     set, today is the UTC date and time_zone_note tells Claude to set it with update_settings. While the
-    account is empty, by account_empty's rule, new_account_note tells Claude to give the person
-    links.hi_there once. A read: no lock, no write limit, no write, so nothing records that it was given.
+    account is empty, by account_empty's rule, new_account_note tells Claude to offer setup once and to
+    give the person links.hi_there once. While a setup step other than import is missing, setup carries
+    the missing steps in SETUP_STEPS' order and SETUP_HOW (contract first-day.md). offered: the function
+    names on offer (the server passes mcp_server.NEEDS); a step that needs a function (SETUP_NEEDS) is
+    on offer only while it is among them (setup_steps). A read: no lock, no write limit, no write, so
+    nothing records that the note was given or a step skipped.
 
 update_settings(user_id, data, by)
     Change the person's own settings (SETTABLE): time_zone; calorie_target_kcal (800 to 10,000),
@@ -31,7 +35,8 @@ account_empty(user_id)
     Today's read for a new account: empty is true when the person has no live entry in the five entry
     tables, no live saved food and no open goal. Deleted rows and closed goals (hit or dropped) do not
     count. A read: no lock, no write limit. The page then shows what to do first. whoami asks the same
-    question (_empty), so the two always agree.
+    seven questions (_questions, through _has), so the two always agree: account_empty stops at the first
+    found, and whoami asks all seven once (_held), since its setup steps read the same answers.
 
 list_exercises(kind=None, category=None)
     The names entries must use, filtered by kind (lift, cardio) and category.
@@ -55,8 +60,8 @@ from sqlalchemy import delete, func, select, update
 
 from app import db, exercises as exercise_list, formatting, links, rules, users
 from app.models import (
-    CLAUDE_CAN, EXERCISE_KINDS, Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement,
-    SavedFood, User, entry_models,
+    CLAUDE_CAN, EXERCISE_KINDS, IMPORTED, Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet,
+    Measurement, SavedFood, User, entry_models,
 )
 from app.rules import error, quote
 from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account, truthy
@@ -64,18 +69,31 @@ from app.services.common import check_by, check_data, check_write_limit, exercis
 TIME_ZONE_NOTE = ("No time zone is set, so today is the UTC date. Set it now with update_settings: use the "
                   "person's time zone if you know it, otherwise ask once which city they are in. Set it "
                   "yourself; the person has nothing to do.")
-NEW_ACCOUNT_NOTE = ("Nothing is logged on this account yet. Give the person links.hi_there once, last in your reply: "
-                    "it is a short read on what to say, what Spotter keeps and how to bring history over from "
-                    "another app. It has nothing to fill in.")
+NEW_ACCOUNT_NOTE = ("Nothing is logged on this account yet. Offer once to set Spotter up together, as setup.how says. "
+                    "Give the person links.hi_there once, last in your reply: it is a short read on how to set up, "
+                    "what to say and what Spotter works out. It has nothing to fill in.")
+# The setup steps, in the order the assistant asks for them and the hi there page lists them (contract first-day.md).
+SETUP_STEPS = ("time_zone", "weigh_in", "lift_session", "goal", "calorie_target", "sessions_target", "cardio_target",
+               "saved_food", "routine", "import")
+# A step that needs a function is on offer only while that function is (setup_steps).
+SETUP_NEEDS = {"routine": "save_routine"}
+SETUP_HOW = ("Bring setup up only when the person asks, or when new_account_note says to offer it. Ask for the first "
+             "step in missing, one question at a time, and save each answer with its function as soon as it is given. "
+             "The person may skip any step: go to the next. Ask for nothing that is not in missing.")
 TIME_ZONE_MAX = 64  # the column's length
 TIME_ZONE_FIX = ("Use an IANA name such as Asia/Kolkata, worked out from the city the person is in. An "
                  "abbreviation or an offset is not enough, because it does not say when the clocks change.")
 NEVER_SETTABLE = {"claude_can": "what Claude may do"}
 
 
-def whoami(user_id: int) -> dict:
+def setup_steps(offered=()) -> tuple[str, ...]:
+    """The setup steps on offer, in order: each of SETUP_STEPS whose function, if it needs one, is in offered."""
+    return tuple(step for step in SETUP_STEPS if step not in SETUP_NEEDS or SETUP_NEEDS[step] in offered)
+
+
+def whoami(user_id: int, offered=()) -> dict:
     """Returns {account_id, user_id, email, name, time_zone, today, targets, claude_can, links[,
-    time_zone_note][, new_account_note]} or {error, message, fix}."""
+    time_zone_note][, new_account_note][, setup]} or {error, message, fix}. See the module notes."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
@@ -96,19 +114,52 @@ def whoami(user_id: int) -> dict:
             "links": {"settings": links.page("settings"), "home": links.page("home"),
                       "hi_there": links.page("hi_there")},
         }
-        if not isinstance(users.zone_for(user.time_zone), ZoneInfo):
+        zoned = isinstance(users.zone_for(user.time_zone), ZoneInfo)
+        if not zoned:
             out["time_zone_note"] = TIME_ZONE_NOTE
-        if _empty(s, user.id):
+        held = _held(s, user)
+        if not any(held.values()):
             out["new_account_note"] = NEW_ACCOUNT_NOTE
+        done = {"time_zone": zoned, "weigh_in": held["bodyweight"], "lift_session": held["lift_session"],
+                "goal": held["goal"], "calorie_target": user.calorie_target_kcal is not None,
+                "sessions_target": user.target_sessions_per_week is not None,
+                "cardio_target": user.target_cardio_minutes_per_week is not None,
+                "saved_food": held["saved_food"], "routine": False}  # routine: nothing can hold one yet
+        missing = [step for step in setup_steps(offered) if step != "import" and not done[step]]
+        if missing:  # import alone never keeps setup alive, so it is asked only now
+            if "import" in setup_steps(offered) and not _imported(s, user.id, held):
+                missing.append("import")
+            out["setup"] = {"missing": missing, "how": SETUP_HOW}
         return out
+
+
+def _questions(user_id: int) -> dict:
+    """The seven questions "empty" asks, by table: a live row of each entry table, a live saved food, an open goal."""
+    asks = {m.__tablename__: select(m.id).where(m.user_id == user_id, m.deleted_at.is_(None))
+            for m in (*entry_models(), SavedFood)}
+    asks["goal"] = select(Goal.id).where(Goal.user_id == user_id, Goal.status == "open")
+    return asks
+
+
+def _has(s, ask) -> bool:
+    """One question, one small read."""
+    return s.scalar(ask.limit(1)) is not None
+
+
+def _held(s, user: User) -> dict[str, bool]:
+    """Each of the seven questions answered, every one whatever the others answer."""
+    return {name: _has(s, ask) for name, ask in _questions(user.id).items()}
+
+
+def _imported(s, user_id: int, held: dict[str, bool]) -> bool:
+    """A live imported row, asked only of the entry tables that hold a live row, stopping at the first found."""
+    return any(_has(s, select(m.id).where(m.user_id == user_id, m.deleted_at.is_(None), m.logged_by == IMPORTED))
+               for m in entry_models() if held[m.__tablename__])
 
 
 def _empty(s, user_id: int) -> bool:
     """True when the account has no live entry in the five entry tables, no live saved food and no open goal."""
-    for model in (*entry_models(), SavedFood):
-        if s.scalar(select(model.id).where(model.user_id == user_id, model.deleted_at.is_(None)).limit(1)):
-            return False
-    return not s.scalar(select(Goal.id).where(Goal.user_id == user_id, Goal.status == "open").limit(1))
+    return not any(_has(s, ask) for ask in _questions(user_id).values())
 
 
 def account_empty(user_id: int) -> dict:
