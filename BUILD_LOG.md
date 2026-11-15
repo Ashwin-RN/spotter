@@ -1015,3 +1015,29 @@ The instructions changed, and every conversation reads them, so the whole set ra
 All 26 cases, 3 runs each, on `claude-opus-5-5`, at `97e634c`, from 00:48:24 to 01:19:45 on 2026-11-15: 77 of 78 runs passed, $12.7761 at list price. The one failure is `delete_regretted`, its third run: the CLI hit the runner's limit of 180 seconds and printed no reply. It had called `whoami` and `get_log`, and never `delete_entry`. That case and `delete_asks_first` were then run again, 3 runs each: 6 of 6, $2.5368. `delete_regretted` is slow, 40 to 152 seconds in the runs that passed: a new conversation looks for the deleted entry, and no read lists deleted ones.
 
 The full suite: 5,377 tests, plain, at the commit `97e634c`. Before the join, every test file also passed with warnings as errors, in separate runs.
+
+## A day's sets in one session, a setup page, and routines
+
+Three items, built and reviewed one after another on 2026-11-15, and released together. Their decisions and limits are in `docs/contracts/gym-logging.md`, `docs/contracts/first-day.md` and `docs/contracts/routines.md`.
+
+| Item | What it does |
+|---|---|
+| Gym logging | Every `log_lifts` call for a date adds its sets to that date's session, so a workout said set by set is one session. `new_session` starts a second workout that day. Lifts have no duplicate question. An add is kept first as an edit, so the one-step undo takes the last add back |
+| First day | `/hi` is the setup page: say "Hi Spotter, help me set up", your first day in order, what you can say, what Spotter works out and how, what it keeps, your say. `whoami` carries `setup`: the steps an account still lacks, in order, walked one question at a time, only when asked or once on a new account |
+| Routines | `save_routine` keeps a workout by name, `get_routines` gives each lift the weight to log: the latest session's, unless the routine was saved on a later day. Logging one is `log_lifts`. A Routines page with Delete and Undo. Migration 0010 |
+
+### The reviews
+
+Each item had one builder and one separate reviewer on frozen copies, then one fix round. Gym logging's review was clean of blockers, with two test gaps closed. First day's review had nothing that must be fixed: one eval case was added (setup stays quiet when the person only logs) and four lines of wording were made exact. Routines' review was clean of blockers: the weight rule's words were made to say "on a later day", as the code compares days, and a name is stored with its spaces folded. Each fix round was re-checked by a fresh reviewer and held.
+
+The three were joined in order. At the last join the setup step for routines was wired: it is done when the person holds a live routine, and the setup field names it.
+
+### Checks
+
+On a real Postgres, 17 in a throwaway container: migration 0010 went up, down and up again; the constraint names, the cascade on account delete and the unique name per person held. Of 181 tests of routines, the export and the switch run there, 172 passed; the 9 that failed compare a statement with SQLite's own text, and the statements Postgres ran lock the row first and name the person's id.
+
+The whole suite on the joined tree: 5,599 tests, in groups, and again by the commit hook.
+
+### The eval run
+
+All 35 cases, 3 runs each, on `claude-opus-5-5`, at `52b0e76`, from 22:07 to 22:49 on 2026-11-15: 105 of 105 runs passed, $16.8061 at list price. Among them the six new cases: a workout in one sentence, a set added to a started session, a lift added later, setup asked for, setup picked up, and setup staying quiet when the person only logs; and routines' three: one saved from a sentence, one logged, one logged with a changed weight.
