@@ -103,6 +103,7 @@ Made on `76df357`, where the decisions leave a how open or the code moved under 
 | R18 | **`tests/text_rules.py`:** `_UNITS` gains `lb`, `mi` and `mph`, so "Weigh-in 185 lb" reads as a figure, not an id. No other rule changes | Without it, R14's own texts fail the summary surface |
 | R19 | **The export.** `ACCOUNT_COLUMNS` gains `weight_unit` and `distance_unit` after `time_zone`. The README's new line after "Times are UTC ...", wrapped as its neighbours are | Decision 17 |
 | R20 | **The evals.** `update_settings` joins `judge.SEED_SERVICES`, called as `service(user_id, data, "web")`, which is its shape (`app/services/account.py:237`), with no `as`. The judge's notes and `docs/evals.md` say so. The six cases go last in `evals/cases.json`, in their order. Not run by the builder: the eval run is the whole build's, once, at the end | Decision 20 |
+| R21 | **Every new result field is optional:** `units`, `units_note`, each new `summary` and `words` default to null in their result models, so no result schema gains a required field. Added on the owner's two-deploy rule, 2026-11-16 | A client holding the old function list must still validate an answer from the new server where it can |
 
 ## "Bench 225 for 5" and "ran 3 miles", call by call
 
@@ -338,7 +339,7 @@ Tidy-ups builds first and moves the hard-coded counts (eval cases, function coun
 | The maintenance note says 7,700 kcal a kg | It names the formula, not a figure of the person's |
 | The hi page's and the README's sample sentences say kg | Fixed examples, the same for every reader |
 | A person who never answers `units_note` is asked again in another conversation | Nothing is stored for a question not answered. Any answer ends it |
-| A conversation begun before the deploy holds the old tool list: no `weight_lb` | As every function change |
+| A conversation begun before the deploy holds the old tool list: no `weight_lb`, and it may refuse an answer of the thirteen changed functions whose result model forbids fields it does not know, as `whoami` was refused after first day. A new conversation clears it; the owner is told at the merge | As every function change |
 | A weight finer than 0.05 lb shows at 0.05 lb | The finest step the 2 dp kg store gives back exactly |
 
 ## Not in this work
