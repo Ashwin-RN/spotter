@@ -354,13 +354,19 @@ def test_the_white_button_in_its_three_states(web_client, state):
     assert re.sub(r"\s+", " ", plain_words(cta)) == f"{words} Source code on GitHub"
 
 
-def test_every_repository_link_is_built_from_the_one_constant(web_client):
+CONTACT = "hello@example.com"  # a made-up address: the real one lives only in the host's CONTACT_EMAIL
+
+
+@pytest.mark.parametrize("contact", [None, CONTACT])
+def test_every_repository_link_is_built_from_the_one_constant(web_client, contact):
     assert re.fullmatch(r"https://github\.com/[\w.-]+/[\w.-]+", links.REPOSITORY)
     for state in sorted(BUTTONS):
-        page = landing_in(web_client, state)
-        repo = [h for h in re.findall(r'\bhref="([^"]*)"', page) if "github" in h.casefold()]
+        page = landing_in(web_client, state, contact_email=contact)
+        hrefs = re.findall(r'\bhref="([^"]*)"', page)
+        repo = [h for h in hrefs if "github" in h.casefold()]
         assert repo == [links.REPOSITORY] + [links.REPOSITORY + "#your-assistant"] * (1 + len(web.ASSISTANTS)) + \
-            [links.REPOSITORY, links.REPOSITORY, links.REPOSITORY + "/issues"], state
+            [links.REPOSITORY, links.REPOSITORY] + ([] if contact else [links.REPOSITORY + "/issues"]), state
+        assert hrefs[-1] == (f"mailto:{contact}" if contact else links.REPOSITORY + "/issues"), state
         assert web.README_TABLE == links.REPOSITORY + "#your-assistant"
     # No template and no other app file types the address: links.py holds it once.
     app_dir = web.HERE
@@ -368,6 +374,46 @@ def test_every_repository_link_is_built_from_the_one_constant(web_client):
              if p.suffix in (".py", ".html", ".js", ".css") and "github.com" in p.read_text(encoding="utf-8")]
     assert typed == ["links.py"]
     assert (app_dir / "links.py").read_text(encoding="utf-8").count("github.com") == 1
+
+
+@pytest.mark.parametrize("contact", [None, CONTACT])
+def test_the_footer_contact_is_the_set_address_or_else_the_issues_page(web_client, contact):
+    client = web_client(contact_email=contact)
+    want = f"mailto:{contact}" if contact else links.REPOSITORY + "/issues"
+    for path in ("/", "/hi"):
+        foot = re.search(r'<footer class="site-foot">(.*?)</footer>', client.get(path).text, re.S).group(1)
+        assert re.findall(r'<a href="([^"]*)">([^<]*)</a>', foot) == [
+            (links.REPOSITORY, "Source code"), (want, "Contact")], path
+
+
+# An address's shape: a name before an at sign, a dot in the name after it. It finds none in config.py's own pattern
+# for CONTACT_EMAIL, whose at sign comes before an opening bracket.
+ADDRESS_SHAPE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+
+
+def test_no_app_file_types_an_address():
+    assert ADDRESS_SHAPE.search(f"write to {CONTACT}.") and not ADDRESS_SHAPE.search("@dataclass")
+    app_dir = web.HERE
+    typed = [p.relative_to(app_dir).as_posix() for p in sorted(app_dir.rglob("*"))
+             if p.suffix in (".py", ".html", ".js", ".css", ".md", ".txt", ".json")
+             and ADDRESS_SHAPE.search(p.read_text(encoding="utf-8"))]
+    assert typed == []
+    assert config._EMAIL.pattern in (app_dir / "config.py").read_text(encoding="utf-8")  # the pattern is not one
+    assert not ADDRESS_SHAPE.search(config._EMAIL.pattern)
+
+
+@pytest.mark.parametrize("contact, repository, words", [
+    (CONTACT, links.REPOSITORY, f"Contact Questions about your data go to {CONTACT}. "
+                                "Problems with the app can also go on the project's issues page."),
+    (None, links.REPOSITORY, "Contact Questions and problems go on the project's issues page. Open the issues page"),
+    (None, None, "Contact Questions and problems go on the issues page of Spotter's project on GitHub."),
+])
+def test_the_privacy_contact_card_gives_the_address_when_set(contact, repository, words):
+    source = (web.HERE / "templates" / "privacy.html").read_text(encoding="utf-8")
+    card = re.search(r'<section class="card" aria-labelledby="privacy-contact">.*?</section>', source, re.S).group(0)
+    drawn = web.templates.env.from_string(card).render(contact_email=contact, repository=repository)
+    assert plain_words(drawn) == words
+    assert (f'href="mailto:{contact}"' in drawn) == bool(contact)
 
 
 CLOSED_LINE = "Spotter is not taking new accounts right now."

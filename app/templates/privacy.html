@@ -107,7 +107,10 @@
 
 <section class="card" aria-labelledby="privacy-contact">
   <h2 id="privacy-contact">Contact</h2>
-  {% if repository %}
+  {% if contact_email %}
+  <p>Questions about your data go to <a class="plain-link" href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+  <p>Problems with the app can also go on the project's issues page.</p>
+  {% elif repository %}
   <p>Questions and problems go on the project's issues page.</p>
   <p><a class="plain-link" href="{{ repository }}/issues">Open the issues page</a></p>
   {% else %}

@@ -144,3 +144,17 @@ def test_the_label_is_part_of_the_derived_key():
     unlabelled = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=None).derive(b"sk_test_a").hex()
     labelled = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=SESSION_KEY_LABEL).derive(b"sk_test_a").hex()
     assert key == labelled and key != unlabelled
+
+
+def test_an_unset_contact_address_is_none():
+    assert load_settings(BASE).contact_email is None
+
+
+@pytest.mark.parametrize("value", ["", "   ", "me", "a@b", "a b@c.d", "<x>@y.z"])
+def test_a_blank_or_malformed_contact_address_is_none(value):
+    assert load_settings({**BASE, "CONTACT_EMAIL": value}).contact_email is None
+
+
+@pytest.mark.parametrize("value", ["hello@example.com", "  hello@example.com \t"])
+def test_a_good_contact_address_is_kept_trimmed(value):
+    assert load_settings({**BASE, "CONTACT_EMAIL": value}).contact_email == "hello@example.com"

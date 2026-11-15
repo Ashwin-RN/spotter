@@ -93,6 +93,10 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 
 Tests: Python 3.12, `pip install -r requirements.txt -r requirements-dev.txt`, then `python -m pytest tests -q`.
 
+## Contact
+
+To reach the person who runs Spotter, use Contact at the foot of the live site. Problems with the code can go on the issues page.
+
 ## Licence
 
 MIT for the code: see `LICENSE`. The cardio MET values, codes and activity descriptions come from the 2024 Adult Compendium of Physical Activities and keep its own terms: see `NOTICE`.

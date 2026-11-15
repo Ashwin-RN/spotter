@@ -12,6 +12,9 @@ defaults hold.
 
 OWNER_USER_ID names the one account that may read other people's calls (owner_calls): the sign-in id whoami
 gives. Unset, nobody is the owner.
+
+CONTACT_EMAIL is the address a person can write to, given on the site's footer and the privacy page. Unset or not an
+address, Contact goes to the project's issues page.
 """
 
 import os
@@ -67,6 +70,7 @@ class Settings:
     db_pool_size: int = DEFAULT_DB_POOL_SIZE  # Postgres only
     db_max_overflow: int = DEFAULT_DB_MAX_OVERFLOW  # Postgres only
     owner_user_id: str | None = None  # the sign-in id of the one account that may read others' calls; unset: none
+    contact_email: str | None = None  # the address the footer's Contact gives; unset: the issues page
 
     @property
     def site_origin(self) -> str | None:
@@ -181,6 +185,16 @@ def _whole_number(value: str | None, bounds: tuple[int, int], default: int) -> i
     return number if bounds[0] <= number <= bounds[1] else default
 
 
+_EMAIL = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
+
+
+def _email(value: str | None) -> str | None:
+    """CONTACT_EMAIL: stripped, and kept only if it reads as an address. Unset, blank or malformed gives None, so a
+    typo on the host never shows a broken address: Contact stays the issues page."""
+    text = (value or "").strip()
+    return text if _EMAIL.fullmatch(text) else None
+
+
 def _text(env: Mapping[str, str], name: str) -> str | None:
     return (env.get(name) or "").strip() or None
 
@@ -202,6 +216,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         db_pool_size=_whole_number(env.get("DB_POOL_SIZE"), DB_POOL_SIZE_RANGE, DEFAULT_DB_POOL_SIZE),
         db_max_overflow=_whole_number(env.get("DB_MAX_OVERFLOW"), DB_MAX_OVERFLOW_RANGE, DEFAULT_DB_MAX_OVERFLOW),
         owner_user_id=_text(env, "OWNER_USER_ID"),
+        contact_email=_email(env.get("CONTACT_EMAIL")),
     )
 
 

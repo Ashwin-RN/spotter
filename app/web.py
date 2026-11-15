@@ -1092,8 +1092,13 @@ YOUR_DATA = (("You decide what your assistant may do.",
              ("Undo.",
               "Right after a delete, Undo brings the entry back. Your assistant can restore an entry it deleted."),
              ("Delete your account.", "On Settings. It removes every entry and your sign-in, and it cannot be undone."))
-# The site footer's links, on the landing and the hi there page.
-SITE_FOOT = {"source": links.REPOSITORY, "contact": links.REPOSITORY + "/issues"}
+
+
+def site_foot() -> dict[str, str]:
+    """The site footer's links: the source, and Contact, the address from CONTACT_EMAIL or else the issues page."""
+    address = get_settings().contact_email
+    return {"source": links.REPOSITORY,
+            "contact": f"mailto:{address}" if address else links.REPOSITORY + "/issues"}
 
 
 def exchange_answer(exchange: dict = LANDING_EXCHANGE) -> list[list[str]]:
@@ -1141,7 +1146,8 @@ async def home(request: Request) -> Response:
                 source_link=links.REPOSITORY, readme_table=README_TABLE, exchange=LANDING_EXCHANGE,
                 answer=exchange_answer(), picture=LANDING_PICTURE, signups_per_day=settings.signups_per_day,
                 function_count=FUNCTION_COUNT, eval_cases=EVAL_CASES, assistants=ASSISTANTS,
-                assistant_notes=ASSISTANT_NOTES, your_data=your_data(), say_first=SAY_FIRST, say_everyday=SAY_EVERYDAY, site_foot=SITE_FOOT)
+                assistant_notes=ASSISTANT_NOTES, your_data=your_data(), say_first=SAY_FIRST, say_everyday=SAY_EVERYDAY,
+                site_foot=site_foot())
 
 
 def in_words(items) -> str:
@@ -1225,7 +1231,7 @@ async def hi_there(request: Request) -> Response:
                 say_groups=[(label, rows) for label, rows in SAY_GROUPS
                             if label not in SAY_GROUP_NEEDS or SAY_GROUP_NEEDS[label] in mcp_server.NEEDS],
                 works=HI_WORKS, keeps=HI_KEEPS, routines="routine" in steps, your_data=your_data(),
-                readme_table=README_TABLE, site_foot=SITE_FOOT)
+                readme_table=README_TABLE, site_foot=site_foot())
 
 
 async def sign_in(request: Request) -> Response:
