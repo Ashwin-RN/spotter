@@ -3,6 +3,33 @@
 **The evals check that Spotter's instructions and schemas steer Claude to the right call, measured
 from what the server received, over repeated runs.**
 
+## When evals run
+
+Evals cost money, so they run once per release, and only when `python -m evals.need main` says yes.
+
+```
+python -m evals.need          against main
+python -m evals.need HEAD~1   against any commit or branch
+```
+
+- It reads what an assistant reads, from this folder and from the other commit. That is the surface:
+  - the server's instructions;
+  - the function list as everyone sees it and as the owner sees it;
+  - each resource with its text;
+  - whoami's answer for a new account and for the owner: setup, the new account note, the time zone note;
+  - every string of 20 characters or more in `app/`, file by file, docstrings left out. This catches
+    the notes, fix lines and plan lines that answers carry.
+- Pages are not surface: `app/web.py`, `app/templates/` and `app/static/` are left out.
+- The string check is strict on purpose. A changed log message says yes too: one run too many costs
+  less than a changed note that goes out untested.
+- A change to `evals/cases.json`, `evals/judge.py` or `evals/run.py` counts too.
+- The first line is `evals needed: yes` or `evals needed: no`. Each line after it names one thing that
+  differs, such as `tool whoami: description`, `resource spotter://can-and-cant`, `result whoami`,
+  `owner result whoami` or `result text app/services/goals.py`.
+- Exit code 0 for no, 1 for yes, 2 when it could not tell, with the reason.
+- It costs nothing: no assistant, no network, no open port. It takes a few seconds.
+- A change to code alone, with the same words, schemas and cases, says no. The tests cover that change.
+
 ## Run them
 
 ```
