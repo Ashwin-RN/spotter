@@ -54,7 +54,7 @@ HOW = ("Bring setup up only when the person asks, or when new_account_note says 
        "skip any step: go to the next. Ask for nothing that is not in missing.")
 SETUP_FIELD = ("Present while a setup step other than import is not done yet. missing: those steps, in the order to ask "
                "them: time_zone, weigh_in, lift_session, goal, calorie_target, sessions_target, cardio_target, "
-               "saved_food, import. how: when and how to ask.")  # the review's L3: other than import
+               "saved_food, routine, import. how: when and how to ask.")  # the review's L3: other than import
 MISSING_FIELD = "The setup steps not done yet, in the order to ask them."
 HOW_FIELD = "When to bring setup up, and how to ask."
 TARGETS_FIELD = "The person's targets."
@@ -75,8 +75,10 @@ SETTING_UP = """## Setting up
 CANNOT_LINE = "- It knows nothing about injury, pain, recovery, form or health."
 STEPS = ("time_zone", "weigh_in", "lift_session", "goal", "calorie_target", "sessions_target", "cardio_target",
          "saved_food", "routine", "import")
-OFFERED_STEPS = [s for s in STEPS if s != "routine"]  # save_routine is not offered on this tree
+OFFERED_STEPS = list(STEPS)  # save_routine is offered on this tree, so every step is (routines.md decision 20)
+NO_ROUTINE_STEPS = [s for s in STEPS if s != "routine"]  # with save_routine not offered, or with nothing given
 ROUTINE_FUNCTION = "save_routine"
+ROUTINE = {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8}]}
 FEEDBACK_FUNCTION = "send_feedback"
 
 
@@ -249,9 +251,13 @@ def shown(page: str) -> str:
 # ---------------------------------------------------------------- the page: its words in each state
 
 @pytest.mark.parametrize("state", sorted(OVERRIDES))
-def test_the_page_says_the_contracts_words_in_each_state(web_client, monkeypatch, state):
-    page = hi_in(web_client, state, lambda: offer(monkeypatch))
-    assert shown(page) == want_words(state)
+def test_the_page_says_the_contracts_words_in_each_state(web_client, state):
+    """As built, NEEDS unchanged: save_routine and send_feedback are both offered, so step 5, the Routines line and
+    the feedback group are drawn (routines.md decision 20)."""
+    assert ROUTINE_FUNCTION in mcp_server.NEEDS and FEEDBACK_FUNCTION in mcp_server.NEEDS
+    page = hi_in(web_client, state)
+    assert shown(page) == want_words(state, feedback=True, routine=True)
+    assert ROUTINES in shown(page) and "Your fixed routines." in shown(page)
     assert re.search(r'</main>\s*<footer class="site-foot">', page) and page.count("<footer") == 1
 
 
@@ -783,10 +789,18 @@ def route_rows(overrides: dict) -> list[tuple[str, str, bool]]:
             for r in web.routes(settings(**{**WEB, **overrides}))]
 
 
+# The routines page's three rows (routines.md), straight after the Foods restore row, all behind the page limit.
+ROUTINES_ROUTES = [("/routines", "GET HEAD", True), ("/routines/{routine_id}/delete", "POST", True),
+                   ("/routines/{routine_id}/restore", "POST", True)]
+
+
 @pytest.mark.parametrize("state", ["signed out", "no web sign-in", "no server address"])
 def test_the_route_tables_differ_from_before_by_hi_alone(state):
-    """R14: the parent's rows plus one, /hi straight after /, GET and HEAD, not behind the page limit."""
-    before = PARENT_ROUTES if state == "signed out" else [(p, m, False) for p, m, _ in PARENT_ROUTES]
+    """R14: the parent's rows plus one, /hi straight after /, GET and HEAD, not behind the page limit. At the join,
+    routines' three rows too, after the Foods restore row, and nothing else."""
+    at = PARENT_ROUTES.index(("/foods/{food_id}/restore", "POST", True)) + 1
+    joined = PARENT_ROUTES[:at] + ROUTINES_ROUTES + PARENT_ROUTES[at:]
+    before = joined if state == "signed out" else [(p, m, False) for p, m, _ in joined]
     assert route_rows(OVERRIDES[state]) == before[:1] + [("/hi", "GET HEAD", False)] + before[1:]
 
 
@@ -888,16 +902,16 @@ def test_the_note_goes_at_the_first_row_and_comes_back_when_it_goes(make_user, k
     user_id = make_user(time_zone="Europe/London").id
     who = services.whoami(user_id)
     held(who, True)
-    assert missing(who) == OFFERED_STEPS[1:]
+    assert missing(who) == NO_ROUTINE_STEPS[1:]  # nothing given: no routine step
     make_one(kind, user_id)
     who = services.whoami(user_id)
     held(who, False)
-    assert missing(who) == [s for s in OFFERED_STEPS[1:] if s != STEP_OF.get(kind)]
+    assert missing(who) == [s for s in NO_ROUTINE_STEPS[1:] if s != STEP_OF.get(kind)]
     assert services.account_empty(user_id) == {"empty": False}
     take_it_away(kind, close, user_id)
     who = services.whoami(user_id)
     held(who, True)
-    assert missing(who) == OFFERED_STEPS[1:]  # a deleted row and a closed goal do not count
+    assert missing(who) == NO_ROUTINE_STEPS[1:]  # a deleted row and a closed goal do not count
     assert services.account_empty(user_id) == {"empty": True}
 
 
@@ -976,6 +990,8 @@ def do_step(step: str, user_id: int) -> None:
         done = services.import_entries(user_id, {"dry_run": False, "rows": [
             {"kind": "measurement", "date": day, "measurement_kind": "resting_hr", "value": 60}]}, "claude")
         assert "error" not in done and done["counts"], done
+    elif step == "routine":
+        assert "error" not in services.save_routine(user_id, ROUTINE, "claude")
     else:
         make_one({"weigh_in": "bodyweight", "lift_session": "lift_session", "goal": "goal",
                   "saved_food": "saved_food"}[step], user_id)
@@ -990,8 +1006,8 @@ def test_a_fresh_account_is_asked_every_step_on_offer_in_order(make_user, http):
     assert account.SETUP_STEPS == STEPS and account.SETUP_NEEDS == {"routine": ROUTINE_FUNCTION}
     assert list(account.setup_steps(mcp_server.NEEDS)) == OFFERED_STEPS
     assert missing(services.whoami(make_user().id, mcp_server.NEEDS)) == OFFERED_STEPS
-    assert missing(services.whoami(make_user().id)) == OFFERED_STEPS  # nothing given: no step that needs a function
-    assert missing(services.whoami(make_user(time_zone="Asia/Kolkata").id)) == OFFERED_STEPS[1:]
+    assert missing(services.whoami(make_user().id)) == NO_ROUTINE_STEPS  # nothing given: no step that needs a function
+    assert missing(services.whoami(make_user(time_zone="Asia/Kolkata").id)) == NO_ROUTINE_STEPS[1:]
     who = whoami(http, sign())  # through MCP: the published schema judges it
     WhoamiResult.model_validate(who)
     assert missing(who) == OFFERED_STEPS and list(who)[-2:] == ["setup", "sign_in"]
@@ -1051,7 +1067,7 @@ def test_another_persons_rows_of_every_kind_change_nothing(make_user):
     before = services.whoami(mine, mcp_server.NEEDS)
     for kind in MAKE:
         make_one(kind, theirs)
-    for step in ("time_zone", "calorie_target", "sessions_target", "cardio_target", "import"):
+    for step in ("time_zone", "calorie_target", "sessions_target", "cardio_target", "routine", "import"):
         do_step(step, theirs)
     assert missing(services.whoami(theirs, mcp_server.NEEDS)) is None
     after = services.whoami(mine, mcp_server.NEEDS)
@@ -1059,18 +1075,45 @@ def test_another_persons_rows_of_every_kind_change_nothing(make_user):
 
 
 def test_the_routine_step_is_on_offer_only_while_save_routine_is(make_user, http, monkeypatch):
-    """Decision 8, R9: through the service with what is offered given, and through MCP with NEEDS changed."""
+    """Decision 8, R9, and routines' decision 20: as built, save_routine is offered, so the step is on offer; taken out
+    of NEEDS, it is not. Through the service with what is offered given, and through MCP with NEEDS changed."""
+    assert ROUTINE_FUNCTION in mcp_server.NEEDS
+    without = {name: level for name, level in mcp_server.NEEDS.items() if name != ROUTINE_FUNCTION}
     user_id = make_user().id
-    assert missing(services.whoami(user_id, [*mcp_server.NEEDS, ROUTINE_FUNCTION])) == list(STEPS)
-    assert missing(services.whoami(user_id, mcp_server.NEEDS)) == OFFERED_STEPS
-    do_every_step_but_import(user_id)
+    assert missing(services.whoami(user_id, mcp_server.NEEDS)) == list(STEPS)
+    assert missing(services.whoami(user_id, without)) == NO_ROUTINE_STEPS
+    for step in NO_ROUTINE_STEPS[:-1]:
+        do_step(step, user_id)
+    assert missing(services.whoami(user_id, mcp_server.NEEDS)) == ["routine", "import"]
     assert missing(services.whoami(user_id, {ROUTINE_FUNCTION: "log"})) == ["routine", "import"]
+    assert missing(services.whoami(user_id, without)) is None
     assert missing(services.whoami(user_id, ())) is None
     token = sign()
-    offer(monkeypatch, routine=True)
+    assert missing(whoami(http, token)) == list(STEPS)  # NEEDS as built
+    offer(monkeypatch, routine=False, feedback=True)
+    assert missing(whoami(http, token)) == NO_ROUTINE_STEPS
+    offer(monkeypatch, routine=True, feedback=True)
     assert missing(whoami(http, token)) == list(STEPS)
-    offer(monkeypatch, routine=False)
-    assert missing(whoami(http, token)) == OFFERED_STEPS
+
+
+def test_a_live_routine_of_the_persons_own_marks_the_step_done_and_another_persons_or_a_deleted_one_does_not(
+        make_user):
+    """The join: whoami reads a live routine of the person's own. A routine does not end a new account (routines.md
+    decision 12), so the note stays throughout."""
+    mine, theirs = make_user().id, make_user().id
+    do_step("routine", theirs)
+    assert "routine" not in missing(services.whoami(theirs, mcp_server.NEEDS))
+    who = services.whoami(mine, mcp_server.NEEDS)
+    assert missing(who) == OFFERED_STEPS and who["new_account_note"] == NOTE
+    made = services.save_routine(mine, ROUTINE, "claude")
+    assert "error" not in made
+    who = services.whoami(mine, mcp_server.NEEDS)
+    assert missing(who) == NO_ROUTINE_STEPS and who["new_account_note"] == NOTE
+    assert "error" not in services.delete_entry(mine, "routine", made["id"])
+    who = services.whoami(mine, mcp_server.NEEDS)
+    assert missing(who) == OFFERED_STEPS and who["new_account_note"] == NOTE  # a deleted routine does not count
+    assert "error" not in services.restore_entry(mine, "routine", made["id"], "claude")
+    assert missing(services.whoami(mine, mcp_server.NEEDS)) == NO_ROUTINE_STEPS
 
 
 def test_the_step_names_in_the_fields_description_are_the_steps_on_offer(http):
@@ -1083,8 +1126,9 @@ def test_the_step_names_in_the_fields_description_are_the_steps_on_offer(http):
     assert schema["$defs"]["Setup"]["required"] == ["missing", "how"]
 
 
-def test_whoami_reads_at_most_thirteen_statements_and_takes_no_lock_and_no_write_limit(make_user, monkeypatch):
-    """R10: the user row, then the seven questions, then up to five for import, each a select. Nothing else."""
+def test_whoami_reads_at_most_fourteen_statements_and_takes_no_lock_and_no_write_limit(make_user, monkeypatch):
+    """R10: the user row, then the seven questions, then one for a live routine (the join), then up to five for import,
+    each a select. Nothing else."""
     def refused(*args, **kwargs):
         raise AssertionError("whoami locked or counted a write")
 
@@ -1094,7 +1138,7 @@ def test_whoami_reads_at_most_thirteen_statements_and_takes_no_lock_and_no_write
     monkeypatch.setattr(account, "lock_user", refused)
     monkeypatch.setattr(account, "check_write_limit", refused)
     monkeypatch.setattr(db, "session_scope", refused)
-    for user, want in ((fresh, 1 + 7), (user_id, 1 + 7 + 5)):
+    for user, want in ((fresh, 1 + 7 + 1), (user_id, 1 + 7 + 1 + 5)):
         statements = []
         engine = db.get_engine()
         record = lambda *a: statements.append(" ".join(a[2].split()))  # noqa: E731
@@ -1103,7 +1147,7 @@ def test_whoami_reads_at_most_thirteen_statements_and_takes_no_lock_and_no_write
             who = services.whoami(user, mcp_server.NEEDS)
         finally:
             event.remove(engine, "before_cursor_execute", record)
-        assert "setup" in who and len(statements) == want <= 13, statements
+        assert "setup" in who and len(statements) == want <= 14, statements
         assert all(s.startswith("SELECT ") and "FOR UPDATE" not in s for s in statements), statements
 
 
@@ -1224,7 +1268,7 @@ SETUP_CASES = {
         "id": "setup_asks_first", "say": "Hi Spotter, help me set up",
         "expect": {"function": "whoami", "reply_asks": True, "reply_has": ["weigh"],
                    "no_call": ["log_bodyweight", "log_lifts", "set_goal", "update_settings", "save_food", "log_food",
-                               "log_cardio", "log_measurement", "import_entries"]},
+                               "log_cardio", "log_measurement", "import_entries", "save_routine"]},
         "db": [{"table": "bodyweight", "count": 0}, {"table": "goal", "count": 0}]},
     "setup_picks_up": {
         "id": "setup_picks_up", "say": "Help me finish setting up Spotter",
@@ -1233,7 +1277,7 @@ SETUP_CASES = {
                   "data": {"kind": "bodyweight", "target_value": 77, "target_date": "{{next_month_end:3}}"}}],
         "expect": {"function": "whoami", "reply_asks": True, "reply_has": ["lift"],
                    "no_call": ["log_bodyweight", "set_goal", "log_lifts", "update_settings", "save_food",
-                               "import_entries"]},
+                               "import_entries", "save_routine"]},
         "db": [{"table": "bodyweight", "count": 1}, {"table": "goal", "count": 1}]},
 }
 
@@ -1268,12 +1312,14 @@ def test_the_two_setup_eval_cases_load_and_judge_as_designed(app_settings):
             name  # a run that also writes
 
 
-def test_the_quiet_setup_case_loads_last_and_judges_as_designed(app_settings):
-    """The review's S1: setup_stays_quiet, last in the file. Its person has a weigh-in from the day before, so whoami
+def test_the_quiet_setup_case_loads_straight_before_the_routine_cases_and_judges_as_designed(app_settings):
+    """The review's S1: setup_stays_quiet, the last setup case, straight before routines' three, which close the file.
+    Its person has a weigh-in from the day before, so whoami
     carries setup and no note, and nobody asked to set up. A reply that only logs passes. One that asks a setup
     question, or speaks of setting up, or writes a setup step, fails."""
     cases = judge.load_cases()
-    case = cases[-1]
+    case = cases[-4]
+    assert [c["id"] for c in cases[-4:]] == ["setup_stays_quiet", "routine_saved", "routine_logged", "routine_changed"]
     assert case["id"] == "setup_stays_quiet" and judge.case_problems(case) == []
     assert case["say"] == "I weighed 80.4 kg this morning"
     assert case["seed"] == [{"as": "earlier", "service": "log_bodyweight",
@@ -1299,7 +1345,7 @@ def test_the_quiet_setup_case_loads_last_and_judges_as_designed(app_settings):
                   plain + " We can keep setting up: tell me your calorie target.",
                   plain + " Say when you want to finish the set-up."):
         assert judge.judge(resolved, logged, reply, rows), reply
-    for wrote in ("log_lifts", "set_goal", "update_settings", "save_food", "import_entries"):
+    for wrote in ("log_lifts", "set_goal", "update_settings", "save_food", "import_entries", "save_routine"):
         assert judge.judge(resolved, [*logged, {"name": wrote, "arguments": {}, "is_error": False}], plain, rows), \
             wrote  # a run that also writes a setup step
     assert judge.judge(resolved, logged[:1], plain, rows)  # no log_bodyweight

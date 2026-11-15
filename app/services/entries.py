@@ -49,6 +49,9 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit])
   one that would move a weigh-in or a measurement onto a day that holds another live one is refused with
   day_taken, as an edit is, before anything is kept, and replaced is always empty. With undo_edit off,
   restore_entry is what it was, but for one more sentence in not_deleted's fix and the web's refusal above.
+- A routine (contract routines.md) is deleted and restored by id as a saved food is, the two calls included. A
+  restore that would make one live past rules.ROUTINES_MAX is too_many_routines, as a save is. It is never edited
+  here and keeps no version: undo_edit on it is nothing_to_undo.
 - A web edit form sends the entry's updated_at as its page drew it (drawn_at, from get_entry). An entry that
   changed since is refused with entry_changed, under the lock, and nothing is saved.
 - Edit, delete and restore are writes: lock_user first, then common.check_write_limit.
@@ -63,10 +66,11 @@ from sqlalchemy import Index, select
 
 from app import db, formatting, links, metrics, rules, users
 from app.models import (
-    IMPORTED, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood, entry_models,
+    IMPORTED, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, Routine, SavedFood,
+    entry_models,
 )
 from app.rules import error, quote
-from app.services import body, cardio, food, lifts, measurements
+from app.services import body, cardio, food, lifts, measurements, routines
 from app.services.common import (
     KIND_LABELS, check_by, check_data, check_write_limit, entry_changed, exercises, keep_version, lock_user,
     newest_version, no_account, not_found, owned, pair, put_back, read_version, row_dict, truthy,
@@ -97,6 +101,7 @@ PREVIEW_NOTE = ("Nothing was deleted. Show the person this entry and ask. Send t
                 "only when they say yes.")
 MISMATCH_NOTE = ("That confirm does not match this entry as it stands, so nothing was deleted. Show the person the "
                  "entry and ask again.")
+ROUTINE_LIVE = "Nothing to do: it is live. get_routines shows it."  # not_deleted's fix for a routine
 
 
 def entry_kinds() -> dict[str, type]:
@@ -105,8 +110,8 @@ def entry_kinds() -> dict[str, type]:
 
 
 def _deletable() -> dict[str, type]:
-    """What delete_entry and restore_entry take: every entry kind, and a saved food."""
-    return {**entry_kinds(), "saved_food": SavedFood}
+    """What delete_entry and restore_entry take: every entry kind, a saved food and a routine."""
+    return {**entry_kinds(), "saved_food": SavedFood, "routine": Routine}
 
 
 def _readable() -> dict[str, type]:
@@ -136,6 +141,8 @@ def entry_dict(row) -> dict:
         return cardio.cardio_dict(row)
     if isinstance(row, SavedFood):
         return {**food.food_dict(row), "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None}
+    if isinstance(row, Routine):
+        return {**routines.routine_dict(row), "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None}
     return row_dict(row)
 
 
@@ -144,6 +151,8 @@ def _links(row) -> dict:
         return {"goals": links.page("goals")}
     if isinstance(row, SavedFood):
         return {"foods": links.page("foods")}
+    if isinstance(row, Routine):
+        return {"routines": links.page("routines")}
     return {"day": links.page("day", date=row.date)}
 
 
@@ -223,8 +232,11 @@ def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo
             return not_found(kind)
         if row.deleted_at is None:
             return error("not_deleted", "This entry is not deleted, so there is nothing to restore.",
+                         ROUTINE_LIVE if kind == "routine" else
                          "Nothing to do: it is live. get_log shows it on its day. To undo its last edit, send "
                          "undo_edit true.")
+        if kind == "routine" and routines.live_count(s, user_id) >= rules.ROUTINES_MAX:
+            return routines.too_many()  # a restore makes a routine live, so the cap counts it (decision 4)
         if by == "web" and kind in ONE_A_DAY:
             # No page brings a set-aside entry back, so the web's restore never replaces another entry.
             taken = _day_taken(s, model, row, row.date, user_id, "then restore this one again")
@@ -258,6 +270,9 @@ def _undo_edit(s, model, kind: str, user_id: int, entry_id, by) -> dict:
     row = owned(s, model, user_id, entry_id)
     if row is None:
         return not_found(kind)
+    if kind == "routine":  # a replace keeps no version (decision 6): said again, it is back
+        return error("nothing_to_undo", "A routine has no earlier values kept.",
+                     "Save it again with save_routine, as it was.")
     version = newest_version(s, row)
     editor = "save_food" if kind == "saved_food" else "edit_entry"
     if version is None:
@@ -374,6 +389,9 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
     if kind == "saved_food":
         return error("unknown_kind", "A saved food is not edited here.",
                      "Use save_food with the same name and the new serving or kcal.")
+    if kind == "routine":
+        return error("unknown_kind", "A routine is not edited here.",
+                     "Use save_routine with the same name and the whole routine.")
     if not (isinstance(kind, str) and kind in EDITABLE):
         return error("unknown_kind", f"'{quote(kind)}' is not a kind of entry that can be edited.",
                      f"Use one of: {', '.join(EDITABLE)}.")

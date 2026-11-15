@@ -251,13 +251,15 @@ def test_spotter_logs_through_its_own_handler_added_once(provider):
 FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings",
              "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
              "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries",
-             "send_feedback"]  # feedback.md decision 2: the twentieth, after the nineteen
-READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals"}
+             "send_feedback",  # feedback.md decision 2: the twentieth, after the nineteen
+             "save_routine", "get_routines"]  # routines.md R10: after send_feedback
+READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals",
+         "get_routines"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 SETTING_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 # Was {"update_settings", "save_food", "import_entries"}: the import is a write, as the log functions are.
-SETTINGS = {"update_settings", "save_food"}  # idempotent: the same call twice ends in the same state
+SETTINGS = {"update_settings", "save_food", "save_routine"}  # idempotent: the same call twice ends in the same state
 DELETE_HINTS = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 DELETES = {"delete_entry"}
 
@@ -406,6 +408,12 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     assert seen["get_trends"][-1]["note"] and seen["get_trends"][-1]["bodyweight"]["rate_per_week"] is None
     keep("send_feedback", {"text": "The chart is confusing.", "topic": "pages"})  # saved (feedback.md decision 2)
     keep("send_feedback", {"text": "The chart is confusing.", "topic": "pages"})  # the same note again: duplicate
+    keep("get_routines")  # none saved: the note (routines.md)
+    push = {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60},
+                                          {"exercise": "Dip", "sets": 3, "reps": 10}]}
+    keep("save_routine", push)  # created
+    keep("save_routine", push)  # the same again: nothing changed
+    keep("get_routines")  # one: Bench Press from today's session, Dip with no weight at all
     # import_entries, last, so no read above sees its rows: a preview, the real run, the same rows again, and a
     # run whose every row fails (no date passed: from, to and the day link are null or absent).
     keep("import_entries", {"rows": import_rows(today), **IMPORT_UNITS})  # dry_run left out: by_row, a null id
@@ -557,7 +565,7 @@ def test_results_are_the_services_own_dicts(http):
     assert ok(http, token, "get_progress") == services.get_progress(account)
     assert ok(http, token, "get_progress", {"exercise": "back squat"}) == services.get_progress(account, "back squat")
     who = ok(http, token, "whoami")
-    assert {k: v for k, v in who.items() if k != "sign_in"} == services.whoami(account)
+    assert {k: v for k, v in who.items() if k != "sign_in"} == services.whoami(account, mcp_server.NEEDS)
 
 
 def test_an_error_is_flagged_and_carries_the_fix_as_structure_and_text(http):
@@ -874,6 +882,8 @@ OPTIONAL_ARGUMENTS = {
     "get_goals": {"include_closed": True},
     "import_entries": {"dry_run": False, "weight_unit": "lb", "distance_unit": "mi", "length_unit": "in"},
     "send_feedback": {"doing": "Doing", "expected": "Expected", "happened": "Happened", "topic": "pages"},
+    "save_routine": {},  # routines.md: name and lifts are required, and a lift's weight_kg sits inside lifts
+    "get_routines": {},
 }
 REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
             "log_measurement": {"kind": "waist", "value": 84.5},
@@ -891,9 +901,10 @@ REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
                                          "entries": [{"description": "Oats", "kcal": 350.0, "meal": "breakfast"}]},
                                         {"kind": "cardio_entry", "date": "2026-01-04", "exercise": "Outdoor Run",
                                          "minutes": 30.0, "distance": 3.1, "speed": 6.2}]},
-            "send_feedback": {"text": "Text"}}
+            "send_feedback": {"text": "Text"},
+            "save_routine": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8}]}}
 DATA_WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "log_food",
-               "save_food", "log_cardio", "import_entries"}
+               "save_food", "log_cardio", "import_entries", "save_routine"}
 
 
 def spy_on_services(monkeypatch) -> dict[str, tuple]:
@@ -1257,6 +1268,7 @@ CONTRACT_NEEDS = {
     "get_trends": "read", "get_goals": "read",
     "import_entries": "log",
     "send_feedback": "log",  # feedback.md decision 3
+    "save_routine": "log", "get_routines": "read",  # routines.md decisions 5 and 7
 }
 ALLOWS = {"log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}  # switch decision 1: two settings
 
@@ -1481,7 +1493,7 @@ def test_can_and_cant_states_the_tags_the_cardio_formula_and_the_food_tables():
                   "Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
                   "(CC BY-NC-ND 4.0).",
                   "With no weigh-in there is no estimate", "USDA FoodData Central", "IFCT 2017 and INDB",
-                  "not openly licensed", "`net_kcal`", "Twenty functions"):
+                  "not openly licensed", "`net_kcal`", "Twenty-two functions"):
         assert words in text, words
 
 
@@ -2079,7 +2091,7 @@ def test_can_and_cant_states_the_goal_kinds_the_trends_and_the_settings_clicks()
                   "more than 2 years from today",
                   "the person's own clicks on Settings", "No function does either", "Claude never offers to do them",
                   "stays valid until it expires, an hour at most", "recreates an empty account",
-                  "`too_many_reads`", "Twenty functions", "`get_trends`", "`get_goals`"):
+                  "`too_many_reads`", "Twenty-two functions", "`get_trends`", "`get_goals`"):
         assert words in text, words
     lines = CAN_AND_CANT.read_text(encoding="utf-8").splitlines()
     rows = [m.group(1) for line in lines if (m := re.match(r"\| `([a-z_]+)` \| ", line))]

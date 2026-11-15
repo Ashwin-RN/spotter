@@ -156,7 +156,8 @@ def test_privacy_is_required_once_it_is_a_link():
     from app import links
     with_privacy = {**links._PATHS, "privacy": "/privacy"}
     assert "Privacy" in top_level_pages(with_privacy)
-    assert missing_pages("Today, Progress, Goals, Foods, Settings", top_level_pages(with_privacy)) == ["Privacy"]
+    assert missing_pages("Today, Progress, Goals, Foods, Routines, Settings", top_level_pages(with_privacy)) == [
+        "Privacy"]  # routines.md: Routines is a links name
 
 
 def test_an_extra_name_in_the_list_is_not_a_fault():

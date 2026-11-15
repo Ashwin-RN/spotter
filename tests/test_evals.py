@@ -29,11 +29,12 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "hi_there_first_log", "hi_there_not_again", "setup_asks_first", "setup_picks_up",
                   "delete_regretted",  # switch decision 21: delete_explicit became delete_asks_first
                   "lift_one_sentence", "lift_set_by_set", "lift_added_later",  # gym logging, decision 17
-                  "setup_stays_quiet"}  # first day: the review's S1
+                  "setup_stays_quiet",  # first day: the review's S1
+                  "routine_saved", "routine_logged", "routine_changed"}  # routines, decision 21
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
           "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries",
-          "send_feedback"}  # feedback.md: a write added later joins the lists (docs/evals.md)
+          "send_feedback", "save_routine"}  # feedback.md: a write added later joins the lists (docs/evals.md)
 
 
 def call(name, arguments=None, is_error=False):
@@ -44,9 +45,9 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert len(cases) == 32  # was 21: feedback adds feedback_sent and feedback_offered, the hi there page
-    # adds hi_there_first_log and hi_there_not_again, the switch delete_regretted, gym logging three, and first day
-    # setup_asks_first, setup_picks_up and setup_stays_quiet
+    assert len(cases) == 35  # was 21: feedback adds feedback_sent and feedback_offered, the hi there page
+    # adds hi_there_first_log and hi_there_not_again, the switch delete_regretted, gym logging three, first day
+    # setup_asks_first, setup_picks_up and setup_stays_quiet, and routines three
     assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)

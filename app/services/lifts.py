@@ -154,6 +154,8 @@ def history(s: Session, user_id: int, today: date) -> dict:
     points:    {lift: [(date, session best)]}   one point per session with a set of 1 to 10 reps
     logged:    {lift: sessions that include the lift, at any reps}
     last:      {lift: the real date of the latest session (in the one order) that trained it}
+    last_top:  {lift: {date, weight_kg}}  that latest session's real date and its heaviest set of the lift. For
+               get_routines' weight to log (contract routines.md): get_progress and the pages do not copy it.
     best_set:  {lift: {weight_kg, reps, date, estimated_max_kg}}
     reps_only: {lift: {reps, date}}  a lift with no set above 0 kg: the most reps in one set, and
                the real date of its session. A tie keeps the earlier set in the one order, as best_set
@@ -168,6 +170,7 @@ def history(s: Session, user_id: int, today: date) -> dict:
     points: dict[str, list[tuple[date, float]]] = {}
     logged: dict[str, int] = {}
     last: dict[str, date] = {}
+    last_top: dict[str, dict] = {}
     best_set: dict[str, dict] = {}
     bests: dict[str, list[dict]] = {}
     prior: dict[str, list[tuple[float, int]]] = {}
@@ -190,6 +193,7 @@ def history(s: Session, user_id: int, today: date) -> dict:
         for lift, lift_sets in by_lift.items():
             logged[lift] = logged.get(lift, 0) + 1
             last[lift] = t.date
+            last_top[lift] = {"date": t.date, "weight_kg": max(w for w, _ in lift_sets)}
             best = metrics.session_best(lift_sets)
             if best is not None:
                 points.setdefault(lift, []).append((t.date, best))
@@ -201,8 +205,8 @@ def history(s: Session, user_id: int, today: date) -> dict:
     best_set = {lift: {**b, "estimated_max_kg": formatting.rounded(b["estimated_max_kg"], "estimated_max")}
                 for lift, b in best_set.items()}
     reps_only = {lift: most for lift, most in most_reps.items() if lift not in weighted}
-    return {"sessions": sessions, "points": points, "logged": logged, "last": last, "best_set": best_set,
-            "reps_only": reps_only, "bests": bests}
+    return {"sessions": sessions, "points": points, "logged": logged, "last": last, "last_top": last_top,
+            "best_set": best_set, "reps_only": reps_only, "bests": bests}
 
 
 def _prior(s: Session, user_id: int, exercise_ids: set, name_of: dict, on: date, today: date,

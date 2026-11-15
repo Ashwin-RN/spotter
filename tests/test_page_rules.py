@@ -57,6 +57,7 @@ FRAME = {
     "/goals": ("goals", {"goals-page"}),
     "/foods": ("settings", {"foods-page"}),
     "/foods/{food_id}/edit": ("settings", {"form-page"}),
+    "/routines": ("settings", {"foods-page"}),  # contract routines.md, R15: the frame class of Foods
     "/settings": ("settings", {"settings-page"}),
     "/settings/delete": ("settings", {"notice-page"}),
 }

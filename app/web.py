@@ -31,11 +31,13 @@ and Settings.
                                    (POST, save_food); delete and Undo POST to /foods/{id}/delete and /restore,
                                    and so does the Undo of a food's edit, as an entry's does
     /foods/{id}/edit               one saved food's serving, kcal and grams (GET, POST)
+    /routines                      the routines as a table, each lift with the weight get_routines gives, and no
+                                   form; delete and Undo POST to /routines/{id}/delete and /restore
     /settings                      six cards: the account, the time zone (POST), the targets (POST to
                                    /settings/targets), the switch for what Claude may do (POST to
                                    /settings/claude-can), the person's data (export, delete), and
-                                   More (Saved foods, and Sign out for a phone). Each post lands on its own card,
-                                   and a GET of /settings/targets or /settings/claude-can goes to that card
+                                   More (Saved foods, Saved routines, and Sign out for a phone). Each post lands on
+                                   its own card, and a GET of /settings/targets or /settings/claude-can goes to that card
     /settings/export               POST: a zip of CSVs, one per table the person owns
     /settings/delete               GET: what goes; POST: the sign-in at the provider, then every row here,
                                    then the session, then a plain "deleted" page
@@ -112,10 +114,12 @@ from app import calllog, charts, csrf, db, exercises as exercise_list, formattin
 from app import metrics, users, web_auth
 from app.config import ROOT, Settings, get_settings
 from app.models import (
-    CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
+    CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, Routine,
+    SavedFood, User,
 )
 from app.services import account as account_checks, body, common, lifts, measurements, progress as progress_data
 from app.services import goals as goal_rules, trends as trend_rules
+from app.services.routines import lift_words as routine_lift_words
 
 log = logging.getLogger("spotter")
 
@@ -257,10 +261,11 @@ FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS}
 # away, deleting: tests/test_web_account.py holds the two side by side. The stored values never change. No text a
 # connected model reads comes from these tables.
 CLAUDE_CAN_LINES = {
-    "log_delete": "Your assistant can log and import entries, edit and restore them, save foods and set goals. It can "
-                  "change your time zone and targets, and delete entries and saved foods. Before a delete it is shown "
-                  "the entry and told to ask you. Nothing is erased: a deleted one can be restored.",
-    "log": "Everything above except deleting: your assistant cannot delete an entry or a saved food.",
+    "log_delete": "Your assistant can log and import entries, edit and restore them, save foods and routines, and set "
+                  "goals. It can change your time zone and targets, and delete entries, saved foods and routines. "
+                  "Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can be "
+                  "restored.",
+    "log": "Everything above except deleting: your assistant cannot delete an entry, a saved food or a routine.",
 }
 CLAUDE_CAN_LABELS = {"log_delete": "Read, log and delete", "log": "Read and log"}
 
@@ -414,7 +419,7 @@ STATUS_CLASSES = {"reached": "tag-good", "on track": "tag-good", "behind": "tag-
 # ENTRY_WORDS spells it). Deleted rows count: they go too.
 DELETE_COUNTS = ((LiftSession, "Lift sessions"), (Bodyweight, "Weigh-ins"), (Measurement, "Measurements"),
                  (FoodEntry, "Food entries"), (CardioEntry, "Cardio sessions"), (SavedFood, "Saved foods"),
-                 (Goal, "Goals"))
+                 (Routine, "Routines"), (Goal, "Goals"))
 
 ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -593,6 +598,7 @@ FRAMES = {
     "goals.html": ("goals-page", None, "goals"),
     "foods.html": ("foods-page", None, "settings"),
     "food_edit.html": (None, "form-page", "settings"),
+    "routines.html": ("foods-page", None, "settings"),
     "settings.html": ("settings-page", None, "settings"),
     "delete_account.html": (None, "notice-page", "settings"),
     "message.html": (None, "notice-page", None),
@@ -1347,7 +1353,7 @@ async def settings_view(request: Request, user: User, zone_error: str | None = N
                 add_back=bool(user.add_back_exercise_kcal) if add_back is None else add_back,
                 switch_error=switch_error,
                 choices=[(value, CLAUDE_CAN_LABELS[value], CLAUDE_CAN_LINES[value]) for value in CLAUDE_CAN],
-                foods_href=page_path("foods"))
+                foods_href=page_path("foods"), routines_href=page_path("routines"))
 
 
 async def claude_can_page(request: Request) -> Response:
@@ -2166,6 +2172,72 @@ async def food_restore_page(request: Request) -> Response:
     return redirect(marked(links.page("foods"), *undo_mark(SAVED_FOOD, result, undo)))
 
 
+# ---------------------------------------------------------------- Routines
+
+# The kind delete_entry and restore_entry name a routine by, and its one spelling on the page (contract routines.md).
+ROUTINE = "routine"
+ROUTINE_WORDS = "Routine"
+# The strips after a write, by mark and value, as Foods' are: deleted=routine:{id} is the Undo strip (routine_strip),
+# and any other mark or value shows none. The words never come from the address.
+ROUTINE_STRIPS = {("restored", ROUTINE): f"{ROUTINE_WORDS} restored."}
+
+
+def routine_strip(params) -> dict | None:
+    """The one strip Routines shows after a write: {"words", "undo"}, where undo is the id its Undo form restores."""
+    kind, _, routine_id = str(params.get("deleted") or "").partition(":")
+    if kind == ROUTINE and plain_id(routine_id):
+        return {"words": f"{ROUTINE_WORDS} deleted.", "undo": routine_id}
+    words = ROUTINE_STRIPS.get(("restored", params.get("restored")))
+    return {"words": words, "undo": None} if words else None
+
+
+async def routines_page(request: Request) -> Response:
+    """GET: the person's routines, each lift with the weight get_routines gives, so the page's weights are the
+    assistant's. No form saves or logs one: Delete in each row, and Undo after it."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await _db(services.get_routines, user.id)
+    rows = [{"id": r["id"], "name": r["name"], "lifts": routine_lift_words(r["lifts"], page=True)}
+            for r in result.get("routines", [])]
+    return page(request, "routines.html", routines=rows, strip=routine_strip(request.query_params))
+
+
+async def routine_delete_page(request: Request) -> Response:
+    """POST: delete a routine (soft) at once, as Foods' Delete does, back to Routines with Undo."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await write(user, "delete_entry", services.delete_entry, user.id, ROUTINE,
+                         request.path_params["routine_id"])
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if failed(result):
+        return not_found_page(request)
+    return redirect(marked(links.page("routines"), "deleted", f"{ROUTINE}:{result['id']}"))
+
+
+async def routine_restore_page(request: Request) -> Response:
+    """POST: Undo after a delete, back to Routines, which says the routine is restored. A stale strip can meet two
+    refusals: the routine is live already, or 20 others are."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await write(user, "restore_entry", services.restore_entry, user.id, ROUTINE,
+                         request.path_params["routine_id"], "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if "not_deleted" in codes(result):
+        return message(request, "Already back", "That routine is not deleted, so there was nothing to undo.",
+                       "Go back to Routines to see it.", status_code=409)
+    if "too_many_routines" in codes(result):
+        return message(request, "Too many routines", result["message"],
+                       "Delete one on Routines first, then undo again.", status_code=409)
+    if failed(result):
+        return not_found_page(request)
+    return redirect(marked(links.page("routines"), "restored", ROUTINE))
+
+
 # ---------------------------------------------------------------- the targets on Settings
 
 def targets_from_form(form, user: User) -> dict:
@@ -2707,6 +2779,9 @@ PAGES = [
     ("/foods/{food_id}/edit", food_edit_page, ["GET", "POST"]),
     ("/foods/{food_id}/delete", food_delete_page, ["POST"]),
     ("/foods/{food_id}/restore", food_restore_page, ["POST"]),
+    ("/routines", routines_page, ["GET"]),
+    ("/routines/{routine_id}/delete", routine_delete_page, ["POST"]),
+    ("/routines/{routine_id}/restore", routine_restore_page, ["POST"]),
     ("/settings/targets", targets_page, ["POST"]),
     ("/entries/{kind}/{entry_id}/edit", edit_page, ["GET", "POST"]),
     ("/entries/food_entry/{entry_id}/confirm", confirm_page, ["POST"]),

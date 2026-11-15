@@ -38,7 +38,8 @@ changed within a day and one full run cost three times the estimate. Both below 
 | claude-fable-5-2 (later that day) | 8 to 50 | 91,000 to 179,000 | $0.26 to $0.79 | measured: about 17 minutes of runs, $22.41 |
 
 - Most tokens are cached reads of the CLI's own system prompt and the tool schemas: eighteen when this
-  was measured, nineteen since `import_entries`, twenty since `send_feedback`.
+  was measured, nineteen since `import_entries`, twenty since `send_feedback`, twenty-two since `save_routine`
+  and `get_routines`.
 - The model line under the table says which model ran. Pin one with `--model` to compare runs.
 - The cost is the CLI's list-price figure. On a subscription that is usage against the plan's limits, not
   a bill.
@@ -188,18 +189,21 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `feedback_offered` | The progress chart in Spotter is confusing (a complaint, nothing asked for) | `send_feedback` never called; no feedback row; the reply says "feedback", "maker" or "runs Spotter" |
 | `hi_there_first_log` | I weighed 80.4 kg this morning (nothing logged yet) | `log_bodyweight` with kg 80.4. The reply says "/hi". One live weigh-in, 80.4, dated today |
 | `hi_there_not_again` | I weighed 80.4 kg this morning (80.9 kg logged yesterday) | `log_bodyweight` with kg 80.4. The reply does not say "/hi". Two live weigh-ins, yesterday's 80.9 and today's 80.4 |
-| `setup_asks_first` | Hi Spotter, help me set up (nothing logged yet) | `whoami` called; `log_bodyweight`, `log_lifts`, `set_goal`, `update_settings`, `save_food`, `log_food`, `log_cardio`, `log_measurement` and `import_entries` never called; the reply asks and says "weigh"; no weigh-in, no goal |
-| `setup_picks_up` | Help me finish setting up Spotter (80.9 kg logged yesterday, a body weight goal of 77 kg by the end of March) | `whoami` called; `log_bodyweight`, `set_goal`, `log_lifts`, `update_settings`, `save_food` and `import_entries` never called; the reply asks and says "lift"; one weigh-in, one goal |
+| `setup_asks_first` | Hi Spotter, help me set up (nothing logged yet) | `whoami` called; `log_bodyweight`, `log_lifts`, `set_goal`, `update_settings`, `save_food`, `log_food`, `log_cardio`, `log_measurement`, `import_entries` and `save_routine` never called; the reply asks and says "weigh"; no weigh-in, no goal |
+| `setup_picks_up` | Help me finish setting up Spotter (80.9 kg logged yesterday, a body weight goal of 77 kg by the end of March) | `whoami` called; `log_bodyweight`, `set_goal`, `log_lifts`, `update_settings`, `save_food`, `import_entries` and `save_routine` never called; the reply asks and says "lift"; one weigh-in, one goal |
 | `delete_regretted` | You deleted a weigh-in I wanted to keep. I never asked for that, and I do not want it to happen again. (one live weigh-in) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
 | `lift_one_sentence` | Back squat 3 sets of 5 at 100 kg, then bench press 80 kg for 8, 8 and 6 | One successful `log_lifts`, its sets holding Back Squat 100 × 5, Bench Press 80 × 8 and Bench Press 80 × 6. One live session, `set_count` 6 |
 | `lift_set_by_set` | Bench press 80 kg for 5 (Bench Press 80 × 5 logged today) | One successful `log_lifts` with Bench Press 80 × 5, never `new_session` true. One live session, the seeded one, `set_count` 2 |
 | `lift_added_later` | Also did barbell rows, 3 sets of 10 at 50 kg (Back Squat 100 × 5, three sets, logged today) | One successful `log_lifts` with Barbell Row 50 × 10, never a Back Squat set, never `new_session` true. One live session, the seeded one, `set_count` 6 |
-| `setup_stays_quiet` | I weighed 80.4 kg this morning (80.9 kg logged yesterday, so `whoami` carries `setup` and no note) | `log_bodyweight` with kg 80.4; `log_lifts`, `set_goal`, `update_settings`, `save_food` and `import_entries` never called; the reply asks nothing (no "?") and does not say "set up" or "setup"; two live weigh-ins, yesterday's 80.9 and today's 80.4 |
+| `setup_stays_quiet` | I weighed 80.4 kg this morning (80.9 kg logged yesterday, so `whoami` carries `setup` and no note) | `log_bodyweight` with kg 80.4; `log_lifts`, `set_goal`, `update_settings`, `save_food`, `import_entries` and `save_routine` never called; the reply asks nothing (no "?") and does not say "set up" or "setup"; two live weigh-ins, yesterday's 80.9 and today's 80.4 |
+| `routine_saved` | Save my push day: bench press 3 sets of 8, overhead press 3 sets of 10, dips 3 sets of 10 | One successful `save_routine`, name "push day" (any case), lifts Bench Press 3 × 8, Overhead Press 3 × 10, Dip 3 × 10, and no `weight_kg` in any lift. No `log_lifts`. One live routine with 3 lifts |
+| `routine_logged` | Log my push day (Push day saved: Bench Press 3 × 8 at 60, Overhead Press 3 × 10 at 40) | One successful `log_lifts`, its sets holding Bench Press 60 × 8 and Overhead Press 40 × 10, never `new_session` true. One live session today, `set_count` 6 |
+| `routine_changed` | Log my push day, but bench was 62.5 today (the same routine saved) | One successful `log_lifts`, its sets holding Bench Press 62.5 × 8 and Overhead Press 40 × 10, and no set at 60. One live session, `set_count` 6 |
 
-"No write function" is the thirteen writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
+"No write function" is the fourteen writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
 `log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,
-`restore_entry`, `delete_entry`, `import_entries`, `send_feedback`. A write added later must be added to those
-lists.
+`restore_entry`, `delete_entry`, `import_entries`, `send_feedback`, `save_routine`. A write added later must be
+added to those lists.
 
 ### What the six stage 5 cases prove, and what they do not
 
@@ -322,6 +326,17 @@ the set count is read from `set_count` on the session row.
 | `lift_one_sentence` | A workout said in one sentence becomes one call, one session, six sets, with the person's numbers | That three equal sets are sent as three items: `inputs_include` cannot count, so the set count is read from the row |
 | `lift_set_by_set` | A set equal to one already logged that day is added to the same session, with no question and no second session. Before this work it failed: the call came back duplicate | That the assistant keeps doing it over five sets in one conversation: a run is one message. The seed stands in for the earlier sets, made before the run, so the assistant did not see them logged |
 | `lift_added_later` | Told of one more lift, the assistant sends only the new sets, and they land in the day's session | That it never resends earlier sets it logged itself in the same conversation: no second turn. Only one phrasing |
+
+### The three routine cases
+
+A routine is saved with `save_routine` and logged through `log_lifts`, with the weights `get_routines` gives. A
+`routine` row carries `lift_count`, the number of lifts in its JSON.
+
+| Case | Proves | Does not prove |
+|---|---|---|
+| `routine_saved` | One sentence becomes one routine with only what was said: no weight made up, nothing logged | That a routine with weights keeps them right: `routine_logged`'s seed covers that from the service side |
+| `routine_logged` | The assistant reads the routine and logs its sets, with the routine's weights, as one session | The newest-wins rule against a later session: unit tests hold it. A run cannot seed `log_lifts` before the routine and then age the routine |
+| `routine_changed` | One changed number is sent changed, and the rest as saved | That next week's read gives 62.5: unit tests hold it |
 
 ## What the evals prove
 

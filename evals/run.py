@@ -32,7 +32,7 @@ from evals.recorder import CallRecorder
 
 RUN_TIMEOUT = 180  # seconds per CLI run
 TABLES = ("food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",
-          "feedback")
+          "feedback", "routine")
 
 # Set by the Claude Code session this may be started from. They make a child CLI think it is part of that
 # session (or point it at its IDE and messaging sockets), so they are dropped: each run then is what it
@@ -249,7 +249,7 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
     """The person's rows, deleted ones too (judge_db tells them apart by deleted_at), in every table a
     case can check, from the running settings' database. Dates and times come back as ISO strings. A
     lift_session row also carries set_count: how many lift_set rows it holds (0 for none), from one counted
-    query over all of the person's sessions."""
+    query over all of the person's sessions. A routine row carries lift_count: how many lifts its lifts JSON holds."""
     from sqlalchemy import func, select
 
     from app import db
@@ -267,6 +267,8 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
             .where(sessions.c.user_id == user_id).group_by(sets.c.session_id)).all())
     for row in found["lift_session"]:
         row["set_count"] = counted.get(row["id"], 0)
+    for row in found["routine"]:
+        row["lift_count"] = len(json.loads(row["lifts"]))
     return found
 
 

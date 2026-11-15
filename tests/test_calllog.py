@@ -144,8 +144,11 @@ MARKED_CALLS = [
                         "length_unit": MARKER}),
     # Every text of a note, and a topic that is no topic: refused (feedback.md decision 15).
     ("send_feedback", {"text": MARKER, "doing": MARKER, "expected": MARKER, "happened": MARKER, "topic": MARKER}),
+    # A routine's name and a lift's exercise: refused, the marker is no lift on the list (routines.md).
+    ("save_routine", {"name": MARKER, "lifts": [{"exercise": MARKER, "sets": 3, "reps": 8}]}),
+    ("get_routines", {}),
 ]
-REFUSED = 17  # the marked calls the services refuse. Was 16, before send_feedback
+REFUSED = 18  # the marked calls the services refuse. Was 17, before save_routine
 
 
 def string_fields(schema: dict) -> set[str]:

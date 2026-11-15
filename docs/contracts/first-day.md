@@ -386,4 +386,6 @@ Routines themselves: a saved workout by name, saved and read through the assista
 
 Until routines are built, the routine step, the page's two routine lines and the `routine` setup step are not drawn (decision 8).
 
+2026-11-15, the join with routines: decision 8 is wired. `save_routine` is offered, so step 5, the Routines line and the `routine` setup step are drawn, a live routine of the person's own marks the step done, and the tests hold both states of `NEEDS`.
+
 Also not in this work: an MCP prompt. A setup function. A per-person checklist on the page. Measurements in setup. The switch in setup. A link to `/hi` from the landing, Today or the footer. Any look, stylesheet rule or picture. A stored mark that setup was offered or a step skipped. Any line of gym logging's. The README's line on the page and the build log's entry, done after the review.

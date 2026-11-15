@@ -792,8 +792,9 @@ def test_every_non_get_web_route_checks_the_token(client):
         "/day/{date}/food", "/day/{date}/cardio", "/foods", "/foods/{food_id}/edit", "/foods/{food_id}/delete",
         "/foods/{food_id}/restore", "/settings/targets", "/entries/food_entry/{entry_id}/confirm",
         "/goals", "/goals/{goal_id}/status", "/settings/export",
-        "/settings/delete"}
-    filled = {"{date}": "2026-11-09", "{kind}": "bodyweight", "{entry_id}": "1", "{food_id}": "1", "{goal_id}": "1"}
+        "/settings/delete", "/routines/{routine_id}/delete", "/routines/{routine_id}/restore"}  # routines.md R15
+    filled = {"{date}": "2026-11-09", "{kind}": "bodyweight", "{entry_id}": "1", "{food_id}": "1", "{goal_id}": "1",
+              "{routine_id}": "1"}
     for route in posting:
         path = route.path
         for marker, value in filled.items():

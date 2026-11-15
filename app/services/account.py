@@ -61,7 +61,7 @@ from sqlalchemy import delete, func, select, update
 from app import db, exercises as exercise_list, formatting, links, rules, users
 from app.models import (
     CLAUDE_CAN, EXERCISE_KINDS, IMPORTED, Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet,
-    Measurement, SavedFood, User, entry_models,
+    Measurement, Routine, SavedFood, User, entry_models,
 )
 from app.rules import error, quote
 from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account, truthy
@@ -124,7 +124,8 @@ def whoami(user_id: int, offered=()) -> dict:
                 "goal": held["goal"], "calorie_target": user.calorie_target_kcal is not None,
                 "sessions_target": user.target_sessions_per_week is not None,
                 "cardio_target": user.target_cardio_minutes_per_week is not None,
-                "saved_food": held["saved_food"], "routine": False}  # routine: nothing can hold one yet
+                "saved_food": held["saved_food"], "routine": s.scalar(select(Routine.id).where(
+                    Routine.user_id == user.id, Routine.deleted_at.is_(None)).limit(1)) is not None}
         missing = [step for step in setup_steps(offered) if step != "import" and not done[step]]
         if missing:  # import alone never keeps setup alive, so it is asked only now
             if "import" in setup_steps(offered) and not _imported(s, user.id, held):
@@ -307,7 +308,7 @@ def set_claude_can(user_id: int, value) -> dict:
 
 # ---------------------------------------------------------------- deleting the account
 
-OWNED = (LiftSession, Bodyweight, Measurement, Goal, SavedFood, FoodEntry, CardioEntry)
+OWNED = (LiftSession, Bodyweight, Measurement, Goal, SavedFood, FoodEntry, CardioEntry, Routine)
 
 
 def delete_account(user_id: int) -> dict:

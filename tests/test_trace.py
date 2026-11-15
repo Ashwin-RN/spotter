@@ -146,7 +146,7 @@ def test_0005_adds_seven_nullable_columns_and_an_index_and_comes_down_again():
             assert sorted((d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
                 == [("add_index", "ix_entry_version_user_id_kind_entry_id_id"),
                     ("add_index", "ix_feedback_user_id_created_at"), ("add_table", "entry_version"),
-                    ("add_table", "feedback"), ("add_table", "write_key")]
+                    ("add_table", "feedback"), ("add_table", "routine"), ("add_table", "write_key")]  # and 0010's
         command.downgrade(cfg, "0004")
         with engine.connect() as c:
             assert {col["name"] for col in inspect(c).get_columns("call_log")} == set(found) - set(TRACE)
@@ -228,7 +228,7 @@ def test_the_known_names_are_every_name_in_the_published_tool_schemas(make_clien
         schema = tool["inputSchema"]
         for obj in [schema, *schema.get("$defs", {}).values()]:
             published |= set(obj.get("properties", {}))
-    assert len(tools) == 23 and published == calllog.KNOWN_NAMES  # was 20: feedback.md adds two, its split a third
+    assert len(tools) == 25 and published == calllog.KNOWN_NAMES  # was 23: routines.md adds two
 
 
 # ---------------------------------------------------------------- decisions 7 to 9: outcome, step, frame
@@ -465,7 +465,7 @@ def test_only_the_owner_s_list_has_owner_calls_and_everyone_else_s_is_the_ninete
     for label in ("someone else", "unset"):
         assert [t["name"] for t in tool_lists[label]] == FUNCTIONS
         assert json.dumps(tool_lists[label]) == json.dumps(tool_lists["owner"][:-3])  # byte for byte
-    assert web.FUNCTION_COUNT == len(FUNCTIONS) == 20  # was 19: send_feedback (feedback.md decision 13)
+    assert web.FUNCTION_COUNT == len(FUNCTIONS) == 22  # was 20: save_routine and get_routines (routines.md 19)
 
 
 @pytest.mark.parametrize("overrides, subject", [({"owner_user_id": OWNER}, "user_01OTHER"), ({}, OWNER)],

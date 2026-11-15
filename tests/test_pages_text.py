@@ -42,7 +42,7 @@ import pytest
 from sqlalchemy import select
 
 from app import db, formatting, services, web
-from app.models import Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User
+from app.models import Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, Routine, SavedFood, User
 
 from . import text_rules as tr
 from .test_web import FIXED_NOW, client, only_user, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
@@ -486,6 +486,9 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
         "/foods": ["/foods", "/foods?saved=saved_food", "/foods?restored=saved_food", "/foods?saved=unchanged",
                    "/foods?saved=1"] + [f"/foods?deleted=saved_food:{i}" for i in foods[:1]],
         "/foods/{food_id}/edit": [f"/foods/{i}/edit" for i in foods],
+        # Routines (contract routines.md): each strip it has words for, and a mark it does not read.
+        "/routines": ["/routines", "/routines?restored=routine", "/routines?restored=1"] +
+                     [f"/routines?deleted=routine:{i}" for i in _ids(Routine, user_id)[:1]],
         "/entries/{kind}/{entry_id}/edit": entries,
         "/progress": ["/progress"],
         "/progress/{lift}": [f"/progress/{web.links.slug(name)}" for name in sorted(lifts)],
@@ -513,6 +516,7 @@ def entered_text(user_id: int) -> list[str]:
         out += list(s.scalars(select(CardioEntry.notes).where(CardioEntry.user_id == user_id)))
         out += list(s.scalars(select(SavedFood.name).where(SavedFood.user_id == user_id)))
         out += list(s.scalars(select(SavedFood.serving_label).where(SavedFood.user_id == user_id)))
+        out += list(s.scalars(select(Routine.name).where(Routine.user_id == user_id)))  # routines.md: their words
         out += list(s.scalars(select(Goal.text).where(Goal.user_id == user_id)))
     return [v for v in out if v]
 
@@ -575,7 +579,7 @@ def page_findings(path: str, markup: str, entered: list[str], user_id: int | Non
 # routes only. A pass adds its own route here when its page lands.
 BUILT: frozenset[str] = frozenset({"/", "/day/{date}", "/entries/{kind}/{entry_id}/edit", "/progress",
                                    "/progress/{lift}", "/goals", "/foods", "/foods/{food_id}/edit", "/settings",
-                                   "/settings/delete", "/hi"})
+                                   "/settings/delete", "/hi", "/routines"})
 
 ROUTES = ("/", *(path for path, _, methods in web.PAGES if "GET" in methods))
 
@@ -692,7 +696,7 @@ TITLE_SHAPE = re.compile(r"\S(?:.*\S)?" + re.escape(SEPARATOR))
 LANDING = "A fitness log you keep by talking to your assistant"
 # Section L's titles table, for the pages named by a fixed word.
 NAMED = {"/": LANDING, "/progress": "Progress", "/goals": "Goals", "/foods": "Foods", "/settings": "Settings",
-         "/settings/delete": "Delete my account", "/hi": "Hi there"}
+         "/settings/delete": "Delete my account", "/hi": "Hi there", "/routines": "Routines"}
 EDIT_KINDS = {"bodyweight": "weigh-in", "measurement": "measurement", "lift_session": "lift session",
               "food_entry": "food entry", "cardio_entry": "cardio session"}
 

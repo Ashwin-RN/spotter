@@ -102,6 +102,8 @@ CALLS = {
     "import_entries": lambda account: {"rows": [{"kind": "bodyweight", "date": day(-3), "weight": 80}],
                                        "weight_unit": "kg", "dry_run": False},
     "send_feedback": lambda account: {"text": "The chart is confusing."},  # feedback.md decision 7
+    "save_routine": lambda account: {"name": "Push day",  # routines.md decision 5
+                                     "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8}]},
 }
 
 
@@ -115,8 +117,8 @@ def writer(http):
     return http, token, account
 
 
-def test_the_table_of_calls_covers_the_thirteen_write_functions():  # was twelve: send_feedback (feedback.md 3)
-    assert set(CALLS) == set(WRITES) and len(WRITES) == 13
+def test_the_table_of_calls_covers_the_fourteen_write_functions():  # was thirteen: save_routine (routines.md 19)
+    assert set(CALLS) == set(WRITES) and len(WRITES) == 14
 
 
 # ---------------------------------------------------------------- decisions 4, 5 and 14: the same call again
@@ -409,8 +411,9 @@ def looks(statements: list[str]) -> list[str]:
 # The read already_done names for each write: get_log for any other. A delete or a restore takes a saved food too,
 # and get_log shows no saved food.
 READS = {"set_goal": "get_goals", "update_settings": "whoami", "save_food": "find_food",
-         "delete_entry": "get_log, or find_food for a saved food",
-         "restore_entry": "get_log, or find_food for a saved food"}
+         "save_routine": "get_routines",  # routines.md R11, and a routine to delete or restore
+         "delete_entry": "get_log, find_food for a saved food, or get_routines for a routine",
+         "restore_entry": "get_log, find_food for a saved food, or get_routines for a routine"}
 
 
 # send_feedback has no read to name: tests/test_feedback.py holds its own fix (feedback.md decision 7).
@@ -887,7 +890,7 @@ def test_0006_adds_the_key_table_the_models_match_and_it_comes_down_again():
             assert sorted((d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
                 == [("add_index", "ix_entry_version_user_id_kind_entry_id_id"),
                     ("add_index", "ix_feedback_user_id_created_at"), ("add_table", "entry_version"),
-                    ("add_table", "feedback")]
+                    ("add_table", "feedback"), ("add_table", "routine")]  # and 0010's (tests/test_routines.py)
         with engine.begin() as c:
             for user, key in ((1, "one-key-01"), (1, "two-key-02"), (2, "one-key-01")):  # one row per person and key
                 c.exec_driver_sql(row, (user, key, now))
@@ -1063,7 +1066,7 @@ UNKEYED = ('action="/sign-out"', 'action="/settings/export"')  # they write noth
 def test_every_form_that_writes_carries_one_hidden_key_as_its_last_field_and_the_three_others_carry_none():
     forms = [form for path in sorted(TEMPLATES.glob("*.html")) for form in FORM.findall(path.read_text("utf-8"))]
     keyed = [form for form in forms if not any(action in form for action in UNKEYED)]
-    assert (len(forms), len(keyed)) == (21, 18)
+    assert (len(forms), len(keyed)) == (22, 19)  # routines.md: a routine's Delete
     field = '<input type="hidden" name="key" value="{{ form_key() }}">'
     for form in forms:
         assert form.count(field) == (form in keyed) and form.count('name="key"') == form.count(field), form[:80]
@@ -1092,6 +1095,17 @@ def a_deleted_food(user: int) -> int:
     food = a_saved_food(user)
     assert services.delete_entry(user, "saved_food", food)["deleted"] is True
     return food
+
+
+def a_routine(user: int) -> int:
+    return services.save_routine(user, {"name": "Push day", "lifts": [{"exercise": "Dip", "sets": 3, "reps": 10}]},
+                                 "web")["id"]
+
+
+def a_deleted_routine(user: int) -> int:
+    routine = a_routine(user)
+    assert services.delete_entry(user, "routine", routine)["deleted"] is True
+    return routine
 
 
 def a_goal(user: int) -> int:
@@ -1132,6 +1146,9 @@ FORMS = {
                             {"serving_label": "1 roti", "kcal_per_serving": "130"}, False),
     "a saved food's delete": (a_saved_food, "/foods", "/foods/{id}/delete", "", {}, True),
     "a saved food's undo": (a_deleted_food, "/foods?deleted=saved_food:{id}", "/foods/{id}/restore", "", {}, True),
+    "a routine's delete": (a_routine, "/routines", "/routines/{id}/delete", "", {}, True),  # routines.md R15
+    "a routine's undo": (a_deleted_routine, "/routines?deleted=routine:{id}", "/routines/{id}/restore", "", {},
+                         True),
 }
 
 

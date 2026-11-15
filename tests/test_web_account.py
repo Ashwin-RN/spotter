@@ -908,7 +908,7 @@ def test_the_confirm_page_says_what_goes_by_count(signed, make_user):
     page = signed.get("/settings/delete").text
     counts = dict(re.findall(r'<li class="entry-line"><span>([^<]+)</span><strong>(\d+)</strong></li>', page))
     assert counts == {"Lift sessions": "2", "Weigh-ins": "2", "Measurements": "3", "Food entries": "3",
-                      "Cardio sessions": "1", "Saved foods": "1", "Goals": "1"}
+                      "Cardio sessions": "1", "Saved foods": "1", "Routines": "0", "Goals": "1"}  # routines.md R14
     assert "so does your sign-in" in page and "This cannot be undone." in page
     form = re.search(r'<form method="post" action="/settings/delete">(.*?)</form>', page, re.S).group(1)
     assert f'value="{session_of(signed)["csrf"]}"' in form and "Delete my account" in form
@@ -1445,7 +1445,9 @@ def test_the_more_card_links_saved_foods_and_carries_a_sign_out_that_signs_out(s
     shows on a phone only), which signs the person out. No Privacy link."""
     page = signed.get("/settings").text
     card = card_by_title(page, "More")
-    assert [(a.attrs, a.text()) for a in card.find_all("a")] == [({"class": "action", "href": "/foods"}, "Saved foods")]
+    assert [(a.attrs, a.text()) for a in card.find_all("a")] == [({"class": "action", "href": "/foods"}, "Saved foods"),
+                                                                 ({"class": "action", "href": "/routines"},
+                                                                  "Saved routines")]  # routines.md R15
     [form] = card.find_all("form")
     assert form.attrs == {"class": "sign-out", "method": "post", "action": "/sign-out"}
     token = session_of(signed)["csrf"]
@@ -1467,14 +1469,16 @@ SWITCH_EVERYTHING = {"whoami", "list_exercises", "get_progress", "get_log", "fin
                      # the owner's alone, at read
                      "log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "import_entries",
                      "edit_entry", "restore_entry", "save_food", "set_goal", "update_settings",
-                     "send_feedback"}  # feedback.md decision 3
+                     "send_feedback",  # feedback.md decision 3
+                     "save_routine", "get_routines"}  # routines.md decisions 5 and 7
 SWITCH_ALLOWS = {
     "log_delete": (SWITCH_EVERYTHING | {"delete_entry"},
-                   "Your assistant can log and import entries, edit and restore them, save foods and set goals. It can "
-                   "change your time zone and targets, and delete entries and saved foods. Before a delete it is shown "
-                   "the entry and told to ask you. Nothing is erased: a deleted one can be restored."),
+                   "Your assistant can log and import entries, edit and restore them, save foods and routines, and set "
+                   "goals. It can change your time zone and targets, and delete entries, saved foods and routines. "
+                   "Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can be "
+                   "restored."),
     "log": (SWITCH_EVERYTHING,
-            "Everything above except deleting: your assistant cannot delete an entry or a saved food."),
+            "Everything above except deleting: your assistant cannot delete an entry, a saved food or a routine."),
 }
 
 
@@ -1588,7 +1592,7 @@ def test_the_delete_page_in_the_contracts_order_with_none_logged(signed):
     lines = re.findall(r'<li class="entry-line"><span>([^<]+)</span><strong>(\d+)</strong></li>', page)
     assert lines == [(label, "0") for _, label in web.DELETE_COUNTS]
     assert [label for _, label in web.DELETE_COUNTS] == ["Lift sessions", "Weigh-ins", "Measurements", "Food entries",
-                                                         "Cardio sessions", "Saved foods", "Goals"]
+                                                         "Cardio sessions", "Saved foods", "Routines", "Goals"]
     [form] = card.find_all("form")
     assert form.attrs == {"method": "post", "action": "/settings/delete"}
     assert [(b.classes, b.text()) for b in form.find_all("button")] == [(["danger"], "Delete my account")]

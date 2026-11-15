@@ -134,7 +134,7 @@
       "function": "get_trends",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
-                  "import_entries", "send_feedback"]
+                  "import_entries", "send_feedback", "save_routine"]
     }
   },
   {
@@ -145,7 +145,7 @@
       "function": "get_goals",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
-                  "import_entries", "send_feedback"]
+                  "import_entries", "send_feedback", "save_routine"]
     }
   },
   {
@@ -154,7 +154,7 @@
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
-                  "import_entries", "send_feedback"],
+                  "import_entries", "send_feedback", "save_routine"],
       "reply_has": ["Settings"]
     }
   },
@@ -196,7 +196,7 @@
       "function": "get_trends",
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
-                  "import_entries", "send_feedback"],
+                  "import_entries", "send_feedback", "save_routine"],
       "reply_lacks": ["\u2014", "\u2013"],
       "reply_lacks_pattern": ["(?<![\\d.,:+\\-\\u2212])\\d{2,3}\\.\\d{2}(?!\\d|\\.\\d)"]
     }
@@ -308,7 +308,7 @@
       "reply_asks": true,
       "reply_has": ["weigh"],
       "no_call": ["log_bodyweight", "log_lifts", "set_goal", "update_settings", "save_food", "log_food",
-                  "log_cardio", "log_measurement", "import_entries"]
+                  "log_cardio", "log_measurement", "import_entries", "save_routine"]
     },
     "db": [{"table": "bodyweight", "count": 0}, {"table": "goal", "count": 0}]
   },
@@ -322,7 +322,8 @@
       "function": "whoami",
       "reply_asks": true,
       "reply_has": ["lift"],
-      "no_call": ["log_bodyweight", "set_goal", "log_lifts", "update_settings", "save_food", "import_entries"]
+      "no_call": ["log_bodyweight", "set_goal", "log_lifts", "update_settings", "save_food", "import_entries",
+                  "save_routine"]
     },
     "db": [{"table": "bodyweight", "count": 1}, {"table": "goal", "count": 1}]
   },
@@ -383,11 +384,58 @@
     "expect": {
       "function": "log_bodyweight",
       "inputs_include": {"kg": 80.4},
-      "no_call": ["log_lifts", "set_goal", "update_settings", "save_food", "import_entries"],
+      "no_call": ["log_lifts", "set_goal", "update_settings", "save_food", "import_entries", "save_routine"],
       "reply_lacks": ["?"],
       "reply_lacks_pattern": ["\\bset(ting)?[ -]?up\\b"]
     },
     "db": [{"table": "bodyweight", "count": 2,
             "rows": [{"id": "{{seed.earlier}}", "kg": 80.9}, {"kg": 80.4, "date": "{{today}}"}]}]
+  },
+  {
+    "id": "routine_saved",
+    "say": "Save my push day: bench press 3 sets of 8, overhead press 3 sets of 10, dips 3 sets of 10",
+    "expect": {
+      "function": "save_routine",
+      "ok_calls": {"save_routine": 1},
+      "inputs_include": {"name": "push day",
+                         "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8},
+                                   {"exercise": "Overhead Press", "sets": 3, "reps": 10},
+                                   {"exercise": "Dip", "sets": 3, "reps": 10}]},
+      "inputs_exclude": ["lifts.*.weight_kg"],
+      "no_call": ["log_lifts"]
+    },
+    "db": [{"table": "routine", "count": 1, "all": {"lift_count": 3}}]
+  },
+  {
+    "id": "routine_logged",
+    "say": "Log my push day",
+    "seed": [{"as": "push", "service": "save_routine",
+              "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60},
+                                                    {"exercise": "Overhead Press", "sets": 3, "reps": 10,
+                                                     "weight_kg": 40}]}}],
+    "expect": {
+      "function": "log_lifts",
+      "ok_calls": {"log_lifts": 1},
+      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_kg": 60, "reps": 8},
+                                  {"exercise": "Overhead Press", "weight_kg": 40, "reps": 10}]},
+      "inputs_forbid": {"new_session": true}
+    },
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}]
+  },
+  {
+    "id": "routine_changed",
+    "say": "Log my push day, but bench was 62.5 today",
+    "seed": [{"as": "push", "service": "save_routine",
+              "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60},
+                                                    {"exercise": "Overhead Press", "sets": 3, "reps": 10,
+                                                     "weight_kg": 40}]}}],
+    "expect": {
+      "function": "log_lifts",
+      "ok_calls": {"log_lifts": 1},
+      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_kg": 62.5, "reps": 8},
+                                  {"exercise": "Overhead Press", "weight_kg": 40, "reps": 10}]},
+      "inputs_forbid": {"sets.*.weight_kg": 60}
+    },
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6}}]
   }
 ]

@@ -13,6 +13,8 @@ from it. It knows nothing else.
   steps, sleep_hours in hours, resting_hr in bpm, and water_ml in ml. One value per kind a day.
 - **Food:** what was eaten, its calories, its meal, and a tag saying who supplied the number.
 - **Saved foods:** foods the person eats often, with a serving and its calories.
+- **Routines:** workouts the person does often, saved by name: each lift with its sets and reps, and a
+  weight when the person gave one.
 - **Cardio:** the activity, minutes, and distance, incline, speed, heart rate and the machine's
   calories when given.
 - **Goals:** a target to reach by a date, of four kinds (below).
@@ -324,6 +326,21 @@ Each answer holds with the same time zone set at both runs. The last row is the 
 - What Claude reads does not mark an imported food entry as imported: no food result carries
   `logged_by`. The export does: `food_entries.csv` says `import`.
 
+## Routines
+
+- A routine is saved by name with `save_routine`: each lift with its number of sets and its reps, and a
+  weight only when the person gave one. Up to 20 routines, each of 1 to 20 lifts and at most 60 sets,
+  so a logged routine fits one session.
+- `get_routines` gives each lift's weight to log: the heaviest set of its latest session, unless the
+  routine was saved on a later day than that session, with a weight of its own. With neither, Claude
+  asks.
+- To log one, Claude sends its sets with `log_lifts`, with each change the person names. They go into
+  that day's session, as any sets do.
+- Saving the same name again replaces the routine. There is no undo of a replace: save it again as it
+  was. `delete_entry` takes kind `routine`, in its two calls, and `restore_entry` brings a deleted
+  routine back.
+- The import does not bring routines over, and the export holds them in `routines.csv`.
+
 ## Export and delete: the person's own clicks
 
 - Exporting the data (a zip of CSV files) and deleting the account are the person's own clicks on
@@ -383,7 +400,7 @@ confusing, an idea.
 
 ## What Claude may do
 
-Twenty functions, nothing else:
+Twenty-two functions, nothing else:
 
 | Function | What it does |
 |---|---|
@@ -407,6 +424,8 @@ Twenty functions, nothing else:
 | `get_goals` | Whether the person is on track: every open goal, its pace and its projected date. |
 | `import_entries` | Brings history over from another app's export, as dated rows: a preview first, then the rows. |
 | `send_feedback` | Sends a note to Spotter's maker, when the person asks or says yes to the offer. |
+| `save_routine` | Saves a workout by name, with its lifts, sets and reps. |
+| `get_routines` | The saved routines, each lift with the weight to log. |
 
 `whoami` reports `claude_can`, the person's setting for what Claude may do:
 

@@ -40,7 +40,7 @@ from pathlib import Path
 from sqlalchemy import delete, update
 
 from app import db
-from app.mcp_schemas import FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, SetIn
+from app.mcp_schemas import FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, RoutineLiftIn, SetIn
 from app.models import CallLog, EntryVersion, Feedback, WriteKey
 
 log = logging.getLogger("spotter.calllog")
@@ -55,8 +55,8 @@ KEY_SWEEP_HOURS = 1
 VERSION_DAYS = 90  # how long an entry's version is kept: an older one is never put back, swept or not
 FEEDBACK_DAYS = 365  # how long a note sent with send_feedback is kept, until the sweep after that
 CALLERS = ("web", "claude")
-# Spotter's seven tables: the one value tried writes (kind=food_entry), and an import's rows counted by kind.
-TABLES = ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "goal")
+# Spotter's eight tables: the one value tried writes (kind=food_entry), and an import's rows counted by kind.
+TABLES = ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "routine", "goal")
 # The functions whose kind names a table. Any other kind (a goal's, a measurement's) is a name only.
 TABLE_KINDS = frozenset({"edit_entry", "delete_entry", "restore_entry"})
 # Every argument name of the MCP functions, and every field of their input models. tried writes no other name.
@@ -64,11 +64,13 @@ KNOWN_NAMES = frozenset({
     "account_id", "add_back_exercise_kcal", "allow_repeat", "avg_hr", "calorie_target_kcal", "category", "confirm",
     "date", "days", "description", "distance_km", "distance_unit", "doing", "dry_run", "email", "entries", "entry_id",
     "exercise", "expected", "failed_only", "goal_id", "grams_per_serving", "happened", "hours", "ids", "include_closed",
-    "incline_pct", "kcal", "kcal_per_serving", "key", "kg", "kind", "length_unit", "limit", "machine_kcal", "meal",
+    "incline_pct", "kcal", "kcal_per_serving", "key", "kg", "kind", "length_unit", "lifts", "limit", "machine_kcal",
+    "meal",
     "measurement_kind", "minutes", "name", "new_session", "no_account", "notes", "query", "request_id", "rows",
     "serving_label", "sets", "speed_kmh", "start_value", "status", "target_cardio_minutes_per_week", "target_date",
     "target_sessions_per_week", "target_value", "text", "time_zone", "topic", "undo_edit", "value", "weight_unit",
-}) | {name for model in (SetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn) for name in model.model_fields}
+}) | {name for model in (SetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn)
+       for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.
 STEPS = {"no_subject": "account", "signups_closed": "account", "no_account": "account",
          "not_allowed": "permission",

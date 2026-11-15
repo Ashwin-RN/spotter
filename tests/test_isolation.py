@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app import db, services, users
 from app.models import (
-    Base, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, SavedFood,
+    Base, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, Routine, SavedFood,
     entry_models, user_tables,
 )
 
@@ -34,6 +34,8 @@ CASES = {
     "cardio_entry": (CardioEntry, ("read", "edit", "delete", "restore")),
     # A saved food is changed only through save_food, by name: A's save_food never reaches B's (tested below).
     "saved_food": (SavedFood, ("read", "delete", "restore")),
+    # A routine likewise, through save_routine by name: tests/test_routines.py holds that A's never reaches B's.
+    "routine": (Routine, ("read", "delete", "restore")),
 }
 
 # Tables with a user_id that no by-id function reaches. (The user table is the account itself: it
@@ -86,6 +88,8 @@ def world(make_user):
         {"saved_food_id": ids["saved_food"], "servings": 2}]}, "claude")["ids"][0]
     ids["cardio_entry"] = services.log_cardio(b.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5},
                                               "web")["id"]
+    ids["routine"] = services.save_routine(b.id, {"name": "B's push day", "lifts": [
+        {"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60}]}, "web")["id"]
     return a, b, ids
 
 
@@ -330,7 +334,8 @@ def test_delete_account_empties_every_table_for_the_person_and_leaves_the_other(
     calllog.start("get_log", started, b.id)
     r = services.delete_account(b.id)
     assert r == {"deleted": True, "rows": {"user": 1, "lift_session": 1, "bodyweight": 1, "measurement": 1, "goal": 1,
-                                           "saved_food": 1, "food_entry": 1, "cardio_entry": 1, "lift_set": 2}}
+                                           "saved_food": 1, "food_entry": 1, "cardio_entry": 1, "routine": 1,
+                                           "lift_set": 2}}
     calllog.finish(row_id, 12, True, None, 40)                     # its own row is still there to finish
     with db.new_session() as s:
         assert s.get(User, b.id) is None and s.get(User, a.id) is not None

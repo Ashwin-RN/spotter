@@ -14,7 +14,7 @@ Live: https://spotter-production-0c0f.up.railway.app
 - **Numbers worked out in code.** Bests, trends and goal pace come from your own log. Every food number is tagged with who supplied it: you, a saved food, the USDA table, or the assistant's estimate.
 - **Your record, not the assistant's.** It lives in Spotter under your sign-in, so the same data is there from any assistant you connect. Use more than one, or switch, with nothing to export or import.
 - **You set the limit.** The assistant can read, log and delete. One switch on Settings turns deleting off. A delete takes two steps: the assistant is first shown the entry and told to ask you. A deleted entry can be restored.
-- **See it and take it with you.** A web app on the same account (Today, Progress with a page per lift, Goals, Foods, Settings). From Settings you can export everything as CSV files or delete the account.
+- **See it and take it with you.** A web app on the same account (Today, Progress with a page per lift, Goals, Foods, Routines, Settings). From Settings you can export everything as CSV files or delete the account.
 
 ## Set up
 
@@ -58,6 +58,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 | "Back squat, 3 sets of 5 at 80 kg" | The session is logged, and new bests are worked out against every earlier set |
 | "Weighed 79.4 this morning" | One weigh-in a day, with the 7-day average and the trend |
 | "Lunch: two rotis and dal" | The whole meal is logged at once, each number tagged with who supplied it |
+| "Save my push day: bench 3 sets of 8 at 60, dips 3 by 10" | The routine is kept by name, as a saved food is. "Log my push day" then logs its sets, each lift at the newest weight Spotter knows |
 | "30 minutes on the treadmill" | A calorie estimate from your body weight, kept beside the machine's number when you give one |
 | "Squat 100 by June" | A goal with a start, a target and the pace it needs |
 | "How am I doing?" | Your weight trend, average calories, sessions and cardio minutes |
@@ -67,7 +68,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 
 ## Under the hood
 
-- 20 MCP functions and two resources, over streamable HTTP.
+- 22 MCP functions and two resources, over streamable HTTP.
 - Python 3.12, Starlette, SQLAlchemy, Alembic, the `mcp` library and Postgres. Sign-in goes through an outside provider (WorkOS AuthKit) for the web and the assistant, so both reach one account.
 - Every write locks the person's row first, counts against a write limit, and passes the same checks whether it came from the assistant or a form.
 - Every write is safe to send twice. A call may carry a key of its own: the same key and call again writes nothing and gets the first answer back. Every form that writes carries a hidden key, so a double click saves once. Answers are kept for a day.
@@ -76,7 +77,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 - Safety limits: a sized connection pool, a time limit on every query, lock wait and idle transaction, a read limit and a page limit per person, and a 1 MiB cap on every request. A database that is too busy answers that it is busy, not with a crash.
 - A call log with a trace: one row per call, with a request id that is also on the log lines and the response, the names of the fields sent and never a value, whether it wrote, and where a failed call stopped. Rows are deleted after 90 days.
 - A docs-only change runs the docs tests, and a small code change runs the tests for the code it touches. The whole suite runs with warnings as errors on a clean export before a big push, and about once in every four or five pushes otherwise.
-- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 32 cases, 3 runs each. At stage 5, before stage 6 added four, 48 of 48 runs passed, on `claude-fable-5-2`. On 2026-11-12 the set of that day ran on `claude-opus-5-5`: 60 of 60 runs passed. On 2026-11-14 the set of that day ran: 75 of 75. On 2026-11-15 the set of that day ran: 77 of 78, and the one failure was a run that hit the time limit with no reply. The runner pins `claude-opus-5-5`. The result is recorded in `BUILD_LOG.md`; how the evals run is in `docs/evals.md`.
+- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 35 cases, 3 runs each. At stage 5, before stage 6 added four, 48 of 48 runs passed, on `claude-fable-5-2`. On 2026-11-12 the set of that day ran on `claude-opus-5-5`: 60 of 60 runs passed. On 2026-11-14 the set of that day ran: 75 of 75. On 2026-11-15 the set of that day ran: 77 of 78, and the one failure was a run that hit the time limit with no reply. The runner pins `claude-opus-5-5`. The result is recorded in `BUILD_LOG.md`; how the evals run is in `docs/evals.md`.
 
 ## Read more
 

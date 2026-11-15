@@ -22,6 +22,7 @@ One module per area, so each later stage adds its own:
   feedback      send_feedback (a note to Spotter's maker), owner_feedback (the notes, for Spotter's owner alone:
                 no user_id either, and it only reads), owner_delete_feedback (the owner's delete of notes by id,
                 no user_id either)
+  routines      save_routine, get_routines (a workout saved by name, each lift with the weight to log)
   common        the by-id lookup, the user-row lock, the write limit, the read throttle, the duplicate guard
 
 Every public function takes the signed-in person's user_id (the account row id) first, and writes
@@ -52,14 +53,16 @@ from app.services.log import get_log
 from app.services.measurements import log_measurement
 from app.services.owner import owner_calls
 from app.services.progress import get_progress
+from app.services.routines import get_routines, save_routine
 from app.services.trends import get_days, get_trends
 
 __all__ = [
     "DUPLICATE_MINUTES", "READ_LIMIT", "WRITE_FUNCTIONS", "WRITE_LIMIT", "WRITE_WINDOW_MINUTES",
     "account_empty", "delete_account", "delete_entry", "edit_entry", "entry_kinds", "export_data", "find_food",
-    "get_cardio", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress", "get_trends",
-    "import_entries", "list_exercises", "list_saved_foods",
+    "get_cardio", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress", "get_routines",
+    "get_trends", "import_entries", "list_exercises", "list_saved_foods",
     "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "owner_calls",
-    "owner_delete_feedback", "owner_feedback", "restore_entry", "save_food", "send_feedback", "set_claude_can",
+    "owner_delete_feedback", "owner_feedback", "restore_entry", "save_food", "save_routine", "send_feedback",
+    "set_claude_can",
     "set_goal", "update_settings", "whoami",
 ]

@@ -1,4 +1,4 @@
-"""Spotter's MCP server: twenty functions and two resources, and owner_calls, owner_feedback and
+"""Spotter's MCP server: twenty-two functions and two resources, and owner_calls, owner_feedback and
 owner_delete_feedback for Spotter's owner alone.
 
 The MCP library does the sign-in work: it serves the protected-resource metadata, answers 401 with
@@ -32,7 +32,7 @@ Unset, nobody is.
 Every result is the service's own dict, as structured content and as compact JSON text. A service
 error ({error, message, fix}) is flagged is_error. A duplicate is a success.
 
-A write's own key (contract idempotency.md): each of the thirteen write functions takes key (Key). The wrapper
+A write's own key (contract idempotency.md): each of the fourteen write functions takes key (Key). The wrapper
 reads it from the arguments as sent, and no service is passed it. The same key with the same call again gets
 the first answer's text back, word for word, and its row reads repeat.
 """
@@ -66,10 +66,10 @@ from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings, get_settings
 from app.mcp_schemas import (
     FOOD_NAME_RULE, IMPORT_ROWS, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn,
-    GetGoalsResult, GetLogResult, GetProgressResult, GetTrendsResult, ImportEntriesResult, ImportRowIn,
-    LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult, OwnerCallsResult,
-    OwnerDeleteFeedbackResult, OwnerFeedbackResult, RestoreEntryResult, SaveFoodResult, SendFeedbackResult,
-    SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
+    GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult, ImportEntriesResult,
+    ImportRowIn, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult,
+    OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult, RestoreEntryResult, RoutineLiftIn,
+    SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
 )
 from app.models import CLAUDE_CAN, User
 from app.services import common, feedback
@@ -233,6 +233,7 @@ NEEDS = {
     "get_trends": "read", "get_goals": "read",
     "import_entries": "log",
     "send_feedback": "log",
+    "save_routine": "log", "get_routines": "read",
     "owner_calls": "read", "owner_feedback": "read", "owner_delete_feedback": "read",
 }
 # Listed for the owner alone, and refused to anyone else (is_owner). At read, so the owner's own switch, which is
@@ -247,7 +248,7 @@ OWNER_ONLY = {"error": "not_allowed", "message": "This function is for Spotter's
 # The arguments of the call running, as the client sent them (SpotterServer.call_tool): what tried describes.
 _SENT: ContextVar[dict | None] = ContextVar("spotter_sent_arguments", default=None)
 
-# A write's own key: the same argument, with the same words, on each of the thirteen write functions. No pattern and
+# A write's own key: the same argument, with the same words, on each of the fourteen write functions. No pattern and
 # no length in the schema: Spotter's own check answers invalid_key, with its fix. The wrapper reads the key from
 # the arguments as sent (_SENT), so a function declares it and never passes it on.
 KEY_DESCRIPTION = (
@@ -259,12 +260,15 @@ Key = Annotated[str | None, Field(description=KEY_DESCRIPTION)]
 
 LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
 KIND_DESCRIPTION = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
-RESTORE_KIND_DESCRIPTION = KIND_DESCRIPTION + " With undo_edit, saved_food too."
-DELETE_KIND_DESCRIPTION = KIND_DESCRIPTION + " Or saved_food."  # delete_entry takes a saved food (switch, ruling 1)
+RESTORE_KIND_DESCRIPTION = (KIND_DESCRIPTION + " With undo_edit, saved_food too. Or routine, to bring back a deleted "
+                            "one.")
+# delete_entry takes a saved food (switch, ruling 1) and a routine (routines, decision 11)
+DELETE_KIND_DESCRIPTION = KIND_DESCRIPTION + " Or saved_food or routine."
 ENTRY_ID_DESCRIPTION = ("The entry's id, from log_lifts, log_bodyweight, log_measurement, log_food, log_cardio "
                         "or get_log, "
                         "with the kind it came with.")
-RESTORE_ID_DESCRIPTION = ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or find_food."
+RESTORE_ID_DESCRIPTION = (ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or find_food, a routine's "
+                          "from save_routine or get_routines.")
 
 CAN_AND_CANT = ROOT / "docs" / "can-and-cant.md"
 CAN_AND_CANT_URI = "spotter://can-and-cant"
@@ -874,8 +878,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="delete_entry",
         title="Delete an entry",
         description=(
-            "Deletes one of the person's entries or saved foods, in two calls. With no confirm, nothing is deleted: "
-            "the answer is a preview, with dry_run true, the entry as it stands and a confirm code. Send the same "
+            "Deletes one of the person's entries, saved foods or routines, in two calls. With no confirm, nothing is "
+            "deleted: the answer is a preview, with dry_run true, the entry as it stands and a confirm code. Send the same "
             "kind and id with that confirm to delete. A confirm that does not match the entry as it stands deletes "
             "nothing and returns the preview again. Nothing is erased: restore_entry brings a deleted entry back. "
             + DELETE_RULE + " Allowed only when the person lets Claude delete; otherwise the answer is not_allowed."
@@ -1100,7 +1104,46 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         return await wrapper.call("send_feedback", SendFeedbackResult,
                                   lambda account: services.send_feedback(account, data))
 
-    # The owner's three, last, so everyone else's list is the twenty above, in their order (SpotterServer.list_tools).
+    # A routine's two (contract routines.md), after send_feedback, so everyone's list is the twenty, then these.
+    @server.tool(
+        name="save_routine",
+        title="Save a routine",
+        description=(
+            "Saves a workout the person does often under its name, such as Push day: each lift with its number of "
+            "sets and its reps, and a weight only when the person gave one. Send only what the person said: never add "
+            "a lift, a set or a weight of your own. Saving the same name again replaces the routine. To save a "
+            "session already logged, read it with get_log and send each lift with its number of sets, its reps and "
+            "its heaviest weight."
+        ),
+        annotations=SETTING,
+    )
+    async def save_routine(
+        name: Annotated[str, Field(
+            description="The routine's name, as the person says it, such as Push day. 1 to 64 characters.")],
+        lifts: Annotated[list[RoutineLiftIn], Field(
+            description="Each lift, in the order done: 1 to 20 lifts, and at most 60 sets in all.")],
+        key: Key = None,
+    ) -> Annotated[CallToolResult, SaveRoutineResult]:
+        data = _sent(name=name, lifts=[x.model_dump(exclude_none=True) for x in lifts])
+        return await wrapper.call("save_routine", SaveRoutineResult,
+                                  lambda account: services.save_routine(account, data, "claude"))
+
+    @server.tool(
+        name="get_routines",
+        title="Get routines",
+        description=(
+            "The person's saved routines, each lift with its sets, its reps and the weight to log. Call it when the "
+            "person names a routine, such as log my push day. To log one, send its sets with log_lifts, one item a "
+            "set, with each change the person names, and leave the date out for today. Where weight_kg is null, ask "
+            "the person for it. Say in your reply which sets were logged."
+        ),
+        annotations=READ_ONLY,
+    )
+    async def get_routines() -> Annotated[CallToolResult, GetRoutinesResult]:
+        return await wrapper.call("get_routines", GetRoutinesResult, lambda account: services.get_routines(account))
+
+    # The owner's three, last, so everyone else's list is the twenty-two above, in their order
+    # (SpotterServer.list_tools).
     @server.tool(
         name="owner_calls",
         title="Owner: calls",

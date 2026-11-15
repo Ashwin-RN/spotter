@@ -138,6 +138,15 @@ def refusals(seen: Seen, user_id: int):
         ("save_food", lambda: services.save_food(user_id, {"name": "", "serving_label": "x" * 65,
                                                            "kcal_per_serving": 5000.5, "grams_per_serving": 0.5,
                                                            "shape": 1}, "claude"), ("shape", 5000.5, 0.5)),
+        # A routine's every check at once, and a sets total past 60 (routines.md R5).
+        ("save_routine", lambda: services.save_routine(user_id, {"name": "x" * 65, "shape": 1, "lifts": [
+            {"exercise": "Zorbinator", "sets": 11, "reps": 31, "weight_kg": 500.5, "tempo": 1}, {"sets": "three"},
+            {"exercise": "Dip", "sets": 2.5, "reps": 0, "weight_kg": "heavy"}]}, "claude"),
+         ("shape", "tempo", "Zorbinator", 500.5, "three", "heavy")),
+        ("save_routine sets", lambda: services.save_routine(user_id, {"name": "Push day", "lifts": [
+            {"exercise": "Dip", "sets": 10, "reps": 10}] * 7}, "claude"), ("Push day",)),
+        ("save_routine lifts", lambda: services.save_routine(user_id, {"name": "Push day", "lifts": []}, "claude"),
+         ()),
         ("log_cardio speed", lambda: services.log_cardio(user_id, {"exercise": "Outdoor Run", "minutes": 30,
                                                                    "distance_km": 5, "speed_kmh": 30}, "claude"), ()),
         ("log_cardio worked", lambda: services.log_cardio(user_id, {"exercise": "Outdoor Run", "minutes": 1,
@@ -230,6 +239,7 @@ def every_read(seen: Seen, user_id: int, widened: bool = False):
     for name in ("Outdoor Run", "Treadmill Walk", "Hiking"):
         seen.add(f"get_cardio {name}", services.get_cardio(user_id, name))
     seen.add("list_saved_foods", services.list_saved_foods(user_id))
+    seen.add("get_routines", services.get_routines(user_id))  # routines.md decision 7
     seen.add("find_food", services.find_food(user_id, "roti"), "roti")
     seen.add("export_data", services.export_data(user_id))
     seen.add("account_empty", services.account_empty(user_id))
@@ -440,6 +450,25 @@ def test_the_other_paths(make_user):
     say("restore swap", services.restore_entry(user.id, "bodyweight", replaced["replaced"]["id"]))
     say("settings no-op", services.update_settings(user.id, {"time_zone": "UTC"}, "claude"))
     say("settings no-op again", services.update_settings(user.id, {"time_zone": "UTC"}, "claude"))
+    # A routine (routines.md): saved, replaced, the same again, deleted and brought back, the cap, and the three
+    # refusals by id. Its name is the person's own text.
+    push = [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 62.5}, {"exercise": "Dip", "sets": 3,
+                                                                                    "reps": 10, "weight_kg": 0}]
+    routine = say("save_routine", services.save_routine(user.id, {"name": "Push day", "lifts": push}, "claude"),
+                  "Push day")
+    say("save_routine replaced", services.save_routine(user.id, {"name": "Push day", "lifts": push[:1]}, "claude"),
+        "Push day")
+    say("save_routine same", services.save_routine(user.id, {"name": "Push day", "lifts": push[:1]}, "claude"),
+        "Push day")
+    say("delete routine", services.delete_entry(user.id, "routine", routine["id"]))
+    say("save_routine back", services.save_routine(user.id, {"name": "Push day", "lifts": push}, "claude"),
+        "Push day")
+    say("routine undo", services.restore_entry(user.id, "routine", routine["id"], "claude", undo_edit=True))
+    say("routine edit", services.edit_entry(user.id, "routine", routine["id"], {"name": "x"}, "claude"))
+    say("routine live", services.restore_entry(user.id, "routine", routine["id"], "claude"))
+    for n in range(19):
+        services.save_routine(user.id, {"name": f"Day {n}", "lifts": push[1:]}, "claude")
+    say("routine cap", services.save_routine(user.id, {"name": "One more", "lifts": push}, "claude"), "One more")
     every_read(seen, user.id)
     texts_seen = seen.texts()
     assert any(t.startswith("Replaced the ") and "weigh-in of 80.5 kg" in t for t in texts_seen)
@@ -452,6 +481,8 @@ def test_the_other_paths(make_user):
     assert ("Cardio entry changed: distance_km set to 4. avg_hr set to 118. speed_kmh set to 5.3, worked out from "
             "distance and minutes.") in texts_seen   # filled where it was empty: never Python's None
     assert "Measurement changed: value from 84.25 cm to 84.34 cm." in texts_seen
+    assert "Brought back and replaced Push day: Bench Press 3 × 8 at 62.5 kg and Dip 3 × 10 at 0 kg." in texts_seen
+    assert "This account holds 20 routines, the most it keeps." in texts_seen
     assert any(t.startswith("Waist 84.26 cm on ") and t.endswith(" Replaced 84.34 cm.") for t in texts_seen)
     assert {"summary", "note", "maintenance_note"} <= seen.keys()
     seen.assert_clean()

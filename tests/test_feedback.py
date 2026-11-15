@@ -65,7 +65,7 @@ READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": T
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 # What each function published before this work: the SHA-256 of the tool as compact JSON with sorted keys.
 PUBLISHED = {
-    "whoami": "2afb942c1c4d04691599987f4df754cfc34e7ff424b1df1f43bbd6a813cb4ca9",  # first day: setup
+    "whoami": "e415c4054cff9ffc6565bc294b147b9868cd78d89694240de571bd926a3c0417",  # first day, and the routine step at the join: setup
     "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
     "log_lifts": "9e95e0445afc3a57390021fcc57a0c9774146be42ff37d4447c51b1ac995fe18",  # gym logging: adds to a day
     "log_bodyweight": "f6d2e5b9ad195b9256152099a072142fdd926c7e176e35fc561e036ff66654b7",
@@ -75,8 +75,8 @@ PUBLISHED = {
     "get_log": "0f13ed202bfb439905e0c81120ab93ecf50031da8a720dac9e790916dd104169",
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
     "edit_entry": "3fbe15511d1b775980d1d89c5e24414a52b5cf4ccf1def94133f0b7d29673e7e",
-    "restore_entry": "387046ab52a01f54010b144d3e326d87ac8b36f75617c8fda446f9fb9e332fe4",  # as trimmed: one undo
-    "delete_entry": "9f44f254de2d734c647c15921809df43fd2310a3ee9a914e307ad545c47a0143",  # switch: two calls, confirm
+    "restore_entry": "ea098328552576986f8c0a410757d424478eb0566b104e2eb76d3de4b24cf8a9",  # routines: kind routine
+    "delete_entry": "197b142a4e73b004c557a70b3a39c5ae3d2b156114159a00929838e6df8246ee",  # routines: kind routine
     "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",
     "log_food": "6ffc9850d580f531c6cf3bd6d961b186936aa00b5bf3b9af19198a3a8e7acd56",
     "save_food": "0a8e5b4526af8bc103af661c711ad6719ab8588579dc64ceb4b6b4ed6cb218cc",
@@ -84,6 +84,8 @@ PUBLISHED = {
     "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
     "get_goals": "ac0e1ea4076d1f304ef604f676d024b743ff07ffdd01615c84a1aa5702a70cbe",
     "import_entries": "8e1bce9821e8547d62c9768c5b05b9a7c686c7437e2f34e80d8275a4a82d5ffd",
+    "save_routine": "d9733bb7c9c1e4438f050b425ba003514ba0b7bc7cc83823660186ac5f6809de",  # routines: new
+    "get_routines": "f40c07973f168e4a1f4462109f594893ac56e86aa8c53ebdede94257aad4aa3a",  # routines: new, R18's words
     "owner_calls": "79ec889297b107ba7f25781a2ace0a058b712960510d994d36788485da57d787",
 }
 INSTRUCTIONS_AS_BUILT = "d1ef2d4d6491bea09aeda32d4106a5bd5a9fa6fb4c761f70e9ba7d0059c86704"  # switch decision 18
@@ -189,7 +191,9 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
             [owner] = inspect(c).get_foreign_keys("feedback")
             assert (owner["constrained_columns"], owner["referred_table"], owner["options"]) == (
                 ["user_id"], "user", {"ondelete": "CASCADE"})
-            assert compare_metadata(MigrationContext.configure(c), Base.metadata) == []  # the models match
+            # The models match, but for the table 0010 adds (tests/test_routines.py holds it there).
+            assert [(d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
+                ("add_table", "routine")]
         with engine.begin() as c:
             for user in (1, 1, 2):
                 c.exec_driver_sql(row, (user, now))
@@ -203,7 +207,7 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0009"  # switch 0009
+    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0010"  # routines 0010
 
 
 def test_the_topics_are_a_tuple_in_the_models_and_no_status_is():
@@ -251,8 +255,10 @@ def test_a_note_counts_toward_the_write_limit_and_at_the_limit_nothing_is_saved(
 
 def test_send_feedback_is_published_after_the_nineteen_with_its_words_and_a_key(http):
     tools = tool_list(http, sign())
-    assert [t["name"] for t in tools] == [*PUBLISHED][:-1] + ["send_feedback"] == FUNCTIONS
-    tool = tools[-1]
+    # routines.md: save_routine and get_routines follow it, before the owner's three.
+    assert [t["name"] for t in tools] == [*PUBLISHED][:19] + ["send_feedback", "save_routine", "get_routines"] \
+        == FUNCTIONS
+    tool = tools[19]
     assert (tool["title"], tool["description"]) == ("Send feedback", described(CAP))
     assert tool["annotations"] == {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False,
                                    "openWorldHint": False}
@@ -521,7 +527,7 @@ def test_only_the_owner_s_list_has_the_owner_s_three_in_order_and_a_non_owner_s_
     assert json.loads(lists["other"][0])["result"]["tools"] == owner[:-3]  # the owner's, less the three
     hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in owner}
     assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED  # nothing that was there changed
-    assert web.FUNCTION_COUNT == len(FUNCTIONS) == 20
+    assert web.FUNCTION_COUNT == len(FUNCTIONS) == 22  # routines: was 20
 
 
 def test_owner_feedback_is_published_with_its_words_its_ranges_no_delete_and_the_read_only_annotation(owner_client):
@@ -941,7 +947,7 @@ def test_can_and_cant_says_what_feedback_is_for_the_offer_and_the_rules():
                  "It is a write, allowed at both settings.",  # switch decision 1: was "read only answers"
                  "`send_feedback`'s description gives the number", "`too_much_feedback` and the hours to wait",
                  "no `allow_repeat` for a note", "never what was logged", "No reply comes back through Spotter.",
-                 "A note is kept until Spotter's maker deletes it, one year at most.", "Twenty functions",
+                 "A note is kept until Spotter's maker deletes it, one year at most.", "Twenty-two functions",
                  "| `send_feedback` | Sends a note to Spotter's maker, when the person asks or says yes to the offer. |",
                  "| `log` | Everything except `delete_entry`. |"):  # switch decision 1: the row for read went
         assert said in text, said
@@ -973,7 +979,7 @@ def test_the_instructions_do_not_change_by_a_character():  # but for the switch'
 def test_the_two_cases_load_and_judge_as_designed(app_settings, make_user):
     cases = {c["id"]: c for c in judge.load_cases()}
     sent, offered = cases["feedback_sent"], cases["feedback_offered"]
-    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 32  # gym logging and first day: was 26
+    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 35  # gym logging, first day and routines: was 26
     assert "switch" not in sent and "switch" not in offered  # the default, log_delete since the switch
     uid = make_user().id
     rows_now = person_rows(uid)

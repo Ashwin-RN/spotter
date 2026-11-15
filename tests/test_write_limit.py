@@ -80,6 +80,8 @@ WRITES = {
         {"kind": "lift_session", "date": "2026-11-09", "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 5}]}],
         "weight_unit": "kg"}, "claude"),   # the unit these weights need since the fix round on 7e95ee9
     "send_feedback": lambda u, ids: services.send_feedback(u.id, {"text": "The chart is confusing."}),  # feedback.md 3
+    "save_routine": lambda u, ids: services.save_routine(u.id, {"name": "Push day", "lifts": [  # routines.md 5
+        {"exercise": "Bench Press", "sets": 3, "reps": 8}]}, "claude"),
 }
 
 

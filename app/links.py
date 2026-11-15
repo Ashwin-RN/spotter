@@ -28,6 +28,7 @@ _PATHS = {
     "progress_lift": "/progress/{lift}",
     "goals": "/goals",
     "foods": "/foods",
+    "routines": "/routines",
 }
 NAMES = tuple(_PATHS)
 

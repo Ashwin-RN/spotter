@@ -34,6 +34,12 @@ HARD_RULES = {
 }
 SESSION_SETS = (1, 60)
 BODYWEIGHT_KG = (20, 400)
+# A routine (contract routines.md): at most this many live a person, its lifts, each lift's sets, its name's length.
+# Its sets in all are SESSION_SETS[1], so a logged routine fits one session.
+ROUTINES_MAX = 20
+ROUTINE_LIFTS = (1, 20)
+ROUTINE_LIFT_SETS = (1, 10)
+ROUTINE_NAME_MAX = 64
 
 # Measurement kinds: unit, lowest, highest, whole number only. One table, read by logging and editing.
 MEASUREMENTS = {
@@ -277,14 +283,15 @@ def bounded(field: str, value, where: str = "") -> tuple[float | int | None, dic
     return kept, None
 
 
-def required_text(value, field: str, where: str = "") -> tuple[str | None, dict | None]:
-    """Free text that must be there: 1 to TEXT_LIMITS[field] characters, through text()."""
+def required_text(value, field: str, where: str = "", limit: int | None = None) -> tuple[str | None, dict | None]:
+    """Free text that must be there: 1 to `limit` characters (left out: TEXT_LIMITS[field]), through text()."""
     at = f"{where}: " if where else ""
-    kept, err = text(value, field, TEXT_LIMITS[field])
+    most = TEXT_LIMITS[field] if limit is None else limit
+    kept, err = text(value, field, most)
     if err:
         return None, {**err, "message": at + err["message"]}
     if not kept:
-        return None, error("missing_field", f"{at}{field} is missing.", f"Give {field}, 1 to {TEXT_LIMITS[field]} characters.")
+        return None, error("missing_field", f"{at}{field} is missing.", f"Give {field}, 1 to {most} characters.")
     return kept, None
 
 

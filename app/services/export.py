@@ -3,7 +3,8 @@
 export_data(user_id)
     A read. One CSV per table the person owns, plus account.csv and README.txt:
       account.csv, lift_sessions.csv, lift_sets.csv, bodyweight.csv, measurements.csv, goals.csv,
-      saved_foods.csv, food_entries.csv, cardio_entries.csv, entry_versions.csv, feedback.csv
+      saved_foods.csv, routines.csv, food_entries.csv, cardio_entries.csv, entry_versions.csv, feedback.csv
+    - routines.csv: each routine the person saved (contract routines.md), its lifts as the JSON stored.
     - entry_versions.csv: what an entry held before each edit or undo still kept (contract
       edit-history.md): its kind, the entry's id, when, who, why, and the values as JSON (_before): as stored,
       without LEFT_OUT, and with names as the other files give them. A set is {exercise, set_number,
@@ -41,7 +42,7 @@ from sqlalchemy.orm import selectinload
 from app import db, formatting
 from app.models import (
     Bodyweight, CardioEntry, EntryVersion, Exercise, Feedback, FoodEntry, Goal, LiftSession, LiftSet, Measurement,
-    SavedFood, User,
+    Routine, SavedFood, User,
 )
 from app.services.common import no_account
 
@@ -55,6 +56,7 @@ TABLES = {
     "measurements.csv": (Measurement, {}),
     "goals.csv": (Goal, {"exercise_id": "exercise"}),
     "saved_foods.csv": (SavedFood, {}),
+    "routines.csv": (Routine, {}),
     "food_entries.csv": (FoodEntry, {"saved_food_id": "saved_food"}),
     "cardio_entries.csv": (CardioEntry, {"exercise_id": "exercise", "avg_hr": "avg_hr_bpm"}),
 }
@@ -64,7 +66,8 @@ SET_COLUMNS = ("session_id", "exercise", "set_number", "weight_kg", "reps")
 VERSION_COLUMNS = ("kind", "entry_id", "created_at", "by", "why", "before")
 FEEDBACK_COLUMNS = ("id", "created_at", "topic", "text", "doing", "expected", "happened")
 ORDER = ("account.csv", "lift_sessions.csv", "lift_sets.csv", "bodyweight.csv", "measurements.csv", "goals.csv",
-         "saved_foods.csv", "food_entries.csv", "cardio_entries.csv", "entry_versions.csv", "feedback.csv")
+         "saved_foods.csv", "routines.csv", "food_entries.csv", "cardio_entries.csv", "entry_versions.csv",
+         "feedback.csv")
 
 README = """Spotter export
 
@@ -77,6 +80,9 @@ Everything Spotter holds for this account, one CSV file per kind of record.
   measurements.csv    each measurement, in its unit
   goals.csv           each goal, open or closed
   saved_foods.csv     each saved food
+  routines.csv        each routine: lifts holds its lifts as JSON, each with exercise, sets, reps
+                      and weight_kg (null when none was given). saved_on is the date it was last
+                      saved
   food_entries.csv    each food entry; source says who supplied the number: you_said (the person),
                       saved_food (worked out from a saved food), usda (the USDA table) or
                       claude_estimate (Claude's estimate)

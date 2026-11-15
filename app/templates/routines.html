@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Routines · Spotter{% endblock %}
+{% block main %}
+{% import "_parts.html" as parts %}
+{# Routines (contract routines.md): the page head with its two grey lines, one strip after a write, then the
+   Routines card. Foods' frame and table, with no form: a routine is saved and logged by talking to the assistant.
+   Each row is the routine's name (td.lead), its lifts in words with the weights get_routines gives (web.routines_page,
+   every number through app.formatting), and Delete in a cell of its own, with no label. No routines: a dashed card. #}
+<div class="page-head">
+  <h1>Routines</h1>
+  <p class="lede">Workouts you do often, saved by name. Say "log my push day" and your assistant logs its sets. Routines are saved by talking to your assistant.</p>
+</div>
+
+{% if strip and strip.undo %}
+{{ parts.undo_strip(strip.words, "/routines/" ~ strip.undo ~ "/restore", csrf_token) }}
+{% elif strip %}
+{{ parts.saved_line(strip.words) }}
+{% endif %}
+
+{% if routines %}
+<section class="card saved-foods" aria-labelledby="routines-title">
+  <h2 id="routines-title">Routines</h2>
+  <div class="table-wrap">
+    <table class="rows" aria-labelledby="routines-title">
+      <thead><tr><th scope="col">Routine</th><th scope="col">Lifts</th><th scope="col"><span class="sr">Delete</span></th></tr></thead>
+      <tbody>
+        {% for r in routines %}
+        <tr><td class="lead">{{ r.name }}</td><td data-label="Lifts">{{ r.lifts }}</td><td><form method="post" action="/routines/{{ r.id }}/delete" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="link">Delete</button>
+          <input type="hidden" name="key" value="{{ form_key() }}">
+        </form></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="small">Each weight is the one your assistant would log today: your latest session's, or the routine's own when it was saved on a later day.</p>
+</section>
+{% else %}
+<div class="card saved-foods is-empty">
+  <p class="empty-line">No routines yet. Tell your assistant a workout you do often, such as your push day, and ask it to save it.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -2,7 +2,7 @@
 stage 5 added (goal.measurement_kind, migration 0003). Migration 0004 dropped one column from seven tables.
 Migration 0005 added the call log's trace columns, 0006 the write keys (write_key), 0007 the values an
 entry held before each edit (entry_version), and 0008 the notes people send Spotter's maker (feedback). 0009
-changes data only: every account's claude_can becomes log_delete.
+changes data only: every account's claude_can becomes log_delete. 0010 adds the routines (routine).
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -342,6 +342,26 @@ class SavedFood(Base):
     serving_label: Mapped[str] = mapped_column(String(64))
     kcal_per_serving: Mapped[float] = mapped_column(Float)
     grams_per_serving: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, onupdate=_now)
+    deleted_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class Routine(Base):
+    """A workout saved by name (migration 0010, contract routines.md). Not an entry table: no entry kind, no duplicate
+    key, so the log, the import and the trends never see it. lifts is JSON text, each item {exercise, sets, reps,
+    weight_kg (null when none was given)}; saved_on is the person's date of the last save. Deleted with the account."""
+
+    __tablename__ = "routine"
+    __table_args__ = (UniqueConstraint("user_id", "name_key"),)  # the one index: every read is by user_id
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = _user_id()
+    name: Mapped[str] = mapped_column(String(64))
+    # The name, spaces folded, casefolded. Room to spare: one character can fold to three.
+    name_key: Mapped[str] = mapped_column(String(255))
+    lifts: Mapped[str] = mapped_column(Text)  # JSON
+    saved_on: Mapped[dt.date] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, onupdate=_now)
     deleted_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)

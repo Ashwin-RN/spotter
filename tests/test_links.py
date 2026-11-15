@@ -23,6 +23,7 @@ SITE = "https://spotter.example.app"
     ("progress_lift", {"lift": "Back Squat"}, "/progress/back-squat"),
     ("goals", {}, "/goals"),
     ("foods", {}, "/foods"),
+    ("routines", {}, "/routines"),  # routines.md R15
 ])
 def test_every_page_builds(name, params, path):
     assert page(name, **params) == SITE + path
@@ -30,7 +31,7 @@ def test_every_page_builds(name, params, path):
 
 def test_every_name_is_covered():
     assert set(NAMES) == {"home", "hi_there", "sign_in", "settings", "today", "day", "progress", "progress_lift",
-                          "goals", "foods"}
+                          "goals", "foods", "routines"}
 
 
 @pytest.mark.parametrize("lift, expected", [

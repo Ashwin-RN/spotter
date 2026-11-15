@@ -112,11 +112,12 @@
   <p class="small">You see what goes before anything is deleted.</p>
 </section>
 
-{# More: Saved foods, and a second copy of the top bar's Sign out form. The stylesheet shows this one on a phone
+{# More: Saved foods, Saved routines, and a second copy of the top bar's Sign out form. The stylesheet shows this one on a phone
    only (.card .sign-out) and the top bar's on a laptop only (.top .sign-out). #}
 <section class="card" aria-labelledby="more-title">
   <h2 id="more-title">More</h2>
   <p><a class="action" href="{{ foods_href }}">Saved foods</a></p>
+  <p><a class="action" href="{{ routines_href }}">Saved routines</a></p>
   <form class="sign-out" method="post" action="/sign-out">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="secondary">Sign out</button>

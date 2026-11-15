@@ -37,7 +37,8 @@ from .test_mcp import CAN_AND_CANT, call, failed, model_texts, ok, one_user, set
 from .test_trace import OWNER, sign_for
 from .test_web import client, location, only_user, post, seam, sign_in, web_client  # noqa: F401
 
-KINDS = ["lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food"]
+KINDS = ["lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "routine"]
+UNDONE = [kind for kind in KINDS if kind != "routine"]  # a routine keeps no version, so no undo (routines.md 6)
 PREVIEW_NOTE = ("Nothing was deleted. Show the person this entry and ask. Send the same kind and id with this confirm "
                 "only when they say yes.")
 MISMATCH_NOTE = ("That confirm does not match this entry as it stands, so nothing was deleted. Show the person the "
@@ -49,8 +50,8 @@ RULE = ("Delete only the entry the person named. When their words fit more than 
         "brings it back. If the person did not want it deleted, restore it, and say they can turn deleting off on "
         "Settings.")
 DESCRIPTION = (
-    "Deletes one of the person's entries or saved foods, in two calls. With no confirm, nothing is deleted: the answer "
-    "is a preview, with dry_run true, the entry as it stands and a confirm code. Send the same kind and id with that "
+    "Deletes one of the person's entries, saved foods or routines, in two calls. With no confirm, nothing is deleted: "
+    "the answer is a preview, with dry_run true, the entry as it stands and a confirm code. Send the same kind and id with that "
     "confirm to delete. A confirm that does not match the entry as it stands deletes nothing and returns the preview "
     "again. Nothing is erased: restore_entry brings a deleted entry back. " + RULE + " Allowed only when the person "
     "lets Claude delete; otherwise the answer is not_allowed.")
@@ -65,7 +66,7 @@ OWNER_FEEDBACK_BEFORE = "242b0d08f0ca2b4bb696ec818f327ede1d2b2b71b6959dba0e687cc
 # ---------------------------------------------------------------- helpers
 
 def model_of(kind: str):
-    return SavedFood if kind == "saved_food" else entries.entry_kinds()[kind]
+    return entries._deletable()[kind]
 
 
 def make(account: int, kind: str) -> int:
@@ -78,6 +79,8 @@ def make(account: int, kind: str) -> int:
         "cardio_entry": lambda: services.log_cardio(account, {"exercise": "Treadmill Walk", "minutes": 30}, "claude"),
         "saved_food": lambda: services.save_food(account, {"name": "Roti", "serving_label": "1 roti",
                                                            "kcal_per_serving": 120}, "claude"),
+        "routine": lambda: services.save_routine(account, {"name": "Push day", "lifts": [
+            {"exercise": "Bench Press", "sets": 3, "reps": 8}]}, "claude"),
     }[kind]()
     assert "error" not in made, made
     return made["ids"][0] if kind == "food_entry" else made["id"]
@@ -88,6 +91,9 @@ def edit(account: int, kind: str, entry_id: int) -> None:
     if kind == "saved_food":
         done = services.save_food(account, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 130},
                                   "claude")
+    elif kind == "routine":  # a routine is changed by saving it again (routines.md decision 5)
+        done = services.save_routine(account, {"name": "Push day", "lifts": [
+            {"exercise": "Bench Press", "sets": 4, "reps": 8}]}, "claude")
     else:
         changes = {"lift_session": {"notes": "Edited"}, "bodyweight": {"kg": 81}, "measurement": {"value": 85},
                    "food_entry": {"kcal": 200}, "cardio_entry": {"minutes": 31}}[kind]
@@ -191,7 +197,7 @@ def test_the_code_holds_for_the_entry_unchanged_and_moves_with_an_edit_and_with_
     assert code_of(account, kind, entry_id) not in (first, before_delete)
 
 
-@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("kind", UNDONE)
 def test_an_undo_of_an_edit_moves_the_code_too(make_user, kind):
     account = make_user().id
     entry_id = make(account, kind)
@@ -367,13 +373,14 @@ def test_with_deleting_off_both_calls_are_not_allowed_before_the_service_and_the
 
 # ---------------------------------------------------------------- decision 11: a person's own click
 
-@pytest.mark.parametrize("kind", ["bodyweight", "saved_food"])
+@pytest.mark.parametrize("kind", ["bodyweight", "saved_food", "routine"])  # and Routines' (routines.md 11)
 def test_both_web_deletes_delete_in_one_post_and_land_with_undo(client, kind):
     sign_in(client)
     account = only_user().id
     assert "error" not in services.update_settings(account, {"time_zone": "UTC"}, "web")
     entry_id = make(account, kind)
-    path = f"/foods/{entry_id}" if kind == "saved_food" else f"/entries/{kind}/{entry_id}"
+    path = {"saved_food": f"/foods/{entry_id}", "routine": f"/routines/{entry_id}"}.get(
+        kind, f"/entries/{kind}/{entry_id}")
     landed = location(post(client, path + "/delete"))
     assert not live(kind, entry_id) and f"deleted={kind}:{entry_id}" in landed
     page = client.get(landed).text
@@ -479,7 +486,9 @@ def test_0009_turns_every_account_to_log_delete_moves_no_updated_at_and_comes_do
         with engine.connect() as c:
             after = [tuple(r) for r in c.exec_driver_sql(read).all()]
             assert after == [(u, "log_delete", stamps[u], stamps[u], stamps[u]) for u in held]
-            assert compare_metadata(MigrationContext.configure(c), Base.metadata) == []  # the models match
+            # The models match, but for the table 0010 adds (tests/test_routines.py holds it there).
+            assert [(d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
+                ("add_table", "routine")]
             assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0009"
         command.downgrade(cfg, "0008")
         with engine.connect() as c:
@@ -488,7 +497,7 @@ def test_0009_turns_every_account_to_log_delete_moves_no_updated_at_and_comes_do
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0009"
+    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0010"  # routines
 
 
 def test_0009_s_statement_is_built_so_postgres_gets_user_quoted(monkeypatch):
@@ -516,11 +525,13 @@ def test_the_rule_is_in_the_instructions_and_the_description_and_the_published_w
     assert list(tool["inputSchema"]["properties"]) == ["kind", "entry_id", "confirm", "key"]
     assert tool["inputSchema"]["required"] == ["kind", "entry_id"]
     assert tool["inputSchema"]["properties"]["confirm"]["description"] == CONFIRM_WORDS
-    # Ruling round 1: kind and entry_id name a saved food too. edit_entry keeps the shared words.
+    # Ruling round 1: kind and entry_id name a saved food too, and since routines.md a routine. edit_entry keeps the
+    # shared words.
     assert tool["inputSchema"]["properties"]["kind"]["description"] == (
-        "lift_session, bodyweight, measurement, food_entry or cardio_entry. Or saved_food.")
+        "lift_session, bodyweight, measurement, food_entry or cardio_entry. Or saved_food or routine.")
     assert tool["inputSchema"]["properties"]["entry_id"]["description"] == mcp_server.RESTORE_ID_DESCRIPTION == (
-        mcp_server.ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or find_food.")
+        mcp_server.ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or find_food, a routine's from "
+                                          "save_routine or get_routines.")
     edit = {t["name"]: t for t in tool_list(http, sign())}["edit_entry"]["inputSchema"]["properties"]
     assert (edit["kind"]["description"], edit["entry_id"]["description"]) == (
         mcp_server.KIND_DESCRIPTION, mcp_server.ENTRY_ID_DESCRIPTION)
@@ -615,4 +626,4 @@ def test_can_and_cant_and_the_readme_say_the_two_calls_and_the_two_settings():
     readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
     assert ("**You set the limit.** The assistant can read, log and delete. One switch on Settings turns deleting "
             "off. A delete takes two steps: the assistant is first shown the entry and told to ask you.") in readme
-    assert "32 cases, 3 runs each." in readme  # gym logging and first day: was 26
+    assert "35 cases, 3 runs each." in readme  # gym logging, first day and routines: was 26

@@ -636,13 +636,15 @@ def test_restore_entry_publishes_undo_edit_and_no_allow_repeat_and_the_instructi
     assert ids == {"edit_entry": mcp_server.ENTRY_ID_DESCRIPTION,
                    **dict.fromkeys(("restore_entry", "delete_entry"),  # switch, ruling 1: delete_entry takes these
                                    mcp_server.ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or "
-                                                                     "find_food.")}
+                                                                     "find_food, a routine's from save_routine or "
+                                                                     "get_routines.")}  # routines.md
     # restore_entry's kind has words of its own: an undo takes a saved food too. The other two keep the shared ones.
     kinds = {t["name"]: t["inputSchema"]["properties"]["kind"]["description"] for t in tool_list(http, sign())
              if "kind" in t["inputSchema"]["properties"] and t["name"].endswith("_entry")}
     shared = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
-    assert kinds == {"edit_entry": shared, "delete_entry": shared + " Or saved_food.",  # switch, ruling 1
-                     "restore_entry": shared + " With undo_edit, saved_food too."}
+    assert kinds == {"edit_entry": shared, "delete_entry": shared + " Or saved_food or routine.",  # and routines.md
+                     "restore_entry": shared + " With undo_edit, saved_food too. Or routine, to bring back a deleted "
+                                               "one."}
     assert tool["description"] == (
         "Brings back a deleted or replaced entry. If the day already has a live one of the same kind, the two swap: "
         "the live one is set aside and can itself be restored. With undo_edit true it undoes the last edit of a live "
@@ -1307,7 +1309,8 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
                 ["user_id"], "user", {"ondelete": "CASCADE"})
             # The models match, but for the table and index 0008 adds (tests/test_feedback.py holds them there).
             assert sorted((d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
-                == [("add_index", "ix_feedback_user_id_created_at"), ("add_table", "feedback")]
+                == [("add_index", "ix_feedback_user_id_created_at"), ("add_table", "feedback"),
+                    ("add_table", "routine")]  # and 0010's (tests/test_routines.py)
         with engine.begin() as c:
             for user, entry in ((1, 5), (1, 5), (2, 5), (2, 999999)):  # many for one entry, and an id no table holds
                 c.exec_driver_sql(row, (user, entry, now))
@@ -1323,7 +1326,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0009"  # switch 0009
+    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0010"  # routines
 
 
 def test_every_kind_s_table_name_fits_the_version_s_kind_column():
@@ -1331,7 +1334,8 @@ def test_every_kind_s_table_name_fits_the_version_s_kind_column():
     only, at its first edit: SQLite does not hold a text column to its length."""
     width = EntryVersion.__table__.c.kind.type.length
     names = [model.__tablename__ for model in entries._deletable().values()]
-    assert width == 16 and set(MODELS) == set(names) == set(entries._deletable())
+    # A routine is deleted and restored by id but keeps no version (routines.md decision 6): its name fits too.
+    assert width == 16 and set(MODELS) | {"routine"} == set(names) == set(entries._deletable())
     assert all(len(name) <= width for name in names), names
 
 

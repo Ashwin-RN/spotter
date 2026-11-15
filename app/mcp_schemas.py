@@ -1,4 +1,4 @@
-"""The shapes of the twenty MCP functions' arguments and results, and of the owner's two.
+"""The shapes of the twenty-two MCP functions' arguments and results, and of the owner's two.
 
 Each result model is published as that function's result schema, and the MCP library checks every
 successful result against it. The top-level fields match the service's keys exactly, and a top-level
@@ -30,6 +30,24 @@ class SetIn(BaseModel):
     exercise: str = Field(description="The exercise name, exactly as list_exercises gives it.")
     weight_kg: float = Field(description="The weight lifted in kg, 0 to 500. Use 0 for bodyweight work.")
     reps: int = Field(description="Reps done in this set, a whole number from 1 to 30.")
+
+
+# A routine's lift (contract routines.md). The result models below take these words for the same fields.
+ROUTINE_EXERCISE = "The lift, exactly as list_exercises gives it."
+ROUTINE_SETS = "How many sets of it, 1 to 10."
+ROUTINE_REPS = "Reps in each set, a whole number from 1 to 30."
+
+
+class RoutineLiftIn(BaseModel):
+    """One lift of a routine: its number of sets, its reps, and a weight only when the person gave one."""
+
+    exercise: str = Field(description=ROUTINE_EXERCISE)
+    sets: int = Field(description=ROUTINE_SETS)
+    reps: int = Field(description=ROUTINE_REPS)
+    weight_kg: float | None = Field(
+        default=None,
+        description="The weight in kg, 0 to 500, only when the person gave one. Leave it out otherwise: get_routines "
+                    "then gives the weight of the lift's latest session.")
 
 
 class FoodEntryIn(BaseModel):
@@ -294,7 +312,7 @@ class WhoamiResult(BaseModel):
         description="Present while a setup step other than import is not done yet. missing: those steps, in the "
                     "order to ask them: "
                     "time_zone, weigh_in, lift_session, goal, calorie_target, sessions_target, cardio_target, "
-                    "saved_food, import. how: when and how to ask.")
+                    "saved_food, routine, import. how: when and how to ask.")
 
 
 # ---------------------------------------------------------------- list_exercises
@@ -1223,6 +1241,79 @@ class OwnerDeleteFeedbackResult(BaseModel):
     summary: str = Field(description="What happened, in one line, ready to quote.")
 
 
+# ---------------------------------------------------------------- save_routine and get_routines
+
+ROUTINE_ID = "The routine's id, for delete_entry and restore_entry with kind routine."
+ROUTINE_NAME = "The routine's name, as the person says it, such as Push day. 1 to 64 characters."
+ROUTINE_LIFTS = "Each lift, in the order done: 1 to 20 lifts, and at most 60 sets in all."
+ROUTINE_SAVED_ON = "The person's date when the routine was last saved."
+LINKS_LAST = "Pages to offer the person. Put links last in a reply."
+
+
+class RoutinesLinks(BaseModel):
+    routines: str = Field(description="The Routines page: the person's routines.")
+
+
+class SavedRoutineLift(BaseModel):
+    exercise: str = Field(description=ROUTINE_EXERCISE)
+    sets: int = Field(description=ROUTINE_SETS)
+    reps: int = Field(description=ROUTINE_REPS)
+    weight_kg: float | None = Field(description="The weight the person gave, in kg, or null when none was given.")
+
+
+class SavedRoutine(BaseModel):
+    id: int = Field(description=ROUTINE_ID)
+    name: str = Field(description=ROUTINE_NAME)
+    lifts: list[SavedRoutineLift] = Field(description=ROUTINE_LIFTS)
+    saved_on: str = Field(description=ROUTINE_SAVED_ON)
+    updated_at: str = Field(description="When it last changed, UTC.")
+
+
+class SaveRoutineResult(BaseModel):
+    model_config = TOP
+
+    kind: str = Field(description="routine.")
+    id: int = Field(description=ROUTINE_ID)
+    created: bool = Field(
+        description="True when the name was new. False when a routine of that name was replaced or brought back.")
+    routine: SavedRoutine = Field(description="The routine as saved.")
+    summary: str = Field(description="What this call did, in one line, ready to quote.")
+    links: RoutinesLinks = Field(description=LINKS_LAST)
+
+
+class LiftToLog(BaseModel):
+    exercise: str = Field(description=ROUTINE_EXERCISE)
+    sets: int = Field(description=ROUTINE_SETS)
+    reps: int = Field(description=ROUTINE_REPS)
+    weight_kg: float | None = Field(
+        description="The weight to log, in kg: the heaviest set of this lift's latest session, unless the routine "
+                    "was saved on a later day than that session, with a weight of its own. Null when there is "
+                    "neither: ask the person.")
+    weight_from: str | None = Field(description="Where weight_kg came from: last_session, routine, or null.")
+    last_date: str | None = Field(
+        description="The date of this lift's latest session, or null when it was never logged.")
+
+
+class RoutineToLog(BaseModel):
+    id: int = Field(description=ROUTINE_ID)
+    name: str = Field(description=ROUTINE_NAME)
+    saved_on: str = Field(description=ROUTINE_SAVED_ON)
+    lifts: list[LiftToLog] = Field(description=ROUTINE_LIFTS)
+
+
+class GetRoutinesResult(BaseModel):
+    model_config = TOP
+
+    routines: list[RoutineToLog] = Field(description="Every live routine, by name.")
+    how: str = Field(
+        description="weight_kg is the heaviest set of the lift's latest session, unless the routine was saved on a "
+                    "later day than that session, with a weight of its own. Quote these numbers; do not work out "
+                    "your own.")
+    summary: str = Field(description="The routines by name, in one line, ready to quote.")
+    note: str | None = Field(default=None, description="Present when no routine is saved.")
+    links: RoutinesLinks = Field(description=LINKS_LAST)
+
+
 RESULTS = {
     "whoami": WhoamiResult,
     "list_exercises": ExercisesResult,
@@ -1244,6 +1335,8 @@ RESULTS = {
     "get_goals": GetGoalsResult,
     "import_entries": ImportEntriesResult,
     "send_feedback": SendFeedbackResult,
+    "save_routine": SaveRoutineResult,
+    "get_routines": GetRoutinesResult,
     "owner_calls": OwnerCallsResult,
     "owner_feedback": OwnerFeedbackResult,
     "owner_delete_feedback": OwnerDeleteFeedbackResult,
