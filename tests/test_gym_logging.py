@@ -13,16 +13,14 @@ from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import event, func, select, update
-from sqlalchemy.dialects import sqlite
 
 from app import db, formatting, services, users
 from app.mcp_schemas import LogLiftsResult
 from app.models import EntryVersion, LiftSession, LiftSet
 from app.services import lifts
-from app.services.common import lock_statement
 
 from . import text_rules as tr
-from .conftest import sign
+from .conftest import lock_sql, sign
 from .test_calllog import rows
 from .test_idempotency import K, keys, writer  # noqa: F401 - writer is a fixture
 from .test_mcp import call, failed, ok, tool_list
@@ -593,7 +591,6 @@ def flat(statement: str) -> str:
     return " ".join(statement.split())
 
 
-LOCK_SQL = flat(str(lock_statement("sqlite", 1).compile(dialect=sqlite.dialect())))
 ADD_STATEMENTS = 11  # as built, for one new set: the lock, the user, the write limit, the exercises, the session,
 # its sets, the earlier sets, the version and the look for versions past ten, the session's update, the new set.
 # On SQLite the ORM inserts each new set on its own, as a new session's sets always were: k new sets are 10 + k.
@@ -608,7 +605,8 @@ def test_an_add_locks_first_and_once_and_runs_as_many_statements_on_a_session_of
         for more in (1, 29):
             result, statements = count_queries(lambda: log(person, *[BENCH] * more))
             assert "error" not in result and result["summary"].startswith("Added "), result
-            assert flat(statements[0]) == LOCK_SQL and sum(flat(s) == LOCK_SQL for s in statements) == 1
+            lock = lock_sql()
+            assert flat(statements[0]) == lock and sum(flat(s) == lock for s in statements) == 1
             counts[held_sets, more] = len(statements)
     assert counts[3, 1] == counts[30, 1] == ADD_STATEMENTS
     assert counts[3, 29] == counts[30, 29] == ADD_STATEMENTS - 1 + 29

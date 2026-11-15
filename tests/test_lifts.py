@@ -14,7 +14,7 @@ from app import db, services, users
 from app.metrics import epley
 from app.models import LiftSession, LiftSet
 from app.services.common import lock_statement
-from tests.conftest import RESOURCE
+from tests.conftest import RESOURCE, lock_sql
 
 SITE = RESOURCE.rsplit("/mcp", 1)[0]
 
@@ -423,15 +423,13 @@ WRITES = {
 def test_every_write_locks_the_user_row_before_anything_else(user, name):
     result, statements = count_queries(lambda: WRITES[name](user))
     assert statements, f"{name} ran no SQL at all: {result}"
-    assert flat(statements[0]) == LOCK_SQL, statements[0]  # the lock itself, not merely some UPDATE of the user
-    assert sum(flat(s) == LOCK_SQL for s in statements) == 1
+    lock = lock_sql()
+    assert flat(statements[0]) == lock, statements[0]  # the lock itself, not merely some UPDATE of the user
+    assert sum(flat(s) == lock for s in statements) == 1
 
 
 def flat(statement: str) -> str:
     return " ".join(statement.split())
-
-
-LOCK_SQL = flat(str(lock_statement("sqlite", 1).compile(dialect=sqlite.dialect())))
 
 
 def test_the_postgres_lock_is_select_for_update_on_the_user_row():

@@ -29,7 +29,7 @@ from app.models import CLAUDE_CAN, Base, CallLog, LiftSession, SavedFood, User
 from app.services import entries
 
 from . import text_rules as tr
-from .conftest import TEST_DIR, alembic_config, sign
+from .conftest import TEST_DIR, alembic_config, lock_sql, sign
 from .test_calllog import MARKER, rows
 from .test_feedback import PUBLISHED, compact
 from .test_idempotency import K, keys, writer  # noqa: F401 - writer is a fixture
@@ -157,8 +157,8 @@ def test_the_first_call_deletes_nothing_the_second_with_its_code_deletes_and_a_r
 
 @pytest.mark.parametrize("kind", KINDS)
 def test_a_preview_sets_nothing_and_writes_nothing_but_the_lock(writer, kind):
-    """Through the service as an assistant calls it, every statement recorded: the one write is the lock on the
-    person's row (SQLite's lock is an UPDATE that changes nothing). No version is kept, no row is flushed."""
+    """Through the service as an assistant calls it, every statement recorded: the only write is the lock, which on
+    SQLite is an UPDATE that changes nothing. No version is kept, no row is flushed."""
     _, _, account = writer
     entry_id = make(account, kind)
     before = stored(kind, entry_id)
@@ -175,8 +175,8 @@ def test_a_preview_sets_nothing_and_writes_nothing_but_the_lock(writer, kind):
         event.remove(engine, "before_cursor_execute", record)
     assert result["dry_run"] is True and stored(kind, entry_id) == before
     writes = [s for s in statements if s.split()[0] in ("INSERT", "UPDATE", "DELETE")]
-    assert writes == [s for s in statements if s.startswith('UPDATE user SET claude_can=user.claude_can')]
-    assert len(writes) == 1
+    lock = lock_sql(account)
+    assert statements.count(lock) == 1 and [s for s in writes if s != lock] == []
 
 
 @pytest.mark.parametrize("kind", KINDS)

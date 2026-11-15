@@ -10,7 +10,7 @@ from app import config, db, services, users
 from app.models import CallLog, FoodEntry, SavedFood, User
 from app.services import food, usda
 from app.services.common import WRITE_LIMIT
-from tests.conftest import settings as make_settings
+from tests.conftest import lock_sql, settings as make_settings
 
 NOON = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
 
@@ -333,8 +333,6 @@ def test_food_writes_are_limited(user, call):
 ])
 def test_food_writes_lock_the_user_row_first(user, call):
     from sqlalchemy import event
-    from sqlalchemy.dialects import sqlite
-    from app.services.common import lock_statement
     statements = []
     engine = db.get_engine()
     record = lambda *a: statements.append(" ".join(a[2].split()))  # noqa: E731
@@ -343,7 +341,7 @@ def test_food_writes_lock_the_user_row_first(user, call):
         call(user)
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    assert statements[0] == " ".join(str(lock_statement("sqlite", user.id).compile(dialect=sqlite.dialect())).split())
+    assert statements[0] == lock_sql(user.id)
 
 
 # ---------------------------------------------------------------- stage 5: the description default (decision 14)

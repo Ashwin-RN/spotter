@@ -10,6 +10,7 @@ from app.metrics import cardio_kcal
 from app.models import CallLog, CardioEntry, Exercise, User
 from app.services.cardio import NO_WEIGH_IN
 from app.services.common import WRITE_LIMIT
+from tests.conftest import lock_sql
 
 
 @pytest.fixture
@@ -171,8 +172,6 @@ def test_the_same_session_within_ten_minutes_is_a_duplicate(user):
 
 def test_cardio_is_limited_and_locks_first(user):
     from sqlalchemy import event
-    from sqlalchemy.dialects import sqlite
-    from app.services.common import lock_statement
     statements = []
     engine = db.get_engine()
     record = lambda *a: statements.append(" ".join(a[2].split()))  # noqa: E731
@@ -181,7 +180,7 @@ def test_cardio_is_limited_and_locks_first(user):
         move(user)
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    assert statements[0] == " ".join(str(lock_statement("sqlite", user.id).compile(dialect=sqlite.dialect())).split())
+    assert statements[0] == lock_sql(user.id)
     with db.session_scope() as s:
         s.add_all(CallLog(user_id=user.id, function="log_cardio", started_at=db.utcnow(), ms=1, ok=True,
                           result_bytes=1) for _ in range(WRITE_LIMIT + 1))

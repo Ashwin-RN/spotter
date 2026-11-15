@@ -29,6 +29,7 @@ from app import config, db, exercises
 from app.config import ROOT, Settings
 from app.main import create_app
 from app.models import Base, User
+from app.services.common import lock_statement
 
 DOMAIN = "example.authkit.app"
 ISSUER = f"https://{DOMAIN}"
@@ -238,6 +239,12 @@ def rpc(client: TestClient, method: str, params: dict | None = None, token: str 
         headers["Authorization"] = f"Bearer {token}"
     return client.post("/mcp", headers=headers,
                        json={"jsonrpc": "2.0", "id": id_, "method": method, "params": params or {}})
+
+
+def lock_sql(user_id: int = 1) -> str:
+    """The lock on the person's row as the running engine sends it, whitespace squashed."""
+    engine = db.get_engine()
+    return " ".join(str(lock_statement(engine.dialect.name, user_id).compile(dialect=engine.dialect)).split())
 
 
 def whoami(client: TestClient, token: str) -> dict[str, Any]:

@@ -5,14 +5,13 @@ from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import event
-from sqlalchemy.dialects import sqlite
 
 from app import db, services, users
 from app.models import Bodyweight, User
 from app.metrics import bodyweight_now, epley
 from app.services import account, body
-from app.services.common import lock_statement
 from app.services.progress import bodyweight_chart
+from tests.conftest import lock_sql
 
 KEYS = {"time_zone", "today", "changed", "summary", "links"}
 
@@ -148,8 +147,7 @@ def test_the_lock_is_the_first_statement_whether_or_not_anything_changes(make_us
     finally:
         event.remove(engine, "before_cursor_execute", record)
     assert "error" not in r, r
-    lock = " ".join(str(lock_statement("sqlite", person.id).compile(dialect=sqlite.dialect())).split())
-    assert statements and statements[0] == lock, statements[:2]
+    assert statements and statements[0] == lock_sql(person.id), statements[:2]
 
 
 def test_one_persons_call_never_changes_anothers(make_user):
@@ -337,8 +335,7 @@ def test_the_switch_locks_the_user_row_first(user):
         services.set_claude_can(user.id, "log_delete")
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    lock = " ".join(str(lock_statement("sqlite", user.id).compile(dialect=sqlite.dialect())).split())
-    assert statements[0] == lock
+    assert statements[0] == lock_sql(user.id)
 
 
 

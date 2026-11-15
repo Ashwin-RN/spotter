@@ -23,7 +23,6 @@ import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import event, inspect, select, update
-from sqlalchemy.dialects import sqlite
 
 from app import db, links, mcp_server, rules, services, web
 from app.calllog import KNOWN_NAMES, TABLES
@@ -31,12 +30,11 @@ from app.db import make_engine
 from app.mcp_schemas import GetRoutinesResult, RoutineLiftIn, SaveRoutineResult
 from app.models import CallLog, LiftSession, Routine, User, user_tables
 from app.services import common, entries, routines
-from app.services.common import lock_statement
 from evals import judge
 from evals.run import TABLES as RUN_TABLES, person_rows
 
 from . import text_rules as tr
-from .conftest import TEST_DIR, alembic_config, sign
+from .conftest import TEST_DIR, alembic_config, lock_sql, sign
 from .test_calllog import rows
 from .test_evals import _lift_case, _lift_server, call as recorded
 from .test_feedback import compact
@@ -190,7 +188,8 @@ def statements_of(fn) -> tuple[object, list[tuple[str, tuple]]]:
     seen: list[tuple[str, tuple]] = []
 
     def keep(conn, cursor, statement, parameters, context, executemany):
-        seen.append((" ".join(statement.split()), tuple(parameters or ())))
+        values = parameters.values() if isinstance(parameters, dict) else parameters or ()  # whatever the paramstyle
+        seen.append((" ".join(statement.split()), tuple(values)))
 
     engine = db.get_engine()
     event.listen(engine, "before_cursor_execute", keep)
@@ -201,7 +200,7 @@ def statements_of(fn) -> tuple[object, list[tuple[str, tuple]]]:
     return result, seen
 
 
-LOCK_SQL = " ".join(str(lock_statement("sqlite", 1).compile(dialect=sqlite.dialect())).split())
+PARAM = r"(?:\?|%\(\w+\)s(?:::\w+)?)"  # a placeholder: ? on SQLite, %(name)s on psycopg, a cast after it
 ON_ROUTINE = re.compile(r"\b(?:FROM|INTO|UPDATE|JOIN)\s+routine\b")
 
 
@@ -1105,7 +1104,8 @@ def test_every_new_text_keeps_the_text_rules():
 def test_a_save_locks_first_and_once(user):
     for lifts_ in (PUSH, [lift()], [lift()]):  # new, replaced, unchanged
         result, seen = statements_of(lambda: save(user.id, lifts=lifts_))
-        assert "error" not in result and seen[0][0] == LOCK_SQL and sum(sql == LOCK_SQL for sql, _ in seen) == 1
+        lock = lock_sql(user.id)
+        assert "error" not in result and seen[0][0] == lock and sum(sql == lock for sql, _ in seen) == 1
 
 
 def test_every_statement_on_routine_names_the_person_s_id(client, make_user):
@@ -1137,11 +1137,11 @@ def test_every_statement_on_routine_names_the_person_s_id(client, make_user):
         assert on, what
         for sql, params in on:
             if sql.startswith("UPDATE routine"):  # the row written back, found first by the person's id
-                assert sql.endswith("WHERE routine.id = ?") and params[-1] == mine["id"], (what, sql)
+                assert re.search(rf"WHERE routine\.id = {PARAM}$", sql) and mine["id"] in params, (what, sql)
             elif sql.startswith("INSERT INTO routine"):
                 assert "user_id" in sql and me.id in params, (what, sql)
             else:
-                assert "routine.user_id = ?" in sql and me.id in params, (what, sql, params)
+                assert re.search(rf"routine\.user_id = {PARAM}", sql) and me.id in params, (what, sql, params)
     assert [r["user_id"] for r in table() if r["id"] == theirs] == [other.id]
     assert read(other.id)["routines"][0]["lifts"][0]["weight_kg"] == 99.0
 
