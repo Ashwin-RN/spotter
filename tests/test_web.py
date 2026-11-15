@@ -4565,7 +4565,8 @@ def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
             for word in rules.KIND_WORDS.values():
                 if (name, word) == ("hi.html", "Steps"):  # hi-there.md's "The steps are on the home page": to connect
                     continue
-                if (name, word) == ("home.html", "Steps"):  # '"From its docs" means the steps follow': to connect
+                if (name, word) == ("home.html", "Steps") and piece.text.strip().startswith(
+                        '"From its docs" means the steps follow'):  # that one sentence, "steps" to connect
                     continue
                 assert not re.search(rf"\b{re.escape(word)}\b", piece.text, re.I), (name, word, piece.text[:80])
     # The edit page and the Goals form read it too.

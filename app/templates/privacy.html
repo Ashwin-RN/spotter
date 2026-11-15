@@ -109,7 +109,7 @@
   <h2 id="privacy-contact">Contact</h2>
   {% if contact_email %}
   <p>Questions about your data go to <a class="plain-link" href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
-  <p>Problems with the app can also go on the project's issues page.</p>
+  <p>Problems with the app can also go on {% if repository %}<a class="plain-link" href="{{ repository }}/issues">the project's issues page</a>{% else %}the project's issues page{% endif %}.</p>
   {% elif repository %}
   <p>Questions and problems go on the project's issues page.</p>
   <p><a class="plain-link" href="{{ repository }}/issues">Open the issues page</a></p>
