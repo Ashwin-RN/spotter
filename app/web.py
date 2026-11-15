@@ -1039,6 +1039,18 @@ README_TABLE = links.REPOSITORY + "#your-assistant"
 # The page never reads the README. The one place the page names products, so the one place it says Claude.
 ASSISTANTS = ("Claude apps", "Claude Code", "ChatGPT", "Cursor", "VS Code with Copilot", "Gemini app", "Mistral",
               "goose")
+# Each assistant's line on the landing: the README table's Status cell, word for word (tests/test_web.py holds them).
+ASSISTANT_NOTES = {
+    "Claude apps": "Tried on the web. Desktop: from its docs. Free plans get one custom connector. On Team and "
+                   "Enterprise an owner adds it.",
+    "Claude Code": "Tried with Spotter.",
+    "ChatGPT": "From its docs. Full access needs Business, Enterprise or Edu. Pro can only read.",
+    "Cursor": "From its docs.",
+    "VS Code with Copilot": "From its docs.",
+    "Gemini app": "From its docs. US only, 18 or over, personal account, Keep Activity on.",
+    "Mistral": "Tried with Spotter.",
+    "goose": "From its docs.",
+}
 
 # The example exchange of What it looks like. The landing has no account to ask, so it is this one constant: what
 # get_goals gives the four-week account on the fixed day (2026-11-10, evals/four_weeks.py), said by the MCP server's
@@ -1129,7 +1141,7 @@ async def home(request: Request) -> Response:
                 source_link=links.REPOSITORY, readme_table=README_TABLE, exchange=LANDING_EXCHANGE,
                 answer=exchange_answer(), picture=LANDING_PICTURE, signups_per_day=settings.signups_per_day,
                 function_count=FUNCTION_COUNT, eval_cases=EVAL_CASES, assistants=ASSISTANTS,
-                your_data=your_data(), say_first=SAY_FIRST, say_everyday=SAY_EVERYDAY, site_foot=SITE_FOOT)
+                assistant_notes=ASSISTANT_NOTES, your_data=your_data(), say_first=SAY_FIRST, say_everyday=SAY_EVERYDAY, site_foot=SITE_FOOT)
 
 
 def in_words(items) -> str:

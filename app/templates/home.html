@@ -46,7 +46,7 @@
   <h2 id="before-title">Before you start</h2>
   <ul class="plain-list">
     <li>You need an AI assistant that can add a remote MCP server with sign-in.</li>
-    <li>Each assistant's plan limits are in <a href="{{ readme_table }}">the README's table</a>.</li>
+    <li>Some assistants need a paid plan or have other limits. Each one's limits are under its name below, from <a href="{{ readme_table }}">the README's table</a>.</li>
     {% if signups_per_day is none %}{# no cap: no line #}
     {% elif signups_per_day %}
     <li>New accounts are capped at {{ signups_per_day|show("count") }} a day.</li>
@@ -88,12 +88,14 @@
   {# The README table's rows (web.ASSISTANTS), each a link to that table: the one place the page names products. #}
   <ul class="assistants">
     {% for name in assistants %}
-    <li><a href="{{ readme_table }}">{{ name }}</a>{% if name == "Claude Code" and mcp_url %}
+    <li><a href="{{ readme_table }}">{{ name }}</a>
+      <p class="muted">{{ assistant_notes[name] }}</p>{% if name == "Claude Code" and mcp_url %}
       <p class="muted">Run this once, then type <code>/mcp</code> and pick spotter to sign in.</p>
       <code class="link-box" id="claude-code-command">claude mcp add --transport http --scope user spotter {{ mcp_url }}</code>
     {% endif %}</li>
     {% endfor %}
   </ul>
+  <p class="muted">"From its docs" means the steps follow that assistant's own docs and have not been tried with Spotter yet.</p>
   <p class="muted">Any other MCP client that supports remote servers with sign-in is added the same way.</p>
 </section>
 

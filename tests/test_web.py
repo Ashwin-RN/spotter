@@ -226,6 +226,11 @@ def test_home_shows_no_address_and_no_command_when_the_address_is_unset(provider
 # ---------------------------------------------------------------- the landing (passes B17 and B18)
 
 NO_BREAK = " "
+# Before you start's second line, and the line under the list of assistants (tidy item 1).
+BEFORE_LIMITS = ("Some assistants need a paid plan or have other limits. Each one's limits are under its name below, "
+                 "from the README's table.")
+FROM_ITS_DOCS = ("\"From its docs\" means the steps follow that assistant's own docs and have not been tried with "
+                 "Spotter yet.")
 # The landing's main and the footer after it, as plain words, in markup order (section L, Landing page). Each {name} marks
 # what differs by state or is read from its source.
 LANDING_WORDS = (
@@ -241,7 +246,7 @@ LANDING_WORDS = (
     "An example. The assistant asked Spotter for the goals and quoted them. The Goals page shows the same numbers.",
     "Before you start",
     "You need an AI assistant that can add a remote MCP server with sign-in.",
-    "Each assistant's plan limits are in the README's table.",
+    BEFORE_LIMITS,
     "How to start",
     "Sign in.", "{step_1}",
     "Add Spotter to your assistant.",
@@ -250,9 +255,11 @@ LANDING_WORDS = (
     "Say what you did.", "Start a new chat and say what you did, or one of the sentences below.",
     "The first time, your assistant may ask you to allow each call. Allow it.",
     "How to add Spotter in each assistant",
-    "Claude apps", "Claude Code", "Run this once, then type /mcp and pick spotter to sign in.",
+    "Claude apps", web.ASSISTANT_NOTES["Claude apps"],
+    "Claude Code", web.ASSISTANT_NOTES["Claude Code"], "Run this once, then type /mcp and pick spotter to sign in.",
     f"claude mcp add --transport http --scope user spotter {RESOURCE}",
-    "ChatGPT", "Cursor", "VS Code with Copilot", "Gemini app", "Mistral", "goose",
+    *(words for name in web.ASSISTANTS[2:] for words in (name, web.ASSISTANT_NOTES[name])),
+    FROM_ITS_DOCS,
     "Any other MCP client that supports remote servers with sign-in is added the same way.",
     "Things to say first",
     "Am I on track for my goals?", "Each goal against its plan line, and the date it is reached at this pace.",
@@ -382,7 +389,7 @@ def test_before_you_start_says_the_cap_from_the_settings(web_client, make_user, 
         before = re.search(r'<section class="card before".*?</section>', page, re.S).group(0)
         items = [plain_words(li) for li in re.findall(r"<li>(.*?)</li>", before, re.S)]
         assert items == ["You need an AI assistant that can add a remote MCP server with sign-in.",
-                         "Each assistant's plan limits are in the README's table."] + ([line] if line else []), state
+                         BEFORE_LIMITS] + ([line] if line else []), state
         assert f'<a href="{links.REPOSITORY}#your-assistant">the README\'s table</a>' in before
         if not cap:
             assert "capped" not in page
@@ -531,6 +538,17 @@ def test_the_list_of_assistants_is_the_readmes_table_and_sits_after_the_steps(cl
     code = [n for n, item in enumerate(items) if "<code" in item]
     assert code == [web.ASSISTANTS.index("Claude Code")] and COMMAND in items[code[0]]
     assert "Run this once, then type <code>/mcp</code> and pick spotter to sign in." in items[code[0]]
+    notes = [re.findall(r'<p class="muted">([^<]*)</p>', item)[0] for item in items]
+    assert [html.unescape(note) for note in notes] == [web.ASSISTANT_NOTES[name] for name in web.ASSISTANTS]
+
+
+def test_each_assistant_s_line_is_its_readme_status_cell():
+    readme = (web.HERE.parent / "README.md").read_text(encoding="utf-8")
+    table = readme[readme.index("\n## Your assistant\n"):]
+    table = table[:table.index("\n## ", 1)]
+    rows = [line.strip().strip("|").split("|") for line in table.splitlines() if line.startswith("| [")]
+    cells = {re.match(r"\s*\[([^\]]+)\]", row[0]).group(1): row[-1].strip() for row in rows}
+    assert cells == web.ASSISTANT_NOTES and tuple(web.ASSISTANT_NOTES) == web.ASSISTANTS
 
 
 def test_your_data_says_the_switchs_settings_from_its_one_table(client, monkeypatch):
@@ -4500,6 +4518,8 @@ def test_measurement_labels_are_gone_and_no_template_holds_a_kinds_word(client):
         for piece in tr.template_text(src):
             for word in rules.KIND_WORDS.values():
                 if (name, word) == ("hi.html", "Steps"):  # hi-there.md's "The steps are on the home page": to connect
+                    continue
+                if (name, word) == ("home.html", "Steps"):  # '"From its docs" means the steps follow': to connect
                     continue
                 assert not re.search(rf"\b{re.escape(word)}\b", piece.text, re.I), (name, word, piece.text[:80])
     # The edit page and the Goals form read it too.
