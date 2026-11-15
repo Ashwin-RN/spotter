@@ -17,7 +17,7 @@ in tests. The README says what it does; this file says how changes are made.
 | `evals/` | `claude -p` against a local server. `python -m evals.run`, and `python -m evals.need` says whether a run is needed |
 | `docs/can-and-cant.md` | Served to the assistant as a resource: model-read text |
 | `docs/evals.md` | How the evals run |
-| `docs/contracts/` | One contract per stage or item, fixed before the build. History once built: never edited after |
+| `docs/contracts/` | One contract per stage or item, fixed before the build. A record once built: a later change adds a dated note rather than rewriting it |
 | `BUILD_LOG.md` | One entry per stage or item: the build, the reviews, the checks, the eval run |
 | `tools/` | `probe.py` checks a live server from outside, `mcp_call.py` calls one function, `load.py` is a local load test |
 
@@ -42,11 +42,11 @@ root without a database set: it leaves a `spotter.db` that fails the schema test
 3. **Review.** A separate `reviewer` agent on a frozen copy (`git archive` of a tree), never the live tree.
    It changes nothing and confirms each finding with a probe.
 4. **Fix round.** One. A fresh re-check only when the review had a must fix; otherwise the fix diff is read.
-5. **Commit** through the hook, one item a commit, files added by name. Plain messages: no co-author or
-   tool lines.
+5. **Commit** through the hook, one item a commit, files added by name, one `git commit` a command: the
+   hook runs once, before the command starts. Plain messages: no co-author or tool lines.
 
 Items that touch the same files are built one after another. Independent items may build in parallel,
-each in its own worktree under `.claude/worktrees/`, and are joined after.
+each in its own git worktree, and are joined after.
 
 ## Release
 
