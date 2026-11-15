@@ -4,7 +4,7 @@ A personal fitness record you keep by talking to your AI assistant.
 
 You say what you lifted, ate or weighed. Your assistant logs it through Spotter over MCP. Spotter stores it and does the arithmetic in code: bests, trends, calorie estimates, the pace a goal needs. The assistant is told to quote Spotter's numbers.
 
-**Status: stages 1 to 6 are live. Every web page is on the new design.**
+**Status: live. Each stage, and each item built since, is recorded in `BUILD_LOG.md`.**
 
 Live: https://spotter-production-0c0f.up.railway.app
 
@@ -68,7 +68,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 
 ## Under the hood
 
-- 22 MCP functions and two resources, over streamable HTTP.
+- The MCP functions listed in `docs/can-and-cant.md`, and two resources, over streamable HTTP.
 - Python 3.12, Starlette, SQLAlchemy, Alembic, the `mcp` library and Postgres. Sign-in goes through an outside provider (WorkOS AuthKit) for the web and the assistant, so both reach one account.
 - Every write locks the person's row first, counts against a write limit, and passes the same checks whether it came from the assistant or a form.
 - Every write is safe to send twice. A call may carry a key of its own: the same key and call again writes nothing and gets the first answer back. Every form that writes carries a hidden key, so a double click saves once. Answers are kept for a day.
@@ -77,7 +77,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 - Safety limits: a sized connection pool, a time limit on every query, lock wait and idle transaction, a read limit and a page limit per person, and a 1 MiB cap on every request. A database that is too busy answers that it is busy, not with a crash.
 - A call log with a trace: one row per call, with a request id that is also on the log lines and the response, the names of the fields sent and never a value, whether it wrote, and where a failed call stopped. Rows are deleted after 90 days.
 - A docs-only change runs the docs tests, and a small code change runs the tests for the code it touches. The whole suite runs with warnings as errors on a clean export before a big push, and about once in every four or five pushes otherwise.
-- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. 35 cases, 3 runs each. At stage 5, before stage 6 added four, 48 of 48 runs passed, on `claude-fable-5-2`. On 2026-11-12 the set of that day ran on `claude-opus-5-5`: 60 of 60 runs passed. On 2026-11-14 the set of that day ran: 75 of 75. On 2026-11-15 the set of that day ran: 77 of 78, and the one failure was a run that hit the time limit with no reply. Later that day, with three more items: 105 of 105. The runner pins `claude-opus-5-5`. The result is recorded in `BUILD_LOG.md`; how the evals run is in `docs/evals.md`.
+- Evals: `claude -p` against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. The cases are in `evals/cases.json`, 3 runs each. The runner pins `claude-opus-5-5`. Each run's result is recorded in `BUILD_LOG.md`, and how the evals run is in `docs/evals.md`.
 
 ## Read more
 
@@ -86,7 +86,10 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 | `docs/can-and-cant.md` | What Spotter records, what its numbers mean, and what it cannot know. Served to the assistant as an MCP resource |
 | `docs/evals.md` | How the evals run and what they do not prove |
 | `BUILD_LOG.md` | How each stage was built, reviewed and checked live |
-| `docs/contracts/` | What each stage had to do, fixed before the builders started |
+| `docs/contracts/` | Each stage's and each item's contract: what it had to do, fixed before its builders started |
+| `tools/probe.py` | Checks a running server from outside, without a token |
+| `tools/mcp_call.py` | Calls one function on a running server the way an assistant would, with a token read from the environment |
+| `tools/load.py` | A load test, run only against a local database |
 
 Tests: Python 3.12, `pip install -r requirements.txt -r requirements-dev.txt`, then `python -m pytest tests -q`.
 

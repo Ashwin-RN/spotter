@@ -395,12 +395,12 @@ confusing, an idea.
 ## Setting up
 
 - While a setup step other than the import is not done, `whoami` carries `setup`: `missing`, the steps not done yet in order, and `how`.
-- A step is done when the account holds it: a time zone, a live weigh-in, a live lift session, an open goal, each target set, a live saved food, a live imported row.
+- A step is done when the account holds it: a time zone, a live weigh-in, a live lift session, an open goal, each target set, a live saved food, a live routine, a live imported row.
 - Claude walks the steps only when the person asks to set up, or once on a new account. One question at a time. Any step can be skipped, and comes back the next time the person asks.
 
 ## What Claude may do
 
-Twenty-two functions, nothing else:
+Claude may call these functions, and nothing else:
 
 | Function | What it does |
 |---|---|

@@ -527,7 +527,7 @@ def test_only_the_owner_s_list_has_the_owner_s_three_in_order_and_a_non_owner_s_
     assert json.loads(lists["other"][0])["result"]["tools"] == owner[:-3]  # the owner's, less the three
     hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in owner}
     assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED  # nothing that was there changed
-    assert web.FUNCTION_COUNT == len(FUNCTIONS) == 22  # routines: was 20
+    assert web.FUNCTION_COUNT == len(FUNCTIONS)
 
 
 def test_owner_feedback_is_published_with_its_words_its_ranges_no_delete_and_the_read_only_annotation(owner_client):
@@ -947,7 +947,7 @@ def test_can_and_cant_says_what_feedback_is_for_the_offer_and_the_rules():
                  "It is a write, allowed at both settings.",  # switch decision 1: was "read only answers"
                  "`send_feedback`'s description gives the number", "`too_much_feedback` and the hours to wait",
                  "no `allow_repeat` for a note", "never what was logged", "No reply comes back through Spotter.",
-                 "A note is kept until Spotter's maker deletes it, one year at most.", "Twenty-two functions",
+                 "A note is kept until Spotter's maker deletes it, one year at most.",
                  "| `send_feedback` | Sends a note to Spotter's maker, when the person asks or says yes to the offer. |",
                  "| `log` | Everything except `delete_entry`. |"):  # switch decision 1: the row for read went
         assert said in text, said
@@ -979,7 +979,7 @@ def test_the_instructions_do_not_change_by_a_character():  # but for the switch'
 def test_the_two_cases_load_and_judge_as_designed(app_settings, make_user):
     cases = {c["id"]: c for c in judge.load_cases()}
     sent, offered = cases["feedback_sent"], cases["feedback_offered"]
-    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES and len(cases) == 35  # gym logging, first day and routines: was 26
+    assert "feedback" in judge.DB_TABLES and "feedback" in RUN_TABLES
     assert "switch" not in sent and "switch" not in offered  # the default, log_delete since the switch
     uid = make_user().id
     rows_now = person_rows(uid)

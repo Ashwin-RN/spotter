@@ -117,8 +117,8 @@ def writer(http):
     return http, token, account
 
 
-def test_the_table_of_calls_covers_the_fourteen_write_functions():  # was thirteen: save_routine (routines.md 19)
-    assert set(CALLS) == set(WRITES) and len(WRITES) == 14
+def test_the_table_of_calls_covers_every_write_function():
+    assert set(CALLS) == set(WRITES)
 
 
 # ---------------------------------------------------------------- decisions 4, 5 and 14: the same call again

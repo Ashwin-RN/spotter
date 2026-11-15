@@ -228,7 +228,7 @@ def test_the_known_names_are_every_name_in_the_published_tool_schemas(make_clien
         schema = tool["inputSchema"]
         for obj in [schema, *schema.get("$defs", {}).values()]:
             published |= set(obj.get("properties", {}))
-    assert len(tools) == 25 and published == calllog.KNOWN_NAMES  # was 23: routines.md adds two
+    assert len(tools) == len(FUNCTIONS) + len(mcp_server.OWNER_FUNCTIONS) and published == calllog.KNOWN_NAMES
 
 
 # ---------------------------------------------------------------- decisions 7 to 9: outcome, step, frame
@@ -453,7 +453,7 @@ def test_owner_user_id_is_read_from_the_environment_and_unset_is_nobody():
     assert load_settings({**base, "OWNER_USER_ID": " "}).owner_user_id is None
 
 
-def test_only_the_owner_s_list_has_owner_calls_and_everyone_else_s_is_the_nineteen_as_before(make_client):
+def test_only_the_owner_s_list_has_owner_calls_and_everyone_else_s_is_the_same_list(make_client):
     tool_lists = {}
     for label, overrides, subject in (("owner", {"owner_user_id": OWNER}, OWNER),
                                       ("someone else", {"owner_user_id": OWNER}, "user_01OTHER"),
@@ -465,7 +465,7 @@ def test_only_the_owner_s_list_has_owner_calls_and_everyone_else_s_is_the_ninete
     for label in ("someone else", "unset"):
         assert [t["name"] for t in tool_lists[label]] == FUNCTIONS
         assert json.dumps(tool_lists[label]) == json.dumps(tool_lists["owner"][:-3])  # byte for byte
-    assert web.FUNCTION_COUNT == len(FUNCTIONS) == 22  # was 20: save_routine and get_routines (routines.md 19)
+    assert web.FUNCTION_COUNT == len(FUNCTIONS)
 
 
 @pytest.mark.parametrize("overrides, subject", [({"owner_user_id": OWNER}, "user_01OTHER"), ({}, OWNER)],

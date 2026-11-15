@@ -11,6 +11,7 @@ from app import db, services, users
 from app.exercises import LIFTS
 from app.models import Exercise, LiftSession, LiftSet
 from tests.conftest import RESOURCE
+from tests.test_mcp import FUNCTIONS
 
 SITE = RESOURCE.rsplit("/mcp", 1)[0]
 MISSING_ID = 10 ** 9
@@ -441,12 +442,8 @@ def test_list_exercises_and_filters():
 
 # ---------------------------------------------------------------- texts name only functions Claude has
 
-# The twenty-two functions Claude is offered: stage 5's eighteen, stage 6's import_entries, feedback's
-# send_feedback, and the routines' two. A later stage extends this list. OWNER_FUNCTIONS are the owner's alone.
-OFFERED = ("whoami", "list_exercises", "get_progress", "get_log", "log_lifts", "log_bodyweight", "set_goal",
-           "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
-           "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries",
-           "send_feedback", "save_routine", "get_routines")
+# The functions Claude is offered: the planned list in tests/test_mcp.py. OWNER_FUNCTIONS are the owner's alone.
+OFFERED = tuple(FUNCTIONS)
 # Functions that exist but Claude cannot call: every other public service function (get_entry,
 # set_claude_can, which is the Settings page's alone, entry_kinds, and stage 5's web-only ones:
 # the empty-account read, export, delete account, the Foods page's list).

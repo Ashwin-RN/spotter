@@ -1,4 +1,4 @@
-"""Spotter's MCP server: twenty-two functions and two resources, and owner_calls, owner_feedback and
+"""Spotter's MCP server: the functions in NEEDS and two resources, and owner_calls, owner_feedback and
 owner_delete_feedback for Spotter's owner alone.
 
 The MCP library does the sign-in work: it serves the protected-resource metadata, answers 401 with
@@ -32,9 +32,9 @@ Unset, nobody is.
 Every result is the service's own dict, as structured content and as compact JSON text. A service
 error ({error, message, fix}) is flagged is_error. A duplicate is a success.
 
-A write's own key (contract idempotency.md): each of the fourteen write functions takes key (Key). The wrapper
-reads it from the arguments as sent, and no service is passed it. The same key with the same call again gets
-the first answer's text back, word for word, and its row reads repeat.
+A write's own key (contract idempotency.md): each write function (common.WRITE_FUNCTIONS) takes key (Key). The
+wrapper reads it from the arguments as sent, and no service is passed it. The same key with the same call again
+gets the first answer's text back, word for word, and its row reads repeat.
 """
 
 import functools
@@ -248,9 +248,9 @@ OWNER_ONLY = {"error": "not_allowed", "message": "This function is for Spotter's
 # The arguments of the call running, as the client sent them (SpotterServer.call_tool): what tried describes.
 _SENT: ContextVar[dict | None] = ContextVar("spotter_sent_arguments", default=None)
 
-# A write's own key: the same argument, with the same words, on each of the fourteen write functions. No pattern and
-# no length in the schema: Spotter's own check answers invalid_key, with its fix. The wrapper reads the key from
-# the arguments as sent (_SENT), so a function declares it and never passes it on.
+# A write's own key: the same argument, with the same words: each write function (common.WRITE_FUNCTIONS) takes
+# key. No pattern and no length in the schema: Spotter's own check answers invalid_key, with its fix. The wrapper
+# reads the key from the arguments as sent (_SENT), so a function declares it and never passes it on.
 KEY_DESCRIPTION = (
     "Optional. A key of your own for this one write: 8 to 64 letters, digits, - or _. Send the same key when you "
     "send the same call again: nothing is written twice and the first answer comes back. A new write takes a new "
@@ -1068,7 +1068,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         return await wrapper.call("import_entries", ImportEntriesResult,
                                   lambda account: services.import_entries(account, data, "claude"))
 
-    # After the nineteen, so everyone's list is those in their order, then this one (SpotterServer.list_tools).
+    # After the others, so everyone's list is those in their order, then this one (SpotterServer.list_tools).
     @server.tool(
         name="send_feedback",
         title="Send feedback",
@@ -1104,7 +1104,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         return await wrapper.call("send_feedback", SendFeedbackResult,
                                   lambda account: services.send_feedback(account, data))
 
-    # A routine's two (contract routines.md), after send_feedback, so everyone's list is the twenty, then these.
+    # A routine's two (contract routines.md), after send_feedback, so everyone's list is the ones above, then these.
     @server.tool(
         name="save_routine",
         title="Save a routine",
@@ -1142,7 +1142,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     async def get_routines() -> Annotated[CallToolResult, GetRoutinesResult]:
         return await wrapper.call("get_routines", GetRoutinesResult, lambda account: services.get_routines(account))
 
-    # The owner's three, last, so everyone else's list is the twenty-two above, in their order
+    # The owner's three, last, so everyone else's list is the functions above, in their order
     # (SpotterServer.list_tools).
     @server.tool(
         name="owner_calls",

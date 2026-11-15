@@ -13,6 +13,7 @@ from starlette.testclient import TestClient
 
 from app import db, metrics, services
 from app.models import EntryVersion, User
+from app.services import common
 from app.main import create_app
 from evals import judge
 from evals.recorder import CallRecorder, parse_body, token_key
@@ -32,9 +33,7 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "setup_stays_quiet",  # first day: the review's S1
                   "routine_saved", "routine_logged", "routine_changed"}  # routines, decision 21
 EM_DASH, EN_DASH = "\u2014", "\u2013"
-WRITES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
-          "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries",
-          "send_feedback", "save_routine"}  # feedback.md: a write added later joins the lists (docs/evals.md)
+WRITES = set(common.WRITE_FUNCTIONS)
 
 
 def call(name, arguments=None, is_error=False):
@@ -45,9 +44,7 @@ def call(name, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert len(cases) == 35  # was 21: feedback adds feedback_sent and feedback_offered, the hi there page
-    # adds hi_there_first_log and hi_there_not_again, the switch delete_regretted, gym logging three, first day
-    # setup_asks_first, setup_picks_up and setup_stays_quiet, and routines three
+    assert len(cases) == len(CONTRACT_CASES)
     assert CONTRACT_CASES == {c["id"] for c in cases}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)

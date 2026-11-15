@@ -227,10 +227,8 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `routine_logged` | Log my push day (Push day saved: Bench Press 3 × 8 at 60, Overhead Press 3 × 10 at 40) | One successful `log_lifts`, its sets holding Bench Press 60 × 8 and Overhead Press 40 × 10, never `new_session` true. One live session today, `set_count` 6 |
 | `routine_changed` | Log my push day, but bench was 62.5 today (the same routine saved) | One successful `log_lifts`, its sets holding Bench Press 62.5 × 8 and Overhead Press 40 × 10, and no set at 60. One live session, `set_count` 6 |
 
-"No write function" is the fourteen writes by name in `no_call`: `log_lifts`, `log_bodyweight`,
-`log_measurement`, `log_food`, `save_food`, `log_cardio`, `set_goal`, `update_settings`, `edit_entry`,
-`restore_entry`, `delete_entry`, `import_entries`, `send_feedback`, `save_routine`. A write added later must be
-added to those lists.
+"No write function" is every write, by name, in `no_call`: the names in `WRITE_FUNCTIONS` in
+`app/services/common.py`. A write added later must be added to those lists.
 
 ### What the six stage 5 cases prove, and what they do not
 

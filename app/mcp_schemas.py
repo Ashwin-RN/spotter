@@ -1,4 +1,4 @@
-"""The shapes of the twenty-two MCP functions' arguments and results, and of the owner's two.
+"""The shapes of every MCP function's arguments and results, the owner's too.
 
 Each result model is published as that function's result schema, and the MCP library checks every
 successful result against it. The top-level fields match the service's keys exactly, and a top-level

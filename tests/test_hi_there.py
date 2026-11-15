@@ -69,7 +69,7 @@ SECTION = """## A new person
 SETTING_UP = """## Setting up
 
 - While a setup step other than the import is not done, `whoami` carries `setup`: `missing`, the steps not done yet in order, and `how`.
-- A step is done when the account holds it: a time zone, a live weigh-in, a live lift session, an open goal, each target set, a live saved food, a live imported row.
+- A step is done when the account holds it: a time zone, a live weigh-in, a live lift session, an open goal, each target set, a live saved food, a live routine, a live imported row.
 - Claude walks the steps only when the person asks to set up, or once on a new account. One question at a time. Any step can be skipped, and comes back the next time the person asks.
 """
 CANNOT_LINE = "- It knows nothing about injury, pain, recovery, form or health."
@@ -250,14 +250,19 @@ def shown(page: str) -> str:
 
 # ---------------------------------------------------------------- the page: its words in each state
 
+@pytest.mark.parametrize("on", [False, True], ids=["both off", "both on"])
 @pytest.mark.parametrize("state", sorted(OVERRIDES))
-def test_the_page_says_the_contracts_words_in_each_state(web_client, state):
-    """As built, NEEDS unchanged: save_routine and send_feedback are both offered, so step 5, the Routines line and
-    the feedback group are drawn (routines.md decision 20)."""
-    assert ROUTINE_FUNCTION in mcp_server.NEEDS and FEEDBACK_FUNCTION in mcp_server.NEEDS
-    page = hi_in(web_client, state)
-    assert shown(page) == want_words(state, feedback=True, routine=True)
-    assert ROUTINES in shown(page) and "Your fixed routines." in shown(page)
+def test_the_page_says_the_contracts_words_in_each_state(web_client, monkeypatch, state, on):
+    """Both on is NEEDS as built: save_routine and send_feedback are both offered, so step 5, the Routines line and
+    the feedback group are drawn (routines.md decision 20). Both off takes the two out, and none of them is drawn
+    (tidy.md J3)."""
+    if on:
+        assert ROUTINE_FUNCTION in mcp_server.NEEDS and FEEDBACK_FUNCTION in mcp_server.NEEDS
+        page = hi_in(web_client, state)
+    else:
+        page = hi_in(web_client, state, lambda: offer(monkeypatch))
+    assert shown(page) == want_words(state, feedback=on, routine=on)
+    assert (ROUTINES in shown(page), "Your fixed routines." in shown(page)) == (on, on)
     assert re.search(r'</main>\s*<footer class="site-foot">', page) and page.count("<footer") == 1
 
 

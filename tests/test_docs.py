@@ -1,14 +1,14 @@
 """T9: the README's facts match the code.
 
-- Its MCP function count equals len(mcp_server.NEEDS).
+- It states no MCP function count: the functions are listed in docs/can-and-cant.md, and the server's own
+  list is the one source.
 - Its page list names every top-level page: each parameterless links._PATHS name but home, hi_there and
   sign_in, the open pages. Once privacy is a links._PATHS name, Privacy is one of them, and the README must then name it.
   Extra names in the list are allowed.
-- Any eval case count it states equals the number of cases in evals/cases.json.
+- It states no eval case count: evals/cases.json is the one source.
 - It writes no test count by hand.
 """
 
-import json
 import re
 from pathlib import Path
 
@@ -16,7 +16,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
-CASES = ROOT / "evals" / "cases.json"
 
 WORDS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
          "sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four "
@@ -74,12 +73,6 @@ def missing_pages(listed: str | None, pages: list[str]) -> list[str]:
     return [p for p in pages if not re.search(rf"(?<!\w){re.escape(p)}(?!\w)", listed)]
 
 
-def cases_in(path: Path) -> int:
-    cases = json.loads(path.read_text(encoding="utf-8"))
-    assert isinstance(cases, list) and cases, f"{path} must be a non-empty list of cases"
-    return len(cases)
-
-
 @pytest.fixture(scope="module")
 def readme() -> str:
     return README.read_text(encoding="utf-8")
@@ -88,12 +81,8 @@ def readme() -> str:
 # ---------------------------------------------------------------- T9 on the README
 
 
-def test_the_function_count_is_the_servers(readme):
-    from app.mcp_server import NEEDS, OWNER_FUNCTIONS
-    counts = function_counts(readme)
-    assert counts, "README.md states no MCP function count"
-    offered = len(NEEDS) - len(OWNER_FUNCTIONS)  # every function but OWNER_FUNCTIONS (feedback.md decision 13)
-    assert set(counts) == {offered}, f"README.md says {counts}, the server offers {offered}"
+def test_no_function_count_is_written(readme):
+    assert function_counts(readme) == [], f"README.md states an MCP function count: {function_counts(readme)}"
 
 
 def test_the_page_list_names_every_top_level_page(readme):
@@ -103,10 +92,8 @@ def test_the_page_list_names_every_top_level_page(readme):
     assert not missing, f"README.md's page list does not name {missing}"
 
 
-def test_any_case_count_is_the_cases_file(readme):
-    stated = case_counts(readme)
-    real = cases_in(CASES)
-    assert all(n == real for n in stated), f"README.md says {stated} cases, evals/cases.json has {real}"
+def test_no_case_count_is_written(readme):
+    assert case_counts(readme) == [], f"README.md states an eval case count: {case_counts(readme)}"
 
 
 def test_no_test_count_is_written_by_hand(readme):
@@ -162,12 +149,3 @@ def test_privacy_is_required_once_it_is_a_link():
 
 def test_an_extra_name_in_the_list_is_not_a_fault():
     assert missing_pages("Today, Goals, Privacy", ["Today", "Goals"]) == []
-
-
-def test_cases_in_counts_the_list(tmp_path):
-    path = tmp_path / "cases.json"
-    path.write_text(json.dumps([{"id": "a"}, {"id": "b"}]), encoding="utf-8")
-    assert cases_in(path) == 2
-    path.write_text("{}", encoding="utf-8")
-    with pytest.raises(AssertionError):
-        cases_in(path)

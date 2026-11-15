@@ -835,7 +835,7 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     assert hashes["log_lifts"] == BEFORE["log_lifts"]  # log_lifts not by one byte
     assert hashes["whoami"] == "e415c4054cff9ffc6565bc294b147b9868cd78d89694240de571bd926a3c0417"  # setup names routine
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
-    assert everyone == names[:22] and len(everyone) == 22 == web.FUNCTION_COUNT
+    assert everyone == [n for n in names if n not in mcp_server.OWNER_FUNCTIONS] and len(everyone) == web.FUNCTION_COUNT
 
 
 def test_the_instructions_do_not_change_3927_characters():
@@ -1257,9 +1257,9 @@ SAID = {"name": "push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "re
 
 
 def test_the_three_cases_load_last_and_the_tables_and_seed_are_known():
-    """At the join, 35: setup's quiet case, then these three, close the file."""
+    """Setup's quiet case, then these three, close the file."""
     cases = judge.load_cases()
-    assert len(cases) == 35 and [c["id"] for c in cases[-3:]] == ["routine_saved", "routine_logged", "routine_changed"]
+    assert [c["id"] for c in cases[-3:]] == ["routine_saved", "routine_logged", "routine_changed"]
     assert cases[-4]["id"] == "setup_stays_quiet"
     assert all(judge.case_problems(c) == [] for c in cases[-3:])
     assert "save_routine" in judge.SEED_SERVICES and "routine" in judge.DB_TABLES and "routine" in RUN_TABLES

@@ -1028,7 +1028,7 @@ Three items, built and reviewed one after another on 2026-11-15, and released to
 
 ### The reviews
 
-Each item had one builder and one separate reviewer on frozen copies, then one fix round. Gym logging's review was clean of blockers, with two test gaps closed. First day's review had nothing that must be fixed: one eval case was added (setup stays quiet when the person only logs) and four lines of wording were made exact. Routines' review was clean of blockers: the weight rule's words were made to say "on a later day", as the code compares days, and a name is stored with its spaces folded. Each fix round was re-checked by a fresh reviewer and held.
+Each item had one builder and one separate reviewer on frozen copies, then one fix round. Gym logging's review was clean of blockers, with two test gaps closed. First day's review had nothing that must be fixed: one eval case was added (setup stays quiet when the person only logs) and four lines of wording were made exact. Routines' review was clean of blockers: the weight rule's words were made to say "on a later day", as the code compares days, and a name is stored with its spaces folded. Each fix round was re-checked by a fresh reviewer and held. First day's fix round still left one test red, and it was made right by hand at the join.
 
 The three were joined in order. At the last join the setup step for routines was wired: it is done when the person holds a live routine, and the setup field names it.
 

@@ -2,6 +2,7 @@
 functions and two resources of stage 2 (stage 1 contract items 1 to 4, 6, 9 to 13, 15; stage 2's MCP surface)."""
 
 import asyncio
+import itertools
 import json
 import logging
 import re
@@ -24,6 +25,7 @@ from app.models import Bodyweight, CallLog, LiftSession, User
 
 from .conftest import DOMAIN, HEADERS, ISSUER, OTHER_KEY, RESOURCE, SIGNING_KEY, TEST_DIR, claims, rpc, sign, whoami
 from .test_auth import hs256_with_public_key, unsigned
+from .test_docs import NUMBER
 
 METADATA_PATH = "/.well-known/oauth-protected-resource/mcp"
 SCOPE_PARAM = re.compile(r'(?:^Bearer |, )scope=')  # an RFC 6750 scope= parameter, not "insufficient_scope"
@@ -1493,7 +1495,7 @@ def test_can_and_cant_states_the_tags_the_cardio_formula_and_the_food_tables():
                   "Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
                   "(CC BY-NC-ND 4.0).",
                   "With no weigh-in there is no estimate", "USDA FoodData Central", "IFCT 2017 and INDB",
-                  "not openly licensed", "`net_kcal`", "Twenty-two functions"):
+                  "not openly licensed", "`net_kcal`"):
         assert words in text, words
 
 
@@ -2091,7 +2093,7 @@ def test_can_and_cant_states_the_goal_kinds_the_trends_and_the_settings_clicks()
                   "more than 2 years from today",
                   "the person's own clicks on Settings", "No function does either", "Claude never offers to do them",
                   "stays valid until it expires, an hour at most", "recreates an empty account",
-                  "`too_many_reads`", "Twenty-two functions", "`get_trends`", "`get_goals`"):
+                  "`too_many_reads`", "`get_trends`", "`get_goals`"):
         assert words in text, words
     lines = CAN_AND_CANT.read_text(encoding="utf-8").splitlines()
     rows = [m.group(1) for line in lines if (m := re.match(r"\| `([a-z_]+)` \| ", line))]
@@ -2099,6 +2101,22 @@ def test_can_and_cant_states_the_goal_kinds_the_trends_and_the_settings_clicks()
     # switch decision 1: two settings, the default first, and no row for read
     assert [line for line in lines if re.match(r"\| `(read|log|log_delete)`", line)] == [
         "| `log_delete` (the default) | Everything, `delete_entry` too. |", "| `log` | Everything except `delete_entry`. |"]
+
+
+def test_can_and_cant_lists_every_function_once_in_order_and_counts_none():
+    """The first table under "What Claude may do" has one row a function, in the published order, and the sentence
+    above it holds no number (tidy.md item 4). It stops at that table: the claude_can table after it has rows of the
+    same shape."""
+    lines = CAN_AND_CANT.read_text(encoding="utf-8").splitlines()
+    section = lines[lines.index("## What Claude may do") + 1:]
+    start = next(i for i, line in enumerate(section) if line.startswith("|"))
+    table = list(itertools.takewhile(lambda line: line.startswith("|"), section[start:]))
+    rows = [re.match(r"\| `([a-z_]+)` \| ", line).group(1) for line in table[2:]]
+    offered = [name for name in mcp_server.NEEDS if name not in mcp_server.OWNER_FUNCTIONS]
+    assert rows == FUNCTIONS and set(rows) == set(offered) and len(rows) == len(offered)
+    sentence = " ".join(line for line in section[:start] if line.strip())
+    assert sentence.endswith("nothing else:"), sentence
+    assert not re.search(rf"\b{NUMBER}\b", sentence, re.IGNORECASE), sentence
 
 
 # ---------------------------------------------------------------- stage 5: find_food's read limit

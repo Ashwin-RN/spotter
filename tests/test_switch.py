@@ -626,4 +626,3 @@ def test_can_and_cant_and_the_readme_say_the_two_calls_and_the_two_settings():
     readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
     assert ("**You set the limit.** The assistant can read, log and delete. One switch on Settings turns deleting "
             "off. A delete takes two steps: the assistant is first shown the entry and told to ask you.") in readme
-    assert "35 cases, 3 runs each." in readme  # gym logging, first day and routines: was 26
