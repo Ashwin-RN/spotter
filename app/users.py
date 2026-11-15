@@ -6,6 +6,10 @@ user_for_identity(), which finds or creates the one user row for that person. A 
 issuer can never split one person into two accounts.
 
 "Today" for a person is the date in their own time zone. Until they set one, it is UTC.
+
+The person's units (contract units.md): units_for(user) gives formatting.Units(weight, distance), kg and km while a
+column is null, for every text a service or a page writes; units_set(user) says whether each was chosen, for
+common.units_note. Every stored number stays in kg and km.
 """
 
 import importlib.resources
@@ -19,7 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import db
+from app import db, formatting
 from app.config import get_settings
 from app.models import User
 
@@ -256,3 +260,13 @@ def now_for(user: User, at: datetime | None = None) -> datetime:
 def today_for(user: User, at: datetime | None = None) -> date:
     """The person's own date today. The one place a date is read from the clock."""
     return now_for(user, at).date()
+
+
+def units_for(user: User) -> formatting.Units:
+    """How this person's texts show weights and distances: (kg or lb, km or mi). Not chosen is kg and km."""
+    return formatting.Units("lb" if user.weight_unit == "lb" else "kg", "mi" if user.distance_unit == "mi" else "km")
+
+
+def units_set(user: User) -> tuple[bool, bool]:
+    """Whether the person has chosen a weight unit and a distance unit: (weight, distance)."""
+    return user.weight_unit is not None, user.distance_unit is not None

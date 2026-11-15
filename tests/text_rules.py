@@ -349,7 +349,7 @@ _MONTHS = ("Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|Februar
            "July|August|September|October|November|December")
 _BEFORE_YEAR = re.compile(rf"\b(?:{_MONTHS})\s+$")
 # An entry word, then a whole number that is not a figure: no decimal, no unit after it.
-_UNITS = r"(?:kg|kcal|g|cm|bpm|km|km/h|min|minutes|h|ml|steps|reps|sets|%)"
+_UNITS = r"(?:kg|kcal|g|cm|bpm|km|km/h|min|minutes|h|ml|steps|reps|sets|%|lb|mi|mph)"  # lb, mi, mph: units.md R18
 _ID = re.compile(r"\b(?:lift\s+session|cardio\s+session|session|food\s+entry|cardio\s+entry|entry|weigh-in|"
                  r"measurement|goal|saved\s+food|id)\s*#?\s*\d+(?!\d|[.,:]\d)(?!\s*" + _UNITS + r"(?![\w/]))"
                  r"|(?<![\w&])#\d+\b", re.IGNORECASE)

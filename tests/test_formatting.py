@@ -29,10 +29,12 @@ NAMED_IN_L = {
 }
 # The rest of section C's quantity table.
 IN_C_ONLY = {"met", "speed", "incline"}
+# Units R4: a rate and a target that are weights, the same as rate and goal_target in kg.
+IN_UNITS = {"weight_rate", "weight_target"}
 
 
 def test_every_quantity_has_a_step():
-    assert set(f.STEP) == NAMED_IN_L | IN_C_ONLY
+    assert set(f.STEP) == NAMED_IN_L | IN_C_ONLY | IN_UNITS
 
 
 @pytest.mark.parametrize("quantity, step", [
@@ -130,6 +132,8 @@ RULES = [
     # As entered: up to 2 dp, trailing zeros dropped (kg, cm; bpm is stored whole).
     ("goal_target", 77.0, "77"), ("goal_target", 77.5, "77.5"), ("goal_target", 77.25, "77.25"),
     ("goal_target", 62, "62"), ("goal_target", 77.125, "77.13"),
+    # Units R4: in kg, as rate and goal_target.
+    ("weight_rate", -0.24, "-0.24"), ("weight_rate", 0.5, "+0.5"), ("weight_target", 77.25, "77.25"),
     # Whole seconds and the word, no sign: the value is minutes.
     ("time_gap", 0.2, "12 seconds"), ("time_gap", 1 / 60, "1 second"), ("time_gap", -0.2, "12 seconds"),
     ("time_gap", 0, "0 seconds"), ("time_gap", 2.0, "120 seconds"), ("time_gap", 20.0, "1,200 seconds"),

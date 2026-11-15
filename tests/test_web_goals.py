@@ -670,6 +670,10 @@ SERVICE_REFUSALS = {
     ("_identity", "missing_field", "distance_km"): [("missing_field", "distance_km")],
     ("_identity", "<_at>", "exercise"): [("unknown_exercise", "exercise")],
     ("_identity", "<_at>", "distance_km"): [("invalid_field", "distance_km")],
+    # Units (units.md R12): the page's goal form is U2's; until it sends miles or a unit, these are never reached.
+    ("_identity", "<one_of>", None): NOT_FROM_THE_FORM + ": the form sends distance_km alone, never distance_mi",
+    ("_identity", "<_at>", "distance_mi"): NOT_FROM_THE_FORM + ": the form sends distance_km alone, never distance_mi",
+    ("_weight_unit", "invalid_unit", "weight_unit"): NOT_FROM_THE_FORM + ": the form sends no other unit",
     ("_identity", "<unknown_exercise>", None): [("unknown_exercise", "exercise")],
     ("_no_start", "missing_field", "start_value"): [("missing_field", "start_value")],
     ("_wrong_way", "wrong_direction", "target_value"): [("wrong_direction", "target_value")],
@@ -686,6 +690,7 @@ SERVICE_REFUSALS = {
     ("set_goal", "cannot_change_kind", "exercise"): NO_GOAL_ID,
     ("set_goal", "cannot_change_kind", "measurement_kind"): NO_GOAL_ID,
     ("set_goal", "cannot_change_kind", "distance_km"): NO_GOAL_ID,
+    ("set_goal", "cannot_change_kind", "distance_mi"): NO_GOAL_ID,
     ("set_goal", "missing_field", "target_value"): [("missing_field", "target_value")],
     ("set_goal", "missing_field", "target_date"): [("missing_field", "target_date")],
     ("set_goal", "target_is_start", "target_value"): [("target_is_start", "target_value")],
@@ -695,13 +700,15 @@ SERVICE_REFUSALS = {
 # How many times each is built, where more than once: a second copy of one is a new refusal too.
 SERVICE_REFUSAL_COUNTS = {("_kind_error", "invalid_field", "kind"): 2, ("_wrong_kind", "invalid_field", "exercise"): 2,
                           ("_identity", "<_at>", "exercise"): 2, ("_no_start", "missing_field", "start_value"): 4,
+                          ("_identity", "<_at>", "distance_km"): 2,  # units.md R6: one_of's both, and the range
                           ("_wrong_way", "wrong_direction", "target_value"): 2,
                           ("set_goal", "invalid_field", "status"): 2}
 # The codes each function of app outside goals.py that set_goal's module calls can build, read from its source.
 OUTSIDE_CODES = {"check_by": {"invalid_by"}, "check_data": {"invalid_field"}, "check_write_limit": {"too_many_writes"},
                  "in_range": {"invalid_field"}, "match_cardio": {"missing_field", "unknown_exercise"},
                  "no_account": {"no_account"}, "not_found": {"not_found"}, "text": {"invalid_field"},
-                 "unknown_exercise": {"unknown_exercise"}, "match_kind": {"invalid_kind"}}
+                 "unknown_exercise": {"unknown_exercise"}, "match_kind": {"invalid_kind"},
+                 "one_of": {"invalid_field", "missing_field"}}  # units.md R6: the pair's check
 
 
 def _named(node):

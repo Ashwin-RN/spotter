@@ -62,12 +62,15 @@ TABLE_KINDS = frozenset({"edit_entry", "delete_entry", "restore_entry"})
 # Every argument name of the MCP functions, and every field of their input models. tried writes no other name.
 KNOWN_NAMES = frozenset({
     "account_id", "add_back_exercise_kcal", "allow_repeat", "avg_hr", "calorie_target_kcal", "category", "confirm",
-    "date", "days", "description", "distance_km", "distance_unit", "doing", "dry_run", "email", "entries", "entry_id",
+    "date", "days", "description", "distance_km", "distance_mi", "distance_unit", "doing", "dry_run", "email",
+    "entries", "entry_id",
     "exercise", "expected", "failed_only", "goal_id", "grams_per_serving", "happened", "hours", "ids", "include_closed",
-    "incline_pct", "kcal", "kcal_per_serving", "key", "kg", "kind", "length_unit", "lifts", "limit", "machine_kcal",
+    "incline_pct", "kcal", "kcal_per_serving", "key", "kg", "kind", "lb", "length_unit", "lifts", "limit",
+    "machine_kcal",
     "meal",
     "measurement_kind", "minutes", "name", "new_session", "no_account", "notes", "query", "request_id", "rows",
-    "serving_label", "sets", "speed_kmh", "start_value", "status", "target_cardio_minutes_per_week", "target_date",
+    "serving_label", "sets", "speed_kmh", "speed_mph", "start_value", "status", "target_cardio_minutes_per_week",
+    "target_date",
     "target_sessions_per_week", "target_value", "text", "time_zone", "topic", "undo_edit", "value", "weight_unit",
 }) | {name for model in (SetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn)
        for name in model.model_fields}

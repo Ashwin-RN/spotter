@@ -113,7 +113,8 @@ MARKED_CALLS = [
     ("log_lifts", {"sets": squat(100), "notes": MARKER}),
     ("log_bodyweight", {"kg": 80, "date": MARKER}),
     ("set_goal", {"kind": MARKER, "exercise": MARKER, "measurement_kind": MARKER, "target_value": 150,
-                  "target_date": MARKER, "text": MARKER, "start_value": 100, "status": MARKER}),
+                  "target_date": MARKER, "text": MARKER, "start_value": 100, "status": MARKER,
+                  "weight_unit": MARKER}),  # units.md R12
     # Each new kind, with its own string arguments marked: refused (not a measurement kind, not an activity).
     ("set_goal", {"kind": "measurement", "measurement_kind": MARKER, "target_value": 80, "target_date": "2099-01-01",
                   "text": MARKER, "start_value": 88}),
@@ -122,7 +123,7 @@ MARKED_CALLS = [
     ("set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150, "text": MARKER,
                   "target_date": "2099-01-01"}),
     ("get_progress", {"exercise": MARKER}),
-    ("update_settings", {"time_zone": MARKER}),
+    ("update_settings", {"time_zone": MARKER, "weight_unit": MARKER, "distance_unit": MARKER}),  # units.md
     ("get_log", {"date": MARKER, "days": 3}),
     ("log_measurement", {"kind": MARKER, "value": 84, "date": MARKER}),
     ("edit_entry", {"kind": MARKER, "entry_id": 1, "date": MARKER, "notes": MARKER,

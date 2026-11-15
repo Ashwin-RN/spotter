@@ -8,12 +8,22 @@ Numbers
   STEP: {quantity: shown step, in the quantity's stored unit}, read-only. The widened step is a tenth of it.
   rounded(value, quantity, widened=False, step=None) gives a float, for a result field
       A quantity kept in minutes needs step, or it raises ValueError
-  is_zero(value, quantity) gives a bool: whether the value rounds to 0 at the shown step
-  widen([now, plan], quantity) gives a bool: close-call rule 2, the two print the same, the gap is real
-  show(value, quantity, page=False, widened=False, *, unit=True) gives a str: the number and its unit
+  is_zero(value, quantity, *, units=None) gives a bool: whether the value rounds to 0 at the shown step
+  widen([now, plan], quantity, *, units=None) gives a bool: close-call rule 2, the two print the same, the gap
+      is real
+  show(value, quantity, page=False, widened=False, *, unit=True, units=None) gives a str: the number and its unit
       unit=False gives the number alone, for a cell under a header that names the unit
   clock(minutes, widened=False) gives a str: the one m:ss function, "75:00" past 59 minutes
-  field(value, quantity) gives a str: a form input's value, at the stored decimals
+  field(value, quantity, *, units=None) gives a str: a form input's value, at the stored decimals
+  convert(value, quantity, units) gives a float: the stored value in the shown unit, unrounded (the charts)
+  unit_word(kind, units) gives "kg" or "lb" (weight), "km" or "mi" (distance), "km/h" or "mph" (speed)
+
+Units (contract units.md). Every number is stored in kg and km. units is a Units(weight, distance): kg or lb,
+km or mi, from users.units_for(user); None or KG_KM is kg and km, byte for byte as before. With weight lb, a
+quantity in WEIGHT_QUANTITIES is divided by LB and shown at its lb row; with distance mi, km and speed are divided
+by MI and pace is multiplied by it. A lb or mi row has its own shown step and widened step (_SHOWN_IN), and a form
+field is filled at the shown step, so an untouched lb field reads back as it was shown. rounded takes no units:
+it rounds number fields, which stay in kg and km.
 
 Dates. Each takes a date, a datetime or an ISO string, and "today" the same way.
   day(d, today)                 "Tue 10 Nov", "Tue 10 Nov 2025" in another year
@@ -30,7 +40,20 @@ ValueError.
 from datetime import date, datetime, timezone, tzinfo
 from decimal import MAX_EMAX, MIN_EMIN, ROUND_HALF_UP, Context, Decimal, localcontext
 from types import MappingProxyType
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
+
+
+class Units(NamedTuple):
+    """How a person's texts show weights and distances: weight "kg" or "lb", distance "km" or "mi"."""
+
+    weight: str
+    distance: str
+
+
+KG_KM = Units("kg", "km")
+LB = 0.45359237   # kg in a pound, exactly
+MI = 1.609344     # km in a mile, exactly
 
 # ---------------------------------------------------------------- the quantity table
 
@@ -70,10 +93,35 @@ _TABLE = {
     "goal_time": ("1", None, 2),
     "goal_target": ("0.01", None, 2),
     "time_gap": ("1", None, 2),
+    # A rate and a target that are weights: the same as rate and goal_target in kg, so a lb row can find them.
+    "weight_rate": ("0.01", None, 2),
+    "weight_target": ("0.01", None, 2),
 }
+# The shown rows in lb and in mi (decision 9): quantity -> (shown step, unit text, widened step). Pace's steps are
+# seconds, as in _TABLE. A form field in lb or mi is filled at the shown step.
+_SHOWN_IN = {
+    "lb": {
+        "weigh_in": ("0.05", "lb", "0.01"),
+        "weight_kg": ("0.05", "lb", "0.01"),
+        "weight_target": ("0.05", None, "0.01"),
+        "bodyweight_derived": ("0.1", "lb", "0.01"),
+        "estimated_max": ("0.1", "lb", "0.01"),
+        "weight_change": ("0.01", "lb", "0.001"),
+        "weight_rate": ("0.01", None, "0.001"),
+    },
+    "mi": {
+        "km": ("0.01", "mi", "0.001"),
+        "speed": ("0.1", "mph", "0.01"),
+        "pace": ("1", None, "0.1"),
+    },
+}
+WEIGHT_QUANTITIES = frozenset(_SHOWN_IN["lb"])
+DISTANCE_QUANTITIES = frozenset(_SHOWN_IN["mi"])
+_UNIT_WORDS = {"weight": {"kg": "kg", "lb": "lb"}, "distance": {"km": "km", "mi": "mi"},
+               "speed": {"km": "km/h", "mi": "mph"}}
 _MINUTES = {"session_time", "pace", "goal_time", "time_pace", "time_gap"}  # kept in minutes
 _CLOCK = {"session_time", "pace", "goal_time"}                             # shown as m:ss
-_SIGNED = {"rate", "weight_change", "time_pace"}                           # a change: + or -
+_SIGNED = {"rate", "weight_change", "time_pace", "weight_rate"}                           # a change: + or -
 _NO_SPACE = {"percent", "incline"}                                         # "41%", "2.5%"
 
 # Read-only: show never reads it, so a caller must not be able to change it.
@@ -105,20 +153,45 @@ def _row(quantity: str) -> tuple:
         raise ValueError(f"Unknown quantity: {quantity}.") from None
 
 
+def _converted(quantity: str, units) -> tuple | None:
+    """The lb or mi row of a quantity when these units show it converted, else None (shown as stored)."""
+    if units is None:
+        return None
+    if quantity in WEIGHT_QUANTITIES and units.weight == "lb":
+        return _SHOWN_IN["lb"][quantity]
+    if quantity in DISTANCE_QUANTITIES and units.distance == "mi":
+        return _SHOWN_IN["mi"][quantity]
+    return None
+
+
+def _in_units(number: Decimal, quantity: str) -> Decimal:
+    """A stored number in the shown unit: a weight over LB, a distance or a speed over MI, a pace times MI."""
+    with localcontext(_CTX):
+        if quantity in WEIGHT_QUANTITIES:
+            return number / Decimal(repr(LB))
+        if quantity == "pace":
+            return number * Decimal(repr(MI))
+        return number / Decimal(repr(MI))
+
+
 def _units(number: Decimal, step: Decimal) -> int:
     """How many steps the number is, halves away from zero. A whole number, so no -0."""
     with localcontext(_CTX):
         return int((number / step).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
-def _shown(value, quantity: str, widened: bool) -> tuple[int, Decimal]:
-    """(steps, step): the value rounded for display, in seconds for a quantity in minutes."""
+def _shown(value, quantity: str, widened: bool, units=None) -> tuple[int, Decimal]:
+    """(steps, step): the value rounded for display, in seconds for a quantity in minutes, in the shown unit."""
     with localcontext(_CTX):
         step = Decimal(_row(quantity)[0])
         number = _decimal(value)
+        row = _converted(quantity, units)
+        if row is not None:
+            number = _in_units(number, quantity)
+            step = Decimal(row[2] if widened else row[0])
         if quantity in _MINUTES:
             number *= _SECOND
-        if widened:
+        if widened and row is None:
             step /= 10
         return _units(number, step), step
 
@@ -181,16 +254,31 @@ def rounded(value, quantity: str, widened: bool = False, step: float | None = No
         return float(units * size) + 0.0
 
 
-def is_zero(value, quantity: str) -> bool:
-    """Whether the value rounds to 0 at the quantity's shown step. The one rule for it."""
-    return _shown(value, quantity, False)[0] == 0
+def is_zero(value, quantity: str, *, units=None) -> bool:
+    """Whether the value rounds to 0 at the quantity's shown step, in the shown unit. The one rule for it."""
+    return _shown(value, quantity, False, units)[0] == 0
 
 
-def widen(pair, quantity: str) -> bool:
+def widen(pair, quantity: str, *, units=None) -> bool:
     """Close-call rule 2: now and plan print the same at the shown step, and the gap between
-    them does not round to 0. The gap is now - plan, as floats."""
+    them does not round to 0. The gap is now - plan, as floats. Judged in the shown unit (decision 10)."""
     now, plan = pair
-    return show(now, quantity) == show(plan, quantity) and not is_zero(now - plan, quantity)
+    return (show(now, quantity, units=units) == show(plan, quantity, units=units)
+            and not is_zero(now - plan, quantity, units=units))
+
+
+def convert(value, quantity: str, units) -> float:
+    """The stored value in the unit these units show the quantity in, unrounded: for the charts, which place
+    points in the shown unit. A quantity shown as stored comes back as it is."""
+    if _converted(quantity, units) is None:
+        return float(value)
+    return float(_in_units(_decimal(value), quantity))
+
+
+def unit_word(kind: str, units=None) -> str:
+    """The unit in use: kind weight ("kg" or "lb"), distance ("km" or "mi") or speed ("km/h" or "mph")."""
+    units = units or KG_KM
+    return _UNIT_WORDS[kind][units.weight if kind == "weight" else units.distance]
 
 
 def clock(minutes, widened: bool = False) -> str:
@@ -199,12 +287,15 @@ def clock(minutes, widened: bool = False) -> str:
     return _time(units if widened else units * 10, False, widened)
 
 
-def show(value, quantity: str, page: bool = False, widened: bool = False, *, unit: bool = True) -> str:
+def show(value, quantity: str, page: bool = False, widened: bool = False, *, unit: bool = True,
+         units=None) -> str:
     """The number and its unit, rounded by the quantity's rule. page=True puts a no-break space
     before the unit. widened=True rounds to the widened step and keeps every widened decimal.
-    unit=False gives the number alone: the same rounding, comma, sign and decimals, no unit."""
-    written = _row(quantity)[1]
-    units, step = _shown(value, quantity, widened)
+    unit=False gives the number alone: the same rounding, comma, sign and decimals, no unit.
+    units: the person's (see the module notes); None is kg and km."""
+    row = _converted(quantity, units)
+    written = _row(quantity)[1] if row is None else row[1]
+    units, step = _shown(value, quantity, widened, units)
     if quantity in _CLOCK:
         return _time(units if widened else units * 10, quantity == "session_time", widened)
     digits = _digits(units, step, widened)
@@ -221,15 +312,19 @@ def show(value, quantity: str, page: bool = False, widened: bool = False, *, uni
     return number + ("" if quantity in _NO_SPACE else (_NBSP if page else " ")) + written
 
 
-def field(value, quantity: str) -> str:
+def field(value, quantity: str, *, units=None) -> str:
     """A form input's value: the number at the decimals the store keeps, trailing zeros dropped.
     No comma, no unit, no plus. A quantity in minutes stays decimal minutes. Parses again with
-    rules.to_float."""
-    places = _row(quantity)[2]
-    with localcontext(_CTX):
-        step = Decimal(1).scaleb(-places)
-    units = _units(_decimal(value), step)
-    return _sign(units, False) + _digits(units, step, False, commas=False)
+    rules.to_float. In lb or mi: the number in that unit at its shown step (80 kg is 176.35 lb)."""
+    row = _converted(quantity, units)
+    if row is not None:
+        step, number = Decimal(row[0]), _in_units(_decimal(value), quantity)
+    else:
+        with localcontext(_CTX):
+            step = Decimal(1).scaleb(-_row(quantity)[2])
+        number = _decimal(value)
+    steps = _units(number, step)
+    return _sign(steps, False) + _digits(steps, step, False, commas=False)
 
 
 # ---------------------------------------------------------------- dates

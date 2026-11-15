@@ -142,13 +142,15 @@ def test_the_first_call_deletes_nothing_the_second_with_its_code_deletes_and_a_r
     before = stored(kind, entry_id)
     first = preview(http, token, kind, entry_id)
     assert stored(kind, entry_id) == before  # not a column moved, updated_at least of all
-    assert list(first) == ["kind", "id", "deleted", "dry_run", "entry", "confirm", "note"]
+    assert list(first) == ["kind", "id", "deleted", "dry_run", "entry", "confirm", "note",
+                           *(["summary"] if kind in SUMMED else [])]  # units.md R14
     assert (first["kind"], first["id"], first["deleted"], first["dry_run"], first["note"]) == (
         kind, entry_id, False, True, PREVIEW_NOTE)
     assert re.fullmatch(r"[0-9a-f]{12}", first["confirm"]) and first["entry"]["deleted_at"] is None
     assert first["entry"] == services.get_entry(account, kind, entry_id)["entry"]  # the entry as it stands
     second = preview(http, token, kind, entry_id, confirm=first["confirm"])
-    assert list(second) == ["kind", "id", "deleted", "entry", "note", "dry_run"] and "confirm" not in second
+    assert list(second) == ["kind", "id", "deleted", "entry", "note", "dry_run",
+                            *(["summary"] if kind in SUMMED else [])] and "confirm" not in second
     assert (second["deleted"], second["dry_run"], second["note"]) == (True, False, DELETED_NOTE)
     assert not live(kind, entry_id) and second["entry"]["deleted_at"] is not None
     assert ok(http, token, "restore_entry", {"kind": kind, "entry_id": entry_id})["restored"] is True
@@ -389,6 +391,10 @@ def test_both_web_deletes_delete_in_one_post_and_land_with_undo(client, kind):
     assert live(kind, entry_id)
 
 
+# The kinds whose delete carries summary: the entry in one line (units.md R14).
+SUMMED = {"lift_session", "bodyweight", "cardio_entry", "routine"}
+
+
 @pytest.mark.parametrize("kind", KINDS)
 def test_the_service_called_as_the_routes_call_it_deletes_at_once_in_today_s_words(make_user, kind):
     account = make_user().id
@@ -396,7 +402,7 @@ def test_the_service_called_as_the_routes_call_it_deletes_at_once_in_today_s_wor
     for by in (None, "web"):  # the routes send no by; anything but claude is the same
         result = services.delete_entry(account, kind, entry_id) if by is None else \
             services.delete_entry(account, kind, entry_id, by)
-        assert list(result) == ["kind", "id", "deleted", "entry", "note"]
+        assert list(result) == ["kind", "id", "deleted", "entry", "note", *(["summary"] if kind in SUMMED else [])]
         assert (result["kind"], result["id"], result["deleted"], result["note"]) == (kind, entry_id, True, DELETED_NOTE)
         assert not live(kind, entry_id)
         assert services.restore_entry(account, kind, entry_id)["restored"] is True
@@ -487,8 +493,8 @@ def test_0009_turns_every_account_to_log_delete_moves_no_updated_at_and_comes_do
             after = [tuple(r) for r in c.exec_driver_sql(read).all()]
             assert after == [(u, "log_delete", stamps[u], stamps[u], stamps[u]) for u in held]
             # The models match, but for the table 0010 adds (tests/test_routines.py holds it there).
-            assert [(d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
-                ("add_table", "routine")]
+            assert [(d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
+                ("add_table", "routine"), ("add_column", "weight_unit"), ("add_column", "distance_unit")]  # 0011's
             assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0009"
         command.downgrade(cfg, "0008")
         with engine.connect() as c:
@@ -497,7 +503,7 @@ def test_0009_turns_every_account_to_log_delete_moves_no_updated_at_and_comes_do
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0010"  # routines
+    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0011"  # units
 
 
 def test_0009_s_statement_is_built_so_postgres_gets_user_quoted(monkeypatch):
@@ -548,7 +554,9 @@ def test_the_rule_is_in_the_instructions_and_the_description_and_the_published_w
         "entry": "The entry as it stands, with the fields of its kind.",
         "confirm": "On a preview: the code to send back as confirm, with the same kind and id, once the person has "
                    "said yes.",
-        "note": "What to do next on a preview, or how to undo a delete."}
+        "note": "What to do next on a preview, or how to undo a delete.",
+        "summary": "The entry in one line, in the person's units, to show the person before they say yes. Null for a "
+                   "measurement, a food entry or a saved food."}  # units.md R14
     who = {t["name"]: t for t in tool_list(http, sign())}["whoami"]
     assert who["outputSchema"]["properties"]["claude_can"]["description"] == CLAUDE_CAN_WORDS
 

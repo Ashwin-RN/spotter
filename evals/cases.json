@@ -437,5 +437,90 @@
       "inputs_forbid": {"sets.*.weight_kg": 60}
     },
     "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6}}]
+  },
+  {
+    "id": "lb_weigh_in",
+    "say": "Weighed 185 this morning",
+    "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}],
+    "expect": {
+      "function": "log_bodyweight",
+      "ok_calls": {"log_bodyweight": 1},
+      "inputs_include": {"lb": 185},
+      "inputs_exclude": ["kg"],
+      "reply_has": ["185"],
+      "reply_lacks_pattern": ["\\bkg\\b"]
+    },
+    "db": [{"table": "bodyweight", "count": 1, "all": {"kg": 83.91, "date": "{{today}}"}}]
+  },
+  {
+    "id": "lb_lifts",
+    "say": "Bench 225 for 5, then 3 sets of 8 at 185",
+    "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}],
+    "expect": {
+      "function": "log_lifts",
+      "ok_calls": {"log_lifts": 1},
+      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_lb": 225, "reps": 5},
+                                  {"exercise": "Bench Press", "weight_lb": 185, "reps": 8}]},
+      "inputs_exclude": ["sets.*.weight_kg"],
+      "reply_lacks_pattern": ["\\bkg\\b"]
+    },
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 4, "date": "{{today}}"}}]
+  },
+  {
+    "id": "miles_run",
+    "say": "Ran 3 miles outside in 27 minutes",
+    "seed": [{"service": "update_settings", "data": {"distance_unit": "mi"}}],
+    "expect": {
+      "function": "log_cardio",
+      "ok_calls": {"log_cardio": 1},
+      "inputs_include": {"exercise": "Outdoor Run", "distance_mi": 3, "minutes": 27},
+      "inputs_exclude": ["distance_km"],
+      "reply_has": ["9:00"],
+      "reply_lacks_pattern": ["\\bkm\\b"]
+    },
+    "db": [{"table": "cardio_entry", "count": 1, "all": {"distance_km": 4.83}}]
+  },
+  {
+    "id": "units_asked",
+    "say": "I weigh 185 lb",
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 84, "date": "{{yesterday}}"}}],
+    "expect": {
+      "function": "log_bodyweight",
+      "ok_calls": {"log_bodyweight": 1},
+      "inputs_include": {"lb": 185},
+      "no_call": ["update_settings"],
+      "reply_asks": true
+    },
+    "db": [{"table": "bodyweight", "count": 2,
+            "rows": [{"id": "{{seed.earlier}}", "kg": 84}, {"kg": 83.91, "date": "{{today}}"}]}]
+  },
+  {
+    "id": "units_switch",
+    "say": "Show my weights in pounds and my runs in miles from now on",
+    "expect": {
+      "function": "update_settings",
+      "ok_calls": {"update_settings": 1},
+      "inputs_include": {"weight_unit": "lb", "distance_unit": "mi"},
+      "no_call": ["log_bodyweight", "log_lifts", "log_cardio"]
+    }
+  },
+  {
+    "id": "lb_routine_changed",
+    "say": "Log my push day, but bench was 230 today",
+    "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}},
+             {"as": "push", "service": "save_routine",
+              "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8,
+                                                      "weight_kg": 102.06},
+                                                     {"exercise": "Overhead Press", "sets": 3, "reps": 10,
+                                                      "weight_kg": 61.23}]}}],
+    "expect": {
+      "function": "log_lifts",
+      "ok_calls": {"log_lifts": 1},
+      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_lb": 230, "reps": 8},
+                                  {"$in": [{"exercise": "Overhead Press", "weight_kg": 61.23, "reps": 10},
+                                           {"exercise": "Overhead Press", "weight_lb": 135, "reps": 10}]}]},
+      "inputs_forbid": {"sets.*.weight_lb": 102.06, "sets.*.weight_kg": 230}
+    },
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}]
   }
 ]

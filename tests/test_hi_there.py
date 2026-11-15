@@ -972,12 +972,14 @@ def test_a_result_with_setup_fails_the_old_schema_on_setup_alone_and_one_with_on
     empty = whoami(http, token)
     with pytest.raises(ValidationError) as refused:
         OldWhoami.model_validate(empty)
-    assert [(e["type"], e["loc"]) for e in refused.value.errors()] == [("extra_forbidden", ("setup",))]
-    OldWhoami.model_validate({k: v for k, v in empty.items() if k != "setup"})
+    # units.md's known limit: whoami now carries units too, which the old schema refuses as it refuses setup.
+    assert [(e["type"], e["loc"]) for e in refused.value.errors()] == [("extra_forbidden", ("units",)),
+                                                                       ("extra_forbidden", ("setup",))]
+    OldWhoami.model_validate({k: v for k, v in empty.items() if k not in ("setup", "units")})
     do_every_step_but_import(empty["account_id"])
     done = whoami(http, token)
     assert "setup" not in done and "new_account_note" not in done
-    OldWhoami.model_validate(done)
+    OldWhoami.model_validate({k: v for k, v in done.items() if k != "units"})
 
 
 # ---------------------------------------------------------------- whoami: setup
@@ -1191,7 +1193,7 @@ def test_the_new_texts_are_the_contracts_and_none_says_page_or_form(http):
     who = whoami(http, token)
     texts = {"note": who["new_account_note"], "how": who["setup"]["how"],
              "link": schema["$defs"]["WhoamiLinks"]["properties"]["hi_there"]["description"],
-             "sentence": tool["description"].rsplit(". ", 1)[-1],
+             "sentence": tool["description"].split(" It carries units:")[0].rsplit(". ", 1)[-1],  # units.md
              "field": schema["properties"]["new_account_note"]["description"],
              "setup field": schema["properties"]["setup"]["description"],
              "missing": schema["$defs"]["Setup"]["properties"]["missing"]["description"],
@@ -1209,7 +1211,7 @@ def test_the_new_texts_are_the_contracts_and_none_says_page_or_form(http):
         else:  # what the model reads, and the two it may say on as written: the note and how
             surfaces = (tr.CLAUDE, tr.MESSAGE) if where in ("note", "how") else (tr.CLAUDE,)
             assert [f for surface in surfaces for f in tr.check(text, surface)] == [], where
-    assert tool["description"].endswith(f" {NOTE_SENTENCE} {SENTENCE}")
+    assert tool["description"].split(" It carries units:")[0].endswith(f" {NOTE_SENTENCE} {SENTENCE}")  # units
     assert doc.index("## What \"today\" means") < doc.index("## A new person") < doc.index("## Setting up") \
         < doc.index("## What Claude may do")
     assert re.search(r"\n\n## Setting up\n\n", doc) and "\n\n## What Claude may do" in doc
@@ -1323,8 +1325,9 @@ def test_the_quiet_setup_case_loads_straight_before_the_routine_cases_and_judges
     carries setup and no note, and nobody asked to set up. A reply that only logs passes. One that asks a setup
     question, or speaks of setting up, or writes a setup step, fails."""
     cases = judge.load_cases()
-    case = cases[-4]
-    assert [c["id"] for c in cases[-4:]] == ["setup_stays_quiet", "routine_saved", "routine_logged", "routine_changed"]
+    case = cases[-10]  # units' six follow routines' three (units.md decision 20)
+    assert [c["id"] for c in cases[-10:-6]] == ["setup_stays_quiet", "routine_saved", "routine_logged",
+                                                "routine_changed"]
     assert case["id"] == "setup_stays_quiet" and judge.case_problems(case) == []
     assert case["say"] == "I weighed 80.4 kg this morning"
     assert case["seed"] == [{"as": "earlier", "service": "log_bodyweight",

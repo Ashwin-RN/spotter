@@ -59,6 +59,10 @@ newest VERSIONS_KEPT. version_of() is the one shape for all six kinds, and put_b
 (restore_entry with undo_edit, through newest_version and read_version). A version older than VERSION_DAYS is
 never put back. Every read and delete of entry_version names the person's id. entry_changed() refuses a web
 edit form drawn before the entry's last change.
+
+Units (contract units.md). units_note() is the one question about units: a write that sent a weight in lb, or a
+distance or speed in miles, while the person has not chosen that unit, carries it (R7). pair() widens a before and
+an after in the shown unit.
 """
 
 import hashlib
@@ -73,7 +77,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import Date, delete, func, select, update
 from sqlalchemy.orm import Session
 
-from app import db, formatting
+from app import db, formatting, users
 from app.calllog import KEY_HOURS, REQUEST_ID, VERSION_DAYS
 from app.models import CALLERS, CallLog, EntryVersion, Exercise, LiftSession, LiftSet, User, WriteKey
 from app.rules import as_sent, error, quote, span, to_float
@@ -554,15 +558,49 @@ def entry_changed(row, drawn_at) -> dict | None:
                  "Open it again and make the change.")
 
 
-def pair(old, new, quantity: str, unit: bool = True) -> tuple[str, str]:
+def pair(old, new, quantity: str, unit: bool = True, units=None) -> tuple[str, str]:
     """A before and an after through formatting.show. When the two print the same at the shown step
     but the stored values differ, both show one more decimal (widened), so a change never reads as none:
-    the rule a new best and the one it beat follow."""
-    shown = formatting.show(old, quantity, unit=unit), formatting.show(new, quantity, unit=unit)
+    the rule a new best and the one it beat follow. units: the person's; judged in the shown unit."""
+    shown = (formatting.show(old, quantity, unit=unit, units=units),
+             formatting.show(new, quantity, unit=unit, units=units))
     if shown[0] == shown[1] and old != new:
-        return (formatting.show(old, quantity, widened=True, unit=unit),
-                formatting.show(new, quantity, widened=True, unit=unit))
+        return (formatting.show(old, quantity, widened=True, unit=unit, units=units),
+                formatting.show(new, quantity, widened=True, unit=unit, units=units))
     return shown
+
+
+# ---------------------------------------------------------------- the person's units
+
+WEIGHT_UNITS_NOTE = ("This weight was given in lb, and Spotter shows this person's weights in kg. Ask once whether to "
+                     "show lb everywhere, and save the answer with update_settings: weight_unit lb, or kg to keep kg. "
+                     "Either answer ends this note.")
+DISTANCE_UNITS_NOTE = ("This distance was given in miles, and Spotter shows this person's distances in km. Ask once "
+                       "whether to show miles everywhere, and save the answer with update_settings: distance_unit mi, "
+                       "or km to keep km. Either answer ends this note.")
+
+
+def units_note(user: User, sent_weight_lb: bool, sent_miles: bool) -> str | None:
+    """The question to ask once (decision 12): the weight sentence when this write sent a weight in lb and the
+    person has not chosen a weight unit, the distance sentence when it sent a distance or speed in miles and they
+    have not chosen a distance unit, both joined by a space. None otherwise. Set only on a write that succeeded."""
+    weight_set, distance_set = users.units_set(user)
+    parts = ([WEIGHT_UNITS_NOTE] if sent_weight_lb and not weight_set else []) + (
+        [DISTANCE_UNITS_NOTE] if sent_miles and not distance_set else [])
+    return " ".join(parts) or None
+
+
+def with_units_note(out: dict, user: User, sent_weight_lb: bool, sent_miles: bool) -> dict:
+    """The result, with units_note when it has one. A refusal never carries it."""
+    note = None if "error" in out else units_note(user, sent_weight_lb, sent_miles)
+    if note:
+        out["units_note"] = note
+    return out
+
+
+def sent(value) -> bool:
+    """A value the caller sent: not None and not blank text."""
+    return value is not None and not (isinstance(value, str) and not value.strip())
 
 
 def in_range(value, field: str, lo: float, hi: float, fix: str, low_open: bool = False,

@@ -65,27 +65,27 @@ READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": T
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 # What each function published before this work: the SHA-256 of the tool as compact JSON with sorted keys.
 PUBLISHED = {
-    "whoami": "e415c4054cff9ffc6565bc294b147b9868cd78d89694240de571bd926a3c0417",  # first day, and the routine step at the join: setup
+    "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",  # first day, and the routine step at the join: setup; units
     "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
-    "log_lifts": "9e95e0445afc3a57390021fcc57a0c9774146be42ff37d4447c51b1ac995fe18",  # gym logging: adds to a day
-    "log_bodyweight": "f6d2e5b9ad195b9256152099a072142fdd926c7e176e35fc561e036ff66654b7",
-    "set_goal": "266f24d8d1467cc4080c620386262b4f5108ce61c002c9975f830028eabc759f",
-    "get_progress": "e01a7b022248ac56d33d1d9a812e1c3b582187af14ee63bb7a6789bd0cd359e0",
-    "update_settings": "8c4f498c508107ef3610e2e735d5e839647aedd30dabefcaed87471c313355c1",
-    "get_log": "0f13ed202bfb439905e0c81120ab93ecf50031da8a720dac9e790916dd104169",
+    "log_lifts": "5d42d7aaf0fe4f936503a529535cc7619afbfeba0d763324e4e6e6cbbbadde32",  # gym logging: adds to a day; units
+    "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",  # units
+    "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",  # units
+    "get_progress": "3a2ee9d44c6ceae92c3717eb9768c0e356caea2861867cc96ca260d3a1e7d0d3",  # units
+    "update_settings": "1053550decae70f255f0edaf894b730c1da9315e2d989ae1e5e2536eee85c879",  # units
+    "get_log": "5f5796e3a4d0089eb3a2aa92f5d5a84e4fa8cb6bb94162e8def01bf5238af3c2",  # units
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
-    "edit_entry": "3fbe15511d1b775980d1d89c5e24414a52b5cf4ccf1def94133f0b7d29673e7e",
+    "edit_entry": "b84ccadc88110fd59cde09f0bcfafd44c80ba3c55a5b0f9632ac4107ab96c26d",  # units
     "restore_entry": "ea098328552576986f8c0a410757d424478eb0566b104e2eb76d3de4b24cf8a9",  # routines: kind routine
-    "delete_entry": "197b142a4e73b004c557a70b3a39c5ae3d2b156114159a00929838e6df8246ee",  # routines: kind routine
+    "delete_entry": "ed03ec3aad90a1ffa9f8b00175bf5a7c1b7d18c92ce20d7032ee43fbf8fd749f",  # routines: kind routine; units
     "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",
     "log_food": "6ffc9850d580f531c6cf3bd6d961b186936aa00b5bf3b9af19198a3a8e7acd56",
     "save_food": "0a8e5b4526af8bc103af661c711ad6719ab8588579dc64ceb4b6b4ed6cb218cc",
-    "log_cardio": "22bfeaeb1a13afa6438c365ba0d9b699a9eb1b4adf09cc38ae92ea5f4914f764",
+    "log_cardio": "da89a42e48c3285acff7665f4b3e7828b184b03090db16f0a1c1f371332407be",  # units
     "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
-    "get_goals": "ac0e1ea4076d1f304ef604f676d024b743ff07ffdd01615c84a1aa5702a70cbe",
+    "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",  # units
     "import_entries": "8e1bce9821e8547d62c9768c5b05b9a7c686c7437e2f34e80d8275a4a82d5ffd",
-    "save_routine": "d9733bb7c9c1e4438f050b425ba003514ba0b7bc7cc83823660186ac5f6809de",  # routines: new
-    "get_routines": "f40c07973f168e4a1f4462109f594893ac56e86aa8c53ebdede94257aad4aa3a",  # routines: new, R18's words
+    "save_routine": "3f4bcc4e8295e09588cd09e099aed979b38f03b5ee6bc89ecb484369d41024ce",  # routines: new; units
+    "get_routines": "c18c1a2dfb39ff16ab62337b575bfe87187a3ea915c6fa422f8378ed0fc9adcf",  # routines: new, R18's words; units
     "owner_calls": "79ec889297b107ba7f25781a2ace0a058b712960510d994d36788485da57d787",
 }
 INSTRUCTIONS_AS_BUILT = "d1ef2d4d6491bea09aeda32d4106a5bd5a9fa6fb4c761f70e9ba7d0059c86704"  # switch decision 18
@@ -192,8 +192,8 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
             assert (owner["constrained_columns"], owner["referred_table"], owner["options"]) == (
                 ["user_id"], "user", {"ondelete": "CASCADE"})
             # The models match, but for the table 0010 adds (tests/test_routines.py holds it there).
-            assert [(d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
-                ("add_table", "routine")]
+            assert [(d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
+                ("add_table", "routine"), ("add_column", "weight_unit"), ("add_column", "distance_unit")]  # 0011's
         with engine.begin() as c:
             for user in (1, 1, 2):
                 c.exec_driver_sql(row, (user, now))
@@ -207,7 +207,7 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0010"  # routines 0010
+    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0011"  # units
 
 
 def test_the_topics_are_a_tuple_in_the_models_and_no_status_is():

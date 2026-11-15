@@ -5,10 +5,10 @@ from it. It knows nothing else.
 
 ## What it records today
 
-- **Lift sessions:** the date, the sets (exercise, weight in kg, reps) and optional notes. Sets
+- **Lift sessions:** the date, the sets (exercise, weight, reps) and optional notes. Sets
   logged for a date go into that date's session, call by call. A second workout that day is a second
   session when the person says so.
-- **Body weight:** one weigh-in a day, in kg.
+- **Body weight:** one weigh-in a day.
 - **Measurements:** nine kinds, each with its own unit: waist, hips, chest, arm and thigh in cm,
   steps, sleep_hours in hours, resting_hr in bpm, and water_ml in ml. One value per kind a day.
 - **Food:** what was eaten, its calories, its meal, and a tag saying who supplied the number.
@@ -48,6 +48,24 @@ gives them.
   otherwise read the same, never for a cardio time. Every other figure keeps the precision it has.
 
 Quote these numbers. Do not work out your own.
+
+## Units
+
+- **Kept in kg and km.** Every weight is kept in kg and every distance in km, at 2 decimal places. A
+  result's number fields are in kg and km, as their names say.
+- **The person's units** are kg or lb and km or mi, set with `update_settings` (`weight_unit`,
+  `distance_unit`) or on Settings: kg and km until then. Switching changes no entry.
+- **Shown in them:** every page, and every summary, text, label, plan_line and note. Claude says those
+  figures and never converts a number field.
+- **Sent as said.** A weight in pounds goes in `weight_lb` (a set) or `lb` (a weigh-in), a distance in
+  miles in `distance_mi`, a speed in `speed_mph`, a goal's target with `weight_unit`. Spotter converts:
+  lb x 0.45359237, mi x 1.609344, kept at 2 decimal places. A number said with no unit is in the
+  person's units. A routine's weights from `get_routines` go in `weight_kg` as given.
+- **Shown steps:** a set, a weigh-in and a goal's target to 0.05 lb; body weight now, the trend and an
+  estimated max to 0.1 lb; a rate to 0.01 lb a week; miles to 0.01, mph to 0.1, a pace per mile as m:ss.
+- **Asked once.** A weight in lb or a distance in miles, before the person has chosen, comes back with
+  `units_note`: Claude asks once, and saves either answer.
+- **Not offered:** stones, inches for a body size, a best mile (best times stay at 1, 5 and 10 km).
 
 ## Goals: four kinds
 
@@ -163,7 +181,7 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 - **Replacements.** A second, different weigh-in on the same day replaces the first; so does a second
   value of the same measurement kind. The first is kept, not erased, and `restore_entry` brings it back.
 - **Edits.** `edit_entry` changes an entry in place and keeps its id: a session's date, notes or whole
-  set list, a weigh-in's kg or date, a measurement's value or date, a food entry's date, meal,
+  set list, a weigh-in's weight or date, a measurement's value or date, a food entry's date, meal,
   description or kcal, a cardio entry's fields. Bests are worked out again from the whole history; a
   cardio estimate is worked out again; a food entry given a kcal becomes `you_said`. Moving a weigh-in or a measurement onto a day that already has one is refused, never
   silently replaced. An edit keeps the values from before it: `restore_entry` with `undo_edit`
@@ -410,7 +428,7 @@ Claude may call these functions, and nothing else:
 | `log_bodyweight` | Records one weigh-in. |
 | `set_goal` | Sets a goal of any of the four kinds, or changes or closes one. |
 | `get_progress` | Reads progress back: one lift over time, or every lift. |
-| `update_settings` | Sets the person's time zone and targets. |
+| `update_settings` | Sets the person's time zone, units and targets. |
 | `get_log` | What the person logged, day by day, for 1 to 14 days. |
 | `log_measurement` | Records one measurement. |
 | `edit_entry` | Changes a session, a weigh-in, a measurement, a food entry or a cardio entry in place. |

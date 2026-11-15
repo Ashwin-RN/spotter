@@ -2,7 +2,8 @@
 stage 5 added (goal.measurement_kind, migration 0003). Migration 0004 dropped one column from seven tables.
 Migration 0005 added the call log's trace columns, 0006 the write keys (write_key), 0007 the values an
 entry held before each edit (entry_version), and 0008 the notes people send Spotter's maker (feedback). 0009
-changes data only: every account's claude_can becomes log_delete. 0010 adds the routines (routine).
+changes data only: every account's claude_can becomes log_delete. 0010 adds the routines (routine). 0011 adds
+the person's units (user.weight_unit and user.distance_unit).
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -129,6 +130,10 @@ class User(Base):
     # Set by the code that edits the row; a last_seen_at touch is not an edit.
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
     last_seen_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+    # How pages and summaries show weights (kg or lb) and distances (km or mi); null = not chosen, shown as kg
+    # and km. Every stored number stays in kg and km whatever these say (contract units.md).
+    weight_unit: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    distance_unit: Mapped[str | None] = mapped_column(String(2), nullable=True)
 
 
 class Exercise(Base):

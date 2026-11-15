@@ -33,7 +33,8 @@ def test_one_day_by_default_with_the_contracts_shape(user):
     assert set(r) == {"from", "to", "days", "totals", "summary", "links"}
     assert r["from"] == r["to"] == day(user, 0) and len(r["days"]) == 1
     only = r["days"][0]
-    assert set(only) == {"date", "sessions", "weigh_in", "measurements", "food", "cardio"}
+    assert set(only) == {"date", "sessions", "weigh_in", "measurements", "food", "cardio", "summary"}  # units R14
+    assert only["summary"] == "Back Squat 1 \u00d7 5 at 60 kg. Weigh-in 80 kg."
     assert [x["id"] for x in only["sessions"]] == [s["id"]] and only["sessions"][0]["sets"][0]["weight_kg"] == 60
     assert only["sessions"][0]["new_bests"] == []
     assert only["weigh_in"]["id"] == w["id"] and [x["id"] for x in only["measurements"]] == [m["id"]]
@@ -50,7 +51,8 @@ def test_every_day_in_the_range_newest_first_empty_ones_included(user):
     assert [d["date"] for d in r["days"]] == [day(user, 0), day(user, -1), day(user, -2)]
     assert r["from"] == day(user, -2) and r["to"] == day(user, 0)
     assert r["days"][0] == {"date": day(user, 0), "sessions": [], "weigh_in": None, "measurements": [],
-                            "food": {"meals": {"breakfast": [], "lunch": [], "dinner": [], "snack": []}, "total_kcal": 0, "estimated_kcal": 0, "estimated_share_pct": 0, "target_kcal": None, "remaining_kcal": None, "net_kcal": None}, "cardio": []}
+                            "food": {"meals": {"breakfast": [], "lunch": [], "dinner": [], "snack": []}, "total_kcal": 0, "estimated_kcal": 0, "estimated_share_pct": 0, "target_kcal": None, "remaining_kcal": None, "net_kcal": None}, "cardio": [],
+                            "summary": ""}  # units.md R14: a day with none
     assert [m["kind"] for m in r["days"][2]["measurements"]] == ["waist", "steps"]  # the kinds' own order
     assert r["summary"] == "3 days, 1 session, 0 weigh-ins, 2 measurements, 0 food entries, 0 cardio sessions."
 

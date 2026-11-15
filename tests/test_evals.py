@@ -31,7 +31,9 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "delete_regretted",  # switch decision 21: delete_explicit became delete_asks_first
                   "lift_one_sentence", "lift_set_by_set", "lift_added_later",  # gym logging, decision 17
                   "setup_stays_quiet",  # first day: the review's S1
-                  "routine_saved", "routine_logged", "routine_changed"}  # routines, decision 21
+                  "routine_saved", "routine_logged", "routine_changed",  # routines, decision 21
+                  "lb_weigh_in", "lb_lifts", "miles_run", "units_asked", "units_switch",  # units, decision 20
+                  "lb_routine_changed"}
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 

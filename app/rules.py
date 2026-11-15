@@ -14,17 +14,26 @@ The fix says what to send instead, so Claude can correct the call and retry.
   entry_date(value, today, noun) -> (date | None, error | None)
         Blank means today. Never after today (an entry records what has happened), never more
         than two years back.
-  check_session(date_value, rows, names, today) -> (session_date, sets, error | None)
+  check_session(date_value, rows, names, today, pounds=True) -> (session_date, sets, error | None)
         A lift session: a valid date; 1 to 60 sets; each set's exercise on the list, weight 0 to
         500 kg, reps 1 to 30 whole. sets: [{exercise (canonical), weight_kg, reps}]. Every failure at once.
+        Each set sends weight_kg or weight_lb (one_of); pounds=False is the import's: weight_kg only, in its
+        words of before units.
+
+Units (contract units.md, decision 15). The one table of factors, UNITS, and its helpers, which the import and
+logging both use: converted (a number in lb, mi or in, in the stored unit), inward (a stored range in another
+unit, each bound moved inward), call_unit (a refusal said in the unit sent) and in_unit (the same, for a log
+field such as weight_lb). one_of(row, kg_field, other_field) is the check of a pair: one of the two, never both.
 
 "today" is always passed in by the caller: the person's own date, from users.today_for.
 """
 
 import difflib
 import math
+import re
 import unicodedata
 from datetime import date, datetime, timedelta
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 
 from app import formatting
 
@@ -93,6 +102,103 @@ NUMBER_QUANTITIES = {
     "speed_kmh": "speed", "avg_hr": "bpm", "machine_kcal": "kcal", "calorie_target_kcal": "kcal",
     "target_sessions_per_week": "count", "target_cardio_minutes_per_week": "week_minutes",
 }
+
+
+# ---------------------------------------------------------------- units: the one table of factors
+
+UNITS = {"weight_unit": {"kg": 1.0, "lb": formatting.LB},
+         "distance_unit": {"km": 1.0, "mi": formatting.MI},
+         "length_unit": {"cm": 1.0, "in": 2.54}}
+UNIT_OF = {factor: unit for table in UNITS.values() for unit, factor in table.items() if factor != 1.0}
+UNITS_FIX = "Use kg or lb for weight_unit, km or mi for distance_unit."  # invalid_unit's fix: settings and goals
+# A log field sent in lb or mi (decision 4): its stored twin, its factor, and the word for the thing it holds.
+OTHER_FIELDS = {"weight_lb": ("weight_kg", formatting.LB, "weight"), "lb": ("kg", formatting.LB, "weight"),
+                "distance_mi": ("distance_km", formatting.MI, "distance"),
+                "speed_mph": ("speed_kmh", formatting.MI, "speed")}
+
+
+def converted(value, factor: float):
+    """A number in the call's unit, turned into the stored unit. Anything that is not a number, or a
+    value already in the stored unit, goes on as sent, so the reused check refuses it in its own words."""
+    number = to_float(value)
+    if number is None or factor == 1.0:
+        return value
+    return number * factor
+
+
+def inward(limits, factor: float, quantity: str) -> tuple[str, str]:
+    """A stored range in the call's unit, through the formatter at the quantity's step, each bound moved
+    inward: the lower one rounded up, the upper one down. So a number refused for being outside the range is
+    never inside the range its message quotes: 44.09 lb is outside 44.1 to 881.84 lb, not 44.09 to 881.85."""
+    step = Decimal(repr(formatting.STEP[quantity]))
+    shown = []
+    for bound, rounding in zip(limits, (ROUND_CEILING, ROUND_FLOOR)):
+        with localcontext() as ctx:
+            ctx.prec = 50
+            steps = (Decimal(repr(float(bound))) / Decimal(repr(factor)) / step).to_integral_value(rounding=rounding)
+            shown.append(formatting.show(float(steps * step), quantity, unit=False))
+    return shown[0], shown[1]
+
+
+def call_unit(err: dict, field: str, raw, factor: float, limits, quantity: str, where: str = "",
+              fix_tail: str = "", per: str = "", word: str | None = None) -> dict:
+    """A refusal of a number sent in the call's unit (lb, mi, in), said in that unit. A range refusal quotes
+    the value as sent and the range. Every refusal of the field, "not a number" and "missing" too, gets a
+    fix with the range in the call's unit, never the stored unit's. The range through the formatter, each
+    bound moved inward (inward). A refusal on a kg, km or cm call goes on as it is. word: the unit as said,
+    when it is not the factor's own ("mph" for a speed sent in miles)."""
+    if factor == 1.0:
+        return err
+    unit = word or (UNIT_OF[factor] + (f" {per}" if per else ""))
+    lo, hi = inward(limits, factor, quantity)
+    at = f"{where}: " if where else ""
+    on = f" on {where.lower()}" if where else ""
+    fix = f"Give {field}{on} from {lo} to {hi} {unit}{fix_tail}."
+    if " is outside " not in err["message"]:
+        return {**err, "fix": fix}
+    after = "" if field == unit else f" {unit}"  # "lb 900 is outside", never "lb 900 lb"
+    return {**err, "message": f"{at}{field} {as_sent(raw)}{after} is outside {lo} to {hi} {unit}.", "fix": fix}
+
+
+def _given(value) -> bool:
+    return value is not None and not (isinstance(value, str) and not value.strip())
+
+
+def both_sent(kg_field: str, other_field: str, where: str = "") -> dict:
+    """invalid_field: a number and its twin in the other unit, both sent (decision 4)."""
+    message = (f"{where} has both {kg_field} and {other_field}: send one." if where
+               else f"Both {kg_field} and {other_field} were sent: send one.")
+    return error("invalid_field", message, f"Send the {OTHER_FIELDS[other_field][2]} in the unit the person said: "
+                                           f"{kg_field} or {other_field}.")
+
+
+def one_of(row: dict, kg_field: str, other_field: str, where: str = "", needed: bool = False,
+           missing_fix: str | None = None) -> tuple[str | None, object, dict | None]:
+    """The check of a pair (R6): (the field sent, its value in the stored unit, None) or (None, None, error).
+    Both sent, neither None nor blank, is invalid_field. Neither, when needed, is missing_field; when not needed,
+    (None, None, None). The other field's value goes through converted, unrounded, so the stored unit's own check
+    takes it and keeps it at 2 dp; a refusal of it is said in its unit with in_unit."""
+    kg_given, other_given = _given(row.get(kg_field)), _given(row.get(other_field))
+    if kg_given and other_given:
+        return None, None, both_sent(kg_field, other_field, where)
+    if other_given:
+        return other_field, converted(row[other_field], OTHER_FIELDS[other_field][1]), None
+    if kg_given or not needed:
+        return (kg_field if kg_given else None), row.get(kg_field), None
+    at = f"{where}: " if where else ""
+    on = f" on {where.lower()}" if where else ""
+    return None, None, error("missing_field", f"{at}{kg_field} or {other_field} is missing.",
+                             missing_fix or f"Give {kg_field} or {other_field}{on}.")
+
+
+def in_unit(err: dict, other_field: str, raw, limits, quantity: str, where: str = "", fix_tail: str = "",
+            word: str | None = None) -> dict:
+    """A refusal of a number sent in other_field (weight_lb, lb, distance_mi, speed_mph): its twin's name becomes
+    the field's, and call_unit says it in the field's unit with the range moved inward."""
+    kg_field, factor, _ = OTHER_FIELDS[other_field]
+    name = re.compile(rf"(?<![\w.]){re.escape(kg_field)}(?![\w])")
+    err = {**err, "message": name.sub(other_field, err["message"]), "fix": name.sub(other_field, err["fix"])}
+    return call_unit(err, other_field, raw, factor, limits, quantity, where, fix_tail, word=word)
 
 
 def span(lo, hi, quantity: str) -> str:
@@ -323,11 +429,13 @@ def entry_date(value, today: date, noun: str = "entries") -> tuple[date | None, 
     return parsed, None
 
 
-def check_session(date_value, rows, names: list[str], today: date) -> tuple[date | None, list[dict], dict | None]:
+def check_session(date_value, rows, names: list[str], today: date,
+                  pounds: bool = True) -> tuple[date | None, list[dict], dict | None]:
     """A lift session, checked. Every failure combined (see combine).
 
     Returns (session date, sets [{exercise, weight_kg, reps}] with canonical names, None) or (None, [], error).
-    A blank date means today. Weight may be 0 (bodyweight work).
+    A blank date means today. Weight may be 0 (bodyweight work). Each set sends weight_kg or weight_lb, and a
+    weight_lb is kept in kg (R9). pounds=False takes weight_kg alone, in the words it had before: the import's.
     """
     errors = []
     session_date, err = entry_date(date_value, today, "sessions")
@@ -337,7 +445,8 @@ def check_session(date_value, rows, names: list[str], today: date) -> tuple[date
     lo, hi = SESSION_SETS
     if not lo <= len(rows) <= hi:
         errors.append(error("sets_count_out_of_range", f"The session has {len(rows)} sets; it needs {lo} to {hi}.",
-                            f"Send one row per set, {lo} to {hi} rows: exercise, weight_kg, reps."))
+                            f"Send one row per set, {lo} to {hi} rows: exercise, "
+                            f"{'weight_kg or weight_lb' if pounds else 'weight_kg'}, reps."))
     w_lo, w_hi = HARD_RULES["weight_kg"]
     r_lo, r_hi = HARD_RULES["reps"]
     sets = []
@@ -353,13 +462,20 @@ def check_session(date_value, rows, names: list[str], today: date) -> tuple[date
             name, _ = match_exercise(raw_name, names)
             if name is None:
                 errors.append(unknown_exercise(raw_name, names, f"{where}: "))
-        weight, err = number(row.get("weight_kg"), float, "weight_kg", where)
+        sent_in, value, err = (one_of(row, "weight_kg", "weight_lb", where, needed=True) if pounds
+                               else ("weight_kg", row.get("weight_kg"), None))
+        weight = None
         if err:
             errors.append(err)
-        elif not w_lo <= weight <= w_hi:
-            sent = as_sent(row.get("weight_kg"))  # as sent: a huge number stays short (quote cuts it)
-            errors.append(error("weight_out_of_range", f"{where}: weight {sent} kg is outside {w_lo} to {w_hi} kg.",
-                                f"Give weight_kg on set {n} from {w_lo} to {w_hi} (0 for bodyweight)."))
+        else:
+            weight, err = number(value, float, "weight_kg", where)
+            if err is None and not w_lo <= weight <= w_hi:
+                sent = as_sent(row.get("weight_kg"))  # as sent: a huge number stays short (quote cuts it)
+                err = error("weight_out_of_range", f"{where}: weight {sent} kg is outside {w_lo} to {w_hi} kg.",
+                            f"Give weight_kg on set {n} from {w_lo} to {w_hi} (0 for bodyweight).")
+            if err and sent_in == "weight_lb":
+                err = in_unit(err, "weight_lb", row["weight_lb"], (w_lo, w_hi), "weight_kg", where)
+            errors += [err] if err else []
         reps, err = number(row.get("reps"), int, "reps", where)
         if err:
             errors.append(err)

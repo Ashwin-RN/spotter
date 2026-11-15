@@ -141,8 +141,10 @@ record cannot be talked round.
   page's own service before the run. Left out, it is the default, `log_delete`. A case that sets
   anything else, `read` among them, stops the load.
 - `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
-  `log_measurement`, `log_lifts`, `set_goal`, `import_entries`, each with `data`, and `four_weeks`, which
-  takes no data.
+  `log_measurement`, `log_lifts`, `set_goal`, `import_entries`, `save_routine`, `update_settings`, each
+  with `data`, and `four_weeks`, which takes no data.
+  - `update_settings` sets the person's settings, such as `weight_unit` lb, called as the web calls it. It
+    returns no id, so it has no `as`.
   - `four_weeks` (`evals/four_weeks.py`) is four weeks of everything and three goals in one call, on an empty account. It has no `as`.
   - `import_entries` returns no one id either, so it has no `as`. Its rows carry fixed dates.
   - `edit_entry` edits a row seeded before it, so the person has an edit to undo. Its `data` is
@@ -226,6 +228,12 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `routine_saved` | Save my push day: bench press 3 sets of 8, overhead press 3 sets of 10, dips 3 sets of 10 | One successful `save_routine`, name "push day" (any case), lifts Bench Press 3 × 8, Overhead Press 3 × 10, Dip 3 × 10, and no `weight_kg` in any lift. No `log_lifts`. One live routine with 3 lifts |
 | `routine_logged` | Log my push day (Push day saved: Bench Press 3 × 8 at 60, Overhead Press 3 × 10 at 40) | One successful `log_lifts`, its sets holding Bench Press 60 × 8 and Overhead Press 40 × 10, never `new_session` true. One live session today, `set_count` 6 |
 | `routine_changed` | Log my push day, but bench was 62.5 today (the same routine saved) | One successful `log_lifts`, its sets holding Bench Press 62.5 × 8 and Overhead Press 40 × 10, and no set at 60. One live session, `set_count` 6 |
+| `lb_weigh_in` | Weighed 185 this morning (weights set to lb) | One successful `log_bodyweight` with `lb` 185 and no `kg`. The reply has "185" and no "kg" as a word. One live weigh-in today, kg 83.91 |
+| `lb_lifts` | Bench 225 for 5, then 3 sets of 8 at 185 (weights set to lb) | One successful `log_lifts` with Bench Press `weight_lb` 225 × 5 and `weight_lb` 185 × 8, no `weight_kg`. The reply has no "kg" as a word. One live session today, `set_count` 4 |
+| `miles_run` | Ran 3 miles outside in 27 minutes (distances set to mi) | One successful `log_cardio`, Outdoor Run, `distance_mi` 3, minutes 27, no `distance_km`. The reply has "9:00" and no "km" as a word. One live cardio entry, distance_km 4.83 |
+| `units_asked` | I weigh 185 lb (84 kg logged yesterday, units never chosen) | One successful `log_bodyweight` with `lb` 185. No `update_settings`. The reply asks. Two live weigh-ins, today's kg 83.91 |
+| `units_switch` | Show my weights in pounds and my runs in miles from now on | One successful `update_settings` with weight_unit lb and distance_unit mi. No log call |
+| `lb_routine_changed` | Log my push day, but bench was 230 today (weights set to lb; Push day saved: Bench Press 3 × 8 at weight_kg 102.06, Overhead Press 3 × 10 at weight_kg 61.23) | One successful `log_lifts`: Bench Press `weight_lb` 230 × 8, and Overhead Press either `weight_kg` 61.23 or `weight_lb` 135 × 10. No set sent `weight_lb` 102.06 or `weight_kg` 230. One live session today, `set_count` 6 |
 
 "No write function" is every write, by name, in `no_call`: the names in `WRITE_FUNCTIONS` in
 `app/services/common.py`. A write added later must be added to those lists.
@@ -362,6 +370,21 @@ A routine is saved with `save_routine` and logged through `log_lifts`, with the 
 | `routine_saved` | One sentence becomes one routine with only what was said: no weight made up, nothing logged | That a routine with weights keeps them right: `routine_logged`'s seed covers that from the service side |
 | `routine_logged` | The assistant reads the routine and logs its sets, with the routine's weights, as one session | The newest-wins rule against a later session: unit tests hold it. A run cannot seed `log_lifts` before the routine and then age the routine |
 | `routine_changed` | One changed number is sent changed, and the rest as saved | That next week's read gives 62.5: unit tests hold it |
+
+### The six units cases
+
+A person who lifts in pounds and runs in miles (contract units.md). Spotter keeps kg and km; the field names
+say the unit sent, and the texts say the person's units. "185" matches a sent 185.0; 83.91 is 185 x 0.45359237
+at 2 decimal places; 4.83 is 3 x 1.609344; 102.06 and 61.23 are 225 and 135 lb, and read 225 lb and 135 lb back.
+
+| Case | Proves | Does not prove |
+|---|---|---|
+| `lb_weigh_in` | A bare number on a lb account goes in as lb, is kept as kg, and comes back in lb | That every later read stays in lb: one message a run |
+| `lb_lifts` | Each set takes the pound field, and the reply never falls back to kg | That a set said in kg on a lb account goes in `weight_kg`: one phrasing |
+| `miles_run` | A distance in miles goes in as said, and the pace comes back per mile | Speed in mph: unit tests hold it |
+| `units_asked` | The first lb log on an account that never chose asks, and does not switch on its own | That the yes is saved: no second turn. `units_switch` covers the save |
+| `units_switch` | The assistant finds the setting from plain words | That pages follow: unit tests hold it |
+| `lb_routine_changed` | A routine's kg weight goes in `weight_kg` as given, or in lb as its words say it, and the changed lift in lb | The newest-wins rule on a lb account: unit tests hold it |
 
 ## What the evals prove
 

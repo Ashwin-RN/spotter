@@ -9,6 +9,11 @@ names the setup steps on offer (account.setup_steps of the server's functions), 
 
 An error result is not checked against these models. It is {error, message, fix}, sometimes with
 `errors` (every problem at once) or `closest` (the nearest exercise names).
+
+Units (contract units.md): a weight or distance goes in the field of the unit the person said (weight_kg or
+weight_lb, kg or lb, distance_km or distance_mi, speed_kmh or speed_mph). Every new result field (units,
+units_note, the new summaries and words) defaults to null (R21), so a client holding the old list still validates
+an answer from the new server where it can.
 """
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,7 +33,16 @@ class SetIn(BaseModel):
     """One set of a lift session."""
 
     exercise: str = Field(description="The exercise name, exactly as list_exercises gives it.")
-    weight_kg: float = Field(description="The weight lifted in kg, 0 to 500. Use 0 for bodyweight work.")
+    weight_kg: float | None = Field(
+        default=None,
+        description="The weight lifted in kg, 0 to 500, when the person said kg, or gave no unit and units.weight is "
+                    "kg, or it came from get_routines. Use 0 for bodyweight work. Send weight_kg or weight_lb, never "
+                    "both.")
+    weight_lb: float | None = Field(
+        default=None,
+        description="The weight lifted in lb, 0 to 1,102.31, when the person said pounds, or gave no unit and "
+                    "units.weight is lb. Send it as said: Spotter converts it. Use 0 for bodyweight work. Send "
+                    "weight_kg or weight_lb, never both.")
     reps: int = Field(description="Reps done in this set, a whole number from 1 to 30.")
 
 
@@ -47,7 +61,11 @@ class RoutineLiftIn(BaseModel):
     weight_kg: float | None = Field(
         default=None,
         description="The weight in kg, 0 to 500, only when the person gave one. Leave it out otherwise: get_routines "
-                    "then gives the weight of the lift's latest session.")
+                    "then gives the weight of the lift's latest session. Send weight_kg or weight_lb, never both.")
+    weight_lb: float | None = Field(
+        default=None,
+        description="The weight in lb, 0 to 1,102.31, only when the person gave one in pounds, or with no unit and "
+                    "units.weight is lb. Leave it out otherwise.")
 
 
 class FoodEntryIn(BaseModel):
@@ -177,8 +195,8 @@ class GoalNumbers(BaseModel):
 
     goal_id: int = Field(description="The goal's id. set_goal takes it as goal_id to change or close the goal.")
     label: str = Field(
-        description="The goal in a few words, such as 'Back Squat 100 kg', 'Body weight 75 kg', 'Waist 80 cm' or "
-                    "'Outdoor Run 5 km in 28:00'.")
+        description="The goal in a few words, in the person's units, such as 'Back Squat 100 kg', 'Body weight "
+                    "75 kg', 'Waist 80 cm' or 'Outdoor Run 5 km in 28:00'.")
     kind: str = Field(description=GOAL_KINDS_TEXT)
     exercise: str | None = Field(
         description="The lift, for a lift goal; the cardio activity, for a cardio_best goal; else null.")
@@ -276,6 +294,15 @@ class Setup(BaseModel):
     how: str = Field(description="When to bring setup up, and how to ask.")
 
 
+UNITS_NOTE = ("Present only when this call sent a weight in lb or a distance or speed in miles, and the person has not "
+              "chosen their units. Ask once, as it says.")
+
+
+class PersonUnits(BaseModel):
+    weight: str = Field(description="kg or lb.")
+    distance: str = Field(description="km or mi.")
+
+
 class SignIn(BaseModel):
     client_id: str = Field(description="The app the person signed in through.")
     scopes: list[str] = Field(description="The scopes the sign-in carries.")
@@ -293,6 +320,13 @@ class WhoamiResult(BaseModel):
     time_zone: str | None = Field(description="Their time zone (an IANA name such as Asia/Kolkata), or null.")
     today: str = Field(description="Today's date for the person, YYYY-MM-DD. Dates you leave out mean this day.")
     targets: Targets = Field(description="The person's targets.")
+    units: PersonUnits | None = Field(
+        default=None,
+        description="The person's units: weight kg or lb, distance km or mi, set with update_settings, kg and km "
+                    "until then. Every summary, text, label, plan_line and note gives weights, distances, paces and "
+                    "speeds in them. Every number field stays in kg or km, as its name says: say the figures the "
+                    "texts give, never a number field you converted. A number the person says with no unit is in "
+                    "these units.")
     claude_can: str = Field(
         description="What the person allows Claude to do. log_delete (the default): everything, delete_entry too. "
                     "log: everything except delete_entry. Only the person can change it; Claude cannot.")
@@ -381,6 +415,7 @@ class LogLiftsResult(BaseModel):
                                      "then new bests, or for a lift's first session the mark it sets (a first "
                                      "session is never a new best).")
     links: LiftLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+    units_note: str | None = Field(default=None, description=UNITS_NOTE)
 
 
 # ---------------------------------------------------------------- log_bodyweight
@@ -431,8 +466,11 @@ class LogBodyweightResult(BaseModel):
     recent: list[DatedKg] = Field(description="The latest weigh-ins, newest first, up to 5.")
     trend: BodyweightTrend | None = Field(description="How body weight is moving, or null with no weigh-ins.")
     how: str = Field(description="How the numbers are worked out.")
+    summary: str | None = Field(
+        default=None, description="The weigh-in in one line, ready to quote, in the person's units.")
     links: BodyweightLinks = Field(description="Pages to offer the person. Put links last in a reply.")
     note: str | None = Field(default=None, description="Present on a duplicate or a replacement: what happened.")
+    units_note: str | None = Field(default=None, description=UNITS_NOTE)
 
 
 # ---------------------------------------------------------------- set_goal
@@ -476,6 +514,7 @@ class SetGoalResult(BaseModel):
                                             "goal for the same lift. Empty when none.")
     links: GoalLinks = Field(description="Pages to offer the person. Put links last in a reply.")
     note: str | None = Field(default=None, description="Present when the goal is closed (hit or dropped).")
+    units_note: str | None = Field(default=None, description=UNITS_NOTE)
 
 
 # ---------------------------------------------------------------- food
@@ -634,6 +673,7 @@ class LogCardioResult(BaseModel):
     summary: str = Field(description="The session in one line, ready to quote.")
     links: CardioLinks = Field(description="Pages to offer the person. Put links last in a reply.")
     note: str | None = Field(default=None, description="Present when there is no estimate, or on a duplicate.")
+    units_note: str | None = Field(default=None, description=UNITS_NOTE)
 
 
 # ---------------------------------------------------------------- get_progress
@@ -722,6 +762,8 @@ class GetProgressResult(BaseModel):
     cardio: CardioProgress | None = Field(default=None, description="With a cardio activity: its sessions and week.")
     goals: list[GoalNumbers] | None = Field(default=None, description="Without an exercise: every open goal.")
     how: str = Field(description="How the numbers are worked out.")
+    summary: str | None = Field(
+        default=None, description="Progress in a few lines, ready to quote, in the person's units.")
     links: ProgressLinks = Field(description="Pages to offer the person. Put links last in a reply.")
     note: str | None = Field(default=None, description="Present when nothing is logged yet.")
 
@@ -801,6 +843,7 @@ class EditEntryResult(BaseModel):
         default=None,
         description="For a lift session: bests are worked out again from the whole history; get_progress shows "
                     "them.")
+    units_note: str | None = Field(default=None, description=UNITS_NOTE)
 
 
 # ---------------------------------------------------------------- delete_entry and restore_entry
@@ -818,6 +861,10 @@ class DeleteEntryResult(BaseModel):
         default=None, description="On a preview: the code to send back as confirm, with the same kind and id, once "
                                   "the person has said yes.")
     note: str | None = Field(default=None, description="What to do next on a preview, or how to undo a delete.")
+    summary: str | None = Field(
+        default=None,
+        description="The entry in one line, in the person's units, to show the person before they say yes. Null for "
+                    "a measurement, a food entry or a saved food.")
 
 
 class RestoreEntryResult(BaseModel):
@@ -869,6 +916,10 @@ class LogDay(BaseModel):
     food: LogFood = Field(description="The day's food by meal, with the day's totals.")
     cardio: list[dict] = Field(
         description="The day's cardio sessions, each with its activity, pace, estimate and the machine's number.")
+    summary: str | None = Field(
+        default=None,
+        description="The day's lift sessions, weigh-in and cardio, ready to quote, in the person's units. Empty when "
+                    "the day has none. Food and measurements are in their own fields.")
 
 
 class LogTotals(BaseModel):
@@ -1279,6 +1330,7 @@ class SaveRoutineResult(BaseModel):
     routine: SavedRoutine = Field(description="The routine as saved.")
     summary: str = Field(description="What this call did, in one line, ready to quote.")
     links: RoutinesLinks = Field(description=LINKS_LAST)
+    units_note: str | None = Field(default=None, description=UNITS_NOTE)
 
 
 class LiftToLog(BaseModel):
@@ -1287,8 +1339,8 @@ class LiftToLog(BaseModel):
     reps: int = Field(description=ROUTINE_REPS)
     weight_kg: float | None = Field(
         description="The weight to log, in kg: the heaviest set of this lift's latest session, unless the routine "
-                    "was saved on a later day than that session, with a weight of its own. Null when there is "
-                    "neither: ask the person.")
+                    "was saved on a later day than that session, with a weight of its own. Send it in weight_kg as "
+                    "it is, never converted. Null when there is neither: ask the person.")
     weight_from: str | None = Field(description="Where weight_kg came from: last_session, routine, or null.")
     last_date: str | None = Field(
         description="The date of this lift's latest session, or null when it was never logged.")
@@ -1299,6 +1351,10 @@ class RoutineToLog(BaseModel):
     name: str = Field(description=ROUTINE_NAME)
     saved_on: str = Field(description=ROUTINE_SAVED_ON)
     lifts: list[LiftToLog] = Field(description=ROUTINE_LIFTS)
+    words: str | None = Field(
+        default=None,
+        description="The routine's lifts in words, each with the weight to log, in the person's units, ready to "
+                    "quote.")
 
 
 class GetRoutinesResult(BaseModel):

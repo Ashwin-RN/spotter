@@ -251,7 +251,8 @@ def test_an_id_is_found(text):
 
 
 @pytest.mark.parametrize("text", ["Weigh-in 79.5 kg", "Measurement 80 cm", "3 sessions in the last 7 days",
-                                  "Set 2, 5 reps", "Session 1 kg", "Fastest session 31:00", "Goal 100 kg by Tue 10 Nov", "Entry 2,000 kcal"])
+                                  "Set 2, 5 reps", "Session 1 kg", "Fastest session 31:00", "Goal 100 kg by Tue 10 Nov", "Entry 2,000 kcal",
+                                  "Weigh-in 185 lb on Sun 15 Nov.", "Session 3 mi", "Entry 6 mph"])  # units.md R18
 def test_a_figure_after_an_entry_word_is_not_an_id(text):
     assert tr.check_ids(text) == []
 

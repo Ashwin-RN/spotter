@@ -57,9 +57,18 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit])
 - Edit, delete and restore are writes: lock_user first, then common.check_write_limit.
 - An edit's summary names each change in words, every value through app.formatting: "Weigh-in
   changed: kg from 74.8 to 78.4." The entry's id is the result's id, never in the summary.
+- Units (contract units.md R13). An edit takes lb beside kg, distance_mi beside distance_km and speed_mph beside
+  speed_kmh (one of each pair), and weight_lb in sets, each kept in kg and km; a refusal of one is said in its unit.
+  The summary follows the person's setting: on a lb account a changed weight is named in words with its unit
+  ("Weigh-in changed: weight from 185 lb to 184 lb."), on a mi account a changed distance or speed ("distance from
+  3 mi to 3.4 mi"), and sets go through lifts.sets_text; a kg weight, a km distance and a km/h speed keep the
+  field's name, as before. A weight in lb or a distance or speed in miles, while the person has not chosen,
+  carries units_note. delete_entry's preview and delete carry summary: the entry in one line in the person's units
+  for a session, a weigh-in, a cardio entry and a routine, none for the other kinds.
 """
 
 import hashlib
+import json
 from datetime import timezone
 
 from sqlalchemy import Index, select
@@ -73,7 +82,8 @@ from app.rules import error, quote
 from app.services import body, cardio, food, lifts, measurements, routines
 from app.services.common import (
     KIND_LABELS, check_by, check_data, check_write_limit, entry_changed, exercises, keep_version, lock_user,
-    newest_version, no_account, not_found, owned, pair, put_back, read_version, row_dict, truthy,
+    newest_version, no_account, not_found, owned, pair, put_back, read_version, row_dict, sent, truthy,
+    with_units_note,
 )
 from app.services.goals import goal_dict
 from app.services.lifts import session_dict
@@ -95,6 +105,14 @@ SESSION_NOTE = "Bests are worked out from history: get_progress shows them."
 KCAL_NOTE = "The number is now the person's own: tagged you_said."
 REESTIMATE_NOTE = "The calorie estimate was worked out again, from body weight now."
 CARDIO_NUMBERS = ("minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal")
+# A number an edit may send in the other unit, per kind (decision 4): (stored field, field in lb or mi). Each is
+# taken beside EDITABLE, which the refusals still list.
+IN_OTHER_UNITS = {"bodyweight": (("kg", "lb"),),
+                  "cardio_entry": (("distance_km", "distance_mi"), ("speed_kmh", "speed_mph"))}
+# How a refusal of one is said in its unit: (its stored range, the quantity it is shown at, the unit word).
+OTHER_RANGES = {"lb": (rules.BODYWEIGHT_KG, "weigh_in", None),
+                "distance_mi": (rules.NUMBERS["distance_km"][:2], "km", None),
+                "speed_mph": (rules.NUMBERS["speed_kmh"][:2], "speed", "mph")}
 ONE_A_DAY = ("bodyweight", "measurement")  # the kinds _day_taken is asked about: one live entry a day
 # A delete through an assistant: the preview's two notes (contract switch, "A delete, call by call").
 PREVIEW_NOTE = ("Nothing was deleted. Show the person this entry and ask. Send the same kind and id with this confirm "
@@ -194,7 +212,8 @@ def delete_entry(user_id: int, kind: str, entry_id, by: str | None = None, confi
     if model is None:
         return _unknown(kind, kinds)
     with db.session_scope() as s:
-        if lock_user(s, user_id) is None:
+        user = lock_user(s, user_id)
+        if user is None:
             return no_account()
         limited = check_write_limit(s, user_id)
         if limited:
@@ -205,13 +224,35 @@ def delete_entry(user_id: int, kind: str, entry_id, by: str | None = None, confi
         if by == "claude":
             code = confirm_code(user_id, kind, row)
             if confirm != code:  # a preview: nothing of the row is set
-                return {"kind": kind, "id": row.id, "deleted": False, "dry_run": True, "entry": entry_dict(row),
-                        "confirm": code, "note": PREVIEW_NOTE if confirm is None else MISMATCH_NOTE}
+                return _with_summary({"kind": kind, "id": row.id, "deleted": False, "dry_run": True,
+                                      "entry": entry_dict(row), "confirm": code,
+                                      "note": PREVIEW_NOTE if confirm is None else MISMATCH_NOTE}, row, user)
         row.deleted_at = db.utcnow()
         s.flush()
         out = {"kind": kind, "id": row.id, "deleted": True, "entry": entry_dict(row),
                "note": "Deleted. restore_entry with the same kind and id brings it back."}
-        return {**out, "dry_run": False} if by == "claude" else out
+        return _with_summary({**out, "dry_run": False} if by == "claude" else out, row, user)
+
+
+def entry_words(row, today, units=None) -> str | None:
+    """The entry in one line, in the person's units (R14), for delete_entry: a session, a weigh-in, a cardio entry
+    and a routine. None for any other kind."""
+    if isinstance(row, LiftSession):
+        sets = [(x.exercise.name, x.weight_kg, x.reps) for x in sorted(row.sets, key=lambda x: x.id)]
+        return f"Lift session on {formatting.day(row.date, today)}: {lifts.sets_text(sets, units)}."
+    if isinstance(row, Bodyweight):
+        return body.weigh_in_text(row.kg, row.date, today, units)
+    if isinstance(row, CardioEntry):
+        return cardio.summary(row, today, units)
+    if isinstance(row, Routine):
+        return f"{row.name}: {routines.lift_words(json.loads(row.lifts), units=units)}."
+    return None
+
+
+def _with_summary(out: dict, row, user) -> dict:
+    """delete_entry's answer, with summary when the kind has one."""
+    words = entry_words(row, users.today_for(user), users.units_for(user))
+    return {**out, "summary": words} if words is not None else out
 
 
 def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo_edit: bool = False) -> dict:
@@ -304,6 +345,34 @@ def _set_rows(row: LiftSession) -> list[tuple[int, int, float, int]]:
 def _quantity(field: str) -> str | None:
     """The quantity a number field is shown in, in an edit summary."""
     return "weigh_in" if field == "kg" else rules.NUMBER_QUANTITIES.get(field)
+
+
+def _in_words(field: str, units) -> str | None:
+    """The word a summary names a changed weight, distance or speed by when the person's setting shows it in lb or
+    mi (R13), its figure carrying its unit; None where the field's name stays, as before."""
+    if field == "kg" and units.weight == "lb":
+        return "weight"
+    if field in ("distance_km", "speed_kmh") and units.distance == "mi":
+        return field.split("_")[0]
+    return None
+
+
+def _stored_units(kind: str, changes: dict) -> tuple[dict, dict, list[dict]]:
+    """(the changes with each lb or mile field in its stored field, in the order sent, {stored field: the value as
+    sent in lb or mi}, errors). Both of a pair is invalid_field. A null in lb or mi stands for the stored field's."""
+    pairs = dict((other, stored) for stored, other in IN_OTHER_UNITS.get(kind, ()))
+    out, sent_in, errors = {}, {}, []
+    for field, value in changes.items():
+        stored = pairs.get(field)
+        if stored is None:
+            out.setdefault(field, value)
+        elif stored in changes:
+            errors.append(rules.both_sent(stored, field))
+        else:
+            out[stored] = rules.converted(value, rules.OTHER_FIELDS[field][1]) if sent(value) else value
+            if sent(value):
+                sent_in[stored] = (field, value)
+    return out, sent_in, errors
 
 
 def _shown(field: str, value, row, today) -> str:
@@ -399,6 +468,10 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
     err = err or check_by(by)
     if err:
         return err
+    sent_changes = changes
+    changes, sent_in, errors = _stored_units(kind, changes)
+    if errors:
+        return rules.combine(errors)
     if not changes:
         return error("nothing_to_change", "No field to change was given.",
                      f"Give one or more of: {', '.join(EDITABLE[kind])}.")
@@ -422,14 +495,22 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
         if stale:
             return stale
         today = users.today_for(user)
+        units = users.units_for(user)
         before = entry_dict(row)
         new, errors = {}, []
         for field, value in changes.items():
             new[field], err = _checked(field, value, row, s, today, kind)
+            if err and field in sent_in:
+                other, raw = sent_in[field]
+                limits, quantity, word = OTHER_RANGES[other]
+                err = rules.in_unit(err, other, raw, limits, quantity, word=word)
             if err:
                 errors += err.get("errors", [err])
         if errors:
             return rules.combine(errors)
+        miles = any(sent(sent_changes.get(f)) for f in ("distance_mi", "speed_mph"))
+        pounds = sent(sent_changes.get("lb")) or (isinstance(sent_changes.get("sets"), list) and any(
+            isinstance(x, dict) and sent(x.get("weight_lb")) for x in sent_changes["sets"]))
 
         current = {f: getattr(row, f, None) for f in EDITABLE[kind] if f not in ("sets", "exercise")}
         if kind == "lift_session":
@@ -450,7 +531,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
                    "links": {"day": links.page("day", date=row.date)}}
             if kind == "lift_session":
                 out["note"] = SESSION_NOTE
-            return out
+            return with_units_note(out, user, pounds, miles)
         if "date" in changed and kind in ONE_A_DAY:
             taken = _day_taken(s, model, row, new["date"], user.id)
             if taken:
@@ -459,13 +540,14 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
         worked_out = set()
         if kind == "cardio_entry":
             if "speed_kmh" in changed:
-                err = cardio.speed_disagrees({f: new.get(f, getattr(row, f)) for f in ("speed_kmh", "distance_km",
-                                                                                     "minutes")})
+                values = {f: new.get(f, getattr(row, f)) for f in ("speed_kmh", "distance_km", "minutes")}
+                err = cardio.speed_disagrees(values)
                 if err:
-                    return err
+                    return cardio.in_miles(err, sent_changes, values) if miles else err
             moved, err = _cardio_speed(row, new, changed)
             if err:
-                return err
+                values = {f: new[f] if f in changed else getattr(row, f) for f in ("distance_km", "minutes")}
+                return cardio.in_miles(err, sent_changes, {**values, "speed_kmh": row.speed_kmh}) if miles else err
             new.update(moved)
             worked_out = set(moved)
             changed += [f for f in moved if f not in changed]
@@ -475,7 +557,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
                 name_of = {e.id: e.name for e in exercises(s, "lift")}
 
                 def written(rows):  # "Back Squat 3 × 5 @ 60 kg", cut to a sane length
-                    return quote(lifts.sets_text([(name_of.get(e, "?"), w, r) for e, _, w, r in rows]))
+                    return quote(lifts.sets_text([(name_of.get(e, "?"), w, r) for e, _, w, r in rows], units))
 
                 parts.append(f"sets from {written(current['sets'])} to {written(new['sets'])}")
             elif field == "notes":
@@ -486,6 +568,19 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
                 parts.append(f"activity from {current[field].name} to {new[field].name}")
             elif field == "kcal" and current[field] == new[field]:
                 parts.append(f"kcal {_shown(field, new[field], row, today)} confirmed by the person")
+            elif _in_words(field, units):
+                word, quantity = _in_words(field, units), _quantity(field)
+                shown = lambda v: formatting.show(v, quantity, units=units)  # noqa: E731
+                if new[field] is None:
+                    with_distance = " with the distance" if field in worked_out else ""
+                    parts.append(f"{word} {shown(current[field])} cleared{with_distance}")
+                elif current[field] is None:
+                    how = ", worked out from distance and minutes" if field in worked_out else ""
+                    parts.append(f"{word} set to {shown(new[field])}{how}")
+                else:
+                    how = ", worked out from distance and minutes" if field in worked_out else ""
+                    old, now = pair(current[field], new[field], quantity, units=units)
+                    parts.append(f"{word} from {old} to {now}{how}")
             elif new[field] is None:  # a cleared value, in words: never "none", never Python's None
                 old = _shown(field, current[field], row, today)
                 with_distance = " with the distance" if field in worked_out else ""  # the speed goes with it
@@ -534,7 +629,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
                "links": {"day": links.page("day", date=row.date)}}
         if note:
             out["note"] = note
-        return out
+        return with_units_note(out, user, pounds, miles)
 
 
 def _cardio_speed(row: CardioEntry, new: dict, changed: list) -> tuple[dict, dict | None]:

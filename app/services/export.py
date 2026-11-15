@@ -23,6 +23,8 @@ export_data(user_id)
     Rows are in id order. The csv module writes them (RFC 4180: CRLF line ends, quotes where needed).
     - Each CSV starts with the UTF-8 byte-order mark (D16), so a spreadsheet reads it as UTF-8. The web
       writes the text as it gets it.
+    - Every number is in kg and km, whatever units the account shows (contract units.md); account.csv names the
+      units chosen, weight_unit and distance_unit, blank when none was.
     - Headers are lower snake_case, a fixed-unit number column named with its unit (weight_kg,
       avg_hr_bpm). A text cell that starts with =, +, - or @ gets a leading apostrophe, so a
       spreadsheet shows it as text and never runs it as a formula.
@@ -46,8 +48,9 @@ from app.models import (
 )
 from app.services.common import no_account
 
-ACCOUNT_COLUMNS = ("account_id", "email", "name", "time_zone", "calorie_target_kcal", "target_sessions_per_week",
-                   "target_cardio_minutes_per_week", "add_back_exercise_kcal", "claude_can", "created_at")
+ACCOUNT_COLUMNS = ("account_id", "email", "name", "time_zone", "weight_unit", "distance_unit", "calorie_target_kcal",
+                   "target_sessions_per_week", "target_cardio_minutes_per_week", "add_back_exercise_kcal",
+                   "claude_can", "created_at")
 LEFT_OUT = ("user_id", "dedupe_key", "name_key")
 # file -> (model, {column: the name written in its place})
 TABLES = {
@@ -102,6 +105,8 @@ logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_e
 came in: web (on Spotter's own pages), claude (through the assistant) or import (brought over from
 another app's export with import_entries).
 Times are UTC (ISO 8601, with +00:00). Dates are the account's own local dates.
+Weights are in kg and distances in km in every file, whatever units the account shows. account.csv
+names the units chosen: weight_unit and distance_unit, blank when none was chosen.
 A blank cell means no value. Exercises, activities and saved foods are given by name.
 """
 
@@ -170,7 +175,8 @@ def export_data(user_id: int) -> dict:
                  "saved_food": {i: n for i, n in s.execute(select(SavedFood.id, SavedFood.name).where(
                      SavedFood.user_id == user.id))}}
         files, rows = {}, {}
-        account = [user.id, user.email, user.name, user.time_zone, user.calorie_target_kcal,
+        account = [user.id, user.email, user.name, user.time_zone, user.weight_unit, user.distance_unit,
+                   user.calorie_target_kcal,
                    user.target_sessions_per_week, user.target_cardio_minutes_per_week, user.add_back_exercise_kcal,
                    user.claude_can, user.created_at]
         files["account.csv"], rows["account.csv"] = _csv(list(ACCOUNT_COLUMNS), [account]), 1

@@ -345,3 +345,9 @@ Tidy-ups builds first and moves the hard-coded counts (eval cases, function coun
 ## Not in this work
 
 Inches for a body size, stones, a best-mile time, the unit an entry was said in, an export in lb or miles, the import's preview in lb, a units step in setup, kJ, a change to the instructions, a new function.
+
+## Note, 2026-11-16: from the U1 review
+
+- The lift bound in lb is 1,469.75, not 1,469.74: 666.67 / 0.45359237 = 1,469.7558, rounded down.
+- A bare goal value from the web is read as kg until the goal form sends `weight_unit` (U2).
+- A lb refusal reads "lb 900 is outside 44.1 to 881.84 lb."

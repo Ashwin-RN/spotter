@@ -21,6 +21,7 @@ get_trends(user_id)
     the note says why.
     bodyweight.now, smoothed and each series point's smoothed come back at 1 dp (formatting.rounded),
     after the rate is worked out from the unrounded line. A weigh-in's own kg stays as entered.
+    The summary is in the person's units (contract units.md), from the unrounded figures; the numbers stay kg.
 
 get_days(user_id)
     A read, for the web only: the 28 days ending today, from the same rows get_trends reads. Per day:
@@ -69,10 +70,11 @@ def _derived(value):
     return None if value is None else formatting.rounded(value, "bodyweight_derived")
 
 
-def _bodyweight(weighed: list, today, start) -> tuple[dict | None, str | None]:
+def _bodyweight(weighed: list, today, start) -> tuple[dict | None, str | None, dict | None]:
+    """(the bodyweight part, the rate's note, the unrounded now and smoothed the summary says)."""
     pts = [(b.date, b.kg) for b in weighed]  # already in the one order
     if not pts:
-        return None, None
+        return None, None, None
     smoothed = metrics.ewma(pts, today)
     rate = metrics.trend_rate(smoothed, today)
     series = [{"date": d.isoformat(), "kg": kg, "smoothed": _derived(sm)}
@@ -82,7 +84,17 @@ def _bodyweight(weighed: list, today, start) -> tuple[dict | None, str | None]:
            "rate_per_week": rate["per_week"] if rate else None,
            "rate_window": {k: rate[k] for k in ("from", "to", "days")} if rate else None,
            "weigh_ins_28d": len(series), "series": series}
-    return out, None if rate else metrics.trend_rate_gap(smoothed, today)
+    raw = {"now": metrics.bodyweight_now(pts, today), "smoothed": smoothed[-1][1],
+           "rate_per_week": _unrounded_rate(smoothed, today, rate)}
+    return out, None if rate else metrics.trend_rate_gap(smoothed, today), raw
+
+
+def _unrounded_rate(smoothed: list, today, rate: dict | None) -> float | None:
+    """trend_rate's per_week before its 2 dp, from the same two ends and days, so a lb rate is converted once."""
+    if rate is None:
+        return None
+    latest, reference = metrics._rate_ends(smoothed, today)
+    return (latest[1] - reference[1]) / rate["days"] * 7
 
 
 def _calories(user, eaten: list, today) -> tuple[dict | None, list]:
@@ -103,15 +115,22 @@ def _calories(user, eaten: list, today) -> tuple[dict | None, list]:
             "target_kcal": user.calorie_target_kcal}, sorted(totals.items())
 
 
-def _summary(weight, calories, sessions, moved, maintenance, maintenance_note) -> str:
+def _summary(weight, calories, sessions, moved, maintenance, maintenance_note, raw=None, units=None) -> str:
+    """raw: the unrounded now, smoothed and rate, so a lb figure is converted once from them; units: the person's.
+    A kg rate is the result's own 2 dp figure."""
     parts = []
     if weight is None:
         parts.append("No weigh-ins yet.")
     else:
-        text = (f"Body weight {formatting.show(weight['now'], 'bodyweight_derived')} now, smoothed "
-                f"{formatting.show(weight['smoothed'], 'bodyweight_derived')}")
+        raw = raw or weight
+        text = (f"Body weight {formatting.show(raw['now'], 'bodyweight_derived', units=units)} now, smoothed "
+                f"{formatting.show(raw['smoothed'], 'bodyweight_derived', units=units)}")
         if weight["rate_per_week"] is not None:
-            text += f", {formatting.show(weight['rate_per_week'], 'rate')} kg a week"
+            per_week = weight["rate_per_week"]
+            if units is not None and units.weight == "lb":
+                per_week = raw.get("rate_per_week", per_week)
+            text += (f", {formatting.show(per_week, 'weight_rate', units=units)} "
+                     f"{formatting.unit_word('weight', units)} a week")
         parts.append(text + ".")
     if calories is None:
         parts.append("No food logged in the last 28 days.")
@@ -164,7 +183,7 @@ def get_trends(user_id: int) -> dict:
         moved = list(s.scalars(select(CardioEntry).where(
             CardioEntry.user_id == user.id, CardioEntry.deleted_at.is_(None), CardioEntry.date >= start)))
 
-        weight, rate_note = _bodyweight(weighed, today, start)
+        weight, rate_note, raw = _bodyweight(weighed, today, start)
         calories, intake = _calories(user, eaten, today)
         sessions = {"this_week": sum(1 for t in trained if metrics.on_or_before(t.date, today) >= week),
                     "target_per_week": user.target_sessions_per_week,
@@ -177,7 +196,8 @@ def get_trends(user_id: int) -> dict:
         maintenance_note = None if maintenance else metrics.maintenance_gap(intake, points, today)
         out = {"today": today.isoformat(), "bodyweight": weight, "calories": calories, "sessions": sessions,
                "cardio": cardio, "maintenance": maintenance, "maintenance_note": maintenance_note, "how": TRENDS_HOW,
-               "summary": _summary(weight, calories, sessions, cardio, maintenance, maintenance_note),
+               "summary": _summary(weight, calories, sessions, cardio, maintenance, maintenance_note, raw,
+                                   users.units_for(user)),
                "links": {"progress": links.page("progress"), "goals": links.page("goals"),
                          "settings": links.page("settings")}}
         if rate_note:

@@ -12,13 +12,19 @@ get_progress(user_id, exercise=None)
     estimated max at 1 dp (a best and the one it beat together, lifts.rounded_best), and the goals
     through goals.rounded_numbers. The numbers worked out from stay unrounded.
 
+    summary (contract units.md R14): progress in a few lines, in the person's units, from the unrounded figures.
+    One lift: "Bench Press: estimated max now 262.5 lb. Best set 225 lb × 5 on Sun 15 Nov. 12 sessions.", then
+    " Trend +1.2 lb a week over 6 weeks." with a trend. Every lift: each lift's first sentence and its sessions,
+    one line a lift. A lift never done above 0: "Pull-up: most reps 12, 8 sessions." A cardio activity: its
+    sessions, then its latest as cardio.summary words it. With nothing logged, the note.
+
 lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals, today, since=None)
     The data app.charts draws, from the same numbers. Each body weight point carries its smoothed
     value (metrics.ewma over every weigh-in), the line the chart draws, and the 7-day average there,
     both at 1 dp. since: draw only the weigh-ins from that date on; the smoothed line is unchanged.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -69,6 +75,53 @@ def _one(name: str, history: dict, numbers: list[dict], today: date) -> dict:
     }
 
 
+def _sessions(n: int) -> str:
+    return f"{formatting.show(n, 'count')} session{'' if n == 1 else 's'}"
+
+
+def _slope_per_week(pts: list, today: date) -> float | None:
+    """metrics.projection's slope_per_week before its 2 dp, from the same points of the last 6 weeks, so a lb
+    trend is converted once. None where projection draws no line."""
+    start = today - timedelta(days=metrics.PROJECTION_DAYS)
+    on = [(metrics.on_or_before(d, today), v) for d, v in metrics.in_order(pts, today)
+          if metrics.on_or_before(d, today) >= start]
+    if len(on) < metrics.PROJECTION_MIN_POINTS or len({d for d, _ in on}) < 2:
+        return None
+    xs, ys = [(d - on[0][0]).days for d, _ in on], [v for _, v in on]
+    mx, my = sum(xs) / len(on), sum(ys) / len(on)
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs) * 7
+
+
+def _lift_words(name: str, history: dict, today: date, units, whole: bool) -> str:
+    """One lift's sentences for the summary. whole: the one-lift view, with the best set and the trend; else its
+    first sentence and its sessions, on one line."""
+    pts = history["points"].get(name, [])
+    sessions = _sessions(history["logged"].get(name, 0))
+    now = metrics.recent_best(pts, today)
+    if now is None:
+        most = history["reps_only"].get(name)
+        if most is not None:
+            return f"{name}: most reps {formatting.show(most['reps'], 'reps')}, {sessions}."
+        return f"{name}: {sessions}."
+    first = f"{name}: estimated max now {formatting.show(now, 'estimated_max', units=units)}"
+    if not whole:
+        return f"{first}, {sessions}."
+    text = first + "."
+    best = history["best_set"].get(name)
+    if best is not None:
+        text += (f" Best set {formatting.show(best['weight_kg'], 'weight_kg', units=units)} \u00d7 "
+                 f"{formatting.show(best['reps'], 'reps')} on {formatting.day(best['date'], today)}.")
+    text += f" {sessions}."
+    trend = metrics.projection(pts, today)
+    if trend is not None:
+        per_week = trend["slope_per_week"]  # kg: the result's own 2 dp figure
+        if units is not None and units.weight == "lb":
+            per_week = _slope_per_week(pts, today)
+        text += (f" Trend {formatting.show(per_week, 'weight_rate', units=units)} "
+                 f"{formatting.unit_word('weight', units)} a week over {metrics.PROJECTION_DAYS // 7} weeks.")
+    return text
+
+
 def get_progress(user_id: int, exercise: str | None = None) -> dict:
     """One lift over time, or a summary of every lift logged.
 
@@ -80,6 +133,7 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
     A cardio activity: {today, cardio {exercise, sessions [{id, date, minutes, distance_km, pace, estimate,
     machine_kcal}] (newest first, in the one order), week {minutes, target_minutes}}, how, links[, note]}.
     week counts all cardio in the 7 days ending today, as the weekly cardio target does.
+    Each also carries summary (see the module notes).
     An exercise not on the list (lifts and cardio) gives unknown_exercise with the closest names.
     """
     with db.new_session() as s:
@@ -87,6 +141,7 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
         if user is None:
             return no_account()
         today = users.today_for(user)
+        units = users.units_for(user)
         only = None
         if exercise not in (None, ""):
             listed = exercises(s)
@@ -96,18 +151,20 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
                 return rules.unknown_exercise(exercise, names)
             activity = next(e for e in listed if e.name == only)
             if activity.kind == "cardio":
-                return _cardio(s, user, activity, today)
+                return _cardio(s, user, activity, today, units)
         history = lifts.history(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                .order_by(Goal.id).options(selectinload(Goal.exercise))))
         loaded = load_numbers(s, user.id, today, goals, lift_history=history)
-        numbers = rounded_numbers(goal_numbers(goals, loaded, today))
+        numbers = rounded_numbers(goal_numbers(goals, loaded, today, units=units))
 
         if only is not None:
             one = _one(only, history, numbers, today)
+            note = None if one["sessions"] else f"No sets of {only} logged yet."
             out = {"today": today.isoformat(), "lift": one, "how": HOW,
+                   "summary": note or _lift_words(only, history, today, units, whole=True),
                    "links": {"progress_lift": links.page("progress_lift", lift=only)}}
-            return _with_note(out, None if one["sessions"] else f"No sets of {only} logged yet.")
+            return _with_note(out, note)
 
         rows = []
         for name in sorted(history["logged"]):
@@ -117,9 +174,12 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
                          "best_estimated_max_kg": (one["best_set"] or {}).get("estimated_max_kg"),
                          "slope_per_week": one["trend"]["slope_per_week"] if one["trend"] else None,
                          "goal_status": one["goal"]["status"] if one["goal"] else None})
+        note = None if rows else "No lift sessions logged yet."
         out = {"today": today.isoformat(), "lifts": rows, "goals": numbers, "how": HOW,
+               "summary": note or "\n".join(_lift_words(r["exercise"], history, today, units, whole=False)
+                                            for r in rows),
                "links": {"progress": links.page("progress")}}
-        return _with_note(out, None if rows else "No lift sessions logged yet.")
+        return _with_note(out, note)
 
 
 def _with_note(out: dict, note: str | None) -> dict:
@@ -129,16 +189,20 @@ def _with_note(out: dict, note: str | None) -> dict:
     return out
 
 
-def _cardio(s, user, activity, today) -> dict:
+def _cardio(s, user, activity, today, units=None) -> dict:
     """One cardio activity: its sessions, newest first in the one order (cardio.sessions_of, the list
-    get_cardio gives too), and this week's minutes."""
+    get_cardio gives too), and this week's minutes. The summary: the sessions, then the latest's words."""
     rows = cardio.sessions_of(s, user, activity, today)
     sessions = [{k: d[k] for k in ("id", "date", "minutes", "distance_km", "pace", "estimate", "machine_kcal")}
                 for d in (cardio.cardio_dict(c) for c in rows)]
+    note = None if sessions else f"No {activity.name} logged yet."
     out = {"today": today.isoformat(),
            "cardio": {"exercise": activity.name, "sessions": sessions, "week": cardio.week_minutes(s, user, today)},
-           "how": CARDIO_HOW, "links": {"progress": links.page("progress")}}
-    return _with_note(out, None if sessions else f"No {activity.name} logged yet.")
+           "how": CARDIO_HOW,
+           "summary": note or (f"{activity.name}: {_sessions(len(rows))}. "
+                               f"Latest: {cardio.summary(rows[0], today, units)}"),
+           "links": {"progress": links.page("progress")}}
+    return _with_note(out, note)
 
 
 # ---------------------------------------------------------------- chart data

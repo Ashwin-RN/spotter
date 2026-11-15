@@ -70,7 +70,6 @@ Every write here locks the user row first (common.lock_user), then checks the wr
 import math
 import re
 from datetime import date, datetime, timedelta
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
@@ -103,9 +102,7 @@ ROW_FIELDS = {
 SET_FIELDS = ("exercise", "weight", "reps", "times")
 FOOD_FIELDS = ("description", "kcal", "meal")
 CALL_FIELDS = ("rows", "dry_run", "weight_unit", "distance_unit", "length_unit")
-UNITS = {"weight_unit": {"kg": 1.0, "lb": 0.45359237},
-         "distance_unit": {"km": 1.0, "mi": 1.609344},
-         "length_unit": {"cm": 1.0, "in": 2.54}}
+UNITS = rules.UNITS  # the one table of factors, and its helpers below, are rules' (contract units.md, decision 15)
 BODY_SIZES = tuple(k for k, (unit, *_rest) in rules.MEASUREMENTS.items() if unit == "cm")
 NOUNS = {"bodyweight": ("weigh-in", "weigh-ins"), "measurement": ("measurement", "measurements"),
          "lift_session": ("lift session", "lift sessions"), "food_entry": ("food entry", "food entries"),
@@ -148,48 +145,8 @@ def _renamed(err: dict, old: str, new: str, fix: bool = True) -> dict:
     return {**err, "message": word.sub(new, err["message"]), "fix": word.sub(new, err["fix"]) if fix else err["fix"]}
 
 
-def _converted(value, factor: float):
-    """A number in the call's unit, turned into the stored unit. Anything that is not a number, or a
-    value already in the stored unit, goes on as sent, so the reused check refuses it in its own words."""
-    number = rules.to_float(value)
-    if number is None or factor == 1.0:
-        return value
-    return number * factor
-
-
-UNIT_OF = {factor: unit for table in UNITS.values() for unit, factor in table.items() if factor != 1.0}
-
-
-def _inward(limits, factor: float, quantity: str) -> tuple[str, str]:
-    """A stored range in the call's unit, through the formatter at the quantity's step, each bound moved
-    inward: the lower one rounded up, the upper one down. So a number refused for being outside the range is
-    never inside the range its message quotes: 44.09 lb is outside 44.1 to 881.84 lb, not 44.09 to 881.85."""
-    step = Decimal(repr(formatting.STEP[quantity]))
-    shown = []
-    for bound, rounding in zip(limits, (ROUND_CEILING, ROUND_FLOOR)):
-        with localcontext() as ctx:
-            ctx.prec = 50
-            steps = (Decimal(repr(float(bound))) / Decimal(repr(factor)) / step).to_integral_value(rounding=rounding)
-            shown.append(formatting.show(float(steps * step), quantity, unit=False))
-    return shown[0], shown[1]
-
-
-def _call_unit(err: dict, field: str, raw, factor: float, limits, quantity: str, where: str = "",
-               fix_tail: str = "", per: str = "") -> dict:
-    """A refusal of a number sent in the call's unit (lb, mi, in), said in that unit. A range refusal quotes
-    the value as sent and the range. Every refusal of the field, "not a number" and "missing" too, gets a
-    fix with the range in the call's unit, never the stored unit's. The range through the formatter, each
-    bound moved inward (_inward). A refusal on a kg, km or cm call goes on as it is."""
-    if factor == 1.0:
-        return err
-    unit = UNIT_OF[factor] + (f" {per}" if per else "")
-    lo, hi = _inward(limits, factor, quantity)
-    at = f"{where}: " if where else ""
-    on = f" on {where.lower()}" if where else ""
-    fix = f"Give {field}{on} from {lo} to {hi} {unit}{fix_tail}."
-    if " is outside " not in err["message"]:
-        return {**err, "fix": fix}
-    return {**err, "message": f"{at}{field} {rules.as_sent(raw)} {unit} is outside {lo} to {hi} {unit}.", "fix": fix}
+# rules' converted, inward and call_unit, under the names this module has always used.
+_converted, _inward, _call_unit, UNIT_OF = rules.converted, rules.inward, rules.call_unit, rules.UNIT_OF
 
 
 _SPEED_SENT = re.compile(r"^(speed_kmh \S+) does not match ")
@@ -371,7 +328,7 @@ def _check_lift(raw: dict, on, today, by_name: dict, factor: float) -> tuple[dic
                           "reps": item.get("reps")})
     if not isinstance(items, list):
         converted = items  # check_session refuses it in its own words
-    _, sets, err = rules.check_session(on or today, converted, names, today)
+    _, sets, err = rules.check_session(on or today, converted, names, today, pounds=False)
     if err:
         for e in err["errors"]:
             at = _AT.match(e["message"])

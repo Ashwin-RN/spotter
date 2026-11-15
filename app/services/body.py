@@ -1,8 +1,10 @@
 """Bodyweight: one live weigh-in per day.
 
 log_bodyweight(user_id, data, by)
-    data: kg (20 to 400), date (YYYY-MM-DD; blank = the person's today; never after today; at most
-    two years back), allow_repeat (optional).
+    data: kg (20 to 400) or lb (44.1 to 881.84, kept in kg at 2 dp), never both; date (YYYY-MM-DD; blank =
+    the person's today; never after today; at most two years back), allow_repeat (optional).
+    The summary says the weigh-in in the person's units (contract units.md R14); a weight sent in lb while the
+    person has not chosen carries units_note.
 
     - The same weight on the same date as a live weigh-in logged in the last 10 minutes is a
       duplicate: that weigh-in comes back with duplicate true, and nothing is written.
@@ -33,7 +35,7 @@ from app import db, formatting, links, metrics, rules, users
 from app.models import Bodyweight
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, duplicate_note, find_duplicate, in_range, lock_user,
-    no_account, pair, row_dict, truthy,
+    no_account, pair, row_dict, sent, truthy, with_units_note,
 )
 
 KIND = "bodyweight"
@@ -49,12 +51,38 @@ def weigh_ins(s: Session, user_id: int, today: date) -> list[Bodyweight]:
 
 
 def check_kg(value) -> tuple[float | None, dict | None]:
-    """A body weight in kg, BODYWEIGHT_KG, 2 dp. Logging and editing both use it."""
+    """A body weight in kg, BODYWEIGHT_KG, 2 dp. Logging, editing and the import use it."""
     lo, hi = rules.BODYWEIGHT_KG
     fix = f"Give the body weight in kg, {lo} to {hi}."
     if value in (None, ""):
         return None, rules.error("missing_field", "kg is missing.", fix)
     return in_range(value, "kg", lo, hi, fix)
+
+
+def lb_range() -> tuple[str, str]:
+    """BODYWEIGHT_KG in lb, each bound moved inward: 44.1 and 881.84."""
+    return rules.inward(rules.BODYWEIGHT_KG, formatting.LB, "weigh_in")
+
+
+def check_weight(data: dict, needed: bool = True) -> tuple[float | None, dict | None]:
+    """kg or lb (decision 4), checked by check_kg, a lb one said in lb with the range moved inward. Neither, when
+    needed, is "kg or lb is missing."."""
+    lo, hi = rules.BODYWEIGHT_KG
+    lb_lo, lb_hi = lb_range()
+    field, value, err = rules.one_of(data, "kg", "lb", needed=needed,
+                                     missing_fix=f"Give the body weight in kg, {lo} to {hi}, or in lb, {lb_lo} to "
+                                                 f"{lb_hi}.")
+    if err or field is None:
+        return None, err
+    kg, err = check_kg(value)
+    if err and field == "lb":
+        err = rules.in_unit(err, "lb", data["lb"], rules.BODYWEIGHT_KG, "weigh_in")
+    return kg, err
+
+
+def weigh_in_text(kg: float, on: date, today: date, units=None) -> str:
+    """'Weigh-in 185 lb on Sun 15 Nov.': log_bodyweight's summary and delete_entry's."""
+    return f"Weigh-in {formatting.show(kg, 'weigh_in', units=units)} on {formatting.day(on, today)}."
 
 
 def weigh_in_key(on: date, kg: float) -> str:
@@ -76,7 +104,7 @@ def _check(data: dict, today: date) -> tuple[date | None, float | None, dict | N
     on, err = rules.entry_date(data.get("date"), today, "weigh-ins")
     if err:
         errors.append(err)
-    kg, err = check_kg(data.get("kg"))
+    kg, err = check_weight(data)
     if err:
         errors.append(err)
     if errors:
@@ -88,7 +116,8 @@ def log_bodyweight(user_id: int, data: dict | None, by: str) -> dict:
     """Record a weigh-in and return the trend.
 
     Returns {kind, id, duplicate, weigh_in, replaced, recent [{date, kg}] (newest first), trend, how,
-    links[, note]} or {error, message, fix}. replaced: the weigh-in this one replaced, or None.
+    summary, links[, note][, units_note]} or {error, message, fix}. replaced: the weigh-in this one replaced, or
+    None. The summary's 7-day average is the trend's now_avg, so it is there when the trend's is.
     """
     data, err = check_data(data)
     err = err or check_by(by)
@@ -102,12 +131,14 @@ def log_bodyweight(user_id: int, data: dict | None, by: str) -> dict:
         if limited:
             return limited
         today = users.today_for(user)
+        units = users.units_for(user)
         on, kg, err = _check(data, today)
         if err:
             return err
         key = weigh_in_key(on, kg)
 
         first = None if truthy(data.get("allow_repeat")) else find_duplicate(s, Bodyweight, user.id, on, key)
+        was = None
         if first is not None:
             row, replaced, note = first, None, duplicate_note("weigh-in")
         else:
@@ -120,8 +151,8 @@ def log_bodyweight(user_id: int, data: dict | None, by: str) -> dict:
                 # row exists, by construction rather than by the order SQLAlchemy picks within a flush.
                 s.flush()
                 replaced = row_dict(live)
-                was = pair(live.kg, kg, "weigh_in")[0]
-                note = (f"Replaced the {formatting.day(on, today)} weigh-in of {was}: "
+                was = pair(live.kg, kg, "weigh_in", units=units)
+                note = (f"Replaced the {formatting.day(on, today)} weigh-in of {was[0]}: "
                         "one weigh-in a day. The earlier weigh-in is kept, not erased, and can be brought back later. "
                         "Its id is under replaced.")
             row = Bodyweight(user_id=user.id, date=on, kg=kg, logged_by=by, dedupe_key=key)
@@ -134,8 +165,26 @@ def log_bodyweight(user_id: int, data: dict | None, by: str) -> dict:
             "replaced": replaced,
             "recent": [{"date": d.isoformat(), "kg": w} for d, w in reversed(points[-RECENT_WEIGH_INS:])],
             "trend": _trend(points, today), "how": HOW,
+            "summary": _summary(row, first is not None, was, points, today, units),
             "links": {"progress": links.page("progress")},
         }
         if note:
             out["note"] = note
-        return out
+        return with_units_note(out, user, sent(data.get("lb")), False)
+
+
+def _summary(row: Bodyweight, duplicate: bool, was: tuple[str, str] | None, points: list, today: date,
+             units) -> str:
+    """The weigh-in in one line (R14), in the person's units. A replace names the one replaced, the pair widened
+    together (common.pair), and the trend's 7-day average follows when the trend has one."""
+    if duplicate:
+        return (f"Already logged: {formatting.show(row.kg, 'weigh_in', units=units)} on "
+                f"{formatting.day(row.date, today)}. Nothing new was written.")
+    if was is None:
+        text = weigh_in_text(row.kg, row.date, today, units)
+    else:
+        text = f"Weigh-in {was[1]} on {formatting.day(row.date, today)}. It replaces {was[0]}, kept, not erased."
+    trend = metrics.bodyweight_trend(points, today)
+    if trend is not None and trend["now_avg"] is not None:
+        text += f" 7-day average {formatting.show(trend['now_avg'], 'bodyweight_derived', units=units)}."
+    return text

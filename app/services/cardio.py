@@ -18,6 +18,11 @@ log_cardio(user_id, data, by)
       note says which was logged and what the others' estimates would be (or, with no weigh-in, their
       METs), so the person can correct it with edit_entry. A duplicate's note, and the no-weigh-in note, come first.
     - The duplicate guard: the same date, activity and numbers within 10 minutes is a duplicate.
+    - Miles (contract units.md): distance_mi beside distance_km and speed_mph beside speed_kmh, one of each
+      pair (check_pairs), kept in km at 2 dp. A refusal of a number sent in miles is said in miles, the range
+      moved inward; with_speed's and speed_disagrees' refusals on a call that sent miles are worded in miles
+      by in_miles. The summary is in the person's units: "3 mi, pace 9:00 per mi". A distance or speed in
+      miles while the person has not chosen carries units_note.
 
 estimate(s, user, exercise, minutes, today) -> {kcal, weight_kg, met, source} | None
 cardio_dict(entry) -> the entry's columns plus exercise, pace, estimate and machine_kcal
@@ -59,12 +64,16 @@ from app.models import CardioEntry, User
 from app.services import body
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, duplicate_note, exercises, find_duplicate,
-    lock_user, no_account, row_dict, truthy,
+    lock_user, no_account, row_dict, sent, truthy, with_units_note,
 )
 
 KIND = "cardio_entry"
 NUMBER_FIELDS = ("minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal")
 FIELDS = ("exercise", "date", "notes", "allow_repeat", *NUMBER_FIELDS)
+# A number sent in miles (decision 4): (its km field, its mile field, the quantity its range is shown at, its unit).
+MILE_FIELDS = (("distance_km", "distance_mi", "km", None), ("speed_kmh", "speed_mph", "speed", "mph"))
+ACCEPTED = (*FIELDS, *(m for _, m, _, _ in MILE_FIELDS))  # what a call may send; the refusal still lists FIELDS
+MILES = formatting.Units("kg", "mi")
 NO_WEIGH_IN = ("No weigh-in yet, so no calorie estimate: the estimate needs body weight. Log a weigh-in and "
                "the next cardio entry gets one.")
 
@@ -137,6 +146,52 @@ def check_numbers(data: dict) -> tuple[dict, list[dict]]:
         else:
             values[field] = None
     return values, errors
+
+
+def check_pairs(data: dict) -> tuple[dict, dict, list[dict]]:
+    """(the data with each mile field in its km field, unrounded, {km field: the value as sent in miles}, errors).
+    One of each pair (rules.one_of): both is invalid_field. A null mile field stands for its km field's null."""
+    out = {k: v for k, v in data.items() if k not in ("distance_mi", "speed_mph")}
+    in_miles, errors = {}, []
+    for km_field, mile_field, _, _ in MILE_FIELDS:
+        field, value, err = rules.one_of(data, km_field, mile_field)
+        if err:
+            errors.append(err)
+        elif field == mile_field:
+            out[km_field], in_miles[km_field] = value, data[mile_field]
+        elif mile_field in data and km_field not in data:
+            out[km_field] = data[mile_field]
+    return out, in_miles, errors
+
+
+def said_in_miles(err: dict, in_miles: dict) -> dict:
+    """A range refusal of check_numbers (or the same check in an edit) for a number sent in miles, in miles."""
+    for km_field, mile_field, quantity, word in MILE_FIELDS:
+        if km_field in in_miles and err["message"].startswith(f"{km_field} "):
+            return rules.in_unit(err, mile_field, in_miles[km_field], rules.NUMBERS[km_field][:2], quantity, word=word)
+    return err
+
+
+def in_miles(err: dict, raw: dict, values: dict) -> dict:
+    """with_speed's two refusals, and an edit's speed that no longer fits, on a call that sent miles: worded in
+    miles, as the import's are (its _speed_in_call_unit), with mph for the speed. values: the distance_km, minutes
+    and speed_kmh the check used; raw: what the call sent."""
+    distance, minutes = values.get("distance_km"), values.get("minutes")
+    worked = formatting.show(metrics.speed(distance, minutes), "speed", units=MILES)
+    miles = (rules.as_sent(raw["distance_mi"]) if sent(raw.get("distance_mi"))
+             else formatting.field(distance, "km", units=MILES))
+    ran_text = f"{miles} mi in {formatting.field(minutes, 'session_time')} minutes"
+    speed_field = "speed_kmh" if sent(raw.get("speed_kmh")) else "speed_mph"
+    fix = err["fix"].replace("speed_kmh", speed_field)
+    if "does not match" in err["message"]:
+        stated = (rules.as_sent(raw[speed_field]) if sent(raw.get(speed_field))
+                  else formatting.field(values["speed_kmh"], "speed", units=MILES))
+        return {**err, "message": f"{speed_field} {stated} does not match {ran_text}, which is {worked}.", "fix": fix}
+    if "no longer fits" in err["message"]:
+        gave = formatting.show(values["speed_kmh"], "speed", units=MILES)
+        return {**err, "message": f"{ran_text} is {worked}; the speed you gave, {gave}, no longer fits.", "fix": fix}
+    lo, hi = rules.inward(rules.NUMBERS["speed_kmh"][:2], formatting.MI, "speed")
+    return {**err, "message": f"{ran_text} is {worked}, outside {lo} to {hi} mph.", "fix": fix}
 
 
 SPEED_TOLERANCE = 0.20  # a stated speed may differ from distance / minutes by up to this share
@@ -215,17 +270,21 @@ def sibling_note(s, exercise, est: dict | None, minutes: float) -> str | None:
     return f"{head} The other {word} activities are {listed}, against MET {met(exercise)} for this one. {tail}"
 
 
-def summary(entry: CardioEntry, today: date) -> str:
-    """'Outdoor Run on Tue 10 Nov for 30:00, 5 km, pace 6:00 per km, about 300 kcal estimated.'"""
+def summary(entry: CardioEntry, today: date, units=None) -> str:
+    """'Outdoor Run on Tue 10 Nov for 30:00, 5 km, pace 6:00 per km, about 300 kcal estimated.' In the person's
+    units: '3 mi, pace 9:00 per mi', 'from body weight now, 185.2 lb'."""
     text = (f"{entry.exercise.name} on {formatting.day(entry.date, today)} for "
             f"{formatting.show(entry.minutes, 'session_time')}")
     if entry.distance_km:
-        text += (f", {formatting.show(entry.distance_km, 'km')}, pace "
-                 f"{metrics.pace(entry.distance_km, entry.minutes)} per km")
+        miles = units is not None and units.distance == "mi"
+        pace = metrics.pace(entry.distance_km / formatting.MI if miles else entry.distance_km, entry.minutes)
+        text += (f", {formatting.show(entry.distance_km, 'km', units=units)}, pace "
+                 f"{pace} per {formatting.unit_word('distance', units)}")
     if entry.estimated_kcal is not None:
         text += f", about {formatting.show(entry.estimated_kcal, 'kcal')} estimated"
         if entry.date != today:  # decision 7: body weight now, even for an earlier day; say so
-            text += f" from body weight now, {formatting.show(entry.estimate_weight_kg, 'bodyweight_derived')}"
+            text += (" from body weight now, "
+                     f"{formatting.show(entry.estimate_weight_kg, 'bodyweight_derived', units=units)}")
     if entry.machine_kcal is not None:
         text += f", the machine said {formatting.show(entry.machine_kcal, 'kcal')}"
     return text + "."
@@ -233,7 +292,7 @@ def summary(entry: CardioEntry, today: date) -> str:
 
 def log_cardio(user_id: int, data: dict | None, by: str) -> dict:
     """Returns {kind: "cardio_entry", id, duplicate, entry, pace, estimate, machine_kcal, week, summary,
-    links {day, progress}[, note]} or {error, message, fix}."""
+    links {day, progress}[, note][, units_note]} or {error, message, fix}."""
     data, err = check_data(data)
     err = err or check_by(by)
     if err:
@@ -247,18 +306,21 @@ def log_cardio(user_id: int, data: dict | None, by: str) -> dict:
             return limited
         today = users.today_for(user)
         errors = [rules.error("invalid_field", f"'{rules.quote(k)}' is not a field of a cardio entry.",
-                              f"Use: {', '.join(FIELDS)}.") for k in data if k not in FIELDS]
+                              f"Use: {', '.join(FIELDS)}.") for k in data if k not in ACCEPTED]
         exercise, err = match_cardio(s, data.get("exercise"))
         errors += [err] if err else []
-        values, errs = check_numbers(data)
+        raw = data
+        data, sent_miles, errs = check_pairs(data)
         errors += errs
+        values, errs = check_numbers(data)
+        errors += [said_in_miles(e, sent_miles) for e in errs]
         on, err = rules.entry_date(data.get("date"), today, "cardio sessions")
         errors += [err] if err else []
         notes, err = rules.text(data.get("notes"), "notes")
         errors += [err] if err else []
         if not errors:
             values, err = with_speed(values)
-            errors += [err] if err else []
+            errors += [in_miles(err, raw, values) if err and sent_miles else err] if err else []
         if errors:
             return rules.combine(errors)
 
@@ -287,11 +349,12 @@ def log_cardio(user_id: int, data: dict | None, by: str) -> dict:
                "entry": {k: v for k, v in shown.items() if k not in ("pace", "estimate")},
                "pace": shown["pace"], "estimate": shown["estimate"], "machine_kcal": row.machine_kcal,
                "week": week_minutes(s, user, today),
-               "summary": ("Already logged: " if first is not None else "") + summary(row, today),
+               "summary": ("Already logged: " if first is not None else "") + summary(row, today,
+                                                                                    users.units_for(user)),
                "links": {"day": links.page("day", date=row.date), "progress": links.page("progress")}}
         if note:
             out["note"] = note
-        return out
+        return with_units_note(out, user, False, bool(sent_miles))
 
 
 # ---------------------------------------------------------------- reading an activity back

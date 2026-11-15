@@ -3,7 +3,8 @@
 whoami(user_id, offered=())
     The signed-in person's account: account_id (the row id), user_id (the sign-in provider's subject,
     the same value the token's sub and the Settings page show), email, name, time zone, today's date
-    for them, their targets, what Claude may do, and links, links.hi_there always. Until a time zone is
+    for them, their targets, their units (users.units_for: kg and km until chosen), what Claude may do,
+    and links, links.hi_there always. Until a time zone is
     set, today is the UTC date and time_zone_note tells Claude to set it with update_settings. While the
     account is empty, by account_empty's rule, new_account_note tells Claude to offer setup once and to
     give the person links.hi_there once. While a setup step other than import is missing, setup carries
@@ -15,7 +16,9 @@ whoami(user_id, offered=())
 update_settings(user_id, data, by)
     Change the person's own settings (SETTABLE): time_zone; calorie_target_kcal (800 to 10,000),
     target_sessions_per_week (0 to 14) and target_cardio_minutes_per_week (0 to 3,000), whole numbers,
-    null to clear; add_back_exercise_kcal, true or false. The summary names each change.
+    null to clear; add_back_exercise_kcal, true or false; weight_unit (kg or lb) and distance_unit (km or mi),
+    case and outer spaces forgiven, which change how texts show numbers and no stored number (contract
+    units.md). Saving either unit, kg and km too, ends units_note. The summary names each change.
     claude_can, what Claude may do, is never set here, whoever
     calls: only the person changes it, on the Settings page, through set_claude_can.
 
@@ -92,7 +95,7 @@ def setup_steps(offered=()) -> tuple[str, ...]:
 
 
 def whoami(user_id: int, offered=()) -> dict:
-    """Returns {account_id, user_id, email, name, time_zone, today, targets, claude_can, links[,
+    """Returns {account_id, user_id, email, name, time_zone, today, targets, units, claude_can, links[,
     time_zone_note][, new_account_note][, setup]} or {error, message, fix}. See the module notes."""
     with db.new_session() as s:
         user = s.get(User, user_id)
@@ -110,6 +113,7 @@ def whoami(user_id: int, offered=()) -> dict:
                 "target_sessions_per_week": user.target_sessions_per_week,
                 "target_cardio_minutes_per_week": user.target_cardio_minutes_per_week,
             },
+            "units": users.units_for(user)._asdict(),
             "claude_can": user.claude_can,
             "links": {"settings": links.page("settings"), "home": links.page("home"),
                       "hi_there": links.page("hi_there")},
@@ -212,6 +216,18 @@ def _switch(value) -> tuple[bool | None, dict | None]:
                        "Give add_back_exercise_kcal as true or false.")
 
 
+def _unit(field: str):
+    """weight_unit (kg or lb) or distance_unit (km or mi): case and outer spaces forgiven, else invalid_unit in the
+    import's words."""
+    def check(value):
+        key = value.strip().casefold() if isinstance(value, str) else None
+        if key in rules.UNITS[field]:
+            return key, None
+        shown = "" if value is None else quote(value)  # null reads as blank, never as None
+        return None, error("invalid_unit", f"{field} '{shown}' is not a unit Spotter takes.", rules.UNITS_FIX)
+    return check
+
+
 # What update_settings can set: field -> its check, which returns (stored value, error).
 SETTABLE = {
     "time_zone": _time_zone,
@@ -219,6 +235,8 @@ SETTABLE = {
     "target_sessions_per_week": _target("target_sessions_per_week"),
     "target_cardio_minutes_per_week": _target("target_cardio_minutes_per_week"),
     "add_back_exercise_kcal": _switch,
+    "weight_unit": _unit("weight_unit"),
+    "distance_unit": _unit("distance_unit"),
 }
 SAID = {
     "time_zone": lambda v: f"Time zone set to {v}",
@@ -231,6 +249,8 @@ SAID = {
         else "Weekly cardio target cleared"),
     "add_back_exercise_kcal": lambda v: ("Exercise calories are now added back" if v
                                          else "Exercise calories are no longer added back"),
+    "weight_unit": lambda v: f"Weights now show in {v}",
+    "distance_unit": lambda v: f"Distances now show in {'miles' if v == 'mi' else v}",
 }
 
 

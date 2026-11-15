@@ -1308,8 +1308,9 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
             assert (owner["constrained_columns"], owner["referred_table"], owner["options"]) == (
                 ["user_id"], "user", {"ondelete": "CASCADE"})
             # The models match, but for the table and index 0008 adds (tests/test_feedback.py holds them there).
-            assert sorted((d[0], d[1].name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
-                == [("add_index", "ix_feedback_user_id_created_at"), ("add_table", "feedback"),
+            assert sorted((d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
+                == [("add_column", "distance_unit"), ("add_column", "weight_unit"),  # 0011's (units)
+                    ("add_index", "ix_feedback_user_id_created_at"), ("add_table", "feedback"),
                     ("add_table", "routine")]  # and 0010's (tests/test_routines.py)
         with engine.begin() as c:
             for user, entry in ((1, 5), (1, 5), (2, 5), (2, 999999)):  # many for one entry, and an id no table holds
@@ -1326,7 +1327,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0010"  # routines
+    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0011"  # units
 
 
 def test_every_kind_s_table_name_fits_the_version_s_kind_column():

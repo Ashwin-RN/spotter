@@ -416,6 +416,19 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("save_routine", push)  # created
     keep("save_routine", push)  # the same again: nothing changed
     keep("get_routines")  # one: Bench Press from today's session, Dip with no weight at all
+    # A fourth person, who never chose units, says pounds and miles (units.md R7): each write carries units_note,
+    # and a delete's preview its summary.
+    lb_token = sign(claims(sub="user_01POUNDS", email="pounds@example.com", name="Pounds"))
+    whoami(client, lb_token)
+    keep("log_lifts", {"sets": [{"exercise": "Bench Press", "weight_lb": 225, "reps": 5}]}, as_token=lb_token)
+    weighed = keep("log_bodyweight", {"lb": 185}, as_token=lb_token)
+    keep("log_cardio", {"exercise": "Outdoor Run", "minutes": 27, "distance_mi": 3}, as_token=lb_token)
+    keep("edit_entry", {"kind": "bodyweight", "entry_id": weighed["id"], "lb": 184}, as_token=lb_token)
+    keep("set_goal", {"kind": "bodyweight", "target_value": 175, "weight_unit": "lb",
+                      "target_date": (today + timedelta(days=60)).isoformat()}, as_token=lb_token)
+    keep("save_routine", {"name": "Pull day", "lifts": [{"exercise": "Barbell Row", "sets": 3, "reps": 8,
+                                                         "weight_lb": 135}]}, as_token=lb_token)
+    keep("delete_entry", {"kind": "bodyweight", "entry_id": weighed["id"]}, as_token=lb_token)
     # import_entries, last, so no read above sees its rows: a preview, the real run, the same rows again, and a
     # run whose every row fails (no date passed: from, to and the day link are null or absent).
     keep("import_entries", {"rows": import_rows(today), **IMPORT_UNITS})  # dry_run left out: by_row, a null id
@@ -480,10 +493,10 @@ def test_the_arguments_are_typed_parameters(http):
     schemas = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}
     assert list(schemas["log_lifts"]["properties"]) == ["sets", "date", "notes", "allow_repeat", "new_session", "key"]
     assert schemas["log_lifts"]["required"] == ["sets"]
-    assert list(schemas["log_bodyweight"]["properties"]) == ["kg", "date", "allow_repeat", "key"]
+    assert list(schemas["log_bodyweight"]["properties"]) == ["kg", "lb", "date", "allow_repeat", "key"]  # units.md
     assert list(schemas["set_goal"]["properties"]) == ["kind", "exercise", "measurement_kind", "distance_km",
-                                                       "target_value", "target_date", "text", "start_value", "goal_id",
-                                                       "status", "key"]
+                                                       "distance_mi", "target_value", "target_date", "text",
+                                                       "start_value", "weight_unit", "goal_id", "status", "key"]
     assert not schemas["set_goal"].get("required")
     assert schemas["get_trends"]["properties"] == {}
     assert list(schemas["get_goals"]["properties"]) == ["include_closed"]
@@ -491,7 +504,7 @@ def test_the_arguments_are_typed_parameters(http):
     assert list(schemas["get_progress"]["properties"]) == ["exercise"]
     assert list(schemas["update_settings"]["properties"]) == [
         "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
-        "add_back_exercise_kcal", "key"]
+        "add_back_exercise_kcal", "weight_unit", "distance_unit", "key"]
     assert list(schemas["find_food"]["properties"]) == ["query", "limit"]
     assert list(schemas["log_food"]["properties"]) == ["entries", "date", "allow_repeat", "key"]
     assert list(schemas["log_food"]["$defs"]["FoodEntryIn"]["properties"]) == [
@@ -499,13 +512,13 @@ def test_the_arguments_are_typed_parameters(http):
     assert list(schemas["save_food"]["properties"]) == ["name", "serving_label", "kcal_per_serving", "grams_per_serving",
                                                         "key"]
     assert list(schemas["log_cardio"]["properties"]) == [
-        "exercise", "minutes", "date", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal", "notes",
-        "allow_repeat", "key"]
+        "exercise", "minutes", "date", "distance_km", "distance_mi", "incline_pct", "speed_kmh", "speed_mph", "avg_hr",
+        "machine_kcal", "notes", "allow_repeat", "key"]
     assert list(schemas["list_exercises"]["properties"]) == ["kind", "category"]
     assert schemas["whoami"]["properties"] == {}
     one_set = schemas["log_lifts"]["$defs"]["SetIn"]
     assert one_set["properties"]["reps"]["type"] == "integer"
-    assert set(one_set["required"]) == {"exercise", "weight_kg", "reps"}
+    assert set(one_set["required"]) == {"exercise", "reps"}  # units.md R9: weight_kg or weight_lb
 
 
 def test_every_real_result_validates_and_its_keys_are_the_models(http):
@@ -861,25 +874,27 @@ OPTIONAL_ARGUMENTS = {
     "whoami": {},
     "list_exercises": {"kind": "lift", "category": "push"},
     "log_lifts": {"date": "2026-01-02", "notes": "Notes", "allow_repeat": True, "new_session": True},
-    "log_bodyweight": {"date": "2026-01-02", "allow_repeat": True},
+    "log_bodyweight": {"kg": 80.5, "lb": 177.5, "date": "2026-01-02", "allow_repeat": True},  # units.md: kg or lb
     "set_goal": {"kind": "lift", "exercise": "Back Squat", "measurement_kind": "waist", "distance_km": 5.5,
-                 "target_value": 150.5, "target_date": "2099-01-01", "text": "Text", "start_value": 100.5, "goal_id": 7,
-                 "status": "open"},
+                 "distance_mi": 3.4, "target_value": 150.5, "target_date": "2099-01-01", "text": "Text",
+                 "start_value": 100.5, "weight_unit": "lb", "goal_id": 7, "status": "open"},
     "get_progress": {"exercise": "Back Squat"},
     "update_settings": {"time_zone": "Asia/Kolkata", "calorie_target_kcal": 2200, "target_sessions_per_week": 4,
-                        "target_cardio_minutes_per_week": 150, "add_back_exercise_kcal": True},
+                        "target_cardio_minutes_per_week": 150, "add_back_exercise_kcal": True, "weight_unit": "lb",
+                        "distance_unit": "mi"},
     "get_log": {"date": "2026-01-02", "days": 7},
     "log_measurement": {"date": "2026-01-02", "allow_repeat": True},
-    "edit_entry": {"date": "2026-01-02", "notes": "Notes", "sets": squat(105), "kg": 80.5, "value": 84.5,
+    "edit_entry": {"date": "2026-01-02", "notes": "Notes", "sets": squat(105), "kg": 80.5, "lb": 177.5, "value": 84.5,
                    "meal": "lunch", "description": "Dal", "kcal": 150.0, "exercise": "Treadmill Walk", "minutes": 30.0,
-                   "distance_km": 3.5, "incline_pct": 2.0, "speed_kmh": 7.0, "avg_hr": 130, "machine_kcal": 210},
+                   "distance_km": 3.5, "distance_mi": 2.2, "incline_pct": 2.0, "speed_kmh": 7.0, "speed_mph": 4.3,
+                   "avg_hr": 130, "machine_kcal": 210},
     "restore_entry": {"undo_edit": True},
     "delete_entry": {"confirm": "0123456789ab"},  # switch decision 7: the second call's code
     "find_food": {"limit": 5},
     "log_food": {"date": "2026-01-02", "allow_repeat": True},
     "save_food": {"grams_per_serving": 40.0},
-    "log_cardio": {"date": "2026-01-02", "distance_km": 3.5, "incline_pct": 2.0, "speed_kmh": 7.0, "avg_hr": 130,
-                   "machine_kcal": 210, "notes": "Easy", "allow_repeat": True},
+    "log_cardio": {"date": "2026-01-02", "distance_km": 3.5, "distance_mi": 2.2, "incline_pct": 2.0, "speed_kmh": 7.0,
+                   "speed_mph": 4.3, "avg_hr": 130, "machine_kcal": 210, "notes": "Easy", "allow_repeat": True},
     "get_trends": {},
     "get_goals": {"include_closed": True},
     "import_entries": {"dry_run": False, "weight_unit": "lb", "distance_unit": "mi", "length_unit": "in"},
@@ -887,7 +902,7 @@ OPTIONAL_ARGUMENTS = {
     "save_routine": {},  # routines.md: name and lifts are required, and a lift's weight_kg sits inside lifts
     "get_routines": {},
 }
-REQUIRED = {"log_lifts": {"sets": squat(100)}, "log_bodyweight": {"kg": 80.5},
+REQUIRED = {"log_lifts": {"sets": squat(100)},
             "log_measurement": {"kind": "waist", "value": 84.5},
             "edit_entry": {"kind": "lift_session", "entry_id": 7},
             "restore_entry": {"kind": "measurement", "entry_id": 7},
@@ -1159,7 +1174,7 @@ def test_the_permission_switch_cannot_be_set_through_update_settings(http, monke
     schema = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["update_settings"]
     assert "claude_can" not in schema["properties"] and set(schema["properties"]) == {
         "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
-        "add_back_exercise_kcal", "key"}
+        "add_back_exercise_kcal", "weight_unit", "distance_unit", "key"}  # units.md decision 3
     assert not any("claude_can" in t["inputSchema"].get("properties", {}) for t in tool_list(http, sign()))
     # And in practice: an extra claude_can is dropped before the service; the stored switch is unchanged.
     token = sign()
@@ -2067,7 +2082,8 @@ def test_the_descriptions_carry_the_same_sentences(http):
     for kind in ("lift", "bodyweight", "measurement", "cardio_best"):
         assert kind in goal["inputSchema"]["properties"]["kind"]["description"], kind
     target = goal["inputSchema"]["properties"]["target_value"]["description"]
-    for words in ("A lift: kg", "Body weight: kg", "A measurement: its own unit", "A cardio_best: minutes"):
+    for words in ("A lift: an estimated one-rep max in weight_unit", "Body weight: in weight_unit",
+                  "A measurement: its own unit", "A cardio_best: minutes"):  # units.md R12
         assert words in target, words
     for kind in ("waist", "hips", "chest", "arm", "thigh", "resting_hr"):
         assert kind in goal["inputSchema"]["properties"]["measurement_kind"]["description"], kind

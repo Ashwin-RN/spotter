@@ -2,8 +2,10 @@
 
 log_lifts(user_id, data, by)
     data: date (YYYY-MM-DD; blank = the person's today; never after today, at most two years back),
-    sets [{exercise, weight_kg, reps}] (1 to 60), notes (optional, up to 2,000 characters),
-    new_session (optional). allow_repeat is read by nothing: an old client may still send it.
+    sets [{exercise, weight_kg or weight_lb, reps}] (1 to 60), notes (optional, up to 2,000 characters),
+    new_session (optional). allow_repeat is read by nothing: an old client may still send it. A weight_lb is
+    kept in kg (rules.check_session); the summary and every best's text are in the person's units
+    (contract units.md), and a set sent in lb while the person has not chosen carries units_note.
     Which session (contract gym-logging.md): the person's live session with that date as stored, the
     highest id, under the lock. new_session true, or no such session: a new one, its sets numbered per
     exercise in the order given. Otherwise an add to it, whoever started it (web, import, assistant).
@@ -24,9 +26,10 @@ history(s, user_id, today)
     with their dates. today orders; it never drops a row.
     The best set's estimated max comes back at 1 dp; every other value at the working precision.
 
-rounded_best(best) and best_text(best)
+rounded_best(best) and best_text(best, units=None)
     A new best for a result: an estimated max and the one it beat at 1 dp together, or both at 2 dp
-    when they would read the same at 1 dp (D5). best_text says the pair the same way.
+    when they would read the same at 1 dp (D5). best_text says the pair the same way, in the person's
+    units, from the unrounded best: a pair that reads the same in lb widens to 0.01 lb (decision 10).
 
 Every write here locks the user row first (common.lock_user), then checks the write limit
 (common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
@@ -41,18 +44,25 @@ from app import db, formatting, links, metrics, rules, users
 from app.models import IMPORTED, LiftSession, LiftSet
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, exercises, keep_version, lock_user, no_account, row_dict,
-    truthy,
+    sent, truthy, with_units_note,
 )
 
 KIND = "lift_session"
 BEST_LABELS = {"estimated_max": "estimated max", "weight": "heaviest weight"}
 
 
-def _widened(p: dict) -> bool:
-    """Whether a best of kind estimated_max and the one it beat read the same at 1 dp: then both show
-    and round at 2 dp. metrics.prs needs the new one strictly above at 2 dp, so 2 dp tells them apart."""
-    return p["kind"] == "estimated_max" and (formatting.show(p["value"], "estimated_max")
-                                             == formatting.show(p["previous"], "estimated_max"))
+def _quantity(p: dict) -> str:
+    return "estimated_max" if p["kind"] == "estimated_max" else "weight_kg"
+
+
+def _widened(p: dict, units=None) -> bool:
+    """Whether a best and the one it beat read the same in the shown unit: then both widen. In kg only an
+    estimated max can (at 1 dp, so both show and round at 2 dp); a heaviest weight is shown at its stored 2 dp.
+    In lb either can: 102.06 and 102.05 kg are both 225 lb. metrics.prs needs the new one strictly above at
+    2 dp, and 0.01 lb tells two such numbers apart (decision 10)."""
+    quantity = _quantity(p)
+    return (formatting.show(p["value"], quantity, units=units)
+            == formatting.show(p["previous"], quantity, units=units))
 
 
 def rounded_best(p: dict) -> dict:
@@ -60,29 +70,28 @@ def rounded_best(p: dict) -> dict:
     stays as entered."""
     if p["kind"] != "estimated_max":
         return dict(p)
-    wide = _widened(p)
+    wide = _widened(p)  # in kg: the number fields never move with the units
     return {**p, "value": formatting.rounded(p["value"], "estimated_max", widened=wide),
             "previous": formatting.rounded(p["previous"], "estimated_max", widened=wide)}
 
 
-def best_text(p: dict) -> str:
-    """'Back Squat estimated max 81.7 kg, up from 70 kg'. The pair widens together (D5)."""
-    if p["kind"] == "estimated_max":
-        wide = _widened(p)
-        value, previous = (formatting.show(p[k], "estimated_max", widened=wide) for k in ("value", "previous"))
-    else:
-        value, previous = (formatting.show(p[k], "weight_kg") for k in ("value", "previous"))
+def best_text(p: dict, units=None) -> str:
+    """'Back Squat estimated max 81.7 kg, up from 70 kg'. The pair widens together (D5), judged in the shown
+    unit. Give it the unrounded best: a figure rounded at a kg step can read 0.1 lb off in lb."""
+    wide = _widened(p, units)
+    value, previous = (formatting.show(p[k], _quantity(p), widened=wide, units=units) for k in ("value", "previous"))
     return f"{p['exercise']} {BEST_LABELS.get(p['kind'], p['kind'])} {value}, up from {previous}"
 
 
-def first_text(lift: str, lift_sets: list[tuple[float, int]]) -> str:
+def first_text(lift: str, lift_sets: list[tuple[float, int]], units=None) -> str:
     """'First Back Squat session: estimated max 70 kg is the mark to beat.' Heaviest weight when no set
     is 1 to 10 reps; nothing to measure when no set counts at all."""
     estimate, heaviest = metrics.session_best(lift_sets), metrics.max_weight(lift_sets)
     if estimate is not None:
-        return f"First {lift} session: estimated max {formatting.show(estimate, 'estimated_max')} is the mark to beat."
+        return (f"First {lift} session: estimated max {formatting.show(estimate, 'estimated_max', units=units)} "
+                "is the mark to beat.")
     if heaviest is not None:
-        return f"First {lift} session: {formatting.show(heaviest, 'weight_kg')} is the mark to beat."
+        return f"First {lift} session: {formatting.show(heaviest, 'weight_kg', units=units)} is the mark to beat."
     return f"First {lift} session."
 
 
@@ -93,22 +102,24 @@ def _joined(items: list[str]) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
-def sets_text(sets: list[tuple[str, float, int]]) -> str:
+def sets_text(sets: list[tuple[str, float, int]], units=None) -> str:
     """'Back Squat 3 \u00d7 5 at 80 kg and Bench Press 60 kg \u00d7 5, 60 kg \u00d7 4' from (exercise,
-    weight, reps), in order: one part a lift, joined as a list."""
-    groups: dict[str, list[tuple[float, int]]] = {}
+    weight, reps), in order: one part a lift, joined as a list. Sets are grouped by their shown weight and reps
+    (R8), so two sets that read 225 lb \u00d7 5 read "2 \u00d7 5 at 225 lb" whatever kg they hold. In kg shown
+    equals stored, so no kg text moves."""
+    groups: dict[str, list[tuple[str | None, int]]] = {}
     for name, w, r in sets:
-        groups.setdefault(name, []).append((w, r))
+        groups.setdefault(name, []).append((formatting.show(w, "weight_kg", units=units) if w else None, r))
     times = "\u00d7"
     parts = []
     for name, rows in groups.items():
         if len(set(rows)) == 1:
             w, r = rows[0]
             parts.append(f"{name} {formatting.show(len(rows), 'count')} {times} {formatting.show(r, 'reps')}"
-                         + (f" at {formatting.show(w, 'weight_kg')}" if w else ""))
+                         + (f" at {w}" if w else ""))
         else:
             parts.append(f"{name} " + ", ".join(
-                f"{formatting.show(w, 'weight_kg')} {times} {formatting.show(r, 'reps')}" if w
+                f"{w} {times} {formatting.show(r, 'reps')}" if w
                 else f"{formatting.show(r, 'reps')} reps" for w, r in rows))
     return _joined(parts)
 
@@ -228,9 +239,15 @@ def _prior(s: Session, user_id: int, exercise_ids: set, name_of: dict, on: date,
     return prior
 
 
-def _best(lift: str, hit: dict) -> dict:
-    p = rounded_best({"exercise": lift, **hit})
-    return {**p, "text": best_text(p)}
+def _best(lift: str, hit: dict, units=None) -> dict:
+    """A new best for a result: its numbers rounded in kg, its text in the person's units from the unrounded one."""
+    raw = {"exercise": lift, **hit}
+    return {**rounded_best(raw), "text": best_text(raw, units)}
+
+
+def _sent_lb(sets) -> bool:
+    """Whether any set the caller sent gave its weight in lb: for units_note."""
+    return isinstance(sets, list) and any(isinstance(x, dict) and sent(x.get("weight_lb")) for x in sets)
 
 
 def _tail(new_bests: list[dict], firsts: list[str]) -> str:
@@ -246,7 +263,8 @@ def _count(n: int) -> str:
     return formatting.show(n, "count")
 
 
-def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name: dict, by: str, today: date) -> dict:
+def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name: dict, by: str, today: date,
+         units=None) -> dict:
     """The call's sets added to the date's session, as an edit of it (see the module notes). Refused past
     rules.SESSION_SETS[1] sets or rules.TEXT_MAX characters of notes, before anything is kept or written."""
     on, had = session.date, sorted(session.sets, key=lambda x: x.id)
@@ -279,10 +297,10 @@ def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name
         was = [(w, r) for ex_id, _, w, r in held if name_of.get(ex_id) == lift]
         now = was + [(x["weight_kg"], x["reps"]) for x in sets if x["exercise"] == lift]
         if not prior.get(lift):
-            firsts.append(first_text(lift, now))
+            firsts.append(first_text(lift, now, units))
             continue
         before = {b["kind"]: b["value"] for b in metrics.prs(prior[lift], was)}
-        new_bests += [_best(lift, hit) for hit in metrics.prs(prior[lift], now)
+        new_bests += [_best(lift, hit, units) for hit in metrics.prs(prior[lift], now)
                       if hit["kind"] not in before or hit["value"] > before[hit["kind"]]]
 
     keep_version(s, session, by)  # every check has passed: the session as it stands is kept
@@ -293,7 +311,8 @@ def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name
         session.dedupe_key = session_key(on, session.notes, held + keyed)
     session.updated_at = db.utcnow()
     s.flush()
-    summary = (f"Added {sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets])} to the session on "
+    summary = (f"Added {sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets], units)} to the "
+               "session on "
                f"{formatting.day(on, today)}. It now has {_count(len(held) + len(keyed))} sets.")
     lifts = list(dict.fromkeys(name_of.get(ex_id) for ex_id, *_ in held + keyed))
     return {"kind": KIND, "id": session.id, "duplicate": False, "session": session_dict(session),
@@ -302,7 +321,7 @@ def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name
 
 def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
     """Log sets of lifting: into the date's session, or a new one. Returns {kind, id, duplicate (always false),
-    session, new_bests, summary, links} or {error, message, fix}. See the module notes for the rules."""
+    session, new_bests, summary, links[, units_note]} or {error, message, fix}. See the module notes for the rules."""
     data, err = check_data(data)
     err = err or check_by(by)
     if err:
@@ -325,8 +344,10 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         target = None if truthy(data.get("new_session")) else s.scalar(
             select(LiftSession).where(LiftSession.user_id == user.id, LiftSession.date == on,
                                       LiftSession.deleted_at.is_(None)).order_by(LiftSession.id.desc()).limit(1))
+        units = users.units_for(user)
         if target is not None:
-            return _add(s, target, sets, notes, by_name, by, today)
+            return with_units_note(_add(s, target, sets, notes, by_name, by, today, units), user,
+                                   _sent_lb(data.get("sets")), False)
 
         keyed = number_sets(sets, by_name)
         key = session_key(on, notes, keyed)
@@ -335,7 +356,7 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         grouped: dict[str, list[tuple[float, int]]] = {}
         for x in sets:
             grouped.setdefault(x["exercise"], []).append((x["weight_kg"], x["reps"]))
-        new_bests = [_best(lift, hit) for lift, lift_sets in grouped.items()
+        new_bests = [_best(lift, hit, units) for lift, lift_sets in grouped.items()
                      for hit in metrics.prs(prior.get(lift, []), lift_sets)]
 
         session = LiftSession(user_id=user.id, date=on, notes=notes, logged_by=by, dedupe_key=key)
@@ -343,8 +364,9 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         s.add(session)
         s.flush()
 
-        summary = (f"{sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets])} on "
+        summary = (f"{sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets], units)} on "
                    f"{formatting.day(on, today)}.")
-        firsts = [first_text(lift, lift_sets) for lift, lift_sets in grouped.items() if not prior.get(lift)]
-        return {"kind": KIND, "id": session.id, "duplicate": False, "session": session_dict(session),
-                "new_bests": new_bests, "summary": summary + _tail(new_bests, firsts), "links": _links(on, lifts)}
+        firsts = [first_text(lift, lift_sets, units) for lift, lift_sets in grouped.items() if not prior.get(lift)]
+        out = {"kind": KIND, "id": session.id, "duplicate": False, "session": session_dict(session),
+               "new_bests": new_bests, "summary": summary + _tail(new_bests, firsts), "links": _links(on, lifts)}
+        return with_units_note(out, user, _sent_lb(data.get("sets")), False)

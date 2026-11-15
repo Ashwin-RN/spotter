@@ -69,13 +69,17 @@ SAVE_DESCRIPTION = (
 GET_DESCRIPTION = (
     "The person's saved routines, each lift with its sets, its reps and the weight to log. Call it when the person "
     "names a routine, such as log my push day. To log one, send its sets with log_lifts, one item a set, with each "
-    "change the person names, and leave the date out for today. Where weight_kg is null, ask the person for it. Say "
-    "in your reply which sets were logged.")
+    "change the person names, and leave the date out for today. Send each weight_kg as given, in weight_kg, whatever "
+    "the person's units. Where weight_kg is null, ask the person, and send the answer in the field of its unit. Say "
+    "in your reply which sets were logged.")  # units.md
 KEY_WORDS = mcp_server.KEY_DESCRIPTION
 LIFT_IN = {"exercise": "The lift, exactly as list_exercises gives it.", "sets": "How many sets of it, 1 to 10.",
            "reps": "Reps in each set, a whole number from 1 to 30.",
            "weight_kg": ("The weight in kg, 0 to 500, only when the person gave one. Leave it out otherwise: "
-                         "get_routines then gives the weight of the lift's latest session.")}
+                         "get_routines then gives the weight of the lift's latest session. Send weight_kg or "
+                         "weight_lb, never both."),
+           "weight_lb": ("The weight in lb, 0 to 1,102.31, only when the person gave one in pounds, or with no unit "
+                         "and units.weight is lb. Leave it out otherwise.")}  # units.md R10
 NAME_IN = "The routine's name, as the person says it, such as Push day. 1 to 64 characters."
 LIFTS_IN = "Each lift, in the order done: 1 to 20 lifts, and at most 60 sets in all."
 ID_WORDS = "The routine's id, for delete_entry and restore_entry with kind routine."
@@ -319,7 +323,7 @@ def test_get_routines_answers_in_name_order_with_its_words_and_with_none_says_so
     found = read(user.id)
     assert found["summary"] == "2 routines: pull day and Push day."  # by the name's key, then id
     assert [r["name"] for r in found["routines"]] == ["pull day", "Push day"]
-    assert list(found["routines"][0]) == ["id", "name", "saved_on", "lifts"]
+    assert list(found["routines"][0]) == ["id", "name", "saved_on", "lifts", "words"]  # units.md decision 11
     assert found["routines"][0]["id"] == pull["id"] and found["routines"][0]["saved_on"] == day()
     assert services.get_routines(10 ** 9) == common.no_account()
 
@@ -475,7 +479,8 @@ REFUSALS = {
     "23 lifts": ({"name": "Push day", "lifts": [lift(sets=1)] * 23},
                  one("A routine holds 1 to 20 lifts, not 23.", "Send 1 to 20 lifts.")),
     "a field a lift does not have": ({"name": "Push day", "lifts": [GOOD, {**GOOD, "x": 1}]},
-                                     one("Lift 2: 'x' is not a field of a lift.", "Use: exercise, sets, reps, weight_kg.")),
+                                     one("Lift 2: 'x' is not a field of a lift.",
+                                         "Use: exercise, sets, reps, weight_kg or weight_lb.")),  # units.md R10
     "no exercise": ({"name": "Push day", "lifts": [GOOD, {"sets": 3, "reps": 8}]},
                     one("Lift 2: exercise is missing.", "Give an exercise name on lift 2.", "missing_field")),
     "a name not on the list": ({"name": "Push day", "lifts": [GOOD, lift("Zorbinator")]},
@@ -778,7 +783,9 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
         "kind": "routine.", "id": ID_WORDS,
         "created": "True when the name was new. False when a routine of that name was replaced or brought back.",
         "routine": "The routine as saved.", "summary": "What this call did, in one line, ready to quote.",
-        "links": "Pages to offer the person. Put links last in a reply."}
+        "links": "Pages to offer the person. Put links last in a reply.",
+        "units_note": ("Present only when this call sent a weight in lb or a distance or speed in miles, and the "
+                       "person has not chosen their units. Ask once, as it says.")}  # units.md R7
     saved = out["$defs"]["SavedRoutine"]["properties"]
     assert {k: v["description"] for k, v in saved.items()} == {
         "id": ID_WORDS, "name": NAME_IN, "lifts": LIFTS_IN,
@@ -795,12 +802,13 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
         "links": "Pages to offer the person. Put links last in a reply."}
     assert {k: v["description"] for k, v in got["$defs"]["RoutineToLog"]["properties"].items()} == {
         "id": ID_WORDS, "name": NAME_IN, "saved_on": "The person's date when the routine was last saved.",
-        "lifts": LIFTS_IN}
+        "lifts": LIFTS_IN, "words": ("The routine's lifts in words, each with the weight to log, in the person's units, "
+                                     "ready to quote.")}  # units.md decision 11
     assert {k: v["description"] for k, v in got["$defs"]["LiftToLog"]["properties"].items()} == {
         **{k: LIFT_IN[k] for k in ("exercise", "sets", "reps")},
         "weight_kg": ("The weight to log, in kg: the heaviest set of this lift's latest session, unless the routine "
-                      "was saved on a later day than that session, with a weight of its own. Null when there is "
-                      "neither: ask the person."),
+                      "was saved on a later day than that session, with a weight of its own. Send it in weight_kg "
+                      "as it is, never converted. Null when there is neither: ask the person."),  # units.md
         "weight_from": "Where weight_kg came from: last_session, routine, or null.",
         "last_date": "The date of this lift's latest session, or null when it was never logged."}
 
@@ -831,9 +839,11 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     names = [t["name"] for t in tools]
     assert names == [*list(BEFORE)[:20], "save_routine", "get_routines", *list(BEFORE)[20:]]
     hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tools}
-    assert {n for n in BEFORE if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami"}
-    assert hashes["log_lifts"] == BEFORE["log_lifts"]  # log_lifts not by one byte
-    assert hashes["whoami"] == "e415c4054cff9ffc6565bc294b147b9868cd78d89694240de571bd926a3c0417"  # setup names routine
+    # Routines moved delete_entry, restore_entry and whoami; units then moved its thirteen (units.md), of these.
+    units = {"whoami", "log_lifts", "log_bodyweight", "log_cardio", "edit_entry", "set_goal", "update_settings",
+             "get_progress", "get_goals", "get_log", "delete_entry"}
+    assert {n for n in BEFORE if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami"} | units
+    assert hashes["restore_entry"] != BEFORE["restore_entry"] and "restore_entry" not in units
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
     assert everyone == [n for n in names if n not in mcp_server.OWNER_FUNCTIONS] and len(everyone) == web.FUNCTION_COUNT
 
@@ -1225,7 +1235,7 @@ def test_0010_builds_the_table_on_sqlite_and_comes_down_leaving_no_other_change(
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0010"
+    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0011"  # units
 
 
 def test_the_model_is_no_entry_table_and_its_columns_are_in_the_contract_s_order():
@@ -1259,9 +1269,9 @@ SAID = {"name": "push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "re
 def test_the_three_cases_load_last_and_the_tables_and_seed_are_known():
     """Setup's quiet case, then these three, close the file."""
     cases = judge.load_cases()
-    assert [c["id"] for c in cases[-3:]] == ["routine_saved", "routine_logged", "routine_changed"]
-    assert cases[-4]["id"] == "setup_stays_quiet"
-    assert all(judge.case_problems(c) == [] for c in cases[-3:])
+    assert [c["id"] for c in cases[-9:-6]] == ["routine_saved", "routine_logged", "routine_changed"]  # units' six next
+    assert cases[-10]["id"] == "setup_stays_quiet"
+    assert all(judge.case_problems(c) == [] for c in cases[-9:-6])
     assert "save_routine" in judge.SEED_SERVICES and "routine" in judge.DB_TABLES and "routine" in RUN_TABLES
     assert judge.seed_service("save_routine") is services.save_routine
     assert "lift_count" in judge._rows_text([{"lift_count": 3}])

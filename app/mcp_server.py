@@ -573,6 +573,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             "anything: use the person's zone if you know it, otherwise ask once which city they are in. "
             "If it carries new_account_note, do what it says."
             " If it carries setup, walk setup.missing as setup.how says."
+            " It carries units: send each number in the field of the unit the person said, and say weights and "
+            "distances as Spotter's summaries give them."
         ),
         annotations=READ_ONLY,
     )
@@ -623,7 +625,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
                         "person says this is a separate workout.")] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogLiftsResult]:
-        data = _sent(sets=[s.model_dump() for s in sets], date=date, notes=notes, new_session=new_session or None)
+        data = _sent(sets=[s.model_dump(exclude_none=True) for s in sets], date=date, notes=notes,
+                     new_session=new_session or None)
         return await wrapper.call("log_lifts", LogLiftsResult,
                                   lambda account: services.log_lifts(account, data, "claude"))
 
@@ -638,14 +641,19 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         annotations=WRITE,
     )
     async def log_bodyweight(
-        kg: Annotated[float, Field(description="Body weight in kg, 20 to 400.")],
+        kg: Annotated[float | None, Field(
+            description="Body weight in kg, 20 to 400, when the person said kg, or gave no unit and units.weight is "
+                        "kg. Send kg or lb, never both.")] = None,
+        lb: Annotated[float | None, Field(
+            description="Body weight in lb, 44.1 to 881.84, when the person said pounds, or gave no unit and "
+                        "units.weight is lb. Send it as said: Spotter converts it. Send kg or lb, never both.")] = None,
         date: Annotated[str | None, Field(
             description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
         allow_repeat: Annotated[bool, Field(
             description="true logs it even when it matches a weigh-in from the last 10 minutes.")] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogBodyweightResult]:
-        data = _sent(kg=kg, date=date, allow_repeat=allow_repeat or None)
+        data = _sent(kg=kg, lb=lb, date=date, allow_repeat=allow_repeat or None)
         return await wrapper.call("log_bodyweight", LogBodyweightResult,
                                   lambda account: services.log_bodyweight(account, data, "claude"))
 
@@ -673,18 +681,27 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             description="A measurement goal: waist, hips, chest, arm, thigh or resting_hr. Not steps, sleep_hours "
                         "or water_ml: those are a day's amount, not a goal.")] = None,
         distance_km: Annotated[float | None, Field(
-            description="A cardio_best goal: the distance in km, 0.1 to 300. A session at or over it counts.")] = None,
+            description="A cardio_best goal: the distance in km, 0.1 to 300, when the person said km. A session at or "
+                        "over it counts. Send distance_km or distance_mi, never both.")] = None,
+        distance_mi: Annotated[float | None, Field(
+            description="A cardio_best goal: the distance in miles, 0.07 to 186.41, when the person said miles. "
+                        "Spotter converts it. Send distance_km or distance_mi, never both.")] = None,
         target_value: Annotated[float | None, Field(
-            description="The target, in the kind's unit. A lift: kg, an estimated one-rep max, above 0 to 666.67. "
-                        "Body weight: kg, 20 to 400. A measurement: its own unit, cm for a body size, bpm for "
-                        "resting_hr. A cardio_best: minutes for the distance, 1 to 600.")] = None,
+            description="The target, in the kind's unit. A lift: an estimated one-rep max in weight_unit, above 0 to "
+                        "666.67 kg or 1,469.75 lb. Body weight: in weight_unit, 20 to 400 kg or 44.1 to 881.84 lb. A "
+                        "measurement: its own unit, cm for a body size, bpm for resting_hr. A cardio_best: minutes "
+                        "for the distance, 1 to 600.")] = None,
         target_date: Annotated[str | None, Field(
             description="The date to reach it by, YYYY-MM-DD, after today. " + MONTH_END_RULE)] = None,
         text: Annotated[str | None, Field(
             description="The goal in the person's words. Up to 2,000 characters.")] = None,
         start_value: Annotated[float | None, Field(
-            description="Where the person is now, in the kind's unit. Used only when nothing is logged yet to start "
-                        "from.")] = None,
+            description="Where the person is now, in the kind's unit, weight_unit for a lift or body weight. Used only "
+                        "when nothing is logged yet to start from.")] = None,
+        weight_unit: Annotated[str | None, Field(
+            description="kg or lb: the unit of target_value and start_value for a lift or body weight goal, as the "
+                        "person said it. Leave it out for the person's units.weight. Never convert a number "
+                        "yourself.")] = None,
         goal_id: Annotated[int | None, Field(
             description="To change a goal: its id, from set_goal, get_goals or get_progress. Leave out for a new "
                         "goal.")] = None,
@@ -693,8 +710,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         key: Key = None,
     ) -> Annotated[CallToolResult, SetGoalResult]:
         data = _sent(kind=kind, exercise=exercise, measurement_kind=measurement_kind, distance_km=distance_km,
-                     target_value=target_value, target_date=target_date, text=text, start_value=start_value,
-                     goal_id=goal_id, status=status)
+                     distance_mi=distance_mi, target_value=target_value, target_date=target_date, text=text,
+                     start_value=start_value, weight_unit=weight_unit, goal_id=goal_id, status=status)
         return await wrapper.call("set_goal", SetGoalResult,
                                   lambda account: services.set_goal(account, data, "claude"))
 
@@ -718,7 +735,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="update_settings",
         title="Update settings",
         description=(
-            "Sets the person's time zone and targets. The time zone decides what today is for them: give an "
+            "Sets the person's time zone, units and targets. The time zone decides what today is for them: give an "
             "IANA name such as Asia/Kolkata or Europe/London, worked out from the city they are in; an "
             "abbreviation (IST) or an offset (+05:30) is refused. The targets: daily calories, sessions a week, "
             "cardio minutes a week, and whether cardio calories are added back to the day's food. Send only what "
@@ -740,10 +757,16 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         add_back_exercise_kcal: Annotated[bool | None, Field(
             description="true adds cardio calories back to the day's food total (net calories); false stops it.")]
             = not_sent(),
+        weight_unit: Annotated[str | None, Field(
+            description="kg or lb: how every page and every summary shows weights. Set it when the person asks, or "
+                        "when they answer a units_note. No stored number changes.")] = None,
+        distance_unit: Annotated[str | None, Field(
+            description="km or mi: how every page and every summary shows distances, paces and speeds. Set it when "
+                        "the person asks, or when they answer a units_note. No stored number changes.")] = None,
         key: Key = None,
     ) -> Annotated[CallToolResult, UpdateSettingsResult]:
         # A target sent as null is passed on, so the service clears it; one left out is not passed at all.
-        data = {**_sent(time_zone=time_zone),
+        data = {**_sent(time_zone=time_zone, weight_unit=weight_unit, distance_unit=distance_unit),
                 **_nullable(calorie_target_kcal=calorie_target_kcal, target_sessions_per_week=target_sessions_per_week,
                             target_cardio_minutes_per_week=target_cardio_minutes_per_week,
                             add_back_exercise_kcal=add_back_exercise_kcal)}
@@ -802,7 +825,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         title="Edit an entry",
         description=(
             "Changes one of the person's entries in place, keeping its id. A lift session: its date, notes or "
-            "whole set list. A weigh-in: its kg or date. A measurement: its value or date. A food entry: its "
+            "whole set list. A weigh-in: its weight or date. A measurement: its value or date. A food entry: its "
             "date, meal, description or kcal; a kcal makes it the person's own number, tagged you_said. A cardio "
             "entry: its date, activity, minutes, distance, incline, speed, heart rate, machine calories or notes; "
             "its estimate is worked out again. Send only what changes. Returns the entry before and after. "
@@ -819,7 +842,10 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             = not_sent(),
         sets: Annotated[list[SetIn] | None, Field(
             description="A lift session's whole new set list, in order: 1 to 60 sets. It replaces every set.")] = None,
-        kg: Annotated[float | None, Field(description="A weigh-in's new weight in kg, 20 to 400.")] = None,
+        kg: Annotated[float | None, Field(
+            description="A weigh-in's new weight in kg, 20 to 400. Send kg or lb, never both.")] = None,
+        lb: Annotated[float | None, Field(
+            description="A weigh-in's new weight in lb, 44.1 to 881.84, as said. Send kg or lb, never both.")] = None,
         value: Annotated[float | None, Field(description="A measurement's new value, in its unit.")] = None,
         meal: Annotated[str | None, Field(description="A food entry's meal: breakfast, lunch, dinner or snack.")] = None,
         description: Annotated[str | None, Field(description="A food entry's new description.")] = None,
@@ -830,10 +856,16 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         minutes: Annotated[float | None, Field(description="A cardio entry's minutes, 1 to 600.")] = None,
         distance_km: Annotated[float | None, Field(
             description="A cardio entry's distance in km. null clears it.")] = not_sent(),
+        distance_mi: Annotated[float | None, Field(
+            description="A cardio entry's distance in miles, as said. null clears it. Send distance_km or "
+                        "distance_mi, never both.")] = not_sent(),
         incline_pct: Annotated[float | None, Field(
             description="A cardio entry's incline in percent. null clears it.")] = not_sent(),
         speed_kmh: Annotated[float | None, Field(
             description="A cardio entry's speed in km/h. null works it out from distance and minutes.")] = not_sent(),
+        speed_mph: Annotated[float | None, Field(
+            description="A cardio entry's speed in miles an hour, as said. null works it out from distance and "
+                        "minutes. Send speed_kmh or speed_mph, never both.")] = not_sent(),
         avg_hr: Annotated[int | None, Field(
             description="A cardio entry's average heart rate in bpm. null clears it.")] = not_sent(),
         machine_kcal: Annotated[int | None, Field(
@@ -842,11 +874,11 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     ) -> Annotated[CallToolResult, EditEntryResult]:
         # The cardio extras and notes pass an explicit null on (it clears them, or works the speed out); every
         # other field sent as null is the same as not sent.
-        changes = {**_sent(date=date, sets=None if sets is None else [x.model_dump() for x in sets], kg=kg,
-                           value=value, meal=meal, description=description, kcal=kcal, exercise=exercise,
+        changes = {**_sent(date=date, sets=None if sets is None else [x.model_dump(exclude_none=True) for x in sets],
+                           kg=kg, lb=lb, value=value, meal=meal, description=description, kcal=kcal, exercise=exercise,
                            minutes=minutes),
-                   **_nullable(notes=notes, distance_km=distance_km, incline_pct=incline_pct, speed_kmh=speed_kmh,
-                               avg_hr=avg_hr, machine_kcal=machine_kcal)}
+                   **_nullable(notes=notes, distance_km=distance_km, distance_mi=distance_mi, incline_pct=incline_pct,
+                               speed_kmh=speed_kmh, speed_mph=speed_mph, avg_hr=avg_hr, machine_kcal=machine_kcal)}
         return await wrapper.call("edit_entry", EditEntryResult,
                                   lambda account: services.edit_entry(account, kind, entry_id, changes, "claude"))
 
@@ -983,9 +1015,19 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         minutes: Annotated[float, Field(description="How long it lasted, in minutes, 1 to 600.")],
         date: Annotated[str | None, Field(
             description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        distance_km: Annotated[float | None, Field(description="The distance in km, if the person gave it.")] = None,
+        distance_km: Annotated[float | None, Field(
+            description="The distance in km, if the person gave it in km, or with no unit and units.distance is km. "
+                        "Send distance_km or distance_mi, never both.")] = None,
+        distance_mi: Annotated[float | None, Field(
+            description="The distance in miles, if the person gave it in miles, or with no unit and units.distance is "
+                        "mi. Send it as said: Spotter converts it. Send distance_km or distance_mi, never both.")]
+            = None,
         incline_pct: Annotated[float | None, Field(description="A treadmill's incline in percent, 0 to 40.")] = None,
-        speed_kmh: Annotated[float | None, Field(description="The speed in km/h, if the person gave it.")] = None,
+        speed_kmh: Annotated[float | None, Field(
+            description="The speed in km/h, if the person gave it so. Send speed_kmh or speed_mph, never both.")] = None,
+        speed_mph: Annotated[float | None, Field(
+            description="The speed in miles an hour, if the person gave it so. Send it as said: Spotter converts it. "
+                        "Send speed_kmh or speed_mph, never both.")] = None,
         avg_hr: Annotated[int | None, Field(description="Average heart rate in bpm, 30 to 240.")] = None,
         machine_kcal: Annotated[int | None, Field(
             description="The calories the machine or watch showed, as the person read them.")] = None,
@@ -994,9 +1036,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             description="true logs it even when it matches a session from the last 10 minutes.")] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogCardioResult]:
-        data = _sent(exercise=exercise, minutes=minutes, date=date, distance_km=distance_km, incline_pct=incline_pct,
-                     speed_kmh=speed_kmh, avg_hr=avg_hr, machine_kcal=machine_kcal, notes=notes,
-                     allow_repeat=allow_repeat or None)
+        data = _sent(exercise=exercise, minutes=minutes, date=date, distance_km=distance_km, distance_mi=distance_mi,
+                     incline_pct=incline_pct, speed_kmh=speed_kmh, speed_mph=speed_mph, avg_hr=avg_hr,
+                     machine_kcal=machine_kcal, notes=notes, allow_repeat=allow_repeat or None)
         return await wrapper.call("log_cardio", LogCardioResult,
                                   lambda account: services.log_cardio(account, data, "claude"))
 
@@ -1134,8 +1176,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         description=(
             "The person's saved routines, each lift with its sets, its reps and the weight to log. Call it when the "
             "person names a routine, such as log my push day. To log one, send its sets with log_lifts, one item a "
-            "set, with each change the person names, and leave the date out for today. Where weight_kg is null, ask "
-            "the person for it. Say in your reply which sets were logged."
+            "set, with each change the person names, and leave the date out for today. Send each weight_kg as given, in "
+            "weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and send the answer in "
+            "the field of its unit. Say in your reply which sets were logged."
         ),
         annotations=READ_ONLY,
     )

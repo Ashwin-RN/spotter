@@ -35,7 +35,9 @@ expect, every key optional, all of them must hold:
 seed, rows created for the person before the run, through Spotter's own services, in order:
 
   {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "log_lifts" | "set_goal" |
-   "import_entries" | "save_routine", "data": {...}} import_entries returns no one id: no "as".
+   "import_entries" | "save_routine" | "update_settings", "data": {...}} import_entries returns no one id: no "as".
+                                    update_settings (contract units.md R20) sets the person's own settings, such
+                                    as weight_unit lb; it returns no id either: no "as".
   {"service": "four_weeks"}         a seed that takes no data: four weeks of everything, three goals
                                     (evals/four_weeks.py). No "as": it returns no one id.
   {"service": "edit_entry", "data": {"kind": "bodyweight", "entry_id": "{{seed.<as>}}", "changes": {...}}}
@@ -73,7 +75,7 @@ DB_KEYS = {"table", "state", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
 SWITCHES = ("log", "log_delete")
 SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "log_lifts", "set_goal", "import_entries",
-                 "edit_entry", "save_routine"}
+                 "edit_entry", "save_routine", "update_settings"}  # update_settings: units.md R20
 EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
 NO_DATA_SERVICES = {"four_weeks"}  # called as seed_service(name)(user_id): see seed_service
 DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",

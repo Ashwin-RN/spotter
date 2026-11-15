@@ -17,7 +17,11 @@ get_log(user_id, date=None, days=1)
     hidden: its day gets a block of its own above today (the one ordering rule, metrics.on_or_before).
     Within a day, entries are in the order they were logged.
 
-    Returns {from, to, days [{date, sessions, weigh_in, measurements, food, cardio}], totals {sessions,
+    Each day's summary (contract units.md R14), in the person's units: the sets of each session as
+    lifts.sets_text words them, then the weigh-in, then each cardio entry as cardio.summary words it; empty when
+    the day has none. A new best's text is in the person's units too, from the unrounded best.
+
+    Returns {from, to, days [{date, sessions, weigh_in, measurements, food, cardio, summary}], totals {sessions,
     weigh_ins, measurements, food_entries, cardio_entries}, summary, links {day: <to>,
     progress}} or {error, message, fix}. A read: no lock, no write limit.
 """
@@ -33,6 +37,16 @@ from app.services import cardio, food, lifts
 from app.services.common import no_account, row_dict
 
 DAYS = (1, 14)
+
+
+def _day_summary(day_sessions: list, weigh_in, cardio_rows: list, today, units) -> str:
+    """A day's lift sessions, weigh-in and cardio in words (R14), in the person's units; "" for a day with none."""
+    parts = [lifts.sets_text([(x.exercise.name, x.weight_kg, x.reps) for x in sorted(t.sets, key=lambda x: x.id)],
+                             units) + "." for t in day_sessions if t.sets]
+    if weigh_in is not None:
+        parts.append(f"Weigh-in {formatting.show(weigh_in.kg, 'weigh_in', units=units)}.")
+    parts += [cardio.summary(c, today, units) for c in cardio_rows]
+    return " ".join(parts)
 
 
 def _plural(n: int, word: str, many: str | None = None) -> str:
@@ -61,6 +75,7 @@ def get_log(user_id: int, date=None, days=1) -> dict:
         if user is None:
             return no_account()
         today = users.today_for(user)
+        units = users.units_for(user)
         if date is None or (isinstance(date, str) and not date.strip()):
             end, later_too = today, True
         else:
@@ -80,8 +95,9 @@ def get_log(user_id: int, date=None, days=1) -> dict:
         bests: dict[int, list[dict]] = {}
         for per_lift in history["bests"].values():
             for b in per_lift:
-                best = lifts.rounded_best({k: b[k] for k in ("exercise", "kind", "value", "previous")})
-                bests.setdefault(b["session_id"], []).append({**best, "text": lifts.best_text(best)})
+                raw = {k: b[k] for k in ("exercise", "kind", "value", "previous")}
+                bests.setdefault(b["session_id"], []).append({**lifts.rounded_best(raw),
+                                                              "text": lifts.best_text(raw, units)})
         sessions = [t for t in history["sessions"] if shown(t.date)]
         weigh_ins = [b for b in s.scalars(select(Bodyweight).where(
             Bodyweight.user_id == user.id, Bodyweight.deleted_at.is_(None), Bodyweight.date >= start)
@@ -108,14 +124,15 @@ def get_log(user_id: int, date=None, days=1) -> dict:
             cardio_rows = [c for c in moved if c.date == day]
             meals = {meal: [{**food.entry_dict(f), **food.saved_parts(f)} for f in food_rows if f.meal == meal]
                      for meal in MEALS}
+            day_sessions = [t for t in sessions if t.date == day]
             out_days.append({
                 "date": day.isoformat(),
-                "sessions": [{**lifts.session_dict(t), "new_bests": bests.get(t.id, [])}
-                             for t in sessions if t.date == day],
+                "sessions": [{**lifts.session_dict(t), "new_bests": bests.get(t.id, [])} for t in day_sessions],
                 "weigh_in": row_dict(weighed[-1]) if weighed else None,
                 "measurements": [row_dict(m) for m in measured if m.date == day],
                 "food": {"meals": meals, **food.day_numbers(user, food_rows, cardio_rows)},
                 "cardio": [cardio.cardio_dict(c) for c in cardio_rows],
+                "summary": _day_summary(day_sessions, weighed[-1] if weighed else None, cardio_rows, today, units),
             })
         totals = {"sessions": len(sessions), "weigh_ins": len(weigh_ins), "measurements": len(measured),
                   "food_entries": len(eaten), "cardio_entries": len(moved)}
