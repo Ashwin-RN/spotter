@@ -33,9 +33,9 @@ and Settings.
     /foods/{id}/edit               one saved food's serving, kcal and grams (GET, POST)
     /routines                      the routines as a table, each lift with the weight get_routines gives, and no
                                    form; delete and Undo POST to /routines/{id}/delete and /restore
-    /settings                      six cards: the account, the time zone (POST), the targets (POST to
-                                   /settings/targets), the switch for what Claude may do (POST to
-                                   /settings/claude-can), the person's data (export, delete), and
+    /settings                      seven cards: the account, the time zone (POST), the units (POST, with its card
+                                   field), the targets (POST to /settings/targets), the switch for what Claude may
+                                   do (POST to /settings/claude-can), the person's data (export, delete), and
                                    More (Saved foods, Saved routines, and Sign out for a phone). Each post lands on
                                    its own card, and a GET of /settings/targets or /settings/claude-can goes to that card
     /settings/export               POST: a zip of CSVs, one per table the person owns
@@ -74,6 +74,11 @@ page, never a 500.
 
 The page limit: more than PAGE_LIMIT loads of the signed-in pages by one person in PAGE_WINDOW_MINUTES is the
 "Too many page loads" page (429), counted in memory (PageLoads). Writes keep the services' write limit.
+
+Units (contract units.md R15 to R17): every render carries the person's units (page()), and every figure, unit word,
+form field and chart follows them. Every number is stored in kg and km; a form shows a weight in lb or a distance in
+miles under the service's own name for that unit (form_field), filled at the shown step, and an untouched one is never
+sent (edit_changes). A kg and km account's pages are as they were.
 """
 
 import hashlib
@@ -90,11 +95,11 @@ import zipfile
 from collections import deque
 from contextvars import ContextVar
 from datetime import date, timedelta
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote as url_quote, urlencode, urlsplit, urlunsplit
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, pass_context
 from sqlalchemy.exc import InterfaceError, InternalError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.concurrency import run_in_threadpool
@@ -126,18 +131,62 @@ log = logging.getLogger("spotter")
 HERE = Path(__file__).resolve().parent
 
 
-def show_filter(value, quantity: str, widened: bool = False, *, unit: bool = True, page: bool = True) -> str:
+def show_filter(value, quantity: str, widened: bool = False, *, unit: bool = True, page: bool = True,
+                units=None) -> str:
     """formatting.show for a template: a page by default, so a no-break space goes before the unit.
     {{ x|show("kcal") }}; unit=False for a cell under a header that names the unit; page=False for
-    text that keeps a plain space."""
-    return formatting.show(value, quantity, page=page, widened=widened, unit=unit)
+    text that keeps a plain space. units: the person's (contract units.md R15); None is kg and km."""
+    return formatting.show(value, quantity, page=page, widened=widened, unit=unit, units=units)
+
+
+@pass_context
+def show_in_context(context, value, quantity: str, widened: bool = False, *, unit: bool = True, page: bool = True,
+                    units=None) -> str:
+    """The show filter: show_filter in the units the render carries (page() puts the person's in every one). A
+    part of _parts.html sees only its arguments, so it is handed units and passes them on."""
+    return show_filter(value, quantity, widened, unit=unit, page=page, units=units or context.get("units"))
+
+
+@pass_context
+def field_in_context(context, value, quantity: str, *, units=None) -> str:
+    """The field filter: formatting.field in the render's units, so a lb or mi field is filled at the shown step."""
+    return formatting.field(value, quantity, units=units or context.get("units"))
 
 
 # The one place numbers and dates reach a template: every figure on a page goes through these filters.
-# field gives a form input's value at the decimals the store keeps.
-FILTERS = {"show": show_filter, "day": formatting.day, "day_heading": formatting.day_heading,
+# field gives a form input's value at the decimals the store keeps, or at the shown step in lb or mi.
+FILTERS = {"show": show_in_context, "day": formatting.day, "day_heading": formatting.day_heading,
            "days": formatting.days, "day_utc": formatting.day_utc, "weekday": formatting.weekday,
-           "weekday_letter": formatting.weekday_letter, "field": formatting.field}
+           "weekday_letter": formatting.weekday_letter, "field": field_in_context}
+
+# The person's units on a form (contract units.md R15, decision 16): a stored field a form shows in lb or mi is
+# drawn and posted under the service's own name for that unit. (stored field) -> (its field in lb or mi, which
+# setting decides it). A kg and km account's forms draw and post the stored names, as before.
+IN_UNITS = {"kg": ("lb", "weight"), "distance_km": ("distance_mi", "distance"), "speed_kmh": ("speed_mph", "distance")}
+STORED_NAME = {other: field for field, (other, _) in IN_UNITS.items()}  # lb -> kg, distance_mi -> distance_km
+
+
+def form_field(field: str, units=None) -> str:
+    """The name a form draws and posts a stored field under, in these units: lb for kg with weights in lb,
+    distance_mi and speed_mph for distance_km and speed_kmh with distances in miles, else the field itself."""
+    other = IN_UNITS.get(field)
+    if other is None or units is None:
+        return field
+    name, setting = other
+    return name if (units.weight == "lb" if setting == "weight" else units.distance == "mi") else field
+
+
+def posted_names(field: str, form, units=None) -> tuple[str, ...]:
+    """The names a posted form carries a stored field under (IN_UNITS), each pair read on its own: kg or lb,
+    distance_km or distance_mi, speed_kmh or speed_mph, by the name it posts. A page drawn before the units changed
+    (update_settings while it was open) posts the names it drew, so each number is read in the unit it was typed
+    in, never the new setting's. A name present but empty counts: emptied is a change. Both names of a pair are
+    both given, so the service refuses them as edit_entry and the logging functions do (decision 4), and neither
+    value is dropped. A form that posts neither: the name these units draw it under (form_field)."""
+    other = IN_UNITS.get(field)
+    if other is None:
+        return (field,)
+    return tuple(name for name in (field, other[0]) if name in form) or (form_field(field, units),)
 
 
 STYLESHEET = HERE / "static" / "style.css"
@@ -171,6 +220,8 @@ def _environment() -> Environment:
     env.filters.update(FILTERS)
     env.globals["style_href"] = style_href()
     env.globals["form_key"] = form_key
+    env.globals["unit_word"] = formatting.unit_word  # "Weight ({{ unit_word('weight', units) }})"
+    env.globals["form_field"] = form_field  # the name a form field is drawn and posted under, in units
     return env
 
 
@@ -250,6 +301,16 @@ FIELD_HELP = {
                                           f"{rules.span(*rules.NUMBERS['grams_per_serving'][:2], 'grams')} g, "
                                           "or leave it empty."),
 }
+# The same lines for a field a form draws in lb or mi, keyed by the name it is drawn under (form_field): the range
+# is the service's own, moved inward into that unit, as its refusals say it (rules.inward, body.lb_range).
+_MILES = rules.inward(rules.NUMBERS["distance_km"][:2], formatting.MI, "km")
+_MPH = rules.inward(rules.NUMBERS["speed_kmh"][:2], formatting.MI, "speed")
+FIELD_HELP_IN_UNITS = {
+    ("bodyweight", "lb"): "That weight was not saved: give it in lb, from {} to {}.".format(*body.lb_range()),
+    ("cardio_entry", "distance_mi"): f"Give the distance in miles, from {_MILES[0]} to {_MILES[1]}, or leave it "
+                                     "empty.",
+    ("cardio_entry", "speed_mph"): f"Give the speed in mph, from {_MPH[0]} to {_MPH[1]}, or leave it empty.",
+}
 FIRST_FIELD = {"bodyweight": "kg", "measurement": "value", "lift_session": "notes", "food_entry": "description",
                "cardio_entry": "minutes", "saved_food": "name"}
 FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS}
@@ -262,7 +323,8 @@ FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS}
 # connected model reads comes from these tables.
 CLAUDE_CAN_LINES = {
     "log_delete": "Your assistant can log and import entries, edit and restore them, save foods and routines, and set "
-                  "goals. It can change your time zone and targets, and delete entries, saved foods and routines. "
+                  "goals. It can change your time zone, units and targets, and delete entries, saved foods and "
+                  "routines. "
                   "Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can be "
                   "restored.",
     "log": "Everything above except deleting: your assistant cannot delete an entry, a saved food or a routine.",
@@ -274,11 +336,17 @@ CLAUDE_CAN_LABELS = {"log_delete": "Read, log and delete", "log": "Read and log"
 # (base.html's #auto-time-zone) is not one of them: it posts to /settings too, with `next` only when its page was
 # drawn without an error, so the Time zone card's form carries a field of its own (ZONE_CARD_FIELD, its value the
 # card's id) and only a post that carries it lands on the card. (the mark's kind, its card's id)
-SETTINGS_CARDS = {"time_zone": "zone", "targets": "targets", "claude_can": "assistant"}
+SETTINGS_CARDS = {"time_zone": "zone", "targets": "targets", "claude_can": "assistant", "units": "units"}
 ZONE_CARD_FIELD = "card"
 # Each card's saved line, by the mark's kind: one at most on a page, in its own card.
 SETTINGS_SAVED = {"time_zone": "Time zone saved.", "targets": "Targets saved.",
-                  "claude_can": "Your assistant's access saved."}
+                  "claude_can": "Your assistant's access saved.", "units": "Units saved."}
+# The Units card (contract units.md R16): its two choices, each (the setting, its label, [(value, words)]), the values
+# update_settings' own. It posts to /settings with ZONE_CARD_FIELD set to its card's id, so the one Settings route
+# that stores a zone stores the units too (units_post).
+UNIT_CHOICES = (("weight_unit", "Weights", (("kg", "kg"), ("lb", "lb"))),
+                ("distance_unit", "Distances", (("km", "km"), ("mi", "miles"))))
+UNITS_ERROR_GENERAL = "The units were not saved. Choose one of each and try again."
 # What the cards say for a refusal, in the page's own words, by the refusal's code (update_settings and
 # set_claude_can give no field). Any other code takes its card's general line. The time zone and the switch say it
 # in the card, the targets under each field: their ranges are update_settings' own (rules.NUMBERS).
@@ -319,7 +387,11 @@ GOAL_KINDS = (("bodyweight", "Body weight"), ("lift", "Lift"), ("cardio_best", "
 GOAL_KIND_FIRST = "bodyweight"  # current when the address names no kind, or one the page does not know
 GOAL_MEASUREMENTS = ("waist", "hips", "chest", "arm", "thigh", "resting_hr")  # decision 2: states, not daily amounts
 GOAL_FIELDS = ("kind", "exercise", "measurement_kind", "distance_km", "target_value", "target_date", "start_value",
-               "text")
+               "text", "distance_mi", "weight_unit")
+# With weights in lb the form carries weight_unit lb as a hidden field, so its targets are read in lb; set_goal reads
+# a bare value from the web as kg, so a kg form carries none and is as it was. With distances in miles its distance
+# is drawn and posted as distance_mi (form_field).
+GOAL_WEIGHT_UNIT = "weight_unit"
 # Each kind's fields, in the form's order. Where you are now (start_value) joins them before the target only when
 # set_goal refused for want of a start, or the person typed one.
 GOAL_KIND_FIELDS = {"bodyweight": ("target_value", "target_date", "text"),
@@ -384,6 +456,28 @@ GOAL_ERROR_WORDS: dict[tuple[str, str], str | dict[str, str]] = {
         "measurement": "Give your {what} measurement now, in {unit}, from {span}{whole}."},
     ("invalid_field", "text"): f"Keep the notes to {formatting.show(rules.TEXT_MAX, 'count')} characters or fewer, "
                                "in plain text.",
+    # A distance sent in miles (units.md R12): the form draws distance_mi with distances in miles. Its range is
+    # set_goal's own, moved inward into miles as its refusal says it.
+    ("invalid_field", "distance_mi"): "Give the distance in miles, from {} to {}.".format(
+        *rules.inward(goal_rules.DISTANCE_KM, formatting.MI, "km")),
+}
+# The lines that name a unit, in lb and in miles (units.md R15): what the form says in place of GOAL_ERROR_WORDS'
+# line for the same refusal, with weights in lb or distances in miles. The ranges are set_goal's own, moved inward
+# into lb as its refusals say them (rules.inward). A line of a kind not named here is GOAL_ERROR_WORDS' own.
+_LB_BODYWEIGHT_SPAN = " to ".join(rules.inward(rules.BODYWEIGHT_KG, formatting.LB, "weight_target"))
+_LB_LIFT_MOST = rules.inward(goal_rules.TARGETS["lift"], formatting.LB, "weight_target")[1]
+GOAL_ERROR_WORDS_IN = {
+    "lb": {
+        ("missing_field", "target_value"): {"bodyweight": "Give the weight you aim for, in lb.",
+                                            "lift": "Give the estimated max you aim for, in lb."},
+        ("invalid_field", "target_value"): {
+            "bodyweight": f"Give the weight you aim for in lb, from {_LB_BODYWEIGHT_SPAN}.",
+            "lift": f"Give the estimated max you aim for in lb, more than 0 and at most {_LB_LIFT_MOST}."},
+        ("invalid_field", "start_value"): {
+            "bodyweight": f"Give your weight now in lb, from {_LB_BODYWEIGHT_SPAN}.",
+            "lift": f"Give your estimated max now in lb, more than 0 and at most {_LB_LIFT_MOST}."},
+    },
+    "mi": {("missing_field", "distance_km"): "Give the distance the time is for, in miles."},
 }
 # A line that names the measurement, when none the page knows is chosen: by (code, field). A line with none here
 # then shows the general line at the top.
@@ -652,6 +746,8 @@ def page(request: Request, name: str, status_code: int = 200, **context) -> Resp
         "attribution": ATTRIBUTION if context.pop("shows_estimate", False) else None,
         # The person's own date, for the date filters. A view passes the date its read was worked out on.
         "today": users.today_for(user) if user is not None and "today" not in context else None,
+        # The person's units (contract units.md R15): every figure the show filter writes, and every unit word.
+        "units": users.units_for(user) if user is not None else formatting.KG_KM,
         **context,
     }
     return templates.TemplateResponse(request, name, values, status_code=status_code)
@@ -1291,6 +1387,8 @@ async def settings_page(request: Request) -> Response:
     zone_error = None
     if request.method == "POST":
         form = await request.form()
+        if form.get(ZONE_CARD_FIELD) == SETTINGS_CARDS["units"]:  # the Units card's own form
+            return await units_post(request, user, form)
         sent = str(form.get("time_zone") or "")
         # The one path that stores a zone, the same one Claude uses; it locks the user row first.
         result = await write(user, "update_settings", services.update_settings, user.id, {"time_zone": sent}, "web")
@@ -1312,6 +1410,21 @@ async def settings_page(request: Request) -> Response:
         if not sent.strip() and result.get("error") in ZONE_ERROR_WORDS:
             zone_error = ZONE_ERROR_EMPTY
     return await settings_view(request, user, zone_error=zone_error, status_code=400 if zone_error else 200)
+
+
+async def units_post(request: Request, user: User, form) -> Response:
+    """The Units card's post (contract units.md R16): weight_unit and distance_unit through update_settings, as Claude
+    sets them. Both are sent, so saving the kg and km a person never chose records the choice and ends units_note.
+    Back to the card: saved, or marked as no change when both were stored already. A refusal, a value no choice
+    gives, keeps the stored units and says the card's general line."""
+    data = {field: str(form.get(field) or "") for field, _, _ in UNIT_CHOICES}
+    result = await write(user, "update_settings", services.update_settings, user.id, data, "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if failed(result):
+        return await settings_view(request, user, units_error=UNITS_ERROR_GENERAL, status_code=400)
+    mark = UNCHANGED if result.get("changed") == [] else ("saved", "units")
+    return redirect(settings_landing("units", mark))
 
 
 def page_path(name: str) -> str:
@@ -1352,11 +1465,14 @@ def target_errors(result: dict, sent: dict) -> tuple[dict[str, str], list[str]]:
 
 async def settings_view(request: Request, user: User, zone_error: str | None = None, switch_error: str | None = None,
                         targets_refused: dict | None = None, targets_loose: list | None = None,
-                        typed: dict | None = None, add_back: bool | None = None, status_code: int = 200) -> Response:
-    """Settings' six cards. A form sent back with its refusal keeps what was typed (the targets and the add-back box)
-    and shows no saved line. Each target's value is the stored one through formatting.field."""
+                        typed: dict | None = None, add_back: bool | None = None, units_error: str | None = None,
+                        status_code: int = 200) -> Response:
+    """Settings' seven cards. A form sent back with its refusal keeps what was typed (the targets and the add-back box)
+    and shows no saved line. Each target's value is the stored one through formatting.field. The Units card shows
+    the units in use, kg and km while none is chosen (users.units_for)."""
     groups, selected = zone_choices(user.time_zone)
-    refused = bool(zone_error or switch_error or targets_refused or targets_loose)
+    refused = bool(zone_error or switch_error or targets_refused or targets_loose or units_error)
+    in_use = users.units_for(user)
     saved = request.query_params.get("saved")
     saved_card = SETTINGS_CARDS[saved] if saved in SETTINGS_SAVED and not refused else None
     stored = {f: getattr(user, f) for f in TARGET_FIELDS}
@@ -1371,6 +1487,8 @@ async def settings_view(request: Request, user: User, zone_error: str | None = N
                 add_back=bool(user.add_back_exercise_kcal) if add_back is None else add_back,
                 switch_error=switch_error,
                 choices=[(value, CLAUDE_CAN_LABELS[value], CLAUDE_CAN_LINES[value]) for value in CLAUDE_CAN],
+                unit_choices=UNIT_CHOICES, units_error=units_error,
+                unit_values={"weight_unit": in_use.weight, "distance_unit": in_use.distance},
                 foods_href=page_path("foods"), routines_href=page_path("routines"))
 
 
@@ -1463,7 +1581,8 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     state = await _db(services.account_empty, user.id)
     return page(request, "day.html", status_code=status_code, day=day, on=on, today=today,
                 # The glance block, on today's page only: "now" figures, which would mislead on a past day.
-                glance=await glance_of(user.id) if on == today else None,
+                glance=await glance_of(user.id, users.units_for(user)) if on == today else None,
+                cardio_pace=cardio_pace,
                 prev_day=prev_day, next_day=next_day,
                 strip=day_strip(request.query_params), form_error=form_error or {},
                 kind_names=KIND_NAMES, meals=MEALS,
@@ -1487,16 +1606,27 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
                 shows_estimate=any(c.get("estimate") for c in cardio))
 
 
-async def glance_of(user_id: int) -> dict | None:
+def exact_read(function, units=None):
+    """A service read as a page takes it. For a person who keeps weights in lb, with exact, so its figures come
+    unrounded, the ones its summary says, and a page never reads a step off Claude's (contract units.md, the U2
+    review's note). In kg the result's rounded figure is already the summary's: the function itself, called as the
+    assistant's read calls it."""
+    return partial(function, exact=True) if units is not None and units.weight == "lb" else function
+
+
+async def glance_of(user_id: int, units=None) -> dict | None:
     """What Today's glance block shows, and Progress' tiles, sheets and Body weight card: get_trends and
     get_days as they come back, the words for what bodyweight.now is and for a missing rate, the two sheets'
     charts, and the chart pair's two compact charts, the Eaten a day one with the calorie target's line when
     one is set. The web works out no figure. None when either read fails: the page then draws no glance block.
+    units: the person's. get_trends is read as exact_read reads it, and the two weight charts are drawn in them
+    (contract units.md R17); the parts that draw the rest are handed them, since a part of _parts.html sees only
+    its arguments.
 
     Each read takes the person's date from the clock. Read across their midnight, the two can name two dates,
     so both are read once more. If they still differ, the page draws no glance block for that one render."""
     for _ in range(2):
-        trends = await _db(services.get_trends, user_id)
+        trends = await _db(exact_read(services.get_trends, units), user_id)
         days = await _db(services.get_days, user_id)
         if failed(trends) or failed(days):
             return None
@@ -1508,10 +1638,21 @@ async def glance_of(user_id: int) -> dict | None:
     series = (trends.get("bodyweight") or {}).get("series")
     target = (trends.get("calories") or {}).get("target_kcal")
     return {"trends": trends, "days": days, "basis": weight_now_label(trends), "rate_words": rate_note(trends),
-            "weight_chart": charts.weight_sheet_svg(series, today),
+            "weight_chart": charts.weight_sheet_svg(series, today, units=units),
             "eaten_chart": charts.eaten_sheet_svg(days["days"], today),
-            "weight_small": charts.weight_small_svg(series, today),
+            "weight_small": charts.weight_small_svg(series, today, units=units),
             "eaten_small": charts.eaten_small_svg(days["days"], today, target)}
+
+
+def cardio_pace(entry: dict, units=None) -> str | None:
+    """A cardio entry's pace as the day page shows it: get_log's own m:ss per km, or, with distances in miles, per
+    mile, worked as cardio.summary works it (metrics.pace of the distance in miles), so the page and the summary
+    say one pace. None with no distance."""
+    if units is None or units.distance != "mi":
+        return (entry.get("pace") or {}).get("min_per_km")
+    if not entry.get("distance_km"):
+        return None
+    return metrics.pace(entry["distance_km"] / formatting.MI, entry["minutes"])
 
 
 SIZE_WORDS = ("small", "medium", "large")
@@ -1708,22 +1849,27 @@ def error_field(kind: str, err: dict) -> str:
     # A message about one entry of several starts "Entry 2: ..."; the field comes after that.
     words = re.sub(r"^[A-Z][a-z]+ \d+: ", "", str(err.get("message") or "")).split()
     first = words[0].strip("':,.").casefold() if words else ""
+    first = STORED_NAME.get(first, first)  # a refusal of lb, distance_mi or speed_mph is about its stored field
     if first in FIELDS_OF.get(kind, ()):
         return first
     return FIRST_FIELD[kind]
 
 
-def field_errors(kind: str, result: dict, measured: str | None = None) -> dict:
-    """{field: the page's own message}, from a refused write: every error, a combined one included."""
+def field_errors(kind: str, result: dict, measured: str | None = None, units=None) -> dict:
+    """{field: the page's own message}, from a refused write: every error, a combined one included. Each is keyed
+    by the name the form draws its field under in these units (form_field), with that unit's line."""
     found = [e for e in result.get("errors") or [] if isinstance(e, dict)] or [result]
     out = {}
     for err in found:
         field = error_field(kind, err)
-        out[field] = FIELD_HELP.get((kind, field)) or form_message(kind, field, measured)
+        drawn = form_field(field, units)
+        out[drawn] = (FIELD_HELP_IN_UNITS.get((kind, drawn)) or FIELD_HELP.get((kind, field))
+                      or form_message(kind, field, measured))
     return out
 
 
-# The fields each side card's fold-out keeps as typed after its error (the Food fold-out's are in log_on_day).
+# The fields each side card's fold-out keeps as typed after its error (the Food fold-out's are in log_on_day), by
+# their stored names: each is kept under the name its form draws it (form_field).
 TYPED_FIELDS = {"bodyweight": ("kg",), "measurement": ("kind", "value"),
                 "cardio_entry": ("exercise", "minutes", "distance_km")}
 
@@ -1738,9 +1884,11 @@ async def log_on_day(request: Request, kind: str) -> Response:
     if on is None:
         return not_found_page(request)
     form = await request.form()
-    if kind == "bodyweight":
+    units = users.units_for(user)  # each form posts its weight and distance under the name of the unit it shows
+    if kind == "bodyweight":  # read by the name it posts (posted_names): the unit it was drawn in
+        weight = {name: str(form.get(name) or "") for name in posted_names("kg", form, units)}
         result = await write(user, "log_bodyweight", services.log_bodyweight, user.id,
-                             {"kg": str(form.get("kg") or ""), "date": on.isoformat()}, "web")
+                             {**weight, "date": on.isoformat()}, "web")
     elif kind == "measurement":
         result = await write(user, "log_measurement", services.log_measurement, user.id,
                              {"kind": str(form.get("kind") or ""), "value": str(form.get("value") or ""),
@@ -1750,18 +1898,19 @@ async def log_on_day(request: Request, kind: str) -> Response:
                              {"entries": [food_from_form(form)], "date": on.isoformat()}, "web")
     else:
         result = await write(user, "log_cardio", services.log_cardio, user.id,
-                             {**cardio_from_form(form), "date": on.isoformat()}, "web")
+                             {**cardio_from_form(form, units), "date": on.isoformat()}, "web")
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if failed(result):
         measured = str(form.get("kind") or "") if kind == "measurement" else None
-        errors = field_errors(kind, result, measured)
+        errors = field_errors(kind, result, measured, units)
         # What was typed stays in the Food fold-out, which the error sends open.
         typed = {kind: {k: str(form.get(k) or "") for k in ("description", "kcal", "meal")}} \
             if kind == "food_entry" else None
         # And in the cardio, weigh-in and measurement fold-outs, the same way.
         if kind in TYPED_FIELDS:
-            typed = {kind: {k: str(form.get(k) or "") for k in TYPED_FIELDS[kind]}}
+            drawn = [form_field(k, units) for k in TYPED_FIELDS[kind]]
+            typed = {kind: {k: str(form.get(k) or "") for k in drawn}}
         shown = await day_page(request, form_error={kind: errors}, status_code=400, typed=typed)
         if shown.status_code == 404:  # a day that has no page (after today): say why, plainly
             return message(request, "Not saved", " ".join(errors.values()), status_code=400)
@@ -1785,12 +1934,14 @@ def food_from_form(form) -> dict:
     return entry
 
 
-def cardio_from_form(form) -> dict:
-    """A cardio entry from the day page's form: activity, minutes, and the distance when one is given."""
+def cardio_from_form(form, units=None) -> dict:
+    """A cardio entry from the day page's form: activity, minutes, and the distance when one is given, under the
+    name it was posted under (posted_names: distance_mi from a form drawn in miles); both names, both given."""
     data = {"exercise": str(form.get("exercise") or ""), "minutes": str(form.get("minutes") or "")}
-    distance = str(form.get("distance_km") or "").strip()
-    if distance:
-        data["distance_km"] = distance
+    for name in posted_names("distance_km", form, units):
+        distance = str(form.get(name) or "").strip()
+        if distance:
+            data[name] = distance
     return data
 
 
@@ -1819,11 +1970,12 @@ async def edit_page(request: Request) -> Response:
     if failed(found):
         return not_found_page(request)
     entry, errors, status = found["entry"], {}, 200
-    values, drawn_at = edit_values(kind, entry), found["updated_at"]
+    units = users.units_for(user)
+    values, drawn_at = edit_values(kind, entry, units), found["updated_at"]
     if request.method == "POST":
         form = await posted_form(request)
         drawn_at = str(form.get("updated_at") or "")  # as the page that sent this form drew it
-        changes = edit_changes(kind, entry, form)
+        changes = edit_changes(kind, entry, form, units)
         if not changes:  # nothing differs: nothing to write
             return redirect(marked(links.page("day", date=entry["date"]), *UNCHANGED))
         result = await write(user, "edit_entry", services.edit_entry, user.id, kind, entry_id, changes, "web",
@@ -1840,8 +1992,9 @@ async def edit_page(request: Request) -> Response:
             saved = f"{kind}:{result['id']}" if result.get("changed") else kind
             mark = UNCHANGED if failed(result) else ("saved", saved)
             return redirect(marked(links.page("day", date=after["date"]), *mark))
-        errors, status = field_errors(kind, result, entry.get("kind") if kind == "measurement" else None), 400
-        values = {f: str(form.get(f) or "") for f in EDIT_FIELDS[kind]}  # what they typed, as typed
+        errors, status = field_errors(kind, result, entry.get("kind") if kind == "measurement" else None, units), 400
+        drawn = [form_field(f, units) for f in EDIT_FIELDS[kind]]
+        values = {f: str(form.get(f) or "") for f in drawn}  # what they typed, as typed
     activities = await cardio_names() if kind == "cardio_entry" else []
     # The day the entry is on, as stored: the back link and Cancel go there, whatever date was typed.
     on, today = date.fromisoformat(entry["date"]), users.today_for(user)
@@ -1850,7 +2003,8 @@ async def edit_page(request: Request) -> Response:
     return page(request, "edit.html", status_code=status, kind=kind, kind_name=KIND_NAMES[kind],
                 entry_id=found["id"], entry=entry, values=values, errors=errors, updated_at=drawn_at,
                 # A refusal about a field the form does not draw goes at the top of the form.
-                loose=[words for field, words in errors.items() if field not in EDIT_FIELDS[kind]],
+                loose=[words for field, words in errors.items()
+                       if field not in [form_field(f, units) for f in EDIT_FIELDS[kind]]],
                 day_href=f"/day/{on.isoformat()}",
                 day_words="Today" if on == today else formatting.day(on, today),
                 # A measurement's line above its Value, and a whole-number kind's numeric keyboard.
@@ -1880,19 +2034,20 @@ async def posted_form(request: Request) -> dict:
             for key, value in form.items()}
 
 
-def edit_values(kind: str, entry: dict) -> dict:
+def edit_values(kind: str, entry: dict, units=None) -> dict:
     """Each field's value in an edit form, as stored: a number at the decimals the store keeps, through
-    formatting.field, other words as they are, nothing for a field with no value."""
+    formatting.field, other words as they are, nothing for a field with no value. A weight, distance or speed shown
+    in lb or mi is keyed by its name in that unit (form_field) and filled at the shown step (decision 16)."""
     out = {}
     for field in EDIT_FIELDS[kind]:
-        value = entry.get(field)
+        value, name = entry.get(field), form_field(field, units)
         if value is None:
-            out[field] = ""
+            out[name] = ""
         elif field in NUMBER_FIELDS and isinstance(value, (int, float)) and not isinstance(value, bool):
             quantity = measurement_quantity(entry["kind"]) if field == "value" else FIELD_QUANTITIES[field]
-            out[field] = formatting.field(value, quantity)
+            out[name] = formatting.field(value, quantity, units=units if name != field else None)
         else:
-            out[field] = str(value)
+            out[name] = str(value)
     return out
 
 
@@ -1919,8 +2074,24 @@ def changed_fields(fields, current: dict, form) -> dict:
     return changes
 
 
-def edit_changes(kind: str, entry: dict, form) -> dict:
-    return changed_fields(EDIT_FIELDS[kind], entry, form)
+def edit_changes(kind: str, entry: dict, form, units=None) -> dict:
+    """The fields of an edit form the person changed, in the form's order (changed_fields). Each field is read by
+    the name it was posted under (posted_names), so a form drawn before a units switch is read in its own units. A
+    field posted in lb or mi is compared as text with what the page fills it with in that unit (edit_values), never
+    as a number: 80 kg fills as 176.35 lb, which is 79.99 kg sent back, so an untouched one is never sent (decision
+    16). A changed one is sent as typed, under its name in that unit, and the service converts it. Both names of a
+    pair are both sent as posted, and the service refuses them: neither is dropped."""
+    filled = edit_values(kind, entry, formatting.Units("lb", "mi"))  # each field keyed by its name in lb or mi
+    changes = {}
+    for field in EDIT_FIELDS[kind]:
+        names = posted_names(field, form, units)
+        if len(names) > 1:
+            changes.update({name: str(form.get(name) or "") for name in names})
+        elif names[0] == field:
+            changes.update(changed_fields((field,), entry, form))
+        elif str(form.get(names[0]) or "").strip() != filled[names[0]]:
+            changes[names[0]] = str(form.get(names[0]) or "")
+    return changes
 
 
 async def confirm_page(request: Request) -> Response:
@@ -2216,7 +2387,8 @@ async def routines_page(request: Request) -> Response:
     if user is None:
         return redirect(links.page("sign_in"))
     result = await _db(services.get_routines, user.id)
-    rows = [{"id": r["id"], "name": r["name"], "lifts": routine_lift_words(r["lifts"], page=True)}
+    units = users.units_for(user)  # the weights in the person's unit, as get_routines' words say them
+    rows = [{"id": r["id"], "name": r["name"], "lifts": routine_lift_words(r["lifts"], page=True, units=units)}
             for r in result.get("routines", [])]
     return page(request, "routines.html", routines=rows, strip=routine_strip(request.query_params))
 
@@ -2308,13 +2480,14 @@ def _trend(user_id: int, today: date | None = None) -> dict:
         if user is None:
             return {"best_sets": {}, "reps_only": {}, "bodyweight": None}
         today = today or users.today_for(user)
+        units = users.units_for(user)
         history = lifts.history(s, user.id, today)
         weighed = body.weigh_ins(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")))
         # The last 28 days, today included (section D): the same points as get_trends' series.
         since = today - timedelta(days=BODY_WEIGHT_DAYS - 1)
         return {"best_sets": history["best_set"], "reps_only": history["reps_only"],
-                "bodyweight": progress_data.bodyweight_chart(weighed, goals, today, since)}
+                "bodyweight": exact_read(progress_data.bodyweight_chart, units)(weighed, goals, today, since)}
 
 
 def _lift_points(lift: dict) -> dict:
@@ -2328,7 +2501,8 @@ async def progress_page(request: Request) -> Response:
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
-    result = await _db(services.get_progress, user.id)
+    units = users.units_for(user)
+    result = await _db(exact_read(services.get_progress, units), user.id)
     if failed(result):
         return not_found_page(request)
     # The tiles, their sheets and the Body weight card read what Today's glance block reads (glance_of), so the
@@ -2338,19 +2512,37 @@ async def progress_page(request: Request) -> Response:
     # reads get_cardio's row for every activity; a failed read draws no card. get_cardio takes the person's date
     # from the clock, so read across their midnight it can count another 28 days than the page's: then it is read
     # once more, as glance_of does, and if it still names another day the card is not drawn for that one render.
-    glance = await glance_of(user.id)
+    glance = await glance_of(user.id, units)
     today = date.fromisoformat(glance["trends"]["today"] if glance else result["today"])
     trend = await _db(_trend, user.id, today)
-    trends = glance["trends"] if glance else await _db(services.get_trends, user.id)
+    trends = glance["trends"] if glance else await _db(exact_read(services.get_trends, units), user.id)
     cardio = await _db(services.get_cardio, user.id)
     if not failed(cardio) and cardio["today"] != today.isoformat():
         cardio = await _db(services.get_cardio, user.id)
+    activities = None if failed(cardio) or cardio["today"] != today.isoformat() else cardio["activities"]
     return page(request, "progress.html", lifts=result["lifts"], best_sets=trend["best_sets"],
                 reps_only=trend["reps_only"], glance=glance, bodyweight=trend["bodyweight"],
-                chart=charts.bodyweight_svg(trend["bodyweight"], today=today), slug=links.slug, today=today,
-                trends=None if failed(trends) else trends,
-                activities=None if failed(cardio) or cardio["today"] != today.isoformat() else cardio["activities"],
+                chart=charts.bodyweight_svg(trend["bodyweight"], today=today, units=units), slug=links.slug,
+                today=today, trends=None if failed(trends) else trends, activities=activities,
+                fastest=await fastest_in_miles(user.id, activities, units),
                 weight_now_label=weight_now_label, rate_note=rate_note)
+
+
+async def fastest_in_miles(user_id: int, activities: list | None, units) -> dict[str, str]:
+    """{activity: its fastest pace per mile} for the Cardio card, with distances in miles; {} otherwise, and the
+    card says get_cardio's own m:ss per km. The every-activity read gives that pace as words only, so each paced
+    activity's own read gives its number (bests.fastest_pace.pace_min_per_km), shown per mile by formatting.show."""
+    if units.distance != "mi" or not activities:
+        return {}
+    out = {}
+    for row in activities:
+        if not row.get("fastest_pace"):
+            continue
+        one = await _db(services.get_cardio, user_id, row["exercise"])
+        best = None if failed(one) else (one.get("bests") or {}).get("fastest_pace")
+        if best and best.get("pace_min_per_km") is not None:
+            out[row["exercise"]] = formatting.show(best["pace_min_per_km"], "pace", units=units)
+    return out
 
 
 def weight_now_label(trends: dict) -> str:
@@ -2391,7 +2583,8 @@ async def progress_lift_page(request: Request) -> Response:
     name = (await lift_names()).get(request.path_params["lift"])
     if name is None:
         return not_found_page(request)
-    result = await _db(services.get_progress, user.id, name)
+    units = users.units_for(user)
+    result = await _db(exact_read(services.get_progress, units), user.id, name)
     if failed(result):
         return not_found_page(request)
     # The page's one date is get_progress' today. The reps_only read takes that date, so it never names another.
@@ -2399,17 +2592,21 @@ async def progress_lift_page(request: Request) -> Response:
     today = date.fromisoformat(result["today"])
     bare = await _db(_reps_only, user.id, lift["exercise"], today)
     chart = progress_data.lift_chart(_lift_points(lift), lift["goals"], lift["exercise"])
-    return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart, today=today), today=today,
-                bare=bare, sessions=list(reversed(lift["estimated_max_over_time"])), best_widened=best_widened,
-                best_labels=lifts.BEST_LABELS)
+    return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart, today=today, units=units),
+                today=today, bare=bare, sessions=list(reversed(lift["estimated_max_over_time"])),
+                best_widened=lambda best: best_widened(best, units), best_labels=lifts.BEST_LABELS)
 
 
-def best_widened(best: dict) -> bool:
-    """Whether a best and the one it beat show widened, together: an estimated max pair that prints
-    the same at the shown step (D5). A heaviest weight is as entered, and never widens."""
-    previous = best.get("previous")
-    return (best.get("kind") == "estimated_max" and previous is not None
-            and formatting.show(best["value"], "estimated_max") == formatting.show(previous, "estimated_max"))
+def best_widened(best: dict, units=None) -> bool:
+    """Whether a best and the one it beat show widened, together: a pair that prints the same at the shown step
+    (D5), judged in the shown unit (decision 10), as lifts.best_text judges it. In kg only an estimated max can: a
+    heaviest weight is shown at its stored 2 dp. In lb a heaviest weight can too: 102.06 and 102.05 kg are both
+    225 lb."""
+    previous, kind = best.get("previous"), best.get("kind")
+    if previous is None or (kind != "estimated_max" and (units is None or units.weight != "lb")):
+        return False
+    quantity = "estimated_max" if kind == "estimated_max" else "weight_kg"
+    return formatting.show(best["value"], quantity, units=units) == formatting.show(previous, quantity, units=units)
 
 
 # ---------------------------------------------------------------- Goals
@@ -2454,22 +2651,26 @@ STATUS_MEANS = {"reached": "The target is reached.", "on track": "At this pace t
                 "behind": "At this pace the target is not reached by the date."}
 
 
-def now_words(goal: dict) -> str | None:
+def now_words(goal: dict, units=None) -> str | None:
     """What a goal's now figure is, in grey words after it: NOW_WORDS by its kind and now_basis. None with nothing
-    logged (now_basis null). A cardio time's distance goes through show, a measurement's word is kind_word's."""
+    logged (now_basis null). A cardio time's distance goes through show, in the person's units, a measurement's
+    word is kind_word's."""
     words = NOW_WORDS.get((goal.get("kind"), goal.get("now_basis")))
     if words is None:
         return None
-    distance = formatting.show(goal["distance_km"], "km", page=True) if goal.get("distance_km") is not None else ""
+    distance = (formatting.show(goal["distance_km"], "km", page=True, units=units)
+                if goal.get("distance_km") is not None else "")
     kind = goal.get("measurement_kind")
     return words.format(distance=distance, measurement=measurements.kind_word(kind).lower() if kind else "")
 
 
-def now_widened(goal: dict) -> bool:
+def now_widened(goal: dict, units=None) -> bool:
     """Close-call rule 2 on the page: the now figure widens exactly when plan_line's does, by formatting.widen on
-    goal_charts' unrounded latest and should_be_today, so the card's now and plan_line's print the same figure."""
+    goal_charts' unrounded latest and should_be_today, judged in the shown unit as plan_line judges it, so the
+    card's now and plan_line's print the same figure."""
     latest, should = goal.get("latest"), goal.get("should_be_today")
-    return latest is not None and should is not None and formatting.widen([latest, should], goal_quantity(goal))
+    return latest is not None and should is not None and formatting.widen([latest, should], goal_quantity(goal),
+                                                                          units=units)
 
 
 def days_words(goal: dict) -> str | None:
@@ -2481,12 +2682,12 @@ def days_words(goal: dict) -> str | None:
     return f"{formatting.show(abs(days), 'count')}{NBSP}{'day' if abs(days) == 1 else 'days'} {goal['vs_plan']}"
 
 
-def goal_words(goal: dict) -> dict:
+def goal_words(goal: dict, units=None) -> dict:
     """One open goal card's words and its now figure's widening, from goal_charts' own fields: the now words, the
     heading of Against the plan line, the days line, the By projection tag, its class and what it means. The page
     builds no comparison and never works out whether the line has ended: vs_plan and line_ended say both."""
     status = goal.get("status")
-    return {"now": now_words(goal), "widened": now_widened(goal),
+    return {"now": now_words(goal, units), "widened": now_widened(goal, units),
             "heading": PLAN_HEADINGS.get((goal.get("vs_plan"), bool(goal.get("line_ended")))),
             "days": days_words(goal), "tag": STATUS_TAGS.get(status, status),
             "tag_class": STATUS_CLASSES.get(status, ""),
@@ -2504,17 +2705,23 @@ GOAL_LEGEND = (
 )
 
 
-def goal_chart(goal: dict, today) -> dict:
+def goal_chart(goal: dict, today, units=None) -> dict:
     """One open goal's path chart and its legend. The chart is charts.goal_svg of goal_charts' own goal, unrounded,
-    drawn on the page's one today. Its desc says plan_line word for word and never widens its own figures (charts.py).
-    The legend names what the drawing holds, read from the drawing itself: the page decides nothing the chart does.
-    No plan (a stand-in read): no chart, no legend."""
-    svg = charts.goal_svg(goal, today)
+    drawn on the page's one today, in the person's units. Its desc says plan_line word for word and never widens its
+    own figures (charts.py). The legend names what the drawing holds, read from the drawing itself: the page decides
+    nothing the chart does. No plan (a stand-in read): no chart, no legend."""
+    svg = charts.goal_svg(goal, today, units=units)
     drawn, legend = str(svg), []
     for marks, key, words in GOAL_LEGEND:
         if any(m in drawn for m in marks) and words not in (w for _, w in legend):
             legend.append((key, words))
     return {"svg": svg, "legend": legend if drawn else []}
+
+
+def goal_unit(goal: dict, units=None) -> str:
+    """The unit word after a goal's now figure: the person's weight unit for a lift or body weight goal (its stored
+    unit stays kg), else the goal's own (cm, bpm)."""
+    return formatting.unit_word("weight", units) if goal.get("kind") in ("bodyweight", "lift") else goal.get("unit")
 
 
 def goal_from_form(form) -> dict:
@@ -2534,12 +2741,19 @@ def goal_kind(value: object) -> str:
     return value if isinstance(value, str) and value in dict(GOAL_KINDS) else GOAL_KIND_FIRST
 
 
-def goal_error_words(err: dict, kind: str, measured: str = "") -> str | None:
+def goal_error_words(err: dict, kind: str, measured: str = "", units=None) -> str | None:
     """The page's own line for one set_goal refusal, found by its error code and its field, never by its message:
     the kind's own line where the line differs by kind, a measurement's line named for the one chosen, or its
-    GOAL_ERROR_UNNAMED line when none is. None for a refusal the table does not know."""
+    GOAL_ERROR_UNNAMED line when none is. None for a refusal the table does not know. With weights in lb or
+    distances in miles, a line that names the unit is GOAL_ERROR_WORDS_IN's."""
     key = (err.get("error"), err.get("field"))
     words = GOAL_ERROR_WORDS.get(key)
+    for unit in ((units.weight, units.distance) if units is not None else ()):
+        shown = GOAL_ERROR_WORDS_IN.get(unit, {}).get(key)
+        if isinstance(shown, dict) and isinstance(words, dict):
+            words = {**words, **shown}
+        elif shown is not None:
+            words = shown
     if isinstance(words, dict):
         words = words.get(kind)
     if words is None or "{" not in words:
@@ -2551,21 +2765,23 @@ def goal_error_words(err: dict, kind: str, measured: str = "") -> str | None:
                         span=rules.span(lo, hi, "goal_target"), whole=", as a whole number" if whole else "")
 
 
-def goal_errors(result: dict, kind: str, typed: dict) -> tuple[dict[str, str], list[str]]:
+def goal_errors(result: dict, kind: str, typed: dict, units=None) -> tuple[dict[str, str], list[str]]:
     """A set_goal refusal on the form of `kind`: ({field: its line}, [the lines at the top of the form]). Each
     problem goes under its own field, by the field it names, when the form draws that field (Where you are now is
     drawn for its own error). A problem about a field the form does not draw, such as the hidden kind, goes at the
-    top, and so does one the table does not know, as the one general line."""
+    top, and so does one the table does not know, as the one general line. With distances in miles the form draws
+    distance_mi, and a refusal that names distance_km (none was sent) goes under it."""
     found = [e for e in result.get("errors") or [] if isinstance(e, dict)] or [result]
-    drawn = (*GOAL_KIND_FIELDS[kind], "start_value")
+    drawn = [form_field(f, units) for f in (*GOAL_KIND_FIELDS[kind], "start_value")]
     under: dict[str, list[str]] = {}
     top: list[str] = []
     for err in found:
-        words = goal_error_words(err, kind, typed.get("measurement_kind") or "")
+        words = goal_error_words(err, kind, typed.get("measurement_kind") or "", units)
+        field = form_field(err["field"], units) if err.get("field") == "distance_km" else err.get("field")
         if words is None:
             top.append(GOAL_ERROR_GENERAL)
-        elif err.get("field") in drawn:
-            under.setdefault(err["field"], []).append(words)
+        elif field in drawn:
+            under.setdefault(field, []).append(words)
         else:
             top.append(words)
     return {field: " ".join(dict.fromkeys(lines)) for field, lines in under.items()}, list(dict.fromkeys(top))
@@ -2601,15 +2817,16 @@ async def exercise_names(kind: str) -> list[str]:
     return [e["name"] for e in result.get("exercises", [])]
 
 
-async def goal_reads(user_id: int) -> tuple[dict, dict]:
+async def goal_reads(user_id: int, units=None) -> tuple[dict, dict]:
     """The Goals page's two reads: get_goals with the closed goals, and goal_charts for the open goals, unrounded,
-    and the page's one date. Each takes the person's date from the clock, so read across their midnight the two can
-    name two dates: both are read once more, as glance_of does. If they still differ, goal_charts' date is the page's
+    worded in units, the person's, as get_goals words them, and the page's one date. Each takes the person's date
+    from the clock, so read across their midnight the two can name two dates: both are read once more, as
+    glance_of does. If they still differ, goal_charts' date is the page's
     for that one render: get_goals gives the page only its closed goals, whose labels, statuses and closing times
     carry nothing worked out from the date. Either read's failure comes back as it is."""
     for _ in range(2):
         listed = await _db(services.get_goals, user_id, True)
-        charted = await _db(services.goal_charts, user_id)
+        charted = await _db(services.goal_charts, user_id, units)
         if failed(listed) or failed(charted) or listed.get("today") == charted.get("today"):
             break
     return listed, charted
@@ -2619,15 +2836,17 @@ async def goals_view(request: Request, user: User, kind: str = GOAL_KIND_FIRST, 
                      loose: list | None = None, typed: dict | None = None, status_code: int = 200) -> Response:
     """The Goals page, its Set a goal form showing `kind`: after a refusal, with each line under its field or at
     the top (loose), and what was typed kept."""
-    listed, charted = await goal_reads(user.id)
+    units = users.units_for(user)
+    listed, charted = await goal_reads(user.id, units)
     if failed(listed) or failed(charted):
         return not_found_page(request)
     saved = GOAL_SAVED.get(request.query_params.get("saved") or "") if status_code == 200 else None
     notes = goal_notes_shown(request.query_params.get("notes")) if saved else []
     goals, today = charted.get("goals") or [], charted.get("today")
     return page(request, "goals.html", status_code=status_code, goals=goals, notes=notes,
-                words={g["goal_id"]: goal_words(g) for g in goals},
-                charts={g["goal_id"]: goal_chart(g, today) for g in goals},
+                words={g["goal_id"]: goal_words(g, units) for g in goals},
+                charts={g["goal_id"]: goal_chart(g, today, units) for g in goals},
+                goal_unit=lambda g: goal_unit(g, units), weight_unit=GOAL_WEIGHT_UNIT,
                 closed=listed.get("closed") or [], errors=errors or {}, loose=loose or [], typed=typed or {},
                 saved=saved, kinds=GOAL_KINDS, kind=kind,
                 shows_start="start_value" in (errors or {}) or bool((typed or {}).get("start_value")),
@@ -2654,7 +2873,7 @@ async def goals_page(request: Request) -> Response:
     if failed(result):
         typed = {f: str(form.get(f) or "") for f in GOAL_FIELDS}
         kind = goal_kind(typed["kind"])
-        errors, loose = goal_errors(result, kind, typed)
+        errors, loose = goal_errors(result, kind, typed, users.units_for(user))
         return await goals_view(request, user, kind=kind, errors=errors, loose=loose, typed=typed, status_code=400)
     return redirect(saved_address("goal", result) + GOAL_POST_LANDS)
 

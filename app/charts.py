@@ -9,6 +9,13 @@
   goal_svg(goal, today)               Goals: the plan line, the actual line, the projection, today
   pace_svg(sessions, activity, today) an activity's page: a dot per session with its pace
 
+Units (contract units.md R17). Each chart of a weight, a distance or a pace takes units, the person's (None is kg
+and km), and is drawn in the shown unit: every point, the goal line and the projection are placed by
+formatting.convert, the tick lists are the same (KG_STEPS serves lb), and every label is in that unit. A tick is
+already a number in the shown unit, so its label is show(unit=False) with no units; every figure from the data is
+show(stored, units=units), never a converted number. A goal of a weight takes its word from unit_word, never from
+its stored unit, which stays "kg".
+
 The data comes from app.services: progress (lift_chart, bodyweight_chart), get_trends, get_days,
 goal_charts and get_cardio. Every chart is one <svg> with role="img", a <title> and a <desc> that state
 its figures, so it reads without the picture. Text from the data is escaped. Colours, strokes, text
@@ -219,9 +226,9 @@ def _points(pairs) -> str:
     return " ".join(f"{_c(x)},{_c(y)}" for x, y in pairs)
 
 
-def _goal_kg(value) -> str:
-    """A goal's target in kg, as entered: "100 kg"."""
-    return f"{formatting.show(value, 'goal_target')} kg"
+def _goal_weight(value, units=None) -> str:
+    """A goal's target weight, as entered, in the person's unit: "100 kg", "220.45 lb"."""
+    return f"{formatting.show(value, 'weight_target', units=units)} {formatting.unit_word('weight', units)}"
 
 
 # ---------------------------------------------------------------- a lift: estimated max over time
@@ -230,10 +237,11 @@ LIFT_W, LIFT_H = 360, 200
 LIFT_TOP, LIFT_BOTTOM = 24, 166
 
 
-def chart_svg(chart: dict | None, element_id: str = "progress-chart", today: date | None = None) -> Markup:
+def chart_svg(chart: dict | None, element_id: str = "progress-chart", today: date | None = None,
+              units=None) -> Markup:
     """Estimated max per session for one lift, a horizontal goal line at the target, and the
     projection as a dotted line from the latest point to the projected value at the goal date. A lift
-    page's chart card.
+    page's chart card. units: the person's; the chart is drawn in its weight unit.
 
     chart: {lift, points [{date, value}], latest {date, value}, goal {target_kg, target_date, status,
     projected} | None}, or None (renders nothing). A goal date already passed draws no projection, and
@@ -242,13 +250,17 @@ def chart_svg(chart: dict | None, element_id: str = "progress-chart", today: dat
     """
     if not chart or not chart.get("points"):
         return Markup("")
+    def shown(v: float) -> float:  # a stored kg in the unit the chart is drawn in
+        return formatting.convert(v, "estimated_max", units)
+
     raw = [(_date(p["date"]), float(p["value"])) for p in chart["points"]]
     today = _date(today) if today else max(d for d, _ in raw)
-    pts = sorted(((_on(d, today), v, d) for d, v in raw), key=lambda p: p[0])
+    pts = sorted(((_on(d, today), shown(v), d, v) for d, v in raw), key=lambda p: p[0])
     goal = chart.get("goal") or None
-    target = float(goal["target_kg"]) if goal and goal.get("target_kg") is not None else None
+    stored_target = float(goal["target_kg"]) if goal and goal.get("target_kg") is not None else None
+    target = shown(stored_target) if stored_target is not None else None
     goal_date = _date(goal["target_date"]) if goal and goal.get("target_date") else None
-    projected = float(goal["projected"]) if goal and goal.get("projected") is not None else None
+    projected = shown(float(goal["projected"])) if goal and goal.get("projected") is not None else None
 
     if goal_date is not None and goal_date <= pts[-1][0]:
         projected = None  # the goal date has passed: nothing left to project
@@ -256,11 +268,11 @@ def chart_svg(chart: dict | None, element_id: str = "progress-chart", today: dat
     first = pts[0][0]
     last = max([pts[-1][0]] + ([goal_date] if drawn else []))
     # The y-range comes from the sessions and the target; a wild projection is held inside it, not followed.
-    values = [v for _, v, _ in pts] + ([target] if target is not None else [])
+    values = [v for _, v, _, _ in pts] + ([target] if target is not None else [])
     lo, hi = min(values), max(values)
     pad = max((hi - lo) * 0.1, 2.5)
     ticks = _ticks(max(0.0, lo - pad), hi + pad, LIFT_STEPS)
-    labels = _tick_labels(ticks, "estimated_max", "kg")
+    labels = _tick_labels(ticks, "estimated_max", formatting.unit_word("weight", units))
     left, right = _margin(labels), LIFT_W - ROOM
     if drawn:
         projected = min(max(projected, ticks[0]), ticks[-1])
@@ -272,26 +284,30 @@ def chart_svg(chart: dict | None, element_id: str = "progress-chart", today: dat
     span = (f"on {formatting.day(raw[0][0], today)}" if n == 1 else
             f"from {formatting.day(raw[0][0], today)} to {formatting.day(raw[-1][0], today)}")
     desc = (f"{_count(n, 'session', 'sessions')} {span}. "
-            f"Latest {formatting.show(latest['value'], 'estimated_max')} on {formatting.day(latest['date'], today)}.")
+            f"Latest {formatting.show(latest['value'], 'estimated_max', units=units)} on "
+            f"{formatting.day(latest['date'], today)}.")
     if goal:
-        desc += f" Goal {_goal_kg(goal['target_kg'])} by {formatting.day(goal['target_date'], today)}: {goal['status']}"
-        desc += f", projected {formatting.show(goal['projected'], 'estimated_max')}." if drawn else "."
+        desc += (f" Goal {_goal_weight(goal['target_kg'], units)} by {formatting.day(goal['target_date'], today)}: "
+                 f"{goal['status']}")
+        desc += f", projected {formatting.show(goal['projected'], 'estimated_max', units=units)}." if drawn else "."
     out = _svg_open(element_id, f"Estimated max over time: {chart['lift']}", desc, LIFT_W, LIFT_H)
     _grid(out, ticks, labels, y, left, right)
     axis_x = _dates(first, last, left, right)
     _end_dates(out, (first, axis_x(first)), (last, axis_x(last)), LIFT_H - 8, LIFT_W, today)
     if target is not None:
         out.append(f'<line class="goal" x1="{_c(left)}" x2="{_c(right)}" y1="{_c(y(target))}" y2="{_c(y(target))}" />')
-        out.append(f'<text class="goal-label end" x="{_c(right)}" y="{_c(y(target) - 6)}">Goal {_goal_kg(target)}</text>')
+        out.append(f'<text class="goal-label end" x="{_c(right)}" y="{_c(y(target) - 6)}">'
+                   f'Goal {_goal_weight(stored_target, units)}</text>')
     if drawn:
         out.append(f'<line class="projection" x1="{_c(x(pts[-1][0]))}" y1="{_c(y(pts[-1][1]))}" '
                    f'x2="{_c(x(goal_date))}" y2="{_c(y(projected))}" stroke-dasharray="1 6" />')
     if n > 1:
-        out.append(f'<polyline class="series" pathLength="1" points="{_points((x(d), y(v)) for d, v, _ in pts)}" />')
-    for i, (d, v, real) in enumerate(pts):
+        out.append(f'<polyline class="series" pathLength="1" points="{_points((x(d), y(v)) for d, v, _, _ in pts)}" />')
+    for i, (d, v, real, stored) in enumerate(pts):
         kind, r = ("dot is-latest", 4) if i == n - 1 else ("dot", 3)
         out.append(f'<circle class="{kind}" cx="{_c(x(d))}" cy="{_c(y(v))}" r="{r}"><title>'
-                   f'{formatting.day(real, today)}: {formatting.show(v, "estimated_max")}</title></circle>')
+                   f'{formatting.day(real, today)}: {formatting.show(stored, "estimated_max", units=units)}'
+                   '</title></circle>')
     return _close(out)
 
 
@@ -301,9 +317,10 @@ BW_W, BW_H = 360, 214
 BW_TOP, BW_BOTTOM = 26, 172
 
 
-def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart", today: date | None = None) -> Markup:
-    """A hollow dot per weigh-in, the smoothed trend as a line, labelled grid lines in whole kg, the
-    first and last date, and a horizontal goal line at the target. Progress' Body weight card.
+def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart", today: date | None = None,
+                   units=None) -> Markup:
+    """A hollow dot per weigh-in, the smoothed trend as a line, labelled grid lines in whole kg (or whole lb),
+    the first and last date, and a horizontal goal line at the target. Progress' Body weight card.
 
     chart: progress.bodyweight_chart: {points [{date, kg, smoothed}], latest {date, kg}, goal {target_kg,
     target_date} | None}, or None. Renders nothing under two weigh-ins. The line joins each point's
@@ -311,17 +328,21 @@ def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart", tod
     """
     if not chart or len(chart.get("points") or []) < 2:
         return Markup("")
+    def shown(v: float) -> float:  # a stored kg in the unit the chart is drawn in
+        return formatting.convert(v, "weigh_in", units)
+
     raw = [(_date(p["date"]), float(p["kg"]), p.get("smoothed")) for p in chart["points"]]
     today = _date(today) if today else max(d for d, _, _ in raw)
     rows = sorted(((_on(d, today), kg, sm, d) for d, kg, sm in raw), key=lambda r: r[0])
-    pts = [(d, kg, real) for d, kg, _, real in rows]
-    smooth = [(d, float(sm)) for d, _, sm, _ in rows if sm is not None]
+    pts = [(d, shown(kg), real, kg) for d, kg, _, real in rows]
+    smooth = [(d, shown(float(sm)), float(sm)) for d, _, sm, _ in rows if sm is not None]
     goal = chart.get("goal") or None
-    target = float(goal["target_kg"]) if goal and goal.get("target_kg") is not None else None
+    stored_target = float(goal["target_kg"]) if goal and goal.get("target_kg") is not None else None
+    target = shown(stored_target) if stored_target is not None else None
     first, last = pts[0][0], pts[-1][0]
-    values = [v for _, v, _ in pts] + [v for _, v in smooth] + ([target] if target is not None else [])
+    values = [v for _, v, _, _ in pts] + [v for _, v, _ in smooth] + ([target] if target is not None else [])
     ticks = _ticks(min(values), max(values), WHOLE_STEPS)
-    labels = _tick_labels(ticks, "bodyweight_derived", "kg")
+    labels = _tick_labels(ticks, "bodyweight_derived", formatting.unit_word("weight", units))
     left, right = _margin(labels), BW_W - ROOM
     y = _scale(ticks[0], ticks[-1], BW_TOP, BW_BOTTOM)
     x = _dates(first, last, left + 6, right - 6)
@@ -329,42 +350,48 @@ def bodyweight_svg(chart: dict | None, element_id: str = "bodyweight-chart", tod
     latest = chart["latest"]
     desc = (f"{_count(len(pts), 'weigh-in', 'weigh-ins')} from {formatting.day(raw[0][0], today)} to "
             f"{formatting.day(raw[-1][0], today)}. "
-            f"Latest {formatting.show(latest['kg'], 'weigh_in')} on {formatting.day(latest['date'], today)}.")
+            f"Latest {formatting.show(latest['kg'], 'weigh_in', units=units)} on "
+            f"{formatting.day(latest['date'], today)}.")
     if len(smooth) > 1:
-        desc += f" The line is the smoothed trend, now {formatting.show(smooth[-1][1], 'bodyweight_derived')}."
+        desc += (" The line is the smoothed trend, now "
+                 f"{formatting.show(smooth[-1][2], 'bodyweight_derived', units=units)}.")
     if target is not None:
-        desc += f" Goal {_goal_kg(target)}" + (f" by {formatting.day(goal['target_date'], today)}."
-                                               if goal.get("target_date") else ".")
+        desc += f" Goal {_goal_weight(stored_target, units)}" + (
+            f" by {formatting.day(goal['target_date'], today)}." if goal.get("target_date") else ".")
     out = _svg_open(element_id, "Body weight over time", desc, BW_W, BW_H)
     _grid(out, ticks, labels, y, left, right)
     axis_x = _dates(first, last, left, right)
     _end_dates(out, (first, axis_x(first)), (last, axis_x(last)), BW_H - 8, BW_W, today)
     if target is not None:
         out.append(f'<line class="goal" x1="{_c(left)}" x2="{_c(right)}" y1="{_c(y(target))}" y2="{_c(y(target))}" />')
-        out.append(f'<text class="goal-label end" x="{_c(right)}" y="{_c(y(target) - 7)}">Goal {_goal_kg(target)}</text>')
-    for d, v, real in pts:
+        out.append(f'<text class="goal-label end" x="{_c(right)}" y="{_c(y(target) - 7)}">'
+                   f'Goal {_goal_weight(stored_target, units)}</text>')
+    for d, v, real, stored in pts:
         out.append(f'<circle class="dot weigh-in" cx="{_c(x(d))}" cy="{_c(y(v))}" r="3"><title>'
-                   f'{formatting.day(real, today)}: {formatting.show(v, "weigh_in")}</title></circle>')
+                   f'{formatting.day(real, today)}: {formatting.show(stored, "weigh_in", units=units)}'
+                   '</title></circle>')
     if len(smooth) > 1:
         out.append(f'<polyline class="series smoothed" pathLength="1" '
-                   f'points="{_points((x(d), y(v)) for d, v in smooth)}" />')
+                   f'points="{_points((x(d), y(v)) for d, v, _ in smooth)}" />')
     return _close(out)
 
 
 # ---------------------------------------------------------------- Today: the smoothed weight, 4 weeks
 
-def _smoothed(series, today: date) -> list[tuple[date, float, date]]:
-    """(drawn date, smoothed, real date), in drawn order: a point after today counts as today."""
-    rows = [(_on(_date(p["date"]), today), float(p["smoothed"]), _date(p["date"]))
+def _smoothed(series, today: date, units=None) -> list[tuple[date, float, date, float]]:
+    """(drawn date, smoothed in the shown unit, real date, smoothed as stored), in drawn order: a point after
+    today counts as today."""
+    rows = [(_on(_date(p["date"]), today), formatting.convert(float(p["smoothed"]), "bodyweight_derived", units),
+             _date(p["date"]), float(p["smoothed"]))
             for p in series or [] if p.get("smoothed") is not None]
     return sorted(rows, key=lambda r: r[0])
 
 
-def _weight_desc(line, today: date) -> str:
-    (_, v1, d1), (_, v2, d2) = line[0], line[-1]
-    return (f"Smoothed body weight over the last 4 weeks, from {formatting.show(v1, 'bodyweight_derived')} "
-            f"on {formatting.day(d1, today)} to {formatting.show(v2, 'bodyweight_derived')} on "
-            f"{formatting.day(d2, today)}.")
+def _weight_desc(line, today: date, units=None) -> str:
+    (_, _, d1, v1), (_, _, d2, v2) = line[0], line[-1]
+    return (f"Smoothed body weight over the last 4 weeks, from "
+            f"{formatting.show(v1, 'bodyweight_derived', units=units)} on {formatting.day(d1, today)} to "
+            f"{formatting.show(v2, 'bodyweight_derived', units=units)} on {formatting.day(d2, today)}.")
 
 
 def _area(line_xy: list[tuple[float, float]], base: float) -> str:
@@ -376,7 +403,7 @@ def _area(line_xy: list[tuple[float, float]], base: float) -> str:
 SMALL_W, SMALL_WEIGHT_H = 320, 132
 
 
-def weight_small_svg(series: list | None, today: date, element_id: str = "chart-weight-4w") -> Markup:
+def weight_small_svg(series: list | None, today: date, element_id: str = "chart-weight-4w", units=None) -> Markup:
     """The Today chart card "Weight": the smoothed line over the last 28 days, the area under it and
     the end dot. No axis.
 
@@ -385,16 +412,17 @@ def weight_small_svg(series: list | None, today: date, element_id: str = "chart-
     or "One weigh-in in the last 28 days. The chart starts from the second one."
     """
     today = _date(today)
-    line = _smoothed(series, today)
+    line = _smoothed(series, today, units)
     if len(line) < 2:
         return Markup("")
-    values = [v for _, v, _ in line]
+    values = [v for _, v, _, _ in line]
     lo, hi = min(values), max(values)
     pad = max((hi - lo) * 0.12, 0.1)
     y = _scale(lo - pad, hi + pad, 14, 110)
     x = _dates(line[0][0], line[-1][0], 8, SMALL_W - 8)
-    xy = [(x(d), y(v)) for d, v, _ in line]
-    out = _svg_open(element_id, "Weight, last 4 weeks", _weight_desc(line, today), SMALL_W, SMALL_WEIGHT_H, small=True)
+    xy = [(x(d), y(v)) for d, v, _, _ in line]
+    out = _svg_open(element_id, "Weight, last 4 weeks", _weight_desc(line, today, units), SMALL_W, SMALL_WEIGHT_H,
+                    small=True)
     out.append(f'<path class="area" d="{_area(xy, SMALL_WEIGHT_H - 4)}" />')
     out.append(f'<polyline class="series smoothed" pathLength="1" points="{_points(xy)}" />')
     out.append(f'<circle class="dot end-dot" cx="{_c(xy[-1][0])}" cy="{_c(xy[-1][1])}" r="7" />')
@@ -405,21 +433,22 @@ SHEET_W, SHEET_WEIGHT_H = 360, 176
 SHEET_TOP, SHEET_BOTTOM = 16, 146
 
 
-def weight_sheet_svg(series: list | None, today: date, element_id: str = "chart-weight-sheet") -> Markup:
+def weight_sheet_svg(series: list | None, today: date, element_id: str = "chart-weight-sheet",
+                     units=None) -> Markup:
     """The Weight sheet's "Smoothed weight": the same line and area, three labelled grid lines, the
     first and last date. series and the empty case as weight_small_svg."""
     today = _date(today)
-    line = _smoothed(series, today)
+    line = _smoothed(series, today, units)
     if len(line) < 2:
         return Markup("")
-    values = [v for _, v, _ in line]
+    values = [v for _, v, _, _ in line]
     ticks = _three_ticks(min(values), max(values), KG_STEPS)
-    labels = _tick_labels(ticks, "bodyweight_derived", "kg")
+    labels = _tick_labels(ticks, "bodyweight_derived", formatting.unit_word("weight", units))
     left, right = _margin(labels), SHEET_W - ROOM
     y = _scale(ticks[0], ticks[-1], SHEET_TOP, SHEET_BOTTOM)
     x = _dates(line[0][0], line[-1][0], left, right - 4)
-    xy = [(x(d), y(v)) for d, v, _ in line]
-    out = _svg_open(element_id, "Weight, last 4 weeks", _weight_desc(line, today), SHEET_W, SHEET_WEIGHT_H)
+    xy = [(x(d), y(v)) for d, v, _, _ in line]
+    out = _svg_open(element_id, "Weight, last 4 weeks", _weight_desc(line, today, units), SHEET_W, SHEET_WEIGHT_H)
     _grid(out, ticks, labels, y, left, right)
     _end_dates(out, (line[0][0], xy[0][0]), (line[-1][0], xy[-1][0]), SHEET_WEIGHT_H - 6, SHEET_W, today)
     out.append(f'<path class="area" d="{_area(xy, SHEET_BOTTOM)}" />')
@@ -537,41 +566,53 @@ def goal_quantity(goal: dict) -> str:
     return GOAL_QUANTITY.get(goal.get("kind")) or UNIT_QUANTITY.get(goal.get("unit")) or "bodyweight_derived"
 
 
-def _goal_unit(goal: dict) -> str | None:
+def _weighed(goal: dict) -> bool:
+    """A goal of a weight: a lift or body weight goal, shown in the person's weight unit (its stored unit is kg)."""
+    return goal.get("kind") in GOAL_QUANTITY
+
+
+def _goal_unit(goal: dict, units=None) -> str | None:
     """The unit a goal's figure carries after it, or None for a time (m:ss carries no unit)."""
-    return None if goal_quantity(goal) == "goal_time" else goal.get("unit")
+    if goal_quantity(goal) == "goal_time":
+        return None
+    return formatting.unit_word("weight", units) if _weighed(goal) else goal.get("unit")
 
 
-def _goal_figure(value, goal: dict) -> str:
-    return formatting.show(value, goal_quantity(goal))
+def _goal_figure(value, goal: dict, units=None) -> str:
+    return formatting.show(value, goal_quantity(goal), units=units)
 
 
-def _goal_target(goal: dict) -> str:
-    """The target as entered, by the goal unit: "77 kg", "84 cm", a time in m:ss."""
+def _goal_target(goal: dict, units=None) -> str:
+    """The target as entered, by the goal unit: "77 kg", "84 cm", a time in m:ss. A weight in the person's unit."""
     if goal_quantity(goal) == "goal_time":
         return formatting.show(goal["target_value"], "goal_time")
+    if _weighed(goal):
+        return _goal_weight(goal["target_value"], units)
     return f"{formatting.show(goal['target_value'], 'goal_target')} {goal.get('unit')}"
 
 
-def _goal_rate(value, goal: dict) -> str:
-    """A pace a week: "-0.25 kg a week", or a time's "-19 seconds a week"."""
+def _goal_rate(value, goal: dict, units=None) -> str:
+    """A pace a week: "-0.25 kg a week", or a time's "-19 seconds a week". A weight in the person's unit."""
     if goal_quantity(goal) == "goal_time":
         return formatting.show(value, "time_pace")
+    if _weighed(goal):
+        return f"{formatting.show(value, 'weight_rate', units=units)} {formatting.unit_word('weight', units)} a week"
     return f"{formatting.show(value, 'rate')} {goal.get('unit')} a week"
 
 
-def _goal_desc(goal: dict, today: date) -> str:
+def _goal_desc(goal: dict, today: date, units=None) -> str:
     """The start, then the goal's own plan_line as the service wrote it (it carries the close-call
     rules of section D: on the line, widened figures, an ended line), then the target, the paces and the
     projected date. With no plan_line there is nothing logged, and no now figure is given."""
-    said = [f"Started {_goal_figure(goal['start_value'], goal)} on {formatting.day(goal['start_date'], today)}."
+    said = [f"Started {_goal_figure(goal['start_value'], goal, units)} on "
+            f"{formatting.day(goal['start_date'], today)}."
             if goal.get("start_value") is not None else f"Started {formatting.day(goal['start_date'], today)}."]
     said.append(goal["plan_line"] if goal.get("plan_line") else "Nothing logged yet.")
-    said.append(f"Target {_goal_target(goal)} by {formatting.day(goal['target_date'], today)}.")
+    said.append(f"Target {_goal_target(goal, units)} by {formatting.day(goal['target_date'], today)}.")
     if goal.get("needed_per_week") is not None:
-        said.append(f"Needed {_goal_rate(goal['needed_per_week'], goal)}.")
+        said.append(f"Needed {_goal_rate(goal['needed_per_week'], goal, units)}.")
     if goal.get("actual_per_week") is not None:
-        said.append(f"So far {_goal_rate(goal['actual_per_week'], goal)}.")
+        said.append(f"So far {_goal_rate(goal['actual_per_week'], goal, units)}.")
     if goal.get("projected_date"):
         said.append(f"At this pace it is reached on {formatting.day(goal['projected_date'], today)}.")
     return " ".join(said)
@@ -590,7 +631,7 @@ def _projection_end(goal: dict) -> tuple[date, float] | None:
     return None
 
 
-def goal_svg(goal: dict | None, today: date, element_id: str | None = None) -> Markup:
+def goal_svg(goal: dict | None, today: date, element_id: str | None = None, units=None) -> Markup:
     """A goal's path, for its card on Goals and the landing picture: the dashed plan line from start to
     target, the actual line with a dot per point, the now figure ringed at today, the dotted projection
     from now to the target at the projected date, the today line with "Today", a target tick with its
@@ -603,12 +644,17 @@ def goal_svg(goal: dict | None, today: date, element_id: str | None = None) -> M
     "Now" is the goal's latest, at today: path.actual has a point per date that has one, so it can end
     before today. The desc says the goal's plan_line as written; its own figures go through show,
     never widened. A projected date far past the target date is held at half the plan's length beyond
-    it, and a projected value inside the grid; the desc keeps the real figures.
+    it, and a projected value inside the grid; the desc keeps the real figures. units: the person's; a
+    weight goal is drawn in its weight unit, a measurement or a time as stored.
     """
     if not goal or not (goal.get("path") or {}).get("plan"):
         return Markup("")
     quantity, today = goal_quantity(goal), _date(today)
-    plan = [(_date(p["date"]), float(p["value"])) for p in goal["path"]["plan"]]  # a line, not logged points
+
+    def shown(v: float) -> float:  # a stored value in the unit the chart is drawn in
+        return formatting.convert(v, quantity, units)
+
+    plan = [(_date(p["date"]), shown(float(p["value"]))) for p in goal["path"]["plan"]]  # a line, not logged points
     actual = sorted(((_on(_date(p["date"]), today), float(p["value"]), _date(p["date"]))
                      for p in goal["path"].get("actual") or []), key=lambda p: p[0])
     now = float(goal["latest"]) if goal.get("latest") is not None else None
@@ -622,21 +668,24 @@ def goal_svg(goal: dict | None, today: date, element_id: str | None = None) -> M
             share = (cap - today).days / max((end[0] - today).days, 1)
             end = (cap, now + (end[1] - now) * share)
         known.append(end[0])
+        end = (end[0], shown(end[1]))
     last = max(known)
-    values = [v for _, v in plan] + [v for _, v, _ in actual] + [float(goal["target_value"])]
-    values += [now] if now is not None else []
+    target = shown(float(goal["target_value"]))
+    values = [v for _, v in plan] + [shown(v) for _, v, _ in actual] + [target]
+    values += [shown(now)] if now is not None else []
     ticks = _ticks(min(values), max(values), STEPS[quantity])
     if end is not None:  # a wild projection is held inside the grid, not followed
         end = (end[0], min(max(end[1], ticks[0]), ticks[-1]))
-    labels = _tick_labels(ticks, quantity, _goal_unit(goal))
-    target_text = _goal_target(goal)
+    labels = _tick_labels(ticks, quantity, _goal_unit(goal, units))
+    target_text = _goal_target(goal, units)
     left = _margin(labels)
     right = GOAL_W - (10 + GAP + text_width(target_text) + ROOM)  # room for the target tick and its label
     y = _scale(ticks[0], ticks[-1], GOAL_TOP, GOAL_BOTTOM)
     x = _dates(first, last, left, right)
-    target_y = y(float(goal["target_value"]))
+    target_y = y(target)
     title = f"{goal.get('label') or 'Goal'} by {formatting.day(target_date, today)}"
-    out = _svg_open(element_id or f"chart-goal-{goal.get('goal_id')}", title, _goal_desc(goal, today), GOAL_W, GOAL_H)
+    out = _svg_open(element_id or f"chart-goal-{goal.get('goal_id')}", title, _goal_desc(goal, today, units),
+                    GOAL_W, GOAL_H)
     _grid(out, ticks, labels, y, left, right)
     _end_dates(out, (_date(goal["start_date"]), x(start)), (target_date, x(target_date)), GOAL_H - 8, GOAL_W, today)
     if len(plan) > 1:
@@ -650,7 +699,7 @@ def goal_svg(goal: dict | None, today: date, element_id: str | None = None) -> M
     out.append(f'<text class="goal-label" x="{_c(max(tick_x, left + 10) + GAP)}" y="{_c(target_y + AXIS / 3)}">'
                f'{escape(target_text)}</text>')
     if end is not None:
-        now_xy = (x(today), y(now))
+        now_xy = (x(today), y(shown(now)))
         end_xy = (x(end[0]), y(end[1]))
         out.append(f'<line class="projection" x1="{_c(now_xy[0])}" y1="{_c(now_xy[1])}" '
                    f'x2="{_c(end_xy[0])}" y2="{_c(end_xy[1])}" />')
@@ -658,15 +707,18 @@ def goal_svg(goal: dict | None, today: date, element_id: str | None = None) -> M
     # The actual line: a point per date. A point at today takes the now figure, so the line meets the ring.
     drawn = [(d, now if (d == today and now is not None) else v, real) for d, v, real in actual]
     if len(drawn) > 1:
-        out.append(f'<polyline class="series" pathLength="1" points="{_points((x(d), y(v)) for d, v, _ in drawn)}" />')
+        out.append(f'<polyline class="series" pathLength="1" '
+                   f'points="{_points((x(d), y(shown(v))) for d, v, _ in drawn)}" />')
     for d, v, real in drawn:
         if d == today and now is not None:
             continue  # the ring below stands for it
-        out.append(f'<circle class="dot" cx="{_c(x(d))}" cy="{_c(y(v))}" r="2.2"><title>'
-                   f'{formatting.day(real, today)}: {escape(formatting.show(v, quantity))}</title></circle>')
+        out.append(f'<circle class="dot" cx="{_c(x(d))}" cy="{_c(y(shown(v)))}" r="2.2"><title>'
+                   f'{formatting.day(real, today)}: {escape(formatting.show(v, quantity, units=units))}'
+                   '</title></circle>')
     if now is not None:
-        out.append(f'<circle class="dot is-latest" cx="{_c(x(today))}" cy="{_c(y(now))}" r="4"><title>'
-                   f'{formatting.day(today, today)}: {escape(formatting.show(now, quantity))}</title></circle>')
+        out.append(f'<circle class="dot is-latest" cx="{_c(x(today))}" cy="{_c(y(shown(now)))}" r="4"><title>'
+                   f'{formatting.day(today, today)}: {escape(formatting.show(now, quantity, units=units))}</title>'
+                   '</circle>')
     return _close(out)
 
 
@@ -687,7 +739,8 @@ def _give_way(boxes: list[tuple[float, float]]) -> set[int]:
     return kept
 
 
-def pace_svg(sessions: list | None, activity: str, today: date, element_id: str = "chart-pace") -> Markup:
+def pace_svg(sessions: list | None, activity: str, today: date, element_id: str = "chart-pace",
+             units=None) -> Markup:
     """An activity's Pace card: a dot per session with its pace above it, joined by a line, the latest
     ringed, grid lines in m:ss, a date under each dot. Lower on the chart is faster. Sessions sit evenly
     spaced, oldest at the left. A label is placed by its width and held inside the canvas; where labels
@@ -695,37 +748,40 @@ def pace_svg(sessions: list | None, activity: str, today: date, element_id: str 
     pace.
 
     sessions: cardio.get_cardio(activity) sessions, [{date, pace_min_per_km | null, ...}], newest first.
-    Empty under 2 sessions with a distance: the card says why.
+    Empty under 2 sessions with a distance: the card says why. units: the person's; in miles, a pace per mi.
     """
     today = _date(today)
     paced = [(_date(s["date"]), float(s["pace_min_per_km"])) for s in reversed(sessions or [])
              if s.get("pace_min_per_km") is not None]
     if len(paced) < 2:
         return Markup("")
-    values = [v for _, v in paced]
+    per = formatting.unit_word("distance", units)
+    drawn = [formatting.convert(v, "pace", units) for _, v in paced]  # each pace in the shown unit
+    values = drawn
     ticks = _ticks(min(values), max(values), SECOND_STEPS, most=4)
     labels = _tick_labels(ticks, "pace", None)
     left, right = _margin(labels), PACE_W - ROOM
     y = _scale(ticks[0], ticks[-1], PACE_TOP, PACE_BOTTOM)
     slot = (right - left) / len(paced)
     xs = [left + slot * (n + 0.5) for n in range(len(paced))]
-    said = [f"Pace per km for each {activity} session, oldest first."]
-    said += [f"{formatting.day(d, today)}: {formatting.show(v, 'pace')}." for d, v in paced]
+    said = [f"Pace per {per} for each {activity} session, oldest first."]
+    said += [f"{formatting.day(d, today)}: {formatting.show(v, 'pace', units=units)}." for d, v in paced]
     said.append("Lower is faster.")
-    out = _svg_open(element_id, f"Pace per km: {activity}", " ".join(said), PACE_W, PACE_H)
+    out = _svg_open(element_id, f"Pace per {per}: {activity}", " ".join(said), PACE_W, PACE_H)
     _grid(out, ticks, labels, y, left, right)
     days = [formatting.day(d, today) for d, _ in paced]
-    paces = [formatting.show(v, "pace") for _, v in paced]
+    paces = [formatting.show(v, "pace", units=units) for _, v in paced]
     day_boxes = [_box(t, x, PACE_W) for t, x in zip(days, xs)]
     pace_boxes = [_box(t, x, PACE_W, bold=True, start=left) for t, x in zip(paces, xs)]
     for n in sorted(_give_way(day_boxes)):
         _label(out, "axis", days[n], day_boxes[n], PACE_H - 8)
-    out.append(f'<polyline class="series" pathLength="1" points="{_points((xs[n], y(v)) for n, (_, v) in enumerate(paced))}" />')
+    out.append(f'<polyline class="series" pathLength="1" '
+               f'points="{_points((xs[n], y(v)) for n, v in enumerate(drawn))}" />')
     shown = _give_way(pace_boxes)
-    for n, (d, v) in enumerate(paced):
+    for n, v in enumerate(drawn):
         kind, r = ("dot is-latest", 4.5) if n == len(paced) - 1 else ("dot", 3.5)
         out.append(f'<circle class="{kind}" cx="{_c(xs[n])}" cy="{_c(y(v))}" r="{r}"><title>'
-                   f'{days[n]}: {paces[n]} per km</title></circle>')
+                   f'{days[n]}: {paces[n]} per {per}</title></circle>')
         if n in shown:
             _label(out, "axis value", paces[n], pace_boxes[n], y(v) - 10)
     return _close(out)

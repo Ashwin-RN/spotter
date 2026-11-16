@@ -81,9 +81,9 @@
 {% set eaten_week = cal and cal.avg_7d is not none %}
 <div class="glance">
   <div class="tiles">
-    {{ parts.glance_tiles(glance, "/progress#body-weight", "/progress#trends") }}
+    {{ parts.glance_tiles(glance, "/progress#body-weight", "/progress#trends", units) }}
   </div>
-  {{ parts.glance_sheets(glance, today, "/progress#body-weight", "/progress#trends") }}
+  {{ parts.glance_sheets(glance, today, "/progress#body-weight", "/progress#trends", units) }}
   {# The Last 28 days card: a pill a day, oldest first, each a link to its day. A day with a lift session is a
      lift day, with cardio and no lift session a cardio day, else nothing trained. The last is today. The
      weekday letters sit over the columns from the first day shown, hidden from reading: each link says its day. #}
@@ -116,7 +116,7 @@
   <div class="pair">
     {{ parts.chart_card("weight", "weight-card-title", "Weight", "Trend, 4 weeks",
                         glance.weight_small if weight_drawn else none,
-                        bw.smoothed|show("bodyweight_derived", unit=False) if weight_drawn else none, "kg",
+                        bw.smoothed|show("bodyweight_derived", unit=False) if weight_drawn else none, unit_word("weight", units),
                         "One weigh-in in the last 28 days. The chart starts from the second one." if bw and bw.weigh_ins_28d == 1
                         else "No weigh-ins in the last 28 days.") }}
     {{ parts.chart_card("calories", "eaten-card-title", "Eaten a day", "Average, 7 days",
@@ -217,7 +217,7 @@
       <div class="entry-main"><span class="entry-name">Lift session</span></div>
       {{ parts.entry_actions("lift_session", session.id, csrf_token) }}
     </div>
-    {{ parts.sets_table(session.sets) }}
+    {{ parts.sets_table(session.sets, units) }}
     {% if session.new_bests %}
     <ul class="bests">
       {% for b in session.new_bests %}<li>New best: {{ b.text if b.text else b.exercise ~ " " ~ b.value|show("estimated_max" if b.kind == "estimated_max" else "weight_kg") }}</li>{% endfor %}
@@ -245,8 +245,8 @@
         <span class="entry-name">{{ c.exercise }}</span>
         <dl class="figures">
           <div><dt>{{ "Time (h:mm:ss)" if time.count(":") == 2 else "Time (m:ss)" }}</dt><dd>{{ time }}</dd></div>
-          {% if c.distance_km is not none %}<div><dt>Distance (km)</dt><dd>{{ c.distance_km|show("km", unit=False) }}</dd></div>{% endif %}
-          {% if c.pace %}<div><dt>Pace (per km)</dt><dd>{{ c.pace.min_per_km }}</dd></div>{% endif %}
+          {% if c.distance_km is not none %}<div><dt>Distance ({{ unit_word("distance", units) }})</dt><dd>{{ c.distance_km|show("km", unit=False) }}</dd></div>{% endif %}
+          {% if c.pace %}<div><dt>Pace (per {{ unit_word("distance", units) }})</dt><dd>{{ cardio_pace(c, units) }}</dd></div>{% endif %}
           <div><dt>Calories (kcal)</dt><dd>{% if c.estimate %}{{ c.estimate.kcal|show("kcal", unit=False) }}{% else %}No estimate{% endif %}</dd></div>
           {% if c.machine_kcal is not none %}<div><dt>Machine (kcal)</dt><dd>{{ c.machine_kcal|show("kcal", unit=False) }}</dd></div>{% endif %}
         </dl>
@@ -265,17 +265,17 @@
   {% endif %}
   {# Closed unless the address carries ?add=cardio or its form came back with an error. What was typed stays. #}
   {% set errors = form_error.get("cardio_entry", {}) %}
-  {% set kept = typed.get("cardio_entry", {}) %}
+  {% set kept = typed.get("cardio_entry", {}) %}{% set distance = form_field("distance_km", units) %}
   {% call parts.foldout("add-cardio", "Add cardio", errors or "cardio" in adding) %}
   <form method="post" action="/day/{{ on.isoformat() }}/cardio#add-cardio">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    {% for field, text in errors.items() if field not in ("exercise", "minutes", "distance_km") %}
+    {% for field, text in errors.items() if field not in ("exercise", "minutes", distance) %}
     <div class="error"><p>{{ text }}</p></div>
     {% endfor %}
     {{ parts.field("cardio-exercise", "exercise", "Activity", errors.get("exercise"), kept.get("exercise"), choices=activity_choices, required=true) }}
     <div class="field-row">
       {{ parts.field("cardio-minutes", "minutes", "Time (min)", errors.get("minutes"), kept.get("minutes"), inputmode="decimal", required=true) }}
-      {{ parts.field("cardio-distance", "distance_km", "Distance (km)", errors.get("distance_km"), kept.get("distance_km"), inputmode="decimal") }}
+      {{ parts.field("cardio-distance", distance, "Distance (" ~ unit_word("distance", units) ~ ")", errors.get(distance), kept.get(distance), inputmode="decimal") }}
     </div>
     <div class="form-actions"><button class="primary">Save cardio</button></div>
     <input type="hidden" name="key" value="{{ form_key() }}">
@@ -289,22 +289,22 @@
   <h2 id="weigh-in-title">Weigh-in</h2>
   {% if day.weigh_in %}
   <div class="entry-line">
-    <div class="entry-main"><span class="entry-big">{{ day.weigh_in.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span></span></div>
+    <div class="entry-main"><span class="entry-big">{{ day.weigh_in.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">{{ unit_word("weight", units) }}</span></span></div>
     {{ parts.entry_actions("bodyweight", day.weigh_in.id, csrf_token) }}
   </div>
   {% else %}
   <p class="empty-line">No weigh-in on this day.</p>
   {% endif %}
   {% set errors = form_error.get("bodyweight", {}) %}
-  {% set kept = typed.get("bodyweight", {}) %}
+  {% set kept = typed.get("bodyweight", {}) %}{% set weight = form_field("kg", units) %}
   {% set weigh_words = "Replace weigh-in" if day.weigh_in else "Add weigh-in" %}
   {% call parts.foldout("add-weigh-in", weigh_words, errors or "weigh-in" in adding) %}
   <form method="post" action="/day/{{ on.isoformat() }}/weigh-in#add-weigh-in">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    {% for field, text in errors.items() if field != "kg" %}
+    {% for field, text in errors.items() if field != weight %}
     <div class="error"><p>{{ text }}</p></div>
     {% endfor %}
-    {{ parts.field("kg", "kg", "Weight (kg)", errors.get("kg"), kept.get("kg"), inputmode="decimal", required=true) }}
+    {{ parts.field(weight, weight, "Weight (" ~ unit_word("weight", units) ~ ")", errors.get(weight), kept.get(weight), inputmode="decimal", required=true) }}
     <div class="form-actions"><button class="primary">{{ weigh_words }}</button></div>
     <input type="hidden" name="key" value="{{ form_key() }}">
   </form>

@@ -40,7 +40,7 @@ HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "app
 FIELDS = {"description": "description", "inputSchema": "input", "outputSchema": "output"}
 DUMP_SECONDS = 180
 MIN_STRING = 20  # (b): a shorter literal is a key, a code or a format, not text an assistant reads
-NOT_ASSISTANT_TEXT = ("app/web.py", "app/templates/", "app/static/")  # pages, read by the person
+NOT_ASSISTANT_TEXT = ("app/web.py", "app/charts.py", "app/templates/", "app/static/")  # pages, read by the person
 # What varies run to run in an answer, and the fixed mark it is put in as.
 VARYING = ((re.compile(r"\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?"), "<date>"),
            (re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"), "<uuid>"))

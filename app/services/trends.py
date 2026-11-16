@@ -85,8 +85,19 @@ def _bodyweight(weighed: list, today, start) -> tuple[dict | None, str | None, d
            "rate_window": {k: rate[k] for k in ("from", "to", "days")} if rate else None,
            "weigh_ins_28d": len(series), "series": series}
     raw = {"now": metrics.bodyweight_now(pts, today), "smoothed": smoothed[-1][1],
-           "rate_per_week": _unrounded_rate(smoothed, today, rate)}
+           "rate_per_week": _unrounded_rate(smoothed, today, rate),
+           "series": [sm for (d, _), (_, sm) in zip(metrics.in_order(pts, today), smoothed)
+                      if metrics.on_or_before(d, today) >= start]}
     return out, None if rate else metrics.trend_rate_gap(smoothed, today), raw
+
+
+def _unrounded(weight: dict | None, raw: dict | None) -> dict | None:
+    """The bodyweight part with now, smoothed, the rate and each point's smoothed as the lb summary takes them,
+    unrounded, for get_trends' exact."""
+    if weight is None:
+        return None
+    return {**weight, "now": raw["now"], "smoothed": raw["smoothed"], "rate_per_week": raw["rate_per_week"],
+            "series": [{**p, "smoothed": sm} for p, sm in zip(weight["series"], raw["series"])]}
 
 
 def _unrounded_rate(smoothed: list, today, rate: dict | None) -> float | None:
@@ -158,8 +169,12 @@ def _summary(weight, calories, sessions, moved, maintenance, maintenance_note, r
     return " ".join(parts)
 
 
-def get_trends(user_id: int) -> dict:
+def get_trends(user_id: int, *, exact: bool = False) -> dict:
     """How the person is doing, from their own logs. See the module notes.
+
+    exact: bodyweight's now, smoothed, rate_per_week and each point's smoothed unrounded, the figures the summary
+    says in lb. For the pages of a person who keeps weights in lb, so a page never reads a step off the summary
+    (contract units.md, the U2 review's note). No MCP function passes it; the summary is the same either way.
 
     Returns {today, bodyweight {now, smoothed, rate_per_week, rate_window {from, to, days} | null,
     weigh_ins_28d, series [{date, kg, smoothed}]} | null, calories {avg_7d, days_logged_7d, avg_28d,
@@ -194,7 +209,8 @@ def get_trends(user_id: int) -> dict:
         points = [(b.date, b.kg) for b in weighed]
         maintenance = metrics.maintenance(intake, points, today)
         maintenance_note = None if maintenance else metrics.maintenance_gap(intake, points, today)
-        out = {"today": today.isoformat(), "bodyweight": weight, "calories": calories, "sessions": sessions,
+        out = {"today": today.isoformat(), "bodyweight": _unrounded(weight, raw) if exact else weight,
+               "calories": calories, "sessions": sessions,
                "cardio": cardio, "maintenance": maintenance, "maintenance_note": maintenance_note, "how": TRENDS_HOW,
                "summary": _summary(weight, calories, sessions, cardio, maintenance, maintenance_note, raw,
                                    users.units_for(user)),

@@ -24,7 +24,7 @@ lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins
     both at 1 dp. since: draw only the weigh-ins from that date on; the smoothed line is unchanged.
 """
 
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -55,21 +55,25 @@ def _max(value: float | None) -> float | None:
     return None if value is None else formatting.rounded(value, "estimated_max")
 
 
-def _one(name: str, history: dict, numbers: list[dict], today: date) -> dict:
-    """One lift. numbers: goals.rounded_numbers. history's own values are never changed."""
+def _one(name: str, history: dict, numbers: list[dict], today: date, exact: bool = False) -> dict:
+    """One lift. numbers: goals.rounded_numbers. history's own values are never changed. exact: the estimated
+    maxes, the bests and the trend unrounded, as the lb summary takes them (get_progress' exact)."""
     pts = history["points"].get(name, [])
     trend = metrics.projection(pts, today)
     goals = [g for g in numbers if g["exercise"] == name]
+    most = (lambda v: v) if exact else _max  # noqa: E731
+    best = dict if exact else lifts.rounded_best
     return {
         "exercise": name,
         "sessions": history["logged"].get(name, 0),
         "last_trained": history["last"][name].isoformat() if name in history["last"] else None,
-        "estimated_max_over_time": [{"date": d.isoformat(), "estimated_max_kg": _max(v)} for d, v in pts],
-        "current_estimated_max_kg": _max(metrics.recent_best(pts, today)),
+        "estimated_max_over_time": [{"date": d.isoformat(), "estimated_max_kg": most(v)} for d, v in pts],
+        "current_estimated_max_kg": most(metrics.recent_best(pts, today)),
         "best_set": history["best_set"].get(name),
-        "bests": [lifts.rounded_best({k: p[k] for k in ("date", "kind", "value", "previous")})
+        "bests": [best({k: p[k] for k in ("date", "kind", "value", "previous")})
                   for p in history["bests"].get(name, [])],
-        "trend": {"slope_per_week": trend["slope_per_week"], "points_used": trend["points_used"]} if trend else None,
+        "trend": {"slope_per_week": _slope_per_week(pts, today) if exact else trend["slope_per_week"],
+                  "points_used": trend["points_used"]} if trend else None,
         "goal": goals[0] if goals else None,
         "goals": goals,
     }
@@ -79,17 +83,9 @@ def _sessions(n: int) -> str:
     return f"{formatting.show(n, 'count')} session{'' if n == 1 else 's'}"
 
 
-def _slope_per_week(pts: list, today: date) -> float | None:
-    """metrics.projection's slope_per_week before its 2 dp, from the same points of the last 6 weeks, so a lb
-    trend is converted once. None where projection draws no line."""
-    start = today - timedelta(days=metrics.PROJECTION_DAYS)
-    on = [(metrics.on_or_before(d, today), v) for d, v in metrics.in_order(pts, today)
-          if metrics.on_or_before(d, today) >= start]
-    if len(on) < metrics.PROJECTION_MIN_POINTS or len({d for d, _ in on}) < 2:
-        return None
-    xs, ys = [(d - on[0][0]).days for d, _ in on], [v for _, v in on]
-    mx, my = sum(xs) / len(on), sum(ys) / len(on)
-    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs) * 7
+# metrics.projection's slope_per_week before its 2 dp, so a lb trend is converted once: the one fit the Goals page's
+# So far reads too (goals.goal_numbers). This name stays for the tests that hold it to the projection.
+_slope_per_week = metrics.slope_per_week
 
 
 def _lift_words(name: str, history: dict, today: date, units, whole: bool) -> str:
@@ -122,8 +118,12 @@ def _lift_words(name: str, history: dict, today: date, units, whole: bool) -> st
     return text
 
 
-def get_progress(user_id: int, exercise: str | None = None) -> dict:
+def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = False) -> dict:
     """One lift over time, or a summary of every lift logged.
+
+    exact: each lift's estimated maxes, bests and trend unrounded, the figures the summary says in lb. For the
+    pages of a person who keeps weights in lb, so a page never reads a step off the summary (contract units.md, the
+    U2 review's note). No MCP function passes it; the summary and the goals are the same either way.
 
     With exercise: {today, lift {exercise, sessions, last_trained, estimated_max_over_time [{date,
     estimated_max_kg}], current_estimated_max_kg, best_set, bests [{date, kind, value, previous}], trend
@@ -159,7 +159,7 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
         numbers = rounded_numbers(goal_numbers(goals, loaded, today, units=units))
 
         if only is not None:
-            one = _one(only, history, numbers, today)
+            one = _one(only, history, numbers, today, exact)
             note = None if one["sessions"] else f"No sets of {only} logged yet."
             out = {"today": today.isoformat(), "lift": one, "how": HOW,
                    "summary": note or _lift_words(only, history, today, units, whole=True),
@@ -168,7 +168,7 @@ def get_progress(user_id: int, exercise: str | None = None) -> dict:
 
         rows = []
         for name in sorted(history["logged"]):
-            one = _one(name, history, numbers, today)
+            one = _one(name, history, numbers, today, exact)
             rows.append({"exercise": name, "sessions": one["sessions"], "last_trained": one["last_trained"],
                          "current_estimated_max_kg": one["current_estimated_max_kg"],
                          "best_estimated_max_kg": (one["best_set"] or {}).get("estimated_max_kg"),
@@ -236,13 +236,16 @@ def _derived(value: float | None) -> float | None:
     return None if value is None else formatting.rounded(value, "bodyweight_derived")
 
 
-def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date, since: date | None = None) -> dict | None:
+def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date, since: date | None = None,
+                     exact: bool = False) -> dict | None:
     """Data for bodyweight_svg: weigh-ins with their smoothed value, the 7-day average at each, the
     open bodyweight goal. Every weigh-in is drawn, whatever its date, in the one order and labelled
     with its real date; with since, only those whose effective date is on or after it. smoothed is
     metrics.ewma over every weigh-in, the window's or not (the line get_trends reports). Each average
     is the 7 days ending on that weigh-in's effective date, over every weigh-in's effective date, so
-    the last one is bodyweight_now. None with fewer than 2 weigh-ins drawn."""
+    the last one is bodyweight_now. None with fewer than 2 weigh-ins drawn. exact: smoothed and each average
+    unrounded, as get_trends' exact gives them, for a page in lb."""
+    shown = (lambda v: v) if exact else _derived  # noqa: E731
     every = metrics.in_order([(b.date, b.kg) for b in weigh_ins], today)
     aged = [(metrics.on_or_before(d, today), kg) for d, kg in every]
     smoothed = [v for _, v in metrics.ewma(every, today)]
@@ -254,9 +257,9 @@ def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date, since: dat
     goal = next((g for g in goals if g.kind == "bodyweight" and g.status == "open" and g.target_value is not None),
                 None)
     return {
-        "points": [{"date": d.isoformat(), "kg": kg, "smoothed": _derived(sm)} for (d, kg), sm in drawn],
+        "points": [{"date": d.isoformat(), "kg": kg, "smoothed": shown(sm)} for (d, kg), sm in drawn],
         "average": [{"date": d.isoformat(),
-                     "kg": _derived(metrics.bodyweight_average(aged, metrics.on_or_before(d, today)))}
+                     "kg": shown(metrics.bodyweight_average(aged, metrics.on_or_before(d, today)))}
                     for d, _ in pts],
         "latest": {"date": pts[-1][0].isoformat(), "kg": pts[-1][1]},
         "goal": None if goal is None else {

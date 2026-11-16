@@ -54,7 +54,7 @@ load_numbers(s, user_id, today, goals, lift_history=None) -> dict
     of the kinds named, cardio sessions of the activities named. set_goal, get_goals and get_progress
     all read through it, so the three never disagree.
 
-goal_numbers(goals, loaded, today, charts=False)
+goal_numbers(goals, loaded, today, charts=False, units=None)
     For each open goal with a target and a date: where it stands, in one shape for every kind.
     latest is the measure above, and status, needed_per_week, the projection and projected_date all
     read that same value: "reached" once latest is at or past the target, else "on track" or "behind"
@@ -66,7 +66,9 @@ goal_numbers(goals, loaded, today, charts=False)
       vs_plan          "ahead", "on the line" or "behind"
       plan_line        one sentence, built here from the unrounded figures through formatting.show
     charts=True adds path {plan, actual}, now_basis and line_ended, for goal_charts only: no MCP result
-    carries them. The actual series (metrics.goal_now_series) is built only then.
+    carries them. The actual series (metrics.goal_now_series) is built only then. With charts and units in lb, a
+    lift goal's actual_per_week is the slope before its 2 dp (metrics.slope_per_week), so the Goals page's So far
+    reads get_progress' Trend: the same fit of the same lifts.history points, converted once.
 
 rounded_numbers(numbers)
     The copy set_goal, get_goals and get_progress return: a body weight or lift goal's start_value,
@@ -76,12 +78,13 @@ rounded_numbers(numbers)
     unit's shown step (1 dp for kg and cm, whole bpm), ahead_by one step finer in close-call rule 2; a
     cardio time goal's two are minutes at 2 dp, never finer.
 
-goal_charts(user_id)
+goal_charts(user_id, units=None)
     The Goals page's read, web only: {today, goals [goal numbers, unrounded, each with path,
     now_basis and line_ended]}. now_basis names the measure latest is:
     average_7d, latest_weigh_in, best_28d or latest; null with nothing logged. line_ended is
     metrics.goal_path's ended: the plan figure is the target, so the page says "the target" as
-    plan_line does.
+    plan_line does. units: the person's, for label and plan_line, as get_goals words them; None is kg and km. In lb,
+    a lift goal's actual_per_week is the slope before its 2 dp, as get_progress' Trend says it.
 
 Every write here locks the user row first (common.lock_user), then checks the write limit
 (common.check_write_limit: 120 writes in 10 minutes), before any other read or work.
@@ -413,6 +416,16 @@ def _counts(g) -> bool:
     return g.kind != "cardio_best" or bool(g.distance_km)
 
 
+def _so_far(g, p: dict | None, points: list, today: date, charts: bool, units) -> float | None:
+    """actual_per_week: the projection's 2 dp slope, or, for a lift goal drawn on the Goals page in lb, the same
+    slope before its 2 dp, as get_progress' Trend is said in lb. Every MCP result keeps the 2 dp kg figure."""
+    if p is None:
+        return None
+    if charts and g.kind == "lift" and units is not None and units.weight == "lb":
+        return metrics.slope_per_week(points, today)
+    return p["slope_per_week"]
+
+
 def goal_numbers(goals: list, loaded: dict, today: date, charts: bool = False, units=None) -> list[dict]:
     """Where each open goal stands, one shape for every kind. The stored direction says which way is
     better. loaded: load_numbers for these goals. charts: add path and now_basis (goal_charts only).
@@ -450,7 +463,7 @@ def goal_numbers(goals: list, loaded: dict, today: date, charts: bool = False, u
             "latest": now,
             "status": status,
             "needed_per_week": needed,
-            "actual_per_week": p["slope_per_week"] if p else None,
+            "actual_per_week": _so_far(g, p, points, today, charts, units),
             "projected_date": p["projected_date"] if p else None,
             "projection": p,
             "note": None if p or status == "reached" else metrics.projection_gap(points, today),
@@ -895,15 +908,16 @@ def get_goals(user_id: int, include_closed=False) -> dict:
 
 # ---------------------------------------------------------------- goal_charts, the Goals page's read
 
-def goal_charts(user_id: int) -> dict:
+def goal_charts(user_id: int, units=None) -> dict:
     """Every open goal's numbers, unrounded, each with path, now_basis and line_ended: the Goals page's
     chart and plan-line statement. Web only: no MCP function returns it, and the series never reach a
-    result.
+    result. units: the person's, for label and plan_line, as get_goals words them; None is kg and km.
 
     Returns {today, goals [goal numbers + path {plan [{date, value}], actual [{date, value}]},
     now_basis, line_ended]} or {error, message, fix}. Read through
     load_numbers and goal_numbers, as get_goals is, so the two never disagree: rounded_numbers of these
-    goals, without path, now_basis and line_ended, is get_goals' goals. A read: no lock, no write limit."""
+    goals, without path, now_basis and line_ended, is get_goals' goals, but for a lift goal's actual_per_week in
+    lb, which is the slope before its 2 dp (goal_numbers). A read: no lock, no write limit."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
@@ -912,4 +926,5 @@ def goal_charts(user_id: int) -> dict:
         open_goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                     .order_by(Goal.id).options(selectinload(Goal.exercise))))
         loaded = load_numbers(s, user.id, today, open_goals)
-        return {"today": today.isoformat(), "goals": goal_numbers(open_goals, loaded, today, charts=True)}
+        return {"today": today.isoformat(), "goals": goal_numbers(open_goals, loaded, today, charts=True,
+                                                                   units=units)}

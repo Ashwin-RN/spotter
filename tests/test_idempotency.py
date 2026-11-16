@@ -1067,7 +1067,7 @@ UNKEYED = ('action="/sign-out"', 'action="/settings/export"')  # they write noth
 def test_every_form_that_writes_carries_one_hidden_key_as_its_last_field_and_the_three_others_carry_none():
     forms = [form for path in sorted(TEMPLATES.glob("*.html")) for form in FORM.findall(path.read_text("utf-8"))]
     keyed = [form for form in forms if not any(action in form for action in UNKEYED)]
-    assert (len(forms), len(keyed)) == (22, 19)  # routines.md: a routine's Delete
+    assert (len(forms), len(keyed)) == (23, 20)  # routines.md: a routine's Delete; units.md R16: the Units card
     field = '<input type="hidden" name="key" value="{{ form_key() }}">'
     for form in forms:
         assert form.count(field) == (form in keyed) and form.count('name="key"') == form.count(field), form[:80]

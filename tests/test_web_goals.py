@@ -417,6 +417,10 @@ ERROR_ROWS = [
      "distance_km", "Give the distance in km, from 0.1 to 300."),
     ("distance not a number", {**FORM_RUN, "distance_km": "five"}, ("invalid_field", "distance_km"), "cardio_best",
      "distance_km", "Give the distance in km, from 0.1 to 300."),
+    # units.md R15: the form draws distance_mi with distances in miles (tests/test_units_pages.py places it under that
+    # field). On this kg and km form, which draws distance_km, a distance_mi sent goes at the top.
+    ("distance in miles too far", {**{k: v for k, v in FORM_RUN.items() if k != "distance_km"}, "distance_mi": "900"},
+     ("invalid_field", "distance_mi"), "cardio_best", "top", "Give the distance in miles, from 0.07 to 186.41."),
     ("no measurement", {**FORM_WAIST, "measurement_kind": ""}, ("missing_field", "measurement_kind"), "measurement",
      "measurement_kind", "Choose a measurement from the list."),
     ("measurement unknown", {**FORM_WAIST, "measurement_kind": "wrist"}, ("invalid_kind", "measurement_kind"),
@@ -670,10 +674,11 @@ SERVICE_REFUSALS = {
     ("_identity", "missing_field", "distance_km"): [("missing_field", "distance_km")],
     ("_identity", "<_at>", "exercise"): [("unknown_exercise", "exercise")],
     ("_identity", "<_at>", "distance_km"): [("invalid_field", "distance_km")],
-    # Units (units.md R12): the page's goal form is U2's; until it sends miles or a unit, these are never reached.
-    ("_identity", "<one_of>", None): NOT_FROM_THE_FORM + ": the form sends distance_km alone, never distance_mi",
-    ("_identity", "<_at>", "distance_mi"): NOT_FROM_THE_FORM + ": the form sends distance_km alone, never distance_mi",
-    ("_weight_unit", "invalid_unit", "weight_unit"): NOT_FROM_THE_FORM + ": the form sends no other unit",
+    # Units (units.md R12, R15): the form draws distance_km or distance_mi, by the person's units, and weight_unit lb as
+    # a hidden field with weights in lb. Both of a pair, or another unit, it never sends.
+    ("_identity", "<one_of>", None): NOT_FROM_THE_FORM + ": the form draws distance_km or distance_mi, never both",
+    ("_identity", "<_at>", "distance_mi"): [("invalid_field", "distance_mi")],
+    ("_weight_unit", "invalid_unit", "weight_unit"): NOT_FROM_THE_FORM + ": the form's hidden weight_unit is lb alone",
     ("_identity", "<unknown_exercise>", None): [("unknown_exercise", "exercise")],
     ("_no_start", "missing_field", "start_value"): [("missing_field", "start_value")],
     ("_wrong_way", "wrong_direction", "target_value"): [("wrong_direction", "target_value")],

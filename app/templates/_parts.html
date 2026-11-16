@@ -92,15 +92,17 @@
   {% endif %}</div>{% endmacro %}
 
 {# The Weight, Calories and Training tiles, drawn by Today and by Progress from one glance (web.glance_of):
-   get_trends' and get_days' own figures, through the filters. A tile with a sheet is a button and its twin
+   get_trends' and get_days' own figures, through the filters, in units, the person's (a part sees no page context,
+   so each weight's filter is handed them). A tile with a sheet is a button and its twin
    link, weight_href for Weight's, trends_href for the other two. The caller draws the tiles' grid. #}
-{% macro glance_tiles(glance, weight_href, trends_href) %}
+{% macro glance_tiles(glance, weight_href, trends_href, units=none) %}
 {%- set bw, cal, ses = glance.trends.bodyweight, glance.trends.calories, glance.trends.sessions -%}
+{%- set weight = unit_word("weight", units) -%}
 {%- set rated = bw and bw.rate_per_week is not none -%}
 {%- set eaten_week = cal and cal.avg_7d is not none -%}
     {% if bw %}
-    {% set weight_note %}{% if rated %}{{ bw.rate_per_week|show("rate") }}&nbsp;kg a week{% else %}No weekly rate yet{% endif %}{% endset %}
-    {{ tile("weight", "Weight: ", bw.smoothed|show("bodyweight_derived", unit=False), "kg trend", weight_note, sheet="sheet-weight", href=weight_href) }}
+    {% set weight_note %}{% if rated %}{{ bw.rate_per_week|show("weight_rate", units=units) }}&nbsp;{{ weight }} a week{% else %}No weekly rate yet{% endif %}{% endset %}
+    {{ tile("weight", "Weight: ", bw.smoothed|show("bodyweight_derived", unit=False, units=units), weight ~ " trend", weight_note, sheet="sheet-weight", href=weight_href) }}
     {% else %}
     {% set no_weight %}No <span class="nowrap">weigh-ins</span> yet{% endset %}
     {{ tile("weight", "Weight: ", no_weight, empty=true) }}
@@ -116,14 +118,15 @@
 {# The Weight, Calories and Training sheets, from the same glance. today is the page's date, for the dates'
    words. Each sheet ends with Open Progress to weight_link or trends_link when given: a Progress sheet has
    none. Weight's sheet is drawn with any weigh-in, Calories' with food in the last 7 days, Training's always. #}
-{% macro glance_sheets(glance, today, weight_link=none, trends_link=none) %}
+{% macro glance_sheets(glance, today, weight_link=none, trends_link=none, units=none) %}
 {%- set trends, grid = glance.trends, glance.days -%}
+{%- set weight = unit_word("weight", units) -%}
 {%- set bw, cal, ses, car = trends.bodyweight, trends.calories, trends.sessions, trends.cardio -%}
 {%- set rated = bw and bw.rate_per_week is not none -%}
 {%- set eaten_week = cal and cal.avg_7d is not none -%}
   {% if bw %}
-  {% call sheet("sheet-weight", "Last 4 weeks", bw.smoothed|show("bodyweight_derived", unit=False), "Weight trend", unit="kg", link=weight_link) %}
-  <p class="sentence">{% if rated %}The trend moved {{ bw.rate_per_week|show("rate") }}&nbsp;kg a week from {{ bw.rate_window.from|days(bw.rate_window.to, today) }}.{% else %}{{ glance.rate_words }}{% endif %}{% if bw.now is not none %} The {{ glance.basis }} is {{ bw.now|show("bodyweight_derived") }}{% if bw.weigh_ins_28d == 0 %}. No weigh-ins in the last 28 days.{% else %}, from {{ bw.weigh_ins_28d|show("count") }} {{ "weigh-in" if bw.weigh_ins_28d == 1 else "weigh-ins" }} in 28 days.{% endif %}{% endif %}</p>
+  {% call sheet("sheet-weight", "Last 4 weeks", bw.smoothed|show("bodyweight_derived", unit=False, units=units), "Weight trend", unit=weight, link=weight_link) %}
+  <p class="sentence">{% if rated %}The trend moved {{ bw.rate_per_week|show("weight_rate", units=units) }}&nbsp;{{ weight }} a week from {{ bw.rate_window.from|days(bw.rate_window.to, today) }}.{% else %}{{ glance.rate_words }}{% endif %}{% if bw.now is not none %} The {{ glance.basis }} is {{ bw.now|show("bodyweight_derived", units=units) }}{% if bw.weigh_ins_28d == 0 %}. No weigh-ins in the last 28 days.{% else %}, from {{ bw.weigh_ins_28d|show("count") }} {{ "weigh-in" if bw.weigh_ins_28d == 1 else "weigh-ins" }} in 28 days.{% endif %}{% endif %}</p>
   <div class="panel">
     <p class="panel-title">Smoothed weight</p>
     {% if glance.weight_chart %}{{ glance.weight_chart }}
@@ -135,10 +138,10 @@
     <table>
       <thead><tr><th scope="col">Quantity</th><th scope="col" class="num">Value</th><th scope="col">Remark</th></tr></thead>
       <tbody>
-        <tr><td>Smoothed trend</td><td class="num">{{ bw.smoothed|show("bodyweight_derived") }}</td><td class="remark">Evens out day-to-day swings</td></tr>
-        {% if bw.now is not none %}<tr><td>{{ glance.basis|capitalize }}</td><td class="num">{{ bw.now|show("bodyweight_derived") }}</td><td class="remark">{{ "Last 7 days" if glance.basis == "7-day average" else "No weigh-in in the last 7 days" }}</td></tr>
+        <tr><td>Smoothed trend</td><td class="num">{{ bw.smoothed|show("bodyweight_derived", units=units) }}</td><td class="remark">Evens out day-to-day swings</td></tr>
+        {% if bw.now is not none %}<tr><td>{{ glance.basis|capitalize }}</td><td class="num">{{ bw.now|show("bodyweight_derived", units=units) }}</td><td class="remark">{{ "Last 7 days" if glance.basis == "7-day average" else "No weigh-in in the last 7 days" }}</td></tr>
         {% endif %}
-        <tr><td>Rate</td><td class="num">{% if rated %}{{ bw.rate_per_week|show("rate") }}&nbsp;kg a week{% endif %}</td><td class="remark">{% if rated %}{{ bw.rate_window.from|days(bw.rate_window.to, today) }}{% else %}No weekly rate yet{% endif %}</td></tr>
+        <tr><td>Rate</td><td class="num">{% if rated %}{{ bw.rate_per_week|show("weight_rate", units=units) }}&nbsp;{{ weight }} a week{% endif %}</td><td class="remark">{% if rated %}{{ bw.rate_window.from|days(bw.rate_window.to, today) }}{% else %}No weekly rate yet{% endif %}</td></tr>
         <tr><td>Weigh-ins</td><td class="num">{{ bw.weigh_ins_28d|show("count") }}</td><td class="remark">In the last 28 days</td></tr>
       </tbody>
     </table>
@@ -191,15 +194,15 @@
   {% else %}<p class="empty-line">{{ empty }}</p>
   {% endif %}</section>{% endmacro %}
 
-{# A lift session's sets in a table, in its scrolling wrap: Exercise, Set, Weight (kg), Reps. The kg sits in the
-   header, so each weight is a bare figure. A set at 0 kg leaves its weight cell blank, and sets with no weight
-   above 0 kg show no Weight column at all. #}
-{% macro sets_table(sets) %}{% set weighted = sets|selectattr("weight_kg")|list %}<div class="table-wrap">
+{# A lift session's sets in a table, in its scrolling wrap: Exercise, Set, Weight (kg), Reps, the weight in units
+   (kg or lb). The unit sits in the header, so each weight is a bare figure. A set at 0 kg leaves its weight cell
+   blank, and sets with no weight above 0 kg show no Weight column at all. #}
+{% macro sets_table(sets, units=none) %}{% set weighted = sets|selectattr("weight_kg")|list %}<div class="table-wrap">
   <table>
-    <thead><tr><th>Exercise</th><th class="num">Set</th>{% if weighted %}<th class="num">Weight (kg)</th>{% endif %}<th class="num">Reps</th></tr></thead>
+    <thead><tr><th>Exercise</th><th class="num">Set</th>{% if weighted %}<th class="num">Weight ({{ unit_word("weight", units) }})</th>{% endif %}<th class="num">Reps</th></tr></thead>
     <tbody>
     {% for s in sets %}
-    <tr><td>{{ s.exercise }}</td><td class="num">{{ s.set_number|show("count") }}</td>{% if weighted %}<td class="num">{% if s.weight_kg %}{{ s.weight_kg|show("weight_kg", unit=False) }}{% endif %}</td>{% endif %}<td class="num">{{ s.reps|show("reps") }}</td></tr>
+    <tr><td>{{ s.exercise }}</td><td class="num">{{ s.set_number|show("count") }}</td>{% if weighted %}<td class="num">{% if s.weight_kg %}{{ s.weight_kg|show("weight_kg", unit=False, units=units) }}{% endif %}</td>{% endif %}<td class="num">{{ s.reps|show("reps") }}</td></tr>
     {% endfor %}
     </tbody>
   </table>

@@ -6523,9 +6523,9 @@ def test_progress_reads_the_glance_and_gives_its_date_to_the_chart(client, pinne
         seen.append(today)
         return real_trend(user_id, today)
 
-    async def counted(user_id):
+    async def counted(user_id, units=None):
         glances.append(user_id)
-        return await real_glance(user_id)
+        return await real_glance(user_id, units)
     monkeypatch.setattr(web, "_trend", spy)
     monkeypatch.setattr(web, "glance_of", counted)
     # get_progress names another date: the chart still takes the glance's.
@@ -6538,7 +6538,7 @@ def test_progress_reads_the_glance_and_gives_its_date_to_the_chart(client, pinne
     assert '<h2 id="cardio-title">Cardio</h2>' in r.text
     monkeypatch.setattr(services, "get_progress", real_progress)
 
-    async def none(user_id):
+    async def none(user_id, units=None):
         return None
     monkeypatch.setattr(web, "glance_of", none)
     r = client.get("/progress")
@@ -6974,8 +6974,8 @@ def test_the_trends_card_reads_the_glances_get_trends_so_one_page_shows_one_day(
         {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}]}, "claude")
     real = web.glance_of
 
-    async def then_midnight(user_id):
-        out = await real(user_id)
+    async def then_midnight(user_id, units=None):
+        out = await real(user_id, units)
         clock["now"] = FIXED_NOW + timedelta(days=1)
         return out
     monkeypatch.setattr(web, "glance_of", then_midnight)

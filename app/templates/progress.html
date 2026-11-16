@@ -14,14 +14,14 @@
 {% set bw = glance.trends.bodyweight %}
 <div class="glance">
   <div class="tiles four">
-    {{ parts.glance_tiles(glance, "#body-weight", "#trends") }}
+    {{ parts.glance_tiles(glance, "#body-weight", "#trends", units) }}
     {% if m %}
     {{ parts.tile("maintenance", "Maintenance: ", m.kcal|show("maintenance", unit=False), "kcal to maintain", tag=("estimate", "estimate"), sheet="sheet-maintenance", href="#trends") }}
     {% else %}
     {{ parts.tile("maintenance", "Maintenance: ", "Not enough logged yet", empty=true) }}
     {% endif %}
   </div>
-  {{ parts.glance_sheets(glance, today) }}
+  {{ parts.glance_sheets(glance, today, units=units) }}
   {% if m %}
   {% call parts.sheet("sheet-maintenance", m.from|days(m.to, today), m.kcal|show("maintenance", unit=False), "Maintenance, a day", unit="kcal", tag=("estimate", "estimate")) %}
   <p class="sentence">About {{ m.kcal|show("maintenance") }} a day, worked out from {{ m.days_logged|show("count") }} logged days. Over that window intake averaged {{ m.intake_avg_kcal|show("kcal") }} a day and the 7-day average weight moved {{ m.weight_change_kg|show("weight_change") }}.</p>
@@ -35,7 +35,7 @@
    smoothed weight, the boxed one. The chart is drawn when there is one to draw. With none, one line says why,
    by get_trends' count of the 28 days' weigh-ins: one, or none. Any other count draws nothing in its place. No
    weigh-in at all: the card is empty. #}
-{% set w = grid.weight %}
+{% set w = grid.weight %}{% set weight = unit_word("weight", units) %}
 <section class="card bw-card{% if not bw %} is-empty{% endif %}" id="body-weight" aria-labelledby="body-weight-title">
   <div class="card-head">
     <h2 id="body-weight-title">Body weight</h2>
@@ -49,12 +49,12 @@
     {% endif %}
     <dl class="callouts">
       {% if w %}
-      <div><dt>High</dt><dd>{{ w.high.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span> <span class="when">{{ w.high.date|day(today) }}</span></dd></div>
-      <div><dt>Latest</dt><dd>{{ w.latest.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span> <span class="when">{{ w.latest.date|day(today) }}</span></dd></div>
+      <div><dt>High</dt><dd>{{ w.high.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">{{ weight }}</span> <span class="when">{{ w.high.date|day(today) }}</span></dd></div>
+      <div><dt>Latest</dt><dd>{{ w.latest.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">{{ weight }}</span> <span class="when">{{ w.latest.date|day(today) }}</span></dd></div>
       {% endif %}
-      <div class="is-key"><dt>Trend</dt><dd>{{ bw.smoothed|show("bodyweight_derived", unit=False) }}&nbsp;<span class="unit">kg</span> <span class="when">Smoothed</span></dd></div>
+      <div class="is-key"><dt>Trend</dt><dd>{{ bw.smoothed|show("bodyweight_derived", unit=False) }}&nbsp;<span class="unit">{{ weight }}</span> <span class="when">Smoothed</span></dd></div>
       {% if w %}
-      <div><dt>Low</dt><dd>{{ w.low.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">kg</span> <span class="when">{{ w.low.date|day(today) }}</span></dd></div>
+      <div><dt>Low</dt><dd>{{ w.low.kg|show("weigh_in", unit=False) }}&nbsp;<span class="unit">{{ weight }}</span> <span class="when">{{ w.low.date|day(today) }}</span></dd></div>
       {% endif %}
     </dl>
   </div>
@@ -62,7 +62,7 @@
   <ul class="legend" aria-label="Key">
     <li><span class="key dot-key" aria-hidden="true"></span>Weigh-in</li>
     <li><span class="key line" aria-hidden="true"></span>Smoothed trend</li>
-    {% if bodyweight.goal %}<li><span class="key line goal" aria-hidden="true"></span>Goal {{ bodyweight.goal.target_kg|show("goal_target") }}&nbsp;kg</li>
+    {% if bodyweight.goal %}<li><span class="key line goal" aria-hidden="true"></span>Goal {{ bodyweight.goal.target_kg|show("weight_target") }}&nbsp;{{ weight }}</li>
     {% endif %}
   </ul>
   <p class="small">Dots are weigh-ins. The line is the smoothed trend, which evens out day-to-day swings.</p>
@@ -90,7 +90,7 @@
         <tr><td>Smoothed trend</td><td class="num">{{ bw.smoothed|show("bodyweight_derived") }}</td><td class="remark"></td></tr>
         {% if bw.now is not none %}<tr><td>{{ weight_now_label(trends)|capitalize }}</td><td class="num">{{ bw.now|show("bodyweight_derived") }}</td><td class="remark"></td></tr>
         {% endif %}
-        <tr><td>Weight rate</td><td class="num">{% if rated %}{{ bw.rate_per_week|show("rate") }}&nbsp;kg a week{% endif %}</td><td class="remark">{% if rated %}{{ bw.rate_window.from|days(bw.rate_window.to, trends.today) }}{% else %}{{ rate_note(trends) }}{% endif %}</td></tr>
+        <tr><td>Weight rate</td><td class="num">{% if rated %}{{ bw.rate_per_week|show("weight_rate") }}&nbsp;{{ unit_word("weight", units) }} a week{% endif %}</td><td class="remark">{% if rated %}{{ bw.rate_window.from|days(bw.rate_window.to, trends.today) }}{% else %}{{ rate_note(trends) }}{% endif %}</td></tr>
         <tr><td>Weigh-ins</td><td class="num">{{ bw.weigh_ins_28d|show("count") }}</td><td class="remark">Last 28 days</td></tr>
         {% else %}
         {% for quantity in ("Smoothed trend", "Weight rate", "Weigh-ins") %}<tr><td>{{ quantity }}</td><td class="num"></td><td class="remark">No weigh-ins yet.</td></tr>
@@ -118,7 +118,8 @@
 
 {# The Cardio card: get_cardio's row for every activity logged, by name, the name plain words. Sessions and time
    are the last 28 days', the fastest pace the best ever, already m:ss. An activity with no distance leaves its
-   pace cell empty, and with no distance on any activity the column is not drawn. A failed read draws no card. #}
+   pace cell empty, and with no distance on any activity the column is not drawn. A failed read draws no card.
+   With distances in miles each pace is fastest_in_miles' per mi; one it could not read leaves its cell empty. #}
 {% if activities is not none %}
 {% if activities %}
 {% set paced = activities|selectattr("fastest_pace")|list %}
@@ -126,10 +127,10 @@
   <h2 id="cardio-title">Cardio</h2>
   <div class="table-wrap">
     <table class="rows" aria-labelledby="cardio-title">
-      <thead><tr><th scope="col">Activity</th><th scope="col" class="num">Sessions</th><th scope="col" class="num">Time (min)</th>{% if paced %}<th scope="col" class="num">Fastest pace (per km)</th>{% endif %}<th scope="col">Last</th></tr></thead>
+      <thead><tr><th scope="col">Activity</th><th scope="col" class="num">Sessions</th><th scope="col" class="num">Time (min)</th>{% if paced %}<th scope="col" class="num">Fastest pace (per {{ unit_word("distance", units) }})</th>{% endif %}<th scope="col">Last</th></tr></thead>
       <tbody>
         {% for a in activities %}
-        <tr><td class="lead">{{ a.exercise }}</td><td class="num" data-label="Sessions">{{ a.sessions_28d|show("count") }}</td><td class="num" data-label="Time (min)">{{ a.minutes_28d|show("week_minutes", unit=False) }}</td>{% if paced %}<td class="num" data-label="Fastest pace (per km)">{% if a.fastest_pace %}{{ a.fastest_pace }}{% endif %}</td>{% endif %}<td data-label="Last"><a href="/day/{{ a.last_date }}">{{ a.last_date|day(today) }}</a></td></tr>
+        <tr><td class="lead">{{ a.exercise }}</td><td class="num" data-label="Sessions">{{ a.sessions_28d|show("count") }}</td><td class="num" data-label="Time (min)">{{ a.minutes_28d|show("week_minutes", unit=False) }}</td>{% if paced %}<td class="num" data-label="Fastest pace (per {{ unit_word("distance", units) }})">{% if a.fastest_pace %}{% if units.distance == "mi" %}{{ fastest.get(a.exercise, "") }}{% else %}{{ a.fastest_pace }}{% endif %}{% endif %}</td>{% endif %}<td data-label="Last"><a href="/day/{{ a.last_date }}">{{ a.last_date|day(today) }}</a></td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -160,7 +161,7 @@
       <tbody>
         {% for row in lifts %}
         {% set best, bare = best_sets.get(row.exercise), reps_only.get(row.exercise) %}
-        <tr><td class="lead"><a href="/progress/{{ slug(row.exercise) }}">{{ row.exercise }}</a></td>{% if row.current_estimated_max_kg is not none %}<td class="num" data-label="Estimated max">{{ row.current_estimated_max_kg|show("estimated_max") }}</td>{% else %}<td class="num muted wide-cell" data-label="Estimated max">{% if bare %}Needs added weight{% else %}Needs a weighted set of 1 to 10 reps{% endif %}</td>{% endif %}{% if filled.best %}<td class="num" data-label="Best set">{% if best %}{{ best.weight_kg|show("weight_kg") }} × {{ best.reps|show("reps") }}{% elif bare %}{{ bare.reps|show("reps") }}&nbsp;reps{% endif %}</td>{% endif %}{% if filled.trend %}<td class="num" data-label="Trend">{% if row.slope_per_week is not none %}{{ row.slope_per_week|show("rate") }}&nbsp;kg a week{% endif %}</td>{% endif %}<td data-label="Last trained">{% if row.last_trained %}<a href="/day/{{ row.last_trained }}">{{ row.last_trained|day(today) }}</a>{% endif %}</td></tr>
+        <tr><td class="lead"><a href="/progress/{{ slug(row.exercise) }}">{{ row.exercise }}</a></td>{% if row.current_estimated_max_kg is not none %}<td class="num" data-label="Estimated max">{{ row.current_estimated_max_kg|show("estimated_max") }}</td>{% else %}<td class="num muted wide-cell" data-label="Estimated max">{% if bare %}Needs added weight{% else %}Needs a weighted set of 1 to 10 reps{% endif %}</td>{% endif %}{% if filled.best %}<td class="num" data-label="Best set">{% if best %}{{ best.weight_kg|show("weight_kg") }} × {{ best.reps|show("reps") }}{% elif bare %}{{ bare.reps|show("reps") }}&nbsp;reps{% endif %}</td>{% endif %}{% if filled.trend %}<td class="num" data-label="Trend">{% if row.slope_per_week is not none %}{{ row.slope_per_week|show("weight_rate") }}&nbsp;{{ unit_word("weight", units) }} a week{% endif %}</td>{% endif %}<td data-label="Last trained">{% if row.last_trained %}<a href="/day/{{ row.last_trained }}">{{ row.last_trained|day(today) }}</a>{% endif %}</td></tr>
         {% endfor %}
       </tbody>
     </table>

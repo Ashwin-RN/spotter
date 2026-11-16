@@ -6,7 +6,10 @@ repository or of app/, edited there. The app itself is never edited.
 """
 
 import copy
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -179,6 +182,20 @@ def test_a_changed_page_string_in_web_is_no(read, app_copy, surface):
     edited(app_copy, "app/web.py", "Give the average heart rate", "Type the average heart rate")
     surface["result_text"] = need.result_text(app_copy)
     assert need.differences(read[0], surface) == []
+
+
+def test_a_changed_chart_string_is_no_and_no_function_reaches_the_charts(read, app_copy, surface, tmp_path):
+    """app/charts.py draws the pages' charts: no MCP function imports it, so its words are never an assistant's."""
+    edited(app_copy, "app/charts.py", "Smoothed body weight over the last 4 weeks, from ",
+           "Smoothed weight over the last 4 weeks, from ")
+    surface["result_text"] = need.result_text(app_copy)
+    assert need.differences(read[0], surface) == []
+    loads = ("import sys; sys.path.insert(0, sys.argv[1]); import app.mcp_server, app.services; "
+             "print('app.charts' in sys.modules)")
+    env = {**os.environ, "DATABASE_URL": f"sqlite:///{(tmp_path / 'unused.db').as_posix()}"}
+    done = subprocess.run([sys.executable, "-I", "-c", loads, str(ROOT)], cwd=tmp_path, env=env, capture_output=True,
+                          text=True, timeout=120)
+    assert done.stdout.strip() == "False", done.stderr
 
 
 def test_a_changed_fix_line_in_a_service_is_yes(read, app_copy, surface):

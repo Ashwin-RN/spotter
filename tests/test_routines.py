@@ -1031,8 +1031,9 @@ def test_settings_links_to_the_page_and_says_what_each_setting_lets_the_assistan
     assert ('<p><a class="action" href="/foods">Saved foods</a></p>\n'
             '  <p><a class="action" href="/routines">Saved routines</a></p>') in page
     assert ("Your assistant can log and import entries, edit and restore them, save foods and routines, and set goals. "
-            "It can change your time zone and targets, and delete entries, saved foods and routines. Before a delete "
-            "it is shown the entry and told to ask you. Nothing is erased: a deleted one can be restored.") in page
+            "It can change your time zone, units and targets, and delete entries, saved foods and routines. Before a "
+            "delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can be "
+            "restored.") in page  # units.md R16: units joins what it can change
     assert "Everything above except deleting: your assistant cannot delete an entry, a saved food or a routine." in page
     assert links.page("routines").endswith("/routines") and ("/routines", web.routines_page, ["GET"]) in web.PAGES
 

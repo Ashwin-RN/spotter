@@ -35,6 +35,7 @@ Trends
           "needed_per_week"} | None
       status: "reached", "on track" or "behind". current replaces the last point as "where the person is now".
       projected_date: the day the line reaches the target (ISO), or None.
+  slope_per_week(points, today) -> float | None   projection's slope_per_week before its 2 dp, from the same fit
   projected_date(...) -> date | None              the day a fitted line reaches a target
   projection_gap(points, today) -> str | None     why there is no line, in words
   reached(value, target, lower_is_better), weeks_left(goal_date, today),
@@ -306,18 +307,11 @@ def projection(points: list[tuple[date, float]], today: date, goal_target: float
     projected_date = projected_date(...) from the same line, as an ISO date or None.
     Without a goal: projected, projected_date, status, weeks_left and needed_per_week are None.
     """
-    start = today - timedelta(days=PROJECTION_DAYS)
-    # In the one order (in_order), each placed on the line at its effective date.
-    pts = [(on_or_before(d, today), v) for d, v in in_order(points, today) if on_or_before(d, today) >= start]
-    if len(pts) < PROJECTION_MIN_POINTS or len({d for d, _ in pts}) < 2:
+    fit = _fit(points, today)
+    if fit is None:
         return None
-    x0 = pts[0][0]
-    xs = [(d - x0).days for d, _ in pts]
-    ys = [v for _, v in pts]
-    n = len(pts)
-    mx, my = sum(xs) / n, sum(ys) / n
-    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
-    intercept = my - slope * mx
+    x0, slope, intercept, ys = fit
+    n = len(ys)
     latest = current if current is not None else ys[-1]
     out = {"slope_per_week": round(slope * 7, 2), "projected": None, "projected_date": None, "status": None,
            "points_used": n, "latest": latest, "weeks_left": None, "needed_per_week": None}
@@ -334,6 +328,30 @@ def projection(points: list[tuple[date, float]], today: date, goal_target: float
     out["weeks_left"] = weeks_left(goal_date, today)
     out["needed_per_week"] = needed_per_week(latest, goal_target, goal_date, today, lower_is_better)
     return out
+
+
+def _fit(points: list[tuple[date, float]], today: date) -> tuple[date, float, float, list[float]] | None:
+    """The least-squares line projection draws: (x0, slope per day, intercept, the values fitted), from the points
+    dated from today - 42 days on, or None with fewer than 4 such points or 1 date."""
+    start = today - timedelta(days=PROJECTION_DAYS)
+    # In the one order (in_order), each placed on the line at its effective date.
+    pts = [(on_or_before(d, today), v) for d, v in in_order(points, today) if on_or_before(d, today) >= start]
+    if len(pts) < PROJECTION_MIN_POINTS or len({d for d, _ in pts}) < 2:
+        return None
+    x0 = pts[0][0]
+    xs = [(d - x0).days for d, _ in pts]
+    ys = [v for _, v in pts]
+    n = len(pts)
+    mx, my = sum(xs) / n, sum(ys) / n
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
+    return x0, slope, my - slope * mx, ys
+
+
+def slope_per_week(points: list[tuple[date, float]], today: date) -> float | None:
+    """projection's slope_per_week before its 2 dp: the same fit of the same points, so a figure shown in another
+    unit is converted once, from the unrounded slope. None where projection draws no line."""
+    fit = _fit(points, today)
+    return None if fit is None else fit[1] * 7
 
 
 def projected_date(slope_per_day: float, intercept: float, x0: date, target: float, today: date,

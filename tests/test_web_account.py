@@ -1039,11 +1039,13 @@ def test_delete_needs_the_csrf_token_and_a_post(signed, provider_delete, monkeyp
 # ---------------------------------------------------------------- Settings, rebuilt (pass B16)
 
 SETTINGS_CARDS = [("account", "account-title", "Your account"), ("zone", "zone-title", "Time zone"),
+                  ("units", "units-title", "Units"),  # units.md R16: the new card, after the time zone
                   ("targets", "targets-title", "Targets"),
                   ("assistant", "assistant-title", "What your assistant may do"),
                   (None, "data-title", "Your data"), (None, "more-title", "More")]
-SETTINGS_LINES = {"zone": "Time zone saved.", "targets": "Targets saved.", "assistant": "Your assistant's access saved."}
-SETTINGS_MARKS = {"zone": "time_zone", "targets": "targets", "assistant": "claude_can"}
+SETTINGS_LINES = {"zone": "Time zone saved.", "targets": "Targets saved.",
+                  "assistant": "Your assistant's access saved.", "units": "Units saved."}
+SETTINGS_MARKS = {"zone": "time_zone", "targets": "targets", "assistant": "claude_can", "units": "units"}
 
 
 def settings_cards(page: str) -> list[Node]:
@@ -1063,7 +1065,7 @@ def shown(node: Node) -> str:
 
 
 def test_settings_in_the_contracts_order(signed):
-    """The head, then the six titled cards in the contract's order, each a section named by its own one
+    """The head, then the seven titled cards in the contract's order, each a section named by its own one
     h2. No code word, no function's name, no required and no autofocus anywhere on the page."""
     page = signed.get("/settings").text
     [main] = parse(page).find_all("main")
@@ -1171,10 +1173,10 @@ def test_each_form_posts_to_its_cards_anchor_and_each_redirect_names_it(signed):
     page = signed.get("/settings").text
     dom = parse(page)
     actions = [f.attrs.get("action") for f in dom.find_all("form")]
-    assert actions == ["/sign-out", "/settings#zone", "/settings/targets#targets", "/settings/claude-can#assistant",
-                       "/settings/export", "/sign-out", "/settings"]
+    assert actions == ["/sign-out", "/settings#zone", "/settings#units", "/settings/targets#targets",
+                       "/settings/claude-can#assistant", "/settings/export", "/sign-out", "/settings"]
     ids = {n.attrs.get("id") for n in dom.iter()}
-    assert {"zone", "targets", "assistant"} <= ids
+    assert {"zone", "units", "targets", "assistant"} <= ids
     assert re.search(r'<form id="auto-time-zone" method="post" action="/settings" hidden>', page)
     assert "autofocus" not in page
     [card] = [f for f in dom.find_all("form") if f.attrs.get("action") == "/settings#zone"]
@@ -1474,9 +1476,9 @@ SWITCH_EVERYTHING = {"whoami", "list_exercises", "get_progress", "get_log", "fin
 SWITCH_ALLOWS = {
     "log_delete": (SWITCH_EVERYTHING | {"delete_entry"},
                    "Your assistant can log and import entries, edit and restore them, save foods and routines, and set "
-                   "goals. It can change your time zone and targets, and delete entries, saved foods and routines. "
-                   "Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can be "
-                   "restored."),
+                   "goals. It can change your time zone, units and targets, and delete entries, saved foods and "
+                   "routines. Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted "
+                   "one can be restored."),  # units.md R16: units joins what it can change
     "log": (SWITCH_EVERYTHING,
             "Everything above except deleting: your assistant cannot delete an entry, a saved food or a routine."),
 }

@@ -19,8 +19,8 @@
   <form class="stack" method="post" action="/entries/{{ kind }}/{{ entry_id }}/edit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% if loose %}<div class="error">{% for words in loose %}<p>{{ words }}</p>{% endfor %}</div>{% endif %}
-    {% if kind == "bodyweight" %}
-    {{ parts.field("edit-kg", "kg", "Weight (kg)", errors.get("kg"), values.kg, inputmode="decimal", required=true) }}
+    {% if kind == "bodyweight" %}{% set weight = form_field("kg", units) %}
+    {{ parts.field("edit-" ~ weight, weight, "Weight (" ~ unit_word("weight", units) ~ ")", errors.get(weight), values[weight], inputmode="decimal", required=true) }}
     {% elif kind == "measurement" %}
     <p id="edit-value-name">{{ kind_with_unit(entry.kind) }}</p>
     {{ parts.field("edit-value", "value", "Value", errors.get("value"), values.value, inputmode=value_inputmode, required=true, describedby="edit-value-name") }}
@@ -28,12 +28,12 @@
     {{ parts.field("edit-description", "description", "Food", errors.get("description"), values.description, required=true, maxlength=200) }}
     {{ parts.field("edit-kcal", "kcal", "Calories (kcal)", errors.get("kcal"), values.kcal, inputmode="numeric", required=true) }}
     {{ parts.field("edit-meal", "meal", "Meal", errors.get("meal"), values.meal, choices=meal_choices) }}
-    {% elif kind == "cardio_entry" %}
+    {% elif kind == "cardio_entry" %}{% set distance, speed = form_field("distance_km", units), form_field("speed_kmh", units) %}
     {{ parts.field("edit-exercise", "exercise", "Activity", errors.get("exercise"), values.exercise, choices=activity_choices) }}
     {{ parts.field("edit-minutes", "minutes", "Time (min)", errors.get("minutes"), values.minutes, inputmode="decimal", required=true) }}
-    {{ parts.field("edit-distance_km", "distance_km", "Distance (km)", errors.get("distance_km"), values.distance_km, inputmode="decimal") }}
+    {{ parts.field("edit-" ~ distance, distance, "Distance (" ~ unit_word("distance", units) ~ ")", errors.get(distance), values[distance], inputmode="decimal") }}
     {{ parts.field("edit-incline_pct", "incline_pct", "Incline (%)", errors.get("incline_pct"), values.incline_pct, inputmode="decimal") }}
-    {{ parts.field("edit-speed_kmh", "speed_kmh", "Speed (km/h)", errors.get("speed_kmh"), values.speed_kmh, inputmode="decimal") }}
+    {{ parts.field("edit-" ~ speed, speed, "Speed (" ~ unit_word("speed", units) ~ ")", errors.get(speed), values[speed], inputmode="decimal") }}
     {{ parts.field("edit-avg_hr", "avg_hr", "Average heart rate (bpm)", errors.get("avg_hr"), values.avg_hr, inputmode="numeric") }}
     {{ parts.field("edit-machine_kcal", "machine_kcal", "Machine's calories (kcal)", errors.get("machine_kcal"), values.machine_kcal, inputmode="numeric") }}
     {{ parts.field("edit-notes", "notes", "Notes", errors.get("notes"), values.notes, rows=2) }}
@@ -55,7 +55,7 @@
 {% if kind == "lift_session" %}
 <section class="card" aria-labelledby="sets-title">
   <h2 id="sets-title">Sets</h2>
-  {{ parts.sets_table(entry.sets) }}
+  {{ parts.sets_table(entry.sets, units) }}
   <p class="small">Sets are changed through your assistant for now: tell it what to fix.</p>
 </section>
 {% endif %}

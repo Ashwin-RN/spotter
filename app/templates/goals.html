@@ -2,7 +2,7 @@
 {% block title %}Goals · Spotter{% endblock %}
 {% block main %}
 {% import "_parts.html" as parts %}
-{% macro pace(g, value) %}{% if g.kind == "cardio_best" %}{{ value|show("time_pace") }}{% else %}{{ value|show("rate") }}&nbsp;{{ g.unit }} a week{% endif %}{% endmacro %}
+{% macro pace(g, value) %}{% if g.kind == "cardio_best" %}{{ value|show("time_pace") }}{% else %}{{ value|show("weight_rate" if g.kind in ("bodyweight", "lift") else "rate", units=units) }}&nbsp;{{ goal_unit(g) }} a week{% endif %}{% endmacro %}
 
 {% macro status_form(goal_id, status, label, button="link") %}
 <form method="post" action="/goals/{{ goal_id }}/status" class="inline">
@@ -36,7 +36,7 @@
         </div>
       </div>
       {% if g.latest is not none %}
-      <p class="goal-now figure"><span class="big">{{ g.latest|show(q, w.widened, unit=False) }}{% if g.kind != "cardio_best" %}&nbsp;<span class="unit">{{ g.unit }}</span>{% endif %}</span> <span class="figure-label">{{ w.now }}</span></p>
+      <p class="goal-now figure"><span class="big">{{ g.latest|show(q, w.widened, unit=False) }}{% if g.kind != "cardio_best" %}&nbsp;<span class="unit">{{ goal_unit(g) }}</span>{% endif %}</span> <span class="figure-label">{{ w.now }}</span></p>
       {% else %}
       <p class="goal-now figure"><span class="figure-label">Nothing logged yet</span></p>
       {% endif %}
@@ -106,18 +106,19 @@
     {% for value, words in kinds %}<a href="/goals?kind={{ value }}#set-goal"{% if value == kind %} aria-current="true"{% endif %}>{{ words }}</a>
     {% endfor %}
   </nav>
-  {% set target_label = {"bodyweight": "Target weight (kg)", "lift": "Target estimated max (kg)", "cardio_best": "Target time (min)"}.get(kind, "Target") %}
-  {% set start_label = {"bodyweight": "Where you are now (kg)", "lift": "Where you are now (kg)", "cardio_best": "Where you are now (min)"}.get(kind, "Where you are now") %}
+  {% set weight, distance = unit_word("weight", units), form_field("distance_km", units) %}{% set target_label = {"bodyweight": "Target weight (" ~ weight ~ ")", "lift": "Target estimated max (" ~ weight ~ ")", "cardio_best": "Target time (min)"}.get(kind, "Target") %}
+  {% set start_label = {"bodyweight": "Where you are now (" ~ weight ~ ")", "lift": "Where you are now (" ~ weight ~ ")", "cardio_best": "Where you are now (min)"}.get(kind, "Where you are now") %}
   {% set minutes_hint = "Minutes, such as 27.5 for 27:30" if kind == "cardio_best" else none %}
   <form method="post" action="/goals#set-goal" class="goal-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="hidden" name="kind" value="{{ kind }}">
+    <input type="hidden" name="kind" value="{{ kind }}">{% if units.weight == "lb" %}
+    <input type="hidden" name="{{ weight_unit }}" value="lb">{% endif %}
     {% if loose %}<div class="error">{% for words in loose %}<p>{{ words }}</p>{% endfor %}</div>{% endif %}
     {% if kind == "lift" %}
     {{ parts.field("goal-exercise", "exercise", "Lift", errors.get("exercise"), typed.get("exercise"), choices=lift_choices, empty="No lift") }}
     {% elif kind == "cardio_best" %}
     {{ parts.field("goal-exercise", "exercise", "Activity", errors.get("exercise"), typed.get("exercise"), choices=activity_choices, empty="No activity") }}
-    {{ parts.field("goal-distance", "distance_km", "Distance (km)", errors.get("distance_km"), typed.get("distance_km"), inputmode="decimal") }}
+    {{ parts.field("goal-distance", distance, "Distance (" ~ unit_word("distance", units) ~ ")", errors.get(distance), typed.get(distance), inputmode="decimal") }}
     {% elif kind == "measurement" %}
     {{ parts.field("goal-measurement", "measurement_kind", "Measurement", errors.get("measurement_kind"), typed.get("measurement_kind"), choices=measurement_choices, empty="No measurement") }}
     {% endif %}

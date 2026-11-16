@@ -2019,8 +2019,8 @@ def test_the_save_a_food_fold_out_keeps_its_rule_on_the_real_page(client):
 SETTINGS_STATES = {"no zone, nothing logged": ACCOUNTS["empty"], "four weeks": ACCOUNTS["four weeks"],
                    "edge": ACCOUNTS["edge"]}
 SETTINGS_CARD_SHAPES = [("section", ["card"], card_id, f"{name}-title") for card_id, name in
-                        [("account", "account"), ("zone", "zone"), ("targets", "targets"), ("assistant", "assistant"),
-                         (None, "data"), (None, "more")]]
+                        [("account", "account"), ("zone", "zone"), ("units", "units"),  # units.md R16: the new card
+                         ("targets", "targets"), ("assistant", "assistant"), (None, "data"), (None, "more")]]
 
 
 def settings_card_shapes(s: Seen) -> list[tuple]:

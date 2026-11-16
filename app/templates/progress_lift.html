@@ -16,16 +16,16 @@
 </div>
 
 {% if lift.sessions %}
-{% set best, estimated = lift.best_set, lift.current_estimated_max_kg is not none %}
+{% set best, estimated = lift.best_set, lift.current_estimated_max_kg is not none %}{% set weight = unit_word("weight", units) %}
 {% set reason = "Needs added weight" if bare else "Needs a weighted set of 1 to 10 reps" %}
 <div class="tiles">
   {% if estimated %}
-  {{ parts.tile("max", "Estimated max now: ", lift.current_estimated_max_kg|show("estimated_max", unit=False), "kg, estimated max now") }}
+  {{ parts.tile("max", "Estimated max now: ", lift.current_estimated_max_kg|show("estimated_max", unit=False), weight ~ ", estimated max now") }}
   {% else %}
   {{ parts.tile("max", "Estimated max now: ", reason, empty=true) }}
   {% endif %}
   {% if best %}
-  {{ parts.tile("best", "Best set: ", best.weight_kg|show("weight_kg", unit=False), "kg × " ~ best.reps|show("reps") ~ ", best set", best.date|day(today)) }}
+  {{ parts.tile("best", "Best set: ", best.weight_kg|show("weight_kg", unit=False), weight ~ " × " ~ best.reps|show("reps") ~ ", best set", best.date|day(today)) }}
   {% elif bare %}
   {{ parts.tile("best", "Best set: ", bare.reps|show("reps"), "reps, best set", bare.date|day(today)) }}
   {% else %}
@@ -38,7 +38,7 @@
    added weight: no chart, and the card says why. #}
 {{ parts.chart_card("max", "max-title", "Estimated max", "Worked out from your sets, not a tested max",
                     chart if chart else none,
-                    lift.current_estimated_max_kg|show("estimated_max", unit=False) if chart and estimated else none, "kg",
+                    lift.current_estimated_max_kg|show("estimated_max", unit=False) if chart and estimated else none, weight,
                     "The chart starts from a set with added weight." if bare
                     else "The chart starts from a weighted set of 1 to 10 reps.") }}
 

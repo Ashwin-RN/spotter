@@ -351,3 +351,10 @@ Inches for a body size, stones, a best-mile time, the unit an entry was said in,
 - The lift bound in lb is 1,469.75, not 1,469.74: 666.67 / 0.45359237 = 1,469.7558, rounded down.
 - A bare goal value from the web is read as kg until the goal form sends `weight_unit` (U2).
 - A lb refusal reads "lb 900 is outside 44.1 to 881.84 lb."
+
+## Note, 2026-11-16: from the U2 review
+
+- A page of a lb account takes the services' unrounded figures: `get_trends`, `get_progress` and `progress.bodyweight_chart` take `exact`, which no MCP function passes. So a page never differs from the summary by a step. In kg the rounded figure is already the summary's, so a kg page reads as before.
+- A form posted after a units switch is read in the unit it was drawn in: by the field it sent, `kg` or `lb`, `distance_km` or `distance_mi`, `speed_kmh` or `speed_mph`. An untouched edit form posted after a switch writes nothing.
+- `goal_charts` takes units, so the Goals page says `get_goals`' label and plan line as they are.
+- No page shows a best time's name yet (1, 5 or 10 km). A card that shows one will need the kg and km exception.

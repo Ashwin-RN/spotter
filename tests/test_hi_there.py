@@ -175,7 +175,9 @@ KEEPS_PART = (
     "What Spotter keeps", *KEEPS, "Targets. Calories a day, lift sessions a week and cardio minutes a week.",
     "{routines}", "What it does not do",
     "It gives no medical advice, and knows nothing of injury, pain, form or recovery.",
-    "It logs weights in kg and distances in km. An import from another app converts pounds and miles.",
+    # units.md, the hi page's line: a person picks kg or lb and km or miles.
+    "It takes no stones, and no inches for a body size. Weights are kg or lb and distances km or miles: say which you "
+    "use.",
     "It counts calories, not protein, carbs or fat.",
     f"It knows lifts by its own list of {count(len(exercises.LIFTS))} names. A name not on the list is refused, never "
     "guessed.",

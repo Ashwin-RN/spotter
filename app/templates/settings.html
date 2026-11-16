@@ -2,9 +2,9 @@
 {% block title %}Settings · Spotter{% endblock %}
 {% block main %}
 {% import "_parts.html" as parts %}
-{# Settings (section L): the page head, then six titled cards in this order, which is the markup
-   order: Your account, Time zone, Targets, What your assistant may do, Your data, More. On a laptop they sit two to a
-   row (.settings-page > .card). Each of the three forms posts to its own card's anchor (web.SETTINGS_CARDS), and its
+{# Settings (section L): the page head, then seven titled cards in this order, which is the markup
+   order: Your account, Time zone, Units, Targets, What your assistant may do, Your data, More. On a laptop they sit two
+   to a row (.settings-page > .card). Each of the four forms posts to its own card's anchor (web.SETTINGS_CARDS), and its
    saved line sits in that card alone, one at most on the page. A refusal is said in the page's own words: in the card
    for the time zone and the switch, under its field for a target, or at the top of the targets form for one tied to
    none of its fields. What was typed stays. No field is required: the page speaks, not the browser. #}
@@ -51,6 +51,33 @@
       </select>
     </div>
     <div class="form-actions"><button class="primary">Save time zone</button></div>
+    <input type="hidden" name="key" value="{{ form_key() }}">
+  </form>
+</section>
+
+{# The Units card (contract units.md R16): the units in use, kg and km while none is chosen, each a choice of
+   update_settings' own values (web.UNIT_CHOICES). Its form posts to /settings with the card's own field, so it lands
+   back on this card. #}
+<section class="card" id="{{ cards.units }}" aria-labelledby="units-title">
+  <h2 id="units-title">Units</h2>
+  {% if saved_card == cards.units %}{{ parts.saved_line(saved_words) }}{% endif %}
+  <p class="muted">Your pages and your assistant show weights and distances in these units. Switching changes no entry.</p>
+  <form class="stack" method="post" action="/settings#{{ cards.units }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="{{ card_field }}" value="{{ cards.units }}">
+    {% if units_error %}<div class="error"><p class="error" id="units-error">{{ units_error }}</p></div>{% endif %}
+    {% for field, label, options in unit_choices %}
+    <fieldset class="choices">
+      <legend>{{ label }}</legend>
+      {% for value, words in options %}
+      <label class="choice">
+        <input type="radio" name="{{ field }}" value="{{ value }}"{% if unit_values[field] == value %} checked{% endif %}{% if units_error %} aria-invalid="true" aria-describedby="units-error"{% endif %}>
+        <span>{{ words }}</span>
+      </label>
+      {% endfor %}
+    </fieldset>
+    {% endfor %}
+    <div class="form-actions"><button class="primary">Save units</button></div>
     <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
 </section>
