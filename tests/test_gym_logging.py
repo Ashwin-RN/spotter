@@ -594,6 +594,7 @@ def flat(statement: str) -> str:
 ADD_STATEMENTS = 11  # as built, for one new set: the lock, the user, the write limit, the exercises, the session,
 # its sets, the earlier sets, the version and the look for versions past ten, the session's update, the new set.
 # On SQLite the ORM inserts each new set on its own, as a new session's sets always were: k new sets are 10 + k.
+# On Postgres it sends them as one insert (insertmanyvalues): k new sets are 11, whatever k is.
 
 
 def test_an_add_locks_first_and_once_and_runs_as_many_statements_on_a_session_of_30_sets_as_on_one_of_3(make_user):
@@ -609,7 +610,8 @@ def test_an_add_locks_first_and_once_and_runs_as_many_statements_on_a_session_of
             assert flat(statements[0]) == lock and sum(flat(s) == lock for s in statements) == 1
             counts[held_sets, more] = len(statements)
     assert counts[3, 1] == counts[30, 1] == ADD_STATEMENTS
-    assert counts[3, 29] == counts[30, 29] == ADD_STATEMENTS - 1 + 29
+    inserts = 29 if db.get_engine().dialect.name == "sqlite" else 1  # the 29 new sets' inserts
+    assert counts[3, 29] == counts[30, 29] == ADD_STATEMENTS - 1 + inserts
     result, statements = count_queries(lambda: log(make_user(), BENCH, BENCH))  # a new session: the bound of 12
     assert result["summary"].startswith("Bench Press 2 × 5") and len(statements) <= 12, statements
 
