@@ -4,13 +4,15 @@
 
 Its card was approved by the owner on 2026-11-16, every pick, decisions 1 to 21, with two later words of his the same day: the function list kept small, and decision 15 changed (below). This contract waits for his yes before the build. Not in this build: the card's "Scoped, not in this build" table, its open item 2 (Basketball as an activity) and open item 1 (streaks, a later item). Built on `52b5dd8`.
 
+Reconciled 2026-11-16 after the owner's later changes: null taken as left out, `targets` beside the data, weighted muscles, and a review's fixes.
+
 ## His words
 
 On new kinds of training: "they have very prefix structure as far as what are the events and what are the times ... it should scale to these guys easily without too much complication. It should be simple enough that we're able to add these features relatively simply." Later he narrowed it to workouts (yoga, Pilates, Hyrox, and BJJ and boxing if they fit), not team sports, and not in this build: so the scaling rule below.
 
 On the function list: "we can have a small menu ... If they want more details, then they can call another function directly, right? Rather than having them read a big function list every time they try accessing this." So both descriptions stay short, every field's meaning is in `what_is_logged`'s answer, and each entry has a size bar.
 
-On words: "a target should be like something you hit once, whereas goal is something that is ... more of an ongoing thing." So in his words the daily and weekly amounts (kcal, steps, sessions a week) are goals, and finish lines by a date are targets. The code says the reverse: `set_goal` makes finish lines, and `update_settings` holds the daily and weekly targets. Which words the published functions end up with is settled later. So this contract adds no published name that may have to flip: neither function carries the settings' daily and weekly amounts, which `whoami` already gives, and the open finish-line goals ride under the word `get_goals` publishes, `goals`, as a subset of `GoalNumbers`.
+On words: "a target should be like something you hit once, whereas goal is something that is ... more of an ongoing thing." So in his words the daily and weekly amounts (kcal, steps, sessions a week) are goals, and finish lines by a date are targets. The code says the reverse: `set_goal` makes finish lines, and `update_settings` holds the daily and weekly targets. Which words the published functions end up with is settled later. So this contract adds no published name that may have to flip: both answers carry the daily and weekly amounts only as `whoami` publishes them, `targets` with its `Targets` model, and the open finish-line goals ride under the word `get_goals` publishes, `goals`, as a subset of `GoalNumbers`.
 
 ## What exists today
 
@@ -61,13 +63,13 @@ The card's 21, as approved. Where the code made a pick concrete, the ruling belo
 | 10 | Totals where they mean something: sum, avg, max, min, count, per_day, share |
 | 11 | Order by any column, newest first by default. 100 rows, at most 300, the answer under 30,000 characters. `more` is an opaque cursor with no server state |
 | 12 | Rows as lists under a columns header. Nothing in range: empty rows and a note with the last entry's date. A field never logged is null |
-| 13 | Values in the person's units at units decision 9's steps, the unit in the column name |
+| 13 | Values in the person's units at units decision 9's steps, the unit in the column name. **A departure from units decision 8** ("Number fields stay in kg and km", `docs/contracts/units.md:66`): here a column's name carries the person's unit (`weight_lb`), so the assistant reads lb as lb and never converts, which decision 8 guarded against by keeping kg in the name. `get_data`'s description says so. `whoami`'s units text (`app/mcp_schemas.py:413-419`) is not touched |
 | 14 | Deleted entries always left out |
 | 15 | `what_is_logged`: per area and per field, the names logged, every open goal with its plan line, and the daily and weekly amounts as `whoami` gives them (R5). **Changed twice by the owner on 2026-11-16:** the targets were first dropped for the words; then put back, since a calorie amount belongs with the food data ("Somebody is trying to lose weight and they're trying to eat 2,100 calories a day. That would be relevant"), under `whoami`'s own name and shape |
 | 16 | `get_data` carries the open goals that match its filters, and the daily and weekly amounts (R5) |
 | 17 | Body region and the muscles each of the 41 lifts works, from free-exercise-db, in `app/exercises.py`, no migration: each primary muscle counts 1 a set, each secondary 0.5 (R13). **The muscle added by the owner on 2026-11-16:** "what about splits across push and pull muscles or individual muscle groups? ... we should be able to identify it right". Push against pull is a group by category. **Then, the same evening:** "Not everybody splits it as a push-pull legs ... close grip bench press would be triceps heavy, but there is some chest in it. How would you account for that accurately? ... It's about tagging the exercise and the involvement accurately, right? Or at least semi-accurately." So every muscle a lift works is tagged, weighted |
 | 18 | One sentence in the instructions; `docs/can-and-cant.md` gains both; read-only annotations |
-| 19 | No migration, no Postgres run; a year timed on SQLite |
+| 19 | No migration; a year timed on SQLite; one local Postgres run of the new test file before the merge (exit check 6) |
 | 20 | 8 eval cases on a new 16-week seed |
 | 21 | The new input names join the call log's known names |
 
@@ -76,17 +78,17 @@ The card's 21, as approved. Where the code made a pick concrete, the ruling belo
 | # | Ruling | Why |
 |---|---|---|
 | R1 | **The range inputs are `from_date` and `to_date`.** The answer keeps `from` and `to`, as `get_log` does (`app/mcp_schemas.py:1028-1032`) | `from` cannot be a parameter (see "What exists") |
-| R2 | **Every optional input of `get_data` takes null as left out,** published as `X | None` with a None default, as today's optional inputs are (77 `| None` inputs in `app/mcp_server.py` on `52b5dd8`) | Some clients send null for every optional field they leave empty. Refusing it would make `get_data` the one function that does, and "any AI" must be able to call it. The nullable form measured 387 characters more than a plain type, so the size bar is 7,500 (see "The size of the list") |
+| R2 | **Every optional input of `get_data` takes null as left out,** published as `X | None` with a None default, as today's optional inputs are, such as `get_log`'s `date` and `days` (`app/mcp_server.py:998-1002`). `group_by`'s 1 to 2 holds on the nullable list (R11): a pydantic check on 2026-11-16 took null and refused 0 and 3 items | Some clients send null for every optional field they leave empty. Refusing it would make `get_data` the one function that does, and "any AI" must be able to call it. The nullable form measured 387 characters more than a plain type; with it, `get_data`'s entry measured 6,994, so the size bar is 7,500 (see "The size of the list") |
 | R3 | **A field takes either unit's name.** On any account, `weight_kg` and `weight_lb` name the same field, in `fields`, `totals` and `order`; the answer's columns are always in the person's units. No refusal for the other unit's name | The assistant never converts, and never needs to know which name the account uses before it asks |
 | R4 | **The open goals ride under `goals`, in both functions, each a subset of `GoalNumbers`:** `goal_id`, `label`, `status`, `target_date`, `plan_line`, each the `GoalNumbers` field of that name, worked as `get_goals` works it. The model is `OpenGoal`; its descriptions are shorter than `GoalNumbers`' and point to `get_goals` | The owner's word on names: the word `get_goals` already publishes. A subset keeps the output schema under the size bar: `GoalNumbers` whole is most of `get_progress`' 17,173 |
-| R5 | **Both answers carry `targets`: the `Targets` model `whoami` publishes (`app/mcp_schemas.py:367-370`), the same name, shape and values,** worked as `whoami` works them. Null fields where not set. Nothing else from the settings | The owner's word: the calorie amount must sit beside the food data. Reusing `whoami`'s name and model adds no published name: a later rename of the words moves all three answers together |
+| R5 | **Both answers carry `targets`: the `Targets` model `whoami` publishes (`app/mcp_schemas.py:367-370`), the same name, shape and values,** worked as `whoami` works them. Null fields where not set. Nothing else from the settings. **In `get_data`, on every area, always present** (not optional): one shape for every answer, the three amounts bear on food, lifts, cardio and days, and on the others they cost about 110 characters an answer. **The values:** `app/services/data.py` reads the three columns off the user row it already holds (`user.calorie_target_kcal`, `user.target_sessions_per_week`, `user.target_cardio_minutes_per_week`), the dict `account.whoami` builds (`app/services/account.py:111-115`). `app/services/account.py` is not touched; a test holds both answers' `targets` equal to `whoami`'s | The owner's word: the calorie amount must sit beside the food data. Reusing `whoami`'s name and model adds no published name: a later rename of the words moves all three answers together |
 | R6 | **The cursor is an offset**, not a key: an entry logged or deleted between two pages can move a row across the page edge (known limit) | Any column can be the order, so a key cursor would need every column |
-| R7 | **The 30,000 ceiling cuts the page, whatever `limit` says.** Rows are added while the answer's compact JSON stays at or under 30,000 characters; the cursor's place counts the rows given, so it never depends on `limit` | 300 food rows with 200-character descriptions measured 142,844 characters |
+| R7 | **The 30,000 ceiling cuts the page, whatever `limit` says.** Rows are added while the answer's compact JSON, counted with its final summary, `more` and note, stays at or under 30,000 characters; the cursor's place counts the rows given, so it never depends on `limit` | 300 food rows with 200-character descriptions measured 142,844 characters |
 | R8 | **Shares are worked over every group of the range, before order, limit and paging.** A page need not sum to 100 | One figure per group, the same on every page |
-| R9 | **Every rule an area or a field has is data on its entry** (the hooks in the dataclasses below): a row's own quantity, a guard on a total, a ratio avg, the divisor of per_day, which groups an area takes, whether it reads the range, its own days logged. `app/services/data.py` names no area and no field: a test reads its source for every area and field name as a string and finds none | The scaling rule: a later area or field is an entry, never a branch |
+| R9 | **Every rule an area or a field has is data on its entry** (the hooks in the dataclasses below): a row's own quantity, the quantity of each total, a guard on a total, a ratio avg, the divisor of per_day, how a filter value is matched and refused, whether a field is a default column, a group's key and shown cell when they differ from the value, a fan, which groups an area takes, whether it reads the range, its own days logged, its default order, and which goals ride with it. **The source test,** exact: `ast` walks `app/services/data.py` and collects every `str` constant; none may equal (whole string, never a substring) an area's name, a field's base name, or either unit's name of a field (`weight_kg`, `weight_lb`), save the named exempt set `{"entries", "values"}`: `entries` is `AreaLogged`'s key and also the cardio and food count fields' name; `values` is `RangeTotals`' key and also the measurements count field's name. The other words `data.py` needs and a field also bears live as constants in `fields.py` and are read from there: `ROW_KEYS = ("date", "id")`, `FIELD_COLUMNS`, `PERIOD_CELLS = ("days", "days_logged")`, `TIME_GROUPS = ("day", "week", "month")`, `SUMMARY_AREAS = ("lift_sessions", "cardio", "weigh_ins", "measurements", "food")` (what_is_logged's summary counts) | The scaling rule: a later area or field is an entry, never a branch |
 | R10 | **per_day's divisor** is the days with an entry in the area (`days_logged`), whatever the filters, except a field whose `per_day_by` is `"rows"`: then the days its own rows hold. `measurements.value` is the one such field today, so steps a day divide by the days with steps, never by days with only a waist | A measurement kind is its own daily series |
 | R11 | **`group_by` is limited in the schema,** `min_length=1, max_length=2` on the list, as `owner_delete_feedback`'s `ids` is (`app/mcp_server.py:1467-1469`): enforced, and published as `minItems` and `maxItems`. Three groups get the schema refusal's words | `json_schema_extra` alone publishes a limit without enforcing it |
-| R13 | **A set counts for every muscle its lift works: 1 for each primary muscle, 0.5 for each secondary,** both lists as free-exercise-db gives them. With `group_by` muscle, a set sits in each muscle's group with that weight: `sets` and `volume_kg`'s sum, per_day and share are weighted (a bench set adds 1 to chest and 0.5 to shoulders and to triceps); count counts the sets that touch the muscle; avg, max and min are over those sets, unweighted. Shares are of the weighted sum over all muscles, so they sum to 100. `filters` muscle keeps the sets whose lift works it, at either weight. The weighting is data on the field (R9): a group field may give several keys with a weight per row (`fan`), and a field marked `weighted` multiplies by it | The 0.5 is the "fractional" count of Pelland, Remmert, Robinson, Hinson and Zourdos, "The Resistance Training Dose-Response", SportRxiv preprint version 2, 2024-10-04 (sportrxiv.org/index.php/server/preprint/view/460): of the three ways of counting indirect sets (1, 0.5, 0), "The relative evidence for the 'fractional' quantification method was strongest." free-exercise-db gives which muscles, not how much; a hand-set percent per lift would have no source. A close-grip bench (not among the 41) reads triceps 1, chest 0.5, shoulders 0.5 in free-exercise-db (`Close-Grip_Barbell_Bench_Press.json`, read 2026-11-16), so it lands triceps-heavy with chest in it |
+| R13 | **A set counts for every muscle its lift works: 1 for each primary muscle, 0.5 for each secondary,** both lists as free-exercise-db gives them, in `exercises.MUSCLES` (the table below). The weighting is data on the field (R9): `muscle` has a `fan` that gives each set's muscles with their weights, and `sets` and `volume_kg` are `weighted`. The rulings: (a) **the weighted set count is `sets_sum`:** `sets` takes sum, which is its count when nothing fans and the weighted count under `group_by` muscle ("triceps 9.5"); (b) **under `group_by` muscle**, a set sits in each muscle's group at its weight: a weighted field's sum and per_day multiply by it, count counts the sets that work the muscle, avg, max and min are over those sets unweighted; (c) **share** is of the weighted sums over every muscle group, so the shares sum to 100; (d) **the range `totals` count each set once,** unweighted, so the groups add up to more than the range total, and `how` says so; (e) **with no `group_by`, `muscle` is not a default field;** named in `fields`, its cell is the lift's primary muscle, null for Suitcase Carry; (f) **`filters` muscle** keeps the sets whose lift works any muscle named, at either weight; with `group_by` muscle too, **only the muscles named are groups:** the matched sets' other muscles are not shown; (g) **a muscle filter narrows the goals that ride along** to the lift goals whose lift works it, as a region filter does; (h) a set of a lift with no muscle (Suitcase Carry) sits in one group whose `muscle` is null, at 1 | The 0.5 is the "fractional" count of Pelland, Remmert, Robinson, Hinson and Zourdos, "The Resistance Training Dose-Response: Meta-Regressions Exploring the Effects of Weekly Volume and Frequency on Muscle Hypertrophy and Strength Gain", SportRxiv preprint, version 2, posted 2024-10-04 (sportrxiv.org/index.php/server/preprint/view/460, fetched on 2026-11-16). Its abstract, word for word but for straight quote marks: "weekly set volume/frequency for indirect sets was quantified as 1 for 'total,' 0.5 for 'fractional,' and 0 for 'direct.'" and "The relative evidence for the 'fractional' quantification method was strongest; therefore, this quantification method was used for the primary meta-regression models." It pooled 67 studies of 2,058 participants. free-exercise-db gives which muscles, not how much; a hand-set percent per lift would have no source. A close-grip bench (not among the 41) reads triceps 1, chest 0.5, shoulders 0.5 in free-exercise-db (`Close-Grip_Barbell_Bench_Press.json`, read on 2026-11-16 when the table was built, not read again since), so it lands triceps-heavy with chest in it |
 | R12 | **Absent optional result fields are left out,** as every result does (`app/mcp_schemas.py:6-7`): `range_note`, `totals`, `more`, `note`, and `names` in an area | One rule for every answer |
 
 ## The field list (decisions 4, 5, 6, 7, 9, 10, 17)
@@ -115,7 +117,15 @@ class Field:
                                                                # value's one-kind and daily-amount rules
     fan: Callable[[Row], list[tuple[str, float]]] | None = None   # a group field with several keys a row, each
                                                                   # with its weight: muscle (R13)
-    weighted: bool = False    # sum, per_day and share multiply by the fan's weight: sets, volume_kg (R13)
+    weighted: bool = False    # under a fanned group, sum and per_day multiply by the fan's weight, and share is of
+                              # those weighted sums: sets, volume_kg (R13). The range totals never weight
+    match: Callable[[object], tuple[object, dict | None]] | None = None   # a filter value as sent to its stored
+                              # form (a name, a list of names, a bool), or the refusal in its own words (the table)
+    default: bool = True      # a default column with no fields sent; muscle: False
+    key: Callable[[Row], object] | None = None      # a group's key when it is not value: food's (below)
+    shown: Callable[[list[Row]], object] | None = None   # a group's cell from its rows: food's name (below)
+    total_quantity: dict[str, str] = field(default_factory=dict)   # total to quantity; a total not named shows
+                              # at the field's quantity (see "Steps of totals")
 
 @dataclass(frozen=True)
 class Area:
@@ -128,16 +138,21 @@ class Area:
     fields: tuple[Field, ...]
     groups: tuple[str, ...] = ("day", "week", "month")   # the time groups it takes; days: week and month;
                                                           # saved_foods: none
-    field_groups: bool = True     # saved_foods: False, so no group_by at all
     ranged: bool = True           # saved_foods: False: every live row whatever the range; its loader counts in range
     logged_days: Callable[[Session, User, date, date], set[date]] | None = None
                                   # None: the distinct dates of the area's rows in range, before filters.
                                   # days and saved_foods give their own
+    order: tuple[str, ...] = ("-date", "-id")   # the default order of rows; saved_foods: ("-times_logged", "name")
+    goals: Callable[[list[dict], Query], list[dict]] = lambda numbers, query: []
+                                  # the open goals' numbers in, the ones that ride out ("Goals riding with the data")
 
 AREAS: dict[str, Area]        # in the order below; what_is_logged lists them so
 INTERNAL_COLUMNS: dict[str, tuple[str, ...]]   # each area table's columns no field reads, by name
 OTHER_TABLES: dict[str, str]  # every other table, with why no area reads it
+ROW_KEYS, FIELD_COLUMNS, PERIOD_CELLS, TIME_GROUPS, SUMMARY_AREAS   # the shared words of R9's source test
 ```
+
+A filter on a field with a `fan` matches any of its keys, and its `names` in `what_is_logged` are the keys: `muscle`'s fan gives each lift's muscles with their weights, and `exercises` has a fan too, each lift in the session at 1, so its filter and its `names` are per lift (never the joined text). A fan groups only where the field's `group` is true. An area takes no `group_by` at all when its `groups` is empty and no field of it groups: that alone gives "saved_foods takes no group_by."
 
 `Query` is the call's checked inputs: the area, fields, filters as matched, groups, totals, order and range. A `Row` is a plain dict: `date` (the stored date), `id`, and each field's stored inputs. A loader filters `user_id` (a set through its session), `deleted_at IS NULL`, and the range with `metrics.on_or_before(date, today)`: an entry dated after today counts as today's, as in every read. It does every query in a fixed number of statements, never one a row.
 
@@ -156,13 +171,13 @@ Noun set, sets. Count field `sets`. Tables `lift_set`, `lift_session`, `exercise
 | `exercise` | The lift, as list_exercises names it. | | stored | | yes | yes | `lift_set.exercise_id` to `exercise.name` |
 | `category` | The lift's movement: squat, hinge, push, pull, carry, core or accessory. | | stored | | yes | yes | `exercise.category` |
 | `region` | The body region the lift trains: upper, lower, core or full_body. | | derived | | yes | yes | `exercises.REGIONS[name]` |
-| `muscle` | A muscle the lift works, as free-exercise-db names it, such as chest or triceps: 1 a set for a primary muscle, 0.5 for a secondary. Grouped by, a set counts in each muscle it works at that weight. Null for Suitcase Carry. | | derived | | yes | yes | `exercises.MUSCLES[name]`, `fan` (R13) |
-| `set_number` | The set's number within its lift in the session, from 1. | | stored | | | | `lift_set.set_number` |
+| `muscle` | A muscle the lift works, as free-exercise-db names it, such as chest or triceps. As a column, the lift's primary muscle. Grouped by, a set counts 1 for each primary muscle and 0.5 for each secondary, in sets and volume. Null for Suitcase Carry. | | derived | | yes | yes | `exercises.MUSCLES[name]`: as a cell its weight-1 muscle; as a group, `fan` (R13). Not a default field |
+| `set_number` | The set's number within its lift in the session, from 1. | `count` | stored | | | | `lift_set.set_number` |
 | `weight_kg` | The weight lifted. 0 for bodyweight work. | weight, `weight_kg` | stored | avg, max, min | | | `lift_set.weight_kg` |
-| `reps` | Reps in the set. | | stored | sum, avg, max, min, per_day | | | `lift_set.reps` |
+| `reps` | Reps in the set. | `reps` | stored | sum, avg, max, min, per_day | | | `lift_set.reps` |
 | `estimated_max_kg` | Epley's estimated one-rep max: weight times 1 plus reps over 30. Null outside 1 to 10 reps or at 0 kg. | weight, `estimated_max` | derived | avg, max, min | | | `metrics.epley(weight_kg, reps)` |
-| `volume_kg` | weight x reps. A 0 kg set counts 0. | weight, `volume` | derived | T | | | `weight_kg * reps` |
-| `sets` | One for each set: count it. | | derived | per_day, share | | | 1 a row |
+| `volume_kg` | weight x reps. A 0 kg set counts 0. | weight, `volume` | derived | T | | | `weight_kg * reps`; `weighted` (R13) |
+| `sets` | One for each set: count it, or sum it for sets weighted by muscle. | `count`; sum and per_day at `count_avg` | derived | sum, per_day, share | | | 1 a row; `weighted` (R13) |
 
 ### lift_sessions: "One live lift session."
 
@@ -172,7 +187,7 @@ Noun session, sessions. Count field `sessions`. Tables `lift_session`, `lift_set
 |---|---|---|---|---|---|---|---|
 | `date` | The day trained. | | stored | | | | `lift_session.date` |
 | `id` | The session's id, for edit_entry with kind lift_session. | | stored | | | | `lift_session.id` |
-| `exercises` | The lifts in it, in the order done. A filter keeps the sessions that hold any of them. | | derived | | yes | | its sets' names, first appearance order, joined by ", " |
+| `exercises` | The lifts in it, in the order done. A filter keeps the sessions that hold any of them. | | derived | | yes | | its sets' names, first appearance order, joined by ", "; `fan`: each lift at 1. A filtered session's cells stay whole: its `sets`, `volume_kg` and `exercises` count every set |
 | `sets` | Sets in it. | `count` | derived | sum, avg, max, min, per_day | | | its sets counted |
 | `volume_kg` | weight x reps over its sets. | weight, `volume` | derived | T | | | sum of its sets' volume |
 | `notes` | The person's notes. | | stored | | | | `lift_session.notes` |
@@ -250,7 +265,7 @@ Noun entry, entries. Count field `entries`. Tables `food_entry`, `saved_food`, `
 
 ### saved_foods: "One live saved food. The range counts its use."
 
-Noun saved food, saved foods. Count field `foods`. Tables `saved_food`, `food_entry`. `ranged` False: every live saved food is a row whatever the range; `times_logged` counts its live entries in the range. `logged_days`: the days in range with a food entry of a saved food. `groups` empty and `field_groups` False: no `group_by`.
+Noun saved food, saved foods. Count field `foods`. Tables `saved_food`, `food_entry`. `ranged` False: every live saved food is a row whatever the range; `times_logged` counts its live entries in the range. `logged_days`: the days in range with a food entry of a saved food. `groups` empty and no field that groups: no `group_by`. `order` ("-times_logged", "name"): most used first, then by name.
 
 | Field | Meaning | Unit | Stored or derived | Totals | Filter | Group | From |
 |---|---|---|---|---|---|---|---|
@@ -295,11 +310,11 @@ Every day of a time group is in range by construction, so `days`' rows are the r
 
 Areas and fields are data in `AREAS`. Neither function, nor its published entry, nor a result model names one. A later area (a format's parts with split times, say) is a table, its loader and its field entries. A later field (protein, say) is a column and one `Field`. Neither changes an input or a result model.
 
-**The test** (`tests/test_data.py`): with `monkeypatch`, register a throwaway area, `test_parts`, whose loader returns three fixed rows (a `part` text field that groups and filters; a `seconds` number field with T; a `split` field whose avg is a `ratio` of `seconds` over a `metres` field; a `guarded` field whose `guard` refuses sum unless `part` is filtered to one name), and a throwaway field `kcal_tenth` on `food`. Then `what_is_logged` lists both with their meanings, `get_data` reads `test_parts` with a filter, a group and every total (the ratio avg against a hand-worked figure, the guard's refusal and its pass), and `food` with `kcal_tenth_sum`. The owner's `tools/list` is byte for byte the same before and after, and so is every model in `RESULTS`.
+**The test** (`tests/test_data.py`): with `monkeypatch`, register a throwaway area, `test_parts`, whose loader returns three fixed rows (a `part` text field that groups and filters; a `seconds` number field with T; a `split` field whose avg is a `ratio` of `seconds` over a `metres` field; a `guarded` field whose `guard` refuses sum unless `part` is filtered to one name; a `zone` field with a `fan` that gives each row two keys, one at 1 and one at 0.5, and `seconds` marked `weighted`), and a throwaway field `kcal_tenth` on `food`. Then `what_is_logged` lists both with their meanings, `get_data` reads `test_parts` with a filter, a group and every total (the ratio avg against a hand-worked figure, the guard's refusal and its pass, and `group_by` zone giving each zone's weighted `seconds_sum` and shares summing to 100, while the range totals count each row once), and `food` with `kcal_tenth_sum`. The owner's `tools/list` is byte for byte the same before and after, and so is every model in `RESULTS`.
 
 ## Body region and main muscle for the 41 lifts (decision 17)
 
-`app/exercises.py` gains `MUSCLES: dict[str, dict[str, float]]` (each lift's muscles with their weight: 1 for each in the table's primary column, 0.5 for each in its secondary column; empty for Suitcase Carry) and `REGIONS: dict[str, str]`, beside `LIFTS`. Each of the 41 entries has exactly one primary muscle, and the region is worked from it. `LIFTS`, `rows()` and `sync` do not change: `sync` builds `Exercise(**row)` (`app/exercises.py:108`), and `ExerciseItem` is pinned by hash (`tests/test_feedback.py:68-90`), so region and muscle are never a column and never in `list_exercises`. A test holds `set(REGIONS) == set(MUSCLES) == {name for name, _ in LIFTS}`, every region in `upper`, `lower`, `core`, `full_body`, every muscle in free-exercise-db's 17 names (abdominals, abductors, adductors, biceps, calves, chest, forearms, glutes, hamstrings, lats, lower back, middle back, neck, quadriceps, shoulders, traps, triceps), every weight 1 or 0.5, exactly one weight of 1 a lift but Suitcase Carry, the table's muscles exactly, and each region equal to the rule below applied to the primary muscle, save the two named exceptions.
+`app/exercises.py` gains `MUSCLES: dict[str, dict[str, float]]` (each lift's muscles with their weight: 1 for each in the table's primary column, 0.5 for each in its secondary column; empty for Suitcase Carry) and `REGIONS: dict[str, str]`, beside `LIFTS`. Every lift but Suitcase Carry has exactly one primary muscle, and its region is worked from it. Checked on 2026-11-16 against the table below: 40 rows with one primary each, every muscle among the 17 names, no muscle both primary and secondary in a row. `LIFTS`, `rows()` and `sync` do not change: `sync` builds `Exercise(**row)` (`app/exercises.py:108`), and `ExerciseItem` is pinned by hash (`tests/test_feedback.py:68-90`), so region and muscle are never a column and never in `list_exercises`. A test holds `set(REGIONS) == set(MUSCLES) == {name for name, _ in LIFTS}`, every region in `upper`, `lower`, `core`, `full_body`, every muscle in free-exercise-db's 17 names (abdominals, abductors, adductors, biceps, calves, chest, forearms, glutes, hamstrings, lats, lower back, middle back, neck, quadriceps, shoulders, traps, triceps), every weight 1 or 0.5, exactly one weight of 1 a lift but Suitcase Carry, the table's muscles exactly, and each region equal to the rule below applied to the primary muscle, save the two named exceptions.
 
 Each region is worked from the primary muscles of the lift's free-exercise-db entry (github.com/yuhonas/free-exercise-db, The Unlicense, read on 2026-11-16, each entry at `exercises/<entry>.json`). The rule: lower is quadriceps, hamstrings, glutes, calves, adductors, abductors and lower back; upper is chest, shoulders, lats, middle back, traps, biceps, triceps, forearms and neck; core is abdominals. Lower back counts as lower, so Deadlift (primary: lower back) reads lower, as a hinge. Two named exceptions: Farmer's Carry (primary forearms, secondaries across every region) and Suitcase Carry (no entry in free-exercise-db) are full_body: a carry is grip, legs and trunk at once. Match: exact is the same name; same is the same movement and equipment under another name; near says what differs in the source file. The 41 stay as they are: no two map to the same entry. Equipment pairs (Bench Press and Dumbbell Bench Press, Romanian Deadlift and its dumbbell form, Overhead Press and Dumbbell Shoulder Press) and Hip Thrust beside Glute Bridge stay apart, since their weights are not comparable and merging would mix their bests.
 
@@ -356,12 +371,12 @@ Every input but `area` is optional, and null is taken as left out (R2). A blank 
 | Input | Type | Default | Range | Description, in full |
 |---|---|---|---|---|
 | `area` | string | required | an area of `AREAS` | "An area, as what_is_logged names it, such as lift_sets or food." |
-| `fields` | array of strings | every field but the count field, in list order | the area's fields, either unit's name (R3) | "The fields to show, as what_is_logged names them. Leave out for every field. Not with group_by." |
-| `filters` | object: string, boolean, or array of strings | none | the area's filter fields | "Only rows that match, by a filter field of what_is_logged: a name, a list of names, or true or false, such as {\"exercise\": \"Back Squat\"}." |
-| `from_date` | string | `to_date` less 27 days | YYYY-MM-DD, from `log.oldest_day(user)` | "The first day, YYYY-MM-DD. Leave out with to_date for the last 28 days." |
+| `fields` | array of strings | every field but the count field and `muscle`, in list order | the area's fields, either unit's name (R3) | "The fields to show, as what_is_logged names them. Leave out for every field. Not with group_by." |
+| `filters` | object, `dict[str, Any] | None` | none | the area's filter fields, each checked by the service, so a bad value gets the refusal table's words: a typed union would answer it in the schema's | "Only rows that match, by a filter field of what_is_logged: a name, a list of names, or true or false, such as {\"exercise\": \"Back Squat\"}." |
+| `from_date` | string | `to_date` less 27 days, or `log.oldest_day(user)` when that is later | YYYY-MM-DD, from `log.oldest_day(user)` | "The first day, YYYY-MM-DD. Leave out with to_date for the last 28 days." |
 | `to_date` | string | today | YYYY-MM-DD, not after today | "The last day, YYYY-MM-DD. Leave out for today." |
 | `group_by` | array of strings | none | 1 to 2 items: `min_length=1, max_length=2` (R11) | "One or two groups: day, week, month, or a field what_is_logged marks as a group. Each row is then one group." |
-| `totals` | object: array of strings | none, or `{count_field: ["count"]}` with `group_by` | a field's allowed totals | "By field, as what_is_logged allows: sum, avg, max, min, count, per_day or share, such as {\"kcal\": [\"per_day\", \"share\"]}." |
+| `totals` | object, `dict[str, Any] | None`, checked by the service | none, or `{count_field: ["count"]}` with `group_by`. `{}` is taken as left out | a field's allowed totals | "By field, as what_is_logged allows: sum, avg, max, min, count, per_day or share, such as {\"kcal\": [\"sum\", \"per_day\"]}." |
 | `order` | string | newest first; groups by a field, largest first | a column of the answer, a leading minus for largest first | "A column of the answer to sort by, smallest first, or with a minus sign first for largest first, such as -kcal_sum. Leave out for newest first, or largest first for groups by a field." |
 | `limit` | integer, `whole_in(1, 300)` | 100 | 1 to 300 | "The most rows: 1 to 300. Leave out for 100." |
 | `cursor` | string | none | a `more` this function gave | "more from the last answer, as it came, with the same query." |
@@ -375,15 +390,18 @@ Every problem of a call at once, through `rules.combine`. Nothing is read when a
 | When | Code | Message | Fix |
 |---|---|---|---|
 | An area not in the list | `invalid_field` | "area 'lifts' is not an area Spotter reads." | "Use one of: lift_sets, lift_sessions, cardio, weigh_ins, measurements, food, saved_foods, days." then " The nearest is lift_sets." when `difflib` finds one at 0.6 |
-| A field not in the area, in `fields`, `totals` or `order`'s field | `invalid_field` | "'weight' is not a field of lift_sets." | "lift_sets takes: {its fields}." then " The nearest field is weight_kg." at `mcp_schemas.NEAR_CUTOFF` |
+| `area` blank or spaces only | `missing_field` | "area is missing." | "Give area, as what_is_logged names it." |
+| `fields` an empty list | `invalid_field` | "fields holds no fields." | "Name at least one field, or leave fields out for every field." |
+| A field not in the area, in `fields` or `totals` | `invalid_field` | "'weight' is not a field of lift_sets." | "lift_sets takes: {its fields}." then " The nearest field is weight_kg." at `mcp_schemas.NEAR_CUTOFF` |
 | `fields` with `group_by` | `invalid_field` | "fields and group_by do not go together: with group_by each row is a group." | "Leave fields out with group_by, and name in totals what to work out for each group." |
 | A filter the area does not take | `invalid_field` | "'colour' is not a filter of lift_sets." | "lift_sets filters on: exercise, category, region, muscle." |
 | Any filter, to an area with none | `invalid_field` | "weigh_ins takes no filters." | "Leave filters out for weigh_ins." |
-| A filter value of the wrong shape, or an empty list | `invalid_field` | "filters.exercise holds no names." / "filters.estimated takes true or false, not 'yes'." | "Send one name or a list of names, or leave the filter out." / "Send estimated as true or false, or leave it out." |
-| An exercise or activity not on the list | `unknown_exercise` | `rules.unknown_exercise` with where "filters.exercise: " | its own, with `closest` |
+| A filter value of the wrong shape, or an empty list | `invalid_field` | "filters.exercise holds no names." / "filters.exercise takes a name or a list of names, not 5." / "filters.estimated takes true or false, not 'yes'." | "Send one name or a list of names, or leave the filter out." / the same / "Send estimated as true or false, or leave it out." |
+| A totals value that is not a list | `invalid_field` | "totals.kcal takes a list of totals, not 'sum'." | "Send totals.kcal as a list, such as [\"sum\"]." |
+| An exercise or activity not on the list | `unknown_exercise` | `rules.unknown_exercise` with where "filters.{field}: ", the field as sent: "filters.activity: 'Basketball' is not on the exercise list." | its own, with `closest` |
 | A measurement kind | `invalid_kind` | `rules.match_kind`'s | its own |
-| A meal | `invalid_field` | `rules.match_meal`'s with where "filters" | its own |
-| A category, region, muscle or source not in its list | `invalid_field` | "region 'legs' is not a region." / "muscle 'pecs' is not a muscle." | "Use one of: upper, lower, core, full_body." / "Use one of: abdominals, biceps, ... (the 17 names)." |
+| A meal | `invalid_field` | `rules.match_meal`'s with where "filters": "filters: meal 'brunch' is not a meal." | "Use one of: breakfast, lunch, dinner, snack." in place of its own, which names the clock (`app/rules.py:464-471`) |
+| A category, region, muscle or source not in its list | `invalid_field` | "region 'legs' is not a region." / "muscle 'pecs' is not a muscle." | "Use one of: upper, lower, core, full_body." / "Use one of: abdominals, abductors, adductors, biceps, calves, chest, forearms, glutes, hamstrings, lats, lower back, middle back, neck, quadriceps, shoulders, traps, triceps." |
 | A group the area does not take | `invalid_field` | "'colour' is not a group of lift_sets." | "lift_sets groups by: day, week, month, exercise, category, region, muscle." |
 | Two of day, week and month | `invalid_field` | "group_by holds week and month: one of day, week and month at most." | "Keep one of day, week and month in group_by." |
 | A group named twice | `invalid_field` | "group_by names exercise twice." | "Name each group once." |
@@ -393,8 +411,9 @@ Every problem of a call at once, through `rules.combine`. Nothing is read when a
 | `share` without `group_by` | `invalid_field` | "share needs group_by: it is a group's part of the range." | "Send group_by with share, or leave share out." |
 | An empty list of totals | `invalid_field` | "totals.kcal holds no totals." | "Name at least one total for kcal, or leave it out." |
 | `value` totals over more than one kind | `invalid_field` | "value holds more than one kind, so its totals mix units." | "Filter on one kind, such as {\"kind\": \"waist\"}, or send group_by kind." |
-| sum, per_day or share of a kind that is not a day's amount | `invalid_field` | "waist takes no sum: it is not a day's amount." | "Use avg, max or min for waist. sum and per_day are for steps, sleep_hours and water_ml." |
-| `order` names no column of the answer | `invalid_field` | "order 'kcal' is not a column of this answer." | "Order by one of: {the columns}, or with a minus sign first, such as -kcal_sum." |
+| sum, per_day or share of a kind that is not a day's amount, with no `group_by` kind | `invalid_field` | "waist takes no sum: it is not a day's amount." | "Use avg, max or min for waist. sum and per_day are for steps, sleep_hours and water_ml." |
+| sum, per_day or share of `value` with `group_by` kind, and no kind filter or a kind filter naming a kind that is not a day's amount | `invalid_field` | "value's sum needs a kind filter of steps, sleep_hours or water_ml: grouped by kind, it could take in a kind that is not a day's amount." | "Filter kind to steps, sleep_hours or water_ml, or use avg, max or min." |
+| `order` names no column of the answer (the only row an `order` gets) | `invalid_field` | "order 'kcal' is not a column of this answer." | "Order by one of: {the columns}, or with a minus sign first, such as -kcal_sum." |
 | A date not YYYY-MM-DD | `invalid_date` | "from_date '20261116' is not a date." | "Give from_date as YYYY-MM-DD, or leave it out." |
 | `to_date` after today | `date_in_future` | "to_date 2026-12-01 is after today (2026-11-16)." | "Give to_date as today or earlier, or leave it out for today." |
 | `from_date` after `to_date` | `invalid_field` | "from_date 2026-11-10 is after to_date 2026-11-01." | "Give from_date on or before to_date." |
@@ -402,16 +421,17 @@ Every problem of a call at once, through `rules.combine`. Nothing is read when a
 | A cursor Spotter did not give | `invalid_field` | "cursor is not one Spotter gave." | "Send more from the last get_data answer as it came, or leave cursor out to start from the first rows." |
 | A cursor sent with another query | `cursor_changed` | "This cursor is for another query." | "Send the cursor with the same area, fields, filters, from_date, to_date, group_by, totals and order as the call that gave it, or leave cursor out to start again." |
 
-A wrong type, a `limit` outside 1 to 300, three groups ("group_by holds 3 items: it takes 1 to 2." / "Send 1 to 2 items in group_by."), an unknown top-level key and a null are the schema refusal's, in its words (`app/mcp_server.py:488-549`). Every message and fix above passed `tests/text_rules.py` on the MESSAGE surface on 2026-11-16.
+A wrong type, a `limit` outside 1 to 300, three groups ("group_by holds 3 items: it takes 1 to 2." / "Send 1 to 2 items in group_by."), and an unknown top-level key are the schema refusal's, in its words (`app/mcp_server.py:488-549`). A null is never refused: it is left out (R2). Every message and fix above passed `tests/text_rules.py` on the MESSAGE surface on 2026-11-16.
 
 ## The answers
 
 ### Rows, groups and totals
 
 - **No `group_by`:** one row a row of the area, its cells the fields asked, in list order. With `totals`, `totals` holds one row of range totals, every total but share.
-- **With `group_by`:** one row a group. Its cells: each group's key, then for a week or month group `days` (its days in range) and `days_logged` (its days with an entry in the area), then each total asked, in the order sent. A day's key is the date; a week's the Monday, YYYY-MM-DD; a month's YYYY-MM. With no `totals`, the count field's count. `totals` holds the range totals of the same, share left out.
+- **With `group_by`:** one row a group. Its cells: each group's key, then for a week or month group `days` (its days in range) and `days_logged` (its days with an entry in the area), then each total asked, in the order sent. A day's key is the date; a week's the Monday, YYYY-MM-DD; a month's YYYY-MM. A time key's column is `day`, `week` or `month`; a field key's is its field's column name in the person's units; the period cells' are `days` and `days_logged`. With no `totals`, the count field's count. `totals` holds the range totals of the same, share left out.
+- **Grouped by muscle (R13):** a weighted field's sum and per_day are weighted, count counts the sets that work the muscle, avg, max and min are unweighted, and the range `totals` count each set once. With a muscle filter, only the muscles named are groups.
 - **Time groups list every period of the range,** empty ones too: count 0 and every other total null. Field groups list only the values present. With a time group and a field group, an empty period is one row with the field key null.
-- **Default order:** rows newest first (date, then id, descending); time groups newest first; a field group by its first total column, largest first, ties by key. With `order`, the rows sort by that column, nulls last, the default order breaking ties.
+- **Default order:** rows by the area's `order`, newest first (date, then id, descending), saved_foods most used first; time groups newest first; a field group by its first total column, largest first, ties by key. With two groups, the first sent sorts first by its own default, the second within it. With `order`, the rows sort by that column, nulls last, the default order breaking ties. A pace column sorts, and takes its max and min, by its minutes, never as text.
 
 ### Totals semantics
 
@@ -420,19 +440,37 @@ Every total is worked from stored numbers (kg, km, minutes), unrounded, then con
 | Total | Meaning |
 |---|---|
 | `sum` | The sum of the rows' values in the group or range, nulls left out. Null when no row holds a value |
-| `avg` | Their mean, the same way. A whole-number field's avg (reps, sets, counts, bpm) is shown at `count_avg`, 0.1 |
+| `avg` | Their mean, the same way, shown at the step "Steps of totals" gives |
 | `max`, `min` | The largest and smallest. For a pace, min is the fastest |
 | `count` | The rows with a value. 0, never null. Every field takes it |
-| `per_day` | The sum over the days with an entry in the area, in the range or in the group's week or month: `days_logged`. Filters do not change that divisor: a meal's kcal a day divides by the days with food, as `get_trends` does (`app/services/trends.py:111-122`). A field with `per_day_by` "rows" divides by the days its own rows hold instead (R10). A whole-number field's per_day is shown at 0.1, kcal whole |
-| `share` | A group's whole percent of the range total of the same field (its sum, or for the count field its count). Rounded by largest remainder, so every group's shares sum to 100; a tie in remainder goes to the larger value, then the earlier group in default order. Worked over every group before order, limit and paging (R8). With two groups, a share is of the range total, not of its period. Groups with a null sum have a null share |
+| `per_day` | The sum over the days with an entry in the area, in the range or in the group's week or month: `days_logged`. Filters do not change that divisor: a meal's kcal a day divides by the days with food, as `get_trends` does (`app/services/trends.py:111-122`). A field with `per_day_by` "rows" divides by the days its own rows hold instead (R10). Shown at the step "Steps of totals" gives |
+| `share` | A group's whole percent of the sum of the same field over every group, as `how` says: its sum, which for a count field is 1 a row, and under `group_by` muscle the weighted sum (R13), so a fanned field's shares still sum to 100. Rounded by largest remainder, so every group's shares sum to 100; a tie in remainder goes to the larger value, then the earlier group in default order. Worked over every group before order, limit and paging (R8). With two groups, a share is of the range total, not of its period. Groups with a null sum have a null share |
 | A pace's `avg` | Total minutes over total distance, over the rows with a distance: never an average of paces |
 
 Refused where it means nothing: each field takes only the totals its row above names, plus count. Text, ids and dates take count alone.
 
+**Steps of totals** (`Field.total_quantity`). A total not named here shows at the field's own quantity.
+
+| Field | Totals | Quantity |
+|---|---|---|
+| lift_sets `sets` | sum, per_day | `count_avg` (0.1): a weighted sum reads 9.5 (R13) |
+| lift_sets `reps`, lift_sessions `sets`, saved_foods `times_logged`, the counts of `days` | avg, per_day | `count_avg` |
+| the count fields `sessions` and `entries` | per_day | `count_avg` |
+| `avg_hr` | avg | `count_avg` |
+| every kcal field (`kcal`, `machine_kcal`, `estimated_kcal`, `kcal_per_serving`) | every total | its kcal quantity: whole, as `get_trends` gives a day's average (`app/services/trends.py:111-122`) |
+| measurements `value` | every total | its kind's, through `row_quantity` |
+
+**Smaller rulings.**
+- `days`' `first`, `last` and 28-day counts in `what_is_logged` are its days with any entry.
+- `first` and `last` are stored dates; the 28-day windows count by `metrics.on_or_before`, as the range does.
+- A `totals` of share alone leaves the range `totals` out (R12): share has no range total.
+- `last_logged` is all time while `times_logged` is in range, as `food._usage` gives it (`app/services/food.py:460-467`): on purpose.
+- `value`'s `count` is never guarded: a count of measurements mixes no units.
+
 ### Units and rounding (decision 13)
 
 - `formatting.py` gains `shown_number(value, quantity, *, units=None)`, returning an int or a float: `_shown(value, quantity, False, units)` as a number, an int when whole. A result cell is never `100.0`. For a quantity kept in minutes it raises, as `rounded` does: a pace is text.
-- Two quantities join `_TABLE`: `minutes` ("0.1", "min", 1) and `volume` ("0.1", "kg", 2), and `_SHOWN_IN["lb"]` gains `volume` ("0.1", "lb", "0.01"), so `WEIGHT_QUANTITIES` holds it by itself: eight rows, where units R4 counts seven (`docs/contracts/units.md:89`). `minutes` is a number of minutes, so it stays out of `_MINUTES` (`app/formatting.py:122`), which turns minutes into seconds. No other row changes. A grep of `tests/` on 2026-11-16 found no test that pins `WEIGHT_QUANTITIES`, `_TABLE`, `_SHOWN_IN` or `STEP`.
+- Two quantities join `_TABLE`: `minutes` ("0.1", "min", 1) and `volume` ("0.1", "kg", 2), and `_SHOWN_IN["lb"]` gains `volume` ("0.1", "lb", "0.01"), so `WEIGHT_QUANTITIES` holds it by itself: eight rows, where units R4 counts seven (`docs/contracts/units.md:89`). `minutes` is a number of minutes, so it stays out of `_MINUTES` (`app/formatting.py:122`), which turns minutes into seconds. No other row changes. Two tests pin the quantity table and move: `tests/test_formatting.py:37` (`set(f.STEP)`: its sets gain `minutes` and `volume`) and `:149` (`RULES`: rows for both), with `test_step`'s rows.
 - The shown steps are units decision 9's (`docs/contracts/units.md:67`): a set and a weigh-in 0.05 lb (0.01 kg); an estimated max and a body weight the estimate used 0.1 lb (0.1 kg); km and mi 0.01; km/h and mph 0.1; a pace m:ss per km or per mi through `formatting.show(minutes_per_km, "pace", unit=False, units=units)`. A volume 0.1 in either.
 - On a lb account 97.5 kg reads 214.95 (`weight_lb`); 100 kg × 5 reads volume 1102.3 lb. Measured on 2026-11-16 with `formatting.show`.
 
@@ -446,19 +484,20 @@ Refused where it means nothing: each field takes only the totals its row above n
 | `field_columns` | list[str] | "What each list in an area's fields holds, in order." Always `["field", "meaning", "unit", "from", "totals", "filter", "group", "filled"]` |
 | `areas` | list[AreaLogged] | "Every area get_data reads, with what the person has in it." |
 | `goals` | list[OpenGoal] | "Every open goal, with its plan line." |
+| `targets` | Targets (`app/mcp_schemas.py:367-370`) | "The person's targets.", `whoami`'s own words (`app/mcp_schemas.py:412`) |
 | `how` | str | "How get_data works out each total." |
 | `summary` | str | "What is logged, in one line, ready to quote." |
 | `note` | str, null default | "Present when nothing is logged yet." |
 
 `AreaLogged`: `area` "The area's name: get_data takes it as area."; `meaning` "What one row of the area is."; `entries` int "Rows the person has in it, deleted ones left out."; `first` and `last` (str or null) "The first row's date, YYYY-MM-DD, or null with none." / "The last row's date, YYYY-MM-DD, or null with none."; `last_28d` "Rows in the 28 days ending today."; `prior_28d` "Rows in the 28 days before those."; `fields` list[list[str | int | float | bool | None]] "The area's fields, one list each, in field_columns' order."; `names` dict[str, list[str]] or null "The names logged in the area, by field, most used first: every exercise logged, say."
 
-A field's list: its name in the person's units, its meaning, its unit word in the person's units (kg or lb, km or mi, km/h or mph, "m:ss per km" or "m:ss per mi", or the fixed word, or null), "stored" or "derived", its totals with count first, filter and group as true or false, and `filled`: the person's rows with a value, all time (0 when never logged). `names`: for each text field that filters or groups, its values logged all time, most rows first, at most 50 a field; null for an area with none. For `saved_foods`, `first`, `last` and the 28-day counts are its foods' created dates in the person's zone. For `days`, `entries` is the days with any entry.
+A field's list: its name in the person's units, its meaning, its unit word in the person's units (kg or lb, km or mi, km/h or mph, "m:ss per km" or "m:ss per mi", or the fixed word, or null), "stored" or "derived", its totals as one text, count first, joined by ", " ("count, avg, max, min"), filter and group as true or false, and `filled`: the person's rows with a value, all time (0 when never logged). `names`: for each text field that filters or groups, its values logged all time (a fanned field's keys, so each lift's name for `exercises`), most rows first, at most 50 a field; null for an area with none. For `muscle`, `names` holds the muscles of the lifts logged, by weighted sets all time, most first, and `filled` the sets whose lift has a muscle (every set but Suitcase Carry's). For `saved_foods`, `first`, `last` and the 28-day counts are its foods' created dates in the person's zone. For `days`, `entries` is the days with any entry.
 
 `OpenGoal` (R4), the same model in both answers: `goal_id` "The goal's id, as get_goals gives it."; `label` "The goal in a few words, in the person's units, as get_goals gives it."; `status` "reached, on track, behind or not enough data, as get_goals gives it."; `target_date` "The date to reach it by, YYYY-MM-DD."; `plan_line` (str or null) "Where the goal stands against its plan line, ready to say as written. Null with nothing to compare." Each value is the `GoalNumbers` value of that name, from `goals.load_numbers`, `goal_numbers(open_goals, loaded, today, units=units)` and `rounded_numbers`, as `get_goals` reads them (`app/services/goals.py:958-959`), so the two never disagree.
 
-`how`, in full: "sum, avg, max and min are over the rows' values, nulls left out, and null when no row holds one. count counts the rows with a value. per_day is the sum over the days with an entry in the area, in the range or in the group's week or month: days_logged says how many. For a measurement's value, it is the days with that kind. share is a group's whole percent of the range total, and the shares of every group sum to 100. A pace's avg is total minutes over total distance. Weeks run Monday to Sunday and months are calendar months: a week or month group gives its days in range and its days logged. Totals are worked out from the stored numbers, then shown in the person's units. Deleted entries are never counted."
+`how`, in full: "sum, avg, max and min are over the rows' values, nulls left out, and null when no row holds one. count counts the rows with a value. per_day is the sum over the days with an entry in the area, in the range or in the group's week or month: days_logged says how many. For a measurement's value, it is the days with that kind. share is a group's whole percent of the sum over every group, and the shares sum to 100. Grouped by muscle, a set counts in each muscle its lift works, 1 for a primary and 0.5 for a secondary, in the sums, per_day and share, and count counts the sets that work it, so the groups add up to more than the range totals, which count each set once. A pace's avg is total minutes over total distance. Weeks run Monday to Sunday and months are calendar months: a week or month group gives its days in range and its days logged. Totals are worked out from the stored numbers, then shown in the person's units. Deleted entries are never counted."
 
-`summary`: "{entries} entries in {areas with any} areas, from {first day} to {last day}. {n} open goals." in `formatting.day` form, the area count leaving out `days`; with no open goal the last sentence is "No open goals." `note`, on an account with nothing: "Nothing is logged yet: every area is empty." `targets` is `whoami`'s, as R5 says; no other setting is in the answer.
+`summary`: "{entries} entries in {areas} areas, from {first day} to {last day}. {n} open goals." in `formatting.day` form, the entries and the areas counted over `fields.SUMMARY_AREAS` only, which holds lift_sessions, cardio, weigh_ins, measurements and food (a set is in its session, a saved food is no entry), the one forms "1 entry", "1 area" and "1 open goal"; with no open goal the last sentence is "No open goals." `note`, on an account with nothing: "Nothing is logged yet: every area is empty." `targets` is `whoami`'s, as R5 says; no other setting is in the answer.
 
 ### `get_data`'s answer (decision 12)
 
@@ -469,7 +508,7 @@ A field's list: its name in the person's units, its meaning, its unit word in th
 | `area` | str | "The area read." |
 | `from` (`from_`) | str | "The range's first day, YYYY-MM-DD." |
 | `to` | str | "The range's last day, YYYY-MM-DD." |
-| `range_note` | str, null default | "Present when no range was sent: say which range this is." |
+| `range_note` | str, null default | "Present when from_date was left out: say which range this is." |
 | `days_in_range` | int | "Days from the first to the last, both counted." |
 | `days_logged` | int | "Days in the range with an entry in the area, whatever the filters." |
 | `columns` | list[str] | "What each row holds, in order. A name carries its unit, such as weight_lb." |
@@ -477,6 +516,7 @@ A field's list: its name in the person's units, its meaning, its unit word in th
 | `totals` | RangeTotals, null default | "The totals asked for, over the whole range." |
 | `more` | str, null default | "Present when more rows match: send it as cursor, with the same query, for the next rows." |
 | `goals` | list[OpenGoal] | "The open goals this query is about, such as the filtered lift's, each with its plan line." |
+| `targets` | Targets, always present (R5) | "The person's targets.", `whoami`'s own words |
 | `summary` | str | "What came back, in one line, ready to quote." |
 | `note` | str, null default | "Present when nothing is in range, or the rows stop at the size limit." |
 
@@ -495,7 +535,7 @@ The words:
 
 Days in `formatting.days` and `formatting.day` form. The dates are examples. Every summary, note and line above, every field meaning and `how` passed `tests/text_rules.py` on the SUMMARY surface on 2026-11-16, and every description in this contract on the CLAUDE surface.
 
-**Goals riding with the data (decision 16, R4).** Open goals only, as `goal_numbers` counts them. `lift_sets` and `lift_sessions`: lift goals, only those whose lift passes the `exercise`, `exercises`, `category` or `region` filter when one is sent. `cardio`: cardio_best goals, narrowed by `activity` or `category`. `weigh_ins`: body weight goals. `measurements`: measurement goals, narrowed by `kind`. `days`: every open goal. `food` and `saved_foods`: none. An empty list when none match. A goal's `plan_line` there reads, for example, "116.7 kg now against 120 kg on the plan line today: 3.3 kg behind."
+**Goals riding with the data (decision 16, R4).** Each area's `goals` hook does this, from the open goals' numbers and the query. Open goals only, as `goal_numbers` counts them. `lift_sets` and `lift_sessions`: lift goals, only those whose lift passes the `exercise`, `exercises`, `category`, `region` or `muscle` filter when one is sent (a muscle at either weight, R13). `cardio`: cardio_best goals, narrowed by `activity` or `category`. `weigh_ins`: body weight goals. `measurements`: measurement goals, narrowed by `kind`. `days`: every open goal. `food` and `saved_foods`: none. An empty list when none match. A goal's `plan_line` there reads, for example, "116.7 kg now against 120 kg on the plan line today: 3.3 kg behind."
 
 **Weeks, months and the range (decision 8).** `from_date` and `to_date` both taken; left out, the 28 days ending today. A week runs Monday to Sunday (`date.weekday() == 0` starts it); a month is the calendar month. A period that runs past either end of the range is a part period: its `days` cell says how many of its days are in range.
 
@@ -505,7 +545,7 @@ Days in `formatting.days` and `formatting.day` form. The dates are examples. Eve
 
 ### Row limits and the ceiling (R7)
 
-`limit` 100 by default, at most 300. The ceiling: the answer's text as `Wrapper.call` sends it (`json.dumps` compact, `ensure_ascii=False`, `app/mcp_server.py:323-327`) is at most 30,000 characters. The service builds the answer with no rows, then adds rows in order while the text stays under the ceiling. When the ceiling stops it before `limit`, `more` and the size note are set. No single row can pass it: a description is at most 200 characters and notes at most 2,000 (`app/rules.py:96`, `:100`).
+`limit` 100 by default, at most 300. The ceiling: the answer's text as `Wrapper.call` sends it (`json.dumps` compact, `ensure_ascii=False`, `app/mcp_server.py:323-327`) is at most 30,000 characters. The service builds the answer with no rows, then adds rows in order while the text, counted with its final summary, `more` and note, stays at or under the ceiling. When the ceiling stops it before `limit`, `more` and the size note are set. No single row can pass it: a description is at most 200 characters and notes at most 2,000 (`app/rules.py:96`, `:100`).
 
 Measured on 2026-11-16, on a scratch SQLite account seeded by a prototype of the 16-week seed below, with this contract's columns and compact JSON:
 
@@ -518,7 +558,7 @@ Measured on 2026-11-16, on a scratch SQLite account seeded by a prototype of the
 | `food`, 300 rows with 200-character descriptions | 300 | 142,844: the ceiling cuts it near 60 rows |
 | `weigh_ins`, 364 days | 300 | 7,341 |
 | `lift_sets` by month and exercise, 3 totals | 24 groups | 1,246 |
-| `what_is_logged`, 8 areas, 75 fields, every field's totals with count, 2 goals | | 10,501 |
+| `what_is_logged`, 8 areas, 76 fields with `muscle`, each field's totals as one text, 13 muscle names, `targets`, 2 goals, the final `how` | | 11,313 |
 
 ## The size of the list (the owner's addition of 2026-11-16)
 
@@ -528,16 +568,16 @@ Measured on 2026-11-16 with a prototype: these exact descriptions and models, re
 
 | Entry | Description | Input schema | Output schema | Whole entry |
 |---|---|---|---|---|
-| `what_is_logged` | 355 | 96 | 3,261 | **3,914** |
-| `get_data` | 411 | 1,944 | 3,350 | **5,895** |
+| `what_is_logged` | 355 | 96 | 4,016 | **4,669** |
+| `get_data` | 490 | 2,204 | 4,110 | **6,994** |
 
-The steps that kept `get_data` small: the goals as `OpenGoal`, five fields with short descriptions (R4), not `GoalNumbers` whole; shorter descriptions on six result fields. No per-area model: rows and fields are lists under a columns header. The prototype measured 5,895 with plain-typed inputs and no `targets`; R2's nullable inputs add 387 and R5's `targets` about 650, so about 6,930 for `get_data` and about 4,560 for `what_is_logged`. The bar is 7,500: a word added to an entry is measured first. The builder measures the real entries and records both figures in the build log; an entry over 7,500 stops the build and goes back to the lead.
+Measured again on 2026-11-16 after the review's fixes, with everything in: nullable inputs (R2), `group_by`'s `min_length` and `max_length` (R11), `filters` and `totals` as `dict[str, Any]`, `targets` in both answers (R5), and the final descriptions, `get_data`'s with its units sentence (decision 13). The muscles add nothing to either entry: they are rows of the field list, read in `what_is_logged`'s answer. What keeps them small: the goals as `OpenGoal`, five fields with short descriptions (R4), not `GoalNumbers` whole; no per-area model, rows and fields as lists under a columns header. **The bar is 7,500**, kept: `get_data` is 506 under it, `what_is_logged` 2,831. Neither is over 7,500. A word added to an entry is measured first. The builder measures the real entries and gives both figures in the hand-over, for the build log entry written at the commit; an entry over 7,500 stops, and goes back to the owner.
 
 ## Model-read text (decision 18)
 
 ### The instructions
 
-`DATA_RULE = "For any other question about the person's data, call what_is_logged, then get_data."` goes into `INSTRUCTIONS` right after `GOALS_RULE`, followed by a space, as `TRENDS_RULE` and `GOALS_RULE` are joined (`app/mcp_server.py:210`). It cannot go last: two tests hold that the instructions end with the plan_line sentence. **3,927 characters become 4,011**, under 4,096 (printed on 2026-11-16 by replacing the text in `INSTRUCTIONS` on this tree). `INSTRUCTIONS_AS_BUILT` (`tests/test_feedback.py:90`) takes the new hash.
+`DATA_RULE = "For any other question about the person's data, call what_is_logged, then get_data."` goes into `INSTRUCTIONS` right after `GOALS_RULE`, followed by a space, as `TRENDS_RULE` and `GOALS_RULE` are joined (`app/mcp_server.py:210`). It cannot go last: two tests hold that the instructions end with the plan_line sentence. **3,927 characters become 4,011**, under 4,096 (printed on 2026-11-16 by replacing the text in `INSTRUCTIONS` on this tree). `INSTRUCTIONS_AS_BUILT` (`tests/test_feedback.py:92`) takes the new hash.
 
 ### The two descriptions, in full
 
@@ -545,9 +585,9 @@ The steps that kept `get_data` small: the goals as `OpenGoal`, five fields with 
 
 "What Spotter can hold and what this person has logged: each area get_data reads, with its fields, what each means, its unit, and the totals, filters and groups it takes, how many entries it holds and when, the names logged, and every open goal with its plan line. Call it before get_data, for a question the other reads do not answer. Quote these numbers."
 
-`get_data`, title "Get data", `READ_ONLY`, 411 characters:
+`get_data`, title "Get data", `READ_ONLY`, 490 characters:
 
-"One query over the person's own entries, for a question the other reads do not answer. Name an area, fields, filters, group_by and totals by the names what_is_logged gives. Spotter works out every total: quote them, never work out your own. Left out, the range is the last 28 days. Rows are lists under columns, in the person's units. When more is given, send it as cursor with the same query for the next rows."
+"One query over the person's own entries, for a question the other reads do not answer. Name an area, fields, filters, group_by and totals by the names what_is_logged gives. Spotter works out every total: quote them, never work out your own. Left out, the range is the last 28 days. Rows are lists under columns. Unlike the other functions, its numbers are in the person's units, and each column's name says which. When more is given, send it as cursor with the same query for the next rows."
 
 No field meaning, area name or total rule is in either description: they are in `what_is_logged`'s answer.
 
@@ -564,11 +604,12 @@ A new section, "Data on request", after "Routines" (`docs/can-and-cant.md:348`):
 
 - "**Two reads.** `what_is_logged` names every area, its fields, what each means and the totals each takes, with how much the person has logged. `get_data` reads one area: rows, or groups with totals."
 - "**Areas:** lift sets, lift sessions, cardio, weigh-ins, measurements, food, saved foods, and days, one row a day across them. Goals and routines stay with `get_goals` and `get_routines`."
-- "**Totals** are Spotter's: sum, avg, max, min, count, per_day and share. per_day divides by the days with an entry in the area. A share is a whole percent, and the shares sum to 100. A pace over a range is total minutes over total distance."
+- "**Totals** are Spotter's: sum, avg, max, min, count, per_day and share. per_day divides by the days with an entry in the area, or for a measurement by the days with that kind. A share is a whole percent, and the shares sum to 100. A pace over a range is total minutes over total distance."
 - "**Ranges.** Left out, the last 28 days. Weeks run Monday to Sunday and months are calendar months."
 - "**Size.** 100 rows by default, at most 300, and an answer of at most 30,000 characters. `more` gives the next rows."
 - "**Units.** Every value is in the person's units, and each column's name says which."
-- "**Body region** of a lift (upper, lower, core or full body) comes from its main muscles in free-exercise-db."
+- "**Body region** of a lift (upper, lower, core or full body) comes from its main muscles in free-exercise-db, save the two carries, which are full body."
+- "**Muscles.** Each lift's muscles are free-exercise-db's. Grouped by muscle, a set counts 1 for its main muscle and 0.5 for each other muscle it works."
 - "**Not offered:** joins across areas in one call, deleted entries, raw queries."
 
 ## Call log, read limit, annotations (decisions 18, 21)
@@ -580,25 +621,25 @@ A new section, "Data on request", after "Routines" (`docs/can-and-cant.md:348`):
 
 ## Performance (decision 19)
 
-- **The bar,** timed by the builder on this PC on SQLite, the service function called directly, median of 5 calls, on an account holding a year of daily entries in every area (365 sessions of 9 sets, 3,650 food entries, 365 weigh-ins, 365 cardio entries, 730 measurements, 10 saved foods): `get_data` over the whole year at the default limit, for each area, at most 500 ms; with `group_by` week and two totals, at most 500 ms; `what_is_logged`, at most 1,000 ms. The figures go in the build log. Not measured here.
+- **The bar,** timed by the builder on this PC on SQLite, the service function called directly, median of 5 calls, on an account holding a year of daily entries in every area (365 sessions of 9 sets, 3,650 food entries, 365 weigh-ins, 365 cardio entries, 730 measurements, 10 saved foods): `get_data` over the whole year at the default limit, for each area, at most 500 ms; with `group_by` week and two totals, at most 500 ms; `what_is_logged`, at most 1,000 ms. The figures go in the builder's hand-over, for the build log entry written at the commit. Not measured here.
 - **No index** unless a bar is missed. An index is a migration (`0012`), owes a Postgres run of up, down, up, and goes back to the owner before it is built.
 - **Statements:** a test counts SQLAlchemy statements (`before_cursor_execute`) for one `get_data` call per area and one `what_is_logged`, at 10 rows and at 1,000: the counts are equal.
 
 ## Packages: two builders, D1 then D2
 
-D2 reads D1's functions, and both touch the eval case pins, so they build one after the other in the same tree.
+D2 reads D1's functions, and both touch `tests/test_inputs.py`, `tests/test_hi_there.py`, `tests/test_routines.py` and `tests/test_units.py` (D1 for the instructions pin, D2 for the case order), so they build one after the other in the same tree.
 
 ### D1: the field list, the two functions, the surface (high)
 
 | Files | Exit check |
 |---|---|
-| `app/services/fields.py` (new), `app/services/data.py` (new: `what_is_logged(user_id)`, `get_data(user_id, data)`), `app/services/__init__.py` (both exported), `app/exercises.py` (`REGIONS`), `app/formatting.py` (`shown_number`, `minutes`, `volume`), `app/mcp_schemas.py` (`OpenGoal`, `AreaLogged`, `WhatIsLoggedResult`, `RangeTotals`, `GetDataResult`, two `RESULTS` entries, module notes), `app/mcp_server.py` (`DATA_RULE`, `INSTRUCTIONS`, `NEEDS`, the two functions, module notes), `app/calllog.py` (`KNOWN_NAMES`), `docs/can-and-cant.md`, `tests/test_data.py` (new). Existing test files only where a decision moves an assertion, each named in the hand-over: `tests/test_mcp.py`, `tests/test_feedback.py`, `tests/test_switch.py`, `tests/test_edit_history.py`, `tests/test_hi_there.py`, `tests/test_idempotency.py`, `tests/test_inputs.py`, `tests/test_routines.py`, `tests/test_units.py`, and `tests/test_formatting.py` if it pins the quantity table (not checked) | Every ruling and every row of the refusal table has a test, each message and fix word for word. The tie test and the scaling test pass. Both entries are at most 7,500 characters. The instructions are 4,011 characters and end with the plan_line sentence. Of the published list, the 22 are byte for byte as before. The tests for the files touched pass, plain and with `-W error` |
+| `app/services/fields.py` (new), `app/services/data.py` (new: `what_is_logged(user_id)`, `get_data(user_id, data)`), `app/services/__init__.py` (both exported), `app/exercises.py` (`REGIONS`, `MUSCLES`), `app/formatting.py` (`shown_number`, `minutes`, `volume`), `app/mcp_schemas.py` (`OpenGoal`, `AreaLogged`, `WhatIsLoggedResult`, `RangeTotals`, `GetDataResult`, two `RESULTS` entries, module notes), `app/mcp_server.py` (`DATA_RULE`, `INSTRUCTIONS`, `NEEDS`, the two functions, module notes), `app/calllog.py` (`KNOWN_NAMES`), `docs/can-and-cant.md`, `tests/test_data.py` (new). Existing test files only where a decision moves an assertion, each named in the hand-over: `tests/test_mcp.py`, `tests/test_feedback.py`, `tests/test_switch.py`, `tests/test_edit_history.py`, `tests/test_hi_there.py`, `tests/test_idempotency.py`, `tests/test_inputs.py`, `tests/test_routines.py`, `tests/test_units.py`, `tests/test_formatting.py` (`:37`, `:149` and `test_step`: `minutes` and `volume`) | Every ruling and every row of the refusal table has a test, each message and fix word for word. The tie test and the scaling test pass. Both entries are at most 7,500 characters. The instructions are 4,011 characters and end with the plan_line sentence. Of the published list, the 22 are byte for byte as before. The tests for the files touched pass, plain and with `-W error` |
 
 ### D2: the seed and the eval cases (medium)
 
 | Files | Exit check |
 |---|---|
-| `evals/sixteen_weeks.py` (new), `evals/judge.py` (`NO_DATA_SERVICES` and `seed_service` by name, the notes), `evals/cases.json` (8 cases, last, in the order below), `docs/evals.md` (the seed, eight rows in the case table, a short section as the units cases have), `tests/test_sixteen_weeks.py` (new), `tests/test_evals.py` (`CONTRACT_CASES`, `NO_DATA_SERVICES`), and the order pins: `tests/test_inputs.py:1220`, `tests/test_hi_there.py:1330-1331`, `tests/test_routines.py:1278-1279`, `tests/test_units.py:845` | The seed's figures hold on nine fixed todays (below). The cases load, and each judges a passing and a failing run. `python -m evals.need main` says yes. The tests for the files touched pass, plain and with `-W error` |
+| `evals/sixteen_weeks.py` (new), `evals/judge.py` (`NO_DATA_SERVICES` and `seed_service` by name, the notes), `evals/cases.json` (8 cases, last, in the order below), `docs/evals.md` (the seed, eight rows in the case table, a short section as the units cases have, and at `:68` ", twenty-four since what_is_logged and get_data" after "twenty-two since `save_routine` and `get_routines`"), `tests/test_sixteen_weeks.py` (new), `tests/test_evals.py` (`CONTRACT_CASES`, `NO_DATA_SERVICES`), and the order pins: `tests/test_inputs.py:1220`, `tests/test_hi_there.py:1330-1331`, `tests/test_routines.py:1278-1279`, `tests/test_units.py:845` | The seed's figures hold on nine fixed todays (below). The cases load, and each judges a passing and a failing run. `python -m evals.need main` says yes. The tests for the files touched pass, plain and with `-W error` |
 
 ### Pins that move
 
@@ -608,8 +649,8 @@ D2 reads D1's functions, and both touch the eval case pins, so they build one af
 | `READS` | `tests/test_mcp.py:258-259` | gains both |
 | `every_result` | `tests/test_mcp.py:317` | calls both, see the tests |
 | `len(INSTRUCTIONS) == 3927` | `tests/test_switch.py:567`, `tests/test_edit_history.py:661`, `tests/test_hi_there.py:1232`, `tests/test_idempotency.py:735`, `tests/test_inputs.py:131`, `tests/test_routines.py:854`, `tests/test_units.py:705` | 4011 |
-| `INSTRUCTIONS_AS_BUILT` | `tests/test_feedback.py:90` | the new hash |
-| `PUBLISHED` | `tests/test_feedback.py:68-89` | unchanged: no existing entry moves |
+| `INSTRUCTIONS_AS_BUILT` | `tests/test_feedback.py:92` | the new hash |
+| `PUBLISHED` | `tests/test_feedback.py:68-91` | unchanged: no existing entry moves |
 | Owner's list order | `tests/test_feedback.py:516-531`, `tests/test_routines.py:841` | the two names after `get_routines` |
 | `BEFORE_INPUTS` and the sweep's base calls | `tests/test_inputs.py:40`, `:114`, `:248` | the old names compared as before; the sweep gains a valid base call of each new function, so its bad values reach `get_data`'s fields |
 | Eval case count and order | `tests/test_inputs.py:1220` (`len(cases) == 43`), `tests/test_hi_there.py:1330-1331`, `tests/test_routines.py:1278-1279`, `tests/test_units.py:845`, `tests/test_evals.py:25`, `:50-51` | 51, each pin moved by 8 (D2) |
@@ -627,20 +668,22 @@ Every date is worked from a fixed today set through `db.utcnow` (`app/models.py:
 - **Never logged:** an area with nothing gives empty rows and "Nothing is logged in {area} yet."; a range before any entry gives the last entry's date; a field never filled is null in every row, its totals null and count 0, and `filled` 0.
 - **Filters,** each kind, a list of names, and every refusal of the table, word for word, several in one call joined by `rules.combine`.
 - **Totals,** each on a hand-worked set: per_day over the days with an entry with a meal filter (the divisor unchanged); share by largest remainder summing to 100 over three groups that round to 99 alone, with the tie rule; a page of groups whose shares do not sum to 100; pace avg as total minutes over total distance against the average of paces; `value` totals with one kind, two kinds refused, a sum of waist refused.
-- **Groups:** by muscle, a bench set adds 1 to chest and 0.5 each to shoulders and triceps in `sets_sum`, `count` is 1 in each, the weighted volume is half the set's for a secondary, the shares sum to 100, and Suitcase Carry's sets sit under a null muscle; a muscle filter keeps a set whose lift works it as a secondary; by category, push against pull; a week group over a range that starts on a Wednesday gives its `days` 5; an empty week has count 0; a month edge; two groups; the default and a sent order.
+- **Groups:** by muscle, a bench set adds 1 to chest and 0.5 each to shoulders and triceps in `sets_sum`, `count` is 1 in each, the weighted volume is half the set's for a secondary, the shares sum to 100, the range `totals` count the set once, and Suitcase Carry's sets sit under a null muscle; a muscle filter keeps a set whose lift works it as a secondary, and with `group_by` muscle shows only the muscles named; a muscle filter narrows the riding goals; `muscle` is not a default column, and named in `fields` reads the primary muscle; `what_is_logged`'s `names` for muscle are most weighted sets first; by category, push against pull; a week group over a range that starts on a Wednesday gives its `days` 5; an empty week has count 0; a month edge; two groups; the default and a sent order.
 - **Units:** on a lb account every weight column is `_lb` and 97.5 kg reads 214.95; on a mi account 5 km reads 3.11 `distance_mi` and pace per mi; `weight_kg` and `weight_lb` both taken in `fields`, `totals` and `order`; a cell never a float that is whole.
 - **The cursor:** a 250-row query at limit 100 pages to the end in three calls with no row twice or missed; the same cursor with a changed filter is `cursor_changed`; a broken one `invalid_field`; a page after the fake clock passes midnight reads the first page's range.
 - **The ceiling:** 300 food entries with 200-character descriptions: the answer is at most 30,000 characters, carries `more` and the size note, and paging to the end gives every row once.
 - **Goals:** a squat filter carries the squat goal and not the bench goal; food carries no goal; a closed goal never rides; each goal's five values equal `get_goals`' for the same goal. Both answers' `targets` equal `whoami`'s on an account with all three set and on one with none; no other setting is in either answer, at any depth.
 - **per_day by rows:** steps logged on 10 of 20 days and a waist on the other 10: steps' per_day divides by 10, and `days_logged` is 20.
-- **The scaling hooks:** `app/services/data.py`'s source holds no area or field name as a string (R9).
+- **The scaling hooks:** R9's source test, exactly as R9 words it: whole-string equality, the exempt set `{"entries"}` and no other.
+- **One person never sees another's rows:** two accounts with entries in every area, goals and saved foods each. Each account's `what_is_logged`, and its `get_data` on every area, with no group, with a time group and with a field group, holds none of the other's rows, ids, counts, `filled`, `names` or goals; every count equals its own seed's.
+- **The review's rulings:** `fields: []`, a blank `area`, a filter value 5 and a totals value "sum" each get the table's words; `totals: {}` is taken as left out; `value`'s sum with `group_by` kind and no kind filter is refused; a default `from_date` near `log.oldest_day` is the floor, never refused; the `exercises` filter keeps whole sessions; saved_foods' default order; the column names of a time key, a field key and the period cells; two groups' default order; a pace ordered by its minutes.
 - **Three groups** get the schema refusal's words, and nothing is read.
 - **`what_is_logged`** on the empty account (note, every count 0, `first` null) and on a full one: its counts, `names` most used first, goals equal to `get_goals`' for the same goals.
 - **Through `/mcp`:** both published with these descriptions, these arguments in this order, `READ_ONLY`, every input and result field described; each entry at most 7,500 characters; a null input taken as left out, the same answer as the call without it; both count toward the 300 reads; the call-log row's `tried` for a get_data call reads `area filters{exercise} group_by[1] totals{kcal}`-like names and never a value.
 - **Statements:** the count test of "Performance".
 - **Text:** every message, fix, summary, note, line, meaning and `how` through `tests/text_rules.py` on its surface.
 
-`tests/test_mcp.py`'s `every_result` gains, in place: `what_is_logged` on the first person before anything is logged (its `note`), and `get_data` area food there (empty rows, `note`, `range_note`); on the four-week person, `what_is_logged` (names, goals), `get_data` lift_sets with an exercise filter and totals (`goals`, `totals`), and food with `limit` 1 (`more`). So every top-level field of both models appears in a real result.
+`tests/test_mcp.py`'s `every_result` gains, in place: `what_is_logged` on the first person before anything is logged (its `note`), and `get_data` area food there (empty rows, `note`, `range_note`); on the four-week person, `what_is_logged` (names, goals), `get_data` lift_sets with an exercise filter and totals (`goals`, `totals`), and food with `limit` 1 (`more`). `targets` is in every answer of both. So every top-level field of both models appears in a real result.
 
 ### D2: `tests/test_sixteen_weeks.py`
 
@@ -749,13 +792,13 @@ The figures, worked on 2026-11-16 by running a prototype of this seed on a scrat
 | `data_empty` | A never-logged kind gets no invented figure, and nothing is written | That the reply says sleep can be logged |
 | `data_year_more` | A year's question finds the three days, by paging with `more` or by ordering or `max` | That `more` itself was sent: the judge has no "key present" form, so the case judges the figures. Ordering by `-weight_kg` or a `max` by month passes too, and is right |
 
-**The run.** Not per item: the release's one run, 51 cases at 3 runs on `claude-opus-5-5`, about 51 × $0.49 = about $25, on the Claude side. Nothing on Railway. The data cases read a `what_is_logged` answer of about 10,000 characters, so they may cost more a case than the last run's average: not measured. The cost is told to the owner before it runs.
+**The run.** Not per item: the release's one run, 51 cases at 3 runs on `claude-opus-5-5`, about 51 × $0.49 = about $25, on the Claude side. Nothing on Railway. The data cases read a `what_is_logged` answer of about 11,600 characters, so they may cost more a case than the last run's average: not measured. The cost is told to the owner before it runs.
 
 ## What does not change
 
 - Today's 22 functions: their names, descriptions, inputs and results, byte for byte (`PUBLISHED`), and their order. `get_trends` still answers "how am I doing" and `get_goals` "on track".
 - Stored units: kg and km. No row is written by either function.
-- No migration, no table, no column, no Postgres run.
+- No migration, no table, no column. The one Postgres run is a test run (exit check 6), not a migration's.
 - `list_exercises` and the exercises resource: no region in them.
 - The read limit's number, the write limit, the switch: a read is open to every account.
 - The pages: none shows either function's answer.
@@ -764,10 +807,11 @@ The figures, worked on 2026-11-16 by running a prototype of this seed on a scrat
 ## The exit check
 
 1. Every row of both packages' exit checks holds.
-2. Both published entries at most 7,500 characters, measured on the built server, and the figures in the build log; the performance figures there too, under their bars.
+2. Both published entries at most 7,500 characters, measured on the built server, and the figures in the build log entry written at the commit; the performance figures there too, under their bars.
 3. The reviewer, on a frozen copy, calls both functions through `/mcp` on a seeded account: every refusal of the table, a page to the end with the cursor, the ceiling with long descriptions, a lb account, and the scaling test's throwaway area by probe.
 4. The tests for the files touched pass, plain and with `-W error`. The hook runs the rest.
 5. `python -m evals.need main` says yes: the release's one run is owed, its cost said first.
+6. One local Postgres run of `tests/test_data.py` before the merge, on the owner's okay to start Docker, recorded in the build log entry.
 
 ## Known limits
 
