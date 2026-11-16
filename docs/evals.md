@@ -66,7 +66,7 @@ changed within a day and one full run cost three times the estimate. Both below 
 
 - Most tokens are cached reads of the CLI's own system prompt and the tool schemas: eighteen when this
   was measured, nineteen since `import_entries`, twenty since `send_feedback`, twenty-two since `save_routine`
-  and `get_routines`.
+  and `get_routines`, twenty-four since `what_is_logged` and `get_data`.
 - The model line under the table says which model ran. Pin one with `--model` to compare runs.
 - The cost is the CLI's list-price figure. On a subscription that is usage against the plan's limits, not
   a bill.
@@ -142,10 +142,12 @@ record cannot be talked round.
   anything else, `read` among them, stops the load.
 - `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
   `log_measurement`, `log_lifts`, `set_goal`, `import_entries`, `save_routine`, `update_settings`, each
-  with `data`, and `four_weeks`, which takes no data.
+  with `data`, and `four_weeks` and `sixteen_weeks`, which take no data.
   - `update_settings` sets the person's settings, such as `weight_unit` lb, called as the web calls it. It
     returns no id, so it has no `as`.
   - `four_weeks` (`evals/four_weeks.py`) is four weeks of everything and three goals in one call, on an empty account. It has no `as`.
+  - `sixteen_weeks` (`evals/sixteen_weeks.py`) is a year of weigh-ins, sixteen weeks of lifts, food, cardio and a
+    waist, and two goals, in one call, on an empty account. It has no `as` either.
   - `import_entries` returns no one id either, so it has no `as`. Its rows carry fixed dates.
   - `edit_entry` edits a row seeded before it, so the person has an edit to undo. Its `data` is
     `{kind, entry_id, changes}`, all three, and `entry_id` is that row's `{{seed.<as>}}`.
@@ -188,6 +190,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `reply_asks` | The final reply contains a question mark. |
 | `reply_has` | The final reply contains every one of these phrases, ignoring case. |
 | `reply_lacks` | The final reply does not contain these phrases, ignoring case. |
+| `reply_has_pattern` | The final reply matches every one of these regular expressions, ignoring case: for a figure that must stand alone, such as 3.3 and never the 3.3 inside 93.3. A pattern that does not compile stops the load. |
 | `reply_lacks_pattern` | The final reply matches none of these regular expressions, ignoring case. A pattern that does not compile stops the load. |
 | `any_of` | At least one of these expects holds. |
 
@@ -236,6 +239,14 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `lb_routine_changed` | Log my push day, but bench was 230 today (weights set to lb; Push day saved: Bench Press 3 × 8 at weight_kg 102.06, Overhead Press 3 × 10 at weight_kg 61.23) | One successful `log_lifts`: Bench Press `weight_lb` 230 × 8, and Overhead Press either `weight_kg` 61.23 or `weight_lb` 135 × 10. No set sent `weight_lb` 102.06 or `weight_kg` 230. One live session today, `set_count` 6 |
 | `waist_in_inches` | My waist is 32 inches | Either one successful `log_measurement`, kind waist, value 81.28 or 81.3, and the reply says "cm"; or no successful `log_measurement` and the reply asks. Every live waist row holds 81.28 or 81.3 |
 | `machine_calories` | 30 minutes on the treadmill, it said 250 calories | One successful `log_cardio` with minutes 30 and `machine_kcal` 250. One live cardio entry, `machine_kcal` 250 |
+| `data_basketball` | How do I get better at basketball? (the `sixteen_weeks` seed) | `get_data` with area `lift_sets`; no write function called; the reply says "33%", "67%", "a third of" or "two thirds of" |
+| `data_lifting` | How do I get better at lifting? (the `sixteen_weeks` seed) | `get_data` with area `lift_sets`; no write function called; the reply says "squat", and "116.7" or "100 kg" |
+| `data_calories` | How do I cut down on my calories? Where do I remove it from day to day? (the `sixteen_weeks` seed) | `get_data` with area `food`; no write function called; the reply says "biryani", and "640", "798" or "42%" |
+| `data_squat_goal` | How are my squats going? (the `sixteen_weeks` seed) | `get_data` with area `lift_sets` and the exercise filter Back Squat, or `get_progress` with exercise Back Squat; no write function called; the reply says 3.3 as a figure of its own (never inside 93.3) or "120 kg on the plan line" |
+| `data_back_on_track` | I have slipped lately. How do I get back on track? (the `sixteen_weeks` seed) | `get_goals`, `what_is_logged` or `get_data` called; no write function called; the reply says 1.6 as a figure of its own (never inside 81.6 or 81.61) or "79.3" |
+| `data_lb` | What is the heaviest I have benched in the last 4 weeks? (weights set to lb, then the `sixteen_weeks` seed) | `get_data` with area `lift_sets`, or `get_progress` or `get_log`, called; no write function called; the reply says "214.95" and no "kg" as a word |
+| `data_empty` | How has my sleep been lately? (the `sixteen_weeks` seed: no sleep logged) | `what_is_logged` or `get_data` called; no write function called; the reply gives no figure in hours, hrs or h for the person: a range's end or a sentence of advice ("most adults need 7 to 9 hours") is allowed, any figure after "slept" is not; 16 live measurements, all waist |
+| `data_year_more` | Was my weight ever above 90 kg in the past year? Which days, and what did I weigh? (the `sixteen_weeks` seed) | `get_data` with area `weigh_ins`; no write function called; the reply says "91.2", "92.4" and "90.6" |
 
 "No write function" is every write, by name, in `no_call`: the names in `WRITE_FUNCTIONS` in
 `app/services/common.py`. A write added later must be added to those lists.
@@ -399,6 +410,34 @@ passes it and the expect decides.
 |---|---|---|
 | `waist_in_inches` | A waist said in inches is never kept as 32 cm: it is kept in cm, or the person is asked | That the `unit` refusal was met: a model that reads `value`'s words converts or asks before any call. That any other body size converts right: one figure |
 | `machine_calories` | A machine's calories land in `machine_kcal`, not in a dropped `calories` | That the refusal's fix was read: a model that reads the schema sends `machine_kcal` at once. Which treadmill activity was taken: `treadmill_once` checks it |
+
+### The eight data cases
+
+A question the other reads do not answer goes to `what_is_logged` and `get_data`, and the reply quotes Spotter's
+figures (contract data-on-request.md). The seed, `sixteen_weeks`, has no randomness, so each figure holds on any
+day. `tests/test_sixteen_weeks.py` checks every one through Spotter's own reads on nine fixed days.
+
+- Weigh-ins: one a day for 364 days, about 81 kg today. Every one is at most 86.8 kg, but three: 91.2, 92.4 and
+  90.6 kg, 330, 340 and 350 days back.
+- Lifts: Monday, Wednesday and Friday for sixteen weeks, two sessions in turn. Each holds 3 lower body sets and 6
+  upper, so the sets split 33% lower and 67% upper. The squat has stayed at 100 kg x 5 for over 7 weeks: an
+  estimated max of 116.7 kg. The bench climbs to 97.5 kg, 214.95 lb.
+- Food: 1,680 kcal a day, then 1,980 for the last 21 days, with a chicken biryani at 640 kcal for dinner and a
+  Coke as a snack. Over the last 28 days dinner is 798 kcal a day, 42% of the total.
+- Cardio stops 21 days back. A waist each week, and nothing else measured: no sleep.
+- Goals: body weight 78 kg, 1.6 kg behind the plan line; Back Squat 150 kg, 3.3 kg behind.
+- No figure a reply must say carries a thousands comma.
+
+| Case | Proves | Does not prove |
+|---|---|---|
+| `data_basketball` | A sport Spotter cannot log still gets Spotter's own split of the person's training, quoted | That the advice is good, or that core work being none is said |
+| `data_lifting` | A lifting question reads the sets and quotes the squat's stall | The bench's rise, or the goal's plan line |
+| `data_calories` | A calorie question reads food by meal or by food, and names the biggest item with its figure | That every meal's share is quoted right |
+| `data_squat_goal` | The squat goal rides with the lift's data, and its plan line is said | Which of the two reads was chosen: either is right |
+| `data_back_on_track` | "Back on track" reaches the body weight plan line. "On track" still routes to `get_goals`, and the three existing cases stay as they are | That the slip in calories is named |
+| `data_lb` | A lb account hears 214.95, never kg, and nothing converts | Any other unit or field |
+| `data_empty` | A kind never logged gets no made-up figure, and nothing is written | That the reply says sleep can be logged |
+| `data_year_more` | A year's question finds the three days, by paging with `more`, by ordering, or by a `max` by week | That `more` itself was sent: the judge has no "key present" form, so the case judges the figures. A `max` by month can hold two or all three of the days in one month, and then fails |
 
 ## What the evals prove
 

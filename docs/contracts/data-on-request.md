@@ -832,6 +832,18 @@ The figures, worked on 2026-11-16 by running a prototype of this seed on a scrat
 | The order refusal's example | "such as -{the answer's last column}", since -kcal_sum is not a column of most answers |
 | Statements with an open lift goal | They grow by at most 2 for each 500 sessions, on the path `get_goals` already takes (`lifts.history`'s two `selectinload` levels), never one a row. A known limit |
 
+**2026-11-17, D2 built and reviewed on a frozen copy, one fix round, a re-check.** The build is the record where it differs from the text above:
+
+| Point | As built |
+|---|---|
+| `data_year_more` | A max by week finds all three high weigh-ins; a max by month does not, since all three fall in one month on some todays. The case table's "a max by month passes too" is superseded |
+| A new judge key | `reply_has_pattern`: regular expressions the reply must match, each compiled when the cases load. It keeps "3.3" from matching inside 93.3 |
+| `data_squat_goal`, `data_back_on_track` | Each passes on either a whole-number match of the plan line's gap (3.3, 1.6) or its plan figure ("120 kg on the plan line", 79.3), with its routes inside each option, since the judge takes one `any_of` an expect |
+| `data_empty` | Two narrower patterns: a made-up sleep figure for the person fails, general advice such as "most adults aim for 7 to 9 hours" passes |
+| `data_lifting` | Also needs "squat", so the deadlift's 100 kg alone does not pass |
+| `data_basketball` | "a third of" and "two thirds of", so "add a third day" does not pass |
+| Cardio and food in the seed | Within the 16 weeks; weigh-ins run the full year |
+
 ## Known limits
 
 | Limit | Why it stands |

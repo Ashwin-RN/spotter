@@ -1327,8 +1327,9 @@ def test_the_quiet_setup_case_loads_straight_before_the_routine_cases_and_judges
     carries setup and no note, and nobody asked to set up. A reply that only logs passes. One that asks a setup
     question, or speaks of setting up, or writes a setup step, fails."""
     cases = judge.load_cases()
-    case = cases[-12]  # units' six follow routines' three (units.md decision 20), then inputs.md's two
-    assert [c["id"] for c in cases[-12:-8]] == ["setup_stays_quiet", "routine_saved", "routine_logged",
+    case = cases[-20]  # units' six follow routines' three (units.md decision 20), then inputs.md's two,
+    # then data-on-request.md's eight (its decision 20)
+    assert [c["id"] for c in cases[-20:-16]] == ["setup_stays_quiet", "routine_saved", "routine_logged",
                                                 "routine_changed"]
     assert case["id"] == "setup_stays_quiet" and judge.case_problems(case) == []
     assert case["say"] == "I weighed 80.4 kg this morning"

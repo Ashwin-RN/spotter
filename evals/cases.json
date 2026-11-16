@@ -538,5 +538,122 @@
     "expect": {"function": "log_cardio", "ok_calls": {"log_cardio": 1},
                "inputs_include": {"minutes": 30, "machine_kcal": 250}},
     "db": [{"table": "cardio_entry", "count": 1, "all": {"machine_kcal": 250, "minutes": 30}}]
+  },
+  {
+    "id": "data_basketball",
+    "say": "How do I get better at basketball?",
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "function": "get_data",
+      "inputs_include": {"area": "lift_sets"},
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries", "send_feedback", "save_routine"],
+      "any_of": [{"reply_has": ["33%"]}, {"reply_has": ["67%"]}, {"reply_has": ["a third of"]},
+                 {"reply_has": ["two thirds of"]}]
+    }
+  },
+  {
+    "id": "data_lifting",
+    "say": "How do I get better at lifting?",
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "function": "get_data",
+      "inputs_include": {"area": "lift_sets"},
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries", "send_feedback", "save_routine"],
+      "reply_has": ["squat"],
+      "any_of": [{"reply_has": ["116.7"]}, {"reply_has": ["100 kg"]}]
+    }
+  },
+  {
+    "id": "data_calories",
+    "say": "How do I cut down on my calories? Where do I remove it from day to day?",
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "function": "get_data",
+      "inputs_include": {"area": "food"},
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries", "send_feedback", "save_routine"],
+      "reply_has": ["biryani"],
+      "any_of": [{"reply_has": ["640"]}, {"reply_has": ["798"]}, {"reply_has": ["42%"]}]
+    }
+  },
+  {
+    "id": "data_squat_goal",
+    "say": "How are my squats going?",
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries", "send_feedback", "save_routine"],
+      "any_of": [{"reply_has_pattern": ["(?<![\\d.])3\\.3(?!\\d)"],
+                  "any_of": [{"function": "get_data",
+                             "inputs_include": {"area": "lift_sets",
+                                                "filters": {"exercise": {"$in": ["Back Squat", ["Back Squat"]]}}}},
+                            {"function": "get_progress", "inputs_include": {"exercise": "Back Squat"}}]},
+                 {"reply_has": ["120 kg on the plan line"],
+                  "any_of": [{"function": "get_data",
+                             "inputs_include": {"area": "lift_sets",
+                                                "filters": {"exercise": {"$in": ["Back Squat", ["Back Squat"]]}}}},
+                            {"function": "get_progress", "inputs_include": {"exercise": "Back Squat"}}]}]
+    }
+  },
+  {
+    "id": "data_back_on_track",
+    "say": "I have slipped lately. How do I get back on track?",
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries", "send_feedback", "save_routine"],
+      "any_of": [{"reply_has_pattern": ["(?<![\\d.])1\\.6(?!\\d)"],
+                  "any_of": [{"function": "get_goals"}, {"function": "what_is_logged"}, {"function": "get_data"}]},
+                 {"reply_has": ["79.3"],
+                  "any_of": [{"function": "get_goals"}, {"function": "what_is_logged"}, {"function": "get_data"}]}]
+    }
+  },
+  {
+    "id": "data_lb",
+    "say": "What is the heaviest I have benched in the last 4 weeks?",
+    "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}, {"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries", "send_feedback", "save_routine"],
+      "reply_has": ["214.95"],
+      "reply_lacks_pattern": ["\\bkg\\b"],
+      "any_of": [{"function": "get_data", "inputs_include": {"area": "lift_sets"}},
+                 {"function": "get_progress"}, {"function": "get_log"}]
+    }
+  },
+  {
+    "id": "data_empty",
+    "say": "How has my sleep been lately?",
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries", "send_feedback", "save_routine"],
+      "reply_lacks_pattern": ["(?m)(?:^|[.!?:]\\s+)(?:(?!\\b(?:aim|aims|need|needs|recommend\\w*|advice|advis\\w*|guideline\\w*|most adults|should)\\b)(?:[^.!?\\n]|\\.(?=\\d)))*?(?<![\\d.])(?<!to )(?<!and )(?<!or )(?<!-)(?<!\u2013)\\d+(?:\\.\\d+)?\\s*(?:hours|hrs|h)\\b",
+                              "\\bslept\\b[^.!?\\n]{0,30}?\\d+(?:\\.\\d+)?\\s*(?:(?:to|or|-|\u2013)\\s*\\d+(?:\\.\\d+)?\\s*)?(?:hours|hrs|h)\\b"],
+      "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]
+    },
+    "db": [{"table": "measurement", "count": 16, "all": {"kind": "waist"}}]
+  },
+  {
+    "id": "data_year_more",
+    "say": "Was my weight ever above 90 kg in the past year? Which days, and what did I weigh?",
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "function": "get_data",
+      "inputs_include": {"area": "weigh_ins"},
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                  "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                  "import_entries", "send_feedback", "save_routine"],
+      "reply_has": ["91.2", "92.4", "90.6"]
+    }
   }
 ]

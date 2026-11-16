@@ -34,7 +34,9 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "routine_saved", "routine_logged", "routine_changed",  # routines, decision 21
                   "lb_weigh_in", "lb_lifts", "miles_run", "units_asked", "units_switch",  # units, decision 20
                   "lb_routine_changed",
-                  "waist_in_inches", "machine_calories"}  # inputs.md decision 19
+                  "waist_in_inches", "machine_calories",  # inputs.md decision 19
+                  "data_basketball", "data_lifting", "data_calories", "data_squat_goal",  # data-on-request.md
+                  "data_back_on_track", "data_lb", "data_empty", "data_year_more"}  # decision 20
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 
@@ -469,6 +471,32 @@ def test_an_invalid_pattern_is_loud_when_loaded_and_when_judged():
         judge.judge_calls({"reply_lacks_pattern": ["(unclosed"]}, [], "")
     with pytest.raises(ValueError, match="non-empty list"):
         judge.judge_calls({"reply_lacks_pattern": "79.25"}, [], "79.25 kg")
+
+
+def test_reply_has_pattern_must_match_every_pattern_and_compile():
+    """data-on-request.md's fix round: a figure that must stand alone, 3.3 and never the 3.3 inside 93.3."""
+    alone = {"reply_has_pattern": [r"(?<![\d.])3\.3(?!\d)"]}
+    assert "reply_has_pattern" in judge.EXPECT_KEYS
+    assert judge.judge_calls(alone, [], "116.7 kg now: 3.3 kg behind.") == []  # a match
+    assert judge.judge_calls(alone, [], "From 93.3 kg to 116.7 kg.") == [
+        "the reply does not match '(?<![\\\\d.])3\\\\.3(?!\\\\d)'"]  # a miss
+    assert judge.judge_calls(alone, [], "3.35 kg")  # nor inside a longer figure
+    both = {"reply_has_pattern": [r"\bsquat\b", r"\d+ kg"]}
+    assert judge.judge_calls(both, [], "Squat 100 kg") == [] and len(judge.judge_calls(both, [], "Squat")) == 1
+    bad = {"id": "a", "say": "x", "expect": {"reply_has_pattern": ["ok", "(unclosed"]}}
+    problems = judge.case_problems(bad)
+    assert len(problems) == 1 and problems[0].startswith("expect.reply_has_pattern[1] '(unclosed' is not a valid")
+    nested = {"id": "a", "say": "x", "expect": {"any_of": [{"reply_has_pattern": ["[a-"]}]}}
+    assert judge.case_problems(nested)[0].startswith("expect.any_of[0].reply_has_pattern[0] '[a-' is not a valid")
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "cases.json"
+        path.write_text(json.dumps([bad]), encoding="utf-8")
+        with pytest.raises(ValueError, match="is not a valid regular expression"):
+            judge.load_cases(path)
+    with pytest.raises(ValueError, match="is not a valid regular expression"):
+        judge.judge_calls({"reply_has_pattern": ["(unclosed"]}, [], "")
+    with pytest.raises(ValueError, match="non-empty list"):
+        judge.judge_calls({"reply_has_pattern": "3.3"}, [], "3.3")
 
 
 def _decimals_case() -> dict:
@@ -1058,10 +1086,12 @@ def test_recorder_keeps_calls_per_token(provider, make_user, token_for):
 
 
 def test_a_seed_service_is_found_by_its_name():
-    """four_weeks is the evals' own seed, outside app/; every other seed is Spotter's own service. A name that is
-    neither, add_sample_data among them, is no seed."""
+    """four_weeks and sixteen_weeks are the evals' own seeds, outside app/; every other seed is Spotter's own
+    service. A name that is neither, add_sample_data among them, is no seed."""
     from evals.four_weeks import four_weeks
-    assert judge.NO_DATA_SERVICES == {"four_weeks"} and judge.seed_service("four_weeks") is four_weeks
+    from evals.sixteen_weeks import sixteen_weeks
+    assert judge.NO_DATA_SERVICES == {"four_weeks", "sixteen_weeks"}
+    assert judge.seed_service("four_weeks") is four_weeks and judge.seed_service("sixteen_weeks") is sixteen_weeks
     assert judge.seed_service("save_food") is services.save_food
     for name in ("add_sample_data", "remove_sample_data", "drop_table"):
         with pytest.raises(KeyError):

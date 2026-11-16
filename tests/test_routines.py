@@ -1275,10 +1275,10 @@ SAID = {"name": "push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "re
 def test_the_three_cases_load_last_and_the_tables_and_seed_are_known():
     """Setup's quiet case, then these three, close the file."""
     cases = judge.load_cases()
-    # units' six next, then inputs.md's two (its decision 19)
-    assert [c["id"] for c in cases[-11:-8]] == ["routine_saved", "routine_logged", "routine_changed"]
-    assert cases[-12]["id"] == "setup_stays_quiet"
-    assert all(judge.case_problems(c) == [] for c in cases[-11:-8])
+    # units' six next, then inputs.md's two (its decision 19), then data-on-request.md's eight (its decision 20)
+    assert [c["id"] for c in cases[-19:-16]] == ["routine_saved", "routine_logged", "routine_changed"]
+    assert cases[-20]["id"] == "setup_stays_quiet"
+    assert all(judge.case_problems(c) == [] for c in cases[-19:-16])
     assert "save_routine" in judge.SEED_SERVICES and "routine" in judge.DB_TABLES and "routine" in RUN_TABLES
     assert judge.seed_service("save_routine") is services.save_routine
     assert "lift_count" in judge._rows_text([{"lift_count": 3}])

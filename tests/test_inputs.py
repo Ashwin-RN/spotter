@@ -1221,8 +1221,9 @@ def test_a_name_of_only_invisible_characters_is_missing(person):
 
 def test_the_two_eval_cases_load_last_and_judge_both_ways():
     cases = judge.load_cases()
-    assert [c["id"] for c in cases[-2:]] == ["waist_in_inches", "machine_calories"] and len(cases) == 43
-    waist, machine = (judge.resolve(c, {"today": "2026-11-16"}) for c in cases[-2:])
+    # data-on-request.md's eight follow (its decision 20)
+    assert [c["id"] for c in cases[-10:-8]] == ["waist_in_inches", "machine_calories"] and len(cases) == 51
+    waist, machine = (judge.resolve(c, {"today": "2026-11-16"}) for c in cases[-10:-8])
     assert judge.case_problems(waist) == [] and judge.case_problems(machine) == []
     logged = [{"name": "log_measurement", "arguments": {"kind": "waist", "value": 81.28}, "is_error": False}]
     row = {"measurement": [{"id": 1, "kind": "waist", "value": 81.28, "deleted_at": None}]}

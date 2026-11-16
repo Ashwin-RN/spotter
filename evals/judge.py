@@ -25,6 +25,9 @@ expect, every key optional, all of them must hold:
   refused           true: every call of `function` was answered isError.
   reply_asks        true: the final reply asks the person something (it contains a question mark).
   reply_has         phrases the final reply must contain, every one (ignoring case).
+  reply_has_pattern regular expressions the final reply must match, every one (re.search, ignoring case). Each
+                    must compile, as reply_lacks_pattern's must. For a figure that must stand alone, such as
+                    3.3 and never the 3.3 inside 93.3.
   reply_lacks       phrases the final reply must not contain (ignoring case).
   reply_lacks_pattern
                     regular expressions the final reply must not match anywhere (re.search, ignoring case).
@@ -40,6 +43,9 @@ seed, rows created for the person before the run, through Spotter's own services
                                     as weight_unit lb; it returns no id either: no "as".
   {"service": "four_weeks"}         a seed that takes no data: four weeks of everything, three goals
                                     (evals/four_weeks.py). No "as": it returns no one id.
+  {"service": "sixteen_weeks"}      the same kind: a year of weigh-ins, sixteen weeks of lifts, food, cardio
+                                    and a waist, two goals (evals/sixteen_weeks.py, contract
+                                    data-on-request.md). No "as" either.
   {"service": "edit_entry", "data": {"kind": "bodyweight", "entry_id": "{{seed.<as>}}", "changes": {...}}}
                                     an edit of a row seeded before it, so the person has an edit to undo.
                                     Its data is kind, entry_id and changes, all three.
@@ -69,7 +75,8 @@ CASES_FILE = Path(__file__).resolve().parent / "cases.json"
 HIDDEN = "[token hidden]"
 
 EXPECT_KEYS = {"function", "inputs_include", "inputs_exclude", "inputs_forbid", "ok_calls", "no_call",
-               "refused", "reply_asks", "reply_has", "reply_lacks", "reply_lacks_pattern", "any_of"}
+               "refused", "reply_asks", "reply_has", "reply_has_pattern", "reply_lacks",
+               "reply_lacks_pattern", "any_of"}
 CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db"}
 DB_KEYS = {"table", "state", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
@@ -77,7 +84,7 @@ SWITCHES = ("log", "log_delete")
 SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "log_lifts", "set_goal", "import_entries",
                  "edit_entry", "save_routine", "update_settings"}  # update_settings: units.md R20
 EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
-NO_DATA_SERVICES = {"four_weeks"}  # called as seed_service(name)(user_id): see seed_service
+NO_DATA_SERVICES = {"four_weeks", "sixteen_weeks"}  # called as seed_service(name)(user_id): see seed_service
 DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",
              "feedback", "routine"}
 _PLACEHOLDER = re.compile(r"^\{\{\s*([a-z_]+(?:\.[A-Za-z0-9_]+|:[0-9]+)?)\s*\}\}$")
@@ -151,8 +158,9 @@ def _expect_problems(expect: Any, where: str) -> list[str]:
     needs_function = {"inputs_include", "inputs_exclude", "inputs_forbid", "refused"} & set(expect)
     if needs_function and "function" not in expect:
         problems.append(f"{where}: {', '.join(sorted(needs_function))} needs function")
-    if "reply_lacks_pattern" in expect:
-        problems += _pattern_problems(expect["reply_lacks_pattern"], f"{where}.reply_lacks_pattern")
+    for key in ("reply_has_pattern", "reply_lacks_pattern"):
+        if key in expect:
+            problems += _pattern_problems(expect[key], f"{where}.{key}")
     for i, sub in enumerate(expect.get("any_of") or []):
         problems += _expect_problems(sub, f"{where}.any_of[{i}]")
     return problems
@@ -210,13 +218,14 @@ def resolve(value: Any, variables: dict[str, Any]) -> Any:
 
 
 def seed_service(name: str):
-    """The function a seed's service names. four_weeks is evals/four_weeks.py's, called as service(user_id); every
-    other is Spotter's own service, called as service(user_id, data, "web"), but edit_entry, which is called as
-    service(user_id, kind, entry_id, changes, "web") from its data (EDIT_SEED_KEYS). Imported only when asked
-    for, so the rest of this module still opens no database."""
+    """The function a seed's service names. A name in NO_DATA_SERVICES is the function of that name in the evals
+    module of that name (evals/four_weeks.py's four_weeks, evals/sixteen_weeks.py's sixteen_weeks), called as
+    service(user_id); every other is Spotter's own service, called as service(user_id, data, "web"), but
+    edit_entry, which is called as service(user_id, kind, entry_id, changes, "web") from its data
+    (EDIT_SEED_KEYS). Imported only when asked for, so the rest of this module still opens no database."""
     if name in NO_DATA_SERVICES:
-        from evals.four_weeks import four_weeks
-        return four_weeks
+        import importlib
+        return getattr(importlib.import_module(f"evals.{name}"), name)
     if name not in SEED_SERVICES:
         raise KeyError(f"no seed service {name}")
     from app import services
@@ -301,6 +310,13 @@ def judge_calls(expect: dict, calls: list[dict], reply: str) -> list[str]:
     for phrase in expect.get("reply_has") or []:
         if phrase.casefold() not in text.casefold():
             reasons.append(f"the reply does not say {phrase!r}")
+    if "reply_has_pattern" in expect:
+        problems = _pattern_problems(expect["reply_has_pattern"], "reply_has_pattern")
+        if problems:
+            raise ValueError("; ".join(problems))
+        for pattern in expect["reply_has_pattern"]:
+            if not re.search(pattern, text, re.IGNORECASE):
+                reasons.append(f"the reply does not match {pattern!r}")
     for phrase in expect.get("reply_lacks") or []:
         if phrase.casefold() in text.casefold():
             reasons.append(f"the reply says {phrase!r}")
