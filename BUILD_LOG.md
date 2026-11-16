@@ -1041,3 +1041,33 @@ The whole suite on the joined tree: 5,599 tests, in groups, and again by the com
 ### The eval run
 
 All 35 cases, 3 runs each, on `claude-opus-5-5`, at `52b0e76`, from 22:07 to 22:49 on 2026-11-15: 105 of 105 runs passed, $16.8061 at list price. Among them the six new cases: a workout in one sentence, a set added to a started session, a lift added later, setup asked for, setup picked up, and setup staying quiet when the person only logs; and routines' three: one saved from a sentence, one logged, one logged with a changed weight.
+
+## Units, input checks and the tidy-ups
+
+Built and reviewed one after another on 2026-11-15 and 2026-11-16 on one branch, and released together. Their decisions and limits are in `docs/contracts/tidy.md`, `docs/contracts/units.md` and `docs/contracts/inputs.md`. Before them, the build system: `python -m evals.need` says whether a change owes an eval run, and `CLAUDE.md` says how the repo is built.
+
+| Item | What it does |
+|---|---|
+| Tidy-ups | The tests that compared SQLite's statement text hold on Postgres too. Each count of functions and cases is drawn from the code. The landing says what each assistant needs. A private contact address, once set, is the Contact link |
+| Units | A person can keep weights in lb and distances in miles, set through the assistant or on Settings. Every answer, page and chart is in their units; storage stays kg and km. Migration 0011 |
+| Input checks | Every input is checked as sent. An unknown field is refused with the field meant. True and false are never numbers. A range is checked before rounding. A number sent as text has one form, a date one form (YYYY-MM-DD). A goal's date is at most 5 years on. Two crashes are gone. A refusal from the function list's own check is Spotter's, with its fix |
+
+### The reviews
+
+Each item had one builder and one separate reviewer on frozen copies, then one fix round. The tidy-ups' review found two things, fixed in one commit: a test's exemption for the landing's steps covered more than its one sentence, and the privacy page's Contact card lost the issues link once an address was set. Units U1 had nothing that must be fixed: two should-fixes and three lows were fixed. Units U2 had two must-fixes, each re-checked by a fresh reviewer: a page figure one step off the assistant's summary (262.6 against 262.5 lb), and a lb lift goal's "so far"; pages now take the services' unrounded figures. Input checks had nothing that must be fixed. Its fix round closed four gaps the builder found outside its files (a routine's weight rounded before its range check, a food's servings or grams dropped when no food is named, a feedback note of only invisible characters, a second "Nothing to change" line beside a refused goal edit) and five lows.
+
+### Checks
+
+On a real Postgres, 17 in a throwaway container, at `c6ddf59`: migration 0011 went up, down and up again over a written row, and the models match the database. Of 1,329 tests in 17 files, 1,328 passed; the one, a count of statements, was by design: Postgres sends a session's new sets as one insert. Its test now counts per engine, and passed 42 of 42 there.
+
+The whole suite ran in the commit hook on each code commit. On `194e7f0` the hook was cut off at its time limit; the suite run on a clean export of that commit passed 5,794 tests, with 15 errors in `test_eval_need`, which needs a `.git` an export does not have.
+
+### Known limits
+
+- The contact address check lets some odd shapes through; it only decides whether a link is shown.
+- A mile account's refusal of a minutes-only cardio edit still names its speed bound in km/h.
+- No page shows a best time's name yet.
+
+### The eval run
+
+All 43 cases, 3 runs each, on `claude-opus-5-5`, at `d4e9400`, from 16:38 to 17:24 on 2026-11-16: 129 of 129 runs passed, $21.0332 at list price. Among them the new cases: units' six (a weigh-in in lb, lifts in lb, a run in miles, the units question after a first lb log, a switch of units, a routine changed in lb) and input checks' two (a waist given in inches, and a machine's calories).
