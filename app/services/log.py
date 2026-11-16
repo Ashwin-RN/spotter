@@ -2,7 +2,9 @@
 
 get_log(user_id, date=None, days=1)
     days: 1 to 14. date: the last day shown (YYYY-MM-DD); default the person's today; a date after
-    today is date_in_future. Every day in the range is listed, newest first, empty days included.
+    today is date_in_future, and one before the oldest day the account can hold (oldest_day) is date_too_old,
+    but with any_date, the day page's: it draws any day.
+    Every day in the range is listed, newest first, empty days included.
 
     Each day: its sessions (with sets, and that session's new bests), its weigh-in or null, its
     measurements, its food (by meal, with the day's numbers from food.day_numbers, the same helper
@@ -39,6 +41,12 @@ from app.services.common import no_account, row_dict
 DAYS = (1, 14)
 
 
+def oldest_day(user: User):
+    """The oldest day an entry of this account can be dated: its created_at date in UTC, less rules.OLDEST_DAYS, less
+    one day for the time zone. get_log refuses an end date before it; a window may start before it."""
+    return user.created_at.date() - timedelta(days=rules.OLDEST_DAYS + 1)
+
+
 def _day_summary(day_sessions: list, weigh_in, cardio_rows: list, today, units) -> str:
     """A day's lift sessions, weigh-in and cardio in words (R14), in the person's units; "" for a day with none."""
     parts = [lifts.sets_text([(x.exercise.name, x.weight_kg, x.reps) for x in sorted(t.sets, key=lambda x: x.id)],
@@ -59,14 +67,17 @@ def _days(value) -> tuple[int | None, dict | None]:
     if value is None:
         return 1, None
     number = rules.to_float(value)
-    if number is None or number != int(number) or not lo <= number <= hi:
+    if number is not None and number == int(number) and not lo <= number <= hi:
+        return None, rules.error("invalid_field", f"days {rules.as_sent(value)} is outside {lo} to {hi}.", fix)
+    if number is None or number != int(number):
         return None, rules.error("invalid_field",
                                  f"days '{rules.quote(value)}' is not a whole number from {lo} to {hi}.", fix)
     return int(number), None
 
 
-def get_log(user_id: int, date=None, days=1) -> dict:
-    """See the module notes."""
+def get_log(user_id: int, date=None, days=1, any_date: bool = False) -> dict:
+    """See the module notes. any_date: the day page's read, which shows any day it can draw (oldest_day is
+    get_log's floor through MCP alone)."""
     count, err = _days(days)
     if err:
         return err
@@ -86,6 +97,11 @@ def get_log(user_id: int, date=None, days=1) -> dict:
             if end > today:
                 return rules.error("date_in_future", f"date {end.isoformat()} is after today ({today.isoformat()}).",
                                    f"Give today or an earlier date. {rules.TODAY_NOTE}")
+            floor = oldest_day(user)
+            if end < floor and not any_date:  # inputs.md decision 8: before any day an entry of this account can be dated
+                return rules.error("date_too_old", f"date {end.isoformat()} is before {floor.isoformat()}, the oldest "
+                                   "day this account can hold.",
+                                   f"Give a date from {floor.isoformat()} to today, or leave it out for today.")
         start = end - timedelta(days=count - 1)
 
         def shown(d) -> bool:

@@ -522,5 +522,21 @@
       "inputs_forbid": {"sets.*.weight_lb": 102.06, "sets.*.weight_kg": 230}
     },
     "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}]
+  },
+  {
+    "id": "waist_in_inches",
+    "say": "My waist is 32 inches",
+    "expect": {"any_of": [
+      {"function": "log_measurement", "ok_calls": {"log_measurement": 1},
+       "inputs_include": {"kind": "waist", "value": {"$in": [81.28, 81.3]}}, "reply_has": ["cm"]},
+      {"ok_calls": {"log_measurement": 0}, "reply_asks": true}]},
+    "db": [{"table": "measurement", "all": {"kind": "waist", "value": {"$in": [81.28, 81.3]}}}]
+  },
+  {
+    "id": "machine_calories",
+    "say": "30 minutes on the treadmill, it said 250 calories",
+    "expect": {"function": "log_cardio", "ok_calls": {"log_cardio": 1},
+               "inputs_include": {"minutes": 30, "machine_kcal": 250}},
+    "db": [{"table": "cardio_entry", "count": 1, "all": {"machine_kcal": 250, "minutes": 30}}]
   }
 ]

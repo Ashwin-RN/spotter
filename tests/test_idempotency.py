@@ -44,9 +44,6 @@ from .test_web import client, only_user, plant_session, post, seam, session_of, 
 
 WRITES = common.WRITE_FUNCTIONS
 K = "retry-0001"
-FAR = "2099-01-31"
-
-
 def keys() -> list[WriteKey]:
     with db.session_scope() as s:
         return list(s.scalars(select(WriteKey).order_by(WriteKey.id)))
@@ -59,6 +56,9 @@ def count(model) -> int:
 
 def day(offset: int = 0) -> str:
     return (db.utcnow().date() + timedelta(days=offset)).isoformat()
+
+
+FAR = day(365)  # a goal's date one year on (inputs.md D15: at most 5 years). Was 2099-01-31
 
 
 def age(model, row_id: int, **back) -> None:
@@ -806,8 +806,12 @@ def test_a_kept_answer_is_returned_only_after_the_permission_check_and_the_key_s
 
 
 def test_a_key_sent_to_a_read_is_not_looked_at(writer):
+    """inputs.md D1: a read takes no key, so one sent is refused as a field it does not take (was: dropped). It is
+    still never looked at."""
     http, token, _ = writer
-    assert call(http, token, "get_log", {"key": "bad"})["isError"] is False and keys() == []
+    refused = call(http, token, "get_log", {"key": "bad"})
+    assert refused["isError"] is True and refused["structuredContent"]["message"] == "'key' is not a field of get_log."
+    assert keys() == []
 
 
 # ---------------------------------------------------------------- decision 13: with no key, nothing changes
@@ -944,7 +948,7 @@ def test_the_same_new_goal_inside_10_minutes_is_not_set_twice_and_the_first_come
 
 
 # What makes a new goal another goal: its target, its date, or the thing it is for.
-OTHERS = [("bodyweight", {"target_value": 74}), ("bodyweight", {"target_date": "2099-02-28"}),
+OTHERS = [("bodyweight", {"target_value": 74}), ("bodyweight", {"target_date": day(400)}),
           ("lift", {"exercise": "Deadlift"}), ("measurement", {"measurement_kind": "hips"}),
           ("cardio_best", {"distance_km": 10, "target_value": 55, "start_value": 60}),
           ("cardio_best", {"exercise": "Treadmill Run"})]

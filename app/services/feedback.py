@@ -18,7 +18,7 @@ send_feedback(user_id, data) -> {id, duplicate, summary}
 owner_feedback(data) -> {total, how, notes}
     The owner's read (mcp_server.OWNER_FUNCTIONS): it reads every account, so it takes no user_id, as owner_calls
     takes none. It only reads. The notes of account_id, or else of every account with that email, newest first, at
-    most limit (LIMIT_SHOWN). total is how many match. Each note gives around: that person's calls from
+    most limit (LIMIT_SHOWN). account_id and email are checked as owner_calls checks them (owner.filters). total is how many match. Each note gives around: that person's calls from
     AROUND_BEFORE up to the note, the newest BEFORE_MOST, and after it up to AROUND_AFTER, the oldest AFTER_MOST, in
     time order, each as owner_calls gives a call. around_cut says either side had more. No read filters by age.
 
@@ -42,7 +42,7 @@ from app.models import FEEDBACK_TOPICS, CallLog, Feedback, User
 from app.services.common import (
     DUPLICATE_MINUTES, check_data, check_write_limit, dedupe_key, entry_id, lock_user, no_account,
 )
-from app.services.owner import call_row, utc
+from app.services.owner import call_row, filters, utc
 
 # The dial: the most notes one person may send in any WINDOW_HOURS, a whole number of at least 1. The one place the
 # number is typed: the refusal and send_feedback's description are built from it.
@@ -103,7 +103,7 @@ def _fields(data: dict) -> tuple[dict, dict | None]:
     for name in ("text", "doing", "expected", "happened"):
         fields[name], err = rules.text(data.get(name), name, TEXT_MAX)
         errors += [err] if err else []
-    if fields["text"] == "":
+    if fields["text"] is not None and not rules.visible(fields["text"]):  # nothing a person can see is missing
         errors.insert(0, rules.error("missing_field", "text is missing.",
                                      "Send text: what the person wants to say, in their own words."))
     topic = data.get("topic")
@@ -135,6 +135,9 @@ def _summary(deleted: int, not_found: int) -> str:
 
 
 def owner_feedback(data: dict) -> dict:
+    data, err = filters(data, ("account_id", "email"))  # inputs.md decisions 9 and 10, as owner_calls checks them
+    if err:
+        return err
     match = []
     if data.get("account_id") is not None:
         match.append(Feedback.user_id == data["account_id"])

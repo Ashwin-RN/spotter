@@ -122,9 +122,10 @@ def _lift(raw, n: int, names: list[str]) -> tuple[dict, list[dict]]:
     elif sent_in is None:
         weight = None
     else:
+        sent_kg = weight  # in kg, converted unrounded from lb: the range is checked on it, then it is kept
         weight, err = rules.number(weight, float, "weight_kg", where)
         lo, hi = rules.HARD_RULES["weight_kg"]
-        if err is None and not lo <= weight <= hi:
+        if err is None and not lo <= rules.to_float(sent_kg) <= hi:
             err = rules.error("weight_out_of_range",
                               f"{where}: weight {rules.as_sent(raw.get('weight_kg'))} kg is outside {lo} to {hi} kg.",
                               f"Give weight_kg on lift {n} from {lo} to {hi}, or leave it out.")

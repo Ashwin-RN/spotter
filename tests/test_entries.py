@@ -98,7 +98,7 @@ def test_unknown_kinds_and_goals(user):
         refused = call(user.id, "goal", 1)
         assert refused["error"] == "unknown_kind" and "set_goal" in refused["fix"]
     goal = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 70, "start_value": 80,
-                                       "target_date": "2099-01-01"}, "claude")
+                                       "target_date": back(user, -365)}, "claude")  # inputs.md D15. Was 2099-01-01
     read = services.get_entry(user.id, "goal", goal["id"])
     assert read["entry"] == goal["goal"] and read["links"]["goals"].endswith("/goals")
 
@@ -184,7 +184,7 @@ def test_fields_a_kind_has_no_business_with_are_refused(user):
 
 def test_kinds_goal_and_unknown(user):
     goal = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 70, "start_value": 80,
-                                       "target_date": "2099-01-01"}, "web")
+                                       "target_date": back(user, -365)}, "web")  # inputs.md D15. Was 2099-01-01
     r = services.edit_entry(user.id, "goal", goal["id"], {"target_value": 71}, "claude")
     assert r["error"] == "unknown_kind" and "set_goal" in r["fix"]
     for kind in ("usda_food", "saved_food", ["bodyweight"], None, "x" * 10_000):

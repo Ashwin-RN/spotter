@@ -14,22 +14,49 @@ failed_only keeps the failed calls (and the lines with one). A failed call is no
 still running (calllog.IN_PROGRESS) is not failed. The MCP schema holds the ranges.
 A call gives its trace: never an argument's value (app/calllog.py). call_row is that one shape of a call, and
 utc its time: owner_feedback's around gives calls the same way (app/services/feedback.py).
+The filters are checked first (filters, contract inputs.md decisions 9 and 10): account_id through
+common.entry_id, email and request_id through rules.text with their column's length as the limit. owner_feedback
+checks its account_id and email the same way.
 """
 
 from datetime import timedelta
 
 from sqlalchemy import case, func, null, select
 
-from app import calllog, db
+from app import calllog, db, rules
 from app.models import CallLog, User
+from app.services.common import entry_id
 
 HOURS = (1, 2160, 24)  # lowest, highest, when left out
 LIMIT = (1, 200, 50)
 # The one test of a failed call: not ok, and not still running.
 FAILED = CallLog.ok.is_(False) & CallLog.error_code.is_distinct_from(calllog.IN_PROGRESS)
+# The longest each text filter can be: its column's own length.
+TEXT_FILTERS = {"email": User.__table__.c.email.type.length, "request_id": CallLog.__table__.c.request_id.type.length}
+
+
+def filters(data: dict, names: tuple) -> tuple[dict, dict | None]:
+    """The owner's filters among `names` (account_id, email, request_id), checked: (data with each kept as checked,
+    every refusal at once or None). account_id passes through common.entry_id, a row id's one check; email and
+    request_id through rules.text, in its own words, at most their column's length."""
+    out, errors = dict(data), []
+    if "account_id" in names and data.get("account_id") is not None:
+        out["account_id"] = entry_id(data["account_id"])
+        if out["account_id"] is None:
+            errors.append(rules.error("invalid_field",
+                                      f"account_id {rules.as_sent(data['account_id'])} is not an account id.",
+                                      "Give an account's id as a line gives it: a whole number from 1."))
+    for name in ("email", "request_id"):
+        if name in names and data.get(name) is not None:
+            out[name], err = rules.text(data[name], name, TEXT_FILTERS[name])
+            errors += [err] if err else []
+    return out, rules.combine(errors)
 
 
 def owner_calls(data: dict) -> dict:
+    data, err = filters(data, ("account_id", "email", "request_id"))
+    if err:
+        return err
     hours, limit = data.get("hours") or HOURS[2], data.get("limit") or LIMIT[2]
     failed_only = bool(data.get("failed_only"))
     since = db.utcnow() - timedelta(hours=hours)

@@ -33,7 +33,8 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "setup_stays_quiet",  # first day: the review's S1
                   "routine_saved", "routine_logged", "routine_changed",  # routines, decision 21
                   "lb_weigh_in", "lb_lifts", "miles_run", "units_asked", "units_switch",  # units, decision 20
-                  "lb_routine_changed"}
+                  "lb_routine_changed",
+                  "waist_in_inches", "machine_calories"}  # inputs.md decision 19
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 

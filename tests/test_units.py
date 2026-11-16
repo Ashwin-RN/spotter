@@ -30,6 +30,7 @@ from evals.run import LocalServer, dates_for, person_rows
 from . import text_rules as tr
 from .conftest import TEST_DIR, alembic_config, sign
 from .test_feedback import PUBLISHED, compact
+from .test_inputs import without_inputs
 from .test_mcp import failed, ok, read_resource, tool_list
 from .test_trace import OWNER, last, sign_for
 
@@ -496,8 +497,10 @@ def test_a_goal_refusal_in_lb_says_lb_with_the_range_moved_inward(lb):
     by = (users.today_for(lb) + timedelta(days=60)).isoformat()
     lift = services.set_goal(lb.id, {"kind": "lift", "exercise": "Bench Press", "target_value": 1500,
                                      "start_value": 200, "target_date": by}, "claude")
-    assert (lift["message"], lift["fix"]) == ("target_value 1500 lb is outside 0 to 1,469.75 lb.",
-                                              "Give target_value in lb, above 0 to 1,469.75, for a lift goal.")
+    # inputs.md D13: a range with its low end left out says so (was "is outside 0 to" and "above 0 to").
+    assert (lift["message"], lift["fix"]) == ("target_value 1500 lb must be more than 0 and at most 1,469.75 lb.",
+                                              "Give target_value in lb, more than 0 and at most 1,469.75, for a lift "
+                                              "goal.")
     body = services.set_goal(lb.id, {"kind": "bodyweight", "target_value": 900, "start_value": 185,
                                      "target_date": by}, "claude")
     assert body["fix"] == "Give target_value in lb, 44.1 to 881.84, for a bodyweight goal."
@@ -528,7 +531,8 @@ def test_a_bare_goal_value_from_the_web_is_kg_and_from_claude_is_the_person_s_un
     assert kept == {web["id"]: (80, 90), told["id"]: (36.29, 31.75), named["id"]: (80, 70)}
     too_heavy = services.set_goal(lb.id, {"kind": "lift", "exercise": "Deadlift", "target_value": 700,
                                           "start_value": 100, "target_date": by}, "web")
-    assert too_heavy["message"] == "target_value 700 is outside 0 to 666.67."  # a kg refusal, as the form says kg
+    # A kg refusal, as the form says kg. inputs.md D13: the low end left out says so (was "is outside 0 to 666.67").
+    assert too_heavy["message"] == "target_value 700 must be more than 0 and at most 666.67."
 
 
 def test_a_waist_goal_sent_with_weight_unit_lb_carries_no_weight_units_note(fresh):
@@ -694,7 +698,9 @@ def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_
     client = make_client(owner_user_id=OWNER)
     tools = tool_list(client, sign_for(OWNER))
     hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tools}
-    assert {name for name, sha in BEFORE_UNITS.items() if hashes[name] != sha} == THIRTEEN
+    # inputs.md moved every one after: with its changes taken out, exactly the thirteen differ from before units.
+    held = {t["name"]: hashlib.sha256(compact(without_inputs(t)).encode()).hexdigest() for t in tools}
+    assert {name for name, sha in BEFORE_UNITS.items() if held[name] != sha} == THIRTEEN
     assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED
     assert len(mcp_server.INSTRUCTIONS) == 3927
     who = next(t for t in tools if t["name"] == "whoami")
@@ -836,7 +842,7 @@ def test_each_case_seeds_through_the_runner_and_its_rows_judge_as_designed(app_s
 
 def test_the_six_cases_load_last_and_judge_both_ways(app_settings):
     cases = judge.load_cases()
-    six = cases[-6:]
+    six = cases[-8:-2]  # inputs.md's two follow (its decision 19)
     assert [c["id"] for c in six] == ["lb_weigh_in", "lb_lifts", "miles_run", "units_asked", "units_switch",
                                       "lb_routine_changed"]
     assert all(judge.case_problems(c) == [] for c in six) and "update_settings" in judge.SEED_SERVICES

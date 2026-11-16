@@ -31,8 +31,9 @@ import_entries(user_id, data, by)
     guessed: the row fails with the closest names, and unknown_names groups each name once.
 
     The date: YYYY-MM-DD is that date. A timestamp with a non-zero offset keeps its own local date.
-    One in UTC (Z or +00:00) is turned into the person's zone. One with no offset is refused. Then the
-    usual check: never after today, at most two years back.
+    One in UTC (Z or +00:00) is turned into the person's zone. One with no offset is refused. A timestamp
+    starts with YYYY-MM-DD (rules.ISO_DAY); any other form of a date (20261116, 2026-W01-1) is invalid_date.
+    Then the usual check: never after today, at most two years back.
 
     The rule for every kind, judged against what the person held before the call:
       already there  the row matches an entry of that kind on that date: a live one, or a soft-deleted
@@ -264,25 +265,26 @@ def _date(raw, user, today: date, noun: str) -> tuple[date | None, dict | None]:
         return None, rules.error("invalid_date", f"date '{rules.quote(raw)}' is not a date.", DATE_FIX)
     text = raw.strip()
     on = None
-    if text:
+    # inputs.md decision 7: the date alone is YYYY-MM-DD (rules.ISO_DAY), and a timestamp starts with it. Any other
+    # form, such as 20261116 or 2026-W01-1, is invalid_date.
+    if rules.ISO_DAY.fullmatch(text):
+        on = rules.to_date(text)
+    elif rules.ISO_DAY.match(text):
         try:
-            on = date.fromisoformat(text)
+            moment = datetime.fromisoformat(text)
         except ValueError:
+            moment = None
+        if moment is not None:
+            offset = moment.utcoffset()
+            if offset is None:
+                return None, rules.error("timestamp_without_offset", f"'{rules.quote(text)}' has no offset.",
+                                         "Send the timestamp with its offset, such as +05:30, or the date alone "
+                                         "when it is the person's local date.")
             try:
-                moment = datetime.fromisoformat(text)
-            except ValueError:
-                moment = None
-            if moment is not None:
-                offset = moment.utcoffset()
-                if offset is None:
-                    return None, rules.error("timestamp_without_offset", f"'{rules.quote(text)}' has no offset.",
-                                             "Send the timestamp with its offset, such as +05:30, or the date alone "
-                                             "when it is the person's local date.")
-                try:
-                    on = moment.astimezone(users.zone_for(user.time_zone)).date() if offset == timedelta(0) \
-                        else moment.date()
-                except OverflowError:  # near year 1 or 9999 there is no local date: its own date is refused below
-                    on = moment.date()
+                on = moment.astimezone(users.zone_for(user.time_zone)).date() if offset == timedelta(0) \
+                    else moment.date()
+            except OverflowError:  # near year 1 or 9999 there is no local date: its own date is refused below
+                on = moment.date()
     if on is None:
         _, err = rules.entry_date(text, today, noun)
         return None, {**err, "fix": DATE_FIX}

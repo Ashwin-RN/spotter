@@ -14,11 +14,95 @@ Units (contract units.md): a weight or distance goes in the field of the unit th
 weight_lb, kg or lb, distance_km or distance_mi, speed_kmh or speed_mph). Every new result field (units,
 units_note, the new summaries and words) defaults to null (R21), so a client holding the old list still validates
 an answer from the new server where it can.
+
+Inputs (contract inputs.md). A set, a routine lift and a food entry forbid any field they do not name (INPUT), so an
+unknown key is refused, never dropped; an import's three row models allow one, and the import refuses it as a row
+problem in its preview. Every number argument is Number and every whole-number or id argument Whole: a bool, or text
+outside rules.NUMBER_TEXT ("1_0", "8e1", "nan"), is refused before pydantic parses it; a JSON number, and text in the
+grammar, go on as today. Their published type stays number or integer. A true-or-false argument is StrictBool: true,
+false or left out. NEAR_MISSES holds the sentence a refusal of an unknown key adds when the key names a field Spotter
+takes by another name.
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+import math
+from typing import Annotated
+
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StrictBool
+from pydantic_core import PydanticCustomError
+
+from app import rules
 
 TOP = ConfigDict(extra="forbid")
+INPUT = ConfigDict(extra="forbid")  # an argument object: an unknown key is refused (inputs.md decision 1)
+
+
+def _number(value):
+    """A number argument before pydantic parses it: a bool, or text outside the grammar, is refused; text in it is
+    its number. Anything else goes on as sent, for pydantic to judge."""
+    if isinstance(value, bool):
+        raise PydanticCustomError("not_a_number", "true and false are not numbers")
+    if isinstance(value, str):
+        if not rules.NUMBER_TEXT.fullmatch(value):
+            raise PydanticCustomError("not_a_number", "text that is not a plain number")
+        value = float(value)
+    if isinstance(value, float) and not math.isfinite(value):  # "1" x 400 reads as inf: never a number
+        raise PydanticCustomError("not_a_number", "a number too large for a float")
+    return value
+
+
+def _whole(value):
+    """A whole-number or id argument before pydantic parses it: as _number, and text with no point stays a whole
+    number however long it is. A fraction is pydantic's to refuse."""
+    if isinstance(value, bool):
+        raise PydanticCustomError("not_a_whole_number", "true and false are not numbers")
+    if isinstance(value, str):
+        if not rules.NUMBER_TEXT.fullmatch(value):
+            raise PydanticCustomError("not_a_whole_number", "text that is not a plain number")
+        return float(value) if "." in value else int(value)
+    return value
+
+
+Number = Annotated[float, BeforeValidator(_number)]
+Whole = Annotated[int, BeforeValidator(_whole)]
+
+
+def whole_in(lo: int, hi: int):
+    """Whole with a range the schema holds: the range before the validator, so it is published as minimum and
+    maximum, as a plain int's range is."""
+    return Annotated[int, Field(ge=lo, le=hi), BeforeValidator(_whole)]
+
+# The sentence after an unknown key's fix when the key names a field taken by another name (inputs.md decision 3),
+# by where it was sent: a function's name for its top level, or set, lift or entry for an item. A key on no row
+# here gets difflib's nearest field taken, at NEAR_CUTOFF, or no sentence.
+NEAR_CUTOFF = 0.75
+_BODY_SIZE = ("value is in the kind's own unit: cm for waist, hips, chest, arm and thigh. Spotter takes no inches for "
+              "a body size.")
+_SET_WEIGHT = "Send the weight in weight_kg or weight_lb, in the unit the person said."
+_BODY_WEIGHT = "Send the body weight in kg or lb, in the unit the person said."
+_CARDIO = {
+    "distance": "Send distance_km or distance_mi, in the unit the person said.",
+    "speed": "Send speed_kmh or speed_mph, in the unit the person said.",
+    "duration": "Send the time as minutes.", "time": "Send the time as minutes.",
+    "heart_rate": "Send the average heart rate as avg_hr.", "hr": "Send the average heart rate as avg_hr.",
+    "incline": "Send the incline as incline_pct.",
+}
+_SERVINGS = "For a saved food, send servings. For a USDA food, send grams."
+_FOOD_KCAL = "For the calories, send kcal."
+_MACHINE_KCAL = "For the calories the machine or watch showed, send machine_kcal."
+NEAR_MISSES = {
+    "log_measurement": {"unit": _BODY_SIZE, "units": _BODY_SIZE},
+    "entry": {**dict.fromkeys(("serving", "serving_count", "qty", "quantity", "amount"), _SERVINGS),
+              **dict.fromkeys(("calories", "cal", "kcals"), _FOOD_KCAL)},
+    "log_cardio": {**dict.fromkeys(("calories", "cal", "kcal"), _MACHINE_KCAL), **_CARDIO},
+    "edit_entry": {"unit": _BODY_SIZE, "units": _BODY_SIZE,
+                   **dict.fromkeys(("calories", "cal"), "For a food entry's calories, send kcal. For a cardio entry's "
+                                                        "machine number, send machine_kcal."),
+                   **_CARDIO, **dict.fromkeys(("weight", "weight_kg", "weight_lb", "lbs"), _BODY_WEIGHT)},
+    "set": dict.fromkeys(("weight", "weight_lbs", "lbs", "lb", "kg", "weight_kgs"), _SET_WEIGHT),
+    "lift": dict.fromkeys(("weight", "weight_lbs", "lbs", "lb", "kg", "weight_kgs"), _SET_WEIGHT),
+    "log_bodyweight": dict.fromkeys(("weight", "weight_kg", "weight_lb", "lbs"), _BODY_WEIGHT),
+    "update_settings": {"length_unit": "Spotter keeps body sizes in cm: there is no length unit to set."},
+}
 
 # For a saved or USDA food, the count is an amount, never words. The instructions and log_food say the same.
 FOOD_NAME_RULE = (
@@ -32,18 +116,20 @@ FOOD_NAME_RULE = (
 class SetIn(BaseModel):
     """One set of a lift session."""
 
+    model_config = INPUT
+
     exercise: str = Field(description="The exercise name, exactly as list_exercises gives it.")
-    weight_kg: float | None = Field(
+    weight_kg: Number | None = Field(
         default=None,
         description="The weight lifted in kg, 0 to 500, when the person said kg, or gave no unit and units.weight is "
                     "kg, or it came from get_routines. Use 0 for bodyweight work. Send weight_kg or weight_lb, never "
                     "both.")
-    weight_lb: float | None = Field(
+    weight_lb: Number | None = Field(
         default=None,
         description="The weight lifted in lb, 0 to 1,102.31, when the person said pounds, or gave no unit and "
                     "units.weight is lb. Send it as said: Spotter converts it. Use 0 for bodyweight work. Send "
                     "weight_kg or weight_lb, never both.")
-    reps: int = Field(description="Reps done in this set, a whole number from 1 to 30.")
+    reps: Whole = Field(description="Reps done in this set, a whole number from 1 to 30.")
 
 
 # A routine's lift (contract routines.md). The result models below take these words for the same fields.
@@ -55,14 +141,16 @@ ROUTINE_REPS = "Reps in each set, a whole number from 1 to 30."
 class RoutineLiftIn(BaseModel):
     """One lift of a routine: its number of sets, its reps, and a weight only when the person gave one."""
 
+    model_config = INPUT
+
     exercise: str = Field(description=ROUTINE_EXERCISE)
-    sets: int = Field(description=ROUTINE_SETS)
-    reps: int = Field(description=ROUTINE_REPS)
-    weight_kg: float | None = Field(
+    sets: Whole = Field(description=ROUTINE_SETS)
+    reps: Whole = Field(description=ROUTINE_REPS)
+    weight_kg: Number | None = Field(
         default=None,
         description="The weight in kg, 0 to 500, only when the person gave one. Leave it out otherwise: get_routines "
                     "then gives the weight of the lift's latest session. Send weight_kg or weight_lb, never both.")
-    weight_lb: float | None = Field(
+    weight_lb: Number | None = Field(
         default=None,
         description="The weight in lb, 0 to 1,102.31, only when the person gave one in pounds, or with no unit and "
                     "units.weight is lb. Leave it out otherwise.")
@@ -70,6 +158,8 @@ class RoutineLiftIn(BaseModel):
 
 class FoodEntryIn(BaseModel):
     """One food in a log_food call. There is no tag field: Spotter works out who supplied the number."""
+
+    model_config = INPUT
 
     description: str | None = Field(
         default=None,
@@ -80,20 +170,20 @@ class FoodEntryIn(BaseModel):
         default=None,
         description="breakfast, lunch, dinner or snack, only when the person named it. Leave out otherwise: "
                     "Spotter picks it from their clock.")
-    kcal: float | None = Field(
+    kcal: Number | None = Field(
         default=None,
         description="The calories, 0 to 5,000: the person's number, or yours with estimated true. Never with "
                     "saved_food_id or usda_fdc_id.")
-    estimated: bool | None = Field(
+    estimated: StrictBool | None = Field(
         default=None,
         description="true when you worked the kcal out yourself, always. Leave out or false when the person "
                     "stated it.")
-    saved_food_id: int | None = Field(
+    saved_food_id: Whole | None = Field(
         default=None, description="A saved food's id from find_food. Send servings with it, and no kcal.")
-    servings: float | None = Field(default=None, description="How many servings of the saved food, 0.1 to 50.")
-    usda_fdc_id: int | None = Field(
+    servings: Number | None = Field(default=None, description="How many servings of the saved food, 0.1 to 50.")
+    usda_fdc_id: Whole | None = Field(
         default=None, description="A USDA food's fdc_id from find_food. Send grams with it, and no kcal.")
-    grams: float | None = Field(default=None, description="How many grams of the USDA food, 1 to 5,000.")
+    grams: Number | None = Field(default=None, description="How many grams of the USDA food, 1 to 5,000.")
 
 
 # An import's rows are named fields for every kind: no positional lists. A field these models do not name still
@@ -108,10 +198,10 @@ class ImportSetIn(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     exercise: str = Field(description="The exercise name, exactly as list_exercises gives it.")
-    weight: float = Field(
+    weight: Number = Field(
         description="The weight lifted, in the call's weight_unit, as the export writes it. 0 for bodyweight work.")
-    reps: int = Field(description="Reps done in this set, a whole number from 1 to 30.")
-    times: int | None = Field(
+    reps: Whole = Field(description="Reps done in this set, a whole number from 1 to 30.")
+    times: Whole | None = Field(
         default=None,
         description="How many sets in a row had this weight and reps, 1 to 20, so 3 sets of 5 is one item. Leave "
                     "out for 1. A session holds at most 60 sets once times is counted.")
@@ -123,7 +213,7 @@ class ImportFoodIn(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     description: str = Field(description="What was eaten, as the export names it, 1 to 200 characters.")
-    kcal: float = Field(description="Its calories as the export gives them, 0 to 5,000.")
+    kcal: Number = Field(description="Its calories as the export gives them, 0 to 5,000.")
     meal: str = Field(description="breakfast, lunch, dinner or snack, as the export names the meal.")
 
 
@@ -142,12 +232,12 @@ class ImportRowIn(BaseModel):
         default=None, description="A lift_session: every set item, in order, 1 to 60.")
     notes: str | None = Field(
         default=None, description="A lift_session or a cardio_entry: its notes, up to 2,000 characters.")
-    weight: float | None = Field(
+    weight: Number | None = Field(
         default=None, description="A bodyweight row: the body weight, in the call's weight_unit.")
     measurement_kind: str | None = Field(
         default=None,
         description="A measurement: waist, hips, chest, arm, thigh, steps, sleep_hours, resting_hr or water_ml.")
-    value: float | None = Field(
+    value: Number | None = Field(
         default=None,
         description="A measurement: its value. A body size (waist, hips, chest, arm, thigh) in the call's "
                     "length_unit. Steps, hours of sleep, bpm or ml for the others.")
@@ -155,17 +245,17 @@ class ImportRowIn(BaseModel):
         default=None, description="A food_entry: the day's foods, 1 to 30, each with its meal.")
     exercise: str | None = Field(
         default=None, description="A cardio_entry: the activity, exactly as list_exercises gives it (kind cardio).")
-    minutes: float | None = Field(default=None, description="A cardio_entry: how long it lasted, 1 to 600 minutes.")
-    distance: float | None = Field(
+    minutes: Number | None = Field(default=None, description="A cardio_entry: how long it lasted, 1 to 600 minutes.")
+    distance: Number | None = Field(
         default=None, description="A cardio_entry: the distance, in the call's distance_unit.")
-    incline_pct: float | None = Field(
+    incline_pct: Number | None = Field(
         default=None, description="A cardio_entry: a treadmill's incline in percent, 0 to 40.")
-    speed: float | None = Field(
+    speed: Number | None = Field(
         default=None,
         description="A cardio_entry: the speed, in the call's distance_unit an hour: km an hour on a km call, mi "
                     "an hour on a mi call.")
-    avg_hr: int | None = Field(default=None, description="A cardio_entry: average heart rate in bpm, 30 to 240.")
-    machine_kcal: int | None = Field(
+    avg_hr: Whole | None = Field(default=None, description="A cardio_entry: average heart rate in bpm, 30 to 240.")
+    machine_kcal: Whole | None = Field(
         default=None, description="A cardio_entry: the calories the machine or watch showed, 1 to 5,000.")
 
 

@@ -141,7 +141,8 @@ def test_ranges(user, field, bad):
 
 
 def test_minutes_keep_one_decimal_and_other_checks(user):
-    assert move(user, "Elliptical", "25.25")["entry"]["minutes"] == round(25.25, 1)
+    # inputs.md D5: kept at its step with halves away from zero (was round(), half to even: 25.2).
+    assert move(user, "Elliptical", "25.25")["entry"]["minutes"] == 25.3
     assert services.log_cardio(user.id, {"exercise": "Elliptical"}, "claude")["error"] == "missing_field"
     assert move(user, notes="a\x00b")["error"] == "invalid_field"
     assert move(user, color="blue")["error"] == "invalid_field"

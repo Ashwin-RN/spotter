@@ -80,7 +80,7 @@ from sqlalchemy.orm import Session
 from app import db, formatting, users
 from app.calllog import KEY_HOURS, REQUEST_ID, VERSION_DAYS
 from app.models import CALLERS, CallLog, EntryVersion, Exercise, LiftSession, LiftSet, User, WriteKey
-from app.rules import as_sent, error, quote, span, to_float
+from app.rules import as_sent, error, keep, quote, span, to_float
 
 log = logging.getLogger("spotter.common")
 
@@ -604,13 +604,18 @@ def sent(value) -> bool:
 
 
 def in_range(value, field: str, lo: float, hi: float, fix: str, low_open: bool = False,
-             quantity: str = "goal_target") -> tuple[float | None, dict | None]:
-    """A finite number from lo to hi (above lo when low_open), 2 dp, or an error carrying `fix`.
-    quantity: how the range is shown in the message (app.formatting)."""
+             quantity: str = "goal_target", places: int = 2) -> tuple[float | None, dict | None]:
+    """A finite number from lo to hi (above lo when low_open), checked as sent, then kept at `places` decimals,
+    halves away from zero (rules.keep), or an error carrying `fix`. quantity: how the range is shown in the
+    message (app.formatting). A low-open range says so: "must be more than 0 and at most 666.67"."""
     number = to_float(value)
     if number is None:
         return None, error("invalid_field", f"{field} '{quote(value)}' is not a number.", fix)
     inside = lo < number <= hi if low_open else lo <= number <= hi
+    if not inside and low_open:
+        shown_lo, shown_hi = (formatting.show(x, quantity, unit=False) for x in (lo, hi))
+        return None, error("invalid_field",
+                           f"{field} {as_sent(value)} must be more than {shown_lo} and at most {shown_hi}.", fix)
     if not inside:
         return None, error("invalid_field", f"{field} {as_sent(value)} is outside {span(lo, hi, quantity)}.", fix)
-    return round(number, 2) + 0.0, None
+    return keep(number, places), None

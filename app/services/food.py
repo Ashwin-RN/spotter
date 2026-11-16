@@ -169,6 +169,13 @@ def _check_entry(s, user_id: int, raw, where: str, default_meal: str,
         if present(wrong) and right in ids:
             errors.append(rules.error("invalid_field", f"{where}: {wrong} does not go with {right}.",
                                       "A saved food takes servings; a USDA food takes grams."))
+    # An amount with no food to measure it by is refused, never dropped (inputs.md, the fix round).
+    for amount, food_id, food in (("servings", "saved_food_id", "a saved food's"), ("grams", "usda_fdc_id",
+                                                                                     "a USDA food's")):
+        if present(amount) and not ids:
+            errors.append(rules.error("invalid_field", f"{where}: {amount} goes only with {food_id}.",
+                                      f"Send {amount} with {food} id, or leave it out and send kcal for the amount "
+                                      "eaten."))
     if errors:
         return None, errors
 

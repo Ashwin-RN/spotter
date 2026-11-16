@@ -2,7 +2,8 @@
 
 set_goal(user_id, data, by)
     A new goal of one of four kinds (KINDS_NOW). Every kind needs target_value and target_date
-    (after today); text is optional, up to 2,000 characters.
+    (after today, and at most 5 years on: rules.goal_latest, else date_too_far); text is optional, up to 2,000
+    characters. Every range is checked on the value as sent, then kept at its step, halves away from zero.
       lift         exercise (a lift name). target_value: an estimated max in kg, above 0 to LIFT_MAX (the
                    estimated max of the heaviest weight the rules allow at 10 reps).
       bodyweight   target_value: kg, 20 to 400.
@@ -11,7 +12,8 @@ set_goal(user_id, data, by)
                    water_ml are refused: they are a day's amount, met or missed each day, not a state to
                    reach by a date.
       cardio_best  exercise (a cardio activity) and distance_km (0.1 to 300, 2 dp). target_value: minutes
-                   for that distance, 1 to 600, 1 dp. A session counts when its distance is at or over
+                   for that distance, 1 to 600, 1 dp, at a speed log_cardio takes (time_limits: 0.1 to
+                   60 km/h), start_value too. A session counts when its distance is at or over
                    the goal's; its time for the goal distance is its pace x the goal distance.
     A weekly sessions or cardio minutes target is a setting (update_settings), not a goal.
 
@@ -91,6 +93,7 @@ Every write here locks the user row first (common.lock_user), then checks the wr
 """
 
 from datetime import date, timedelta
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -207,32 +210,72 @@ def _at(err: dict, field: str) -> dict:
     return {**err, "field": field}
 
 
+def time_limits(distance_km: float | None) -> tuple[float, float]:
+    """The minutes a cardio time goal takes for its distance (inputs.md decision 16): the speeds log_cardio takes,
+    0.1 to 60 km/h, inside 1 to 600 minutes. From max(1, d) to min(600, 600 x d), the low bound rounded up and
+    the high one down to the minutes' step (0.1). No distance: 1 to 600."""
+    lo, hi = TARGETS["cardio_best"]
+    if not distance_km:
+        return lo, hi
+    speed_lo, speed_hi = rules.NUMBERS["speed_kmh"][:2]
+    fastest, slowest = Decimal(repr(distance_km)) * 60 / Decimal(repr(speed_hi)), \
+        Decimal(repr(distance_km)) * 60 / Decimal(repr(speed_lo))
+    step = Decimal("0.1")
+    low = (max(Decimal(lo), fastest) / step).to_integral_value(rounding=ROUND_CEILING) * step
+    high = (min(Decimal(hi), slowest) / step).to_integral_value(rounding=ROUND_FLOOR) * step
+    return float(low) + 0.0, float(high) + 0.0
+
+
+def _time_words(distance_km: float, units=None) -> tuple[str, str]:
+    """(the minutes' range "5 to 600", "for 5 km: a speed from 0.1 to 60 km/h") for a cardio time goal's
+    refusal, the distance and the speed in the person's units."""
+    lo, hi = time_limits(distance_km)
+    distance = formatting.show(distance_km, "km", units=units)
+    speeds = rules.NUMBERS["speed_kmh"][:2]
+    if units is not None and units.distance == "mi":
+        speed = "{} to {} mph".format(*rules.inward(speeds, formatting.MI, "speed"))
+    else:
+        speed = f"{rules.span(*speeds, 'speed')} km/h"
+    return rules.span(lo, hi, "goal_target"), f"for {distance}: a speed from {speed}"
+
+
 def _value(value, field: str, kind: str, measurement_kind: str | None,
-           units=None) -> tuple[float | None, dict | None]:
+           units=None, distance_km: float | None = None) -> tuple[float | None, dict | None]:
     """target_value or start_value, in the goal's unit and range. A refusal carries `field`. units: the call's;
-    a lift or body weight value in lb is kept in kg, and refused in lb with the range moved inward."""
+    a lift or body weight value in lb is kept in kg, and refused in lb with the range moved inward. A cardio
+    time takes the minutes time_limits gives for distance_km, the goal's distance; with none (its own refusal
+    says what to fix), 1 to 600."""
     lo, hi, low_open, whole, places = _limits(kind, measurement_kind)
     unit = unit_for(kind, measurement_kind)
-    limits = rules.span(lo, hi, "goal_target")
+    shown_lo, shown_hi = (formatting.show(x, "goal_target", unit=False) for x in (lo, hi))
     pounds = _lb(kind, units)
     if pounds:
-        unit, limits = "lb", " to ".join(rules.inward((lo, hi), formatting.LB, "weight_target"))
-    span = f"above {limits}" if low_open else limits
+        unit = "lb"
+        shown_lo, shown_hi = rules.inward((lo, hi), formatting.LB, "weight_target")
+    span = f"more than {shown_lo} and at most {shown_hi}" if low_open else f"{shown_lo} to {shown_hi}"
     fix = (f"Give {field} in {unit}, {span}{', a whole number' if whole else ''}, for "
            f"{_what(kind, measurement_kind)}.")
+    timed = kind == "cardio_best" and bool(distance_km)
     if kind == "cardio_best":
         fix = f"Give {field} as the minutes for the goal's distance, {span}, for a cardio_best goal."
+    if timed:
+        lo, hi = time_limits(distance_km)
+        minutes, tail = _time_words(distance_km, units)
+        fix = f"Give {field} as the minutes for the goal's distance, {minutes} {tail}, as log_cardio takes."
     number, err = in_range(rules.converted(value, formatting.LB) if pounds else value, field, lo, hi, fix,
-                           low_open=low_open)
+                           low_open=low_open, places=2 if whole else places)
     if err and pounds:
         err = rules.call_unit(err, field, value, formatting.LB, (lo, hi), "weight_target")
         err = {**err, "fix": fix}
+    if err and timed and " is outside " in err["message"]:
+        err = {**err, "message": f"{field} {rules.as_sent(value)} is outside {minutes} minutes "
+                                 f"{tail.split(':')[0]}."}
     if err:
         return None, _at(err, field)
     if whole and number != int(number):
         return None, rules.error("invalid_field", f"{field} must be a whole number, not {rules.as_sent(value)}.",
                                  fix, field=field)
-    return round(number, places) + 0.0, None
+    return (float(int(number)) if whole else number) + 0.0, None
 
 
 # ---------------------------------------------------------------- reading what the goals need
@@ -491,6 +534,12 @@ def _future_date(value, today: date) -> tuple[date | None, dict | None]:
         return None, rules.error("date_not_in_future", f"target_date {parsed.isoformat()} is not after today "
                                  f"({today.isoformat()}).", f"Give a target date after today. {rules.TODAY_NOTE}",
                                  field="target_date")
+    latest = rules.goal_latest(today)
+    if parsed > latest:  # inputs.md decision 15: at most 5 calendar years on
+        return None, rules.error("date_too_far", f"target_date {parsed.isoformat()} is more than "
+                                 f"{rules.GOAL_YEARS} years after today, {today.isoformat()}.",
+                                 f"Give a target date after today, at most {rules.GOAL_YEARS} years on: "
+                                 f"{latest.isoformat()} at the latest.", field="target_date")
     return parsed, None
 
 
@@ -606,11 +655,12 @@ def _changes_identity(goal: Goal, data: dict) -> str | None:
         return "measurement_kind"
     if data.get("distance_km") not in (None, ""):
         number = rules.to_float(data["distance_km"])
-        if number is None or goal.distance_km is None or round(number, 2) != goal.distance_km:
+        # kept as set_goal keeps it (rules.keep, inputs.md D5), so the distance it was set with is the same one
+        if number is None or goal.distance_km is None or rules.keep(number, 2) != goal.distance_km:
             return "distance_km"
     if data.get("distance_mi") not in (None, ""):
         number = rules.to_float(data["distance_mi"])
-        if number is None or goal.distance_km is None or round(number * formatting.MI, 2) != goal.distance_km:
+        if number is None or goal.distance_km is None or rules.keep(number * formatting.MI, 2) != goal.distance_km:
             return "distance_mi"
     return None
 
@@ -655,17 +705,20 @@ def _start(g, loaded: dict, given, today: date, warnings: list,
         return current, source, None
     if given in (None, ""):
         return None, None, _no_start(g, units)
-    value, err = _value(given, "start_value", g.kind, g.measurement_kind, units)
+    value, err = _value(given, "start_value", g.kind, g.measurement_kind, units, g.distance_km)
     return value, "the start_value given", err
 
 
 def _wrong_way(kind: str, measurement_kind: str | None, direction: str, start: float, target: float,
-               units=None) -> dict | None:
+               units=None, distance_km: float | None = None) -> dict | None:
     """None when the target lies the goal's way from the start. Otherwise an error whose fix names
-    only targets the rules accept. units: the call's; in lb the bounds are moved inward (rules.inward)."""
+    only targets the rules accept. units: the call's; in lb the bounds are moved inward (rules.inward). A cardio
+    time's bounds are those of its distance (time_limits)."""
     if (direction == "up" and target > start) or (direction == "down" and target < start):
         return None
     lo, hi, *_ = _limits(kind, measurement_kind)
+    if kind == "cardio_best" and distance_km:
+        lo, hi = time_limits(distance_km)
     unit = unit_for(kind, measurement_kind)
     side = "above" if direction == "up" else "below"
 
@@ -767,7 +820,8 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
         ranged = kind in KINDS_NOW and (kind != "measurement" or measurement_kind is not None)
         target = target_date = None
         if data.get("target_value") not in (None, "") and ranged:
-            target, err = _value(data["target_value"], "target_value", kind, measurement_kind, said_in)
+            target, err = _value(data["target_value"], "target_value", kind, measurement_kind, said_in,
+                                 goal.distance_km if goal is not None else distance)
             errors += [err] if err else []
         if data.get("target_date") not in (None, ""):
             target_date, err = _future_date(data["target_date"], today)
@@ -782,8 +836,9 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
                     errors.append(rules.error("missing_field", f"A {kind} goal needs {field}.", f"Give {field}{how}",
                                               field=field))
         # cannot_change_kind already says what to do; "nothing to change" beside it would contradict it.
-        if goal is not None and not renamed and status is None and target is None and target_date is None \
-                and text is None:
+        # On what was sent, not on what passed: a refused target_value is its own refusal alone.
+        if goal is not None and not renamed and status is None and data.get("target_value") in (None, "") \
+                and data.get("target_date") in (None, "") and data.get("text") is None:
             errors.append(rules.error("nothing_to_change", "Nothing to change on this goal.",
                                       "Give status (hit, dropped or open), target_value, target_date or text."))
         if errors:
@@ -810,7 +865,7 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
                                    field="target_value")
             else:
                 direction = "down" if target < start else "up"
-            err = _wrong_way(kind, measurement_kind, direction, start, target, said_in)
+            err = _wrong_way(kind, measurement_kind, direction, start, target, said_in, distance)
             if err:
                 return err
             same = select(Goal).where(Goal.user_id == user.id, Goal.status == "open", Goal.kind == kind)
@@ -837,7 +892,8 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
         else:
             loaded = load_numbers(s, user.id, today, [goal])
             if target is not None:
-                err = _wrong_way(goal.kind, goal.measurement_kind, goal.direction, goal.start_value, target, said_in)
+                err = _wrong_way(goal.kind, goal.measurement_kind, goal.direction, goal.start_value, target, said_in,
+                                 goal.distance_km)
                 if err:
                     return err
             if status == "open" and goal.status != "open" and target_date is None and goal.target_date \

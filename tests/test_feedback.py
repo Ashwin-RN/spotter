@@ -63,30 +63,31 @@ IDS_DESCRIPTION = "Ids of the notes to delete for good: 1 to 100. Only the ids t
 OWNER_ONLY = {"error": "not_allowed", "message": "This function is for Spotter's owner.", "fix": "Nothing to retry."}
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
-# What each function published before this work: the SHA-256 of the tool as compact JSON with sorted keys.
+# What each function published before this work: the SHA-256 of the tool as compact JSON with sorted keys. inputs.md
+# moved every one (additionalProperties false on each, and three descriptions): tests/test_inputs.py diffs the two.
 PUBLISHED = {
-    "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",  # first day, and the routine step at the join: setup; units
-    "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
-    "log_lifts": "5d42d7aaf0fe4f936503a529535cc7619afbfeba0d763324e4e6e6cbbbadde32",  # gym logging: adds to a day; units
-    "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",  # units
-    "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",  # units
-    "get_progress": "3a2ee9d44c6ceae92c3717eb9768c0e356caea2861867cc96ca260d3a1e7d0d3",  # units
-    "update_settings": "1053550decae70f255f0edaf894b730c1da9315e2d989ae1e5e2536eee85c879",  # units
-    "get_log": "5f5796e3a4d0089eb3a2aa92f5d5a84e4fa8cb6bb94162e8def01bf5238af3c2",  # units
-    "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
-    "edit_entry": "b84ccadc88110fd59cde09f0bcfafd44c80ba3c55a5b0f9632ac4107ab96c26d",  # units
-    "restore_entry": "ea098328552576986f8c0a410757d424478eb0566b104e2eb76d3de4b24cf8a9",  # routines: kind routine
-    "delete_entry": "ed03ec3aad90a1ffa9f8b00175bf5a7c1b7d18c92ce20d7032ee43fbf8fd749f",  # routines: kind routine; units
-    "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",
-    "log_food": "6ffc9850d580f531c6cf3bd6d961b186936aa00b5bf3b9af19198a3a8e7acd56",
-    "save_food": "0a8e5b4526af8bc103af661c711ad6719ab8588579dc64ceb4b6b4ed6cb218cc",
-    "log_cardio": "da89a42e48c3285acff7665f4b3e7828b184b03090db16f0a1c1f371332407be",  # units
-    "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
-    "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",  # units
-    "import_entries": "8e1bce9821e8547d62c9768c5b05b9a7c686c7437e2f34e80d8275a4a82d5ffd",
-    "save_routine": "3f4bcc4e8295e09588cd09e099aed979b38f03b5ee6bc89ecb484369d41024ce",  # routines: new; units
-    "get_routines": "c18c1a2dfb39ff16ab62337b575bfe87187a3ea915c6fa422f8378ed0fc9adcf",  # routines: new, R18's words; units
-    "owner_calls": "79ec889297b107ba7f25781a2ace0a058b712960510d994d36788485da57d787",
+    "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
+    "list_exercises": "3066492e2648709510f2e97d2928830a5128b86e32eb415ed51cbcff1d98f0ee",  # inputs
+    "log_lifts": "7ad201d9321cf8011b00e7c456195f043cbc7e54138d01125f530a68986b2163",  # gym logging: adds to a day; units; inputs
+    "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
+    "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs
+    "get_progress": "afd01739efd47ad94fd7e4d4087a560999df7870fad3ca098acc756f48a88024",  # units; inputs
+    "update_settings": "cdd9e2dc2bb0ce2a9e35d4d6cfa0e81e71ffec9bbfcb16a4945d6d858ad8ea64",  # units; inputs
+    "get_log": "47061b96ee8c0d4fe0fa278b5a15444bccf0a9d6b39e69500645adcb9950d9a9",  # units; inputs
+    "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
+    "edit_entry": "289e74116d1611d6e92051efae09d6fac6a3e2e2609249a6e48a8fd952343d83",  # units; inputs
+    "restore_entry": "1fc5aa945a46c50c8203a702b4821fe42c6d39e35d3db0f27552c2099043c224",  # routines: kind routine; inputs
+    "delete_entry": "1ec50c125535b54a79d67d619c802d49ddaf0aef69a88f53ff90ae66168d1282",  # routines: kind routine; units; inputs
+    "find_food": "9ae7214dc6c6104ae9ae93325d6ed9b87c5296773febd70d07dd8a388ae56fde",  # inputs
+    "log_food": "84b1fc5683c0ab2b74199eefd4440c17525455025b98cceb5908e1580ade7371",  # inputs
+    "save_food": "51fa9c1edce31ca0afd9715af26aaef77dda38aef084160d805b8bfb8f0710d9",  # inputs
+    "log_cardio": "9e8a9435e365e49a651e6eccd56553f842ced35873ffa3111bfec3aec04cdcf9",  # units; inputs
+    "get_trends": "76a12552c23e443d455dd77b910788c66030f05c3f4ea5b3df0d46d69845b30f",  # inputs
+    "get_goals": "6d71cb0446594ce9d51a5eaa6719394018946cfa273a49d49a4bf559cc13a391",  # units; inputs
+    "import_entries": "c57c39754d9f49416f75e9542a02be58d59ad0dcc51fc952085012e80be84105",  # inputs
+    "save_routine": "33eb83b6dc12f454d43758b61a92aebc19ea31ee3dfbc3a3061a76b07d3eff2f",  # routines: new; units; inputs
+    "get_routines": "2f674c996eb19e408741b7a6f6be84fc38f4b17913046eb3c7231e739a26e18c",  # routines: new, R18's words; units; inputs
+    "owner_calls": "171f8c5c586e68e6885bc0d9014d5a2b7ef4ba4bafa217ee898c8338ffaed810",  # inputs
 }
 INSTRUCTIONS_AS_BUILT = "d1ef2d4d6491bea09aeda32d4106a5bd5a9fa6fb4c761f70e9ba7d0059c86704"  # switch decision 18
 
@@ -707,7 +708,8 @@ def test_the_delete_takes_1_and_100_ids_and_the_schema_refuses_0_and_101(owner_c
         answer = call(owner_client, sign_for(OWNER), "owner_delete_feedback", {"ids": refused})
         assert answer["isError"] is True
     assert call(owner_client, sign_for(OWNER), "owner_delete_feedback", {})["isError"] is True  # ids is needed
-    assert [n.id for n in notes()] == [left] and len(rows()) == before  # the schema refused: the service never ran
+    # The schema refused: the service never ran. inputs.md D12: each refusal writes its call's row (was: none).
+    assert [n.id for n in notes()] == [left] and len(rows()) == before + 3
 
 
 def test_the_owner_s_own_switch_at_read_only_does_not_gate_the_delete(owner_client, make_user):
@@ -716,13 +718,16 @@ def test_the_owner_s_own_switch_at_read_only_does_not_gate_the_delete(owner_clie
     assert owner_delete(owner_client, [note])["deleted"] == [note] and notes() == []
 
 
-def test_a_delete_an_old_client_sends_to_owner_feedback_is_dropped_and_deletes_nothing(owner_client, make_user):
+def test_a_delete_an_old_client_sends_to_owner_feedback_is_refused_and_deletes_nothing(owner_client, make_user):
+    """inputs.md D1: an argument the schema does not name is refused, never dropped (was: dropped, and the read
+    answered). Either way nothing is deleted."""
     [note] = fill(make_user().id, 1)
-    out = owner_read(owner_client, delete=[note])  # the library drops an argument the schema does not name
-    assert list(out) == ["total", "how", "notes"] and [n["id"] for n in out["notes"]] == [note]
+    out = call(owner_client, sign_for(OWNER), "owner_feedback", {"delete": [note]})
+    assert out["isError"] is True
+    assert out["structuredContent"]["message"] == "'delete' is not a field of owner_feedback."
     assert [n.id for n in notes()] == [note]
     row = rows()[-1]
-    assert (row.function, row.outcome, row.notes, row.tried) == ("owner_feedback", "read", None, "other[1]")
+    assert (row.function, row.outcome, row.notes, row.tried) == ("owner_feedback", "refused", None, "other[1]")
 
 
 def test_the_trace_a_delete_that_deleted_reads_written_one_that_deleted_nothing_and_a_read_read_and_no_id_shows(

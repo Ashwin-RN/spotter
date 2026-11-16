@@ -103,6 +103,8 @@ def test_every_function_writes_its_own_row(http):
 
 # ---------------------------------------------------------------- the marker
 
+LATER = (db.utcnow().date() + timedelta(days=365)).isoformat()  # a goal's date: inputs.md D15. Was 2099-01-01
+
 # Every string argument of every function carries the marker; the rest are valid values. The first call of
 # each function fails at the service (the marker is not a date, a kind or an exercise); the second, where
 # one exists, succeeds and stores the marker as the person's own text.
@@ -116,12 +118,12 @@ MARKED_CALLS = [
                   "target_date": MARKER, "text": MARKER, "start_value": 100, "status": MARKER,
                   "weight_unit": MARKER}),  # units.md R12
     # Each new kind, with its own string arguments marked: refused (not a measurement kind, not an activity).
-    ("set_goal", {"kind": "measurement", "measurement_kind": MARKER, "target_value": 80, "target_date": "2099-01-01",
+    ("set_goal", {"kind": "measurement", "measurement_kind": MARKER, "target_value": 80, "target_date": LATER,
                   "text": MARKER, "start_value": 88}),
     ("set_goal", {"kind": "cardio_best", "exercise": MARKER, "distance_km": 5, "target_value": 28,
-                  "target_date": "2099-01-01", "text": MARKER, "start_value": 31}),
+                  "target_date": LATER, "text": MARKER, "start_value": 31}),
     ("set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150, "text": MARKER,
-                  "target_date": "2099-01-01"}),
+                  "target_date": LATER}),
     ("get_progress", {"exercise": MARKER}),
     ("update_settings", {"time_zone": MARKER, "weight_unit": MARKER, "distance_unit": MARKER}),  # units.md
     ("get_log", {"date": MARKER, "days": 3}),

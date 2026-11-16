@@ -939,7 +939,8 @@ def test_the_page_after_every_write_is_calm(client):
     assert write("unchanged targets", "/settings/targets", calorie_target_kcal="2000") == "/settings?saved=unchanged"
     write("the switch", "/settings/claude-can", claude_can="log")  # switch decision 1: was read
     write("the zone", "/settings", time_zone="Asia/Kolkata")
-    write("a goal", "/goals", kind="bodyweight", target_value="70", target_date="2099-01-01")
+    later = (today_of(only_user()) + timedelta(days=365)).isoformat()  # inputs.md D15: 5 years at most. Was 2099
+    write("a goal", "/goals", kind="bodyweight", target_value="70", target_date=later)
     goal = services.get_goals(user.id)["goals"][0]["goal_id"]
     write("drop a goal", f"/goals/{goal}/status", status="dropped")
 

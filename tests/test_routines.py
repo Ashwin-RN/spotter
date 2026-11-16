@@ -38,6 +38,7 @@ from .conftest import TEST_DIR, alembic_config, lock_sql, sign
 from .test_calllog import rows
 from .test_evals import _lift_case, _lift_server, call as recorded
 from .test_feedback import compact
+from .test_inputs import without_inputs
 from .test_idempotency import K, keys, writer  # noqa: F401 - writer is a fixture
 from .test_mcp import call, failed, ok, set_switch, tool_list
 from .test_page_rules import Seen, built_findings, follow, frame_findings, page_rule_findings, titled_card_findings
@@ -838,7 +839,8 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     tools = tool_list(client, sign_for(OWNER))
     names = [t["name"] for t in tools]
     assert names == [*list(BEFORE)[:20], "save_routine", "get_routines", *list(BEFORE)[20:]]
-    hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tools}
+    # inputs.md then moved every one: its changes are taken out here (tests/test_inputs.py diffs the two).
+    hashes = {t["name"]: hashlib.sha256(compact(without_inputs(t)).encode()).hexdigest() for t in tools}
     # Routines moved delete_entry, restore_entry and whoami; units then moved its thirteen (units.md), of these.
     units = {"whoami", "log_lifts", "log_bodyweight", "log_cardio", "edit_entry", "set_goal", "update_settings",
              "get_progress", "get_goals", "get_log", "delete_entry"}
@@ -870,9 +872,11 @@ def test_a_save_and_a_read_through_mcp_pass_their_models_and_the_trace_writes_li
     assert "lifts" in KNOWN_NAMES and set(RoutineLiftIn.model_fields) <= KNOWN_NAMES
     assert TABLES == ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food",
                       "routine", "goal")
-    marked = ok(http, token, "save_routine", {"name": "Pull day", "lifts": [{**lift(), "colour": "red"}]})
-    # A field the model does not name is dropped before the service, and counted, never named, in tried.
-    assert marked["created"] is True and rows()[-1].tried == "lifts[1]{exercise,reps,sets} name other[1]"
+    marked = failed(http, token, "save_routine", {"name": "Pull day", "lifts": [{**lift(), "colour": "red"}]})
+    # A field the model does not name is refused before the service, in R5's words (inputs.md D1 and D6: was
+    # dropped), and counted, never named, in tried.
+    assert marked["message"] == "Lift 1: 'colour' is not a field of a lift."
+    assert rows()[-1].tried == "lifts[1]{exercise,reps,sets} name other[1]" and rows()[-1].outcome == "refused"
 
 
 def test_get_routines_is_counted_by_the_read_limit(writer):
@@ -1270,9 +1274,10 @@ SAID = {"name": "push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "re
 def test_the_three_cases_load_last_and_the_tables_and_seed_are_known():
     """Setup's quiet case, then these three, close the file."""
     cases = judge.load_cases()
-    assert [c["id"] for c in cases[-9:-6]] == ["routine_saved", "routine_logged", "routine_changed"]  # units' six next
-    assert cases[-10]["id"] == "setup_stays_quiet"
-    assert all(judge.case_problems(c) == [] for c in cases[-9:-6])
+    # units' six next, then inputs.md's two (its decision 19)
+    assert [c["id"] for c in cases[-11:-8]] == ["routine_saved", "routine_logged", "routine_changed"]
+    assert cases[-12]["id"] == "setup_stays_quiet"
+    assert all(judge.case_problems(c) == [] for c in cases[-11:-8])
     assert "save_routine" in judge.SEED_SERVICES and "routine" in judge.DB_TABLES and "routine" in RUN_TABLES
     assert judge.seed_service("save_routine") is services.save_routine
     assert "lift_count" in judge._rows_text([{"lift_count": 3}])

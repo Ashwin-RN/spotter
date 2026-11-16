@@ -167,8 +167,9 @@ def test_bs_entries_are_not_found_by_as_service_reads_either(http, bob, kind):
 
 def test_a_new_goal_for_a_starts_from_as_numbers_not_bs(http, bob):
     t = token(A)
+    later = (date.fromisoformat(ok(http, t, "whoami")["today"]) + timedelta(days=365)).isoformat()  # D15: was 2099
     result = call(http, t, "set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150,
-                                        "target_date": "2099-01-01"})
+                                        "target_date": later})
     assert result["isError"] is True and result["structuredContent"]["error"] == "missing_field"
     assert "start_value" in result["structuredContent"]["fix"]  # A has no squat to start from; B's is not used
 

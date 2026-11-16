@@ -341,23 +341,22 @@ def test_an_undo_sent_twice_runs_once_at_any_age_and_its_second_row_reads_duplic
     assert [v.why for v in versions()] == ["edit", "undo", "edit", "undo"] and rows()[-1].outcome == "written"
 
 
-def test_restore_entry_takes_no_allow_repeat_and_one_sent_anyway_is_dropped(writer):
-    """The published schema names no allow_repeat. The MCP library drops an argument the schema does not name and
-    runs the call as if it were not sent: it is not refused. So an undo sent with one undoes, and sent again it
-    changes nothing, as any undo sent twice. The call's row still says the name was sent. The service takes none."""
+def test_restore_entry_takes_no_allow_repeat_and_one_sent_anyway_is_refused(writer):
+    """The published schema names no allow_repeat. Was: the MCP library dropped it and the undo ran. inputs.md D1: an
+    argument the schema does not name is refused, and nothing is undone. The call's row still says the name was sent.
+    The service takes none."""
     http, token, account = writer
     [tool] = [t for t in tool_list(http, sign()) if t["name"] == "restore_entry"]
     assert "allow_repeat" not in tool["inputSchema"]["properties"]
     entry = make("bodyweight", account)
     edit("bodyweight", account, entry)  # 80 to 81.5
     sent = {"kind": "bodyweight", "entry_id": entry, "undo_edit": True, "allow_repeat": True}
-    first, second = ok(http, token, "restore_entry", sent), ok(http, token, "restore_entry", sent)
-    assert (flags(first), first["entry"]["kg"]) == ((True, False), 80)
-    assert (flags(second), second["entry"]["kg"]) == ((False, True), 80)
-    assert [(r.outcome, r.tried) for r in rows()[-2:]] == [
-        ("written", "allow_repeat entry_id kind=bodyweight undo_edit"),
-        ("duplicate", "allow_repeat entry_id kind=bodyweight undo_edit")]
-    assert stored("bodyweight", entry)["kg"] == 80 and [v.why for v in versions()] == ["edit", "undo"]
+    refused = call(http, token, "restore_entry", sent)
+    assert refused["isError"] is True
+    assert refused["structuredContent"]["message"] == "'allow_repeat' is not a field of restore_entry."
+    assert [(r.outcome, r.tried) for r in rows()[-1:]] == [
+        ("refused", "allow_repeat entry_id kind=bodyweight undo_edit")]
+    assert stored("bodyweight", entry)["kg"] == 81.5 and [v.why for v in versions()] == ["edit"]
     with pytest.raises(TypeError):
         services.restore_entry(account, "bodyweight", entry, "claude", undo_edit=True, allow_repeat=True)
 

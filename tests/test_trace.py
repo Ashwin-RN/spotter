@@ -175,7 +175,8 @@ def test_what_each_call_tried_is_names_and_counts_and_a_web_write_reads_like_an_
     weigh_in = through_mcp("weigh-in", "log_bodyweight", {"kg": 80})["id"]
     through_mcp("edit", "edit_entry", {"kind": "bodyweight", "entry_id": weigh_in, "kg": 81})
     through_mcp("measurement", "log_measurement", {"kind": "waist", "value": 84})
-    through_mcp("goal", "set_goal", {"kind": "bodyweight", "target_value": 75, "target_date": "2099-01-31"})
+    later = (db.utcnow().date() + timedelta(days=365)).isoformat()  # inputs.md D15: at most 5 years. Was 2099-01-31
+    through_mcp("goal", "set_goal", {"kind": "bodyweight", "target_value": 75, "target_date": later})
     through_mcp("import", "import_entries", {"rows": [
         {"kind": "bodyweight", "date": "2026-11-01", "weight": 176},
         {"kind": "bodyweight", "date": "2026-11-02", "weight": 175, "notes": "x"},
@@ -529,7 +530,11 @@ def test_the_owner_reads_lines_a_person_s_calls_and_one_request(make_client, mak
     assert [line["account_id"] for line in read(failed_only=True)["accounts"]] == [asha.id]
     for out_of_range in ({"hours": 0}, {"hours": 2161}, {"limit": 0}, {"limit": 201}):
         assert tools_call(client, owner, "owner_calls", out_of_range)[1]["isError"] is True
-    assert last().function == "owner_calls" and last().tried == "failed_only" and last().caller == "claude"
+    # inputs.md D12: each refused call writes its row too (was: none, so the last row was the failed_only read).
+    assert [(r.function, r.tried, r.outcome) for r in rows()[-5:]] == [
+        ("owner_calls", "failed_only", "read"), *[("owner_calls", name, "refused") for name in ("hours", "hours",
+                                                                                                  "limit", "limit")]]
+    assert last().caller == "claude"
 
 
 def test_the_owner_s_own_running_call_is_in_neither_the_failed_list_nor_the_failed_count(make_client, make_user):

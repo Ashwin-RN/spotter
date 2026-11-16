@@ -32,6 +32,7 @@ from . import text_rules as tr
 from .conftest import TEST_DIR, alembic_config, lock_sql, sign
 from .test_calllog import MARKER, rows
 from .test_feedback import PUBLISHED, compact
+from .test_inputs import without_inputs
 from .test_idempotency import K, keys, writer  # noqa: F401 - writer is a fixture
 from .test_mcp import CAN_AND_CANT, call, failed, model_texts, ok, one_user, set_switch, squat, tool_list
 from .test_trace import OWNER, sign_for
@@ -581,7 +582,9 @@ def test_only_whoami_and_delete_entry_differ_in_the_published_list_and_owner_fee
     tools = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tool_list(client, sign_for(OWNER))}
     moved = {name for name, sha in PUBLISHED.items() if tools[name] != sha}
     assert moved == set()  # PUBLISHED holds the two new hashes: tests/test_feedback.py
-    assert tools["owner_feedback"] == OWNER_FEEDBACK_BEFORE
+    # inputs.md moved every one, owner_feedback too: with its changes taken out, owner_feedback is as before.
+    [held] = [t for t in tool_list(client, sign_for(OWNER)) if t["name"] == "owner_feedback"]
+    assert hashlib.sha256(compact(without_inputs(held)).encode()).hexdigest() == OWNER_FEEDBACK_BEFORE
 
 
 def test_every_new_text_keeps_the_text_rules():

@@ -376,8 +376,10 @@ def day_after(days: int) -> str:
 
 
 def filled(data: dict) -> dict:
-    """A form to post, its BY a day 60 after the person's own today and its TODAY their today."""
-    days = {"BY": day_after(60), "TODAY": day_after(0)}
+    """A form to post, its BY a day 60 after the person's own today, its TODAY their today, and its FAR the day after
+    the latest a goal takes (inputs.md D15)."""
+    far = (rules.goal_latest(today_of(only_user())) + timedelta(days=1)).isoformat()
+    days = {"BY": day_after(60), "TODAY": day_after(0), "FAR": far}
     return {k: days.get(v, v) for k, v in data.items()}
 
 
@@ -392,7 +394,8 @@ KIND_LINE = "Choose a kind of goal above: Body weight, Lift, Cardio time or Meas
 # The wrong-way lines (lane B's rewording, rev_b14 M1): true with the start inside its range and at its end.
 WRONG_WAY = {"lift": "A lift goal aims above your estimated max now, and this target is not above it.",
              "cardio_best": "A cardio time goal aims below your time now, and this target is not below it."}
-LIFT_TOP, TIME_LEAST = goal_rules.TARGETS["lift"][1], goal_rules.TARGETS["cardio_best"][0]  # set_goal's own ends
+# set_goal's own ends: a 5 km time's least is 5 minutes, 60 km/h (inputs.md D16; was TARGETS' 1, any distance)
+LIFT_TOP, TIME_LEAST = goal_rules.TARGETS["lift"][1], goal_rules.time_limits(5)[0]
 DAILY_LINE = "Choose a measurement from the list. Steps, sleep and water are daily amounts, not goals to reach by a date."
 ERROR_ROWS = [
     ("kind missing", {"target_value": "75", "target_date": "BY"}, ("missing_field", "kind"), "bodyweight", "top",
@@ -444,7 +447,7 @@ ERROR_ROWS = [
     ("lift not a number", {**FORM_LIFT, "target_value": "lots"}, ("invalid_field", "target_value"), "lift",
      "target_value", "Give the estimated max you aim for in kg, more than 0 and at most 666.67."),
     ("cardio out of range", {**FORM_RUN, "target_value": "700"}, ("invalid_field", "target_value"), "cardio_best",
-     "target_value", "Give the time you aim for in minutes, from 1 to 600."),
+     "target_value", "Give the time you aim for in minutes, from 5 to 600."),  # inputs.md D16: 5 km
     ("waist out of range", {**FORM_WAIST, "target_value": "20"}, ("invalid_field", "target_value"), "measurement",
      "target_value", "Give a target for your waist in cm, from 30 to 300."),
     ("heart rate not whole", {**FORM_WAIST, "measurement_kind": "resting_hr", "target_value": "52.5"},
@@ -458,7 +461,7 @@ ERROR_ROWS = [
     ("cardio slower than the start", {**FORM_RUN, "target_value": "35", "start_value": "30"},
      ("wrong_direction", "target_value"), "cardio_best", "target_value", WRONG_WAY["cardio_best"]),
     # The start at the bottom of a cardio time's range: no faster time can be set, and the line asks for none.
-    ("cardio at the bottom of its range", {**FORM_RUN, "target_value": "5", "start_value": str(TIME_LEAST)},
+    ("cardio at the bottom of its range", {**FORM_RUN, "target_value": str(TIME_LEAST), "start_value": str(TIME_LEAST)},
      ("wrong_direction", "target_value"), "cardio_best", "target_value", WRONG_WAY["cardio_best"]),
     ("weight at the start", {**FORM_WEIGHT, "target_value": "80", "start_value": "80"}, ("target_is_start", "target_value"),
      "bodyweight", "target_value", "That target is where you are now: give one above or below it."),
@@ -470,6 +473,8 @@ ERROR_ROWS = [
      "That is not a day: choose one after today."),
     ("today", {**FORM_RUN, "target_date": "TODAY"}, ("date_not_in_future", "target_date"), "cardio_best", "target_date",
      "Choose a day after today."),
+    ("too far", {**FORM_WEIGHT, "target_date": "FAR"}, ("date_too_far", "target_date"), "bodyweight", "target_date",
+     "Choose a day at most 5 years from today."),  # inputs.md D15
     ("weight, nothing to start from", FORM_WEIGHT, ("missing_field", "start_value"), "bodyweight", "start_value",
      "Nothing is logged to start from yet: give your weight now, or log a weigh-in first."),
     ("lift, nothing to start from", FORM_LIFT, ("missing_field", "start_value"), "lift", "start_value",
@@ -484,7 +489,7 @@ ERROR_ROWS = [
     ("lift start out of range", {**FORM_LIFT, "start_value": "0"}, ("invalid_field", "start_value"), "lift",
      "start_value", "Give your estimated max now in kg, more than 0 and at most 666.67."),
     ("cardio start out of range", {**FORM_RUN, "start_value": "0.5"}, ("invalid_field", "start_value"), "cardio_best",
-     "start_value", "Give your time now in minutes, from 1 to 600."),
+     "start_value", "Give your time now in minutes, from 5 to 600."),  # inputs.md D16: 5 km
     ("arm start out of range", {**FORM_WAIST, "measurement_kind": "arm", "target_value": "38", "start_value": "5"},
      ("invalid_field", "start_value"), "measurement", "start_value",
      "Give your arm measurement now, in cm, from 10 to 100."),
@@ -661,6 +666,7 @@ SERVICE_REFUSALS = {
     ("_value", "invalid_field", "start_value"): [("invalid_field", "start_value")],
     ("_future_date", "invalid_date", "target_date"): [("invalid_date", "target_date")],
     ("_future_date", "date_not_in_future", "target_date"): [("date_not_in_future", "target_date")],
+    ("_future_date", "date_too_far", "target_date"): [("date_too_far", "target_date")],  # inputs.md D15
     ("_kind_error", "invalid_field", "kind"): [("invalid_field", "kind")],
     ("_kind_error", "missing_field", "kind"): [("missing_field", "kind")],
     ("_measurement_kind", "missing_field", "measurement_kind"): [("missing_field", "measurement_kind")],
@@ -993,7 +999,7 @@ def test_cardio_times_where_you_are_now_has_the_targets_hint_tied_to_it_with_its
     """Cardio time's start field carries the target's hint (lane B's ruling, A4), tied to its input, and with an
     error under it both are tied. No other kind's start field has a hint."""
     form = form_parts(post(signed, "/goals", **filled({**FORM_RUN, "start_value": "0.5"})).text)
-    assert form["errors"]["start_value"] == "Give your time now in minutes, from 1 to 600."
+    assert form["errors"]["start_value"] == "Give your time now in minutes, from 5 to 600."  # inputs.md D16: 5 km
     assert form["described"]["start_value"] == "goal-start-error goal-start-hint"
     assert form["hints"] == {"goal-start-hint": HINT, "goal-target-hint": HINT} and form["invalid"] == {"start_value"}
     form = form_parts(post(signed, "/goals", **filled({**FORM_RUN, "start_value": "30", "target_value": "lots"})).text)
@@ -1238,7 +1244,7 @@ def test_drop_then_reopen_a_real_goal(signed):
 def test_someone_elses_goal_is_a_404_and_untouched(signed, make_user):
     other = make_user()
     theirs = services.set_goal(other.id, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
-                                          "target_date": "2099-01-01"}, "claude")
+                                          "target_date": (today_of(other) + timedelta(days=365)).isoformat()}, "claude")
     for path in (f"/goals/{theirs['id']}/status", "/goals/abc/status", "/goals/99999/status"):
         r = post(signed, path, status="hit")
         assert r.status_code == 404 and "There is nothing here." in r.text
@@ -1248,7 +1254,7 @@ def test_someone_elses_goal_is_a_404_and_untouched(signed, make_user):
 def test_a_bad_status_is_refused_plainly(signed):
     uid = only_user().id
     made = services.set_goal(uid, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
-                                   "target_date": "2099-01-01"}, "claude")
+                                   "target_date": day_after(365)}, "claude")  # inputs.md D15: was 2099-01-01
     r = post(signed, f"/goals/{made['id']}/status", status="won")
     assert r.status_code == 400 and "That goal was not changed." in r.text and "GOAL_STATUSES" not in r.text
     assert [g.status for g in rows(Goal, uid)] == ["open"]
@@ -2346,7 +2352,7 @@ def test_another_persons_goal_is_never_read_as_unchanged(signed, make_user):
     me = only_user().id
     other = make_user()
     theirs = services.set_goal(other.id, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
-                                          "target_date": "2099-01-01"}, "claude")["id"]
+                                          "target_date": (today_of(other) + timedelta(days=365)).isoformat()}, "claude")["id"]
     for status in ("open", "dropped"):
         r = post(signed, f"/goals/{theirs}/status", status=status)
         assert r.status_code == 404 and "There is nothing here." in r.text, status

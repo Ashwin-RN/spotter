@@ -268,6 +268,7 @@ rest is in `import_entries`' own description:
 | A timestamp with a non-zero offset, such as 2026-03-01T23:30:00+05:30 | Its own date as written: 1 March |
 | A timestamp in UTC, ending Z or +00:00 | Turned into the person's time zone, then its date |
 | A timestamp with no offset | Refused |
+| Any other form of a date, such as 20261116 or 2026-W01-1 | Refused |
 
 Then the usual rule: never after today, at most 2 years back. An import needs the person's time zone set.
 
@@ -377,9 +378,18 @@ Each answer holds with the same time zone set at both runs. The last row is the 
 - Claude sets the time zone with `update_settings`, the first time `whoami` carries `time_zone_note`,
   before logging anything. It uses the person's zone if it knows it, and otherwise asks once which city
   they are in. The zone is an IANA name such as Asia/Kolkata; an abbreviation or an offset is refused.
-- No entry can be dated after today, or more than 2 years back.
+- A date is sent as YYYY-MM-DD. No entry can be dated after today, or more than 2 years back. A goal's
+  target date is after today, and at most 5 years on.
 - Changing the time zone changes no entry: each keeps the date it was logged with. One that is then
   dated after today still shows, and counts as today's in every number above.
+
+## What a call can send
+
+- **Only the fields a function lists.** Any other field is refused with `invalid_field`, and nothing is
+  written. Its fix lists the fields the function takes, and names the nearest one when there is one.
+- **Numbers as numbers.** true and false are never a number. Text that holds a plain number, such as
+  "80", is read as that number. Other text, such as 1_0, 8e1 or digits of another script, is refused.
+- **A refused call writes nothing.** Its fix says what to send instead.
 
 ## Feedback
 

@@ -611,17 +611,18 @@ def test_log_lifts_twice_adds_to_the_session_and_new_session_logs_another(http):
 
 
 @pytest.mark.parametrize("name, arguments, field", [
-    ("log_bodyweight", {"kg": "heavy"}, "kg"),
-    ("log_lifts", {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": "five"}]}, "sets.0.reps"),
-    ("log_lifts", {"sets": "not a list"}, "sets"),
-    ("set_goal", {"goal_id": "twelve", "status": "dropped"}, "goal_id"),
-    ("log_lifts", {"sets": squat(100), "allow_repeat": "perhaps"}, "allow_repeat"),
+    ("log_bodyweight", {"kg": "heavy"}, "kg must be a number, not 'heavy'."),
+    ("log_lifts", {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": "five"}]},
+     "Set 1: reps must be a whole number, not 'five'."),
+    ("log_lifts", {"sets": "not a list"}, "sets must be a list, not 'not a list'."),
+    ("set_goal", {"goal_id": "twelve", "status": "dropped"}, "goal_id must be a whole number, not 'twelve'."),
+    ("log_lifts", {"sets": squat(100), "allow_repeat": "perhaps"}, "allow_repeat must be true or false, not 'perhaps'."),
 ], ids=["kg as text", "reps as text", "sets not a list", "goal_id as text", "allow_repeat not a bool"])
 def test_a_wrong_typed_argument_is_a_tool_error_naming_the_field(http, name, arguments, field):
+    """inputs.md D11: was the library's text, the field's path on a line of its own. Now Spotter's own refusal."""
     result = call(http, sign(), name, arguments)
     assert result["isError"] is True
-    text = result["content"][0]["text"]
-    assert re.search(rf"^{re.escape(field)}$", text, re.MULTILINE), text
+    assert (result["structuredContent"]["error"], result["structuredContent"]["message"]) == ("invalid_field", field)
     assert sessions_logged() == 0
 
 
@@ -1004,9 +1005,15 @@ def test_writes_through_mcp_are_stored_as_by_claude(http):
     # A goal stores no author column; the service is told who sets it, which the spy test above checks.
 
 
+def a_year_on(http, token: str) -> str:
+    """A goal's target date one year after the person's today (inputs.md D15: at most 5 years on). Was 2099-01-01."""
+    return (date.fromisoformat(whoami(http, token)["today"]) + timedelta(days=365)).isoformat()
+
+
 def test_set_goal_passes_start_value_for_a_lift_with_nothing_logged(http):
-    goal = ok(http, sign(), "set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150,
-                                         "target_date": "2099-01-01", "start_value": 100})
+    token = sign()
+    goal = ok(http, token, "set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150,
+                                        "target_date": a_year_on(http, token), "start_value": 100})
     assert goal["goal"]["start_value"] == 100 and goal["warnings"] == []
 
 
@@ -1176,14 +1183,16 @@ def test_the_permission_switch_cannot_be_set_through_update_settings(http, monke
         "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
         "add_back_exercise_kcal", "weight_unit", "distance_unit", "key"}  # units.md decision 3
     assert not any("claude_can" in t["inputSchema"].get("properties", {}) for t in tool_list(http, sign()))
-    # And in practice: an extra claude_can is dropped before the service; the stored switch is unchanged.
+    # And in practice: an extra claude_can is refused before the service (inputs.md D1: was dropped); the stored
+    # switch is unchanged.
     token = sign()
     whoami(http, token)
-    ok(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log"})  # switch: the default
+    refused = failed(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log"})
+    assert (refused["error"], refused["message"]) == ("invalid_field", "'claude_can' is not a field of update_settings.")
     assert one_user().claude_can == "log_delete" and whoami(http, token)["claude_can"] == "log_delete"  # is log_delete
     received = spy_on_services(monkeypatch)
     failed(http, token, "update_settings", {"time_zone": "Europe/London", "claude_can": "log"})
-    assert received["update_settings"][0][1] == {"time_zone": "Europe/London"}
+    assert "update_settings" not in received  # the service is never called
 
 
 def test_one_persons_time_zone_never_changes_anothers(http):
@@ -1448,9 +1457,12 @@ def test_a_source_sent_by_the_caller_never_reaches_the_service(http, monkeypatch
     token = sign()
     whoami(http, token)
     received = spy_on_services(monkeypatch)
-    failed(http, token, "log_food", {"entries": [{"description": "Dal", "kcal": 180, "source": "usda"}],
-                                     "source": "you_said"})
-    assert received["log_food"][0][1] == {"entries": [{"description": "Dal", "kcal": 180.0}]}
+    refused = failed(http, token, "log_food", {"entries": [{"description": "Dal", "kcal": 180, "source": "usda"}],
+                                               "source": "you_said"})
+    # inputs.md D1: refused, both of them, where they were dropped before; the service is never called.
+    assert [p["message"] for p in refused["errors"]] == ["'source' is not a field of log_food.",
+                                                         "Entry 1: 'source' is not a field of a food entry."]
+    assert "log_food" not in received
 
 
 def food_tags(result: dict) -> list[tuple[str, float, bool]]:
@@ -2211,7 +2223,7 @@ def test_set_goal_refusals_carry_fixes_that_work(http):
 def test_the_new_reads_are_the_services_own_dicts(http):
     token = sign()
     ok(http, token, "log_bodyweight", {"kg": 80})
-    ok(http, token, "set_goal", {"kind": "bodyweight", "target_value": 75, "target_date": "2099-01-01"})
+    ok(http, token, "set_goal", {"kind": "bodyweight", "target_value": 75, "target_date": a_year_on(http, token)})
     account = one_user().id
     assert ok(http, token, "get_trends") == services.get_trends(account)
     assert ok(http, token, "get_goals") == services.get_goals(account)
@@ -2309,14 +2321,16 @@ def test_who_logged_it_names_import_wherever_a_result_says(http):
                          ids=["'false'", "'no'", "0", "1", "'true'", "'off'", "blank", "null"])
 def test_a_dry_run_that_is_not_a_bool_is_refused_before_the_service_and_writes_nothing(http, value):
     """pydantic's default reads "no", "off" and 0 as false. Strict, the schema refuses each, so a loose value
-    never reaches the service as a bool: no call-log row, nothing written."""
+    never reaches the service as a bool: nothing written. inputs.md D11 and D12: the refusal is Spotter's own, and
+    its call writes one row (was: the library's text, and no row)."""
     token, today = import_person(http)
     row = {"kind": "bodyweight", "date": (today - timedelta(days=3)).isoformat(), "weight": 80}
     result = call(http, token, "import_entries", {"rows": [row], "dry_run": value})
     assert result["isError"] is True
-    text = result["content"][0]["text"]
-    assert re.search(r"^dry_run$", text, re.MULTILINE) and "valid boolean" in text, text
-    assert import_calls() == 0  # the wrapper never ran: the library refused the argument
+    refused = result["structuredContent"]
+    assert refused["error"] == "invalid_field" and refused["message"].startswith("dry_run must be true or false, not ")
+    assert refused["fix"] == "Send dry_run as true or false, or leave it out."
+    assert import_calls() == 1  # the refusal ran through the wrapper: one row, refused at the check
     assert entry_rows() == 0
 
 
@@ -2375,25 +2389,24 @@ def test_a_field_a_row_does_not_take_reaches_the_service_and_fails_its_row(http)
     ("length_units", "length_unit", "in", {"kind": "measurement", "measurement_kind": "waist", "value": 33.5})])
 @pytest.mark.parametrize("dry_run", [None, True, False], ids=["left out", "preview", "real"])
 def test_a_misspelt_unit_argument_ends_in_the_missing_unit_refusal(http, misspelt, unit, value, row, dry_run):
-    """The MCP library drops an argument the function does not name, before the wrapper runs (kept in the fix round
-    on 7e95ee9: the library offers no way for one function to refuse it). Was: a preview in kg, 176 read as 176 kg.
-    Now no unit is assumed, so the dropped unit ends in the service's missing_unit refusal, preview or not."""
+    """Was: the MCP library dropped an argument the function does not name, and the dropped unit ended in the
+    service's missing_unit refusal. inputs.md D1: an unknown key is refused by name, before the service, preview or
+    not, and its fix names the unit's own field (D3, by spelling)."""
     token, today = import_person(http)
     sent = {"rows": [{**row, "date": (today - timedelta(days=3)).isoformat()}], misspelt: value,
             **({} if dry_run is None else {"dry_run": dry_run})}
     refused = failed(http, token, "import_entries", sent)
-    assert refused["error"] == "missing_unit" and refused["missing_units"] == [unit], refused
-    assert refused["message"].startswith(f"{unit} is missing, and 1 row holds ")
-    assert refused["fix"].startswith(f"Send {unit} as the export writes it: ")
-    assert refused["fix"].endswith(" If the export does not say which unit, ask the person. Spotter never assumes a "
-                                   "unit.")  # was: endswith(" Spotter never assumes a unit."), before fix round 3
-    assert entry_rows() == 0 and import_calls() == 1  # the service refused it: one call, one write of the limit
+    assert refused["error"] == "invalid_field", refused
+    assert refused["message"] == f"'{misspelt}' is not a field of import_entries."
+    assert refused["fix"].endswith(f" The nearest field is {unit}.")
+    assert entry_rows() == 0 and import_calls() == 1  # refused at the check: one call, one write of the limit
 
 
 def test_a_row_of_the_wrong_type_is_refused_whole_by_the_schema_and_writes_nothing(http):
-    """Ruled in the fix round on 7e95ee9: a call that does not fit the function's shape is refused whole by the
-    library, before the wrapper. Nothing is written and no call is counted as a write. A row the rules refuse fails
-    alone (test_a_field_a_row_does_not_take_reaches_the_service_and_fails_its_row)."""
+    """Ruled in the fix round on 7e95ee9: a call that does not fit the function's shape is refused whole, before the
+    service. Nothing is written. A row the rules refuse fails alone
+    (test_a_field_a_row_does_not_take_reaches_the_service_and_fails_its_row). inputs.md D11 and D12: the refusal is
+    Spotter's own, naming the row and the set, and its call writes one row (was: the library's text, and no row)."""
     token, today = import_person(http)
     on = (today - timedelta(days=3)).isoformat()
     result = call(http, token, "import_entries", {"rows": [
@@ -2401,9 +2414,8 @@ def test_a_row_of_the_wrong_type_is_refused_whole_by_the_schema_and_writes_nothi
         {"kind": "lift_session", "date": on, "sets": [{"exercise": "Deadlift", "weight": 100, "reps": 2.5}]}],
         "weight_unit": "kg", "dry_run": False})
     assert result["isError"] is True
-    text = result["content"][0]["text"]
-    assert re.search(r"^rows\.1\.sets\.0\.reps$", text, re.MULTILINE) and "valid integer" in text, text
-    assert import_calls() == 0 and entry_rows() == 0
+    assert result["structuredContent"]["message"] == "Row 2, set 1: reps must be a whole number, not 2.5."
+    assert import_calls() == 1 and entry_rows() == 0
 
 
 def test_squat_barbell_gets_only_the_closest_name_the_rule_gives(http):

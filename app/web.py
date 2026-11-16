@@ -279,7 +279,7 @@ FOOD_FIELDS = ("name", "serving_label", "kcal_per_serving", "grams_per_serving")
 # What a page says beside a field the service refused, in its own words: (kind, field) -> text.
 FIELD_HELP = {
     ("food_entry", "description"): "Give a description, up to 200 characters.",
-    ("food_entry", "kcal"): "That kcal was not saved: give a whole number from 0 to 5,000.",
+    ("food_entry", "kcal"): "That kcal was not saved: give a number from 0 to 5,000. It is kept as a whole number.",
     ("food_entry", "meal"): "Choose breakfast, lunch, dinner or snack.",
     ("cardio_entry", "exercise"): "Choose an activity from the list.",
     ("cardio_entry", "minutes"): "Give the minutes, from 1 to 600.",
@@ -288,7 +288,7 @@ FIELD_HELP = {
     ("cardio_entry", "speed_kmh"): "Give the speed in km/h, from 0.1 to 60, or leave it empty.",
     ("cardio_entry", "avg_hr"): "Give the average heart rate, 30 to 240, as a whole number, or leave it empty.",
     ("cardio_entry", "machine_kcal"): "Give the machine's number, 1 to 5,000, as a whole number, or leave it empty.",
-    ("cardio_entry", "notes"): "Keep the notes under 2,000 characters.",
+    ("cardio_entry", "notes"): "Keep the notes to 2,000 characters or fewer.",
     # Foods' two forms: the limits are save_food's own (rules.TEXT_LIMITS, rules.NUMBERS). The kcal and grams lines
     # answer a typed comma or unit ("1,000", "58,5", "40g") as well as the range: save_food takes a plain number only.
     ("saved_food", "name"): f"Give the food a name, up to {rules.TEXT_LIMITS['name']} characters.",
@@ -401,10 +401,10 @@ GOAL_KIND_FIELDS = {"bodyweight": ("target_value", "target_date", "text"),
 # What the form says for each set_goal refusal a person can reach from it, in the page's own words, keyed by the
 # refusal's error code and its field: never by its message. A line that differs by kind is a {kind: line} table.
 # A measurement's range line names the measurement chosen: {what}, {unit}, {span} and {whole} are filled from
-# rules.MEASUREMENTS. The ranges are the service's own (rules, services.goals), never typed here.
+# rules.MEASUREMENTS. A cardio time's {minutes} is the range for the distance on the form (goals.time_limits: 1 to 600
+# with none). The ranges are the service's own (rules, services.goals), never typed here.
 _BODYWEIGHT_SPAN = rules.span(*rules.BODYWEIGHT_KG, "goal_target")
 _LIFT_MOST = formatting.show(goal_rules.TARGETS["lift"][1], "goal_target", unit=False)
-_TIME_SPAN = rules.span(*goal_rules.TARGETS["cardio_best"], "goal_target")
 _DISTANCE_SPAN = rules.span(*goal_rules.DISTANCE_KM, "goal_target")
 _KIND_LINE = "Choose a kind of goal above: Body weight, Lift, Cardio time or Measurement."
 _EXERCISE_LINE = {"lift": "Choose a lift from the list.", "cardio_best": "Choose an activity from the list."}
@@ -431,7 +431,7 @@ GOAL_ERROR_WORDS: dict[tuple[str, str], str | dict[str, str]] = {
     ("invalid_field", "target_value"): {
         "bodyweight": f"Give the weight you aim for in kg, from {_BODYWEIGHT_SPAN}.",
         "lift": f"Give the estimated max you aim for in kg, more than 0 and at most {_LIFT_MOST}.",
-        "cardio_best": f"Give the time you aim for in minutes, from {_TIME_SPAN}.",
+        "cardio_best": "Give the time you aim for in minutes, from {minutes}.",
         "measurement": "Give a target for your {what} in {unit}, from {span}{whole}."},
     # A new body weight or measurement goal takes its direction from the target, so only a lift or a cardio time
     # can point the wrong way from the form. Each line holds with the start inside its range and at its end, where
@@ -443,6 +443,7 @@ GOAL_ERROR_WORDS: dict[tuple[str, str], str | dict[str, str]] = {
     ("missing_field", "target_date"): "Choose the day you aim to reach it by.",
     ("invalid_date", "target_date"): "That is not a day: choose one after today.",
     ("date_not_in_future", "target_date"): "Choose a day after today.",
+    ("date_too_far", "target_date"): f"Choose a day at most {rules.GOAL_YEARS} years from today.",
     ("missing_field", "start_value"): {
         "bodyweight": "Nothing is logged to start from yet: give your weight now, or log a weigh-in first.",
         "lift": "No session of this lift is logged yet: give your estimated max now, or log a session first.",
@@ -452,7 +453,7 @@ GOAL_ERROR_WORDS: dict[tuple[str, str], str | dict[str, str]] = {
     ("invalid_field", "start_value"): {
         "bodyweight": f"Give your weight now in kg, from {_BODYWEIGHT_SPAN}.",
         "lift": f"Give your estimated max now in kg, more than 0 and at most {_LIFT_MOST}.",
-        "cardio_best": f"Give your time now in minutes, from {_TIME_SPAN}.",
+        "cardio_best": "Give your time now in minutes, from {minutes}.",
         "measurement": "Give your {what} measurement now, in {unit}, from {span}{whole}."},
     ("invalid_field", "text"): f"Keep the notes to {formatting.show(rules.TEXT_MAX, 'count')} characters or fewer, "
                                "in plain text.",
@@ -515,7 +516,7 @@ DELETE_COUNTS = ((LiftSession, "Lift sessions"), (Bodyweight, "Weigh-ins"), (Mea
                  (FoodEntry, "Food entries"), (CardioEntry, "Cardio sessions"), (SavedFood, "Saved foods"),
                  (Routine, "Routines"), (Goal, "Goals"))
 
-ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+ISO_DAY = rules.ISO_DAY  # YYYY-MM-DD in ASCII digits: the one date pattern, chat's and the addresses' (inputs.md D7)
 
 PAGE_HEADERS = {
     "X-Frame-Options": "DENY",
@@ -1553,7 +1554,7 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     on = parse_day(request.path_params["date"])
     if on is None:
         return not_found_page(request)
-    result = await _db(services.get_log, user.id, on.isoformat(), 1)
+    result = await _db(services.get_log, user.id, on.isoformat(), 1, True)  # any day it can draw (inputs.md D8)
     today = users.today_for(user)
     later: list[date] = []  # days after today that hold an entry (left there by a change of time zone)
     if (not failed(result) and on >= today) or codes(result) == {"date_in_future"}:
@@ -1824,7 +1825,7 @@ def form_message(kind: str, field: str, measured: str | None = None) -> str:
     if kind == "bodyweight":
         return "That weight was not saved: give it in kg, from 20 to 400."
     if kind == "lift_session":
-        return "Those notes were not saved: keep them under 2,000 characters."
+        return "Those notes were not saved: keep them to 2,000 characters or fewer."
     if measured in rules.MEASUREMENTS:
         unit, lo, hi, whole = rules.MEASUREMENTS[measured]
         in_unit = "" if unit == measured else f" in {unit}"
@@ -2741,11 +2742,13 @@ def goal_kind(value: object) -> str:
     return value if isinstance(value, str) and value in dict(GOAL_KINDS) else GOAL_KIND_FIRST
 
 
-def goal_error_words(err: dict, kind: str, measured: str = "", units=None) -> str | None:
+def goal_error_words(err: dict, kind: str, measured: str = "", units=None,
+                     distance_km: float | None = None) -> str | None:
     """The page's own line for one set_goal refusal, found by its error code and its field, never by its message:
     the kind's own line where the line differs by kind, a measurement's line named for the one chosen, or its
     GOAL_ERROR_UNNAMED line when none is. None for a refusal the table does not know. With weights in lb or
-    distances in miles, a line that names the unit is GOAL_ERROR_WORDS_IN's."""
+    distances in miles, a line that names the unit is GOAL_ERROR_WORDS_IN's. distance_km: a cardio time goal's
+    distance on the form, when set_goal takes it, for the minutes its time takes (goals.time_limits)."""
     key = (err.get("error"), err.get("field"))
     words = GOAL_ERROR_WORDS.get(key)
     for unit in ((units.weight, units.distance) if units is not None else ()):
@@ -2758,11 +2761,25 @@ def goal_error_words(err: dict, kind: str, measured: str = "", units=None) -> st
         words = words.get(kind)
     if words is None or "{" not in words:
         return words
+    if "{minutes}" in words:
+        return words.format(minutes=rules.span(*goal_rules.time_limits(distance_km), "goal_target"))
     if measured not in rules.MEASUREMENTS:
         return GOAL_ERROR_UNNAMED.get(key)
     unit, lo, hi, whole = rules.MEASUREMENTS[measured]
     return words.format(what=measurements.kind_word(measured).lower(), unit=unit,
                         span=rules.span(lo, hi, "goal_target"), whole=", as a whole number" if whole else "")
+
+
+def typed_distance(typed: dict) -> float | None:
+    """The distance typed on the Set a goal form, in km, when set_goal takes it (goals.DISTANCE_KM): distance_km, or
+    distance_mi converted. None for none, or for one it refuses: the time's line then says 1 to 600."""
+    for field, factor in (("distance_km", 1.0), ("distance_mi", formatting.MI)):
+        number = rules.to_float(typed.get(field))
+        if number is not None:
+            km = number * factor
+            lo, hi = goal_rules.DISTANCE_KM
+            return km if lo <= km <= hi else None
+    return None
 
 
 def goal_errors(result: dict, kind: str, typed: dict, units=None) -> tuple[dict[str, str], list[str]]:
@@ -2776,7 +2793,7 @@ def goal_errors(result: dict, kind: str, typed: dict, units=None) -> tuple[dict[
     under: dict[str, list[str]] = {}
     top: list[str] = []
     for err in found:
-        words = goal_error_words(err, kind, typed.get("measurement_kind") or "", units)
+        words = goal_error_words(err, kind, typed.get("measurement_kind") or "", units, typed_distance(typed))
         field = form_field(err["field"], units) if err.get("field") == "distance_km" else err.get("field")
         if words is None:
             top.append(GOAL_ERROR_GENERAL)

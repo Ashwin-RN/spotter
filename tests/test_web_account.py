@@ -807,12 +807,12 @@ def test_a_refusal_posted_to_a_marked_address_shows_no_strip(signed, real_save_f
 @pytest.mark.parametrize("data, stored", [
     ({"kcal_per_serving": "0"}, ("Idli", "1 idli", 0, None)),
     ({"kcal_per_serving": "5000"}, ("Idli", "1 idli", 5000, None)),
-    ({"kcal_per_serving": "1e3"}, ("Idli", "1 idli", 1000, None)),
+    ({"kcal_per_serving": "1000."}, ("Idli", "1 idli", 1000, None)),  # inputs.md D4: was 1e3, no longer a number
     ({"grams_per_serving": "1"}, ("Idli", "1 idli", 58, 1)),
     ({"grams_per_serving": "5000"}, ("Idli", "1 idli", 58, 5000)),
     ({"name": "n" * 128}, ("n" * 128, "1 idli", 58, None)),
     ({"serving_label": "s" * 64}, ("Idli", "s" * 64, 58, None)),
-], ids=["kcal 0", "kcal 5000", "kcal 1e3", "grams 1", "grams 5000", "name 128", "serving 64"])
+], ids=["kcal 0", "kcal 5000", "kcal 1000.", "grams 1", "grams 5000", "name 128", "serving 64"])
 def test_each_accepted_end_is_saved_through_the_fold_out(signed, data, stored):
     """rev_b15 T6: the ends save_food accepts, posted through the form, are saved and marked so."""
     uid = only_user().id
@@ -902,7 +902,8 @@ def test_the_confirm_page_says_what_goes_by_count(signed, make_user):
     stocked = stock(only_user())
     stock_food(only_user(), weigh_in=False)
     services.delete_entry(uid, "bodyweight", stocked["old_weigh_in"])  # a deleted row goes too
-    services.set_goal(uid, {"kind": "bodyweight", "target_value": 70, "target_date": "2099-01-01"}, "claude")
+    later = (today_of(only_user()) + timedelta(days=365)).isoformat()  # inputs.md D15: 5 years at most. Was 2099
+    services.set_goal(uid, {"kind": "bodyweight", "target_value": 70, "target_date": later}, "claude")
     other = make_user()
     services.log_bodyweight(other.id, {"kg": "90"}, "claude")
     page = signed.get("/settings/delete").text

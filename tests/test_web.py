@@ -2523,7 +2523,7 @@ def test_the_food_form_sends_a_chosen_meal(client):
 
 
 @pytest.mark.parametrize("data, says", [
-    ({"description": "Rice", "kcal": "6000"}, "That kcal was not saved: give a whole number from 0 to 5,000."),
+    ({"description": "Rice", "kcal": "6000"}, "That kcal was not saved: give a number from 0 to 5,000. It is kept as a whole number."),
     ({"description": "Rice", "kcal": "abc"}, "That kcal was not saved"),
     ({"description": "", "kcal": "100"}, "Give a description, up to 200 characters."),
     ({"description": "Rice", "kcal": "100", "meal": "brunch"}, "Choose breakfast, lunch, dinner or snack."),
@@ -4005,9 +4005,9 @@ def test_the_fold_out_holds_the_contracts_fields_and_button(client):
 @pytest.mark.parametrize("data, field, says", [
     ({"description": "", "kcal": "100", "meal": ""}, "description", "Give a description, up to 200 characters."),
     ({"description": "Rice", "kcal": "abc", "meal": "dinner"}, "kcal",
-     "That kcal was not saved: give a whole number from 0 to 5,000."),
+     "That kcal was not saved: give a number from 0 to 5,000. It is kept as a whole number."),
     ({"description": "Rice", "kcal": "6000", "meal": ""}, "kcal",
-     "That kcal was not saved: give a whole number from 0 to 5,000."),
+     "That kcal was not saved: give a number from 0 to 5,000. It is kept as a whole number."),
     ({"description": "Rice", "kcal": "100", "meal": "brunch"}, "meal", "Choose breakfast, lunch, dinner or snack."),
 ])
 def test_a_food_error_opens_the_fold_out_under_its_field_tied_to_its_input(client, data, field, says):
@@ -4989,16 +4989,16 @@ EDIT_ERRORS = [
     ("bodyweight", {"kg": "0"}, "kg", "That weight was not saved: give it in kg, from 20 to 400.", "0"),
     ("bodyweight", {"kg": " abc "}, "kg", "That weight was not saved: give it in kg, from 20 to 400.", " abc "),
     ("measurement", {"value": "500"}, "value", "That value was not saved: give waist in cm, from 30 to 300.", "500"),
-    ("lift_session", {"notes": "x" * 2001}, "notes", "Those notes were not saved: keep them under 2,000 characters.",
+    ("lift_session", {"notes": "x" * 2001}, "notes", "Those notes were not saved: keep them to 2,000 characters or fewer.",
      "x" * 2001),
     ("food_entry", {"description": "Biryani", "kcal": "abc", "meal": "lunch"}, "kcal",
-     "That kcal was not saved: give a whole number from 0 to 5,000.", "abc"),
+     "That kcal was not saved: give a number from 0 to 5,000. It is kept as a whole number.", "abc"),
     ("food_entry", {"description": "Biryani", "kcal": "1250", "meal": "brunch"}, "meal",
      "Choose breakfast, lunch, dinner or snack.", None),
     ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "0"}, "minutes", "Give the minutes, from 1 to 600.", "0"),
     ("cardio_entry", {"exercise": "Back Squat", "minutes": "30"}, "exercise", "Choose an activity from the list.", None),
     ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "30", "notes": "x" * 2001}, "notes",
-     "Keep the notes under 2,000 characters.", "x" * 2001),
+     "Keep the notes to 2,000 characters or fewer.", "x" * 2001),
     ("food_entry", {"description": "", "kcal": "1250", "meal": "lunch"}, "description",
      "Give a description, up to 200 characters.", None),
     ("cardio_entry", {"exercise": "Treadmill Run", "minutes": "30", "distance_km": "500"}, "distance_km",

@@ -287,12 +287,15 @@ def sendable(result) -> None:
 HOSTILE = ["\ud83d", "a\udfffb", "\ud800" * 200, "Back Squat\ud83d", "2026-11-09\ud83d", "\x00\ud83d", "x" * 100_000]
 
 
+LATER = (db.utcnow().date() + timedelta(days=365)).isoformat()  # a goal's date: inputs.md D15. Was 2099-01-01
+
+
 def hostile_calls(user_id, goal_id, entry):
     """Every public function, with each string argument in turn replaced by a hostile value."""
     good_set = {"exercise": "Deadlift", "weight_kg": 90, "reps": 5}
     lifts = {"date": "", "notes": "n", "sets": [good_set], "allow_repeat": True}
     weigh = {"kg": 80, "date": "", "allow_repeat": True}
-    new_goal = {"kind": "lift", "exercise": "Deadlift", "target_value": 150, "target_date": "2099-01-01",
+    new_goal = {"kind": "lift", "exercise": "Deadlift", "target_value": 150, "target_date": LATER,
                 "start_value": 90, "text": "t", "status": "open"}
     for bad in HOSTILE:
         yield "list_exercises kind", lambda: services.list_exercises(bad, None)
@@ -354,9 +357,9 @@ def hostile_calls(user_id, goal_id, entry):
             yield f"set_goal edit {field}", lambda f=field: services.set_goal(
                 user_id, {"goal_id": goal_id, f: bad}, "web")
         for new in ({"kind": "measurement", "measurement_kind": "waist", "target_value": 80, "start_value": 90,
-                     "target_date": "2099-01-01"},
+                     "target_date": LATER},
                     {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 27,
-                     "start_value": 30, "target_date": "2099-01-01"}):
+                     "start_value": 30, "target_date": LATER}):
             for field in new:
                 yield f"set_goal {new['kind']} {field}", lambda n=new, f=field: services.set_goal(
                     user_id, {**n, f: bad}, "web")

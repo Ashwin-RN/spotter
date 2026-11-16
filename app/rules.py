@@ -8,7 +8,9 @@ The fix says what to send instead, so Claude can correct the call and retry.
   quote(value) -> str                    a caller's value as a message repeats it, cut to 80 characters
   text(value, field) -> (str | None, error | None)
         Free text: at most 2,000 characters, no control characters but newlines and tabs.
-  to_float(value), to_date(value)        a finite number or a date, else None; never raise
+  to_float(value), to_date(value)        a finite number or a date, else None; never raise. Text is a number
+        only in NUMBER_TEXT's one grammar, and a date only as YYYY-MM-DD (ISO_DAY), both ASCII digits
+  keep(number, places) -> float          a number at its step, halves away from zero, after its range check
   match_exercise(name, names) -> (canonical name | None, closest names)
   unknown_exercise(name, names, where="") -> dict
   entry_date(value, today, noun) -> (date | None, error | None)
@@ -18,12 +20,16 @@ The fix says what to send instead, so Claude can correct the call and retry.
         A lift session: a valid date; 1 to 60 sets; each set's exercise on the list, weight 0 to
         500 kg, reps 1 to 30 whole. sets: [{exercise (canonical), weight_kg, reps}]. Every failure at once.
         Each set sends weight_kg or weight_lb (one_of); pounds=False is the import's: weight_kg only, in its
-        words of before units.
+        words of before units. The weight's range is checked on the number unrounded, then kept at 2 dp.
 
 Units (contract units.md, decision 15). The one table of factors, UNITS, and its helpers, which the import and
 logging both use: converted (a number in lb, mi or in, in the stored unit), inward (a stored range in another
 unit, each bound moved inward), call_unit (a refusal said in the unit sent) and in_unit (the same, for a log
 field such as weight_lb). one_of(row, kg_field, other_field) is the check of a pair: one of the two, never both.
+
+Ranges (contract inputs.md, decision 5): every range is checked on the number as sent, unrounded, and only then
+is the number kept at its step, halves away from zero (keep). A lb or mi number is converted unrounded and checked
+against the stored range.
 
 "today" is always passed in by the caller: the person's own date, from users.today_for.
 """
@@ -33,7 +39,7 @@ import math
 import re
 import unicodedata
 from datetime import date, datetime, timedelta
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal, localcontext
 
 from app import formatting
 
@@ -90,7 +96,14 @@ NUMBERS = {
 TEXT_LIMITS = {"description": 200, "serving_label": 64, "name": 128}
 MEALS = ("breakfast", "lunch", "dinner", "snack")
 OLDEST_DAYS = 2 * 365 + 1  # entries go back two years at most, either side of a leap day
+GOAL_YEARS = 5             # a goal's target date is at most this many years after today (goal_latest)
 TEXT_MAX = 2000            # notes and goal text
+# The one grammar of a number sent as text (inputs.md decision 4), ASCII only: outer spaces, at most one sign, digits,
+# at most one decimal point, at least one digit. So " 80 ", "+80", "80." and ".5" are numbers; "1_0", "8e1",
+# "1,000", other scripts' digits, "nan" and "inf" are not.
+NUMBER_TEXT = re.compile(r"\s*[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)\s*", re.ASCII)
+# A date sent as text (decision 7): YYYY-MM-DD in ASCII digits, nothing else. The pages' addresses read it too.
+ISO_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 QUOTE_MAX = 80             # the most of a caller's value an error message repeats
 NAME_MAX = 80              # far longer than any exercise name: no closest-name search beyond it
 TODAY_NOTE = "Today is the person's own date: their time zone, or UTC until update_settings sets one."
@@ -153,10 +166,15 @@ def call_unit(err: dict, field: str, raw, factor: float, limits, quantity: str, 
     lo, hi = inward(limits, factor, quantity)
     at = f"{where}: " if where else ""
     on = f" on {where.lower()}" if where else ""
-    fix = f"Give {field}{on} from {lo} to {hi} {unit}{fix_tail}."
-    if " is outside " not in err["message"]:
+    low_open = " must be more than " in err["message"]  # a range with its low end left out (in_range, low_open)
+    fix = (f"Give {field}{on} more than {lo} and at most {hi} {unit}{fix_tail}." if low_open
+           else f"Give {field}{on} from {lo} to {hi} {unit}{fix_tail}.")
+    if " is outside " not in err["message"] and not low_open:
         return {**err, "fix": fix}
     after = "" if field == unit else f" {unit}"  # "lb 900 is outside", never "lb 900 lb"
+    if low_open:
+        return {**err, "message": f"{at}{field} {as_sent(raw)}{after} must be more than {lo} and at most {hi} {unit}.",
+                "fix": fix}
     return {**err, "message": f"{at}{field} {as_sent(raw)}{after} is outside {lo} to {hi} {unit}.", "fix": fix}
 
 
@@ -208,7 +226,10 @@ def span(lo, hi, quantity: str) -> str:
 
 def as_sent(value) -> str:
     """A refused number as the caller sent it, for a message: never rounded to a shown step, so
-    "not a whole number, not 2.5" and "5000.6 is outside" say what came in."""
+    "not a whole number, not 2.5" and "5000.6 is outside" say what came in. A whole number shows no ".0"
+    (inputs.md, owner's question 2): the library hands 0 on as 0.0, and "0" is what was sent."""
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer() and abs(value) < 1e16:
+        return quote(int(value))
     return quote(value.strip() if isinstance(value, str) else value)
 
 
@@ -243,9 +264,11 @@ def text(value, field: str, limit: int = TEXT_MAX) -> tuple[str | None, dict | N
 
 
 def to_float(value) -> float | None:
-    """A finite float, or None. Booleans, text that is not a number, and numbers too big for a
-    float are None. -0.0 becomes 0.0."""
+    """A finite float, or None. Booleans, text outside NUMBER_TEXT ("1_0", "8e1", "٨٠", "nan"), and numbers
+    too big for a float are None. -0.0 becomes 0.0."""
     if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and not NUMBER_TEXT.fullmatch(value):
         return None
     try:
         parsed = float(value)
@@ -254,16 +277,38 @@ def to_float(value) -> float | None:
     return parsed + 0.0 if math.isfinite(parsed) else None
 
 
+def keep(number: float, places: int) -> float:
+    """A number kept at `places` decimals, halves away from zero (2.5 is 3, 0.125 is 0.13), from its shortest
+    repr, so 80.125 is the half it reads as. A number too large to hold a fraction is already at its step."""
+    if not math.isfinite(number) or abs(number) >= 2 ** 52:
+        return number
+    step = Decimal(1).scaleb(-places)
+    return float(Decimal(repr(float(number))).quantize(step, rounding=ROUND_HALF_UP)) + 0.0
+
+
 def to_date(value) -> date | None:
-    """A date from a date, a datetime (its date part) or ISO text; else None."""
+    """A date from a date, a datetime (its date part) or text that is YYYY-MM-DD (ISO_DAY) and a real day, its
+    outer spaces forgiven; else None. 20261116 and 2026-W01-1 are not dates here."""
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
         return value
+    text = str(value).strip()
+    if not ISO_DAY.fullmatch(text):
+        return None
     try:
-        return date.fromisoformat(str(value).strip())
+        return date.fromisoformat(text)
     except ValueError:
         return None
+
+
+def goal_latest(today: date) -> date:
+    """The latest target date a goal takes: the same day GOAL_YEARS on, and 28 February for 29 February."""
+    year = today.year + GOAL_YEARS
+    try:
+        return today.replace(year=year)
+    except ValueError:  # 29 February, in a year that has none
+        return date(year, 2, 28)
 
 
 def error(code: str, message: str, fix: str, **extra) -> dict:
@@ -313,8 +358,9 @@ def unknown_exercise(name, names: list[str], where: str = "") -> dict:
 
 
 def number(value, kind, field: str, where: str = "") -> tuple[float | int | None, dict | None]:
-    """A finite number (kind float, rounded to 2 dp) or a whole one (kind int), else an error.
-    `where` names the place, such as "Set 3", in the message and the fix."""
+    """A finite number (kind float, kept at 2 dp, halves away from zero) or a whole one (kind int), else an error.
+    `where` names the place, such as "Set 3", in the message and the fix. It checks no range: a caller with one
+    checks it on to_float(value), unrounded, as check_session does."""
     at_m = f"{where}: " if where else ""
     at_f = f" on {where.lower()}" if where else ""
     if value is None or (isinstance(value, str) and not value.strip()):
@@ -328,7 +374,7 @@ def number(value, kind, field: str, where: str = "") -> tuple[float | int | None
             return None, error("not_a_whole_number", f"{at_m}{field} must be a whole number.",
                                f"Give {field}{at_f} as a whole number.")
         return int(parsed), None
-    return round(parsed, 2) + 0.0, None
+    return keep(parsed, 2), None
 
 
 def _kind_key(name: str) -> str:
@@ -364,39 +410,53 @@ def measurement_value(kind: str, value) -> tuple[float | int | None, dict | None
         return None, error("invalid_field", f"{kind} must be a whole number, not {as_sent(value)}.", fix)
     if not lo <= number <= hi:
         return None, error("invalid_field", f"{kind} {as_sent(value)} {unit} is outside {limits}.", fix)
-    return (int(number) if whole else round(number, 2) + 0.0), None
+    return (int(number) if whole else keep(number, 2)), None
 
 
 def bounded(field: str, value, where: str = "") -> tuple[float | int | None, dict | None]:
     """A number for one of the NUMBERS fields: in its range and kept its way, else an error.
     `where` names the place, such as "Entry 2", in the message."""
-    lo, hi, keep = NUMBERS[field]
+    lo, hi, how = NUMBERS[field]
     at = f"{where}: " if where else ""
-    kind = "a whole number" if keep in ("whole", "round") else "a number"
     # A range of minutes reads as whole minutes ("1 to 600"), not as a session's m:ss.
     limits = span(lo, hi, "week_minutes" if field == "minutes" else NUMBER_QUANTITIES[field])
-    fix = f"Give {field} as {kind} from {limits}{' on ' + where.lower() if where else ''}."
+    on = f" on {where.lower()}" if where else ""
+    if how == "round":  # any number is taken, and kept whole: the fix says both (inputs.md decision 14)
+        fix = f"Give {field} as a number from {limits}{on}: it is kept as a whole number."
+    else:
+        fix = f"Give {field} as {'a whole number' if how == 'whole' else 'a number'} from {limits}{on}."
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, error("missing_field", f"{at}{field} is missing.", fix)
     number = to_float(value)
     if number is None:
         return None, error("invalid_field", f"{at}{field} '{quote(value)}' is not a number.", fix)
-    if keep == "whole" and number != int(number):
+    if how == "whole" and number != int(number):
         return None, error("invalid_field", f"{at}{field} must be a whole number, not {as_sent(value)}.", fix)
-    kept = int(round(number)) if keep in ("whole", "round") else round(number, keep) + 0.0
-    if not lo <= kept <= hi:
+    if not lo <= number <= hi:  # the number as sent, unrounded: 5000.4 kcal is outside, never kept as 5000
         return None, error("invalid_field", f"{at}{field} {as_sent(value)} is outside {limits}.", fix)
-    return kept, None
+    return (int(keep(number, 0)) if how in ("whole", "round") else keep(number, how)), None
+
+
+# Letters that draw nothing: the Hangul fillers and the blank Braille pattern.
+BLANK_LETTERS = frozenset(map(chr, (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800)))
+
+
+def visible(value: str) -> bool:
+    """True when the text holds a character a person can see: not only spaces, format characters (Cf) such as a
+    zero-width space or a word joiner, marks with nothing to sit on (Mn, Me) and BLANK_LETTERS."""
+    return any(not ch.isspace() and ch not in BLANK_LETTERS and unicodedata.category(ch) not in ("Cf", "Mn", "Me")
+               for ch in value)
 
 
 def required_text(value, field: str, where: str = "", limit: int | None = None) -> tuple[str | None, dict | None]:
-    """Free text that must be there: 1 to `limit` characters (left out: TEXT_LIMITS[field]), through text()."""
+    """Free text that must be there: 1 to `limit` characters (left out: TEXT_LIMITS[field]), through text(). Text of
+    only invisible characters (visible) is missing."""
     at = f"{where}: " if where else ""
     most = TEXT_LIMITS[field] if limit is None else limit
     kept, err = text(value, field, most)
     if err:
         return None, {**err, "message": at + err["message"]}
-    if not kept:
+    if not visible(kept):  # nothing, or only invisible characters such as a zero-width space (owner's question 3)
         return None, error("missing_field", f"{at}{field} is missing.", f"Give {field}, 1 to {most} characters.")
     return kept, None
 
@@ -469,7 +529,7 @@ def check_session(date_value, rows, names: list[str], today: date,
             errors.append(err)
         else:
             weight, err = number(value, float, "weight_kg", where)
-            if err is None and not w_lo <= weight <= w_hi:
+            if err is None and not w_lo <= to_float(value) <= w_hi:  # unrounded: -0.01 lb is refused, never 0 kg
                 sent = as_sent(row.get("weight_kg"))  # as sent: a huge number stays short (quote cuts it)
                 err = error("weight_out_of_range", f"{where}: weight {sent} kg is outside {w_lo} to {w_hi} kg.",
                             f"Give weight_kg on set {n} from {w_lo} to {w_hi} (0 for bodyweight).")

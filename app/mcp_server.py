@@ -35,12 +35,25 @@ error ({error, message, fix}) is flagged is_error. A duplicate is a success.
 A write's own key (contract idempotency.md): each write function (common.WRITE_FUNCTIONS) takes key (Key). The
 wrapper reads it from the arguments as sent, and no service is passed it. The same key with the same call again
 gets the first answer's text back, word for word, and its row reads repeat.
+
+A call that does not fit its function (contract inputs.md, decisions 1, 2, 3, 11 and 12). Every function publishes
+additionalProperties false at its top level, and a set, a routine lift and a food entry at theirs. Before the library
+validates, SpotterServer.call_tool checks the keys sent against the function's published properties, then validates
+the arguments with the function's own argument model. Any unknown key or schema failure is Spotter's own refusal,
+{error, message, fix} (schema_refusal: missing_field for a missing argument, invalid_field for every other, every
+problem at once through rules.combine), run through Wrapper.call as a work that returns it, so it meets the same
+order as every call (the account, the row, the switch, the owner check, the read limit, the key's shape) and writes
+one call-log row. An unknown function name is the library's own answer, with no row. Number and Whole (mcp_schemas)
+refuse a bool and text outside rules.NUMBER_TEXT on every number and id argument; true and false arguments are
+StrictBool.
 """
 
+import difflib
 import functools
 import json
 import logging
 import time
+import unicodedata
 from collections import OrderedDict
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -55,24 +68,25 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
-from pydantic import BaseModel, Field, StrictBool
+from pydantic import BaseModel, Field, StrictBool, ValidationError
 from sqlalchemy.exc import InterfaceError, InternalError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.applications import Starlette
 from starlette.routing import Route
 
-from app import calllog, db, links, services, users
+from app import calllog, db, links, rules, services, users
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings, get_settings
 from app.mcp_schemas import (
-    FOOD_NAME_RULE, IMPORT_ROWS, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn,
-    GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult, ImportEntriesResult,
-    ImportRowIn, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult,
-    OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult, RestoreEntryResult, RoutineLiftIn,
-    SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult, WhoamiResult,
+    FOOD_NAME_RULE, IMPORT_ROWS, NEAR_CUTOFF, NEAR_MISSES, DeleteEntryResult, EditEntryResult, ExercisesResult,
+    FindFoodResult, FoodEntryIn, GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult,
+    ImportEntriesResult, ImportRowIn, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult,
+    LogMeasurementResult, Number, OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult, RestoreEntryResult,
+    RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
+    Whole, WhoamiResult, whole_in,
 )
 from app.models import CLAUDE_CAN, User
-from app.services import common, feedback
+from app.services import common, feedback, food, routines
 from app.services.common import check_reads
 from app.services.owner import HOURS, LIMIT
 
@@ -362,6 +376,190 @@ class LookupMemo:
         return True
 
 
+# ---------------------------------------------------------------- a call that does not fit its function
+
+# How an item of a list is named in a refusal, as the services name it: "Set 1", "Entry 2", "Lift 1", "Row 3, set 2".
+ITEM_WORDS = {"sets": "set", "entries": "entry", "lifts": "lift", "rows": "row"}
+# An unknown key in an item (decision 2): the services' own words, by the list it was sent in. Each is
+# (what the item is, the fix, NEAR_MISSES' row). The import's rows allow any key: its service refuses one.
+ITEM_FIELDS = {
+    "sets": ("a set", f"Use: {', '.join(SetIn.model_fields)}.", "set"),
+    "entries": ("a food entry", f"Use: {', '.join(food.ENTRY_FIELDS)}. source is decided by the server.", "entry"),
+    "lifts": ("a lift", f"Use: {routines.LIFT_FIELDS_TEXT}.", "lift"),
+}
+# What each published type takes, in a refusal's words: (message, fix).
+TYPE_WORDS = {
+    "number": ("{at}{field} must be a number, not {sent}.", "Give {field}{on} as a number{range}."),
+    "integer": ("{at}{field} must be a whole number, not {sent}.", "Give {field}{on} as a whole number{range}."),
+    "boolean": ("{at}{field} must be true or false, not {sent}.", "Send {field} as true or false, or leave it out."),
+    "string": ("{at}{field} must be text, not {sent}.", "Give {field}{on} as text."),
+    "array": ("{at}{field} must be a list, not {sent}.", "Send {field} as a list."),
+}
+TYPE_AS = {"number": "a number", "integer": "a whole number", "boolean": "true or false", "string": "text",
+           "array": "a list", "object": "an object of named fields"}
+RANGE_ERRORS = ("greater_than_equal", "less_than_equal", "greater_than", "less_than")
+LENGTH_ERRORS = ("too_short", "too_long")
+_MISSING = object()
+
+
+def _node(schema: dict, node: dict | None) -> dict | None:
+    """A schema node with its $ref followed and a nullable anyOf reduced to its one other type."""
+    for _ in range(4):
+        if not isinstance(node, dict):
+            return None
+        if "$ref" in node:
+            node = schema.get("$defs", {}).get(node["$ref"].rsplit("/", 1)[-1])
+            continue
+        options = [o for o in node.get("anyOf", []) if o.get("type") != "null"]
+        if len(options) == 1:
+            node = {**{k: v for k, v in node.items() if k != "anyOf"}, **options[0]}
+            continue
+        return node
+    return node
+
+
+def _schema_at(schema: dict, loc: tuple) -> dict | None:
+    """The published schema of the field at loc, its $ref followed; None where the schema names no such field."""
+    node = _node(schema, schema)
+    for part in loc:
+        if node is None:
+            return None
+        node = _node(schema, node.get("items") if isinstance(part, int) else node.get("properties", {}).get(part))
+    return node
+
+
+def _sent_at(arguments, loc: tuple, fallback):
+    """The value at loc, as the client sent it (the library pre-parses list and object text); else fallback."""
+    value = arguments
+    for part in loc:
+        if isinstance(part, int) and isinstance(value, list) and 0 <= part < len(value):
+            value = value[part]
+        elif isinstance(part, str) and isinstance(value, dict) and part in value:
+            value = value[part]
+        else:
+            return fallback
+    return value
+
+
+def _shown(value) -> str:
+    """A refused value as JSON writes it, cut by rules.quote, in single quotes when it is text: true, [1], {}, '12abc'."""
+    if isinstance(value, str):
+        return f"'{rules.quote(value)}'"
+    try:
+        text = json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = repr(value)
+    return rules.quote(text)
+
+
+def _place(loc: tuple) -> tuple[str, list]:
+    """(where, the loc left): the items named on the way, as the services name them ("Row 3, set 2"), and the rest."""
+    names, rest, i = [], list(loc), 0
+    while i + 1 < len(rest) and isinstance(rest[i], str) and isinstance(rest[i + 1], int) and rest[i] in ITEM_WORDS:
+        names.append(f"{ITEM_WORDS[rest[i]]} {rest[i + 1] + 1}")
+        i += 2
+    where = ", ".join(names)
+    return where[:1].upper() + where[1:], rest[i:]
+
+
+def _near(where: str, key: str, taken) -> str:
+    """The sentence after an unknown key's fix (decision 3): NEAR_MISSES' row, else the nearest field by spelling."""
+    sentence = NEAR_MISSES.get(where, {}).get(key)
+    if sentence:
+        return " " + sentence
+    close = difflib.get_close_matches(key, list(taken), n=1, cutoff=NEAR_CUTOFF) if len(key) <= rules.NAME_MAX else []
+    return f" The nearest field is {close[0]}." if close else ""
+
+
+def key_shown(key) -> str:
+    """A key as a message names it: a control or format character as its escape (a newline as \\n), cut by
+    rules.quote."""
+    text = str(key)
+    return rules.quote("".join(repr(ch)[1:-1] if unicodedata.category(ch)[0] == "C" else ch for ch in text))
+
+
+def unknown_key(function: str, key: str, taken) -> dict:
+    """invalid_field for a key a function does not take, at its top level (decision 2)."""
+    takes = f"{function} takes: {', '.join(taken)}." if taken else f"{function} takes no fields: send none."
+    return rules.error("invalid_field", f"'{key_shown(key)}' is not a field of {function}.",
+                       takes + _near(function, key, taken))
+
+
+def _problem(function: str, schema: dict, arguments: dict, err: dict) -> dict:
+    """One pydantic failure, in Spotter's words (decision 11's table)."""
+    loc = tuple(err.get("loc") or ())
+    where, rest = _place(loc)
+    kind = err.get("type")
+    sent = _sent_at(arguments, loc, err.get("input"))
+    at = f"{where}: " if where else ""
+    on = f" on {where.lower()}" if where else ""
+    if kind == "extra_forbidden" and len(loc) >= 2 and loc[0] in ITEM_FIELDS:
+        what, fix, row = ITEM_FIELDS[loc[0]]
+        key = str(loc[-1])
+        taken = (_schema_at(schema, loc[:-1]) or {}).get("properties", {})
+        return rules.error("invalid_field", f"{at}'{key_shown(key)}' is not a field of {what}.",
+                           fix + _near(row, key, taken))
+    if kind == "extra_forbidden":  # a forbidding object with no words of its own: named as at the top
+        key = str(loc[-1]) if loc else ""
+        taken = (_schema_at(schema, loc[:-1]) or {}).get("properties", {})
+        return rules.error("invalid_field", f"{at}'{key_shown(key)}' is not a field of {function}.",
+                           f"Use: {', '.join(taken)}.")
+    node = _schema_at(schema, loc) or {}
+    whole = _node(schema, schema.get("properties", {}).get(loc[0])) if loc else None
+    if not rest or isinstance(rest[-1], int):  # an item itself, or an item of a list of plain values
+        if node.get("type") == "object" or not rest:
+            taken = ", ".join(node.get("properties", {}))
+            return rules.error("invalid_field", f"{at}it must be an object of named fields.",
+                               f"Send each item with its named fields: {taken}.")
+        field = f"{rest[-2]} item {rest[-1] + 1}" if len(rest) >= 2 else str(rest[-1])
+    else:
+        field = str(rest[-1])
+    if kind == "missing":
+        return rules.error("missing_field", f"{at}{field} is missing.", f"Give {field}{on}.")
+    top = schema.get("properties", {}).get(loc[0], {}) if loc else {}
+    lo = node.get("minimum", top.get("minimum"))
+    hi = node.get("maximum", top.get("maximum"))
+    span = rules.span(lo, hi, "count") if lo is not None and hi is not None else ""
+    if kind in RANGE_ERRORS and lo is not None and hi is not None:
+        return rules.error("invalid_field", f"{at}{field} {_shown(sent)} is outside {span}.",
+                           f"Give {field}{on} from {span}.")
+    if kind in LENGTH_ERRORS and whole is not None and "minItems" in whole and "maxItems" in whole:
+        n = len(sent) if isinstance(sent, list | dict | str) else err.get("ctx", {}).get("actual_length", 0)
+        lo_n, hi_n = whole["minItems"], whole["maxItems"]
+        return rules.error("invalid_field", f"{field} holds {n} item{'' if n == 1 else 's'}: it takes {lo_n} to "
+                                            f"{hi_n}.", f"Send {lo_n} to {hi_n} items in {field}.")
+    shape = node.get("type")
+    ranged = f", from {span}" if lo is not None and hi is not None else ""
+    if shape in TYPE_WORDS:
+        message, fix = TYPE_WORDS[shape]
+        return rules.error("invalid_field", message.format(at=at, field=field, sent=_shown(sent)),
+                           fix.format(field=field, on=on, range=ranged))
+    taken = TYPE_AS.get(shape, "what its description says")
+    return rules.error("invalid_field", f"{at}{field} {_shown(sent)} is not what {field} takes.",
+                       f"Give {field}{on} as {taken}.")
+
+
+def schema_refusal(function: str, schema: dict, arguments: dict, unknown: list,
+                   failure: ValidationError | None) -> dict:
+    """The one refusal for a call that does not fit its function: every unknown top-level key, then every schema
+    failure, as one answer (rules.combine)."""
+    taken = list(schema.get("properties", {}))
+    problems = [unknown_key(function, key, taken) for key in unknown]
+    problems += [_problem(function, schema, arguments, err) for err in (failure.errors() if failure else [])]
+    return rules.combine(problems)
+
+
+def misfit(tool, arguments: dict) -> tuple[list, ValidationError | None] | None:
+    """(the unknown top-level keys, the schema failure) of a call, or None when it fits its function."""
+    unknown = [key for key in arguments if key not in tool.parameters.get("properties", {})]
+    try:
+        tool.fn_metadata.validate_arguments(arguments)
+        failure = None
+    except ValidationError as exc:
+        failure = exc
+    return (unknown, failure) if unknown or failure is not None else None
+
+
 class SpotterServer(MCPServer):
     """MCPServer whose metadata advertises SCOPES while tokens need only REQUIRED_SCOPES.
 
@@ -390,10 +588,20 @@ class SpotterServer(MCPServer):
         tools = await super().list_tools()
         return tools if is_owner(get_access_token()) else [t for t in tools if t.name not in OWNER_FUNCTIONS]
 
+    wrapper: "Wrapper | None" = None  # build_server sets it: a schema refusal runs through it
+
     async def call_tool(self, name: str, arguments: dict[str, Any], context=None):
-        """The library's call, with the arguments as sent held for the wrapper (tried) while it runs."""
+        """The library's call, with the arguments as sent held for the wrapper (tried) while it runs. A call that
+        does not fit its function (misfit) is Spotter's refusal instead, through the wrapper; its words are built in
+        the work, so a fault in them is internal_error with a row. An unknown function is the library's."""
         held = _SENT.set(arguments)
         try:
+            tool = self._tool_manager.get_tool(name)
+            found = misfit(tool, arguments) if tool is not None and self.wrapper is not None else None
+            if found is not None:
+                unknown, failure = found
+                return await self.wrapper.call(
+                    name, BaseModel, lambda _account: schema_refusal(name, tool.parameters, arguments, unknown, failure))
             return await super().call_tool(name, arguments, context)
         finally:
             _SENT.reset(held)
@@ -562,6 +770,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     # Also set on the logger itself, so it holds even when something else configured logging first.
     logging.getLogger("mcp").setLevel(LIBRARY_LOG_LEVEL)
     wrapper = Wrapper(userinfo)
+    server.wrapper = wrapper
 
     @server.tool(
         name="whoami",
@@ -619,8 +828,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         notes: Annotated[str | None, Field(
             description="How it went, in the person's words. Up to 2,000 characters. On a later call for the same "
                         "date, they are added to the session's notes.")] = None,
-        allow_repeat: Annotated[bool, Field(description="Not needed: every call adds its sets. Ignored.")] = False,
-        new_session: Annotated[bool, Field(
+        allow_repeat: Annotated[StrictBool, Field(description="Not needed: every call adds its sets. Ignored.")] = False,
+        new_session: Annotated[StrictBool, Field(
             description="true starts a new session for that date, even when one is logged. Send it only when the "
                         "person says this is a separate workout.")] = False,
         key: Key = None,
@@ -641,15 +850,15 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         annotations=WRITE,
     )
     async def log_bodyweight(
-        kg: Annotated[float | None, Field(
+        kg: Annotated[Number | None, Field(
             description="Body weight in kg, 20 to 400, when the person said kg, or gave no unit and units.weight is "
                         "kg. Send kg or lb, never both.")] = None,
-        lb: Annotated[float | None, Field(
+        lb: Annotated[Number | None, Field(
             description="Body weight in lb, 44.1 to 881.84, when the person said pounds, or gave no unit and "
                         "units.weight is lb. Send it as said: Spotter converts it. Send kg or lb, never both.")] = None,
         date: Annotated[str | None, Field(
             description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        allow_repeat: Annotated[bool, Field(
+        allow_repeat: Annotated[StrictBool, Field(
             description="true logs it even when it matches a weigh-in from the last 10 minutes.")] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogBodyweightResult]:
@@ -680,29 +889,30 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         measurement_kind: Annotated[str | None, Field(
             description="A measurement goal: waist, hips, chest, arm, thigh or resting_hr. Not steps, sleep_hours "
                         "or water_ml: those are a day's amount, not a goal.")] = None,
-        distance_km: Annotated[float | None, Field(
+        distance_km: Annotated[Number | None, Field(
             description="A cardio_best goal: the distance in km, 0.1 to 300, when the person said km. A session at or "
                         "over it counts. Send distance_km or distance_mi, never both.")] = None,
-        distance_mi: Annotated[float | None, Field(
+        distance_mi: Annotated[Number | None, Field(
             description="A cardio_best goal: the distance in miles, 0.07 to 186.41, when the person said miles. "
                         "Spotter converts it. Send distance_km or distance_mi, never both.")] = None,
-        target_value: Annotated[float | None, Field(
+        target_value: Annotated[Number | None, Field(
             description="The target, in the kind's unit. A lift: an estimated one-rep max in weight_unit, above 0 to "
                         "666.67 kg or 1,469.75 lb. Body weight: in weight_unit, 20 to 400 kg or 44.1 to 881.84 lb. A "
                         "measurement: its own unit, cm for a body size, bpm for resting_hr. A cardio_best: minutes "
-                        "for the distance, 1 to 600.")] = None,
+                        "for the distance, 1 to 600, at a speed from 0.1 to 60 km/h.")] = None,
         target_date: Annotated[str | None, Field(
-            description="The date to reach it by, YYYY-MM-DD, after today. " + MONTH_END_RULE)] = None,
+            description="The date to reach it by, YYYY-MM-DD, after today and at most 5 years on. "
+                        + MONTH_END_RULE)] = None,
         text: Annotated[str | None, Field(
             description="The goal in the person's words. Up to 2,000 characters.")] = None,
-        start_value: Annotated[float | None, Field(
+        start_value: Annotated[Number | None, Field(
             description="Where the person is now, in the kind's unit, weight_unit for a lift or body weight. Used only "
                         "when nothing is logged yet to start from.")] = None,
         weight_unit: Annotated[str | None, Field(
             description="kg or lb: the unit of target_value and start_value for a lift or body weight goal, as the "
                         "person said it. Leave it out for the person's units.weight. Never convert a number "
                         "yourself.")] = None,
-        goal_id: Annotated[int | None, Field(
+        goal_id: Annotated[Whole | None, Field(
             description="To change a goal: its id, from set_goal, get_goals or get_progress. Leave out for a new "
                         "goal.")] = None,
         status: Annotated[str | None, Field(
@@ -748,13 +958,13 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         time_zone: Annotated[str | None, Field(
             description="An IANA time zone name, such as Asia/Kolkata, from the city the person is in. "
                         "Not an abbreviation or an offset.")] = None,
-        calorie_target_kcal: Annotated[int | None, Field(
+        calorie_target_kcal: Annotated[Whole | None, Field(
             description="The daily calorie target, 800 to 10,000. null clears it.")] = not_sent(),
-        target_sessions_per_week: Annotated[int | None, Field(
+        target_sessions_per_week: Annotated[Whole | None, Field(
             description="Training sessions a week the person aims for, 0 to 14. null clears it.")] = not_sent(),
-        target_cardio_minutes_per_week: Annotated[int | None, Field(
+        target_cardio_minutes_per_week: Annotated[Whole | None, Field(
             description="Cardio minutes a week the person aims for, 0 to 3,000. null clears it.")] = not_sent(),
-        add_back_exercise_kcal: Annotated[bool | None, Field(
+        add_back_exercise_kcal: Annotated[StrictBool | None, Field(
             description="true adds cardio calories back to the day's food total (net calories); false stops it.")]
             = not_sent(),
         weight_unit: Annotated[str | None, Field(
@@ -787,7 +997,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     async def get_log(
         date: Annotated[str | None, Field(
             description="The last day to show, YYYY-MM-DD. Leave out for today.")] = None,
-        days: Annotated[int | None, Field(
+        days: Annotated[Whole | None, Field(
             description="How many days to show, ending on date: 1 to 14. Leave out for one day.",
             json_schema_extra={"minimum": LOG_DAYS[0], "maximum": LOG_DAYS[1]})] = None,
     ) -> Annotated[CallToolResult, GetLogResult]:
@@ -808,11 +1018,12 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     async def log_measurement(
         kind: Annotated[str, Field(
             description="waist, hips, chest, arm, thigh, steps, sleep_hours, resting_hr or water_ml.")],
-        value: Annotated[float, Field(
-            description="The value in the kind's unit: cm for the body sizes, steps, hours of sleep, bpm, ml.")],
+        value: Annotated[Number, Field(
+            description="The value in the kind's unit: cm for the body sizes, steps, hours of sleep, bpm, ml. "
+                        "Spotter takes no inches.")],
         date: Annotated[str | None, Field(
             description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        allow_repeat: Annotated[bool, Field(
+        allow_repeat: Annotated[StrictBool, Field(
             description="true logs it even when it matches a measurement from the last 10 minutes.")] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogMeasurementResult]:
@@ -835,40 +1046,40 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     )
     async def edit_entry(
         kind: Annotated[str, Field(description=KIND_DESCRIPTION)],
-        entry_id: Annotated[int, Field(description=ENTRY_ID_DESCRIPTION)],
+        entry_id: Annotated[Whole, Field(description=ENTRY_ID_DESCRIPTION)],
         date: Annotated[str | None, Field(description="The new date, YYYY-MM-DD.")] = None,
         notes: Annotated[str | None, Field(
             description="A lift session's or cardio entry's new notes, up to 2,000 characters. null clears them.")]
             = not_sent(),
         sets: Annotated[list[SetIn] | None, Field(
             description="A lift session's whole new set list, in order: 1 to 60 sets. It replaces every set.")] = None,
-        kg: Annotated[float | None, Field(
+        kg: Annotated[Number | None, Field(
             description="A weigh-in's new weight in kg, 20 to 400. Send kg or lb, never both.")] = None,
-        lb: Annotated[float | None, Field(
+        lb: Annotated[Number | None, Field(
             description="A weigh-in's new weight in lb, 44.1 to 881.84, as said. Send kg or lb, never both.")] = None,
-        value: Annotated[float | None, Field(description="A measurement's new value, in its unit.")] = None,
+        value: Annotated[Number | None, Field(description="A measurement's new value, in its unit.")] = None,
         meal: Annotated[str | None, Field(description="A food entry's meal: breakfast, lunch, dinner or snack.")] = None,
         description: Annotated[str | None, Field(description="A food entry's new description.")] = None,
-        kcal: Annotated[float | None, Field(
+        kcal: Annotated[Number | None, Field(
             description="A food entry's calories, as the person stated them. It becomes their own number.")] = None,
         exercise: Annotated[str | None, Field(
             description="A cardio entry's activity, as list_exercises gives it.")] = None,
-        minutes: Annotated[float | None, Field(description="A cardio entry's minutes, 1 to 600.")] = None,
-        distance_km: Annotated[float | None, Field(
+        minutes: Annotated[Number | None, Field(description="A cardio entry's minutes, 1 to 600.")] = None,
+        distance_km: Annotated[Number | None, Field(
             description="A cardio entry's distance in km. null clears it.")] = not_sent(),
-        distance_mi: Annotated[float | None, Field(
+        distance_mi: Annotated[Number | None, Field(
             description="A cardio entry's distance in miles, as said. null clears it. Send distance_km or "
                         "distance_mi, never both.")] = not_sent(),
-        incline_pct: Annotated[float | None, Field(
+        incline_pct: Annotated[Number | None, Field(
             description="A cardio entry's incline in percent. null clears it.")] = not_sent(),
-        speed_kmh: Annotated[float | None, Field(
+        speed_kmh: Annotated[Number | None, Field(
             description="A cardio entry's speed in km/h. null works it out from distance and minutes.")] = not_sent(),
-        speed_mph: Annotated[float | None, Field(
+        speed_mph: Annotated[Number | None, Field(
             description="A cardio entry's speed in miles an hour, as said. null works it out from distance and "
                         "minutes. Send speed_kmh or speed_mph, never both.")] = not_sent(),
-        avg_hr: Annotated[int | None, Field(
+        avg_hr: Annotated[Whole | None, Field(
             description="A cardio entry's average heart rate in bpm. null clears it.")] = not_sent(),
-        machine_kcal: Annotated[int | None, Field(
+        machine_kcal: Annotated[Whole | None, Field(
             description="The calories the machine or watch showed. null clears it.")] = not_sent(),
         key: Key = None,
     ) -> Annotated[CallToolResult, EditEntryResult]:
@@ -896,8 +1107,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     )
     async def restore_entry(
         kind: Annotated[str, Field(description=RESTORE_KIND_DESCRIPTION)],
-        entry_id: Annotated[int, Field(description=RESTORE_ID_DESCRIPTION)],
-        undo_edit: Annotated[bool, Field(
+        entry_id: Annotated[Whole, Field(description=RESTORE_ID_DESCRIPTION)],
+        undo_edit: Annotated[StrictBool, Field(
             description="true undoes the last edit of this entry, which must be live: the values from before it "
                         "come back. An edit can be undone for 90 days.")] = False,
         key: Key = None,
@@ -920,7 +1131,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     )
     async def delete_entry(
         kind: Annotated[str, Field(description=DELETE_KIND_DESCRIPTION)],
-        entry_id: Annotated[int, Field(description=RESTORE_ID_DESCRIPTION)],
+        entry_id: Annotated[Whole, Field(description=RESTORE_ID_DESCRIPTION)],
         confirm: Annotated[str | None, Field(
             description="The confirm code from this entry's preview. Leave it out on the first call. Send it only "
                         "after the person has seen the entry and said yes.")] = None,
@@ -943,7 +1154,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     )
     async def find_food(
         query: Annotated[str, Field(description="What the person ate, in their words, such as banana or roti.")],
-        limit: Annotated[int | None, Field(
+        limit: Annotated[Whole | None, Field(
             description="How many of each kind of match to return. Leave out for 8.")] = None,
     ) -> Annotated[CallToolResult, FindFoodResult]:
         sent = _sent(limit=limit)
@@ -965,7 +1176,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         entries: Annotated[list[FoodEntryIn], Field(description="Every food in the message, one entry each.")],
         date: Annotated[str | None, Field(
             description="The day it was eaten, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        allow_repeat: Annotated[bool, Field(
+        allow_repeat: Annotated[StrictBool, Field(
             description="true logs it even when it matches food logged in the last 10 minutes. Send it only "
                         "when the person confirms they ate it again.")] = False,
         key: Key = None,
@@ -987,9 +1198,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     async def save_food(
         name: Annotated[str, Field(description="The food's name, as the person says it, such as Roti.")],
         serving_label: Annotated[str, Field(description="What one serving is, such as 1 roti or 1 bowl.")],
-        kcal_per_serving: Annotated[float, Field(
+        kcal_per_serving: Annotated[Number, Field(
             description="Calories in one serving, as the person gave them, 0 to 5,000.")],
-        grams_per_serving: Annotated[float | None, Field(description="Grams in one serving, if known.")] = None,
+        grams_per_serving: Annotated[Number | None, Field(description="Grams in one serving, if known.")] = None,
         key: Key = None,
     ) -> Annotated[CallToolResult, SaveFoodResult]:
         data = _sent(name=name, serving_label=serving_label, kcal_per_serving=kcal_per_serving,
@@ -1012,27 +1223,27 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     async def log_cardio(
         exercise: Annotated[str, Field(
             description="The activity, exactly as list_exercises gives it, such as Treadmill Walk. " + CARDIO_RULE)],
-        minutes: Annotated[float, Field(description="How long it lasted, in minutes, 1 to 600.")],
+        minutes: Annotated[Number, Field(description="How long it lasted, in minutes, 1 to 600.")],
         date: Annotated[str | None, Field(
             description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        distance_km: Annotated[float | None, Field(
+        distance_km: Annotated[Number | None, Field(
             description="The distance in km, if the person gave it in km, or with no unit and units.distance is km. "
                         "Send distance_km or distance_mi, never both.")] = None,
-        distance_mi: Annotated[float | None, Field(
+        distance_mi: Annotated[Number | None, Field(
             description="The distance in miles, if the person gave it in miles, or with no unit and units.distance is "
                         "mi. Send it as said: Spotter converts it. Send distance_km or distance_mi, never both.")]
             = None,
-        incline_pct: Annotated[float | None, Field(description="A treadmill's incline in percent, 0 to 40.")] = None,
-        speed_kmh: Annotated[float | None, Field(
+        incline_pct: Annotated[Number | None, Field(description="A treadmill's incline in percent, 0 to 40.")] = None,
+        speed_kmh: Annotated[Number | None, Field(
             description="The speed in km/h, if the person gave it so. Send speed_kmh or speed_mph, never both.")] = None,
-        speed_mph: Annotated[float | None, Field(
+        speed_mph: Annotated[Number | None, Field(
             description="The speed in miles an hour, if the person gave it so. Send it as said: Spotter converts it. "
                         "Send speed_kmh or speed_mph, never both.")] = None,
-        avg_hr: Annotated[int | None, Field(description="Average heart rate in bpm, 30 to 240.")] = None,
-        machine_kcal: Annotated[int | None, Field(
+        avg_hr: Annotated[Whole | None, Field(description="Average heart rate in bpm, 30 to 240.")] = None,
+        machine_kcal: Annotated[Whole | None, Field(
             description="The calories the machine or watch showed, as the person read them.")] = None,
         notes: Annotated[str | None, Field(description="How it went, in the person's words.")] = None,
-        allow_repeat: Annotated[bool, Field(
+        allow_repeat: Annotated[StrictBool, Field(
             description="true logs it even when it matches a session from the last 10 minutes.")] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogCardioResult]:
@@ -1067,7 +1278,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         annotations=READ_ONLY,
     )
     async def get_goals(
-        include_closed: Annotated[bool, Field(
+        include_closed: Annotated[StrictBool, Field(
             description="true also lists the goals marked hit or dropped. Leave out for open goals only.")] = False,
     ) -> Annotated[CallToolResult, GetGoalsResult]:
         sent = _sent(include_closed=include_closed or None)
@@ -1201,18 +1412,17 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         annotations=READ_ONLY,
     )
     async def owner_calls(
-        account_id: Annotated[int | None, Field(description="An account's id, as a line gives it.")] = None,
+        account_id: Annotated[Whole | None, Field(description="An account's id, as a line gives it.")] = None,
         email: Annotated[str | None, Field(description="An account's email, matched exactly, ignoring case.")] = None,
         request_id: Annotated[str | None, Field(
             description="A request's id, from its X-Request-Id header. Goes before account_id and email.")] = None,
-        no_account: Annotated[bool, Field(
+        no_account: Annotated[StrictBool, Field(
             description="true lists the calls that had no account: a refused sign-in, or a deleted account.")] = False,
-        hours: Annotated[int | None, Field(
-            description="The window, in hours back from now: 1 to 2,160. Leave out for 24.",
-            ge=HOURS[0], le=HOURS[1])] = None,
-        failed_only: Annotated[bool, Field(description="true keeps only the calls that were not ok.")] = False,
-        limit: Annotated[int | None, Field(
-            description="The most lines or calls: 1 to 200. Leave out for 50.", ge=LIMIT[0], le=LIMIT[1])] = None,
+        hours: Annotated[whole_in(*HOURS[:2]) | None, Field(
+            description="The window, in hours back from now: 1 to 2,160. Leave out for 24.")] = None,
+        failed_only: Annotated[StrictBool, Field(description="true keeps only the calls that were not ok.")] = False,
+        limit: Annotated[whole_in(*LIMIT[:2]) | None, Field(
+            description="The most lines or calls: 1 to 200. Leave out for 50.")] = None,
     ) -> Annotated[CallToolResult, OwnerCallsResult]:
         sent = _sent(account_id=account_id, email=email, request_id=request_id, no_account=no_account or None,
                      hours=hours, failed_only=failed_only or None, limit=limit)
@@ -1231,14 +1441,13 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         annotations=READ_ONLY,  # it only reads: the delete is owner_delete_feedback's
     )
     async def owner_feedback(
-        account_id: Annotated[int | None, Field(description="Only this account's notes: its id, as a note gives it.")]
+        account_id: Annotated[Whole | None, Field(description="Only this account's notes: its id, as a note gives it.")]
             = None,
         email: Annotated[str | None, Field(
             description="Only the notes of the accounts with this email, matched exactly, ignoring case. account_id "
                         "goes before it.")] = None,
-        limit: Annotated[int | None, Field(
-            description="The most notes: 1 to 50. Leave out for 10.",
-            ge=feedback.LIMIT_SHOWN[0], le=feedback.LIMIT_SHOWN[1])] = None,
+        limit: Annotated[whole_in(*feedback.LIMIT_SHOWN[:2]) | None, Field(
+            description="The most notes: 1 to 50. Leave out for 10.")] = None,
     ) -> Annotated[CallToolResult, OwnerFeedbackResult]:
         sent = _sent(account_id=account_id, email=email, limit=limit)
         return await wrapper.call("owner_feedback", OwnerFeedbackResult,
@@ -1255,7 +1464,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         annotations=DELETE,  # it deletes notes for good: a client is told so, as for delete_entry
     )
     async def owner_delete_feedback(
-        ids: Annotated[list[int], Field(
+        ids: Annotated[list[Whole], Field(
             description="Ids of the notes to delete for good: 1 to 100. Only the ids the owner said to delete.",
             min_length=1, max_length=feedback.DELETE_MOST)],
     ) -> Annotated[CallToolResult, OwnerDeleteFeedbackResult]:
@@ -1287,6 +1496,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     # This check is the guard: the switch alone would let a function without a level through at log_delete.
     if registered != set(NEEDS):
         raise RuntimeError(f"NEEDS does not match the functions: {sorted(registered ^ set(NEEDS))}")
+    for tool in server._tool_manager.list_tools():  # every function takes only the fields it lists (decision 1)
+        tool.parameters["additionalProperties"] = False
     return server
 
 

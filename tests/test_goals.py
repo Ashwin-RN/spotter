@@ -546,7 +546,8 @@ def test_a_cardio_best_goal_refusals(user):
     base = {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_date": day(user, 30)}
     assert goal(user, **{**base, "target_value": 31})["error"] == "wrong_direction"   # slower than now
     slower = goal(user, **{**base, "target_value": 30})
-    assert slower["error"] == "wrong_direction" and "below 30 and at least 1 min" in slower["fix"]
+    # inputs.md D16: the least a 5 km time takes is 5 minutes, 60 km/h (was "at least 1 min").
+    assert slower["error"] == "wrong_direction" and "below 30 and at least 5 min" in slower["fix"]
     assert goal(user, **{**base, "target_value": 0.5})["error"] == "invalid_field"
     assert goal(user, **{**base, "target_value": 700})["error"] == "invalid_field"
     assert goal(user, **{**base, "distance_km": 0.05, "target_value": 20})["error"] == "invalid_field"
@@ -1169,15 +1170,16 @@ FIELD_CASES = {
                                       [("cannot_change_kind", "measurement_kind")]),
     "edit_target_the_wrong_way": (lambda u: goal(u, goal_id=weight_goal_id(u), target_value=85),
                                   [("wrong_direction", "target_value")]),
-    # A bad value on an edit changes nothing, so nothing_to_change, with no field, comes beside it.
+    # A bad value on an edit is its own refusal alone: nothing_to_change is decided on what was sent (inputs.md, the
+    # fix round; was: nothing_to_change, with no field, came beside it).
     "edit_target_out_of_range": (lambda u: goal(u, goal_id=weight_goal_id(u), target_value=500),
-                                 [("invalid_field", "target_value"), ("nothing_to_change", None)]),
+                                 [("invalid_field", "target_value")]),
     "edit_date_today": (lambda u: goal(u, goal_id=weight_goal_id(u), target_date=day(u, 0)),
-                        [("date_not_in_future", "target_date"), ("nothing_to_change", None)]),
+                        [("date_not_in_future", "target_date")]),
     "edit_status_not_one": (lambda u: goal(u, goal_id=weight_goal_id(u), status="finished"),
                             [("invalid_field", "status")]),
     "edit_text_control_character": (lambda u: goal(u, goal_id=weight_goal_id(u), text="a\x00b"),
-                                    [("invalid_field", "text"), ("nothing_to_change", None)]),
+                                    [("invalid_field", "text")]),
     "whole_data_not_an_object": (lambda u: services.set_goal(u.id, ["kind"], "claude"), [("invalid_field", None)]),
     "whole_by_unknown": (lambda u: goal(u, by="robot", **WEIGHT), [("invalid_by", None)]),
     "whole_no_account": (lambda u: services.set_goal(u.id + 999999, {"kind": "bodyweight"}, "claude"),
