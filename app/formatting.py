@@ -8,6 +8,8 @@ Numbers
   STEP: {quantity: shown step, in the quantity's stored unit}, read-only. The widened step is a tenth of it.
   rounded(value, quantity, widened=False, step=None) gives a float, for a result field
       A quantity kept in minutes needs step, or it raises ValueError
+  shown_number(value, quantity, *, units=None) gives an int or a float: a get_data cell, at the shown step in the
+      shown unit, an int when whole. A quantity kept in minutes raises ValueError
   is_zero(value, quantity, *, units=None) gives a bool: whether the value rounds to 0 at the shown step
   widen([now, plan], quantity, *, units=None) gives a bool: close-call rule 2, the two print the same, the gap
       is real
@@ -96,6 +98,9 @@ _TABLE = {
     # A rate and a target that are weights: the same as rate and goal_target in kg, so a lb row can find them.
     "weight_rate": ("0.01", None, 2),
     "weight_target": ("0.01", None, 2),
+    # get_data's (contract data-on-request.md): a number of minutes, never m:ss, and weight x reps.
+    "minutes": ("0.1", "min", 1),
+    "volume": ("0.1", "kg", 2),
 }
 # The shown rows in lb and in mi (decision 9): quantity -> (shown step, unit text, widened step). Pace's steps are
 # seconds, as in _TABLE. A form field in lb or mi is filled at the shown step.
@@ -108,6 +113,7 @@ _SHOWN_IN = {
         "estimated_max": ("0.1", "lb", "0.01"),
         "weight_change": ("0.01", "lb", "0.001"),
         "weight_rate": ("0.01", None, "0.001"),
+        "volume": ("0.1", "lb", "0.01"),
     },
     "mi": {
         "km": ("0.01", "mi", "0.001"),
@@ -285,6 +291,18 @@ def clock(minutes, widened: bool = False) -> str:
     """Minutes as m:ss: 27.5 is "27:30", 75 is "75:00". Widened: tenths of a second, "29:30.0"."""
     units, _ = _shown(minutes, "goal_time", widened)
     return _time(units if widened else units * 10, False, widened)
+
+
+def shown_number(value, quantity: str, *, units=None) -> int | float:
+    """A result cell: the value rounded at the quantity's shown step in the shown unit, as a number, an int when it
+    is whole, so a cell is never 100.0. A quantity kept in minutes raises ValueError, as rounded does: a pace is
+    text."""
+    if quantity in _MINUTES:
+        raise ValueError(f"{quantity} is kept in minutes: show it as text.")
+    steps, step = _shown(value, quantity, False, units)
+    with localcontext(_CTX):
+        number = steps * step
+    return int(number) if number == number.to_integral_value() else float(number) + 0.0
 
 
 def show(value, quantity: str, page: bool = False, widened: bool = False, *, unit: bool = True,

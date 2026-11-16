@@ -61,6 +61,73 @@ LIFTS: list[tuple[str, str]] = [
     ("Lateral Raise", "accessory"),
 ]
 
+# The muscles each lift works and its body region (contract data-on-request.md, decision 17), from free-exercise-db
+# (yuhonas/free-exercise-db on GitHub, The Unlicense, read on 2026-11-16): each primary muscle 1 a set, each
+# secondary 0.5 (R13). Code only, never a column: sync and list_exercises do not read them. The region is worked from
+# the lift's primary muscle (REGION_OF), save the two carries, which are full_body. Suitcase Carry has no entry there.
+MUSCLE_NAMES = ("abdominals", "abductors", "adductors", "biceps", "calves", "chest", "forearms", "glutes", "hamstrings",
+                "lats", "lower back", "middle back", "neck", "quadriceps", "shoulders", "traps", "triceps")
+REGION_NAMES = ("upper", "lower", "core", "full_body")
+REGION_OF = {**dict.fromkeys(("quadriceps", "hamstrings", "glutes", "calves", "adductors", "abductors", "lower back"),
+                             "lower"),
+             **dict.fromkeys(("chest", "shoulders", "lats", "middle back", "traps", "biceps", "triceps", "forearms",
+                              "neck"), "upper"),
+             "abdominals": "core"}
+FULL_BODY = ("Farmer's Carry", "Suitcase Carry")  # a carry is grip, legs and trunk at once
+
+# lift: (its free-exercise-db entry, its primary muscles, its secondary muscles)
+_SOURCE: dict[str, tuple[str | None, tuple[str, ...], tuple[str, ...]]] = {
+    "Back Squat": ("Barbell_Full_Squat", ("quadriceps",), ("calves", "glutes", "hamstrings", "lower back")),
+    "Front Squat": ("Front_Barbell_Squat", ("quadriceps",), ("calves", "glutes", "hamstrings")),
+    "Goblet Squat": ("Goblet_Squat", ("quadriceps",), ("calves", "glutes", "hamstrings", "shoulders")),
+    "Leg Press": ("Leg_Press", ("quadriceps",), ("calves", "glutes", "hamstrings")),
+    "Bulgarian Split Squat": ("Split_Squat_with_Dumbbells", ("quadriceps",), ("glutes", "hamstrings")),
+    "Walking Lunge": ("Bodyweight_Walking_Lunge", ("quadriceps",), ("calves", "glutes", "hamstrings")),
+    "Bodyweight Squat": ("Bodyweight_Squat", ("quadriceps",), ("glutes", "hamstrings")),
+    "Step-Up": ("Dumbbell_Step_Ups", ("quadriceps",), ("calves", "glutes", "hamstrings")),
+    "Deadlift": ("Barbell_Deadlift", ("lower back",),
+                 ("calves", "forearms", "glutes", "hamstrings", "lats", "middle back", "quadriceps", "traps")),
+    "Romanian Deadlift": ("Romanian_Deadlift", ("hamstrings",), ("calves", "glutes", "lower back")),
+    "Dumbbell Romanian Deadlift": ("Stiff-Legged_Dumbbell_Deadlift", ("hamstrings",), ("glutes", "lower back")),
+    "Hip Thrust": ("Barbell_Hip_Thrust", ("glutes",), ("calves", "hamstrings")),
+    "Glute Bridge": ("Barbell_Glute_Bridge", ("glutes",), ("calves", "hamstrings")),
+    "Kettlebell Swing": ("One-Arm_Kettlebell_Swings", ("hamstrings",), ("calves", "glutes", "lower back", "shoulders")),
+    "Bench Press": ("Barbell_Bench_Press_-_Medium_Grip", ("chest",), ("shoulders", "triceps")),
+    "Incline Dumbbell Press": ("Incline_Dumbbell_Press", ("chest",), ("shoulders", "triceps")),
+    "Dumbbell Bench Press": ("Dumbbell_Bench_Press", ("chest",), ("shoulders", "triceps")),
+    "Overhead Press": ("Standing_Military_Press", ("shoulders",), ("triceps",)),
+    "Dumbbell Shoulder Press": ("Dumbbell_Shoulder_Press", ("shoulders",), ("triceps",)),
+    "Push-Up": ("Pushups", ("chest",), ("shoulders", "triceps")),
+    "Dip": ("Parallel_Bar_Dip", ("triceps",), ("chest", "shoulders")),
+    "Pull-Up": ("Pullups", ("lats",), ("biceps", "middle back")),
+    "Lat Pulldown": ("Wide-Grip_Lat_Pulldown", ("lats",), ("biceps", "middle back", "shoulders")),
+    "Barbell Row": ("Bent_Over_Barbell_Row", ("middle back",), ("biceps", "lats", "shoulders")),
+    "Dumbbell Row": ("One-Arm_Dumbbell_Row", ("middle back",), ("biceps", "lats", "shoulders")),
+    "Seated Cable Row": ("Seated_Cable_Rows", ("middle back",), ("biceps", "lats", "shoulders")),
+    "Inverted Row": ("Inverted_Row", ("middle back",), ("lats",)),
+    "Face Pull": ("Face_Pull", ("shoulders",), ("middle back",)),
+    "Farmer's Carry": ("Farmers_Walk", ("forearms",),
+                       ("abdominals", "glutes", "hamstrings", "lower back", "quadriceps", "traps")),
+    "Suitcase Carry": (None, (), ()),
+    "Plank": ("Plank", ("abdominals",), ()),
+    "Side Plank": ("Side_Bridge", ("abdominals",), ("shoulders",)),
+    "Dead Bug": ("Dead_Bug", ("abdominals",), ()),
+    "Hanging Knee Raise": ("Hanging_Leg_Raise", ("abdominals",), ()),
+    "Pallof Press": ("Pallof_Press", ("abdominals",), ("chest", "shoulders", "triceps")),
+    "Leg Curl": ("Lying_Leg_Curls", ("hamstrings",), ()),
+    "Leg Extension": ("Leg_Extensions", ("quadriceps",), ()),
+    "Calf Raise": ("Standing_Calf_Raises", ("calves",), ()),
+    "Dumbbell Curl": ("Dumbbell_Bicep_Curl", ("biceps",), ("forearms",)),
+    "Triceps Pushdown": ("Triceps_Pushdown", ("triceps",), ()),
+    "Lateral Raise": ("Side_Lateral_Raise", ("shoulders",), ()),
+}
+FREE_EXERCISE_DB = {name: entry for name, (entry, _, _) in _SOURCE.items()}
+MUSCLES: dict[str, dict[str, float]] = {
+    name: {**dict.fromkeys(primary, 1.0), **dict.fromkeys(secondary, 0.5)}
+    for name, (_, primary, secondary) in _SOURCE.items()}
+REGIONS: dict[str, str] = {
+    name: "full_body" if name in FULL_BODY else REGION_OF[primary[0]] for name, (_, primary, _) in _SOURCE.items()}
+
 CARDIO_CATEGORIES = ["walk", "run", "cycle", "row", "swim", "machine", "other"]
 
 # Cardio: (name, category, MET, Compendium code), kind "cardio". Every MET and code is a row of the

@@ -254,9 +254,10 @@ FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goa
              "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
              "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries",
              "send_feedback",  # feedback.md decision 2: the twentieth, after the nineteen
-             "save_routine", "get_routines"]  # routines.md R10: after send_feedback
+             "save_routine", "get_routines",  # routines.md R10: after send_feedback
+             "what_is_logged", "get_data"]  # data-on-request.md: after get_routines
 READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals",
-         "get_routines"}
+         "get_routines", "what_is_logged", "get_data"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 SETTING_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
@@ -328,6 +329,8 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
 
     who = keep("whoami")  # no time zone yet: carries time_zone_note
     today = date.fromisoformat(who["today"])
+    keep("what_is_logged")  # data-on-request.md: nothing logged, its note
+    keep("get_data", {"area": "food"})  # empty rows, its note and range_note
     keep("get_trends")  # nothing logged: every block that can be null is null
     keep("get_goals")  # no goals
     keep("list_exercises")
@@ -399,6 +402,10 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     assert "error" not in added, added
     for name in ("get_log", "get_progress", "get_trends", "get_goals"):
         keep(name, as_token=full_token)
+    keep("what_is_logged", as_token=full_token)  # names and goals (data-on-request.md)
+    keep("get_data", {"area": "lift_sets", "filters": {"exercise": "Back Squat"},
+                      "totals": {"estimated_max_kg": ["max"]}}, as_token=full_token)  # goals and totals
+    keep("get_data", {"area": "food", "limit": 1}, as_token=full_token)  # more
     # One of its goals dropped: the closed list then holds it.
     full_goal = seen["get_goals"][-1]["goals"][0]["goal_id"]
     keep("set_goal", {"goal_id": full_goal, "status": "dropped"}, as_token=full_token)
@@ -902,6 +909,10 @@ OPTIONAL_ARGUMENTS = {
     "send_feedback": {"doing": "Doing", "expected": "Expected", "happened": "Happened", "topic": "pages"},
     "save_routine": {},  # routines.md: name and lifts are required, and a lift's weight_kg sits inside lifts
     "get_routines": {},
+    "what_is_logged": {},  # data-on-request.md: no arguments
+    "get_data": {"fields": ["kcal"], "filters": {"meal": "lunch"}, "from_date": "2026-01-02", "to_date": "2026-01-03",
+                 "group_by": ["week"], "totals": {"kcal": ["sum"]}, "order": "-kcal_sum", "limit": 5,
+                 "cursor": "c1.x"},
 }
 REQUIRED = {"log_lifts": {"sets": squat(100)},
             "log_measurement": {"kind": "waist", "value": 84.5},
@@ -920,7 +931,8 @@ REQUIRED = {"log_lifts": {"sets": squat(100)},
                                         {"kind": "cardio_entry", "date": "2026-01-04", "exercise": "Outdoor Run",
                                          "minutes": 30.0, "distance": 3.1, "speed": 6.2}]},
             "send_feedback": {"text": "Text"},
-            "save_routine": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8}]}}
+            "save_routine": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8}]},
+            "get_data": {"area": "food"}}
 DATA_WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "log_food",
                "save_food", "log_cardio", "import_entries", "save_routine"}
 
@@ -962,7 +974,7 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
     if name == "delete_entry":  # who calls, so a delete takes two calls (switch decision 7), and confirm when sent
         flags = {k: v for k, v in arguments.items() if k == "confirm"}
         return (account, arguments["kind"], arguments["entry_id"], "claude"), flags
-    if name == "send_feedback":  # no by: a note comes only through MCP (feedback.md R3)
+    if name in ("send_feedback", "get_data"):  # no by: a note comes only through MCP (feedback.md R3); a read
         return (account, arguments), {}
     if name == "whoami":  # what is offered, for its setup steps (first-day.md R9)
         return (account, mcp_server.NEEDS), {}
@@ -1295,6 +1307,7 @@ CONTRACT_NEEDS = {
     "import_entries": "log",
     "send_feedback": "log",  # feedback.md decision 3
     "save_routine": "log", "get_routines": "read",  # routines.md decisions 5 and 7
+    "what_is_logged": "read", "get_data": "read",  # data-on-request.md: two reads
 }
 ALLOWS = {"log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}  # switch decision 1: two settings
 

@@ -31,10 +31,12 @@ NAMED_IN_L = {
 IN_C_ONLY = {"met", "speed", "incline"}
 # Units R4: a rate and a target that are weights, the same as rate and goal_target in kg.
 IN_UNITS = {"weight_rate", "weight_target"}
+# data-on-request.md: get_data's minutes (a number, never m:ss) and volume (weight x reps).
+IN_DATA = {"minutes", "volume"}
 
 
 def test_every_quantity_has_a_step():
-    assert set(f.STEP) == NAMED_IN_L | IN_C_ONLY | IN_UNITS
+    assert set(f.STEP) == NAMED_IN_L | IN_C_ONLY | IN_UNITS | IN_DATA
 
 
 @pytest.mark.parametrize("quantity, step", [
@@ -45,7 +47,7 @@ def test_every_quantity_has_a_step():
     ("steps", 1), ("ml", 1), ("servings", 0.01), ("count", 1), ("count_avg", 0.1), ("rate", 0.01),
     ("weight_change", 0.01), ("goal_target", 0.01),
     ("session_time", 1 / 60), ("pace", 1 / 60), ("goal_time", 1 / 60), ("time_pace", 1 / 60),
-    ("time_gap", 1 / 60),
+    ("time_gap", 1 / 60), ("minutes", 0.1), ("volume", 0.1),
 ])
 def test_step(quantity, step):
     assert f.STEP[quantity] == pytest.approx(step)
@@ -55,6 +57,9 @@ def test_step(quantity, step):
 
 # (quantity, value, shown). Where rounding applies: at a half, just under it and just over it.
 RULES = [
+    # data-on-request.md: 1 dp, as a number of minutes and as weight x reps.
+    ("minutes", 30.0, "30 min"), ("minutes", 27.25, "27.3 min"), ("minutes", 27.2499, "27.2 min"),
+    ("volume", 1500.0, "1,500 kg"), ("volume", 102.25, "102.3 kg"), ("volume", 102.2499, "102.2 kg"),
     # As entered, up to 2 dp, trailing zeros dropped.
     ("weigh_in", 80.0, "80 kg"), ("weigh_in", 80.1, "80.1 kg"), ("weigh_in", 80.25, "80.25 kg"),
     ("weigh_in", 80.125, "80.13 kg"), ("weigh_in", 80.1249, "80.12 kg"), ("weigh_in", 80.1251, "80.13 kg"),

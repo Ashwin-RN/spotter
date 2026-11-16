@@ -46,6 +46,11 @@ order as every call (the account, the row, the switch, the owner check, the read
 one call-log row. An unknown function name is the library's own answer, with no row. Number and Whole (mcp_schemas)
 refuse a bool and text outside rules.NUMBER_TEXT on every number and id argument; true and false arguments are
 StrictBool.
+
+Data on request (contract data-on-request.md): what_is_logged and get_data, reads at READ_ONLY after get_routines,
+counted with every read. Every optional input of get_data takes null as left out (R2), and its filters and totals
+are objects the service checks, so a bad value gets the service's words, not the schema's. Neither description names
+an area or a field; DATA_RULE sits after GOALS_RULE in the instructions.
 """
 
 import difflib
@@ -79,11 +84,11 @@ from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings, get_settings
 from app.mcp_schemas import (
     FOOD_NAME_RULE, IMPORT_ROWS, NEAR_CUTOFF, NEAR_MISSES, DeleteEntryResult, EditEntryResult, ExercisesResult,
-    FindFoodResult, FoodEntryIn, GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult,
-    ImportEntriesResult, ImportRowIn, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult,
-    LogMeasurementResult, Number, OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult, RestoreEntryResult,
-    RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
-    Whole, WhoamiResult, whole_in,
+    FindFoodResult, FoodEntryIn, GetDataResult, GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult,
+    GetTrendsResult, ImportEntriesResult, ImportRowIn, LogBodyweightResult, LogCardioResult, LogFoodResult,
+    LogLiftsResult, LogMeasurementResult, Number, OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult,
+    RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn,
+    UpdateSettingsResult, WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
 )
 from app.models import CLAUDE_CAN, User
 from app.services import common, feedback, food, routines
@@ -171,6 +176,9 @@ FOOD_RULE = (
 # Which read answers which question. get_trends and get_goals carry the same text.
 TRENDS_RULE = "To answer how the person is doing, call get_trends."
 GOALS_RULE = "To answer whether the person is on track, call get_goals."
+# Any other question about the person's own data (contract data-on-request.md, decision 18). Not last: the instructions
+# end with the plan_line sentence.
+DATA_RULE = "For any other question about the person's data, call what_is_logged, then get_data."
 
 # A goal "by the end of March" names a month, not a day. set_goal's target_date carries the same text.
 MONTH_END_RULE = (
@@ -207,7 +215,7 @@ INSTRUCTIONS = (
     "duplicate: true means nothing was written: say so, and send allow_repeat: true only when the person "
     "confirms it was a separate entry. "
     "To answer what the person did on a day or in a week, use get_log. "
-    + TRENDS_RULE + " " + GOALS_RULE + " "
+    + TRENDS_RULE + " " + GOALS_RULE + " " + DATA_RULE + " "
     "Goals: " + MONTH_END_RULE + " "
     "Food: " + FOOD_RULE + " " + FOOD_NAME_RULE + " "
     "Leave the meal out unless the person named it: Spotter picks it from their clock. Never ask which meal. "
@@ -248,6 +256,7 @@ NEEDS = {
     "import_entries": "log",
     "send_feedback": "log",
     "save_routine": "log", "get_routines": "read",
+    "what_is_logged": "read", "get_data": "read",
     "owner_calls": "read", "owner_feedback": "read", "owner_delete_feedback": "read",
 }
 # Listed for the owner alone, and refused to anyone else (is_owner). At read, so the owner's own switch, which is
@@ -1395,6 +1404,66 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     )
     async def get_routines() -> Annotated[CallToolResult, GetRoutinesResult]:
         return await wrapper.call("get_routines", GetRoutinesResult, lambda account: services.get_routines(account))
+
+    # Data on request's two (contract data-on-request.md), after get_routines, before the owner's three. Neither
+    # description names an area or a field: what_is_logged's answer does.
+    @server.tool(
+        name="what_is_logged",
+        title="What is logged",
+        description=(
+            "What Spotter can hold and what this person has logged: each area get_data reads, with its fields, what "
+            "each means, its unit, and the totals, filters and groups it takes, how many entries it holds and when, "
+            "the names logged, and every open goal with its plan line. Call it before get_data, for a question the "
+            "other reads do not answer. Quote these numbers."
+        ),
+        annotations=READ_ONLY,
+    )
+    async def what_is_logged() -> Annotated[CallToolResult, WhatIsLoggedResult]:
+        return await wrapper.call("what_is_logged", WhatIsLoggedResult,
+                                  lambda account: services.what_is_logged(account))
+
+    @server.tool(
+        name="get_data",
+        title="Get data",
+        description=(
+            "One query over the person's own entries, for a question the other reads do not answer. Name an area, "
+            "fields, filters, group_by and totals by the names what_is_logged gives. Spotter works out every total: "
+            "quote them, never work out your own. Left out, the range is the last 28 days. Rows are lists under "
+            "columns. Unlike the other functions, its numbers are in the person's units, and each column's name says "
+            "which. When more is given, send it as cursor with the same query for the next rows."
+        ),
+        annotations=READ_ONLY,
+    )
+    async def get_data(
+        area: Annotated[str, Field(description="An area, as what_is_logged names it, such as lift_sets or food.")],
+        fields: Annotated[list[str] | None, Field(
+            description="The fields to show, as what_is_logged names them. Leave out for every field. Not with "
+                        "group_by.")] = None,
+        filters: Annotated[dict[str, Any] | None, Field(
+            description="Only rows that match, by a filter field of what_is_logged: a name, a list of names, or true "
+                        "or false, such as {\"exercise\": \"Back Squat\"}.")] = None,
+        from_date: Annotated[str | None, Field(
+            description="The first day, YYYY-MM-DD. Leave out with to_date for the last 28 days.")] = None,
+        to_date: Annotated[str | None, Field(description="The last day, YYYY-MM-DD. Leave out for today.")] = None,
+        group_by: Annotated[list[str] | None, Field(
+            description="One or two groups: day, week, month, or a field what_is_logged marks as a group. Each row is "
+                        "then one group.", min_length=1, max_length=2)] = None,
+        totals: Annotated[dict[str, Any] | None, Field(
+            description="By field, as what_is_logged allows: sum, avg, max, min, count, per_day or share, such as "
+                        "{\"kcal\": [\"sum\", \"per_day\"]}.")] = None,
+        order: Annotated[str | None, Field(
+            description="A column of the answer to sort by, smallest first, or with a minus sign first for largest "
+                        "first, such as -kcal_sum. Leave out for newest first, or largest first for groups by a "
+                        "field.")] = None,
+        limit: Annotated[whole_in(1, 300) | None, Field(description="The most rows: 1 to 300. Leave out for 100.")]
+            = None,
+        cursor: Annotated[str | None, Field(
+            description="more from the last answer, as it came, with the same query.")] = None,
+    ) -> Annotated[CallToolResult, GetDataResult]:
+        # Null is taken as left out (R2): _sent drops every None.
+        data = _sent(area=area, fields=fields, filters=filters, from_date=from_date, to_date=to_date,
+                     group_by=group_by, totals=totals, order=order, limit=limit, cursor=cursor)
+        return await wrapper.call("get_data", GetDataResult, lambda account: services.get_data(account, data))
 
     # The owner's three, last, so everyone else's list is the functions above, in their order
     # (SpotterServer.list_tools).

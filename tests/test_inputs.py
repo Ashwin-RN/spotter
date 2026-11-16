@@ -110,7 +110,8 @@ def owner_tools(make_client) -> list[dict]:
 
 
 def test_the_published_list_differs_only_by_additional_properties_and_the_three_descriptions(make_client):
-    tools = owner_tools(make_client)
+    # data-on-request.md added what_is_logged and get_data after get_routines: the old names are compared as before.
+    tools = [t for t in owner_tools(make_client) if t["name"] in BEFORE_INPUTS]
     assert [t["name"] for t in tools] == list(BEFORE_INPUTS)
     for tool in tools:  # every number and integer, every output schema and every other word as published before
         assert sha(without_inputs(tool)) == BEFORE_INPUTS[tool["name"]], tool["name"]
@@ -128,7 +129,7 @@ def test_the_published_list_differs_only_by_additional_properties_and_the_three_
 
 
 def test_the_instructions_are_unchanged():
-    assert len(mcp_server.INSTRUCTIONS) == 3927
+    assert len(mcp_server.INSTRUCTIONS) == 4011  # data-on-request.md: DATA_RULE joined after
 
 
 # ---------------------------------------------------------------- the person and the calls
@@ -236,6 +237,9 @@ def bases(user: User, ids: dict) -> dict:
         "save_routine": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8,
                                                         "weight_kg": 60}]},
         "get_routines": {},
+        "what_is_logged": {},  # data-on-request.md: its two, so the sweep's values reach get_data's fields
+        "get_data": {"area": "lift_sets", "fields": ["reps"], "filters": {"exercise": "Back Squat"},
+                     "from_date": day(10), "to_date": day(1), "order": "-reps", "limit": 5},
         "owner_calls": {"account_id": user.id, "hours": 24, "failed_only": False, "limit": 50},
         "owner_feedback": {"email": "owner@example.com", "limit": 10},
         "owner_delete_feedback": {"ids": [ids["note"]]},
@@ -245,7 +249,7 @@ def bases(user: User, ids: dict) -> dict:
 def test_every_base_call_succeeds_and_names_every_function(owner_person, monkeypatch):
     client, token, user = owner_person
     calls = bases(user, seeded(user))
-    assert list(calls) == list(BEFORE_INPUTS)
+    assert list(calls) == [*list(BEFORE_INPUTS)[:22], "what_is_logged", "get_data", *list(BEFORE_INPUTS)[22:]]
     for name, arguments in calls.items():
         result = tool_call(client, token, name, arguments)
         assert result["isError"] is False, (name, result)

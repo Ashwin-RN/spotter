@@ -360,6 +360,25 @@ Each answer holds with the same time zone set at both runs. The last row is the 
   routine back.
 - The import does not bring routines over, and the export holds them in `routines.csv`.
 
+## Data on request
+
+- **Two reads.** `what_is_logged` names every area, its fields, what each means and the totals each
+  takes, with how much the person has logged. `get_data` reads one area: rows, or groups with totals.
+- **Areas:** lift sets, lift sessions, cardio, weigh-ins, measurements, food, saved foods, and days, one
+  row a day across them. Goals and routines stay with `get_goals` and `get_routines`.
+- **Totals** are Spotter's: sum, avg, max, min, count, per_day and share. per_day divides by the days
+  with an entry in the area, or for a measurement by the days with that kind. A share is a whole percent,
+  and the shares sum to 100. A pace over a range is total minutes over total distance.
+- **Ranges.** Left out, the last 28 days. Weeks run Monday to Sunday and months are calendar months.
+- **Size.** 100 rows by default, at most 300, and an answer of at most 30,000 characters. `more` gives
+  the next rows.
+- **Units.** Every value is in the person's units, and each column's name says which.
+- **Body region** of a lift (upper, lower, core or full body) comes from its main muscles in
+  free-exercise-db, save the two carries, which are full body.
+- **Muscles.** Each lift's muscles are free-exercise-db's. Grouped by muscle, a set counts 1 for its main
+  muscle and 0.5 for each other muscle it works.
+- **Not offered:** joins across areas in one call, deleted entries, raw queries.
+
 ## Export and delete: the person's own clicks
 
 - Exporting the data (a zip of CSV files) and deleting the account are the person's own clicks on
@@ -454,6 +473,8 @@ Claude may call these functions, and nothing else:
 | `send_feedback` | Sends a note to Spotter's maker, when the person asks or says yes to the offer. |
 | `save_routine` | Saves a workout by name, with its lifts, sets and reps. |
 | `get_routines` | The saved routines, each lift with the weight to log. |
+| `what_is_logged` | What Spotter can hold and what the person has logged, area by area, with the open goals. |
+| `get_data` | One query over the person's entries: an area, its fields, filters, groups and totals, all worked out by Spotter. |
 
 `whoami` reports `claude_can`, the person's setting for what Claude may do:
 

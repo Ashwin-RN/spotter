@@ -23,6 +23,8 @@ One module per area, so each later stage adds its own:
                 no user_id either, and it only reads), owner_delete_feedback (the owner's delete of notes by id,
                 no user_id either)
   routines      save_routine, get_routines (a workout saved by name, each lift with the weight to log)
+  data          what_is_logged, get_data (data on request: any question about the person's own entries, from the
+                field list in fields)
   common        the by-id lookup, the user-row lock, the write limit, the read throttle, the duplicate guard
 
 Every public function takes the signed-in person's user_id (the account row id) first, and writes
@@ -43,6 +45,7 @@ from app.services.common import (
 )
 from app.services.entries import delete_entry, edit_entry, entry_kinds, get_entry, restore_entry
 from app.services.cardio import get_cardio, log_cardio
+from app.services.data import get_data, what_is_logged
 from app.services.export import export_data
 from app.services.feedback import owner_delete_feedback, owner_feedback, send_feedback
 from app.services.food import find_food, list_saved_foods, log_food, save_food
@@ -59,10 +62,10 @@ from app.services.trends import get_days, get_trends
 __all__ = [
     "DUPLICATE_MINUTES", "READ_LIMIT", "WRITE_FUNCTIONS", "WRITE_LIMIT", "WRITE_WINDOW_MINUTES",
     "account_empty", "delete_account", "delete_entry", "edit_entry", "entry_kinds", "export_data", "find_food",
-    "get_cardio", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress", "get_routines",
-    "get_trends", "import_entries", "list_exercises", "list_saved_foods",
+    "get_cardio", "get_data", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress",
+    "get_routines", "get_trends", "import_entries", "list_exercises", "list_saved_foods",
     "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "owner_calls",
     "owner_delete_feedback", "owner_feedback", "restore_entry", "save_food", "save_routine", "send_feedback",
     "set_claude_can",
-    "set_goal", "update_settings", "whoami",
+    "set_goal", "update_settings", "what_is_logged", "whoami",
 ]

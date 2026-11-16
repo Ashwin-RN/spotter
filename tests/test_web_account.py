@@ -1473,7 +1473,8 @@ SWITCH_EVERYTHING = {"whoami", "list_exercises", "get_progress", "get_log", "fin
                      "log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "import_entries",
                      "edit_entry", "restore_entry", "save_food", "set_goal", "update_settings",
                      "send_feedback",  # feedback.md decision 3
-                     "save_routine", "get_routines"}  # routines.md decisions 5 and 7
+                     "save_routine", "get_routines",  # routines.md decisions 5 and 7
+                     "what_is_logged", "get_data"}  # data-on-request.md: two reads
 SWITCH_ALLOWS = {
     "log_delete": (SWITCH_EVERYTHING | {"delete_entry"},
                    "Your assistant can log and import entries, edit and restore them, save foods and routines, and set "

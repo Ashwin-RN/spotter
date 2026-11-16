@@ -813,6 +813,25 @@ The figures, worked on 2026-11-16 by running a prototype of this seed on a scrat
 5. `python -m evals.need main` says yes: the release's one run is owed, its cost said first.
 6. One local Postgres run of `tests/test_data.py` before the merge, on the owner's okay to start Docker, recorded in the build log entry.
 
+## Notes after the build
+
+**2026-11-16, D1 built and reviewed on a frozen copy, one fix round, a re-check.** Where the build settled a point the text above left open or worded two ways, the build is the record:
+
+| Point | As built |
+|---|---|
+| R9's exempt set | `{"entries", "values"}`, as R9 says. The tests line that names `entries` alone is superseded |
+| per_day on lift_sessions' `sessions` | None: its field row gives share only. Sessions over the days with a session is always about 1 |
+| Nothing in range, with a time group | Empty rows and the note (decision 12). When anything matches, every period of the range is listed |
+| Words the refusal table did not give | A to_date before the floor, a from_date after today, a filter or totals value of the wrong type, a page past the end: each has its own refusal or summary, through `tests/text_rules.py` |
+| Two more `Area` hooks | `goal_kinds` (from `goals.KINDS_NOW`) and `entries_are_days`: data on the entry, as R9 asks |
+| A forged cursor | A cursor longer than 200 characters is refused before it is read, and a range outside the account's floor or after today is refused: "cursor is not one Spotter gave." Spotter's own are about 90 |
+| `value`'s range totals over several kinds | Null: a range total never mixes units. One kind keeps its figure |
+| `value`'s share | Needs a one-kind filter, `group_by` kind included: "value's share needs one kind: it is a part of one kind's total." |
+| The goals that ride along | At most 10, in `get_goals`' order, with the note "{n} more open goals: get_goals has them all." A page always keeps at least one row, so `more` moves on |
+| The saved food join | Also on the entry's own account, as a second guard |
+| The order refusal's example | "such as -{the answer's last column}", since -kcal_sum is not a column of most answers |
+| Statements with an open lift goal | They grow by at most 2 for each 500 sessions, on the path `get_goals` already takes (`lifts.history`'s two `selectinload` levels), never one a row. A known limit |
+
 ## Known limits
 
 | Limit | Why it stands |

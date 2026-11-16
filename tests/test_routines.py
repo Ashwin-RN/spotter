@@ -838,7 +838,8 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     client = make_client(owner_user_id=OWNER)
     tools = tool_list(client, sign_for(OWNER))
     names = [t["name"] for t in tools]
-    assert names == [*list(BEFORE)[:20], "save_routine", "get_routines", *list(BEFORE)[20:]]
+    assert names == [*list(BEFORE)[:20], "save_routine", "get_routines", "what_is_logged", "get_data",
+                     *list(BEFORE)[20:]]  # data-on-request.md: its two after get_routines
     # inputs.md then moved every one: its changes are taken out here (tests/test_inputs.py diffs the two).
     hashes = {t["name"]: hashlib.sha256(compact(without_inputs(t)).encode()).hexdigest() for t in tools}
     # Routines moved delete_entry, restore_entry and whoami; units then moved its thirteen (units.md), of these.
@@ -850,8 +851,8 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     assert everyone == [n for n in names if n not in mcp_server.OWNER_FUNCTIONS] and len(everyone) == web.FUNCTION_COUNT
 
 
-def test_the_instructions_do_not_change_3927_characters():
-    assert len(mcp_server.INSTRUCTIONS) == 3927
+def test_the_instructions_do_not_change_4011_characters():  # data-on-request.md: DATA_RULE joined after
+    assert len(mcp_server.INSTRUCTIONS) == 4011
     assert "routine" not in mcp_server.INSTRUCTIONS
 
 

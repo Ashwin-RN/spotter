@@ -22,6 +22,10 @@ outside rules.NUMBER_TEXT ("1_0", "8e1", "nan"), is refused before pydantic pars
 grammar, go on as today. Their published type stays number or integer. A true-or-false argument is StrictBool: true,
 false or left out. NEAR_MISSES holds the sentence a refusal of an unknown key adds when the key names a field Spotter
 takes by another name.
+
+Data on request (contract data-on-request.md): what_is_logged and get_data publish no area or field by name. Their
+rows are lists under a columns header (Cell), their open goals OpenGoal, five fields of GoalNumbers, and their daily
+and weekly amounts whoami's own Targets.
 """
 
 import math
@@ -1460,6 +1464,83 @@ class GetRoutinesResult(BaseModel):
     links: RoutinesLinks = Field(description=LINKS_LAST)
 
 
+# ---------------------------------------------------------------- what_is_logged and get_data
+
+# Contract data-on-request.md. No model here names an area or a field (its scaling rule): an area's fields and a
+# query's rows are lists under a columns header, and what each field means is in what_is_logged's answer. The open
+# goals ride as OpenGoal, a subset of GoalNumbers (R4), and the daily and weekly amounts as whoami's own Targets (R5).
+Cell = str | int | float | bool | None
+
+
+class OpenGoal(BaseModel):
+    goal_id: int = Field(description="The goal's id, as get_goals gives it.")
+    label: str = Field(description="The goal in a few words, in the person's units, as get_goals gives it.")
+    status: str = Field(description="reached, on track, behind or not enough data, as get_goals gives it.")
+    target_date: str = Field(description="The date to reach it by, YYYY-MM-DD.")
+    plan_line: str | None = Field(
+        description="Where the goal stands against its plan line, ready to say as written. Null with nothing to "
+                    "compare.")
+
+
+class AreaLogged(BaseModel):
+    area: str = Field(description="The area's name: get_data takes it as area.")
+    meaning: str = Field(description="What one row of the area is.")
+    entries: int = Field(description="Rows the person has in it, deleted ones left out.")
+    first: str | None = Field(description="The first row's date, YYYY-MM-DD, or null with none.")
+    last: str | None = Field(description="The last row's date, YYYY-MM-DD, or null with none.")
+    last_28d: int = Field(description="Rows in the 28 days ending today.")
+    prior_28d: int = Field(description="Rows in the 28 days before those.")
+    fields: list[list[Cell]] = Field(description="The area's fields, one list each, in field_columns' order.")
+    names: dict[str, list[str]] | None = Field(
+        default=None,
+        description="The names logged in the area, by field, most used first: every exercise logged, say.")
+
+
+class WhatIsLoggedResult(BaseModel):
+    model_config = TOP
+
+    today: str = Field(description="Today's date for the person, YYYY-MM-DD.")
+    field_columns: list[str] = Field(description="What each list in an area's fields holds, in order.")
+    areas: list[AreaLogged] = Field(description="Every area get_data reads, with what the person has in it.")
+    goals: list[OpenGoal] = Field(description="Every open goal, with its plan line.")
+    targets: Targets = Field(description="The person's targets.")
+    how: str = Field(description="How get_data works out each total.")
+    summary: str = Field(description="What is logged, in one line, ready to quote.")
+    note: str | None = Field(default=None, description="Present when nothing is logged yet.")
+
+
+class RangeTotals(BaseModel):
+    columns: list[str] = Field(description="Each total's name: the field, then the total, such as kcal_sum.")
+    values: list[Cell] = Field(description="The totals over the whole range, in columns' order.")
+
+
+class GetDataResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    area: str = Field(description="The area read.")
+    from_: str = Field(alias="from", description="The range's first day, YYYY-MM-DD.")
+    to: str = Field(description="The range's last day, YYYY-MM-DD.")
+    range_note: str | None = Field(
+        default=None, description="Present when from_date was left out: say which range this is.")
+    days_in_range: int = Field(description="Days from the first to the last, both counted.")
+    days_logged: int = Field(description="Days in the range with an entry in the area, whatever the filters.")
+    columns: list[str] = Field(description="What each row holds, in order. A name carries its unit, such as weight_lb.")
+    rows: list[list[Cell]] = Field(
+        description="The rows, one list each, in columns' order. Null where a field holds nothing.")
+    totals: RangeTotals | None = Field(default=None, description="The totals asked for, over the whole range.")
+    more: str | None = Field(
+        default=None,
+        description="Present when more rows match: send it as cursor, with the same query, for the next rows.")
+    goals: list[OpenGoal] = Field(
+        description="The open goals this query is about, such as the filtered lift's, each with its plan line.")
+    targets: Targets = Field(description="The person's targets.")
+    summary: str = Field(description="What came back, in one line, ready to quote.")
+    note: str | None = Field(
+        default=None,
+        description="Present when nothing is in range, the rows stop at the size limit, or more open goals match than "
+                    "ride along.")
+
+
 RESULTS = {
     "whoami": WhoamiResult,
     "list_exercises": ExercisesResult,
@@ -1483,6 +1564,8 @@ RESULTS = {
     "send_feedback": SendFeedbackResult,
     "save_routine": SaveRoutineResult,
     "get_routines": GetRoutinesResult,
+    "what_is_logged": WhatIsLoggedResult,
+    "get_data": GetDataResult,
     "owner_calls": OwnerCallsResult,
     "owner_feedback": OwnerFeedbackResult,
     "owner_delete_feedback": OwnerDeleteFeedbackResult,

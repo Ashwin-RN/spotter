@@ -72,6 +72,9 @@ KNOWN_NAMES = frozenset({
     "serving_label", "sets", "speed_kmh", "speed_mph", "start_value", "status", "target_cardio_minutes_per_week",
     "target_date",
     "target_sessions_per_week", "target_value", "text", "time_zone", "topic", "undo_edit", "value", "weight_unit",
+    # get_data's (contract data-on-request.md, decision 21). The keys inside filters and totals are field names:
+    # the known ones are written in braces, the rest counted in other[n].
+    "area", "fields", "filters", "from_date", "to_date", "group_by", "totals", "order", "cursor",
 }) | {name for model in (SetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn)
        for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.

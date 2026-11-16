@@ -89,7 +89,8 @@ PUBLISHED = {
     "get_routines": "2f674c996eb19e408741b7a6f6be84fc38f4b17913046eb3c7231e739a26e18c",  # routines: new, R18's words; units; inputs
     "owner_calls": "171f8c5c586e68e6885bc0d9014d5a2b7ef4ba4bafa217ee898c8338ffaed810",  # inputs
 }
-INSTRUCTIONS_AS_BUILT = "d1ef2d4d6491bea09aeda32d4106a5bd5a9fa6fb4c761f70e9ba7d0059c86704"  # switch decision 18
+# switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE
+INSTRUCTIONS_AS_BUILT = "0aa8baaee659785159ee103fea7760bee064bd85170faea722d296122e080442"
 
 
 def notes() -> list[Feedback]:
@@ -256,9 +257,10 @@ def test_a_note_counts_toward_the_write_limit_and_at_the_limit_nothing_is_saved(
 
 def test_send_feedback_is_published_after_the_nineteen_with_its_words_and_a_key(http):
     tools = tool_list(http, sign())
-    # routines.md: save_routine and get_routines follow it, before the owner's three.
-    assert [t["name"] for t in tools] == [*PUBLISHED][:19] + ["send_feedback", "save_routine", "get_routines"] \
-        == FUNCTIONS
+    # routines.md: save_routine and get_routines follow it, before the owner's three; data-on-request.md: its two
+    # after them.
+    assert [t["name"] for t in tools] == [*PUBLISHED][:19] + ["send_feedback", "save_routine", "get_routines",
+                                                              "what_is_logged", "get_data"] == FUNCTIONS
     tool = tools[19]
     assert (tool["title"], tool["description"]) == ("Send feedback", described(CAP))
     assert tool["annotations"] == {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False,
