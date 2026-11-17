@@ -378,8 +378,8 @@ def test_the_first_migration_is_unchanged_in_what_it_builds():
 
 # ---------------------------------------------------------------- migration 0003: goal.measurement_kind
 
-# What SQLite reports back for each model type.
-SQLITE_TYPES = {"Integer": "INTEGER", "String": "VARCHAR", "Text": "TEXT", "Float": "FLOAT", "Boolean": "BOOLEAN",
+# What SQLite reports back for each model type. BigInteger: call_log.id, INTEGER on SQLite (hardening.md, decision 13).
+SQLITE_TYPES = {"Integer": "INTEGER", "BigInteger": "INTEGER", "String": "VARCHAR", "Text": "TEXT", "Float": "FLOAT", "Boolean": "BOOLEAN",
                 "Date": "DATE", "UtcDateTime": "DATETIME"}
 
 
@@ -593,7 +593,7 @@ def test_0004_applies_on_an_empty_database_and_follows_0003():
         engine.dispose()
     from alembic.script import ScriptDirectory
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0011"  # units
+    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0012"  # hardening
 
 
 def test_the_postgres_sql_deletes_the_marked_rows_and_drops_the_columns():
@@ -616,3 +616,52 @@ def test_the_postgres_sql_deletes_the_marked_rows_and_drops_the_columns():
         command.downgrade(cfg, "0004:0003", sql=True)
     for table in MARKED_TABLES:
         assert f"ALTER TABLE {table} ADD COLUMN is_sample BOOLEAN DEFAULT false NOT NULL" in down.getvalue(), table
+
+
+# ---------------------------------------------------------------- migration 0012: hardening
+
+def test_the_postgres_sql_holds_every_rule_of_0012_the_bigint_the_width_and_the_indexes():
+    from .test_hardening_schema import CHECKS, FK_OWNER, SWEEP_INDEXES, UQ_SAVED_FOOD, UQ_SET_NUMBER
+    cfg = alembic_config("postgresql+psycopg://spotter@db.invalid/spotter")
+    out = io.StringIO()
+    with redirect_stdout(out):
+        command.upgrade(cfg, "0011:0012", sql=True)
+    sql = out.getvalue()
+    for name in CHECKS:
+        table = next(t for t in ("cardio_entry", "entry_version", "food_entry", "lift_session", "lift_set",
+                                 "measurement", "saved_food", "bodyweight", "goal", "user") if name.startswith(f"ck_{t}_"))
+        shown = '"user"' if table == "user" else table
+        assert sql.count(f"ALTER TABLE {shown} ADD CONSTRAINT {name} CHECK (") == 1, name
+    assert sql.count("ADD CONSTRAINT ck_") == len(CHECKS)
+    assert f"ALTER TABLE lift_set ADD CONSTRAINT {UQ_SET_NUMBER} UNIQUE (session_id, exercise_id, set_number);" in sql
+    assert f"ALTER TABLE saved_food ADD CONSTRAINT {UQ_SAVED_FOOD} UNIQUE (user_id, id);" in sql
+    assert (f"ALTER TABLE food_entry ADD CONSTRAINT {FK_OWNER} FOREIGN KEY(user_id, saved_food_id) REFERENCES "
+            "saved_food (user_id, id) DEFERRABLE INITIALLY DEFERRED;") in sql
+    assert sql.index(UQ_SAVED_FOOD) < sql.index(FK_OWNER)  # the unique it points at comes first
+    assert "ALTER TABLE saved_food ALTER COLUMN name_key TYPE VARCHAR(384);" in sql
+    assert "ALTER TABLE call_log ALTER COLUMN id TYPE BIGINT;" in sql
+    assert "ALTER SEQUENCE call_log_id_seq AS BIGINT;" in sql
+    for table, index in SWEEP_INDEXES.items():
+        assert f"CREATE INDEX {index} ON {table} (created_at);" in sql
+    assert "CREATE TABLE" not in sql and "DROP TABLE" not in sql and "_alembic_tmp_" not in sql  # nothing rebuilt
+    assert 'CHECK ("by" IN (\'web\', \'claude\'))' in sql  # by stays quoted
+    down = io.StringIO()
+    with redirect_stdout(down):
+        command.downgrade(cfg, "0012:0011", sql=True)
+    back = down.getvalue()
+    assert back.count("DROP CONSTRAINT ck_") == len(CHECKS)
+    assert "ALTER SEQUENCE call_log_id_seq AS INTEGER;" in back and "ALTER COLUMN id TYPE INTEGER;" in back
+    assert back.index("ALTER SEQUENCE call_log_id_seq AS INTEGER") < back.index("ALTER COLUMN id TYPE INTEGER")
+    assert "ALTER TABLE saved_food ALTER COLUMN name_key TYPE VARCHAR(128);" in back
+    assert back.index(f"DROP CONSTRAINT {FK_OWNER}") < back.index(f"DROP CONSTRAINT {UQ_SAVED_FOOD}")
+    for index in SWEEP_INDEXES.values():
+        assert f"DROP INDEX {index};" in back
+
+
+def test_the_full_postgres_sql_still_builds_call_log_as_serial_then_widens_it():
+    cfg = alembic_config("postgresql+psycopg://spotter@db.invalid/spotter")
+    out = io.StringIO()
+    with redirect_stdout(out):
+        command.upgrade(cfg, "head", sql=True)
+    sql = out.getvalue()
+    assert "id SERIAL NOT NULL" in sql and sql.index("CREATE TABLE call_log") < sql.index("TYPE BIGINT")

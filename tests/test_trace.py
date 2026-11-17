@@ -35,6 +35,7 @@ from .test_calllog import MARKED_CALLS, MARKER, rows
 from .test_mcp import FUNCTIONS, set_switch, squat
 from .test_usda import KEY, Fake, banana
 from .test_web import client, post, seam, sign_in, web_client  # noqa: F401 - fixtures
+from .test_hardening_schema import before_0012
 
 ID = re.compile(r"[0-9a-f]{16}")
 TRACE = ("request_id", "caller", "tried", "outcome", "step", "frame", "notes")
@@ -143,7 +144,7 @@ def test_0005_adds_seven_nullable_columns_and_an_index_and_comes_down_again():
             assert tuple(old) == ("whoami", *[None] * len(TRACE))  # the row already there keeps nulls
             # The models match, but for the table 0006 adds and the tables and indexes 0007 and 0008 add
             # (tests/test_idempotency.py, tests/test_edit_history.py and tests/test_feedback.py hold them there).
-            assert sorted((d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
+            assert sorted((d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in before_0012(compare_metadata(MigrationContext.configure(c), Base.metadata))) \
                 == [("add_column", "distance_unit"), ("add_column", "weight_unit"),  # 0011's (units)
                     ("add_index", "ix_entry_version_user_id_kind_entry_id_id"),
                     ("add_index", "ix_feedback_user_id_created_at"), ("add_table", "entry_version"),

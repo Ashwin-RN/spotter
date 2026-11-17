@@ -38,6 +38,7 @@ from .test_calllog import MARKER, rows
 from .test_idempotency import K, age, count, keys, writer  # noqa: F401 - writer is a fixture
 from .test_mcp import CAN_AND_CANT, FUNCTIONS, call, failed, ok, set_switch, tool_list
 from .test_trace import OWNER, sign_for, tools_call
+from .test_hardening_schema import before_0012
 
 CAP = feedback.NOTES_PER_DAY  # read from the dial, never typed
 SAVED = "Feedback saved. Spotter's maker reads it. No reply comes back through Spotter."
@@ -194,7 +195,7 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
             assert (owner["constrained_columns"], owner["referred_table"], owner["options"]) == (
                 ["user_id"], "user", {"ondelete": "CASCADE"})
             # The models match, but for the table 0010 adds (tests/test_routines.py holds it there).
-            assert [(d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
+            assert [(d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in before_0012(compare_metadata(MigrationContext.configure(c), Base.metadata))] == [
                 ("add_table", "routine"), ("add_column", "weight_unit"), ("add_column", "distance_unit")]  # 0011's
         with engine.begin() as c:
             for user in (1, 1, 2):
@@ -209,7 +210,7 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0011"  # units
+    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0012"  # units
 
 
 def test_the_topics_are_a_tuple_in_the_models_and_no_status_is():
@@ -714,9 +715,9 @@ def test_the_delete_takes_1_and_100_ids_and_the_schema_refuses_0_and_101(owner_c
     assert [n.id for n in notes()] == [left] and len(rows()) == before + 3
 
 
-def test_the_owner_s_own_switch_at_read_only_does_not_gate_the_delete(owner_client, make_user):
+def test_the_owner_s_own_switch_at_log_does_not_gate_the_delete(owner_client, make_user):
     [note] = fill(make_user().id, 1)
-    set_switch(ok(owner_client, sign_for(OWNER), "whoami")["account_id"], "read")
+    set_switch(ok(owner_client, sign_for(OWNER), "whoami")["account_id"], "log")  # the lowest the database takes
     assert owner_delete(owner_client, [note])["deleted"] == [note] and notes() == []
 
 

@@ -21,6 +21,7 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import event, select, update
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import IntegrityError
 
 from app import calllog, db, links, mcp_server, models, services, web
 from app.config import ROOT
@@ -37,6 +38,7 @@ from .test_idempotency import K, keys, writer  # noqa: F401 - writer is a fixtur
 from .test_mcp import CAN_AND_CANT, call, failed, model_texts, ok, one_user, set_switch, squat, tool_list
 from .test_trace import OWNER, sign_for
 from .test_web import client, location, only_user, post, seam, sign_in, web_client  # noqa: F401
+from .test_hardening_schema import before_0012
 
 KINDS = ["lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "routine"]
 UNDONE = [kind for kind in KINDS if kind != "routine"]  # a routine keeps no version, so no undo (routines.md 6)
@@ -432,12 +434,14 @@ def test_the_two_settings_are_the_default_first_and_the_needs_keep_their_three_w
 
 
 @pytest.mark.parametrize("stored_value", ["read", "admin", "", "LOG"])
-def test_an_unknown_stored_value_refuses_a_delete_and_lets_a_log_run(writer, stored_value):
+def test_an_unknown_stored_value_is_refused_by_the_database_and_would_count_as_log(writer, stored_value):
     http, token, account = writer
-    set_switch(account, stored_value)
+    with pytest.raises(IntegrityError):  # ck_user_claude_can (hardening.md, decision 12)
+        set_switch(account, stored_value)
     assert mcp_server.level_of(stored_value) == "log"
-    assert ok(http, token, "log_bodyweight", {"kg": 80})["duplicate"] is False
-    assert failed(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": 1})["error"] == "not_allowed"
+    assert mcp_server.not_allowed("delete_entry", stored_value)["error"] == "not_allowed"
+    assert mcp_server.not_allowed("log_bodyweight", stored_value) is None
+    assert ok(http, token, "log_bodyweight", {"kg": 80})["duplicate"] is False  # the row kept log_delete
 
 
 def test_a_new_account_starts_at_log_delete_by_a_first_call_through_mcp(http):
@@ -494,7 +498,7 @@ def test_0009_turns_every_account_to_log_delete_moves_no_updated_at_and_comes_do
             after = [tuple(r) for r in c.exec_driver_sql(read).all()]
             assert after == [(u, "log_delete", stamps[u], stamps[u], stamps[u]) for u in held]
             # The models match, but for the table 0010 adds (tests/test_routines.py holds it there).
-            assert [(d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)] == [
+            assert [(d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in before_0012(compare_metadata(MigrationContext.configure(c), Base.metadata))] == [
                 ("add_table", "routine"), ("add_column", "weight_unit"), ("add_column", "distance_unit")]  # 0011's
             assert c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == "0009"
         command.downgrade(cfg, "0008")
@@ -504,7 +508,7 @@ def test_0009_turns_every_account_to_log_delete_moves_no_updated_at_and_comes_do
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0011"  # units
+    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0012"  # units
 
 
 def test_0009_s_statement_is_built_so_postgres_gets_user_quoted(monkeypatch):

@@ -1241,7 +1241,7 @@ def test_0010_builds_the_table_on_sqlite_and_comes_down_leaving_no_other_change(
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0011"  # units
+    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0012"  # units
 
 
 def test_the_model_is_no_entry_table_and_its_columns_are_in_the_contract_s_order():

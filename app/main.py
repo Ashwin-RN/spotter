@@ -1,10 +1,16 @@
-"""The Spotter server: /health, the web pages and the MCP endpoint at /mcp.
+"""The Spotter server: /health, /ready, the web pages and the MCP endpoint at /mcp.
 
 The app is built by create_app(settings), which first makes those settings the process-wide ones (the
 database, the user lookup and the link helper all read them). The two halves fail closed on their own:
 - Without a usable AUTHKIT_DOMAIN and MCP_RESOURCE_URL, /mcp returns 503 and no token is accepted,
-  and the web pages say sign-in is not set up. /health still answers.
+  and the web pages say sign-in is not set up. /health and /ready still answer.
 - Without the WorkOS values, the web pages say sign-in is not set up and MCP still works.
+
+/health says OK without looking at anything. /ready (contract hardening.md, decision 14) also reads the database's
+revision, with alembic's own migration context in a worker thread: 200 OK when it is the code's head revision, else
+503 and one of two words, database or migration, never an error's text. The head is read from migrations/ on the
+first /ready and then kept, so a missing folder answers 503 and never stops the app at start. Neither is behind the
+page limit, and neither writes a call-log row.
 
 The session cookie is attached only to the web routes, so /mcp and /.well-known/ never read or set it.
 Last of all, web.fallback at "/": /mcp, /.well-known and anything under them go to the MCP app as before,
@@ -22,6 +28,10 @@ import contextlib
 import logging
 import secrets
 
+import anyio.to_thread
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
+
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -30,9 +40,9 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Mount, Route, Router
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app import calllog, config, web
+from app import calllog, config, db, web
 from app.auth import FetchJson, JwksTokenVerifier, UserinfoClient, fetch_json
-from app.config import Settings, load_settings
+from app.config import ROOT, Settings, load_settings
 from app.mcp_server import build_server
 
 ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
@@ -190,6 +200,47 @@ async def health(request: Request) -> PlainTextResponse:
     return PlainTextResponse("OK")
 
 
+MIGRATIONS = ROOT / "migrations"
+NOT_READY = "Not ready: "  # then what is not: database or migration
+_head: list[str] = []  # the code's head revision, once read
+
+
+def _code_head() -> str | None:
+    """The head revision of migrations/, read once and kept. None when it cannot be read."""
+    if not _head:
+        try:
+            head = ScriptDirectory(str(MIGRATIONS)).get_current_head()
+        except Exception:
+            return None
+        if head is None:
+            return None
+        _head.append(head)
+    return _head[0]
+
+
+def _database_heads() -> tuple[str, ...]:
+    """The revisions the database says it is at. Raises when it cannot be read."""
+    with db.get_engine().connect() as connection:
+        return tuple(MigrationContext.configure(connection).get_current_heads())
+
+
+def _readiness() -> str | None:
+    """None when the database answers at the code's head revision, else the word for what is not ready."""
+    try:
+        found = _database_heads()
+    except Exception:
+        return "database"
+    head = _code_head()
+    return None if head is not None and found == (head,) else "migration"
+
+
+async def ready(request: Request) -> PlainTextResponse:
+    missing = await anyio.to_thread.run_sync(_readiness)
+    if missing is None:
+        return PlainTextResponse("OK")
+    return PlainTextResponse(NOT_READY + missing, status_code=503)
+
+
 def _not_configured(problem: str):
     async def handler(request: Request) -> JSONResponse:
         return JSONResponse(
@@ -222,6 +273,7 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
         mcp_off = Router(routes=[Route("/mcp", not_configured, methods=ALL_METHODS)])
         return SpotterApp(routes=[
             Route("/health", health),
+            Route("/ready", ready),
             *web.routes(settings),
             Route("/mcp", not_configured, methods=ALL_METHODS),
             Mount("/", app=web.fallback(settings, mcp_off)),
@@ -244,6 +296,7 @@ def create_app(settings: Settings, fetch: FetchJson = fetch_json) -> Starlette:
     return SpotterApp(
         routes=[
             Route("/health", health),
+            Route("/ready", ready),
             *web.routes(settings),
             # Last: the MCP app answers /mcp and the protected-resource metadata under /.well-known/; every
             # other path no route answered gets the 404 page.

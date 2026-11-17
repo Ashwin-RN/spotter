@@ -2,7 +2,7 @@
 
 Usage: python tools/probe.py <base-url>      for example  python tools/probe.py https://spotter.example.app
 
-Checks /health, the 401 from /mcp and its WWW-Authenticate header, and the protected-resource metadata,
+Checks /health, /ready (the database answers at the code's migration), the 401 from /mcp and its WWW-Authenticate header, and the protected-resource metadata,
 including its scopes_supported. Prints PASS or FAIL per check and exits non-zero if any check fails.
 Standard library only.
 """
@@ -52,6 +52,13 @@ def main(base: str) -> int:
         probe.check("server reachable", False, type(e).__name__)
         return 1
     probe.check("GET /health is 200 OK", status == 200 and text.strip() == "OK", f"{status} {text[:40]!r}")
+
+    # /ready also reads the database's revision: 503 says database or migration (contract hardening.md, decision 14).
+    try:
+        status, _, text = request(f"{base}/ready")
+    except OSError as e:
+        status, text = 0, type(e).__name__
+    probe.check("GET /ready is 200 OK", status == 200 and text.strip() == "OK", f"{status} {text[:40]!r}")
 
     initialize = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
         "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "probe", "version": "0"}}})

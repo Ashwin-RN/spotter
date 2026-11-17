@@ -39,6 +39,7 @@ from .test_mcp import call, failed, ok, tool_list
 from .test_pages_text import Rendered, entered_text, error_page_findings, page_findings
 from .test_trace import tools_call
 from .test_web import SITE, client, only_user, post, seam, session_of, sign_in, web_client  # noqa: F401
+from .test_hardening_schema import before_0012
 
 MODELS = {"lift_session": LiftSession, "bodyweight": Bodyweight, "measurement": Measurement,
           "food_entry": FoodEntry, "cardio_entry": CardioEntry, "saved_food": SavedFood}
@@ -1326,7 +1327,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
             assert (owner["constrained_columns"], owner["referred_table"], owner["options"]) == (
                 ["user_id"], "user", {"ondelete": "CASCADE"})
             # The models match, but for the table and index 0008 adds (tests/test_feedback.py holds them there).
-            assert sorted((d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
+            assert sorted((d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in before_0012(compare_metadata(MigrationContext.configure(c), Base.metadata))) \
                 == [("add_column", "distance_unit"), ("add_column", "weight_unit"),  # 0011's (units)
                     ("add_index", "ix_feedback_user_id_created_at"), ("add_table", "feedback"),
                     ("add_table", "routine")]  # and 0010's (tests/test_routines.py)
@@ -1345,7 +1346,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0011"  # units
+    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0012"  # units
 
 
 def test_every_kind_s_table_name_fits_the_version_s_kind_column():

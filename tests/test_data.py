@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import Column, Integer, MetaData, Table, event, select
+from sqlalchemy.exc import IntegrityError
 
 from app import calllog, db, exercises, mcp_schemas, mcp_server, rules, services
 from app.mcp_schemas import RESULTS
@@ -1311,8 +1312,9 @@ def test_a_long_or_deep_cursor_is_refused_never_a_crash(http):
 def test_another_account_s_saved_food_never_names_a_food_entry(make_user):
     a, b = make_user(time_zone="UTC").id, make_user(time_zone="UTC").id
     private = saved_food(b, "BEE private shake", 300)
-    eat(a, ago(1), "Shake", 300, saved=private, servings=1, source="saved_food")  # no write path makes this row
-    assert [r["food"] for r in table(data(a, area="food"))] == ["Shake"]
+    with pytest.raises(IntegrityError):  # fk_food_entry_user_id_saved_food refuses the row at commit (hardening D12)
+        eat(a, ago(1), "Shake", 300, saved=private, servings=1, source="saved_food")
+    assert table(data(a, area="food")) == []
     assert "BEE" not in json.dumps(services.what_is_logged(a))
 
 

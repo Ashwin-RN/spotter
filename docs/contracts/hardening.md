@@ -305,3 +305,38 @@ H1 was built as decided, reviewed on a frozen copy (no must fix, 1 should fix, 2
 | `app/web.py`, the day page | When the person's midnight passes between the page's date and `get_log`'s, today's page reads that day once more by its date, where it would 404 (the review's nit; `fd83753` drew it). A test crosses midnight through the clock seam |
 
 Not run here, left for the Postgres run: D2's one-moment read, D1 with two connections, D5's weights statement, D8's batched deletes.
+
+## Built, H2, 2026-11-17
+
+H2 was built as decided and reviewed on a frozen copy joined with H1: no must fix in H2's files, 4 nits. Two of them were fixed at the join. `python -m evals.need fd83753`: no.
+
+The join changed 8 test files outside H2's list. The contract did not name them:
+
+| File | Why |
+|---|---|
+| `tests/test_edit_history.py`, `tests/test_feedback.py`, `tests/test_routines.py`, `tests/test_switch.py`, `tests/test_units.py` | Each pinned the head at 0011; now 0012 |
+| `tests/test_trace.py`, `tests/test_idempotency.py`, `tests/test_edit_history.py`, `tests/test_feedback.py`, `tests/test_switch.py` | Each held `compare_metadata`'s exact list at 0005 to 0009. Those lists now also hold 0012's indexes, uniques and key, and `name_key`'s width as a nested entry. Each call goes through `before_0012` (`tests/test_hardening_schema.py`), and the expected lists are unchanged |
+| `tests/test_switch.py`, the four unknown stored values | `ck_user_claude_can` refuses them. The test asserts the refusal and checks `level_of` and `not_allowed` directly |
+| `tests/test_feedback.py`, the owner's switch | "read" cannot be stored. The test is now at log, the lowest value the database takes, and is renamed |
+| `tests/test_data.py`, another person's saved food | The owner key refuses the row at commit. The test asserts that, and that the person's food read is empty |
+
+| Left open by the contract | Built |
+|---|---|
+| The stop | `sys.exit` with the line, exit 1. Several broken rules give one full line each |
+| The downgrade's call-log stops on Postgres | `0012 down stopped: call_log.id N rows. Nothing was changed.` and `0012 down stopped: call_log_id_seq value past 2147483647. Nothing was changed.` |
+| The owner key's count | It also counts a link whose saved food is missing, which the key refuses too |
+| A failed key check after the run (SQLite) | The line says the migrations ran and the revision the database is at: SQLite has committed each migration by then |
+
+Found while building and fixed:
+- the migration had left out `ck_cardio_entry_logged_by`;
+- the key check after the run committed the connection, which hid a missing commit after the pragma. It now only reads.
+
+Still a known gap, with the review's probe: on `env.py`'s passed-in connection path a SQLite rebuild runs with foreign keys on and takes every lift set. The check after cannot see it, since the cascade leaves no orphan. Nothing in the repo uses that path.
+
+Not run here, left for the Postgres run:
+- D15's counts on Postgres;
+- the NaN refusal;
+- the call-log id and sequence stops;
+- `pg_constraint` and the deferred key's account and hard deletes;
+- the shared-database tests of `tests/test_hardening_schema.py`;
+- whether a reader that holds a later table before `"user"` deadlocks with 0012 (the review's question 1).

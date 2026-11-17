@@ -41,6 +41,7 @@ from .test_pages_text import Rendered, error_page_findings
 from .test_trace import today
 from .test_usda import KEY as USDA_KEY, Fake, banana
 from .test_web import client, only_user, plant_session, post, seam, session_of, sign_in, web_client  # noqa: F401
+from .test_hardening_schema import before_0012
 
 WRITES = common.WRITE_FUNCTIONS
 K = "retry-0001"
@@ -891,7 +892,7 @@ def test_0006_adds_the_key_table_the_models_match_and_it_comes_down_again():
             assert (owner["referred_table"], owner["options"]) == ("user", {"ondelete": "CASCADE"})
             # The models match, but for the tables and indexes 0007 and 0008 add (tests/test_edit_history.py and
             # tests/test_feedback.py hold them there).
-            assert sorted((d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in compare_metadata(MigrationContext.configure(c), Base.metadata)) \
+            assert sorted((d[0], (d[3] if d[0] == "add_column" else d[1]).name) for d in before_0012(compare_metadata(MigrationContext.configure(c), Base.metadata))) \
                 == [("add_column", "distance_unit"), ("add_column", "weight_unit"),  # 0011's (units)
                     ("add_index", "ix_entry_version_user_id_kind_entry_id_id"),
                     ("add_index", "ix_feedback_user_id_created_at"), ("add_table", "entry_version"),

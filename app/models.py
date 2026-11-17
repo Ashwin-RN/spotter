@@ -3,14 +3,22 @@ stage 5 added (goal.measurement_kind, migration 0003). Migration 0004 dropped on
 Migration 0005 added the call log's trace columns, 0006 the write keys (write_key), 0007 the values an
 entry held before each edit (entry_version), and 0008 the notes people send Spotter's maker (feedback). 0009
 changes data only: every account's claude_can becomes log_delete. 0010 adds the routines (routine). 0011 adds
-the person's units (user.weight_unit and user.distance_unit).
+the person's units (user.weight_unit and user.distance_unit). 0012 (contract hardening.md) widens saved_food.name_key, adds
+the sweep's three created_at indexes, one set number per session and lift, a food entry's saved food tied to its owner,
+a 64-bit call-log id on Postgres, and the database's own rules.
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
 - Entry tables take their four shared columns from EntryColumns and their two indexes from entry_indexes().
 - Deleting a user deletes everything they own, in the database (ON DELETE CASCADE).
-- Allowed values for the string columns are listed here as tuples. The services check them; the
-  schema does not, so a later stage can add a value without a migration.
+- Allowed values for the string columns are listed here as tuples, and the services check them. Since 0012 the
+  database also checks these closed lists: LOGGED_BY on the five entry tables, CLAUDE_CAN, the two units, GOAL_DIRECTIONS,
+  GOAL_STATUSES, and entry_version's by (CALLERS) and why. A new value in one of those needs a one-line migration. The
+  lists meant to grow stay unchecked: goal and measurement kinds, a measurement's unit, meals, food sources, feedback
+  topics, an exercise's kind and category.
+- Since 0012 the database also holds a sign rule and a wide ceiling on every number a person's row holds, and three
+  goal shape rules. The rules' text lives only in migrations/versions/0012_hardening.py: the models declare none, and
+  compare_metadata does not read them.
 
 The migration in migrations/versions/ builds these tables. A test checks the two agree.
 """
@@ -19,7 +27,8 @@ import datetime as dt
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, MetaData, String, Text, UniqueConstraint, false, text,
+    BigInteger, Boolean, Date, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, MetaData, String, Text,
+    UniqueConstraint, false, text,
 )
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -174,6 +183,7 @@ class LiftSet(Base):
     __table_args__ = (
         Index("ix_lift_set_session_id", "session_id"),
         Index("ix_lift_set_exercise_id", "exercise_id"),
+        UniqueConstraint("session_id", "exercise_id", "set_number"),  # one set number per session and lift (0012)
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -241,7 +251,9 @@ class CallLog(Base):
         Index("ix_call_log_request_id", "request_id"),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 64 bits (0012): BIGINT on Postgres, with its sequence. SQLite's INTEGER primary key is already a 64-bit rowid,
+    # and only INTEGER keeps it numbering itself.
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     user_id: Mapped[int | None] = _user_id(nullable=True)
     function: Mapped[str] = mapped_column(String(64))
     started_at: Mapped[datetime] = mapped_column(UtcDateTime)
@@ -273,7 +285,7 @@ class WriteKey(Base):
     function: Mapped[str] = mapped_column(String(64))
     fingerprint: Mapped[str] = mapped_column(String(64))
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)  # null until the first answer is kept
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, index=True)  # the sweep's (0012)
 
 
 class EntryVersion(Base):
@@ -289,7 +301,7 @@ class EntryVersion(Base):
     user_id: Mapped[int] = _user_id()
     kind: Mapped[str] = mapped_column(String(16))
     entry_id: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, index=True)  # the sweep's (0012)
     by: Mapped[str] = mapped_column("by", String(8), quote=True)  # one of CALLERS. Quoted: BY is SQL's own word
     why: Mapped[str] = mapped_column(String(8))  # edit or undo
     request_id: Mapped[str | None] = mapped_column(String(16), nullable=True)  # the call log's, null outside a request
@@ -307,7 +319,7 @@ class Feedback(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = _user_id()
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, index=True)  # the sweep's (0012)
     text: Mapped[str] = mapped_column(Text)
     doing: Mapped[str] = mapped_column(Text, default="")
     expected: Mapped[str] = mapped_column(Text, default="")
@@ -338,12 +350,16 @@ class Measurement(EntryColumns, Base):
 
 class SavedFood(Base):
     __tablename__ = "saved_food"
-    __table_args__ = (UniqueConstraint("user_id", "name_key"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "name_key"),
+        UniqueConstraint("user_id", "id"),  # what a food entry's owner key points at (0012)
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = _user_id()
     name: Mapped[str] = mapped_column(String(128))
-    name_key: Mapped[str] = mapped_column(String(128))  # the name, casefolded
+    # The name, casefolded: one character can fold to three, so 128 at 3 each (0012).
+    name_key: Mapped[str] = mapped_column(String(384))
     serving_label: Mapped[str] = mapped_column(String(64))
     kcal_per_serving: Mapped[float] = mapped_column(Float)
     grams_per_serving: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -373,12 +389,17 @@ class Routine(Base):
 
 
 class FoodEntry(EntryColumns, Base):
-    """kcal is copied in when the entry is logged, so editing a saved food never rewrites history."""
+    """kcal is copied in when the entry is logged, so editing a saved food never rewrites history.
+
+    A saved food has the entry's own owner (0012): the key on (user_id, saved_food_id) to saved_food (user_id, id) is
+    checked at commit, after the key on saved_food_id alone has nulled a link to a saved food deleted for good."""
 
     __tablename__ = "food_entry"
     __table_args__ = (
         *entry_indexes("food_entry"),
         Index("ix_food_entry_user_id_saved_food_id", "user_id", "saved_food_id"),
+        ForeignKeyConstraint(["user_id", "saved_food_id"], ["saved_food.user_id", "saved_food.id"],
+                             deferrable=True, initially="DEFERRED"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -396,7 +417,8 @@ class FoodEntry(EntryColumns, Base):
     grams: Mapped[float | None] = mapped_column(Float, nullable=True)
     dedupe_key: Mapped[str] = mapped_column(String(64))
 
-    saved_food: Mapped[SavedFood | None] = relationship()
+    # Two keys lead to saved_food: the relationship goes by saved_food_id alone, on saved_food.id.
+    saved_food: Mapped[SavedFood | None] = relationship(foreign_keys=[saved_food_id])
 
 
 class CardioEntry(EntryColumns, Base):
