@@ -105,3 +105,7 @@ No `text`, or a topic outside the list, is refused with the codes those mistakes
 Not in this work: a feedback form on a page; a reply to the person; a question the owner puts to people through a result; MCP's own way for a server to ask the person a question, which was not looked up; telling the owner when a note arrives; bringing a deleted note back; a sentence on the privacy page's Contact card; the docs (`README.md`'s feature line, `BUILD_LOG.md`, the trace contract's line on the new step), done after the review.
 
 **An eval run follows the build:** a new function for everyone. 23 cases, 3 runs each, on `claude-opus-5-5`. The cost is told to the owner before it runs.
+
+## Note, 2026-11-17: the sweep runs beside the calls
+
+From `docs/contracts/hardening.md` (D8, D11). The notes' retention is unchanged: a note older than 365 days goes, at most once in 24 hours. The sweep no longer runs inside the call that finishes: when one is due, it starts on a thread of its own and deletes in batches of 1,000 rows a statement, each its own transaction, at most 50 a table a run. A table that fails or stops at the cap is tried again 10 minutes on. `feedback.created_at` has an index for it (migration `0012`).

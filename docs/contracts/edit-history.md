@@ -71,3 +71,7 @@ What existed before this work, read in the code on the idempotency branch (`f1bc
 Not in this work: a way back after an undo; a goal's old target (a goal changes through `set_goal`, which is given the new values); a list of an entry's versions for the assistant or on a page; the stale check through MCP, where a key covers a late retry; a confirmation before an edit is written, which the owner has named as the better guard and which is its own later work.
 
 **An eval run follows the build:** `restore_entry`'s schema and the can-and-cant resource are text a model reads. 21 cases, 3 runs each, on `claude-opus-5-5`. The cost is told to the owner before it runs.
+
+## Note, 2026-11-17: the sweep runs beside the calls
+
+From `docs/contracts/hardening.md` (D8, D11). The versions' retention is unchanged: a version older than 90 days goes, at most once in 24 hours, and is never put back, swept or not. The sweep no longer runs inside the call that finishes: when one is due, it starts on a thread of its own and deletes in batches of 1,000 rows a statement, each its own transaction, at most 50 a table a run. A table that fails or stops at the cap is tried again 10 minutes on. `entry_version.created_at` has an index for it (migration `0012`).

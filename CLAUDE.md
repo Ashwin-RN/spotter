@@ -54,8 +54,9 @@ each in its own git worktree, and are joined after.
 2. One eval run for the whole release, when `python -m evals.need main` says yes. Its cost is said first.
 3. Merge to `main` as a fast-forward and push. Railway deploys `main`: migrations run before the new
    build serves.
-4. Live check: `/health` 200, `/mcp` 401 with no token, `/` 200, the migration line in the deploy log, and
-   a fresh assistant session (a running one keeps the function list it started with).
+4. Live check: `/health` 200, `/mcp` 401 with no token, `/` 200, `/ready` 200 (the database is at the
+   code's migration head), and a fresh assistant session (a running one keeps the function list it
+   started with).
 
 Removing a required result field or a column takes two deploys: optional first, removed later. A client
 holding the old function list breaks otherwise.

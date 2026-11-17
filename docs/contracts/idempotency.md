@@ -69,3 +69,7 @@ What exists before this work, read in the code on `e061bd8`. The trace work and 
 Not in this work: the confirm card and its drafts; telling assistants in the instructions to always send a key; the stale edit form that overwrites a newer change (item C's ground); cardio's guard leaving notes out; a retry across midnight or a meal boundary with no key; the docs (`README.md`, `docs/can-and-cant.md`, `BUILD_LOG.md`), done after the review.
 
 **An eval run follows the build:** every write function's schema gains an argument, which is text a model reads. 20 cases, 3 runs each, on `claude-opus-5-5`. The cost is told to the owner before it runs.
+
+## Note, 2026-11-17: the sweep runs beside the calls
+
+From `docs/contracts/hardening.md` (D8, D11). The write keys' retention is unchanged: keys older than 24 hours go, at most once an hour, and an older key counts as absent, swept or not. The sweep no longer runs inside the call that finishes: when one is due, it starts on a thread of its own and deletes in batches of 1,000 rows a statement, each its own transaction, at most 50 a table a run. A table that fails or stops at the cap is tried again 10 minutes on. `write_key.created_at` has an index for it (migration `0012`).

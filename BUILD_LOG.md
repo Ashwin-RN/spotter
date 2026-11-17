@@ -1099,3 +1099,31 @@ The whole suite ran in the commit hook on D1 and on the fix round. On D2 the hoo
 ### The eval run
 
 All 51 cases, 3 runs each, on `claude-opus-5-5`, at `e6174f7`, from 08:01 to 09:18 on 2026-11-17: 144 of 153 runs passed, $35.2311 at list price. In every answered run the reply quoted Spotter's figures right. The misses: two data cases asked for one route where another read gave the right figures, two runs were cut off at 180 s after 10 to 15 right calls, one checker read an example of what to say as a made-up sleep figure, and one older case missed once. The fix round (`6529133`) judges the data cases on Spotter's figures and a read of Spotter's data, and gives each run 300 s. The six cases again, 3 runs each, from 11:29 to 11:53: 17 of 18, $11.8049. The miss was a right reply quoting figures from `get_trends`, outside the case's list. Released on the owner's word with that one miss.
+
+## Hardening
+
+Built on 2026-11-17 on one branch, in two packages, and released in two deploys. It came from an outside review of the database, whose verdict was to keep Postgres and the relational design and make a small request do a small amount of work. Its decisions and limits are in `docs/contracts/hardening.md`, with the build's notes and the Postgres run at its end.
+
+| Package | What it does |
+|---|---|
+| H1 | No migration. A delete's switch is checked again under the row lock. The export runs one at a time per person, at most 5 an hour and 2 at once, and reads one moment on Postgres. `get_log` reads only the days asked, and every lift session up to them for its bests. The lift history, routines' weights and the goal series work in one pass, and each page works the history out once. The retention sweep runs beside the calls, in batches. A set list is replaced old first |
+| H2 | Migration `0012`. A sign and a ceiling on every number a person's row holds, the closed value lists, the goal shape rules, one set number per session and lift, a food entry's saved food tied to the entry's owner (checked at commit), a saved food key wide enough for any casefolded name, three indexes for the sweep, a 64-bit call-log id on Postgres, and `/ready` beside `/health`. The migration counts rule-breaking rows first and stops with counts only. SQLite migrations run with foreign keys off and check them after |
+
+### The reviews
+
+The contract was reviewed, fixed and re-checked before the build, with two must fixes: a statement count pinned by the routines tests, and the order of the Postgres steps. The owner said yes to its six picks. H1's review had no must fix, one should fix (a page test had lost its closed goals check) and two nits (a dead stand-in, and today's page giving 404 for one render at the person's midnight), all fixed in one round. H2 was reviewed on a copy joined with H1: no must fix in its files and four nits, two fixed at the join. The join changed 13 tests in 8 files: head pins, `compare_metadata` lists, and rows the new rules refuse. H2's builder found and fixed two faults of its own: a missing cardio `logged_by` rule, and a key check that committed.
+
+### Checks
+
+The whole suite ran in the commit hook on H1 (`4ddee93`), H2 (`bc5bb71`) and the Postgres run's fix (`9bd6518`). On a real Postgres, 17 in a throwaway container, at `bc5bb71`: up, down and up over rows written by the old code; every rule in place; NaN and Infinity refused; another person's saved food refused at commit; the downgrade's three stops; a delete waited on the row lock, then got `not_allowed`; an export saw the state from before a set added during it. The service, schema and page test files run there passed 1,719 of 1,720: the one was a test's own goal kind, longer than its column, fixed in `9bd6518`. Timed on Postgres: `history` at 2,000 sessions 0.212 s (4.576 s before), `get_log` of a day 600 days back 0.136 s (4.648 s), and a sweep of 100,000 old call-log rows done in three runs. `python -m evals.need main` said no for each deploy, so no eval run.
+
+### Release
+
+H1 was live at 20:27 and H2 at 20:32 on 2026-11-17, each on the owner's word. The export check before H2 was skipped on his word: his is the only account, and it has nothing logged. After each deploy: `/health` 200, `/mcp` 401, `/` 200, the probe with no failures, and a fresh assistant session. After H2, `/ready` 200: the database is at `0012`.
+
+### Known limits
+
+- `get_log` of an old day still reads every lift session up to that day, for its bests.
+- On `env.py`'s passed-in connection path, a SQLite rebuild runs with foreign keys on and takes every lift set, and the check after cannot see it. Nothing in the repo uses that path.
+- Not run: whether a reader holding a later table before `"user"` would deadlock with a migration like `0012`.
+- Left for later, as the review placed them: `get_data` and `what_is_logged` in SQL with paging by key, the write lock holding back the call log's insert, and the order of an account delete's two steps.
