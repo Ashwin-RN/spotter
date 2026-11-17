@@ -1275,12 +1275,18 @@ def test_the_two_eval_cases_load_and_judge_as_designed(app_settings):
 SETUP_CASES = {
     "setup_asks_first": {
         "id": "setup_asks_first", "say": "Hi Spotter, help me set up",
+        "calls": {"must": ["whoami"], "may": [],  # function-list.md, G1: the tags every case carries
+                  "must_not": ["log_bodyweight", "log_lifts", "set_goal", "update_settings", "save_food", "log_food",
+                               "log_cardio", "log_measurement", "import_entries", "save_routine"]},
         "expect": {"function": "whoami", "reply_asks": True, "reply_has": ["weigh"],
                    "no_call": ["log_bodyweight", "log_lifts", "set_goal", "update_settings", "save_food", "log_food",
                                "log_cardio", "log_measurement", "import_entries", "save_routine"]},
         "db": [{"table": "bodyweight", "count": 0}, {"table": "goal", "count": 0}]},
     "setup_picks_up": {
         "id": "setup_picks_up", "say": "Help me finish setting up Spotter",
+        "calls": {"must": ["whoami"], "may": [],
+                  "must_not": ["log_bodyweight", "set_goal", "log_lifts", "update_settings", "save_food",
+                               "import_entries", "save_routine"]},
         "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}},
                  {"as": "goal", "service": "set_goal",
                   "data": {"kind": "bodyweight", "target_value": 77, "target_date": "{{next_month_end:3}}"}}],
@@ -1327,10 +1333,11 @@ def test_the_quiet_setup_case_loads_straight_before_the_routine_cases_and_judges
     carries setup and no note, and nobody asked to set up. A reply that only logs passes. One that asks a setup
     question, or speaks of setting up, or writes a setup step, fails."""
     cases = judge.load_cases()
-    case = cases[-20]  # units' six follow routines' three (units.md decision 20), then inputs.md's two,
+    at = [c["id"] for c in cases].index("data_basketball")  # function-list.md's G1 cases follow the eight
+    case = cases[at - 12]  # units' six follow routines' three (units.md decision 20), then inputs.md's two,
     # then data-on-request.md's eight (its decision 20)
-    assert [c["id"] for c in cases[-20:-16]] == ["setup_stays_quiet", "routine_saved", "routine_logged",
-                                                "routine_changed"]
+    assert [c["id"] for c in cases[at - 12:at - 8]] == ["setup_stays_quiet", "routine_saved", "routine_logged",
+                                                       "routine_changed"]
     assert case["id"] == "setup_stays_quiet" and judge.case_problems(case) == []
     assert case["say"] == "I weighed 80.4 kg this morning"
     assert case["seed"] == [{"as": "earlier", "service": "log_bodyweight",

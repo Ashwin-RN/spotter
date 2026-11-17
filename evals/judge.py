@@ -34,11 +34,38 @@ expect, every key optional, all of them must hold:
                     Each must compile: a pattern that does not is a problem when the cases are loaded, and an
                     error when judged, never a pass.
   any_of            a list of expects of this same shape; at least one must hold.
+  read_any          true: at least one data read (DATA_READS) was answered without error.
+  quotes_spotter    n: the reply holds at least n distinct figures that appear in this run's data read answers
+                    (contract function-list.md, G1). A data read is one of DATA_READS, never whoami, list_exercises,
+                    find_food or get_routines; only an answer without error counts, texts inside it included but its
+                    fixed help texts (FIXED_TEXT_KEYS: how, meaning, a field's words), which are the same on every
+                    account. Each figure is matched whole, with the boundary reply_has_pattern uses. Not counted:
+                    dates, ids, links, a span such as "28 days" or "4 weeks", a figure the case's say holds, and a
+                    whole number under 10, with a unit or without (a decimal under 10, such as 3.3, counts). A sign
+                    is ignored: "down 0.24 kg" quotes -0.24. 1,980 and 1980 are one figure. A negative case states 0,
+                    with a reply_lacks_pattern for a made-up figure of its kind.
+  quotes_one_of     figures, such as ["116.7", "100"]: the reply quotes at least one of them, and a data read of this
+                    run gave it, by quotes_spotter's rules. The figure a direct case asks about, tied to the run.
+
+calls, the case's tags, on every case (contract function-list.md, "The golden set"):
+
+  {"must": [...], "may": [...], "must_not": [...]}
+  must      any of these, at least one called and answered (a refusal is an answer; a call cut off before its
+            answer is not). Judged as function and any_of judge it. An empty must asks for no call.
+  may       called or not, either is right. Judges nothing: it records intent.
+  must_not  none of these called, refused or not. Judged as no_call judges it.
+  When a case has both, its expect's top-level function is in must and its no_call is in must_not, so a reason
+  the two give alike is said once.
+
+kind, on a golden case only: direct, incidental or look_alike. Incidental and look_alike runs are kept out of the
+pass count, the threshold and the exit code, and reported apart: the pick-up rate (incidental runs that made a must
+call) and the over-call rate (look_alike runs that made a data read).
 
 seed, rows created for the person before the run, through Spotter's own services, in order:
 
-  {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "log_lifts" | "set_goal" |
-   "import_entries" | "save_routine" | "update_settings", "data": {...}} import_entries returns no one id: no "as".
+  {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "log_lifts" | "log_cardio" |
+   "set_goal" | "import_entries" | "save_routine" | "update_settings", "data": {...}}
+                                    import_entries returns no one id: no "as".
                                     update_settings (contract units.md R20) sets the person's own settings, such
                                     as weight_unit lb; it returns no id either: no "as".
   {"service": "four_weeks"}         a seed that takes no data: four weeks of everything, three goals
@@ -59,15 +86,18 @@ db, checks on the person's rows after the run:
   routine row carries lift_count: how many lifts its lifts JSON holds.
 
 Placeholders, as a whole string: "{{today}}" and "{{yesterday}}" (the person's own dates, YYYY-MM-DD),
-and "{{next_month_end:N}}" (N from 1 to 12: the last day of month N, the next one strictly after today
-in the person's zone), anywhere in seed, expect and db; "{{seed.<as>}}" (the id of the seeded row) in
+"{{days_ago:N}}" (N from 0 to DAYS_AGO, 60: the day N days before today), and "{{next_month_end:N}}" (N from 1 to
+12: the last day of month N, the next one strictly after today in the person's zone), anywhere in seed, expect and
+db; "{{seed.<as>}}" (the id of the seeded row) in
 expect and db, and in the data of a seed that comes after the one it names. A seed that names an "as" no
-earlier seed gave is a problem when the cases are loaded. resolve() replaces them before seeding and before
-judging.
+earlier seed gave is a problem when the cases are loaded, and so is any other name, or an N out of its range.
+resolve() replaces them before seeding and before judging.
 """
 
 import json
 import re
+import statistics
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -76,13 +106,25 @@ HIDDEN = "[token hidden]"
 
 EXPECT_KEYS = {"function", "inputs_include", "inputs_exclude", "inputs_forbid", "ok_calls", "no_call",
                "refused", "reply_asks", "reply_has", "reply_has_pattern", "reply_lacks",
-               "reply_lacks_pattern", "any_of"}
-CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db"}
+               "reply_lacks_pattern", "any_of", "read_any", "quotes_spotter", "quotes_one_of"}
+CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db", "calls", "kind"}
+TAG_KEYS = ("must", "may", "must_not")
+KINDS = ("direct", "incidental", "look_alike")  # a golden case's kind
+APART = ("incidental", "look_alike")  # kept out of the pass count, reported apart
+# The data reads, the only answers quotes_spotter and read_any read (contract function-list.md, G1). whoami,
+# list_exercises, find_food and get_routines are never among them.
+DATA_READS = ("what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals")
+# Spotter's writes, as app/services/common.py's WRITE_FUNCTIONS names them (a test holds the two equal). A case
+# whose must holds one is a logging case: the release bar of the contract's exit check 6.
+WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "save_routine",
+                   "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
+                   "import_entries", "send_feedback")
+DAYS_AGO = 60  # {{days_ago:N}} for N from 0 to this (evals/run.py's dates_for gives them)
 DB_KEYS = {"table", "state", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
 SWITCHES = ("log", "log_delete")
-SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "log_lifts", "set_goal", "import_entries",
-                 "edit_entry", "save_routine", "update_settings"}  # update_settings: units.md R20
+SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "log_lifts", "log_cardio", "set_goal",
+                 "import_entries", "edit_entry", "save_routine", "update_settings"}  # update_settings: units.md R20
 EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
 NO_DATA_SERVICES = {"four_weeks", "sixteen_weeks"}  # called as seed_service(name)(user_id): see seed_service
 DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",
@@ -115,6 +157,10 @@ def case_problems(case: Any) -> list[str]:
         problems += _expect_problems(case["expect"], "expect")
     if "switch" in case and case["switch"] not in SWITCHES:
         problems.append(f"switch must be one of {', '.join(SWITCHES)}")
+    if "kind" in case and case["kind"] not in KINDS:
+        problems.append(f"kind must be one of {', '.join(KINDS)}")
+    if "calls" in case:
+        problems += _tag_problems(case["calls"], case.get("expect"), case.get("kind"))
     named: set = set()  # the "as" of the seeds so far: what a later seed's {{seed.<as>}} may name
     for i, seed in enumerate(case.get("seed") or []):
         if isinstance(seed, dict) and seed.get("service") in NO_DATA_SERVICES:
@@ -131,6 +177,8 @@ def case_problems(case: Any) -> list[str]:
                          for name in sorted(_seed_names(seed["data"]) - named)]
             if isinstance(seed.get("as"), str):
                 named.add(seed["as"])
+    problems += [f"{{{{{name}}}}} is not a placeholder: {why}" for name, why in _placeholder_problems(
+        [case.get("seed"), case.get("expect"), case.get("db")])]
     for i, check in enumerate(case.get("db") or []):
         if not isinstance(check, dict) or check.get("table") not in DB_TABLES:
             problems.append(f"db[{i}] needs a table ({', '.join(sorted(DB_TABLES))})")
@@ -139,6 +187,33 @@ def case_problems(case: Any) -> list[str]:
         elif check.get("state", "live") not in DB_STATES:
             problems.append(f"db[{i}] state must be live or deleted")
     return problems
+
+
+def _placeholders(value: Any) -> set[str]:
+    """The name of every whole-string placeholder in value."""
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, list):
+        return {name for item in value for name in _placeholders(item)}
+    match = _PLACEHOLDER.match(value) if isinstance(value, str) else None
+    return {match.group(1)} if match else set()
+
+
+def _placeholder_problems(value: Any) -> list[tuple[str, str]]:
+    """(name, why) for each placeholder no run can fill: an unknown name, or an N out of its range. {{seed.<as>}}
+    is checked against the seeds apart."""
+    out = []
+    for name in sorted(_placeholders(value)):
+        if name in ("today", "yesterday") or name.startswith("seed."):
+            continue
+        base, _, n = name.partition(":")
+        if base == "days_ago" and n and 0 <= int(n) <= DAYS_AGO:
+            continue
+        if base == "next_month_end" and n and 1 <= int(n) <= 12:
+            continue
+        out.append((name, {"days_ago": f"N runs from 0 to {DAYS_AGO}", "next_month_end": "N runs from 1 to 12"}.get(
+            base, "no such name")))
+    return out
 
 
 def _seed_names(value: Any) -> set[str]:
@@ -161,8 +236,61 @@ def _expect_problems(expect: Any, where: str) -> list[str]:
     for key in ("reply_has_pattern", "reply_lacks_pattern"):
         if key in expect:
             problems += _pattern_problems(expect[key], f"{where}.{key}")
+    if "read_any" in expect and expect["read_any"] is not True:
+        problems.append(f"{where}.read_any must be true")
+    if "quotes_spotter" in expect and (isinstance(expect["quotes_spotter"], bool)
+                                       or not isinstance(expect["quotes_spotter"], int)
+                                       or expect["quotes_spotter"] < 0):
+        problems.append(f"{where}.quotes_spotter must be a whole number, 0 or more")
+    if "quotes_one_of" in expect:
+        problems += _one_of_problems(expect["quotes_one_of"], f"{where}.quotes_one_of")
     for i, sub in enumerate(expect.get("any_of") or []):
         problems += _expect_problems(sub, f"{where}.any_of[{i}]")
+    return problems
+
+
+def _one_of_problems(figures: Any, where: str) -> list[str]:
+    """A non-empty list of figures as text, each one quotes_spotter can count: never a whole number under 10."""
+    if not isinstance(figures, list) or not figures:
+        return [f"{where} must be a non-empty list of figures"]
+    problems = []
+    for i, figure in enumerate(figures):
+        value = _decimal(figure.replace(",", "")) if isinstance(figure, str) else None
+        if value is None:
+            problems.append(f"{where}[{i}] must be a figure written as text, such as \"116.7\"")
+        elif _small_whole(value):
+            problems.append(f"{where}[{i}] {figure} is a whole number under 10, which never counts")
+    return problems
+
+
+def _tag_problems(tags: Any, expect: Any, kind: Any) -> list[str]:
+    """What is wrong with a case's calls tags, and where they disagree with its expect."""
+    if not isinstance(tags, dict) or set(tags) != set(TAG_KEYS):
+        return [f"calls must be an object of exactly {', '.join(TAG_KEYS)}"]
+    problems = []
+    for key in TAG_KEYS:
+        names = tags[key]
+        if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
+            problems.append(f"calls.{key} must be a list of function names")
+        elif len(set(names)) != len(names):
+            problems.append(f"calls.{key} names a function twice")
+    if problems:
+        return problems
+    for a, b in (("must", "may"), ("must", "must_not"), ("may", "must_not")):
+        both = sorted(set(tags[a]) & set(tags[b]))
+        if both:
+            problems.append(f"calls.{a} and calls.{b} both name {', '.join(both)}")
+    if isinstance(expect, dict):
+        function = expect.get("function")
+        if isinstance(function, str) and function not in tags["must"]:
+            problems.append(f"calls.must leaves out {function}, the expect's function")
+        missing = sorted(set(expect.get("no_call") or []) - set(tags["must_not"]))
+        if missing:
+            problems.append(f"calls.must_not leaves out {', '.join(missing)}, which the expect's no_call names")
+    if kind == "incidental" and not tags["must"]:
+        problems.append("an incidental case names the data read its step needs in calls.must")
+    if kind == "look_alike" and not set(DATA_READS) <= set(tags["must_not"]):
+        problems.append("a look_alike case names every data read in calls.must_not")
     return problems
 
 
@@ -272,8 +400,9 @@ def values_at(data: Any, path: str) -> list[Any]:
 
 # ---------------------------------------------------------------- judging
 
-def judge_calls(expect: dict, calls: list[dict], reply: str) -> list[str]:
-    """Why this run fails the expect, or [] when it passes. calls: [{name, arguments, is_error}]."""
+def judge_calls(expect: dict, calls: list[dict], reply: str, say: str = "") -> list[str]:
+    """Why this run fails the expect, or [] when it passes. calls: [{name, arguments, is_error}, with answer for
+    a data read (evals/recorder.py)]. say: the case's own words, whose figures quotes_spotter leaves out."""
     reasons: list[str] = []
     called = [c["name"] for c in calls]
     function = expect.get("function")
@@ -328,11 +457,175 @@ def judge_calls(expect: dict, calls: list[dict], reply: str) -> list[str]:
             found = re.search(pattern, text, re.IGNORECASE)
             if found:
                 reasons.append(f"the reply matches {pattern!r}: it says {found.group(0)!r}")
+    if expect.get("read_any") and not any(c["name"] in DATA_READS and not c["is_error"] for c in calls):
+        reasons.append(f"no data read was answered without error (calls: {', '.join(called) or 'none'})")
+    if "quotes_one_of" in expect:
+        problems = _one_of_problems(expect["quotes_one_of"], "quotes_one_of")
+        if problems:
+            raise ValueError("; ".join(problems))
+        asked = {_decimal(f.replace(",", "")) for f in expect["quotes_one_of"]}
+        quoted = _quoted(text, calls, say)
+        if not asked & {value for value, _ in quoted}:
+            reasons.append(f"the reply quotes none of {', '.join(expect['quotes_one_of'])} from this run's data reads"
+                           + (f" (quoted: {', '.join(shown for _, shown in quoted)})" if quoted else ""))
+    if "quotes_spotter" in expect:
+        quoted = quoted_figures(text, calls, say)
+        if len(quoted) < expect["quotes_spotter"]:
+            reasons.append(f"the reply quotes {len(quoted)} of this run's figures from Spotter's data reads, "
+                           f"expected at least {expect['quotes_spotter']}"
+                           + (f" (quoted: {', '.join(quoted)})" if quoted else ""))
     if expect.get("any_of"):
-        options = [judge_calls(sub, calls, reply) for sub in expect["any_of"]]
+        options = [judge_calls(sub, calls, reply, say) for sub in expect["any_of"]]
         if all(options):
             reasons.append("none of: " + " | ".join("; ".join(o) for o in options))
     return reasons
+
+
+def judge_tags(tags: dict | None, calls: list[dict]) -> list[str]:
+    """Why this run fails a case's calls tags, or []. must: at least one of them called and answered; must_not: none
+    of them called. may judges nothing. One must name gives function's own words, so a case whose expect names the
+    same function says it once (judge drops a reason said twice)."""
+    if not tags:
+        return []
+    reasons = []
+    called = [c["name"] for c in calls]
+    must = tags.get("must") or []
+    if must:
+        made = [c for c in calls if c["name"] in must]
+        if not any(c.get("answered", True) for c in made):
+            if made:
+                reasons.append(f"{', '.join(sorted({c['name'] for c in made}))} was called and never answered")
+            elif len(must) == 1:
+                reasons.append(f"{must[0]} was not called (calls: {', '.join(called) or 'none'})")
+            else:
+                reasons.append(f"none of {', '.join(must)} was called (calls: {', '.join(called) or 'none'})")
+    for name in tags.get("must_not") or []:
+        if name in called:
+            reasons.append(f"{name} was called and should not have been")
+    return reasons
+
+
+# ---------------------------------------------------------------- Spotter's figures in a reply (quotes_spotter)
+
+_LINK = re.compile(r"\]\([^)\s]*\)|<?https?://[^\s)>\]]+>?|\bwww\.[^\s)\]]+", re.IGNORECASE)
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?")
+_MONTH = (r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?"
+          r"|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)")
+_MONTH_FIRST = _MONTH.replace("|may|", "|")  # "may 12" is more often the verb than the date
+_PROSE_DATE = re.compile(rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+(?:of\s+)?{_MONTH}\b\.?(?:,?\s+\d{{4}})?"
+                         rf"|\b{_MONTH_FIRST}\.?\s+\d{{1,2}}(?:st|nd|rd|th)?\b(?:,?\s+\d{{4}})?", re.IGNORECASE)
+_NUMERIC_DATE = re.compile(r"(?<![\d.])\d{1,2}[/.]\d{1,2}[/.]\d{2,4}(?![\d.])")
+_SPAN = re.compile(r"(?<![\w.,])\d+[\s-]+(?:days?|weeks?|months?|years?)\b", re.IGNORECASE)
+_DURATION = re.compile(r"(?<![\w.,:])(\d{1,3}):(\d{2})(?::(\d{2}))?(?![\d:])")
+_FIGURE = re.compile(r"(?<![\w.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?!\d|[.,]\d)")
+_ID_KEYS = {"id", "ids", "more", "cursor", "links", "link", "url", "confirm", "key", "request_id"}
+# The keys whose texts are fixed help, the same on every account (what_is_logged's how and its areas' meaning and
+# field words; every read's how): their numbers ("0.5 for a secondary", "reps over 30") are no figure of the person's.
+# A number under them still counts: a field's filled count is the last item of its list.
+FIXED_TEXT_KEYS = {"how", "meaning", "fields"}
+
+
+def _id_like(key: Any) -> bool:
+    key = str(key)
+    return key in _ID_KEYS or key.endswith(("_id", "_ids", "_url"))
+
+
+def _decimal(text: str) -> Decimal | None:
+    try:
+        return abs(Decimal(text)).normalize()
+    except InvalidOperation:
+        return None
+
+
+def _text_figures(text: str) -> list[tuple[Any, str]]:
+    """(value, as written) for each figure in a text, in order: links, dates and spans such as "28 days" taken out
+    first. A duration such as 29:30 is one figure."""
+    for pattern in (_LINK, _ISO_DATE, _PROSE_DATE, _NUMERIC_DATE, _SPAN):
+        text = pattern.sub(" ", text)
+    found: list[tuple[Any, str]] = []
+
+    def duration(m: re.Match) -> str:
+        found.append((f"{int(m[1])}:{m[2]}" + (f":{m[3]}" if m[3] else ""), m[0]))
+        return " "
+
+    text = _DURATION.sub(duration, text)
+    for m in _FIGURE.finditer(text):
+        value = _decimal(m[1].replace(",", "") + (f".{m[2]}" if m[2] else ""))
+        if value is not None:
+            found.append((value, m[0]))
+    return found
+
+
+def _answer_figures(value: Any) -> set:
+    """Every figure in one answer: its numbers and the figures in its texts, never an id, a cursor or a link, nor a
+    fixed help text's (FIXED_TEXT_KEYS). A table's id columns (get_data's columns and rows) are left out too."""
+    found: set = set()
+
+    def walk(item: Any, fixed: bool = False) -> None:
+        if isinstance(item, bool) or item is None:
+            return
+        if isinstance(item, (int, float)):
+            number = _decimal(repr(item))
+            if number is not None:
+                found.add(number)
+        elif isinstance(item, str):
+            if not fixed:
+                found.update(v for v, _ in _text_figures(item))
+        elif isinstance(item, list):
+            for x in item:
+                walk(x, fixed)
+        elif isinstance(item, dict):
+            columns = item.get("columns") if isinstance(item.get("columns"), list) else []
+            skip = {i for i, c in enumerate(columns) if _id_like(c)}
+            for key, x in item.items():
+                if _id_like(key):
+                    continue
+                inner = fixed or key in FIXED_TEXT_KEYS
+                if skip and key in ("rows", "values") and isinstance(x, list):
+                    for row in (x if key == "rows" else [x]):
+                        if isinstance(row, list):
+                            for i, cell in enumerate(row):
+                                if i not in skip:
+                                    walk(cell, inner)
+                        else:
+                            walk(row, inner)
+                else:
+                    walk(x, inner)
+
+    walk(value)
+    return found
+
+
+def spotter_figures(calls: list[dict]) -> set:
+    """The figures of this run's data read answers: answered without error, with an answer kept."""
+    found: set = set()
+    for c in calls:
+        if c["name"] in DATA_READS and not c["is_error"] and c.get("answer") is not None:
+            found |= _answer_figures(c["answer"])
+    return found
+
+
+def _small_whole(value: Any) -> bool:
+    return isinstance(value, Decimal) and value == value.to_integral_value() and value < 10
+
+
+def _quoted(reply: str, calls: list[dict], say: str = "") -> list[tuple[Any, str]]:
+    """(value, as written) for each distinct figure of the reply that this run's data reads gave: not one the say
+    holds, and not a whole number under 10, with a unit or without."""
+    spotter = spotter_figures(calls)
+    said = {v for v, _ in _text_figures(say or "")}
+    out, seen = [], set()
+    for value, shown in _text_figures(reply or ""):
+        if value in seen or value in said or _small_whole(value) or value not in spotter:
+            continue
+        seen.add(value)
+        out.append((value, shown))
+    return out
+
+
+def quoted_figures(reply: str, calls: list[dict], say: str = "") -> list[str]:
+    """The distinct figures of the reply, as written, that this run's data reads gave (_quoted)."""
+    return [shown for _, shown in _quoted(reply, calls, say)]
 
 
 def judge_db(checks: list[dict], rows: dict[str, list[dict]]) -> list[str]:
@@ -362,8 +655,11 @@ def _rows_text(rows: list[dict]) -> str:
 
 
 def judge(case: dict, calls: list[dict], reply: str, rows: dict[str, list[dict]]) -> list[str]:
-    """The whole verdict for one run of an already-resolved case: [] is a pass."""
-    return judge_calls(case["expect"], calls, reply) + judge_db(case.get("db") or [], rows)
+    """The whole verdict for one run of an already-resolved case: [] is a pass. The expect, the calls tags and the
+    rows; a reason the expect and the tags give alike is said once."""
+    reasons = (judge_calls(case["expect"], calls, reply, case.get("say", ""))
+               + judge_tags(case.get("calls"), calls) + judge_db(case.get("db") or [], rows))
+    return list(dict.fromkeys(reasons))
 
 
 # ---------------------------------------------------------------- the CLI's output
@@ -377,7 +673,8 @@ def parse_cli_output(stdout: str) -> dict:
 
     The document is one JSON object of type "result" (or, with --verbose, a list of messages whose last
     "result" message is the one). Returns {reply, subtype, is_error, num_turns, cost_usd, usage, tokens,
-    models, permission_denials}. tokens is input + cache creation + cache read + output.
+    input_tokens, cached_tokens, output_tokens, models, permission_denials}. tokens is input + cache creation +
+    cache read + output; split as token_split says.
     Raises CliOutputError when there is no such document.
     """
     text = (stdout or "").strip()
@@ -413,38 +710,155 @@ def parse_cli_output(stdout: str) -> dict:
         "cost_usd": float(cost) if _number(cost) else 0.0,
         "usage": usage,
         "tokens": tokens,
+        **token_split("claude", usage),
         "models": models,
         "permission_denials": document.get("permission_denials") or [],
     }
 
 
+def token_split(client: str, usage: dict) -> dict:
+    """A run's tokens as input (not read from a cache), cached (read from a cache) and output, one rule a client,
+    so the three add up to the run's tokens.
+
+    claude  input = input_tokens + cache_creation_input_tokens (a cache write is input not yet cached);
+            cached = cache_read_input_tokens; output = output_tokens.
+    codex   input = input_tokens - cached_input_tokens (OpenAI counts the cached part inside input_tokens);
+            cached = cached_input_tokens; output = output_tokens. reasoning_output_tokens is taken as part of
+            output_tokens, OpenAI's convention, so never added again (not checked against a Codex run).
+    gemini  input = promptTokenCount - cachedContentTokenCount (the cached part is inside the prompt count);
+            cached = cachedContentTokenCount; output = candidatesTokenCount + thoughtsTokenCount (Gemini counts
+            thoughts apart from the answer)."""
+    def get(key: str) -> int:
+        value = (usage or {}).get(key)
+        return int(value) if _number(value) else 0
+
+    if client == "claude":
+        split = (get("input_tokens") + get("cache_creation_input_tokens"), get("cache_read_input_tokens"),
+                 get("output_tokens"))
+    elif client == "codex":
+        split = (max(get("input_tokens") - get("cached_input_tokens"), 0), get("cached_input_tokens"),
+                 get("output_tokens"))
+    elif client == "gemini":
+        split = (max(get("promptTokenCount") - get("cachedContentTokenCount"), 0), get("cachedContentTokenCount"),
+                 get("candidatesTokenCount") + get("thoughtsTokenCount"))
+    else:
+        raise ValueError(f"no token rule for the client {client!r}")
+    return dict(zip(("input_tokens", "cached_tokens", "output_tokens"), split))
+
+
 # ---------------------------------------------------------------- the table
 
-def summarise(results: list[dict], n: int, threshold: float) -> tuple[str, bool]:
-    """The printed table and whether every case met the threshold.
+def made_must_call(run: dict, tags: dict | None) -> bool:
+    """The run called one of the case's must functions and got an answer."""
+    must = set((tags or {}).get("must") or [])
+    return any(c["name"] in must and c.get("answered", True) for c in run.get("calls") or [])
 
-    results: one per case: {id, runs: [{passed, tokens, cost_usd}]}.
+
+def made_data_read(run: dict) -> bool:
+    """The run called a data read, answered or not."""
+    return any(c["name"] in DATA_READS for c in run.get("calls") or [])
+
+
+def golden_rates(results: list[dict]) -> dict:
+    """The pick-up and over-call rates of one run of the evals, from its results (a kept results.json holds them):
+    pick_up (incidental runs that made a must call, incidental runs) and over_call (look_alike runs that made a data
+    read, look_alike runs)."""
+    incidental = [(r, res.get("tags")) for res in results if res.get("kind") == "incidental" for r in res["runs"]]
+    look_alike = [r for res in results if res.get("kind") == "look_alike" for r in res["runs"]]
+    return {"pick_up": (sum(1 for r, tags in incidental if made_must_call(r, tags)), len(incidental)),
+            "over_call": (sum(1 for r in look_alike if made_data_read(r)), len(look_alike))}
+
+
+def logging_case(result: dict) -> bool:
+    """A case whose must holds a write: the release bar's cases (contract function-list.md, exit check 6)."""
+    return bool(set((result.get("tags") or {}).get("must") or []) & set(WRITE_FUNCTIONS))
+
+
+def _mean(values: list) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _median(values: list) -> float:
+    return statistics.median(values) if values else 0.0
+
+
+def _run_tokens(run: dict) -> tuple[int, int, int]:
+    return (int(run.get("input_tokens") or 0), int(run.get("cached_tokens") or 0), int(run.get("output_tokens") or 0))
+
+
+def _cost(runs: list[dict]) -> float | None:
+    """The runs' cost, or None when no run's client reported one (Codex and Gemini give none)."""
+    costs = [r["cost_usd"] for r in runs if _number(r.get("cost_usd"))]
+    return sum(costs) if costs else None
+
+
+def _money(cost: float | None) -> str:
+    return "none given" if cost is None else f"${cost:.4f}"
+
+
+def _rate(made: int, of: int) -> str:
+    return f"{made} of {of}" + (f" ({made / of * 100:.0f}%)" if of else "")
+
+
+def summarise(results: list[dict], n: int, threshold: float) -> tuple[str, bool]:
+    """The printed table and whether every counted case met the threshold.
+
+    results: one per case: {id, kind?, tags?, runs: [{passed, tokens, input_tokens?, cached_tokens?,
+    output_tokens?, cost_usd, calls?, num_turns?, seconds?}]}. Each case's row gives its passes and, a run on
+    average, its calls, turns, seconds and tokens (input, cached, output), and its runs' cost. Incidental and
+    look_alike cases are marked apart: kept out of the counted passes and the threshold, with the pick-up and
+    over-call rates under the table. Then the medians and totals over every run, and the logging cases' bar.
     """
-    lines = [f"{'case':<26} {'passes':>7} {'tokens/run':>11} {'cost':>9}"]
-    lines.append("-" * len(lines[0]))
-    total_pass = total_runs = 0
-    total_cost = 0.0
+    head = (f"{'case':<26} {'passes':>7} {'calls':>6} {'turns':>6} {'seconds':>8} {'input':>9} {'cached':>9} "
+            f"{'output':>7} {'cost':>10}")
+    lines = [head, "-" * len(head)]
+    counted_pass = counted_runs = apart_pass = apart_runs = 0
+    every: list[dict] = []
     ok = True
     for r in results:
         runs = r["runs"]
+        every += runs
         passes = sum(1 for x in runs if x["passed"])
-        tokens = sum(x.get("tokens") or 0 for x in runs) / len(runs) if runs else 0
-        cost = sum(x.get("cost_usd") or 0.0 for x in runs)
-        total_pass += passes
-        total_runs += len(runs)
-        total_cost += cost
+        apart = r.get("kind") in APART
+        if apart:
+            apart_pass += passes
+            apart_runs += len(runs)
+        else:
+            counted_pass += passes
+            counted_runs += len(runs)
         rate = passes / len(runs) if runs else 0.0
-        below = rate < threshold
+        below = not apart and rate < threshold
         ok = ok and not below
-        lines.append(f"{r['id']:<26} {f'{passes}/{len(runs)}':>7} {tokens:>11,.0f} {f'${cost:.4f}':>9}"
-                     + ("  below threshold" if below else ""))
-    lines.append("-" * len(lines[0]))
-    overall = (total_pass / total_runs * 100) if total_runs else 0.0
-    lines.append(f"{'overall':<26} {f'{total_pass}/{total_runs}':>7} {'':>11} {f'${total_cost:.4f}':>9}")
-    lines.append(f"pass rate {overall:.0f}%, threshold {threshold:g} per case, n = {n}")
+        tokens = [_run_tokens(x) for x in runs]
+        turns = [x["num_turns"] for x in runs if _number(x.get("num_turns"))]
+        lines.append(
+            f"{r['id']:<26} {f'{passes}/{len(runs)}':>7} {_mean([len(x.get('calls') or []) for x in runs]):>6.1f} "
+            f"{(f'{_mean(turns):.1f}' if turns else '-'):>6} {_mean([x.get('seconds') or 0 for x in runs]):>8.1f} "
+            f"{_mean([t[0] for t in tokens]):>9,.0f} {_mean([t[1] for t in tokens]):>9,.0f} "
+            f"{_mean([t[2] for t in tokens]):>7,.0f} {_money(_cost(runs)):>10}"
+            + ("  below threshold" if below else "") + (f"  apart: {r['kind']}" if apart else ""))
+    lines.append("-" * len(head))
+    overall = (counted_pass / counted_runs * 100) if counted_runs else 0.0
+    lines.append(f"counted: {counted_pass} of {counted_runs} runs passed, pass rate {overall:.0f}%, threshold "
+                 f"{threshold:g} per case, n = {n}")
+    if apart_runs:
+        rates = golden_rates(results)
+        lines.append(f"apart, incidental and look-alike: {apart_pass} of {apart_runs} runs passed, not counted")
+        lines.append(f"pick-up rate: {_rate(*rates['pick_up'])} incidental runs made a must call; over-call rate: "
+                     f"{_rate(*rates['over_call'])} look-alike runs made a data read")
+    tokens = [_run_tokens(x) for x in every]
+    lines.append(f"a run, median: {_median([len(x.get('calls') or []) for x in every]):g} calls, "
+                 f"{_median([x['num_turns'] for x in every if _number(x.get('num_turns'))]):g} turns, "
+                 f"{_median([x.get('seconds') or 0 for x in every]):g} seconds, "
+                 f"{_median([sum(t) for t in tokens]):,.0f} tokens")
+    lines.append(f"in total: {sum(len(x.get('calls') or []) for x in every)} calls, "
+                 f"{sum(x.get('seconds') or 0 for x in every):,.1f} seconds, tokens {sum(t[0] for t in tokens):,} "
+                 f"input, {sum(t[1] for t in tokens):,} cached, {sum(t[2] for t in tokens):,} output, cost "
+                 f"{_money(_cost(every))}")
+    logging = [r for r in results if logging_case(r) and r.get("kind") not in APART]
+    if logging:
+        runs = [x for r in logging for x in r["runs"]]
+        low = [r["id"] for r in logging if r["runs"] and sum(x["passed"] for x in r["runs"]) / len(r["runs"]) < 2 / 3]
+        lines.append(f"logging cases (a write in must): {_rate(sum(1 for x in runs if x['passed']), len(runs))} runs "
+                     f"passed; under 2 of 3: {', '.join(low) or 'none'}")
     return "\n".join(lines), ok

@@ -842,7 +842,8 @@ def test_each_case_seeds_through_the_runner_and_its_rows_judge_as_designed(app_s
 
 def test_the_six_cases_load_last_and_judge_both_ways(app_settings):
     cases = judge.load_cases()
-    six = cases[-16:-10]  # inputs.md's two follow (its decision 19), then data-on-request.md's eight
+    at = [c["id"] for c in cases].index("data_basketball")  # function-list.md's G1 cases follow the eight
+    six = cases[at - 8:at - 2]  # inputs.md's two follow (its decision 19), then data-on-request.md's eight
     assert [c["id"] for c in six] == ["lb_weigh_in", "lb_lifts", "miles_run", "units_asked", "units_switch",
                                       "lb_routine_changed"]
     assert all(judge.case_problems(c) == [] for c in six) and "update_settings" in judge.SEED_SERVICES

@@ -3,8 +3,10 @@
 CallRecorder wraps the whole app as ASGI middleware. For every POST to /mcp it reads the JSON-RPC body
 before the app does, hands the app the same bytes, and reads the answer on the way out. It keeps, per
 sign-in token:
-- each tools/call: the function name, its arguments as sent, and whether the answer was isError
-  (a JSON-RPC error, such as an unknown function or arguments that break the schema, counts as an error);
+- each tools/call: the function name, its arguments as sent, whether the answer was isError (a JSON-RPC
+  error, such as an unknown function or arguments that break the schema, counts as an error), and whether any
+  answer came at all; for a data read (judge.DATA_READS), the answer itself: its structuredContent, else its
+  text, read as JSON where it parses (contract function-list.md, G1: quotes_spotter reads it);
 - the other JSON-RPC methods seen (server/discover or initialize, tools/list, ...), and whether the
   handshake's answer carried the server's instructions.
 
@@ -17,6 +19,8 @@ import json
 import threading
 from collections import defaultdict
 from typing import Any
+
+from evals.judge import DATA_READS
 
 
 def token_key(token: str) -> str:
@@ -41,6 +45,22 @@ def parse_body(content_type: str, raw: bytes) -> Any:
     return json.loads(text) if text.strip() else None
 
 
+def answer_of(result: dict) -> Any:
+    """What a tools/call answer holds: its structuredContent when that is an object, else its text content, read
+    as JSON where it parses, else the text itself. None for an answer with neither."""
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        return structured
+    text = "".join(c.get("text", "") for c in result.get("content") or []
+                   if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str))
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
 def _messages(body: Any) -> list[dict]:
     if isinstance(body, dict):
         return [body]
@@ -61,7 +81,8 @@ class CallRecorder:
     # ------------------------------------------------------------ what the runner reads
 
     def calls(self, token: str) -> list[dict]:
-        """Every tools/call this token made, in order: {name, arguments, is_error}."""
+        """Every tools/call this token made, in order: {name, arguments, is_error, answered, error}, and answer
+        for a data read."""
         with self._lock:
             return [dict(c) for c in self._calls.get(token_key(token), [])]
 
@@ -147,6 +168,9 @@ class CallRecorder:
                         "arguments": arguments if isinstance(arguments, dict) else {},
                         # No answer at all (a crash mid-response) counts as an error too.
                         "is_error": bool(result.get("isError")) or "error" in answer or not answer,
+                        "answered": bool(answer),
                         "error": (result.get("structuredContent") or {}).get("error")
                         if isinstance(result.get("structuredContent"), dict) else None,
                     })
+                    if params.get("name") in DATA_READS:
+                        self._calls[key][-1]["answer"] = answer_of(result)

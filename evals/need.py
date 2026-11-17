@@ -30,7 +30,10 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-EVAL_FILES = ("evals/cases.json", "evals/judge.py", "evals/run.py")
+# The eval files: the cases, the judge, the runner, the recorder (what quotes_spotter reads) and the two clients
+# (what each run sends). A change to any of them alone says yes (contract function-list.md, G1's fix round).
+EVAL_FILES = ("evals/cases.json", "evals/judge.py", "evals/run.py", "evals/recorder.py", "evals/codex_client.py",
+              "evals/gemini_client.py")
 OWNER = "user_01OWNER"  # the owner's sign-in id, as tests/test_trace.py has it
 OTHER = "user_01OTHER"  # anyone else, as tests/test_feedback.py has it
 DOMAIN = "example.authkit.app"  # the fake provider of tests/conftest.py

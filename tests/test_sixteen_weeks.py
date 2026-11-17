@@ -290,18 +290,21 @@ def test_refused_on_an_account_with_entries_or_a_deleted_saved_foods_name(make_u
 
 # ---------------------------------------------------------------- the eight cases
 
-def test_the_eight_cases_load_last_in_order_with_the_contracts_write_list():
+def test_the_eight_cases_load_in_order_with_the_contracts_write_list():
+    """In order, straight after inputs.md's two; function-list.md's G1 cases follow them."""
     cases = judge.load_cases()
-    assert [c["id"] for c in cases[-8:]] == CASES and len(cases) == 51
+    at = [c["id"] for c in cases].index("data_basketball")
+    eight = cases[at:at + 8]
+    assert [c["id"] for c in eight] == CASES and cases[at - 1]["id"] == "machine_calories"
     assert set(W) == set(common.WRITE_FUNCTIONS) and len(W) == len(common.WRITE_FUNCTIONS)
-    for case in cases[-8:]:
+    for case in eight:
         assert judge.case_problems(case) == [], case["id"]
         assert case["seed"][-1] == {"service": "sixteen_weeks"}
         assert case["expect"]["no_call"] == W
         for phrase in case["expect"].get("reply_has", []) + [p for o in case["expect"].get("any_of", [])
                                                               for p in o.get("reply_has", [])]:
             assert "," not in phrase  # no thousands comma
-    assert cases[-3]["seed"][0] == {"service": "update_settings", "data": {"weight_unit": "lb"}}
+    assert eight[-3]["seed"][0] == {"service": "update_settings", "data": {"weight_unit": "lb"}}
     assert judge.seed_service("sixteen_weeks") is sixteen_weeks
 
 
@@ -310,9 +313,38 @@ def ran(*calls) -> list[dict]:
     return [{"name": c[0], "arguments": c[1], "is_error": c[2] if len(c) > 2 else False} for c in calls]
 
 
+def answer_of(user_id: int, name: str, arguments: dict) -> dict:
+    """A data read's answer as Spotter's own service gives it: what evals/recorder.py keeps of the MCP answer."""
+    if name == "what_is_logged":
+        return services.what_is_logged(user_id)
+    if name == "get_data":
+        return services.get_data(user_id, arguments)
+    if name == "get_goals":
+        return services.get_goals(user_id, include_closed=arguments.get("include_closed", False))
+    if name == "get_progress":
+        return services.get_progress(user_id, arguments.get("exercise"))
+    if name == "get_trends":
+        return services.get_trends(user_id)
+    if name == "get_log":
+        return services.get_log(user_id, date=arguments.get("date"), days=arguments.get("days", 1))
+    raise KeyError(name)
+
+
+def with_answers(user_id: int, calls: list[dict]) -> list[dict]:
+    """The run's calls, each data read with its answer from this account (judge.DATA_READS)."""
+    return [{**c, "answered": True, "answer": answer_of(user_id, c["name"], c["arguments"])}
+            if c["name"] in judge.DATA_READS and not c["is_error"] else c for c in calls]
+
+
+def needs_answers(case: dict) -> bool:
+    """A case that counts the run's own figures (quotes_spotter of 1 or more) is judged on real answers."""
+    return case["expect"].get("quotes_spotter", 0) > 0
+
+
 WHO = ("whoami", {})
 CATALOGUE = ("what_is_logged", {})
 LIFT_SETS = ("get_data", {"area": "lift_sets", "group_by": ["region"], "totals": {"sets": ["sum", "share"]}})
+SQUAT_SETS = ("get_data", {"area": "lift_sets", "filters": {"exercise": "Back Squat"}})
 WAIST_ROWS = {"measurement": [{"id": i, "kind": "waist", "value": 92 - 0.25 * i, "deleted_at": None}
                               for i in range(16)]}
 
@@ -338,43 +370,47 @@ RUNS = {
          (ran(CATALOGUE), "Most of your training is upper body. Add jumps.", {}),        # no figure quoted
          (ran(LIFT_SETS), "Shoot 33% from three. Do 2 sessions a week of 3 to 5 sets of 8.", {}),  # none Spotter's
          (ran(LIFT_SETS, ("log_lifts", {"sets": []})), "Your sets are 67% upper body.", {})]),  # wrote
+    # Route-free since G1 (function-list.md): any data read, and two of that run's own figures quoted.
     "data_lifting": (
-        [(ran(LIFT_SETS), "Back Squat has sat at 100 kg for 5 since August: an estimated max of 116.7 kg.", {}),
-         (ran(("get_progress", {"exercise": "Back Squat"})), "Back Squat is at 116.7 kg.", {}),  # the lift's own read
+        [(ran(SQUAT_SETS), "Back Squat has sat at 100 kg for 5 since August: an estimated max of 116.7 kg.", {}),
+         (ran(("get_progress", {"exercise": "Back Squat"})), "Back Squat is at 116.7 kg, from 100 kg for 5.", {}),
          (ran(WHO, ("get_progress", {}), ("get_trends", {}), ("get_goals", {})),  # the release run's runs 2 and 3
-          "Your last three squat days were all 3 x 5 at 100 kg. Estimated max 116.7 kg since Wed 23 Sep.", {})],
-        [(ran(LIFT_SETS), "Your squat has stalled. Add weight.", {}),
-         (ran(("get_data", {"area": "cardio"})), "Back Squat is at 116.7 kg.", {}),  # read another area
-         (ran(("get_goals", {})), "Back Squat is at 116.7 kg.", {}),                 # read no lifts
-         (ran(LIFT_SETS, ("set_goal", {})), "Back Squat is at 116.7 kg.", {})]),
+          "Your squat goal: 116.7 kg now against 120 kg on the plan line. Estimated max 116.7 kg since Wed 23 Sep.",
+          {})],
+        [(ran(SQUAT_SETS), "Your squat has stalled. Add weight.", {}),
+         (ran(("get_data", {"area": "cardio"})), "Back Squat is at 116.7 kg, from 100 kg for 5.", {}),  # not its read
+         (ran(("get_goals", {})), "Back Squat is at 116.7 kg.", {}),  # one of the run's figures, not two
+         (ran(WHO), "Back Squat is at 116.7 kg, from 100 kg for 5.", {}),  # no data read
+         (ran(SQUAT_SETS, ("set_goal", {})), "Back Squat is at 116.7 kg, from 100 kg for 5.", {})]),
     "data_calories": (
         [(ran(("get_data", {"area": "food", "group_by": ["meal"]}), ("get_data", {"area": "food", "group_by": ["food"]})),
           "Dinner is 798 kcal a day, 42% of the total. Chicken biryani is 640 kcal each time.", {})],
         [(ran(("get_data", {"area": "food"})), "Dinner is 798 kcal a day, 42% of the total.", {}),  # biryani unnamed
          (ran(("get_data", {"area": "food"})), "Cut the biryani.", {}),                            # no figure
          (ran(("get_data", {"area": "days"})), "Chicken biryani is 640 kcal each time.", {})]),
-    "data_squat_goal": (
-        [(ran(("get_data", {"area": "lift_sets", "filters": {"exercise": "Back Squat"}})),
-          "116.7 kg now against 120 kg on the plan line today: 3.3 kg behind.", {}),
+    "data_squat_goal": (  # route-free since G1: one of the run's own figures, and the plan line's
+        [(ran(SQUAT_SETS), "116.7 kg now against 120 kg on the plan line today: 3.3 kg behind.", {}),
          (ran(("get_data", {"area": "lift_sets", "filters": {"exercise": ["back squat"]}})), "3.3 kg behind.", {}),
-         (ran(("get_progress", {"exercise": "Back Squat"})), "3.3 kg behind the plan line.", {})],
-        [(ran(("get_data", {"area": "lift_sets", "filters": {"exercise": "Bench Press"}})), "3.3 kg behind.", {}),
-         (ran(("get_data", {"area": "lift_sets", "filters": {"exercise": "Back Squat"}})), "Squats are stuck.", {}),
-         (ran(("get_goals", {})), "3.3 kg behind.", {})]),
-    "data_back_on_track": (
+         (ran(("get_progress", {"exercise": "Back Squat"})), "3.3 kg behind the plan line.", {}),
+         (ran(("get_goals", {})), "3.3 kg behind.", {})],  # was a failing run: the goals read now counts
+        [(ran(("get_data", {"area": "cardio"})), "3.3 kg behind.", {}),  # a figure no answer of the run gave
+         (ran(SQUAT_SETS), "Squats are stuck.", {}),
+         (ran(WHO), "3.3 kg behind.", {})]),
+    "data_back_on_track": (  # route-free since G1: two of the run's own figures, and the plan line's
         [(ran(("get_goals", {})), "80.9 kg now against 79.3 kg on the plan line today: 1.6 kg behind.", {}),
-         (ran(CATALOGUE), "Body weight is 1.6 kg behind the plan line.", {})],
+         (ran(CATALOGUE), "Body weight is 80.9 kg against 79.3 kg on the plan line: 1.6 kg behind.", {})],
         [(ran(("get_goals", {})), "You are a little behind.", {}),
-         (ran(("get_trends", {})), "Body weight is 1.6 kg behind the plan line.", {}),
-         (ran(("get_goals", {}), ("update_settings", {})), "1.6 kg behind.", {})]),
-    "data_lb": (
+         (ran(CATALOGUE), "Body weight is 1.6 kg behind the plan line.", {}),  # one figure, not two
+         (ran(WHO), "Body weight is 80.9 kg against 79.3 kg on the plan line: 1.6 kg behind.", {}),
+         (ran(("get_goals", {}), ("update_settings", {})), "80.9 kg against 79.3 kg: 1.6 kg behind.", {})]),
+    "data_lb": (  # route-free since G1: any read that gave 214.95
         [(ran(("get_data", {"area": "lift_sets", "filters": {"exercise": "Bench Press"}})),
           "Your heaviest bench in the last 4 weeks was 214.95 lb for 5, on 13 Nov.", {}),
          (ran(("get_progress", {"exercise": "Bench Press"})), "214.95 lb for 5.", {}),
          (ran(("get_log", {"days": 14})), "214.95 lb.", {})],
         [(ran(("get_data", {"area": "lift_sets"})), "214.95 lb, which is 97.5 kg.", {}),  # converted to kg
          (ran(("get_data", {"area": "lift_sets"})), "About 215 lb.", {}),                 # rounded
-         (ran(("get_trends", {})), "214.95 lb.", {})]),
+         (ran(("get_trends", {})), "214.95 lb.", {})]),  # a figure the run's answers never gave
     "data_empty": (
         [(ran(CATALOGUE), "Spotter has no sleep logged. Only your waist is measured.", WAIST_ROWS),
          (ran(("get_data", {"area": "measurements", "filters": {"kind": "sleep_hours"}})),
@@ -396,11 +432,17 @@ RUNS = {
 
 
 @pytest.mark.parametrize("name", CASES)
-def test_each_case_judges_a_passing_and_a_failing_run(name):
+def test_each_case_judges_a_passing_and_a_failing_run(name, make_user, clock):
+    """A case that counts the run's own figures is judged on the answers Spotter gives the seeded account on the
+    fixed day; the others need none."""
     case = judge.resolve(next(c for c in judge.load_cases() if c["id"] == name), {"today": "2026-11-16"})
     passing, failing = RUNS[name]
+    if needs_answers(case):
+        user_id = seeded(make_user, **({"weight_unit": "lb"} if name == "data_lb" else {}))
+        passing = [(with_answers(user_id, calls), reply, rows) for calls, reply, rows in passing]
+        failing = [(with_answers(user_id, calls), reply, rows) for calls, reply, rows in failing]
     for calls, reply, rows in passing:
-        assert judge.judge(case, calls, reply, rows) == [], (name, reply)
+        assert judge.judge(case, calls, reply, rows) == [], (name, reply, judge.judge(case, calls, reply, rows))
     for calls, reply, rows in failing:
         assert judge.judge(case, calls, reply, rows), (name, reply)
     for write in W:  # the first passing run, with any one write added, fails
@@ -472,18 +514,20 @@ REVIEWED = {  # id: (the route's calls, rows, replies that pass, replies that fa
                          "Add 2 cardio sessions a week.", "Rest 120 seconds between sets.",
                          "Eat 1.6 to 2.2 g of protein per kg.", "Hold it for 116.75 seconds.",
                          "A 1,108 sets program."]),
-    "data_lifting": (ran(LIFT_SETS), {},
-                     ["Back Squat has stalled at 100 kg x 5.", "Your squat's estimated max is 116.7 kg."],
+    "data_lifting": (ran(SQUAT_SETS), {},  # two of the run's own figures since G1
+                     ["Back Squat has stalled at 100 kg x 5, an estimated max of 116.7 kg.",
+                      "Your squat's estimated max is 116.7 kg, at 100 kg for 5."],
                      ["Your deadlift went from 100 kg to 157.5 kg in 16 weeks.", "Your squat has stalled.",
-                      "Bench is at 116.7 kg."]),
+                      "Bench is at 116.7 kg.", "Back Squat has stalled at 100 kg x 5."]),
     "data_squat_goal": (ran(SQUAT_ROUTE), {},
                         ["116.7 kg now against 120 kg on the plan line today: 3.3 kg behind.",
                          "Behind by 3.3 kg.", "116.7 kg now, against 120 kg on the plan line."],
                         ["Your squat estimated max went from 93.3 kg to 116.7 kg. It has stalled at 100 kg x 5 "
                          "since Sep.", "Your squat is 3.35 kg short.", "Your squat is behind."]),
-    "data_back_on_track": (ran(("get_goals", {})), {},
+    "data_back_on_track": (ran(("get_goals", {})), {},  # two of the run's own figures since G1
                            ["80.9 kg now against 79.3 kg on the plan line today: 1.6 kg behind.",
-                            "You should be at 79.3 kg today.", "Behind by 1.6 kg."],
+                            "You should be at 79.3 kg today, and you are at 80.9 kg.",
+                            "Behind by 1.6 kg: 80.9 kg against 79.3 kg."],
                            ["At this pace you reach 81.61 kg by the target date, not 78 kg. Cut the biryani.",
                             "You weighed 81.6 kg in August and 80.9 kg now.", "You are a little behind."]),
     "data_empty": (ran(CATALOGUE), WAIST_ROWS, SLEEP_GOOD, SLEEP_BAD),
@@ -491,24 +535,31 @@ REVIEWED = {  # id: (the route's calls, rows, replies that pass, replies that fa
 
 
 @pytest.mark.parametrize("name", list(REVIEWED))
-def test_the_reviews_replies_judge_as_the_fix_round_says(name):
+def test_the_reviews_replies_judge_as_the_fix_round_says(name, make_user, clock):
     case = judge.resolve(next(c for c in judge.load_cases() if c["id"] == name), {"today": "2026-11-16"})
     calls, rows, good, bad = REVIEWED[name]
+    if needs_answers(case):
+        calls = with_answers(seeded(make_user), calls)
     for reply in good:
         assert judge.judge(case, calls, reply, rows) == [], (name, reply)
     for reply in bad:
         assert judge.judge(case, calls, reply, rows), (name, reply)
 
 
-def test_the_squat_and_weight_figures_stand_alone_and_the_routes_still_count():
-    """Both data_squat_goal and data_back_on_track hold two any_of at once: a reply arm and a route arm."""
+def test_the_squat_and_weight_figures_stand_alone_and_any_read_that_gave_them_counts(make_user, clock):
+    """Route-free since G1 (function-list.md): no read is the right one, but the figure must be one a read of
+    that run gave. Was: the routes still count."""
     cases = {c["id"]: c for c in judge.load_cases()}
     squat, weight = cases["data_squat_goal"], cases["data_back_on_track"]
-    assert judge.judge(squat, ran(("get_goals", {})), "3.3 kg behind.", {})  # the right words, the wrong read
-    assert judge.judge(squat, ran(("get_data", {"area": "lift_sets", "filters": {"exercise": "Back Squat"}})),
-                       "120 kg on the plan line.", {}) == []
-    assert judge.judge(weight, ran(("get_trends", {})), "79.3 kg on the plan line.", {})
-    assert judge.judge(weight, ran(("get_data", {"area": "weigh_ins"})), "1.6 kg behind.", {}) == []
+    user_id = seeded(make_user)
+    answers = lambda *calls: with_answers(user_id, ran(*calls))  # noqa: E731
+    assert judge.judge(squat, answers(("get_goals", {})), "3.3 kg behind.", {}) == []  # the goals read gives it
+    assert judge.judge(squat, answers(SQUAT_SETS), "120 kg on the plan line.", {}) == []
+    assert judge.judge(squat, answers(("get_data", {"area": "food"})), "120 kg on the plan line.", {})
+    assert judge.judge(squat, answers(SQUAT_SETS), "From 93.3 kg to 116.7 kg.", {})  # not the 3.3 inside 93.3
+    assert judge.judge(weight, answers(("get_goals", {})), "79.3 kg on the plan line, you are at 80.9 kg.", {}) == []
+    assert judge.judge(weight, answers(("get_data", {"area": "food"})), "79.3 kg on the plan line, 80.9 kg now.", {})
+    assert judge.judge(weight, answers(("get_goals", {})), "You weighed 81.6 kg in August, 80.9 kg now.", {})
 
 
 @pytest.mark.parametrize("name", ["data_lb", "data_empty"])
@@ -525,5 +576,267 @@ def test_the_seeds_run_through_the_runner_and_the_rows_judge_as_designed(app_set
     rows = person_rows(user_id)
     passing, failing = RUNS[name]
     calls, reply, _ = passing[0]
+    if needs_answers(case):
+        calls = with_answers(user_id, calls)
     assert judge.judge(case, calls, reply, rows) == []
     assert judge.judge(case, calls + ran(("log_food", {})), reply, rows)
+
+
+# ---------------------------------------------------------------- the golden set's new direct cases (function-list.md, G1)
+
+GOLDEN = ["gold_squat_month", "gold_weigh_morning", "gold_kcal_yesterday", "gold_squat_goal", "gold_eat_more",
+          "gold_run_week"]
+
+
+@pytest.mark.parametrize("today", TODAYS, ids=[d.isoformat() for d in TODAYS])
+def test_every_figure_the_golden_cases_look_for_holds(make_user, clock, today):
+    clock(today)
+    user_id = seeded(make_user)
+    ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
+    # gold_weigh_morning: this morning's weigh-in is 81.1 kg; 80.9 is the 7-day average the plan line gives.
+    weighed = table(get(user_id, area="weigh_ins", from_date=ago(0)))
+    assert [r["weight_kg"] for r in weighed] == [81.1]
+    # gold_kcal_yesterday: 1,980 kcal, the recent menu's day.
+    assert totals(get(user_id, area="food", from_date=ago(1), to_date=ago(1), totals={"kcal": ["sum"]})) == {
+        "kcal_sum": 1980}
+    # gold_squat_month: the last 28 or 31 days hold only 100 kg x 5, an estimated max of 116.7 kg.
+    for start in (ago(27), ago(30)):
+        answer = get(user_id, area="lift_sets", filters={"exercise": "Back Squat"}, from_date=start,
+                     totals={"estimated_max_kg": ["max"], "weight_kg": ["max", "min"]})
+        assert totals(answer) == {"estimated_max_kg_max": 116.7, "weight_kg_max": 100, "weight_kg_min": 100}, start
+    # gold_squat_goal and gold_eat_more: both plan lines, and 1,905 kcal a day over 28 days, 1,980 over 7.
+    assert {g["plan_line"] for g in services.get_goals(user_id)["goals"]} == {SQUAT_LINE, WEIGHT_LINE}
+    calories = services.get_trends(user_id)["calories"]
+    assert (calories["avg_7d"], calories["avg_28d"]) == (1980, 1905)
+    # gold_run_week: no cardio in the last 7 days, nor since the week's Monday.
+    for start in (ago(6), ago(today.weekday())):
+        assert get(user_id, area="cardio", from_date=start)["rows"] == [], start
+
+
+GOLDEN_RUNS = {  # id: (passing runs, failing runs). Each run: (calls, reply); answers from the seeded account.
+    "gold_squat_month": (
+        [(ran(WHO, SQUAT_SETS), "This month your squat is 100 kg for 5, an estimated max of 116.7 kg."),
+         (ran(("get_progress", {"exercise": "Back Squat"})), "Your squat's estimated max is 116.7 kg."),
+         (ran(SQUAT_SETS), "This month you squatted 100 kilos for 5, every session."),  # the review's S5: kilos
+         (ran(SQUAT_SETS), "This month: 3 x 5 at 100kg.")],
+        [(ran(SQUAT_SETS), "Your squat is going well."),
+         (ran(WHO), "Your squat's estimated max is 116.7 kg."),       # no data read
+         (ran(("get_data", {"area": "food"})), "Your squat's estimated max is 116.7 kg."),  # not that run's figure
+         # The review's M2: two of the run's figures quoted, and the asked one made up (get_goals gives no 100).
+         (ran(("get_goals", {})), "Your squat started at 80 kg and the target is 150 kg: you are at 100 kg now."),
+         # Its M1: 100 from what_is_logged's help text ("the shares sum to 100") is no figure of the person's.
+         (ran(CATALOGUE), "Your squat goal started at 100 kg, so this month you are fine.")]),
+    "gold_weigh_morning": (
+        [(ran(("get_data", {"area": "weigh_ins", "order": "-date", "limit": 1})), "You weighed 81.1 kg this morning."),
+         (ran(("get_log", {})), "81.1 kg this morning.")],
+        [(ran(("get_data", {"area": "weigh_ins"})), "Your 7-day average is 80.9 kg."),  # not this morning's
+         (ran(WHO), "You weighed 81.1 kg this morning."),
+         (ran(("get_data", {"area": "food"})), "You weighed 81.1 kg this morning.")]),  # no read of that run gave it
+    "gold_kcal_yesterday": (
+        [(ran(("get_log", {"date": "2026-11-15"})), "Yesterday you ate 1,980 kcal."),
+         (ran(("get_data", {"area": "food", "from_date": "2026-11-15", "to_date": "2026-11-15",
+                            "totals": {"kcal": ["sum"]}})), "1980 kcal yesterday.")],
+        [(ran(("get_log", {"date": "2026-11-15"})), "About 2,000 kcal yesterday."),
+         (ran(("get_data", {"area": "cardio"})), "Yesterday you ate 1,980 kcal.")]),
+    "gold_squat_goal": (
+        [(ran(("get_goals", {})), SQUAT_LINE), (ran(SQUAT_SETS), "You are 3.3 kg behind."),
+         # The review's S5: right, in words other than the plan line's own.
+         (ran(("get_goals", {})), "Behind. You are at 116.7 kg; the plan line says 120 kg for today."),
+         (ran(("get_goals", {})), "You are behind: 116.7 kg against a plan of 120 kg.")],
+        [(ran(("get_goals", {})), "You are behind."), (ran(("get_data", {"area": "food"})), "You are 3.3 kg behind.")]),
+    "gold_eat_more": (
+        [(ran(("get_trends", {}), ("get_goals", {})),
+          "No. You eat 1,980 kcal a day this week, and your weight is 80.9 kg against 79.3 kg on the plan line.")],
+        [(ran(("get_trends", {})), "Eat a bit more protein."),
+         (ran(("get_trends", {})), "You eat 1,980 kcal a day."),  # one figure, not two
+         (ran(WHO), "You eat 1,980 kcal a day, and weigh 80.9 kg.")]),
+    "gold_run_week": (
+        [(ran(("get_data", {"area": "cardio", "from_date": "2026-11-10"})),
+          "You have not run this week. Your last run was 30 minutes and 5 km."),
+         (ran(("get_log", {"days": 7})), "No runs this week, so 0 km."),
+         (ran(("get_data", {"area": "cardio"})),
+          "No run this week. Your last run was 5 km in 30 minutes, three weeks ago."),
+         (ran(("get_data", {"area": "cardio"})), "Nothing this week: your last run was on 27 Oct, 5 km in 30 minutes."),
+         # The re-check's right replies: the last run named, by "latest", "previous" or its date.
+         (ran(("get_data", {"area": "cardio"})), "You have not run this week. The latest was 5 km, on 26 Oct."),
+         (ran(("get_data", {"area": "cardio"})), "No run this week, 0 km."),
+         (ran(("get_data", {"area": "cardio"})), "Your last run was 5 km on 3 November."),
+         (ran(("get_data", {"area": "cardio"})), "No runs this week. Your previous run was 5.5 km in 31 minutes, on 20 Oct.")],
+        [(ran(("get_data", {"area": "cardio"})), "This week you ran 5 km in 30 minutes."),  # made up
+         (ran(("get_data", {"area": "cardio"})), "You ran 30 minutes this week."),
+         (ran(WHO), "No runs this week."),
+         # The review's M3: each made up for this week, with no word that there was no run.
+         (ran(("get_data", {"area": "cardio"})), "This week: a 5 km run, 30 minutes."),
+         (ran(("get_data", {"area": "cardio"})), "Your run on Tuesday was 5 km in 30 minutes. Nice work."),
+         (ran(("get_data", {"area": "cardio"})), "Yes, you ran 5 km yesterday, in 30 minutes."),
+         (ran(("get_data", {"area": "cardio"})), "You ran twice this week."),
+         # The re-check's holes: a no-run word elsewhere, and a run made up in the same reply.
+         (ran(("get_data", {"area": "cardio"})), "You haven't run much: just one 5 km run on Tuesday, in 30 minutes."),
+         (ran(("get_data", {"area": "cardio"})), "Not much running this week, one 5 km run, 30 minutes."),
+         (ran(("get_data", {"area": "cardio"})), "No runs logged since Sunday. On Tuesday you ran 5 km in 30 minutes."),
+         (ran(("get_data", {"area": "cardio"})), "Not a bad week: you ran 5 km on Tuesday in 30 minutes."),
+         (ran(("get_data", {"area": "cardio"})), "This week, you ran 5 km on Tuesday. No cardio since."),
+         (ran(("get_data", {"area": "cardio"})), "No complaints, you ran 5 km on Tuesday in 30 minutes."),
+         (ran(("get_data", {"area": "cardio"})), "Nothing logged for cardio before Monday, then you ran 5 km on Tuesday."),
+         (ran(("get_data", {"area": "cardio"})), "You haven't run much: you ran twice this week.")]),
+}
+
+
+@pytest.mark.parametrize("name", GOLDEN)
+def test_each_golden_case_judges_a_passing_and_a_failing_run(name, make_user, clock):
+    case = judge.resolve(next(c for c in judge.load_cases() if c["id"] == name), {"today": "2026-11-16"})
+    assert case["kind"] == "direct" and case["seed"] == [{"service": "sixteen_weeks"}]
+    assert case["calls"]["must"] == list(judge.DATA_READS) and case["calls"]["must_not"] == W
+    user_id = seeded(make_user)
+    passing, failing = GOLDEN_RUNS[name]
+    for calls, reply in passing:
+        calls = with_answers(user_id, calls)
+        assert judge.judge(case, calls, reply, {}) == [], (name, reply, judge.judge(case, calls, reply, {}))
+        for write in W:  # any one write added fails
+            assert judge.judge(case, calls + ran((write, {})), reply, {}), (name, write)
+    for calls, reply in failing:
+        assert judge.judge(case, with_answers(user_id, calls), reply, {}), (name, reply)
+
+
+def test_the_best_deadlift_case_has_squats_only_and_no_made_up_deadlift_passes(app_settings):
+    """Its own seed, not the sixteen weeks: both of those seeds hold a deadlift (evals/sixteen_weeks.py:56)."""
+    case = next(c for c in judge.load_cases() if c["id"] == "gold_best_deadlift")
+    server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
+    server.settings = app_settings
+    user_id, _, _ = server.new_person(ZONE, case["seed"])
+    sessions = person_rows(user_id)["lift_session"]
+    assert len(sessions) == 2 and {s["set_count"] for s in sessions} == {3}
+    names = {a["area"]: a for a in services.what_is_logged(user_id)["areas"]}
+    assert "Deadlift" not in str(names["lift_sets"]) and "Back Squat" in str(names["lift_sets"])
+    deadlift = ("get_data", {"area": "lift_sets", "filters": {"exercise": "Deadlift"}})
+    calls = with_answers(user_id, ran(WHO, CATALOGUE, deadlift))
+    for reply in ("No deadlift is logged yet. Your best squat is 100 kg for 5.",
+                  "You have not logged a deadlift. Squats only: 100 kg x 5 at best.",
+                  "There is no deadlift in Spotter; your squats top out at 100 kg.",
+                  "No deadlift among your 48 lift sessions.", "No deadlift logged in the last 28 days."):  # spans
+        assert judge.judge(case, calls, reply, {}) == [], reply
+    for reply in ("Your best deadlift is 140 kg.", "Deadlift: 120 kg for 5.", "About 150 kg on the deadlift.",
+                  "Your best deadlift is 140.",  # the review's S1: a figure with no unit
+                  "Nothing to worry about: your best deadlift is 140.",  # the re-check's: a no word elsewhere
+                  "You have not deadlifted much, but your best is 140 kg.",
+                  "No deadlift logged last month, but your best deadlift is 140."):  # the no-unit lacks alone
+        assert judge.judge(case, calls, reply, {}), reply
+    assert judge.judge(case, ran(WHO), "No deadlift is logged yet.", {})  # no data read
+
+
+# The release run of 2026-11-17 (51 cases at 3 runs): five kept runs of the cases re-judged route-free in G1,
+# their calls and replies word for word. Judged again on the answers those calls get on the same day's seed.
+KEPT_RELEASE_RUNS = [  # (case, run, passed then, its calls, its reply)
+    ('data_lb', 1, True,
+     [('whoami', {}), ('what_is_logged', {}),
+      ('get_data',
+       {'area': 'lift_sets',
+        'fields': ['date', 'set_number', 'weight_lb', 'reps', 'estimated_max_lb'],
+        'filters': {'exercise': 'Bench Press'},
+        'limit': 10,
+        'order': '-weight_lb',
+        'totals': {'weight_lb': ['max']}})],
+     ("Your heaviest bench press in the last 4 weeks (21 Oct to 17 Nov) was 214.95 lb.\nThat was on Fri "
+      "13 Nov.\nYou did 3 sets of 5 reps at that weight.\nSpotter's estimated one-rep max from those sets"
+      " is 250.8 lb.\nYour bench went up each session in that stretch: 198.4 lb on 30 Oct, 203.95 lb on "
+      "4 Nov, 209.45 lb on 9 Nov, then 214.95 lb on 13 Nov.")),
+    ('data_squat_goal', 1, True,
+     [('whoami', {}), ('list_exercises', {'category': 'squat'}), ('get_goals', {}), ('get_progress', {}),
+      ('get_progress', {'exercise': 'Back Squat'})],
+     ("Your squats went up fast until late September, and they haven't moved since.\n\nBack Squat: estima"
+      "ted max now 116.7 kg, 24 sessions, last trained 13 Nov.\nYour estimated max went from 81.7 kg on "
+      "29 Jul to 116.7 kg on 23 Sep, with a new best almost every session.\nYour best set is 100 kg \u00d7 5,"
+      " on Wed 23 Sep.\nYou haven't set a new best since then. Every session after it came in at 116.7 k"
+      "g.\nTrend: 0 kg a week over 6 weeks.\n\nYour goal is Back Squat 150 kg by Tue 9 Feb 2027, and you'r"
+      "e behind.\n116.7 kg now against 120 kg on the plan line today: 3.3 kg behind.\nFrom here it needs "
+      "2.78 kg a week, with 12 weeks left. Your pace so far is 0 kg a week.\n\nYour Bench Press and Deadl"
+      "ift are still going up, at 4.39 kg and 4.34 kg a week, so only your squat has stalled.\nEvery ses"
+      "sion since 23 Sep has the same estimated max, so you're probably repeating the same top set. You"
+      " could add 2.5 kg to it, or deload for a week and then build back up.\nI can pull up the sets you"
+      "'ve logged since 23 Sep if you want to see exactly what you've been doing.\n\nhttps://spotter.exam"
+      "ple.app/progress/back-squat")),
+    ('data_back_on_track', 3, True,
+     [('whoami', {}), ('get_goals', {}), ('get_trends', {}), ('get_log', {'days': 14}),
+      ('get_log', {'date': '2026-11-03', 'days': 14})],
+     ("Your habits haven't slipped. What changed is your dinner, starting on Wed 28 Oct.\n\n**Still going"
+      " well**\nYou weighed in on 28 of the last 28 days.\nYou logged food on 28 of the last 28 days.\nYou"
+      "'re lifting 3 sessions a week.\nDeadlift, Bench Press and Overhead Press have all set new bests r"
+      "ecently.\n\n**Up to Tue 27 Oct**\nDinner was a rice bowl, a dal bowl and chicken curry, with no sna"
+      "ck.\nThose days came to 1,680 kcal. The chicken curry, 350 kcal, was an estimate.\nYour weigh-ins "
+      "stayed between 80 and 80.1 kg.\nYou did cardio: 30 minutes on the stationary bike on Thu 22 Oct a"
+      "nd a 5 km run on Tue 27 Oct.\n\n**Since Wed 28 Oct**\nEvery dinner has been chicken biryani, 640 kc"
+      "al, plus a dal bowl.\nYou've had a Coke 500 ml, 210 kcal, every day.\nEvery day comes to 1,980 kca"
+      "l.\nYour weight is going up 0.23 kg a week over the last 14 days.\nToday's weigh-in was 81.1 kg.\nS"
+      "potter estimates your maintenance at about 1,660 kcal a day, from the last 21 days. It's an esti"
+      "mate, so treat it as a guide.\nYou haven't logged any cardio since 27 Oct.\n\n**Your goals**\nBody w"
+      "eight 78 kg by Tue 12 Jan 2027: behind.\n80.9 kg now against 79.3 kg on the plan line today: 1.6 "
+      "kg behind.\nTo get there it needs a loss of 0.37 kg a week.\nBack Squat 150 kg by Tue 9 Feb 2027: "
+      "behind.\n116.7 kg now against 120 kg on the plan line today: 3.3 kg behind.\nYou've squatted 3 \u00d7 5"
+      " at 100 kg every squat day since Tue 21 Oct.\n\n**How to get back on track**\n1. Drop the daily Cok"
+      "e or switch to a zero sugar one. That's 210 kcal every day.\n2. Go back to the October dinner mos"
+      "t nights and keep biryani for some nights. Your weight held steady on those 1,680 kcal days. To "
+      "start losing again you'll need to eat a little below that, not just get back to it.\n3. Bring bac"
+      "k cardio, like the bike ride or the run you did in October.\n4. Add weight to your squat. You've "
+      "finished every set at 100 kg, so my suggestion is 2.5 kg more next squat day, the same step your"
+      " bench and deadlift take. That's my suggestion, not a figure from Spotter.\n\nIf you choose a dail"
+      "y calorie target, I can save it so Spotter shows how much is left each day.\n\nProgress: https://s"
+      "potter.example.app/progress\nGoals: https://spotter.example.app/goals")),
+    ('data_lifting', 2, False,
+     [('whoami', {}), ('get_progress', {}), ('get_trends', {}), ('get_goals', {}),
+      ('get_progress', {'exercise': 'Back Squat'}), ('get_log', {'days': 14}), ('get_routines', {}),
+      ('get_progress', {'exercise': 'Barbell Row'}), ('get_progress', {'exercise': 'Pull-Up'})],
+     ("Your log shows a clear pattern. The lifts where you add weight are going up. The two where you d"
+      "on't are flat.\n\n**Going up**\n- Bench Press: estimated max 113.8 kg, trend 4.39 kg a week.\n- Dead"
+      "lift: estimated max 183.8 kg, trend 4.34 kg a week.\n- Overhead Press: estimated max 68.5 kg, tre"
+      "nd 2.17 kg a week.\n- On all three, you've used a heavier weight than the time before in each ses"
+      "sion I looked at.\n\n**Flat**\n- Back Squat: estimated max 116.7 kg since Wed 23 Sep, trend 0 kg a "
+      "week over 6 weeks.\n- Your last three squat sessions were all 3 \u00d7 5 at 100 kg, and you finished e"
+      "very rep.\n- Barbell Row: best set 60 kg \u00d7 8 on Wed 29 Jul, estimated max 76 kg, and no new bests"
+      " since.\n- Pull-Up: most reps 6.\n\nSo your squat hasn't stalled. You just stopped adding weight to"
+      " it.\n\n**What to do**\n1. Squat: add 2.5 kg next session. Keep adding it each squat day as long as"
+      " you get all 15 reps.\n2. If you miss reps, repeat that weight once. If you miss again, drop abou"
+      "t 10% and build back up.\n3. Row: add one rep a session until you reach 3 \u00d7 10, then add 2.5 kg a"
+      "nd go back to 3 \u00d7 8.\n4. Pull-Up: add one rep to one set each session. Once you can do 3 \u00d7 8, add"
+      " a small weight.\n5. Bench, deadlift and overhead press: keep doing what you're doing.\n\n**Your go"
+      "als**\n- Back Squat 150 kg by Tue 9 Feb 2027: 116.7 kg now against 120 kg on the plan line today:"
+      " 3.3 kg behind.\n- It needs 2.78 kg a week from here.\n- Body weight 78 kg by Tue 12 Jan 2027: 80."
+      "9 kg now against 79.3 kg on the plan line today: 1.6 kg behind.\n- Your weight trend is +0.23 kg "
+      "a week, eating 1,980 kcal a day over the last 7 days.\n- Spotter estimates your maintenance at ab"
+      "out 1,660 kcal a day. That's an estimate.\n\nThese two goals pull against each other. Your squat g"
+      "oes up fastest when you eat enough to gain a little, and your weight goal needs you to eat less."
+      " You may want to choose which one comes first for now.\n\nGeneral advice, not from your logs: slee"
+      "p and protein matter a lot for strength. Your food log only records calories, so I can't check y"
+      "our protein.\n\nDid you keep your squat at 100 kg on purpose, for example because of form, pain or"
+      " your program? Or did it just stay there?\n\nYour lift charts: https://spotter.example.app/progres"
+      "s")),
+    ('how_am_i_doing', 3, True,
+     [('whoami', {}), ('get_trends', {})],
+     ("You're heading down slowly and steadily.\n\nBody weight is 79 kg now, smoothed 79.2 kg.\nThe trend "
+      "is -0.24 kg a week.\nYou weighed in all 28 of the last 28 days.\n\nYou're averaging 2,216 kcal a da"
+      "y over the last 7 days.\nOver the last 28 days it's 2,196 kcal a day.\n41% of the last 28 days' ca"
+      "lories are estimates, so treat these figures as approximate.\n\nYour maintenance is about 2,510 kc"
+      "al a day, from 21 logged days of the last 21. This is an estimate.\nThat puts you a little under "
+      "maintenance, which matches the slow loss.\n\nYou did 3 lift sessions in the last 7 days, the same "
+      "as your 4 week average.\nYou did 85 cardio minutes in the last 7 days, in line with your usual we"
+      "ek.\n\nYou haven't set a calorie, session or cardio target, so I can't say whether you're on targe"
+      "t. I can set those up if you'd like.\n\nProgress: https://spotter.example.app/progress")),
+]
+
+
+@pytest.mark.parametrize("run", KEPT_RELEASE_RUNS, ids=[f"{r[0]}-{r[1]}" for r in KEPT_RELEASE_RUNS])
+def test_the_re_judged_cases_pass_their_kept_runs(make_user, clock, run):
+    """The seeds have no randomness but the day, so the release run's own day gives the answers its model read, ids
+    aside. data_lifting run 2 failed then on its route alone (no get_data); route-free, it passes."""
+    from evals.four_weeks import four_weeks
+    name, number, passed_then, sent, reply = run
+    clock(date(2026, 11, 17))
+    case = judge.resolve(next(c for c in judge.load_cases() if c["id"] == name), {"today": "2026-11-17"})
+    if name == "how_am_i_doing":
+        user = make_user(time_zone=ZONE)
+        assert "error" not in four_weeks(user.id)
+        user_id = user.id
+    else:
+        user_id = seeded(make_user, **({"weight_unit": "lb"} if name == "data_lb" else {}))
+    calls = with_answers(user_id, ran(*sent))
+    assert judge.judge(case, calls, reply, {}) == [], (name, number, passed_then)
+    assert judge.judge(case, [c for c in calls if c["name"] not in judge.DATA_READS], reply, {})  # without its reads

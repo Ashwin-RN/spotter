@@ -36,13 +36,24 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "lb_routine_changed",
                   "waist_in_inches", "machine_calories",  # inputs.md decision 19
                   "data_basketball", "data_lifting", "data_calories", "data_squat_goal",  # data-on-request.md
-                  "data_back_on_track", "data_lb", "data_empty", "data_year_more"}  # decision 20
+                  "data_back_on_track", "data_lb", "data_empty", "data_year_more",  # decision 20
+                  # function-list.md, G1: the golden set's new direct cases, three draft incidental and look-alike
+                  # pairs, a case for each function no case had as its must, the catch-up and the import
+                  "gold_squat_month", "gold_weigh_morning", "gold_kcal_yesterday", "gold_squat_goal", "gold_eat_more",
+                  "gold_best_deadlift", "gold_run_week", "inc_10k_plan", "look_10k_friend", "inc_trip_meals",
+                  "look_trip_hours", "inc_deload", "look_deload", "save_food_asked", "edit_fixes_minutes",
+                  "food_lookup", "routine_read", "exercise_list", "catch_up", "import_other_app"}
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 
 
 def call(name, arguments=None, is_error=False):
     return {"name": name, "arguments": arguments or {}, "is_error": is_error}
+
+
+def answered(name, answer, arguments=None, is_error=False):
+    """A recorded data read with its answer, as evals/recorder.py keeps it."""
+    return {**call(name, arguments, is_error), "answered": True, "answer": answer}
 
 
 # ---------------------------------------------------------------- the cases file
@@ -389,13 +400,22 @@ def test_the_stage_5_cases_judge_as_designed():
                                                   "target_date": end, "direction": "down", "status": "open"}]}) == []
     assert judge.judge_db(goal["db"], {"goal": []})
 
+    # function-list.md, G1: both are judged route-free, any data read that was answered. how_am_i_doing also needs
+    # two of that run's figures quoted: test_how_am_i_doing_quotes_two_of_its_own_runs_figures.
+    trends = {"bodyweight": {"now": 79.0, "rate_per_week": -0.24}, "calories": {"avg_7d": 2216}}
     doing = cases["how_am_i_doing"]["expect"]
-    assert judge.judge_calls(doing, [call("whoami"), call("get_trends"), call("get_goals")], "Down 0.3 kg a week.") == []
-    assert judge.judge_calls(doing, [call("get_progress")], "Fine.")
-    assert judge.judge_calls(doing, [call("get_trends"), call("log_bodyweight")], "Logged.")
+    assert judge.judge_calls(doing, [call("whoami"), answered("get_trends", trends), call("get_goals")],
+                             "79 kg now, down 0.24 kg a week, 2,216 kcal a day.") == []
+    assert judge.judge_calls(doing, [answered("get_progress", trends)], "79 kg now, 2,216 kcal a day.") == []
+    assert judge.judge_calls(doing, [answered("get_trends", trends)], "Fine.")  # no figure
+    assert judge.judge_calls(doing, [call("whoami")], "79 kg now, 2,216 kcal a day.")  # no data read
+    assert judge.judge_calls(doing, [answered("get_trends", trends), call("log_bodyweight")], "79 kg, 2,216 kcal.")
     on_track = cases["on_track"]["expect"]
     assert judge.judge_calls(on_track, [call("get_goals")], "Two of three on track.") == []
-    assert judge.judge_calls(on_track, [call("get_trends")], "Looks good.")
+    assert judge.judge_calls(on_track, [call("get_trends")], "Looks good.") == []  # any read, since G1
+    assert judge.judge_calls(on_track, [call("whoami")], "Looks good.") == [
+        "no data read was answered without error (calls: whoami)"]
+    assert judge.judge_calls(on_track, [call("get_goals", is_error=True)], "Looks good.")
 
     export = cases["export_is_a_click"]["expect"]
     assert judge.judge_calls(export, [], "Export is a button on Settings.") == []
@@ -508,7 +528,7 @@ def test_the_decimals_case_is_well_formed():
     assert case["say"] == "How am I doing?"
     assert judge.case_problems(case) == []
     expect = case["expect"]
-    assert expect["function"] == "get_trends"
+    assert "function" not in expect and expect["read_any"] is True  # route-free since G1
     assert set(expect["no_call"]) == WRITES
     assert set(expect["reply_lacks"]) == {EM_DASH, EN_DASH}
     assert len(expect["reply_lacks_pattern"]) == 1
@@ -591,11 +611,13 @@ def test_the_decimals_case_passes_a_colon_a_comma_or_a_full_stop(reply):
     assert _decimals_reply(reply) == []
 
 
-def test_the_decimals_case_needs_get_trends_and_no_write():
+def test_the_decimals_case_needs_a_data_read_and_no_write():
+    """Route-free since G1 (function-list.md): any data read answered, not get_trends alone."""
     expect = _decimals_case()["expect"]
     assert judge.judge_calls(expect, [call("get_trends"), call("get_goals")], "Body weight 79.3 kg.") == []
-    assert judge.judge_calls(expect, [call("get_progress")], "Body weight 79.3 kg.") == [
-        "get_trends was not called (calls: get_progress)"]
+    assert judge.judge_calls(expect, [call("get_progress")], "Body weight 79.3 kg.") == []
+    assert judge.judge_calls(expect, [call("whoami")], "Body weight 79.3 kg.") == [
+        "no data read was answered without error (calls: whoami)"]
     assert judge.judge_calls(expect, [call("get_trends"), call("log_bodyweight")], "Logged.") == [
         "log_bodyweight was called and should not have been"]
     both = judge.judge_calls(expect, [call("get_trends")], f"79.25 kg {EM_DASH} fine.")
@@ -1010,7 +1032,8 @@ def test_parse_cli_output_forms():
     assert judge.parse_cli_output(listed)["tokens"] > 0
     bare = judge.parse_cli_output(json.dumps({"type": "result", "subtype": "error_max_turns", "is_error": True}))
     assert bare == {"reply": "", "subtype": "error_max_turns", "is_error": True, "num_turns": None,
-                    "cost_usd": 0.0, "usage": {}, "tokens": 0, "models": [], "permission_denials": []}
+                    "cost_usd": 0.0, "usage": {}, "tokens": 0, "input_tokens": 0, "cached_tokens": 0,
+                    "output_tokens": 0, "models": [], "permission_denials": []}
 
 
 @pytest.mark.parametrize("stdout", ["", "   ", "not json", "{\"type\": \"assistant\"}", "[1, 2]",
@@ -1168,7 +1191,7 @@ def test_main_gives_every_run_the_advisor_off_and_prints_the_count(monkeypatch, 
          "models": ["claude-opus-5-5", "claude-fable-5-2"]},
         {"passed": True, "reasons": [], "other_models": [], "models": ["claude-opus-5-5"]}])
 
-    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep):
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
         envs.append(env)
         return {"tokens": 0, "cost_usd": 0.0, "reply": "Done?", "calls": [], "seconds": 1.0, "instructions": True,
                 **next(outcomes)}
@@ -1250,3 +1273,682 @@ def test_a_seed_service_is_found_by_its_name():
         with pytest.raises(KeyError):
             judge.seed_service(name)
         assert not hasattr(services, name)
+
+
+# ---------------------------------------------------------------- G1 of function-list.md: the tags, the coverage, the figures
+
+def _cases() -> dict:
+    return {c["id"]: c for c in judge.load_cases()}
+
+
+def test_every_case_carries_the_three_call_tags_and_they_agree_with_its_expect():
+    for case in judge.load_cases():
+        tags = case.get("calls")
+        assert isinstance(tags, dict) and set(tags) == {"must", "may", "must_not"}, case["id"]
+        assert judge.case_problems(case) == [], case["id"]
+        expect = case["expect"]
+        if "function" in expect:
+            assert expect["function"] in tags["must"], case["id"]
+        assert set(expect.get("no_call") or []) <= set(tags["must_not"]), case["id"]
+        if expect.get("read_any"):
+            assert tags["must"] and set(tags["must"]) <= set(judge.DATA_READS), case["id"]
+
+
+def test_every_function_on_everyone_s_list_is_some_case_s_must():
+    """The coverage test: no cost, no run. The owner's three are listed for him alone, so they are left out."""
+    from app import mcp_server
+    everyone = set(mcp_server.NEEDS) - set(mcp_server.OWNER_FUNCTIONS)
+    cases = judge.load_cases()
+    musts = {name for c in cases for name in c["calls"]["must"]}
+    assert everyone - musts == set()
+    named = {name for c in cases for key in ("must", "may", "must_not") for name in c["calls"][key]}
+    assert named <= everyone  # no tag names a function nobody has, or the owner's
+    # The two the release run of 2026-11-17 never called each have a case of their own.
+    assert {"save_food", "edit_entry"} <= {name for c in cases if len(c["calls"]["must"]) == 1
+                                           for name in c["calls"]["must"]}
+
+
+def test_the_judge_s_lists_are_the_app_s():
+    from app import mcp_server
+    assert judge.WRITE_FUNCTIONS == common.WRITE_FUNCTIONS
+    assert set(judge.DATA_READS) <= set(mcp_server.READ_FUNCTIONS)
+    assert not {"whoami", "list_exercises", "find_food", "get_routines"} & set(judge.DATA_READS)
+
+
+@pytest.mark.parametrize("tags, problem", [
+    ({"must": [], "may": []}, "calls must be an object of exactly must, may, must_not"),
+    ({"must": "log_food", "may": [], "must_not": []}, "calls.must must be a list of function names"),
+    ({"must": ["log_food", "log_food"], "may": [], "must_not": []}, "calls.must names a function twice"),
+    ({"must": ["log_food"], "may": [], "must_not": ["log_food"]}, "calls.must and calls.must_not both name log_food"),
+    ({"must": [], "may": [], "must_not": []}, "calls.must leaves out log_food, the expect's function"),
+    ({"must": ["log_food"], "may": [], "must_not": []},
+     "calls.must_not leaves out save_food, which the expect's no_call names"),
+])
+def test_the_tags_are_checked_when_the_cases_load(tags, problem):
+    case = {"id": "a", "say": "x", "calls": tags, "expect": {"function": "log_food", "no_call": ["save_food"]}}
+    assert problem in judge.case_problems(case)
+
+
+def test_a_golden_kind_is_one_of_three_and_its_tags_say_what_it_measures():
+    base = {"id": "a", "say": "x", "expect": {"reply_has": ["x"]}}
+    assert judge.case_problems({**base, "kind": "golden"}) == ["kind must be one of direct, incidental, look_alike"]
+    none = {"must": [], "may": [], "must_not": []}
+    assert judge.case_problems({**base, "kind": "incidental", "calls": none}) == [
+        "an incidental case names the data read its step needs in calls.must"]
+    assert judge.case_problems({**base, "kind": "look_alike", "calls": none}) == [
+        "a look_alike case names every data read in calls.must_not"]
+    reads = {"must": [], "may": [], "must_not": list(judge.DATA_READS)}
+    assert judge.case_problems({**base, "kind": "look_alike", "calls": reads}) == []
+    cases = judge.load_cases()
+    kinds = {c["id"]: c["kind"] for c in cases if "kind" in c}
+    assert {k for k, v in kinds.items() if v == "direct"} >= {"how_am_i_doing", "data_lifting", "data_back_on_track",
+                                                               "data_empty"}
+    assert sorted(v for v in kinds.values() if v != "direct") == ["incidental"] * 3 + ["look_alike"] * 3
+
+
+def test_must_needs_one_call_answered_and_must_not_none_called():
+    tags = {"must": ["get_data", "what_is_logged"], "may": ["whoami"], "must_not": ["log_food"]}
+    assert judge.judge_tags(tags, [call("whoami"), call("get_data", is_error=True)]) == []  # a refusal is an answer
+    assert judge.judge_tags(tags, [call("whoami")]) == [
+        "none of get_data, what_is_logged was called (calls: whoami)"]
+    assert judge.judge_tags(tags, [{**call("get_data", is_error=True), "answered": False}]) == [
+        "get_data was called and never answered"]
+    assert judge.judge_tags(tags, [call("get_data"), call("log_food")]) == ["log_food was called and should not have been"]
+    assert judge.judge_tags({"must": ["log_food"], "may": [], "must_not": []}, []) == [
+        "log_food was not called (calls: none)"]
+    assert judge.judge_tags({"must": [], "may": ["get_data"], "must_not": []}, [call("get_data")]) == []  # may: nothing
+    assert judge.judge_tags(None, []) == []
+
+
+def test_a_reason_the_expect_and_the_tags_give_alike_is_said_once():
+    case = {"id": "a", "say": "x", "calls": {"must": ["log_food"], "may": [], "must_not": ["save_food"]},
+            "expect": {"function": "log_food", "no_call": ["save_food"]}}
+    assert judge.judge(case, [call("save_food")], "", {}) == ["log_food was not called (calls: save_food)",
+                                                               "save_food was called and should not have been"]
+    tagged_only = {**case, "expect": {"reply_has": ["Logged"]}}
+    assert judge.judge(tagged_only, [call("save_food")], "Logged", {}) == [
+        "log_food was not called (calls: save_food)", "save_food was called and should not have been"]
+
+
+def test_read_any_needs_a_data_read_answered_without_error():
+    expect = {"read_any": True}
+    assert judge.judge_calls(expect, [call("whoami"), call("get_log")], "") == []
+    for name in judge.DATA_READS:
+        assert judge.judge_calls(expect, [call(name)], "") == [], name
+    for name in ("whoami", "list_exercises", "find_food", "get_routines", "log_food"):
+        assert judge.judge_calls(expect, [call(name)], "") == [
+            f"no data read was answered without error (calls: {name})"], name
+    assert judge.judge_calls(expect, [call("get_data", is_error=True)], "")
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"read_any": False}}) == [
+        "expect.read_any must be true"]
+
+
+@pytest.mark.parametrize("value", [-1, 1.5, True, "2"])
+def test_quotes_spotter_takes_a_whole_number(value):
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"quotes_spotter": value}}) == [
+        "expect.quotes_spotter must be a whole number, 0 or more"]
+
+
+ANSWER = {"today": "2026-11-16", "from": "2026-10-20", "columns": ["date", "id", "session_id", "weight_kg", "reps"],
+          "rows": [["2026-11-13", 4417, 918, 100.0, 5], ["2026-11-11", 4416, 917, 97.5, 5]],
+          "totals": {"columns": ["weight_kg_max", "kcal_sum"], "values": [100.0, 1980]},
+          "goals": [{"goal_id": 2, "plan_line": "116.7 kg now against 120 kg on the plan line today: 3.3 kg behind."}],
+          "summary": "24 sessions since Mon 27 Jul, the last 28 days ending 16 Nov.", "rate": -0.24,
+          "pace": "5:54 a km", "links": {"progress": "https://spotter.example.app/progress/42"}, "more": "c1.eyJ4IjozMH0",
+          "entries": [{"id": 5512, "saved_food_id": 31, "kcal": 640}]}
+
+
+@pytest.mark.parametrize("reply, quoted", [
+    ("Your best is 100 kg for 5, an estimated max of 116.7 kg.", ["100", "116.7"]),
+    ("100.0 kg, then 97.5 kg.", ["100.0", "97.5"]),                 # 100.0 is 100
+    ("1,980 kcal, or 1980 again.", ["1,980"]),                     # one figure, said twice
+    ("3.3 kg behind, 0.24 kg a week down.", ["3.3", "0.24"]),      # a decimal under 10 counts; the sign is ignored
+    ("Session 918 on 2026-11-13, id 4417.", []),                   # ids and dates never count
+    ("Entry 5512, saved food 31: 640 kcal.", ["640"]),             # an id as a key, not only as a column
+    ("13 Nov: 5 sets of 5.", []),                                  # a date, and whole numbers under 10
+    ("Over the last 28 days: 24 sessions.", ["24"]),               # a span never counts
+    ("See https://spotter.example.app/progress/42 and [the log](https://x.app/116).", []),  # links never count
+    ("A pace of 5:54 a km.", ["5:54"]),                            # a duration is one figure
+    ("From 93.3 kg to 1116.7 kg.", []),                            # matched whole: not the 3.3 in 93.3
+    ("Your goal is 150 kg.", []),                                  # not in this run's answers
+])
+def test_quoted_figures_are_this_run_s_own_matched_whole(reply, quoted):
+    assert judge.quoted_figures(reply, [answered("get_data", ANSWER)]) == quoted
+
+
+def test_a_figure_the_say_holds_and_a_read_that_is_not_a_data_read_never_count():
+    reply = "Was it above 90 kg? Yes: 92.4 kg."
+    answer = {"rows": [["2025-12-11", 92.4], ["2025-12-21", 90]], "columns": ["date", "weight_kg"]}
+    assert judge.quoted_figures(reply, [answered("get_data", answer)], "Was my weight ever above 90 kg?") == ["92.4"]
+    assert judge.quoted_figures(reply, [answered("get_data", answer)]) == ["90", "92.4"]
+    for name in ("whoami", "list_exercises", "find_food", "get_routines"):
+        assert judge.quoted_figures(reply, [answered(name, answer)]) == [], name
+    assert judge.quoted_figures(reply, [answered("get_data", answer, is_error=True)]) == []  # a refusal gives none
+    assert judge.quoted_figures(reply, [call("get_data")]) == []  # a call with no answer kept gives none
+    expect = {"quotes_spotter": 2}
+    assert judge.judge_calls(expect, [answered("get_data", answer)], reply, "Was my weight ever above 90 kg?") == [
+        "the reply quotes 1 of this run's figures from Spotter's data reads, expected at least 2 (quoted: 92.4)"]
+    assert judge.judge_calls({"any_of": [expect]}, [answered("get_data", answer)], reply)  == []  # say: none
+    assert judge.judge_calls({"quotes_spotter": 0}, [], "") == []
+
+
+# The kept run of 2026-11-17's Gemini trial, gemini-4-hydrogen on how_am_i_doing (four_weeks): its reply word for word
+# and the two data reads it made, trimmed to the parts the reply quotes. It passed under the judging of the day.
+KEPT_REPLY = (
+    "Body weight is 79 kg now, smoothed 79.2 kg, -0.24 kg a week.\nCalories average 2,216 kcal a day over 7 logged "
+    "days of the last 7.\nCalories average 2,196 kcal a day over 28 logged days of the last 28.\nMaintenance estimate "
+    "is about 2,510 kcal a day, from 21 logged days of the last 21.\nYou logged 3 lift sessions in the last 7 days.\n"
+    "You logged 85 cardio minutes in the last 7 days.\n\nGoal: Body weight 77 kg by Tue 12 Jan 2027, on track, "
+    "projected date 2027-01-02.\n79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind.\n\nGoal: Back "
+    "Squat 120 kg by Tue 9 Feb 2027, on track, projected date 2026-12-03.\n107.9 kg now against 99.8 kg on the plan "
+    "line today: 8.1 kg ahead.\n\nGoal: Outdoor Run 5 km in 27:00 by Tue 12 Jan 2027, on track, projected date "
+    "2026-12-19.\n29:30 now against 29:48 on the plan line today: 18 seconds ahead.\n\nProgress: "
+    "https://spotter.example.app/progress\nGoals: https://spotter.example.app/goals")
+KEPT_TRENDS = {"today": "2026-11-17", "bodyweight": {"now": 79.0, "smoothed": 79.2, "rate_per_week": -0.24,
+                                                     "weigh_ins_28d": 28},
+               "calories": {"avg_7d": 2216, "days_logged_7d": 7, "avg_28d": 2196, "days_logged_28d": 28},
+               "sessions": {"this_week": 3}, "cardio": {"minutes_this_week": 84.5, "minutes_per_week_4w": 85.2},
+               "maintenance": {"kcal": 2513, "days_logged": 21, "window_days": 21},
+               "summary": "Maintenance about 2,510 kcal a day: 85 cardio minutes a week."}
+KEPT_GOALS = {"goals": [
+    {"goal_id": 1, "label": "Body weight 77 kg", "target_value": 77.0,
+     "plan_line": "79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind."},
+    {"goal_id": 2, "label": "Back Squat 120 kg", "target_value": 120.0,
+     "plan_line": "107.9 kg now against 99.8 kg on the plan line today: 8.1 kg ahead."},
+    {"goal_id": 3, "label": "Outdoor Run 5 km in 27:00", "target_value": 27.0,
+     "plan_line": "29:30 now against 29:48 on the plan line today: 18 seconds ahead."}]}
+
+
+def test_quotes_spotter_on_a_kept_run():
+    calls = [answered("whoami", {"account_id": 2, "today": "2026-11-17"}), answered("get_trends", KEPT_TRENDS),
+             answered("get_goals", KEPT_GOALS)]
+    assert judge.quoted_figures(KEPT_REPLY, calls, "How am I doing?") == [
+        "27:00", "29:30", "29:48", "79", "79.2", "0.24", "2,216", "2,196", "28", "2,510", "21", "85", "77", "79.01",
+        "78.96", "0.05", "120", "107.9", "99.8", "8.1", "18"]
+    case = judge.resolve(_cases()["how_am_i_doing"], {})
+    assert judge.judge(case, calls, KEPT_REPLY, {}) == []
+    assert judge.judge(case, calls[:1], KEPT_REPLY, {})  # whoami alone: no data read, no figure of one
+    assert judge.judge(case, calls, "You are doing well. Keep it up.", {})
+
+
+def test_how_am_i_doing_quotes_two_of_its_own_runs_figures(make_user, monkeypatch):
+    """On Spotter's own answer: the four-week account on its fixed day, 2026-11-10."""
+    from evals.four_weeks import four_weeks
+    monkeypatch.setattr(db, "utcnow", lambda: dt.datetime(2026, 11, 10, 12, 0, tzinfo=dt.timezone.utc))
+    user = make_user(time_zone="Asia/Kolkata")
+    assert "error" not in four_weeks(user.id)
+    trends = services.get_trends(user.id)
+    now, kcal = trends["bodyweight"]["now"], trends["calories"]["avg_7d"]
+    case = judge.resolve(_cases()["how_am_i_doing"], {})
+    calls = [call("whoami"), answered("get_trends", trends)]
+    assert judge.judge(case, calls, f"You weigh {now:g} kg and eat {kcal:,} kcal a day.", {}) == []
+    assert judge.judge(case, calls, f"You weigh {now + 7:g} kg and eat {kcal + 333:,} kcal a day.", {})  # not Spotter's
+    assert judge.judge(case, calls, f"You weigh {now:g} kg.", {})  # one figure, not two
+
+
+# ---------------------------------------------------------------- the rates and the table
+
+def _run(passed=True, calls=(), seconds=10.0, tokens=(100, 1000, 10), turns=3, cost=0.1):
+    return {"passed": passed, "calls": list(calls), "seconds": seconds, "num_turns": turns, "cost_usd": cost,
+            "input_tokens": tokens[0], "cached_tokens": tokens[1], "output_tokens": tokens[2], "tokens": sum(tokens)}
+
+
+KEPT_RESULTS = [  # as a kept results.json holds them: each case with its kind and tags
+    {"id": "stated_number", "tags": {"must": ["log_food"], "may": [], "must_not": []},
+     "runs": [_run(calls=[call("log_food")]), _run(calls=[call("log_food")]), _run(passed=False)]},
+    {"id": "inc_deload", "kind": "incidental", "tags": {"must": list(judge.DATA_READS), "may": [], "must_not": []},
+     "runs": [_run(calls=[call("whoami"), call("get_data")]), _run(passed=False, calls=[call("whoami")]),
+              _run(calls=[call("get_trends", is_error=True)])]},
+    {"id": "look_deload", "kind": "look_alike", "tags": {"must": [], "may": [], "must_not": list(judge.DATA_READS)},
+     "runs": [_run(calls=[call("whoami")]), _run(passed=False, calls=[call("what_is_logged")]), _run(calls=[])]},
+]
+
+
+def test_the_pick_up_and_over_call_rates_are_worked_from_a_kept_run():
+    assert judge.golden_rates(KEPT_RESULTS) == {"pick_up": (2, 3), "over_call": (1, 3)}
+    assert judge.golden_rates(KEPT_RESULTS[:1]) == {"pick_up": (0, 0), "over_call": (0, 0)}
+    cut_off = [{**KEPT_RESULTS[1], "runs": [_run(calls=[{**call("get_data", is_error=True), "answered": False}])]}]
+    assert judge.golden_rates(cut_off)["pick_up"] == (0, 1)  # a call with no answer is no pick-up
+
+
+def test_the_table_keeps_incidental_and_look_alike_runs_apart():
+    table, ok = judge.summarise(KEPT_RESULTS, 3, 0.66)
+    assert ok is True  # stated_number passed 2 of 3; the apart cases' fails do not count
+    assert "counted: 2 of 3 runs passed, pass rate 67%" in table
+    assert "apart, incidental and look-alike: 4 of 6 runs passed, not counted" in table
+    assert "pick-up rate: 2 of 3 (67%) incidental runs made a must call; over-call rate: 1 of 3 (33%)" in table
+    assert "apart: incidental" in table and "apart: look_alike" in table
+    assert "logging cases (a write in must): 2 of 3 (67%) runs passed; under 2 of 3: none" in table
+    lines = {line.split()[0]: line for line in table.splitlines() if line.startswith("stated_number")}
+    assert lines["stated_number"].split()[1:7] == ["2/3", "0.7", "3.0", "10.0", "100", "1,000"]
+    assert "a run, median: 1 calls, 3 turns, 10 seconds, 1,110 tokens" in table
+    assert "tokens 900 input, 9,000 cached, 90 output, cost $0.9000" in table
+    assert judge.summarise(KEPT_RESULTS, 3, 1.0)[1] is False
+
+
+def test_a_client_that_gives_no_cost_says_so():
+    results = [{"id": "a", "runs": [_run(cost=None), _run(cost=None)]}]
+    table, _ = judge.summarise(results, 2, 1.0)
+    assert "cost none given" in table and "$0.0000" not in table
+    assert judge.summarise([{"id": "a", "runs": [{"passed": True, "tokens": 5, "cost_usd": 0.0}]}], 1, 1.0)[1]
+
+
+def test_the_claude_token_split_adds_up_to_its_tokens():
+    got = judge.parse_cli_output(json.dumps(SAMPLE))
+    assert (got["input_tokens"], got["cached_tokens"], got["output_tokens"]) == (10 + 14126, 105829, 303)
+    assert got["input_tokens"] + got["cached_tokens"] + got["output_tokens"] == got["tokens"]
+    assert judge.token_split("codex", {"input_tokens": 74001, "cached_input_tokens": 54400, "output_tokens": 194,
+                                       "reasoning_output_tokens": 0}) == {
+        "input_tokens": 19601, "cached_tokens": 54400, "output_tokens": 194}
+    assert judge.token_split("gemini", {"promptTokenCount": 50971, "cachedContentTokenCount": 29785,
+                                        "candidatesTokenCount": 407, "thoughtsTokenCount": 2967}) == {
+        "input_tokens": 21186, "cached_tokens": 29785, "output_tokens": 3374}
+    with pytest.raises(ValueError):
+        judge.token_split("other", {})
+
+
+# ---------------------------------------------------------------- the recorder keeps a data read's answer
+
+def test_the_recorder_keeps_each_data_read_s_answer_and_no_other(provider, make_user, token_for):
+    make_user(subject="user_rec_c", email="c@example.com", name="C", time_zone="Asia/Kolkata")
+    recorder = CallRecorder(create_app(settings(), fetch=provider.fetch))
+    token = token_for("user_rec_c")
+    with TestClient(recorder) as client:
+        for i, (name, arguments) in enumerate((("whoami", {}), ("log_bodyweight", {"kg": 80.4}),
+                                               ("get_data", {"area": "weigh_ins"}), ("what_is_logged", {}),
+                                               ("get_data", {"area": "lift_set"})), 1):
+            client.post("/mcp", headers={**HEADERS, "Authorization": f"Bearer {token}"},
+                        json={"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                              "params": {"name": name, "arguments": arguments}})
+    calls = recorder.calls(token)
+    assert [c["name"] for c in calls] == ["whoami", "log_bodyweight", "get_data", "what_is_logged", "get_data"]
+    assert all(c["answered"] for c in calls)
+    assert "answer" not in calls[0] and "answer" not in calls[1]  # not data reads
+    assert calls[2]["answer"]["columns"][:2] == ["date", "id"] and calls[2]["answer"]["rows"][0][2] == 80.4
+    assert any(a["area"] == "weigh_ins" for a in calls[3]["answer"]["areas"])
+    assert calls[4]["is_error"] is True and calls[4]["answer"]["error"]  # a refusal's answer is kept, never counted
+    assert judge.quoted_figures("You weighed 80.4 kg.", calls) == ["80.4"]
+
+
+def test_the_recorder_reads_an_answer_from_its_text_when_it_has_no_structured_content():
+    from evals.recorder import answer_of
+    assert answer_of({"structuredContent": {"a": 1}, "content": [{"type": "text", "text": "{}"}]}) == {"a": 1}
+    assert answer_of({"content": [{"type": "text", "text": '{"rows": [[1]]}'}]}) == {"rows": [[1]]}
+    assert answer_of({"content": [{"type": "text", "text": "plain 81.1 kg"}]}) == "plain 81.1 kg"
+    assert answer_of({}) is None
+
+
+# ---------------------------------------------------------------- the runner's new parts: days ago, effort, clients
+
+def test_dates_for_gives_days_ago_for_the_catch_up_case():
+    dates = dates_for("Asia/Kolkata")
+    today = dt.date.fromisoformat(dates["today"])
+    assert dates["days_ago:0"] == dates["today"] and dates["days_ago:1"] == dates["yesterday"]
+    assert dates["days_ago:3"] == (today - dt.timedelta(days=3)).isoformat() and "days_ago:61" not in dates
+    assert judge.resolve("{{days_ago:3}}", dates) == dates["days_ago:3"]
+
+
+def test_the_effort_is_a_flag_of_its_own_before_the_model():
+    command = cli_command("claude", "Waist 84", "c.json", "claude-sonnet-5-5", "xhigh")
+    assert command[-4:] == ["--effort", "xhigh", "--model", "claude-sonnet-5-5"]
+    assert "--effort" not in cli_command("claude", "x", "c.json", "sonnet")
+
+
+@pytest.mark.parametrize("argv, model, effort", [  # each model's own default, pinned (the owner, 2026-11-17)
+    ([], "claude-opus-5-5", "medium"),
+    (["--model", "claude-sonnet-5-5"], "claude-sonnet-5-5", "medium"),
+    (["--client", "codex"], "gpt-6.1-sol", "low"),
+    (["--client", "codex", "--model", "gpt-6-luna"], "gpt-6-luna", "medium"),
+    (["--client", "codex", "--model", "gpt-6-luna", "--effort", "high"], "gpt-6-luna", "high"),  # by hand
+    (["--client", "gemini"], "gemini-4-hydrogen", "high"),
+    (["--client", "gemini", "--model", "gemini-3.8-flash"], "gemini-3.8-flash", ""),  # no default read: none sent
+    (["--model", "", "--effort", ""], "", ""),  # the client's own defaults, sent as nothing
+    (["--model", ""], "", ""),
+])
+def test_each_client_has_its_pinned_model_and_effort(argv, model, effort):
+    from evals import run
+    args = run.parse_args(argv)
+    assert (args.model, args.effort) == (model, effort)
+    assert run.SMALL_GPT == "gpt-6-luna"
+
+
+@pytest.mark.parametrize("argv", [["--client", "gemini", "--effort", "ultra"], ["--effort", "minimal"],
+                                  ["--client", "gemini", "--model", ""], ["--client", "other"],
+                                  ["--gemini-key", "0"]])
+def test_an_effort_a_client_does_not_take_is_refused(argv, capsys):
+    from evals import run
+    with pytest.raises(SystemExit):
+        run.parse_args(argv)
+
+
+def test_the_model_lines_say_who_answered():
+    from evals import run
+    results = [{"id": "a", "runs": [{"models": ["claude-sonnet-5-5"], "other_models": []}]}]
+    assert run.model_lines(results, "claude", "claude-sonnet-5-5", "xhigh") == [
+        "client: claude, model asked for: claude-sonnet-5-5; reported: claude-sonnet-5-5", "effort sent: xhigh",
+        "runs where another model took part: 0 of 1"]
+    assert run.model_lines([{"id": "a", "runs": [{"models": []}]}], "codex", "gpt-6-luna", "") == [
+        "client: codex, model asked for: gpt-6-luna; Codex names no model in its events, so the one ran is not reported",
+        "effort sent: none (the client default)"]
+    assert run.model_lines([{"id": "a", "runs": [{"models": ["gemini-4-hydrogen"]}]}], "gemini", "gemini-4-hydrogen",
+                           "high")[0] == "client: gemini, model asked for: gemini-4-hydrogen; reported: gemini-4-hydrogen"
+
+
+def test_main_runs_the_golden_set_alone_and_carries_each_case_s_kind_and_tags(monkeypatch, capsys):
+    from evals import run
+    monkeypatch.setattr(run.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    seen = []
+
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+        seen.append((case["id"], model, effort))
+        return {"passed": True, "reasons": [], "reply": "", "calls": [], "seconds": 1.0, "models": [model],
+                "other_models": [], "tokens": 0, "cost_usd": 0.0}
+
+    monkeypatch.setattr(run, "run_once", fake_run_once)
+    assert run.main(["--golden", "--n", "1", "--time-zone", "Asia/Kolkata", "--model", "claude-sonnet-5-5"]) == 0
+    golden = [c["id"] for c in judge.load_cases() if c.get("kind")]
+    assert [s[0] for s in seen] == golden and {s[1:] for s in seen} == {("claude-sonnet-5-5", "medium")}
+    out = capsys.readouterr().out
+    assert "pick-up rate: 3 of 3" not in out and "pick-up rate: 0 of 3 (0%) incidental runs" in out
+    assert "client: claude, model asked for: claude-sonnet-5-5" in out and "effort sent: medium" in out
+
+
+def test_main_stops_a_gemini_model_on_a_quota_and_says_so(monkeypatch, capsys):
+    from evals import gemini_client, run
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(gemini_client, "load_key", lambda n: "fake-key-for-the-test")
+    made = []
+
+    def fake_gemini(server, case, zone, host):
+        made.append(case["id"])
+        if len(made) == 2:
+            raise gemini_client.QuotaStop("429 RESOURCE_EXHAUSTED")
+        return {"passed": True, "reasons": [], "reply": "", "calls": [], "seconds": 1.0, "models": [], "tokens": 0,
+                "cost_usd": None}
+
+    monkeypatch.setattr(gemini_client, "run_once_gemini", fake_gemini)
+    assert run.main(["--client", "gemini", "--n", "1", "--time-zone", "Asia/Kolkata"]) == 1
+    out = capsys.readouterr().out
+    assert len(made) == 2 and "Stopped, this model's runs end here" in out and "QuotaStop" in out
+    assert "fake-key-for-the-test" not in out
+
+
+# ---------------------------------------------------------------- the new cases that need no data read, both ways
+
+def _seeded_case(app_settings, case_id: str, server: LocalServer | None = None) -> tuple[dict, int, dict]:
+    """The case resolved for a fresh person seeded as it says. Pass the server on for a second person in one test:
+    two servers made in the same second would name their people alike."""
+    if server is None:
+        server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
+        server.settings = app_settings
+    case = _cases()[case_id]
+    zone = "Asia/Kolkata"
+    user_id, _, seeded = server.new_person(zone, case.get("seed") or [])
+    return judge.resolve(case, {**dates_for(zone), **{f"seed.{k}": v for k, v in seeded.items()}}), user_id, seeded
+
+
+def test_the_save_food_case_judges_as_designed(app_settings):
+    case, user_id, _ = _seeded_case(app_settings, "save_food_asked")
+    sent = {"name": "Protein shake", "serving_label": "1 scoop", "kcal_per_serving": 150}
+    assert judge.judge(case, [call("save_food", sent)], "Saved.", person_rows(user_id))  # nothing saved yet
+    assert "error" not in services.save_food(user_id, sent, "claude")
+    assert judge.judge(case, [call("whoami"), call("save_food", sent)], "Saved: 150 kcal a scoop.",
+                       person_rows(user_id)) == []
+    assert judge.judge(case, [call("save_food", sent), call("log_food", {})], "Saved and logged.", person_rows(user_id))
+    assert judge.judge(case, [call("save_food", {**sent, "kcal_per_serving": 120})], "Saved.", person_rows(user_id))
+
+
+def test_the_edit_case_changes_the_run_in_place(app_settings):
+    case, user_id, seeded = _seeded_case(app_settings, "edit_fixes_minutes")
+    [run_row] = person_rows(user_id)["cardio_entry"]
+    assert (run_row["minutes"], run_row["distance_km"], run_row["date"]) == (30, 5, dates_for("Asia/Kolkata")["yesterday"])
+    sent = {"kind": "cardio_entry", "entry_id": seeded["run"], "minutes": 32}
+    assert judge.judge(case, [call("edit_entry", sent)], "Fixed.", person_rows(user_id))  # not yet changed
+    assert "error" not in services.edit_entry(user_id, "cardio_entry", seeded["run"], {"minutes": 32}, "claude")
+    assert judge.judge(case, [call("get_log"), call("edit_entry", sent)], "Fixed: 32 minutes.", person_rows(user_id)) == []
+    again = [call("log_cardio", {"exercise": "Outdoor Run", "minutes": 32}), call("edit_entry", sent)]
+    assert judge.judge(case, again, "Logged it again.", person_rows(user_id))  # a second run logged
+
+
+def test_the_food_routine_and_exercise_list_cases_judge_as_designed(app_settings):
+    server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
+    server.settings = app_settings
+    food, user_id, _ = _seeded_case(app_settings, "food_lookup", server)
+    found = services.find_food(user_id, "oats bowl")
+    assert found["saved"][0]["kcal_per_serving"] == 300
+    assert judge.judge(food, [call("find_food", {"query": "oats bowl"})], "One bowl is 300 kcal.", {}) == []
+    assert judge.judge(food, [call("get_data", {"area": "saved_foods"})], "300 kcal a bowl.", {}) == []
+    assert judge.judge(food, [call("find_food")], "About 350 kcal.", {})
+    assert judge.judge(food, [], "One bowl is 300 kcal.", {})  # read nothing
+    routine, user_id, _ = _seeded_case(app_settings, "routine_read", server)
+    weights = {lift["exercise"]: lift for lift in services.get_routines(user_id)["routines"][0]["lifts"]}
+    assert set(weights) == {"Bench Press", "Overhead Press"}
+    reply = "Push day: Bench Press 3 x 8 at 60 kg, Overhead Press 3 x 10 at 40 kg."
+    assert judge.judge(routine, [call("get_routines")], reply, {}) == []
+    assert judge.judge(routine, [call("get_data")], reply, {})  # no routine read
+    assert judge.judge(routine, [call("get_routines")], "Bench and overhead press.", {})
+    listed = _cases()["exercise_list"]
+    names = {e["name"] for e in services.list_exercises("lift", "squat")["exercises"]}
+    assert {"Goblet Squat", "Bulgarian Split Squat"} <= names
+    assert judge.judge(listed, [call("list_exercises", {"category": "squat"})], ", ".join(sorted(names)), {}) == []
+    assert judge.judge(listed, [call("list_exercises")], "Back Squat and Front Squat.", {})
+    assert judge.judge(listed, [], ", ".join(sorted(names)), {})
+
+
+def test_the_catch_up_case_judges_the_rows_on_each_date(app_settings):
+    server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people are used
+    server.settings = app_settings
+    case, user_id, _ = _seeded_case(app_settings, "catch_up", server)
+    dates = dates_for("Asia/Kolkata")
+    assert judge.judge(case, [call("whoami")], "Logged.", person_rows(user_id))  # nothing logged
+    services.log_lifts(user_id, {"date": dates["days_ago:3"],
+                                 "sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}] * 3}, "claude")
+    services.log_food(user_id, {"date": dates["days_ago:2"],
+                                "entries": [{"description": "Chicken biryani", "kcal": 640, "meal": "lunch"}]}, "claude")
+    calls = [call("log_lifts"), call("log_food"), call("log_bodyweight")]
+    assert judge.judge(case, calls, "Logged.", person_rows(user_id)) == ["bodyweight: 0 rows, expected 1"]
+    services.log_bodyweight(user_id, {"kg": 80.2, "date": dates["today"]}, "claude")  # on the wrong date
+    assert judge.judge(case, calls, "Logged.", person_rows(user_id))
+    _, right, _ = _seeded_case(app_settings, "catch_up", server)
+    services.log_lifts(right, {"date": dates["days_ago:3"],
+                               "sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}] * 3}, "claude")
+    services.log_food(right, {"date": dates["days_ago:2"],
+                              "entries": [{"description": "Chicken biryani", "kcal": 640}]}, "claude")
+    services.log_bodyweight(right, {"kg": 80.2, "date": dates["yesterday"]}, "claude")
+    assert judge.judge(case, calls, "Logged all three.", person_rows(right)) == []
+    assert "{{" not in case["say"] and "three days ago" in case["say"]  # relative days: right on any run day
+
+
+def test_the_import_case_is_the_hacker_s_diet_layout_and_previews_first(app_settings, monkeypatch):
+    # The case's dates are fixed in September 2026: the clock is pinned, so the test holds on any real day.
+    monkeypatch.setattr(db, "utcnow", lambda: dt.datetime(2026, 11, 17, 9, 0, tzinfo=dt.timezone.utc))
+    case, user_id, _ = _seeded_case(app_settings, "import_other_app")
+    assert "Date,Weight,Rung,Flag,Comment" in case["say"] and "Preferences,1.0,kilogram" in case["say"]
+    rows = [{"kind": "bodyweight", "date": d, "weight": float(w)} for d, w in
+            re.findall(r"(\d{4}-\d{2}-\d{2}),(\d+\.\d),\d+,[01],", case["say"])]
+    assert len(rows) == 5
+    preview = services.import_entries(user_id, {"rows": rows, "weight_unit": "kg"}, "claude")
+    assert preview["dry_run"] is True and preview["row_outcomes"]["written"] == 5
+    sent = {"rows": rows, "weight_unit": "kg"}
+    assert judge.judge(case, [call("import_entries", sent)], "Write these 5 weigh-ins?", person_rows(user_id)) == []
+    assert judge.judge(case, [call("import_entries", {**sent, "weight_unit": "lb"})], "Write them?",
+                       person_rows(user_id))
+    assert judge.judge(case, [call("import_entries", {**sent, "dry_run": False})], "Written. More?",
+                       person_rows(user_id))
+    assert judge.judge(case, [call("import_entries", sent)], "Here is the preview.", person_rows(user_id))
+
+
+@pytest.mark.parametrize("pair", [("inc_10k_plan", "look_10k_friend"), ("inc_trip_meals", "look_trip_hours"),
+                                  ("inc_deload", "look_deload")])
+def test_each_draft_incidental_case_has_its_look_alike_and_both_judge_by_their_tags(pair):
+    incidental, look_alike = (_cases()[i] for i in pair)
+    assert (incidental["kind"], look_alike["kind"]) == ("incidental", "look_alike")
+    assert incidental["seed"] == look_alike["seed"] == [{"service": "sixteen_weeks"}]
+    read = [call("whoami"), call("get_data", {"area": "cardio"})]
+    assert judge.judge(incidental, read, "Here is the plan.", {}) == []  # picked up
+    assert judge.judge(incidental, [call("whoami")], "Here is the plan.", {})  # not picked up
+    assert judge.judge(incidental, read + [call("log_cardio")], "Here is the plan.", {})
+    assert judge.judge(look_alike, [call("whoami")], "Here is the plan.", {}) == []
+    assert judge.judge(look_alike, read, "Here is the plan.", {}) == ["get_data was called and should not have been"]
+
+
+# ---------------------------------------------------------------- the fix round of G1 (the review of 2026-11-17)
+
+def test_the_fixed_help_texts_of_an_answer_are_never_spotter_s_figures(make_user):
+    """M1: what_is_logged's how and its field words hold 0.5, 3.5, 10, 30, 100 and 200 on every account."""
+    user = make_user(time_zone="Asia/Kolkata")
+    answer = services.what_is_logged(user.id)
+    assert any(word in answer["how"] for word in ("100", "0.5"))  # the texts still hold them
+    calls = [call("whoami"), answered("what_is_logged", answer)]
+    assert {v for v in judge.spotter_figures(calls) if not judge._small_whole(v)} == set()
+    for reply in ("Aim for 30 minutes of cardio and 10 reps a set.", "100 squats a week and 200 minutes of walking.",
+                  "Gain 0.5 kg a week; MET x 3.5."):
+        assert judge.quoted_figures(reply, calls) == [], reply
+    fixed = {"how": "per_day over 28 days, 7,700 kcal", "meaning": "reps over 30", "fields": [["reps", "1 to 10", 12]],
+             "summary": "12 sets, 7700 kcal"}
+    assert judge.quoted_figures("12 sets, 7,700 kcal.", [answered("get_trends", fixed)]) == ["12", "7,700"]
+    assert judge.quoted_figures("30 reps, 1 to 10.", [answered("get_trends", fixed)]) == []
+
+
+def test_how_am_i_doing_fails_a_reply_of_advice_alone(make_user, monkeypatch):
+    """M1, the review's probe: four weeks of everything, what_is_logged read, two advice figures quoted."""
+    from evals.four_weeks import four_weeks
+    monkeypatch.setattr(db, "utcnow", lambda: dt.datetime(2026, 11, 16, 12, 0, tzinfo=dt.timezone.utc))
+    user = make_user(time_zone="Asia/Kolkata")
+    assert "error" not in four_weeks(user.id)
+    case = judge.resolve(_cases()["how_am_i_doing"], {})
+    calls = [call("whoami"), answered("what_is_logged", services.what_is_logged(user.id))]
+    for reply in ("You are doing fine. Aim for 30 minutes of cardio and 10 reps a set.",
+                  "Keep going: 100 squats a week and 200 minutes of walking would help."):
+        assert judge.judge(case, calls, reply, {}), reply
+
+
+def test_quotes_one_of_needs_the_asked_figure_from_this_run_s_reads():
+    """M2: the figure a direct case asks about is one of the run's own, by any read."""
+    expect = {"quotes_one_of": ["116.7", "100"]}
+    squat = answered("get_data", {"columns": ["date", "weight_kg", "estimated_max_kg"],
+                                  "rows": [["2026-11-13", 100.0, 116.7]]})
+    goals = answered("get_goals", {"goals": [{"goal_id": 2, "start_value": 80.0, "target_value": 150.0}]})
+    assert judge.judge_calls(expect, [squat], "100 kilos for 5 this month.") == []
+    assert judge.judge_calls(expect, [squat], "An estimated max of 116.7 kg.") == []
+    assert judge.judge_calls(expect, [goals], "Started at 80 kg, target 150 kg: you are at 100 kg now.") == [
+        "the reply quotes none of 116.7, 100 from this run's data reads (quoted: 80, 150)"]  # 100 made up
+    assert judge.judge_calls(expect, [squat], "From 1116.7 kg.") == [
+        "the reply quotes none of 116.7, 100 from this run's data reads"]
+    assert judge.judge_calls({"quotes_one_of": ["1980"]}, [answered("get_log", {"kcal": 1980})], "1,980 kcal.") == []
+
+
+@pytest.mark.parametrize("figures, problem", [
+    ([], "expect.quotes_one_of must be a non-empty list of figures"),
+    ("116.7", "expect.quotes_one_of must be a non-empty list of figures"),
+    ([116.7], 'expect.quotes_one_of[0] must be a figure written as text, such as "116.7"'),
+    (["about"], 'expect.quotes_one_of[0] must be a figure written as text, such as "116.7"'),
+    (["5"], "expect.quotes_one_of[0] 5 is a whole number under 10, which never counts"),
+])
+def test_quotes_one_of_is_checked_when_the_cases_load(figures, problem):
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"quotes_one_of": figures}}) == [problem]
+
+
+def test_a_whole_number_under_10_never_counts_with_a_unit_or_without_and_a_decimal_does():
+    """The owner's word: a whole number under 10 never counts, with a unit or without; a decimal under 10 does."""
+    answer = answered("get_data", {"rows": [[5, 3, 8, 3.3, 0.24, 9.0, 10]], "columns": ["km", "sets", "reps", "a",
+                                                                                         "b", "c", "d"]})
+    assert judge.quoted_figures("5 km, 3 sessions, 8 reps, 9, 9.0 kg.", [answer]) == []
+    assert judge.quoted_figures("3.3 kg behind, 0.24 kg a week, 10 sets.", [answer]) == ["3.3", "0.24", "10"]
+
+
+@pytest.mark.parametrize("placeholder, why", [
+    ("{{days_ago:61}}", "N runs from 0 to 60"), ("{{days_ago:99}}", "N runs from 0 to 60"),
+    ("{{next_month_end:13}}", "N runs from 1 to 12"), ("{{next_month_end:0}}", "N runs from 1 to 12"),
+    ("{{tomorrow}}", "no such name"),
+])
+def test_a_placeholder_no_run_can_fill_is_a_problem_when_the_cases_load(placeholder, why):
+    """N1: before, it loaded clean and failed only mid-run, at resolve."""
+    case = {"id": "a", "say": "x", "expect": {"function": "log_food", "inputs_include": {"date": placeholder}}}
+    assert judge.case_problems(case) == [f"{placeholder} is not a placeholder: {why}"]
+    fine = {"id": "a", "say": "x", "expect": {"function": "f", "inputs_include": {"date": "{{days_ago:60}}"}},
+            "db": [{"table": "goal", "all": {"target_date": "{{next_month_end:12}}"}}]}
+    assert judge.case_problems(fine) == []
+
+
+def test_the_catch_up_goes_through_the_log_functions_never_an_import():
+    """The owner's ruling: a catch-up told in chat is logged, one path a source; import_entries is a must_not."""
+    case = _cases()["catch_up"]
+    assert "import_entries" in case["calls"]["must_not"] and "import_entries" not in case["calls"]["must"]
+    assert judge.judge(case, [call("import_entries")], "Previewed.", {})
+    assert "import_entries was called and should not have been" in judge.judge(
+        case, [call("log_lifts"), call("import_entries")], "Logged.", {})
+
+
+def test_one_run_s_error_never_loses_the_others_and_the_kept_results_are_written(monkeypatch, capsys):
+    """S3: a run that raises is that run's failure, with its reason; the table prints; results.json is written."""
+    from evals import run
+    monkeypatch.setattr(run.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(run.judge, "load_cases", lambda: [{"id": "one", "say": "x", "expect": {"reply_asks": True}}])
+    made = []
+
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+        made.append(label)
+        if len(made) == 3:
+            raise RuntimeError("the CLI crashed")
+        return {"passed": True, "reasons": [], "reply": "Done?", "calls": [], "seconds": 1.0, "models": [model],
+                "other_models": [], "tokens": 0, "cost_usd": 0.0}
+
+    monkeypatch.setattr(run, "run_once", fake_run_once)
+    kept = []
+    real_mkdtemp = run.tempfile.mkdtemp
+    monkeypatch.setattr(run.tempfile, "mkdtemp", lambda prefix: kept.append(real_mkdtemp(prefix=prefix)) or kept[-1])
+    assert run.main(["--n", "4", "--time-zone", "Asia/Kolkata", "--keep"]) == 1
+    out = capsys.readouterr().out
+    assert made == ["one-1", "one-2", "one-3", "one-4"]  # the fourth run still ran
+    assert "one-3: FAIL" in out and "the run raised RuntimeError: the CLI crashed" in out
+    assert "counted: 3 of 4 runs passed" in out
+    results = json.loads((Path(kept[0]) / "results.json").read_text(encoding="utf-8"))
+    assert [r["passed"] for r in results[0]["runs"]] == [True, True, False, True]
+    import shutil
+    shutil.rmtree(kept[0], ignore_errors=True)
+
+
+def test_a_quota_stop_keeps_the_run_it_stopped_as_a_failure_with_its_reason(monkeypatch, capsys):
+    """S3: the stopped run is a blank outcome, failed, its reason the stop."""
+    from evals import gemini_client, run
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(gemini_client, "load_key", lambda n: "fake-key-for-the-test")
+    monkeypatch.setattr(run.judge, "load_cases", lambda: [{"id": "one", "say": "x", "expect": {"reply_asks": True}}])
+
+    def fake_gemini(server, case, zone, host):
+        raise gemini_client.QuotaStop("429 for fake-key-for-the-test")
+
+    monkeypatch.setattr(gemini_client, "run_once_gemini", fake_gemini)
+    assert run.main(["--client", "gemini", "--n", "3", "--time-zone", "Asia/Kolkata"]) == 1
+    out = capsys.readouterr().out
+    assert "one-1: FAIL" in out and "one-2" not in out and "counted: 0 of 1 runs passed" in out
+    assert "stopped: one-1: QuotaStop: 429 for [key hidden]" in out and "fake-key-for-the-test" not in out
+
+
+def test_a_raised_run_s_text_is_masked_for_the_token_as_every_kept_text_is(monkeypatch, capsys):
+    """The re-check's nit: the text of a run that raises is masked for every token the server signed, and for any
+    text shaped like one."""
+    from evals import run
+    monkeypatch.setattr(run.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(run.judge, "load_cases", lambda: [{"id": "one", "say": "x", "expect": {"reply_asks": True}}])
+
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+        server.issued.append("signed-token-of-this-person")
+        raise RuntimeError("boom Bearer eyJSECRET.abc.def, and signed-token-of-this-person")
+
+    monkeypatch.setattr(run, "run_once", fake_run_once)
+    assert run.main(["--n", "1", "--time-zone", "Asia/Kolkata"]) == 1
+    out = capsys.readouterr().out
+    assert "the run raised RuntimeError: boom Bearer [token hidden], and [token hidden]" in out
+    assert "eyJSECRET" not in out and "signed-token-of-this-person" not in out
+    assert run.kept_text("a eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln b", []) == "a [token hidden] b"
+

@@ -255,6 +255,28 @@ and the owner is told. Why: at a 95% pass rate, 180 runs move by about 3 passes 
 | Tests | Each client's parser on a kept transcript, its command never holding the token, a cut-off Gemini run keeping usage; `read_any` and `quotes_spotter` on kept runs, a figure from `say` not counted; every new case loads and judges a passing and a failing run; the re-judged cases pass their kept passing runs; every case carries the three call tags; **the coverage test** (below); the pick-up and over-call rates worked from a kept run |
 | Exit | The owner's yes on the golden set's table, before any baseline run. The baseline report in the build log, both runs, with each model's cost by side and the band. Every Claude run passes `2718899`'s one-model rule |
 
+**2026-11-17, G1's fix round (its review, and the owner's and the lead's rulings):**
+- Files: `evals/need.py` (its eval files gain `evals/recorder.py`, `evals/codex_client.py` and
+  `evals/gemini_client.py`), `evals/__init__.py` and `tests/test_eval_need.py` join G1's list.
+- The figure a direct case asks about is checked by a new key, `quotes_one_of`: a figure a data read of that run
+  gave, whichever read. It replaces the `reply_has_pattern` in an `any_of` of routes above: route-free, the same aim.
+- `quotes_spotter` never counts the fixed help texts (each read's `how`, `what_is_logged`'s meanings and field
+  words), and never a whole number under 10, with a unit or without; a decimal counts.
+- Each tier's reasoning effort is the model's own default, pinned by its flag (his word: "yes, pin the defaults"):
+  medium for `claude-opus-5-5` and `claude-sonnet-5-5`, low for `gpt-6.1-sol`, medium for `gpt-6-luna`, high for
+  `gemini-4-hydrogen`. Each source is in `docs/evals.md`.
+- A catch-up told in chat goes through the log functions, one path a source: `import_entries` is a `must_not` on
+  `catch_up`.
+- Gemini runs are paced to 5 requests a minute, the free tier's limit; the persistent 429 stop stays.
+- The route-free cases give `get_goals`, `get_log`, `get_progress` and `get_trends` no case of their own. The evals
+  measure the model's choice; a read's correctness is the unit tests' job.
+- The free tier is the measure (his words: "The free tier is the most important tier for us when we are testing"):
+  Sonnet 5.5, `gpt-6-luna` and `gemini-4-hydrogen`, with tokens and cost per model and per case in every report.
+  Opus 5.5 and `gpt-6.1-sol` run at the baseline and the release.
+- The golden set grows by a package of its own after G1: 170 reviewed cases (Codex's 164 candidates checked against
+  the code, 27 dropped as overlaps, 33 added). His pick: a core of 81 at each gate, the full set at the baseline and
+  the release.
+
 ### G2: the list diet (high)
 
 | Piece | What |

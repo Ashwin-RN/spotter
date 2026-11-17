@@ -2,6 +2,9 @@
   {
     "id": "stated_number",
     "say": "Lunch: dal, 180 kcal",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food"],
+              "must_not": []},
     "expect": {
       "function": "log_food",
       "inputs_include": {"entries": [{"kcal": 180}]},
@@ -12,6 +15,9 @@
   {
     "id": "guessed_number",
     "say": "Lunch: two rotis and dal",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food"],
+              "must_not": []},
     "expect": {
       "function": "log_food",
       "inputs_include": {"entries": [{"estimated": true}]},
@@ -23,6 +29,9 @@
   {
     "id": "saved_food",
     "say": "Two rotis",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food", "what_is_logged", "get_data"],
+              "must_not": []},
     "seed": [{"as": "roti", "service": "save_food",
               "data": {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}}],
     "expect": {
@@ -36,6 +45,9 @@
   {
     "id": "meal_not_asked",
     "say": "Had a banana, 90 kcal",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food"],
+              "must_not": []},
     "expect": {
       "function": "log_food",
       "inputs_include": {"entries": [{"kcal": 90}]},
@@ -47,6 +59,9 @@
   {
     "id": "yesterday",
     "say": "Weighed 70 kg yesterday",
+    "calls": {"must": ["log_bodyweight"],
+              "may": ["whoami"],
+              "must_not": []},
     "expect": {
       "function": "log_bodyweight",
       "inputs_include": {"kg": 70, "date": "{{yesterday}}"}
@@ -56,6 +71,9 @@
   {
     "id": "treadmill_once",
     "say": "30 minutes on the treadmill",
+    "calls": {"must": ["log_cardio"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": []},
     "expect": {
       "function": "log_cardio",
       "inputs_include": {"minutes": 30, "exercise": {"$in": ["Treadmill Walk", "Treadmill Run"]}},
@@ -66,6 +84,9 @@
   {
     "id": "repeat_sent",
     "say": "Waist 84",
+    "calls": {"must": ["log_measurement"],
+              "may": ["whoami", "get_log"],
+              "must_not": []},
     "seed": [{"as": "waist", "service": "log_measurement", "data": {"kind": "waist", "value": 84}}],
     "expect": {
       "function": "log_measurement",
@@ -76,6 +97,9 @@
   {
     "id": "delete_ambiguous",
     "say": "Delete my weigh-in",
+    "calls": {"must": [],
+              "may": ["whoami", "get_log", "what_is_logged", "get_data"],
+              "must_not": ["delete_entry"]},
     "switch": "log_delete",
     "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 72, "date": "{{yesterday}}"}},
              {"as": "latest", "service": "log_bodyweight", "data": {"kg": 71.5}}],
@@ -88,6 +112,9 @@
   {
     "id": "delete_asks_first",
     "say": "Delete my last weigh-in",
+    "calls": {"must": ["delete_entry"],
+              "may": ["whoami", "get_log", "what_is_logged", "get_data"],
+              "must_not": []},
     "switch": "log_delete",
     "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 71.5}}],
     "expect": {
@@ -103,6 +130,9 @@
   {
     "id": "unknown_exercise",
     "say": "Log 3 sets of 8 on the zorbinator at 20 kg",
+    "calls": {"must": [],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts"]},
     "expect": {
       "any_of": [
         {"function": "list_exercises"},
@@ -115,6 +145,9 @@
   {
     "id": "goal_date",
     "say": "I want to be 72 kg by the end of March",
+    "calls": {"must": ["set_goal"],
+              "may": ["whoami", "get_trends", "get_goals", "get_log", "what_is_logged", "get_data"],
+              "must_not": []},
     "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.4, "date": "{{yesterday}}"}},
              {"as": "latest", "service": "log_bodyweight", "data": {"kg": 80}}],
     "expect": {
@@ -128,10 +161,17 @@
   },
   {
     "id": "how_am_i_doing",
+    "kind": "direct",
     "say": "How am I doing?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "four_weeks"}],
     "expect": {
-      "function": "get_trends",
+      "read_any": true,
+      "quotes_spotter": 2,
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"]
@@ -140,9 +180,14 @@
   {
     "id": "on_track",
     "say": "Am I on track?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "four_weeks"}],
     "expect": {
-      "function": "get_goals",
+      "read_any": true,
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"]
@@ -151,6 +196,11 @@
   {
     "id": "export_is_a_click",
     "say": "Export my data",
+    "calls": {"must": [],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
@@ -161,6 +211,9 @@
   {
     "id": "delete_is_a_click",
     "say": "Delete my account",
+    "calls": {"must": [],
+              "may": ["whoami"],
+              "must_not": ["delete_entry"]},
     "switch": "log_delete",
     "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 80}}],
     "expect": {
@@ -172,6 +225,9 @@
   {
     "id": "drop_goal",
     "say": "Drop the squat goal",
+    "calls": {"must": ["set_goal"],
+              "may": ["whoami", "get_goals", "what_is_logged", "get_data"],
+              "must_not": []},
     "seed": [{"as": "squat", "service": "set_goal",
               "data": {"kind": "lift", "exercise": "Back Squat", "target_value": 120, "start_value": 100,
                        "target_date": "{{next_month_end:6}}"}},
@@ -190,10 +246,15 @@
   {
     "id": "decimals_and_dashes",
     "say": "How am I doing?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 79.2, "date": "{{yesterday}}"}},
              {"as": "latest", "service": "log_bodyweight", "data": {"kg": 79.3}}],
     "expect": {
-      "function": "get_trends",
+      "read_any": true,
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"],
@@ -204,6 +265,9 @@
   {
     "id": "import_preview_first",
     "say": "Bring my weigh-ins over from my old app. Its export: Date,Weight (lb) 2026-10-05,176.4 2026-10-06,175.8 2026-10-07,176.0 2026-10-08,175.2 2026-10-09,174.6",
+    "calls": {"must": ["import_entries"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": []},
     "expect": {
       "function": "import_entries",
       "inputs_include": {"weight_unit": "lb"},
@@ -215,6 +279,9 @@
   {
     "id": "import_again",
     "say": "I checked the preview, write them: Date,Weight (lb) 2026-10-05,176.4 2026-10-06,175.8 2026-10-07,176.0 2026-10-08,175.2 2026-10-09,174.6",
+    "calls": {"must": ["import_entries"],
+              "may": ["whoami"],
+              "must_not": []},
     "seed": [{"service": "import_entries",
               "data": {"rows": [{"kind": "bodyweight", "date": "2026-10-05", "weight": 176.4},
                                 {"kind": "bodyweight", "date": "2026-10-06", "weight": 175.8},
@@ -233,6 +300,9 @@
   {
     "id": "import_unknown_lift",
     "say": "Import my lifts from my Strong export: Date,Exercise Name,Set Order,Weight (kg),Reps 2026-10-20,Zorbinator Press,1,20,8 2026-10-20,Zorbinator Press,2,20,8 2026-10-20,Zorbinator Press,3,20,8",
+    "calls": {"must": ["list_exercises", "import_entries"],
+              "may": ["whoami"],
+              "must_not": []},
     "expect": {
       "any_of": [
         {"function": "list_exercises"},
@@ -246,6 +316,9 @@
   {
     "id": "undo_edit",
     "say": "I changed today's weigh-in by mistake. Undo that change.",
+    "calls": {"must": ["restore_entry"],
+              "may": ["whoami", "get_log", "get_data"],
+              "must_not": []},
     "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 80}},
              {"service": "edit_entry",
               "data": {"kind": "bodyweight", "entry_id": "{{seed.weigh_in}}", "changes": {"kg": 85}}}],
@@ -259,6 +332,9 @@
   {
     "id": "feedback_sent",
     "say": "Send feedback to Spotter's maker: the progress chart confused me. I was looking at my squat on the Progress page, I expected one line for my best set each week, and it showed two lines with no labels.",
+    "calls": {"must": ["send_feedback"],
+              "may": ["whoami"],
+              "must_not": []},
     "expect": {
       "function": "send_feedback",
       "ok_calls": {"send_feedback": 1}
@@ -268,6 +344,9 @@
   {
     "id": "feedback_offered",
     "say": "The progress chart in Spotter is so confusing. Two lines and no labels, and I have no idea which one is my squat.",
+    "calls": {"must": [],
+              "may": ["whoami"],
+              "must_not": ["send_feedback"]},
     "expect": {
       "no_call": ["send_feedback"],
       "any_of": [
@@ -281,6 +360,9 @@
   {
     "id": "hi_there_first_log",
     "say": "I weighed 80.4 kg this morning",
+    "calls": {"must": ["log_bodyweight"],
+              "may": ["whoami"],
+              "must_not": []},
     "expect": {
       "function": "log_bodyweight",
       "inputs_include": {"kg": 80.4},
@@ -291,6 +373,9 @@
   {
     "id": "hi_there_not_again",
     "say": "I weighed 80.4 kg this morning",
+    "calls": {"must": ["log_bodyweight"],
+              "may": ["whoami"],
+              "must_not": []},
     "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}}],
     "expect": {
       "function": "log_bodyweight",
@@ -303,6 +388,10 @@
   {
     "id": "setup_asks_first",
     "say": "Hi Spotter, help me set up",
+    "calls": {"must": ["whoami"],
+              "may": [],
+              "must_not": ["log_bodyweight", "log_lifts", "set_goal", "update_settings", "save_food", "log_food",
+                           "log_cardio", "log_measurement", "import_entries", "save_routine"]},
     "expect": {
       "function": "whoami",
       "reply_asks": true,
@@ -315,6 +404,10 @@
   {
     "id": "setup_picks_up",
     "say": "Help me finish setting up Spotter",
+    "calls": {"must": ["whoami"],
+              "may": [],
+              "must_not": ["log_bodyweight", "set_goal", "log_lifts", "update_settings", "save_food",
+                           "import_entries", "save_routine"]},
     "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}},
              {"as": "goal", "service": "set_goal",
               "data": {"kind": "bodyweight", "target_value": 77, "target_date": "{{next_month_end:3}}"}}],
@@ -330,6 +423,9 @@
   {
     "id": "delete_regretted",
     "say": "You deleted a weigh-in I wanted to keep. I never asked for that, and I do not want it to happen again.",
+    "calls": {"must": [],
+              "may": ["whoami", "get_log", "what_is_logged", "get_data"],
+              "must_not": ["delete_entry"]},
     "seed": [{"as": "weigh_in", "service": "log_bodyweight", "data": {"kg": 80}}],
     "expect": {
       "no_call": ["delete_entry"],
@@ -340,6 +436,9 @@
   {
     "id": "lift_one_sentence",
     "say": "Back squat 3 sets of 5 at 100 kg, then bench press 80 kg for 8, 8 and 6",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": []},
     "expect": {
       "function": "log_lifts",
       "ok_calls": {"log_lifts": 1},
@@ -352,6 +451,9 @@
   {
     "id": "lift_set_by_set",
     "say": "Bench press 80 kg for 5",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises", "get_log"],
+              "must_not": []},
     "seed": [{"as": "bench", "service": "log_lifts",
               "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}]}}],
     "expect": {
@@ -365,6 +467,9 @@
   {
     "id": "lift_added_later",
     "say": "Also did barbell rows, 3 sets of 10 at 50 kg",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises", "get_log"],
+              "must_not": []},
     "seed": [{"as": "squat", "service": "log_lifts",
               "data": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
                                 {"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
@@ -380,6 +485,9 @@
   {
     "id": "setup_stays_quiet",
     "say": "I weighed 80.4 kg this morning",
+    "calls": {"must": ["log_bodyweight"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "set_goal", "update_settings", "save_food", "import_entries", "save_routine"]},
     "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}}],
     "expect": {
       "function": "log_bodyweight",
@@ -394,6 +502,9 @@
   {
     "id": "routine_saved",
     "say": "Save my push day: bench press 3 sets of 8, overhead press 3 sets of 10, dips 3 sets of 10",
+    "calls": {"must": ["save_routine"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts"]},
     "expect": {
       "function": "save_routine",
       "ok_calls": {"save_routine": 1},
@@ -409,6 +520,9 @@
   {
     "id": "routine_logged",
     "say": "Log my push day",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "get_routines", "list_exercises"],
+              "must_not": []},
     "seed": [{"as": "push", "service": "save_routine",
               "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60},
                                                     {"exercise": "Overhead Press", "sets": 3, "reps": 10,
@@ -425,6 +539,9 @@
   {
     "id": "routine_changed",
     "say": "Log my push day, but bench was 62.5 today",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "get_routines", "list_exercises"],
+              "must_not": []},
     "seed": [{"as": "push", "service": "save_routine",
               "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60},
                                                     {"exercise": "Overhead Press", "sets": 3, "reps": 10,
@@ -441,6 +558,9 @@
   {
     "id": "lb_weigh_in",
     "say": "Weighed 185 this morning",
+    "calls": {"must": ["log_bodyweight"],
+              "may": ["whoami"],
+              "must_not": []},
     "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}],
     "expect": {
       "function": "log_bodyweight",
@@ -455,6 +575,9 @@
   {
     "id": "lb_lifts",
     "say": "Bench 225 for 5, then 3 sets of 8 at 185",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": []},
     "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}],
     "expect": {
       "function": "log_lifts",
@@ -469,6 +592,9 @@
   {
     "id": "miles_run",
     "say": "Ran 3 miles outside in 27 minutes",
+    "calls": {"must": ["log_cardio"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": []},
     "seed": [{"service": "update_settings", "data": {"distance_unit": "mi"}}],
     "expect": {
       "function": "log_cardio",
@@ -483,6 +609,9 @@
   {
     "id": "units_asked",
     "say": "I weigh 185 lb",
+    "calls": {"must": ["log_bodyweight"],
+              "may": ["whoami"],
+              "must_not": ["update_settings"]},
     "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 84, "date": "{{yesterday}}"}}],
     "expect": {
       "function": "log_bodyweight",
@@ -497,6 +626,9 @@
   {
     "id": "units_switch",
     "say": "Show my weights in pounds and my runs in miles from now on",
+    "calls": {"must": ["update_settings"],
+              "may": ["whoami"],
+              "must_not": ["log_bodyweight", "log_lifts", "log_cardio"]},
     "expect": {
       "function": "update_settings",
       "ok_calls": {"update_settings": 1},
@@ -507,6 +639,9 @@
   {
     "id": "lb_routine_changed",
     "say": "Log my push day, but bench was 230 today",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "get_routines", "list_exercises"],
+              "must_not": []},
     "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}},
              {"as": "push", "service": "save_routine",
               "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8,
@@ -526,6 +661,9 @@
   {
     "id": "waist_in_inches",
     "say": "My waist is 32 inches",
+    "calls": {"must": [],
+              "may": ["whoami", "log_measurement"],
+              "must_not": []},
     "expect": {"any_of": [
       {"function": "log_measurement", "ok_calls": {"log_measurement": 1},
        "inputs_include": {"kind": "waist", "value": {"$in": [81.28, 81.3]}}, "reply_has": ["cm"]},
@@ -535,6 +673,9 @@
   {
     "id": "machine_calories",
     "say": "30 minutes on the treadmill, it said 250 calories",
+    "calls": {"must": ["log_cardio"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": []},
     "expect": {"function": "log_cardio", "ok_calls": {"log_cardio": 1},
                "inputs_include": {"minutes": 30, "machine_kcal": 250}},
     "db": [{"table": "cardio_entry", "count": 1, "all": {"machine_kcal": 250, "minutes": 30}}]
@@ -542,6 +683,11 @@
   {
     "id": "data_basketball",
     "say": "How do I get better at basketball?",
+    "calls": {"must": ["what_is_logged", "get_data"],
+              "may": ["whoami", "get_log", "get_progress", "get_trends", "get_goals"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
@@ -560,24 +706,32 @@
   },
   {
     "id": "data_lifting",
+    "kind": "direct",
     "say": "How do I get better at lifting?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"],
+      "read_any": true,
+      "quotes_spotter": 2,
       "reply_has": ["squat"],
-      "any_of": [{"reply_has": ["116.7"],
-                  "any_of": [{"function": "get_data", "inputs_include": {"area": "lift_sets"}},
-                             {"function": "get_progress"}]},
-                 {"reply_has": ["100 kg"],
-                  "any_of": [{"function": "get_data", "inputs_include": {"area": "lift_sets"}},
-                             {"function": "get_progress"}]}]
+      "quotes_one_of": ["116.7", "100"]
     }
   },
   {
     "id": "data_calories",
     "say": "How do I cut down on my calories? Where do I remove it from day to day?",
+    "calls": {"must": ["get_data"],
+              "may": ["whoami", "what_is_logged", "get_log", "get_trends"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {
       "function": "get_data",
@@ -592,54 +746,68 @@
   {
     "id": "data_squat_goal",
     "say": "How are my squats going?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"],
-      "any_of": [{"reply_has_pattern": ["(?<![\\d.])3\\.3(?!\\d)"],
-                  "any_of": [{"function": "get_data",
-                             "inputs_include": {"area": "lift_sets",
-                                                "filters": {"exercise": {"$in": ["Back Squat", ["Back Squat"]]}}}},
-                            {"function": "get_progress", "inputs_include": {"exercise": "Back Squat"}}]},
-                 {"reply_has": ["120 kg on the plan line"],
-                  "any_of": [{"function": "get_data",
-                             "inputs_include": {"area": "lift_sets",
-                                                "filters": {"exercise": {"$in": ["Back Squat", ["Back Squat"]]}}}},
-                            {"function": "get_progress", "inputs_include": {"exercise": "Back Squat"}}]}]
+      "read_any": true,
+      "quotes_spotter": 1,
+      "quotes_one_of": ["3.3", "120"]
     }
   },
   {
     "id": "data_back_on_track",
+    "kind": "direct",
     "say": "I have slipped lately. How do I get back on track?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"],
-      "any_of": [{"reply_has_pattern": ["(?<![\\d.])1\\.6(?!\\d)"],
-                  "any_of": [{"function": "get_goals"}, {"function": "what_is_logged"}, {"function": "get_data"}]},
-                 {"reply_has": ["79.3"],
-                  "any_of": [{"function": "get_goals"}, {"function": "what_is_logged"}, {"function": "get_data"}]}]
+      "read_any": true,
+      "quotes_spotter": 2,
+      "quotes_one_of": ["1.6", "79.3"]
     }
   },
   {
     "id": "data_lb",
     "say": "What is the heaviest I have benched in the last 4 weeks?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}, {"service": "sixteen_weeks"}],
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"],
-      "reply_has": ["214.95"],
-      "reply_lacks_pattern": ["\\bkg\\b"],
-      "any_of": [{"function": "get_data", "inputs_include": {"area": "lift_sets"}},
-                 {"function": "get_progress"}, {"function": "get_log"}]
+      "read_any": true,
+      "quotes_spotter": 1,
+      "quotes_one_of": ["214.95"],
+      "reply_lacks_pattern": ["\\bkg\\b"]
     }
   },
   {
     "id": "data_empty",
+    "kind": "direct",
     "say": "How has my sleep been lately?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
@@ -647,13 +815,19 @@
                   "import_entries", "send_feedback", "save_routine"],
       "reply_lacks_pattern": ["(?m)(?:^|(?<!\\be\\.g)(?<!\\bi\\.e)(?<!example)(?<!instance)[.!?:]\\s+)(?:(?!\\b(?:aim|aims|need|needs|recommend\\w*|advice|advis\\w*|guideline\\w*|most adults|should|example|examples|instance|e\\.g|such as)\\b)(?:[^.!?\\n\"\u201c\u201d]|\\.(?=\\d)))*?(?<![\\d.])(?<!to )(?<!and )(?<!or )(?<!-)(?<!\u2013)(?<!like )\\d+(?:\\.\\d+)?\\s*(?:hours|hrs|h)\\b",
                               "(?m)(?:^|(?<!\\be\\.g)(?<!\\bi\\.e)(?<!example)(?<!instance)[.!?:]\\s+)(?:(?!\\b(?:example|examples|instance|e\\.g|such as)\\b)(?:[^.!?\\n\"\u201c\u201d]|\\.(?=\\d)))*?\\bslept\\b(?:(?!\\b(?:example|examples|instance|e\\.g|such as)\\b)[^.!?\\n\"\u201c\u201d]){0,30}?(?<!like )\\d+(?:\\.\\d+)?\\s*(?:(?:to|or|-|\u2013)\\s*\\d+(?:\\.\\d+)?\\s*)?(?:hours|hrs|h)\\b"],
-      "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]
+      "read_any": true,
+      "quotes_spotter": 0
     },
     "db": [{"table": "measurement", "count": 16, "all": {"kind": "waist"}}]
   },
   {
     "id": "data_year_more",
     "say": "Was my weight ever above 90 kg in the past year? Which days, and what did I weigh?",
+    "calls": {"must": ["get_data"],
+              "may": ["whoami", "what_is_logged"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {
       "function": "get_data",
@@ -663,5 +837,355 @@
                   "import_entries", "send_feedback", "save_routine"],
       "reply_has": ["91.2", "92.4", "90.6"]
     }
+  },
+  {
+    "id": "gold_squat_month",
+    "kind": "direct",
+    "say": "What is my squat this month?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "read_any": true,
+      "quotes_spotter": 1,
+      "quotes_one_of": ["116.7", "100"]
+    }
+  },
+  {
+    "id": "gold_weigh_morning",
+    "kind": "direct",
+    "say": "What did I weigh this morning?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "read_any": true,
+      "quotes_spotter": 1,
+      "quotes_one_of": ["81.1"]
+    }
+  },
+  {
+    "id": "gold_kcal_yesterday",
+    "kind": "direct",
+    "say": "How many calories did I eat yesterday?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "read_any": true,
+      "quotes_spotter": 1,
+      "quotes_one_of": ["1980"]
+    }
+  },
+  {
+    "id": "gold_squat_goal",
+    "kind": "direct",
+    "say": "Am I on track for my squat goal?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "read_any": true,
+      "quotes_spotter": 1,
+      "quotes_one_of": ["3.3", "120", "116.7"]
+    }
+  },
+  {
+    "id": "gold_eat_more",
+    "kind": "direct",
+    "say": "Should I eat more?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "read_any": true,
+      "quotes_spotter": 2,
+      "quotes_one_of": ["1980", "1905", "79.3", "80.9", "1.6"]
+    }
+  },
+  {
+    "id": "gold_best_deadlift",
+    "kind": "direct",
+    "say": "What is my best deadlift?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "log_lifts",
+              "data": {"date": "{{days_ago:3}}",
+                       "sets": [{"exercise": "Back Squat", "weight_kg": 90, "reps": 5},
+                                {"exercise": "Back Squat", "weight_kg": 90, "reps": 5},
+                                {"exercise": "Back Squat", "weight_kg": 90, "reps": 5}]}},
+             {"service": "log_lifts",
+              "data": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
+                                {"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
+                                {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "read_any": true,
+      "quotes_spotter": 0,
+      "reply_has_pattern": ["\\b(?:no|not|never|none|nothing|zero|haven't|hasn't|didn't|don't|have not|has not|did not|do not|can't|cannot|isn't|is not|aren't|are not)\\b(?:\\s+\\w+){0,3}?\\s+deadlifts?\\b|\\bdeadlifts?\\b[^.!?\\n]{0,40}\\b(?:none|nothing|not logged|not yet logged|no entries)\\b"],
+      "reply_lacks_pattern": ["\\bdeadlifts?\\b(?:(?!\\bsquat)[^.!?\\n;]){0,40}?(?<![\\w.,])\\d{2,3}(?:\\.\\d+)?(?![\\d,]|\\.\\d)(?!\\s*(?:days?|weeks?|months?|years?|sessions?|sets?|reps?|lifts?|times|entries|workouts|%))", "(?<![\\w.,])\\d+(?:\\.\\d+)?\\s*(?:kg|kilos?|lbs?|pounds?)\\b(?:(?!\\bsquat)[^.!?\\n;]){0,25}?\\bdeadlift"]
+    }
+  },
+  {
+    "id": "gold_run_week",
+    "kind": "direct",
+    "say": "How was my run this week?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "read_any": true,
+      "quotes_spotter": 0,
+      "reply_has_pattern": ["\\b(?:no|not|never|none|nothing|zero|haven't|hasn't|didn't|don't|have not|has not|did not|do not|can't|cannot|isn't|is not|aren't|are not)\\b(?:\\s+\\w+){0,3}?\\s+(?:runs?|ran|running|cardio)\\b(?!\\s+(?:much|a lot|as much|that much|enough|often|far|well|badly)\\b)|\\b(?:runs?|running|cardio)\\b[^.!?\\n]{0,40}\\b(?:none|nothing)\\b|\\b(?:last|latest|most recent|previous)\\s+(?:runs?|cardio|session|outing)\\b[^.!?\\n]{0,60}?(?:\\bago\\b|\\b\\d{1,2}\\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\\w*\\.?\\s+\\d{1,2}\\b|\\d{4}-\\d{2}-\\d{2})"],
+      "reply_lacks_pattern": ["(?:^|(?<=[!?\\n])|(?<=\\.)(?!\\d))(?:(?!\\b(?:last|latest|ago|previous|most recent)\\b)(?:[^.!?\\n]|(?<=\\d)\\.(?=\\d)))*?(?<![\\w.,])(?!0(?:\\.0+)?(?![\\d.]))\\d+(?:\\.\\d+)?\\s*(?:km|kilomet\\w*|mi|miles?|minutes?|mins?)\\b(?:(?!\\b(?:last|latest|ago|previous|most recent)\\b)(?:[^.!?\\n]|(?<=\\d)\\.(?=\\d)))*(?=[.!?\\n]|$)"]
+    }
+  },
+  {
+    "id": "inc_10k_plan",
+    "kind": "incidental",
+    "say": "Write me an 8-week plan to run my first 10k.",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"]
+    }
+  },
+  {
+    "id": "look_10k_friend",
+    "kind": "look_alike",
+    "say": "Write an 8-week plan for my friend Sam to run her first 10k. She has never run before.",
+    "calls": {"must": [],
+              "may": ["whoami"],
+              "must_not": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals",
+                           "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"]
+    }
+  },
+  {
+    "id": "inc_trip_meals",
+    "kind": "incidental",
+    "say": "I am in Goa for a week from Monday. Plan my meals there so I stay on track.",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami", "find_food"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"]
+    }
+  },
+  {
+    "id": "look_trip_hours",
+    "kind": "look_alike",
+    "say": "What time do beach shacks in Goa usually open for breakfast?",
+    "calls": {"must": [],
+              "may": ["whoami"],
+              "must_not": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals",
+                           "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"]
+    }
+  },
+  {
+    "id": "inc_deload",
+    "kind": "incidental",
+    "say": "Should I take a deload week this week?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"]
+    }
+  },
+  {
+    "id": "look_deload",
+    "kind": "look_alike",
+    "say": "What is a deload week, in general?",
+    "calls": {"must": [],
+              "may": ["whoami"],
+              "must_not": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals",
+                           "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "sixteen_weeks"}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"]
+    }
+  },
+  {
+    "id": "save_food_asked",
+    "say": "Save my usual protein shake as a food: one scoop is 150 kcal. I have not had one today.",
+    "calls": {"must": ["save_food"],
+              "may": ["whoami", "find_food"],
+              "must_not": ["log_food"]},
+    "expect": {
+      "function": "save_food",
+      "ok_calls": {"save_food": 1},
+      "inputs_include": {"kcal_per_serving": 150},
+      "no_call": ["log_food"]
+    },
+    "db": [{"table": "saved_food", "count": 1, "all": {"kcal_per_serving": 150}},
+          {"table": "food_entry", "count": 0}]
+  },
+  {
+    "id": "edit_fixes_minutes",
+    "say": "My run yesterday was 32 minutes, not 30. Please fix it.",
+    "calls": {"must": ["edit_entry"],
+              "may": ["whoami", "get_log", "what_is_logged", "get_data"],
+              "must_not": ["delete_entry", "log_cardio"]},
+    "seed": [{"as": "run", "service": "log_cardio", "data": {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5, "date": "{{yesterday}}"}}],
+    "expect": {
+      "function": "edit_entry",
+      "ok_calls": {"edit_entry": 1},
+      "inputs_include": {"kind": "cardio_entry", "entry_id": "{{seed.run}}", "minutes": 32},
+      "no_call": ["delete_entry", "log_cardio"]
+    },
+    "db": [{"table": "cardio_entry", "count": 1, "all": {"id": "{{seed.run}}", "minutes": 32, "distance_km": 5}}]
+  },
+  {
+    "id": "food_lookup",
+    "say": "How many calories is one serving of my oats bowl?",
+    "calls": {"must": ["find_food", "get_data"],
+              "may": ["whoami", "what_is_logged"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "oats", "service": "save_food", "data": {"name": "Oats bowl", "serving_label": "1 bowl", "kcal_per_serving": 300}}],
+    "expect": {
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "reply_has_pattern": ["(?<![\\w.,])300(?!\\d|[.,]\\d)"]
+    }
+  },
+  {
+    "id": "routine_read",
+    "say": "What is in my push day?",
+    "calls": {"must": ["get_routines"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "push", "service": "save_routine", "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60}, {"exercise": "Overhead Press", "sets": 3, "reps": 10, "weight_kg": 40}]}}],
+    "expect": {
+      "function": "get_routines",
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "reply_has": ["bench", "overhead"],
+      "reply_has_pattern": ["(?<![\\w.,])60(?!\\d|[.,]\\d)", "(?<![\\w.,])40(?!\\d|[.,]\\d)"]
+    }
+  },
+  {
+    "id": "exercise_list",
+    "say": "Which squat exercises can I log in Spotter?",
+    "calls": {"must": ["list_exercises"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
+                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
+                           "import_entries", "send_feedback", "save_routine"]},
+    "expect": {
+      "function": "list_exercises",
+      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
+                  "save_routine"],
+      "reply_has": ["Goblet Squat", "Bulgarian Split Squat"]
+    }
+  },
+  {
+    "id": "catch_up",
+    "say": "Catching up after three days off the app: three days ago I did back squat, 3 sets of 5 at 100 kg. Two days ago I had a chicken biryani for lunch, 640 kcal. Yesterday morning I weighed 80.2 kg.",
+    "calls": {"must": ["log_lifts", "log_food", "log_bodyweight"],
+              "may": ["whoami", "list_exercises", "find_food"],
+              "must_not": ["delete_entry", "import_entries"]},
+    "expect": {
+      "no_call": ["delete_entry", "import_entries"]
+    },
+    "db": [{"table": "lift_session", "count": 1, "all": {"date": "{{days_ago:3}}", "set_count": 3}},
+          {"table": "food_entry", "count": 1, "all": {"date": "{{days_ago:2}}", "kcal": 640}},
+          {"table": "bodyweight", "count": 1, "all": {"date": "{{yesterday}}", "kg": 80.2}}]
+  },
+  {
+    "id": "import_other_app",
+    "say": "Bring my weigh-ins over from The Hacker's Diet Online. Its CSV export: Epoch,2026-09-20T07:00:00Z Preferences,1.0,kilogram,kilogram,calorie,0,. Date,Weight,Rung,Flag,Comment 2026-09-14,82.4,12,0, 2026-09-15,82.1,12,0, 2026-09-16,82.3,13,0, 2026-09-17,81.9,13,0, 2026-09-18,81.7,13,1,",
+    "calls": {"must": ["import_entries"],
+              "may": ["whoami"],
+              "must_not": []},
+    "expect": {
+      "function": "import_entries",
+      "inputs_include": {"weight_unit": "kg"},
+      "inputs_forbid": {"dry_run": false},
+      "reply_asks": true
+    },
+    "db": [{"table": "bodyweight", "count": 0},
+          {"table": "bodyweight", "state": "deleted", "count": 0}]
   }
 ]

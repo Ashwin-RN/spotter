@@ -1,11 +1,14 @@
-"""Run the evals: python -m evals.run [--n 3] [--threshold 1.0] [--case ID ...] [--model M] [--keep]
+"""Run the evals: python -m evals.run [--client claude|codex|gemini] [--n 3] [--threshold 1.0] [--case ID ...]
+[--golden] [--model M] [--effort E] [--keep]
 
-One local server for the whole run, with a temporary SQLite file. For each case, n fresh conversations
-with the Claude CLI, each with a new throwaway person. Each run is judged by what the server received
-(evals/recorder.py) and by that person's rows afterwards (evals/judge.py). See docs/evals.md.
+One local server for the whole run, with a temporary SQLite file. For each case, n fresh conversations with the
+client asked for, each with a new throwaway person: the Claude CLI (here), Codex (evals/codex_client.py) or a
+Gemini model with this process as the MCP host (evals/gemini_client.py). Each run is judged by what the server
+received (evals/recorder.py) and by that person's rows afterwards (evals/judge.py). See docs/evals.md.
 
 The sign-in token is never printed, never kept: every line that is printed or saved goes through
-judge.masked, and each run's MCP config file (the one place the token is written) is deleted after it.
+judge.masked. For Claude, each run's MCP config file (the one place the token is written) is deleted after it; for
+Codex the token is only in that one child's environment; for Gemini it is only in this process's memory.
 """
 
 import argparse
@@ -14,6 +17,7 @@ import datetime as dt
 import itertools
 import json
 import logging
+import re
 import os
 import shutil
 import socket
@@ -74,12 +78,40 @@ def child_env(environ: dict[str, str]) -> tuple[dict[str, str], list[str]]:
 # The model every run uses unless --model says otherwise. Pinned on 2026-11-10 after the CLI's own default
 # changed within a day and one full run cost three times the estimate.
 DEFAULT_MODEL = "claude-opus-5-5"
+CLIENTS = ("claude", "codex", "gemini")
+# Each client's model when --model is left out: each is its release tier (contract function-list.md, D11). The gate
+# tier is passed by name: --model claude-sonnet-5-5, --model gpt-6-luna (SMALL_GPT), as docs/evals.md says.
+DEFAULT_MODELS = {"claude": DEFAULT_MODEL, "codex": "gpt-6.1-sol", "gemini": "gemini-4-hydrogen"}
+# The small GPT, by its exact name in Codex's own model list (~/.codex/models_cache.json, fetched by codex-cli
+# 0.169.0 on 2026-11-17 08:48 UTC): "Fast and affordable model for easier tasks", shown in the picker.
+SMALL_GPT = "gpt-6-luna"
+# The reasoning effort every run sends, a model at a time, unless --effort says otherwise (--effort "" sends none).
+# Each is the model's own default, the level a person gets when nothing is set, pinned by the client's flag so a
+# change in a default or in the owner's own settings never changes a run (his word, 2026-11-17: "yes, pin the
+# defaults"). Claude: --effort; Codex: -c model_reasoning_effort; Gemini: generationConfig.thinkingConfig.
+# thinkingLevel. The sources, read on 2026-11-17, no paid call:
+#   claude-opus-5-5, claude-sonnet-5-5  medium: https://code.claude.com/docs/en/model-config.md, "Resolution order",
+#                                       step 5: "Opus 5.5, Sonnet 5.5, and Haiku 5.5 default to medium"
+#   gpt-6.1-sol low, gpt-6-luna medium  each model's default_reasoning_level in Codex's own model list
+#                                       (~/.codex/models_cache.json, codex-cli 0.169.0)
+#   gemini-4-hydrogen high              Google's thinking page (aistudio.google.com/docs/thinking): "On (high)"
+# A model not here sends no effort: its client's own default, unpinned, and the run says so.
+DEFAULT_EFFORTS = {"claude-opus-5-5": "medium", "claude-sonnet-5-5": "medium", "gpt-6.1-sol": "low",
+                   "gpt-6-luna": "medium", "gemini-4-hydrogen": "high"}
+# The levels each client takes: claude --help (2.1.326); Codex's model list (gpt-6.1-sol takes ultra too,
+# gpt-6-luna stops at max); Google's thinking page (minimal is not taken by Gemini 4 or gemini-3.8-flash).
+EFFORTS = {"claude": ("low", "medium", "high", "xhigh", "max"),
+           "codex": ("low", "medium", "high", "xhigh", "max", "ultra"),
+           "gemini": ("minimal", "low", "medium", "high", "xhigh")}
+DAYS_AGO = judge.DAYS_AGO  # {{days_ago:N}} for N from 0 to this
 
 
-def cli_command(claude: str, say: str, config_path: str, model: str | None) -> list[str]:
+def cli_command(claude: str, say: str, config_path: str, model: str | None, effort: str | None = None) -> list[str]:
     command = [claude, "-p", say, "--output-format", "json", "--mcp-config", config_path, "--strict-mcp-config",
                "--allowedTools", "mcp__spotter__*", "--no-session-persistence",
                "--settings", NO_ADVISOR_SETTINGS]  # the advisor's second off switch: see CHILD_SETS
+    if effort:
+        command += ["--effort", effort]
     if model:
         command += ["--model", model]
     return command
@@ -165,11 +197,34 @@ def next_month_end(today: dt.date, month: int) -> dt.date:
 
 
 def dates_for(zone: str) -> dict[str, str]:
-    """The placeholders' dates for a person in this zone: today, yesterday, next_month_end:1 to :12."""
+    """The placeholders' dates for a person in this zone: today, yesterday, days_ago:0 to :60, next_month_end:1 to
+    :12."""
     today = dt.datetime.now(zoneinfo.ZoneInfo(zone)).date()
     dates = {"today": today.isoformat(), "yesterday": (today - dt.timedelta(days=1)).isoformat()}
+    dates.update({f"days_ago:{n}": (today - dt.timedelta(days=n)).isoformat() for n in range(DAYS_AGO + 1)})
     dates.update({f"next_month_end:{m}": next_month_end(today, m).isoformat() for m in range(1, 13)})
     return dates
+
+
+# A bearer token's shape (a JWT: three base64url parts, the first from '{"'), masked in a text a run raised even when
+# it is no token this server signed.
+_JWT = re.compile(r"eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
+
+
+def kept_text(text: str, tokens: list[str]) -> str:
+    """A text a run raised, as it may be kept and printed: every token this server signed masked, as judge.masked
+    masks a run's own, and anything shaped like one too."""
+    for token in tokens:
+        text = judge.masked(text, token)
+    return _JWT.sub(judge.HIDDEN, text)
+
+
+def blank_outcome(client: str, model: str | None, effort: str | None) -> dict:
+    """The keys every client's outcome carries before its run, so a run cut off or refused still reads in the
+    table. cost_usd is None until a client reports one: Codex and Gemini give none."""
+    return {"passed": False, "client": client, "model": model or None, "effort": effort or None, "tokens": 0,
+            "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0, "cost_usd": None, "reply": "", "reasons": [],
+            "models": [], "other_models": [], "num_turns": None, "calls": [], "seconds": 0.0}
 
 
 def _plain(value):
@@ -198,6 +253,7 @@ class LocalServer:
         self._server = None
         self._thread: threading.Thread | None = None
         self._subjects = itertools.count(1)
+        self.issued: list[str] = []  # every token signed for a person, so a kept text can be masked for each
         self._stamp = int(time.time())
 
     def start(self) -> None:
@@ -294,6 +350,7 @@ class LocalServer:
             if seed.get("as"):
                 seeded[seed["as"]] = result["id"]
         token = sign(self.key, claims(subject, email=f"{subject}@example.com", name="Eval Person"))
+        self.issued.append(token)
         return user_id, token, seeded
 
 
@@ -328,7 +385,7 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
 # ---------------------------------------------------------------- one run
 
 def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str | None, env: dict[str, str],
-             workdir: Path, label: str, keep: bool) -> dict:
+             workdir: Path, label: str, keep: bool, effort: str | None = None) -> dict:
     user_id, token, seeded = server.new_person(zone, case.get("seed") or [], case.get("switch"))
     variables = {**dates_for(zone), **{f"seed.{k}": v for k, v in seeded.items()}}
     resolved = judge.resolve(case, variables)
@@ -336,11 +393,10 @@ def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str
     cwd = workdir / f"cwd-{label}"
     cwd.mkdir()
     config_path.write_text(json.dumps(mcp_config(server.port, token)), encoding="utf-8")
-    outcome = {"passed": False, "tokens": 0, "cost_usd": 0.0, "reply": "", "reasons": [], "models": [],
-               "other_models": [], "num_turns": None}
+    outcome = {**blank_outcome("claude", model, effort), "cost_usd": 0.0}
     started = time.monotonic()
     try:
-        done = subprocess.run(cli_command(claude, case["say"], str(config_path), model), cwd=cwd, env=env,
+        done = subprocess.run(cli_command(claude, case["say"], str(config_path), model, effort), cwd=cwd, env=env,
                               stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=RUN_TIMEOUT, shell=False)
         stdout, stderr = done.stdout or "", done.stderr or ""
@@ -365,7 +421,8 @@ def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str
     except judge.CliOutputError as e:
         outcome["reasons"] = [f"CLI: {e}; stderr: {judge.masked(stderr.strip()[-500:], token) or 'none'}"]
         return outcome
-    outcome.update({k: parsed[k] for k in ("tokens", "cost_usd", "reply", "models", "num_turns")})
+    outcome.update({k: parsed[k] for k in ("tokens", "input_tokens", "cached_tokens", "output_tokens", "cost_usd",
+                                           "reply", "models", "num_turns")})
     outcome["permission_denials"] = parsed["permission_denials"]
     reasons = []
     if parsed["is_error"] or parsed["subtype"] != "success":
@@ -382,15 +439,30 @@ def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str
 # ---------------------------------------------------------------- main
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="python -m evals.run", description="Run Spotter's evals with the Claude CLI.")
+    parser = argparse.ArgumentParser(prog="python -m evals.run",
+                                     description="Run Spotter's evals with the Claude CLI, Codex or a Gemini model.")
+    parser.add_argument("--client", choices=CLIENTS, default="claude",
+                        help="who answers: claude (the Claude CLI, the default), codex (codex exec) or gemini (a "
+                             "Gemini model, this process the MCP host)")
     parser.add_argument("--n", type=int, default=3, help="runs per case (default 3)")
     parser.add_argument("--threshold", type=float, default=1.0,
-                        help="the pass rate every case must reach, 0 to 1 (default 1.0: every run)")
+                        help="the pass rate every counted case must reach, 0 to 1 (default 1.0: every run)")
     parser.add_argument("--case", action="append", default=[], metavar="ID", help="run only this case (repeatable)")
-    parser.add_argument("--model", default=DEFAULT_MODEL,
-                        help=f"passed through to the CLI as --model (default {DEFAULT_MODEL}: pinned, so a change "
-                             "in the CLI's own default never changes what a run costs; an empty value uses the "
-                             "CLI's default)")
+    parser.add_argument("--golden", action="store_true", help="run only the golden set: the cases with a kind")
+    parser.add_argument("--model", default=None,
+                        help="the model, pinned by its exact name (default: claude "
+                             f"{DEFAULT_MODELS['claude']}, codex {DEFAULT_MODELS['codex']}, gemini "
+                             f"{DEFAULT_MODELS['gemini']}; an empty value uses the client's own default)")
+    parser.add_argument("--effort", default=None,
+                        help="the reasoning effort every run sends (default: the model's own default, pinned: "
+                             + ", ".join(f"{m} {e}" for m, e in DEFAULT_EFFORTS.items())
+                             + "; another model sends none; an empty value sends none)")
+    parser.add_argument("--gemini-key", type=int, default=1, metavar="N",
+                        help="gemini only: the key GOOGLE_API_KEY_<N> in .env.evals, the one key of every run "
+                             "(default 1)")
+    parser.add_argument("--gemini-per-minute", type=int, default=5, metavar="N",
+                        help="gemini only: requests a minute at most, each spaced to keep under it (default 5, the "
+                             "free tier's; 0: not paced)")
     parser.add_argument("--keep", action="store_true",
                         help="keep the temporary directory with the database and each run's raw output")
     parser.add_argument("--time-zone", help="the person's IANA time zone (default: the machine's)")
@@ -399,7 +471,35 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--n must be at least 1")
     if not 0 <= args.threshold <= 1:
         parser.error("--threshold is a rate from 0 to 1")
+    if args.model is None:
+        args.model = DEFAULT_MODELS[args.client]
+    if args.effort is None:
+        args.effort = DEFAULT_EFFORTS.get(args.model or "", "")
+    if args.effort and args.effort not in EFFORTS[args.client]:
+        parser.error(f"--effort for {args.client} is one of {', '.join(EFFORTS[args.client])}, or empty")
+    if args.gemini_key < 1:
+        parser.error("--gemini-key is 1 or more")
+    if args.gemini_per_minute < 0:
+        parser.error("--gemini-per-minute is 0 or more")
+    if args.client == "gemini" and not args.model:
+        parser.error("--client gemini needs a model by name")
     return args
+
+
+def model_lines(results: list[dict], client: str, model: str | None, effort: str | None) -> list[str]:
+    """The lines under the table that say who answered: the client, the model asked for and the models the runs
+    reported, the effort sent, and for Claude the one-model rule's count."""
+    seen = sorted({m for res in results for r in res["runs"] for m in r.get("models") or []})
+    asked = model or "the client's own default"
+    if client == "codex":
+        lines = [f"client: codex, model asked for: {asked}; Codex names no model in its events, so the one ran "
+                 "is not reported"]
+    else:
+        lines = [f"client: {client}, model asked for: {asked}; reported: {', '.join(seen) or 'not reported'}"]
+    lines.append(f"effort sent: {effort or 'none (the client default)'}")
+    if client == "claude":
+        lines.append(model_line(results))
+    return lines
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -417,46 +517,96 @@ def main(argv: list[str] | None = None) -> int:
             print(f"unknown case: {', '.join(unknown)}")
             return 2
         cases = [c for c in cases if c["id"] in args.case]
-    claude = shutil.which("claude")
-    if claude is None:
-        print("The Claude CLI (claude) is not on PATH. Install it and sign in first.")
+    if args.golden:
+        cases = [c for c in cases if c.get("kind")]
+    if not cases:
+        print("no case to run")
         return 2
     zone = local_time_zone(args.time_zone)
     env, dropped = child_env(dict(os.environ))
 
+    stops: tuple = ()  # what ends one model's runs early: a Gemini quota or a request its API refuses
+    redact = judge.masked  # (text, None): nothing to hide but on Gemini, whose key it takes out
+    if args.client == "claude":
+        claude = shutil.which("claude")
+        if claude is None:
+            print("The Claude CLI (claude) is not on PATH. Install it and sign in first.")
+            return 2
+    elif args.client == "codex":
+        from evals import codex_client
+        codex = codex_client.find_codex()
+        if codex is None:
+            print("Codex (codex) is not installed. Install it and sign in first.")
+            return 2
+    else:
+        from evals import gemini_client
+        try:
+            api = gemini_client.GeminiAPI(gemini_client.load_key(args.gemini_key), per_minute=args.gemini_per_minute)
+        except KeyError as e:
+            print(f"Gemini: {e.args[0]}")
+            return 2
+        host = gemini_client.GeminiHost(api, args.model, args.effort)
+        stops = (gemini_client.QuotaStop, gemini_client.ConfigStop)
+        redact = lambda text, _token: api.redact(text)  # noqa: E731
+
     workdir = Path(tempfile.mkdtemp(prefix="spotter-evals-"))
     server = LocalServer(workdir)
+
+    def run_one(case: dict, label: str) -> dict:
+        if args.client == "claude":
+            return run_once(server, case, zone, claude, args.model, env, workdir, label, args.keep,
+                            effort=args.effort)
+        if args.client == "codex":
+            return codex_client.run_once_codex(server, case, zone, codex, args.model, args.effort, env, workdir,
+                                               label, args.keep)
+        return gemini_client.run_once_gemini(server, case, zone, host)
+
     results = []
-    seen_models: set[str] = set()
+    stopped = None
     try:
         server.start()
-        print(f"Spotter on 127.0.0.1:{server.port}, person's zone {zone}, {len(cases)} cases x {args.n} runs")
+        print(f"Spotter on 127.0.0.1:{server.port}, person's zone {zone}, {len(cases)} cases x {args.n} runs, "
+              f"client {args.client}, model {args.model or 'the client default'}, effort {args.effort or 'none'}")
         if dropped:
-            print(f"Left out of the CLI's environment: {', '.join(dropped)}")
+            print(f"Left out of the client's environment: {', '.join(dropped)}")
         for case in cases:
             runs = []
             for i in range(1, args.n + 1):
                 label = f"{case['id']}-{i}"
-                outcome = run_once(server, case, zone, claude, args.model, env, workdir, label, args.keep)
-                seen_models.update(outcome.get("models") or [])
+                try:
+                    outcome = run_one(case, label)
+                except stops as e:  # this model's runs end; the run that hit it is kept, failed, with the stop
+                    stopped = f"{label}: {type(e).__name__}: {redact(kept_text(str(e), server.issued), None)[:1500]}"
+                    outcome = {**blank_outcome(args.client, args.model, args.effort),
+                               "reasons": [f"stopped: {stopped}"]}
+                except Exception as e:  # noqa: BLE001 - one run's fault never loses the others: it is that run's reason
+                    outcome = {**blank_outcome(args.client, args.model, args.effort),
+                               "reasons": [f"the run raised {type(e).__name__}: "
+                                           f"{redact(kept_text(str(e), server.issued), None)[:500]}"]}
                 runs.append(outcome)
                 verdict = "pass" if outcome["passed"] else "FAIL"
                 names = ", ".join(c["name"] + (" (refused)" if c["is_error"] else "") for c in outcome["calls"])
                 print(f"  {label}: {verdict} in {outcome['seconds']} s; calls: {names or 'none'}", flush=True)
-            results.append({"id": case["id"], "runs": runs})
+                if stopped:
+                    break
+            if runs:
+                results.append({"id": case["id"], "kind": case.get("kind"), "tags": case.get("calls"), "runs": runs})
+            if stopped:
+                print(f"Stopped, this model's runs end here: {stopped}")
+                break
     finally:
         server.stop()
-
-    if args.keep:
-        (workdir / "results.json").write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+        if args.keep:  # whatever ended the loop, the runs so far are kept
+            (workdir / "results.json").write_text(json.dumps(results, indent=2, ensure_ascii=False, default=str),
+                                                  encoding="utf-8")
     print()
     table, ok = judge.summarise(results, args.n, args.threshold)
     print(table)
-    print(f"model: {', '.join(sorted(seen_models)) or 'not reported'}")
-    print(model_line(results))
+    for line in model_lines(results, args.client, args.model, args.effort):
+        print(line)
     handshakes = [r.get("instructions") for res in results for r in res["runs"]]
     print(f"handshakes that carried the server's instructions: {sum(1 for h in handshakes if h)} of "
-          f"{len(handshakes)} runs (whether the CLI shows them to the model is what the cases measure)")
+          f"{len(handshakes)} runs (whether the client shows them to the model is what the cases measure)")
     failures = [(res["id"], i, r) for res in results for i, r in enumerate(res["runs"], 1) if not r["passed"]]
     if failures:
         print("\nFailed runs:")
@@ -471,7 +621,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nKept: {workdir}")
     else:
         shutil.rmtree(workdir, ignore_errors=True)
-    return 0 if ok else 1
+    return 0 if ok and not stopped else 1
 
 
 if __name__ == "__main__":

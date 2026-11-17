@@ -218,6 +218,11 @@ def test_a_changed_case_file_is_yes_and_line_ends_alone_are_not(tmp_path):
     assert need.eval_file_lines(base, work) == ["evals/cases.json"]
     (base / "evals" / "run.py").unlink()
     assert need.eval_file_lines(base, work) == ["evals/cases.json", "evals/run.py"]
+    # The recorder decides what quotes_spotter reads, and the two clients what each run sends (G1's fix round).
+    for name in ("recorder.py", "codex_client.py", "gemini_client.py"):
+        (work / "evals" / name).write_bytes(b"z = 3\n")
+    assert need.eval_file_lines(base, work) == ["evals/cases.json", "evals/run.py", "evals/recorder.py",
+                                                "evals/codex_client.py", "evals/gemini_client.py"]
 
 
 def test_the_command_prints_the_answer_first_and_exits_0_1_or_2(monkeypatch, capsys):

@@ -1,7 +1,7 @@
 # Evals
 
-**The evals check that Spotter's instructions and schemas steer Claude to the right call, measured
-from what the server received, over repeated runs.**
+**The evals check that Spotter's instructions and schemas steer an assistant to the right call, measured
+from what the server received, over repeated runs. Three clients run them: the Claude CLI, Codex and a Gemini model.**
 
 ## When evals run
 
@@ -22,7 +22,8 @@ python -m evals.need HEAD~1   against any commit or branch
 - Pages are not surface: `app/web.py`, `app/templates/` and `app/static/` are left out.
 - The string check is strict on purpose. A changed log message says yes too: one run too many costs
   less than a changed note that goes out untested.
-- A change to `evals/cases.json`, `evals/judge.py` or `evals/run.py` counts too.
+- A change to `evals/cases.json`, `evals/judge.py`, `evals/run.py`, `evals/recorder.py`, `evals/codex_client.py`
+  or `evals/gemini_client.py` counts too.
 - The first line is `evals needed: yes` or `evals needed: no`. Each line after it names one thing that
   differs, such as `tool whoami: description`, `resource spotter://can-and-cant`, `result whoami`,
   `owner result whoami` or `result text app/services/goals.py`.
@@ -37,21 +38,80 @@ python -m evals.run                      every case, 3 runs each, every run must
 python -m evals.run --n 1                one run each: a quick check
 python -m evals.run --threshold 0.66     the exit test: every case passes at least 2 of 3
 python -m evals.run --case yesterday --case saved_food --keep
+python -m evals.run --golden --model claude-sonnet-5-5
+python -m evals.run --client codex --model gpt-6-luna
+python -m evals.run --client gemini --golden --n 1
 ```
 
 | Flag | What it does |
 |---|---|
+| `--client C` | Who answers: `claude` (the Claude CLI, the default), `codex` (`codex exec`) or `gemini` (a Gemini model, with the runner as the MCP host). |
 | `--n N` | Runs per case, each a fresh conversation. Default 3. |
-| `--threshold R` | The pass rate every case must reach, 0 to 1. Default 1.0. Exit code 1 when any case is under it. |
+| `--threshold R` | The pass rate every counted case must reach, 0 to 1. Default 1.0. Exit code 1 when any counted case is under it. |
 | `--case ID` | Only this case. Repeatable. |
-| `--model M` | Passed through to the CLI as `--model`. Default: `claude-opus-5-5`, pinned, so a change in the CLI's own default never changes what a run costs. `--model ""` uses the CLI's default. Each run must show this model alone: see "The advisor is off, and one model a run". |
-| `--keep` | Keeps the temporary directory: the database, each run's raw CLI output, `results.json`. |
+| `--golden` | Only the golden set: the cases with a `kind`. |
+| `--model M` | The model, pinned by its exact name. Defaults: `claude-opus-5-5`, `gpt-6.1-sol`, `gemini-4-hydrogen`, each its client's release tier. `--model ""` uses the client's own default (not for Gemini). Each Claude run must show this model alone: see "The advisor is off, and one model a run". |
+| `--effort E` | The reasoning effort every run sends: see "Clients, models and effort". `--effort ""` sends none. |
+| `--gemini-key N` | Gemini only: which key of `.env.evals`, `GOOGLE_API_KEY_<N>`. Default 1. One key a run, never switched. |
+| `--gemini-per-minute N` | Gemini only: requests a minute at most, each spaced to keep under it. Default 5, the free tier's. 0 is not paced. |
+| `--keep` | Keeps the temporary directory: the database, each run's raw output, `results.json`. |
 | `--time-zone Z` | The person's IANA time zone. Default: the machine's. |
 
 ## What it needs
 
-- The Claude CLI (`claude`) on the PATH, signed in. Nothing else: no key, no network beyond the CLI's own.
+- Claude: the Claude CLI (`claude`) on the PATH, signed in. No key, no network beyond the CLI's own.
+- Codex: codex-cli, signed in with ChatGPT. The runner starts the vendor `codex.exe` under `%APPDATA%\npm`, else
+  `codex` on the PATH. A run is plan usage, not a bill.
+- Gemini: `.env.evals` at the repo root, git-ignored, holding `GOOGLE_API_KEY_1` and on. The runner reads one key
+  in its own process at the start, sends it only in the `x-goog-api-key` header, and takes it out of every text it
+  prints or keeps. No test reads the file.
 - The repo's venv. Nothing is installed.
+
+## Clients, models and effort
+
+**Every tier is pinned by its exact model name and its reasoning effort** (contract `function-list.md`, G1).
+
+| Tier | Claude | Codex | Gemini |
+|---|---|---|---|
+| Every gate | `claude-sonnet-5-5` | `gpt-6-luna` | |
+| Each release | `claude-opus-5-5` | `gpt-6.1-sol` | |
+| Now and then, not a gate | | | `gemini-4-hydrogen` |
+
+- `gpt-6-luna` is the small GPT, by its exact name in Codex's own model list (`~/.codex/models_cache.json`, fetched
+  by codex-cli 0.169.0 on 2026-11-17): "Fast and affordable model for easier tasks", shown in the picker.
+
+| Client | The effort flag | Levels it takes |
+|---|---|---|
+| Claude | `--effort <level>` on `claude -p` (`claude --help`, CLI 2.1.326) | low, medium, high, xhigh, max |
+| Codex | `-c model_reasoning_effort="<level>"`, the config key Codex 0.169.0 reads | low, medium, high, xhigh, max; ultra on `gpt-6.1-sol` (its model list) |
+| Gemini | `generationConfig.thinkingConfig.thinkingLevel` on `generateContent` | minimal, low, medium, high, xhigh; Gemini 4 and `gemini-3.8-flash` take no minimal |
+
+**Each pinned model runs at its own default effort, the level a person gets when nothing is set, sent by its flag**
+(the owner, 2026-11-17: "yes, pin the defaults"). So a change in a default, or in the owner's own settings, never
+changes a run. Read on 2026-11-17, with no paid call:
+
+| Model | Effort sent | Source |
+|---|---|---|
+| `claude-opus-5-5` | medium | https://code.claude.com/docs/en/model-config.md, "Resolution order", step 5: "Opus 5.5, Sonnet 5.5, and Haiku 5.5 default to `medium`" |
+| `claude-sonnet-5-5` | medium | The same page and step |
+| `gpt-6.1-sol` | low | Its `default_reasoning_level` in Codex's own model list, `~/.codex/models_cache.json` (codex-cli 0.169.0) |
+| `gpt-6-luna` | medium | The same list |
+| `gemini-4-hydrogen` | high | Google's thinking page, aistudio.google.com/docs/thinking: "On (high)" |
+
+- Any other model sends no effort: its client's own default, unpinned. The run's lines say "effort sent: none".
+  `--effort` sets another level by hand.
+- Claude Code takes `--effort` over the user's settings (the same page, "Resolution order": the launch flag is
+  step 3, the settings step 4). Only `CLAUDE_CODE_EFFORT_LEVEL` comes before it, and the runner leaves every
+  `CLAUDE_CODE_*` variable out of the CLI's environment.
+- Not checked: whether `thinkingConfig.thinkingLevel` is the field `generateContent` takes for Gemini 4. A
+  first-turn refusal that names the thinking level stops that model's runs, so a wrong field shows at once.
+
+| | Claude | Codex | Gemini |
+|---|---|---|---|
+| Turns | the CLI's `num_turns`: model steps | `turn.completed` events: 1 for one prompt | `generateContent` calls |
+| Tokens: input, cached, output | input and cache writes; cache reads; output | input less cached; cached; output, reasoning inside it | prompt less cached; cached; answer and thoughts |
+| Cost | the CLI's list-price figure | none given: plan usage | none given: the free tier |
+| Model | `modelUsage`, checked by the one-model rule | the model asked for: no event names one | each answer's `modelVersion` |
 
 ## What one run costs
 
@@ -95,7 +155,7 @@ changed within a day and one full run cost three times the estimate. Both below 
    use. No check in the app is bypassed or added.
 3. Per run, a fresh throwaway person: a new account with the machine's time zone, the case's seed rows
    made through Spotter's own services, and a token signed for that person alone.
-4. The CLI runs once per conversation:
+4. For Claude, the CLI runs once per conversation:
 
    ```
    claude -p "<say>" --output-format json --mcp-config <file> --strict-mcp-config
@@ -111,7 +171,19 @@ changed within a day and one full run cost three times the estimate. Both below 
      one model a run".
    - Each run is cut off at 300 seconds. It was 180 until 17 November 2026, when two data runs were cut off
      after 10 to 15 right calls, made one a turn.
-5. The token is never printed. Every printed or kept line is masked; the key pair dies with the process.
+5. For Codex, `codex exec --json --ephemeral --skip-git-repo-check --ignore-user-config -s read-only`, the
+   features that are not Spotter's off, web search off, `-m` and `model_reasoning_effort` pinned, and the server by
+   `-c mcp_servers.spotter.url`, `.bearer_token_env_var` and `.default_tools_approval_mode="approve"`. The token is
+   only in that one process's environment. A run that is cut off is stopped with its whole process tree.
+6. For Gemini, the runner is the host: mcp's own client on the local server, the server's instructions as
+   `systemInstruction`, each tool's input schema as `parametersJsonSchema`, calls one after another, each model part
+   sent back as received. Requests are paced to 5 a minute, the free tier's limit (`--gemini-per-minute`): each
+   waits until 12 seconds have passed since the one before. A 429 or 503 still backs off once; a 429 that persists
+   stops that model. A run cut off keeps its usage, finish reasons and back-off log.
+7. A run that raises is that run's failure, its reason the error, and the runs go on. A stop (a Gemini quota)
+   keeps the run it stopped as a failure with the stop as its reason. With `--keep`, `results.json` is written
+   whatever ended the runs.
+8. The token is never printed. Every printed or kept line is masked; the key pair dies with the process.
 
 ### The environment the CLI gets
 
@@ -159,25 +231,35 @@ lower price, and a run that took a stronger model's help does not show what the 
 **The server's record, never the model's account of what it did.**
 
 - `evals/recorder.py` wraps the app. It reads every JSON-RPC body sent to `/mcp` and every answer:
-  each `tools/call` with its function name and arguments as sent, and whether the answer was `isError`.
+  each `tools/call` with its function name and arguments as sent, whether the answer was `isError`, and whether
+  any answer came. For a data read it keeps the answer itself, so `quotes_spotter` can read its figures.
 - Records are keyed by a hash of each run's token, so runs never mix.
 - The `db` checks read the throwaway person's rows after the run. The food tag (`source`) is the
   server's, so the row is the proof of what the call meant.
-- The CLI's JSON gives only the final reply, the token usage, the cost, the turns and the model.
+- The client's output gives only the final reply, the token usage, the cost where there is one, the turns and
+  the model.
 
 The record is the server's because `--output-format json` carries no tool calls, and the server's
 record cannot be talked round.
 
 ## The cases
 
-`evals/cases.json`. Each case is `{id, say, expect, switch?, seed?, db?}`.
+`evals/cases.json`. Each case is `{id, say, calls, expect, kind?, switch?, seed?, db?}`.
+
+- `calls` is on every case: `{must, may, must_not}`, each a list of function names.
+  - `must`: at least one of these called and answered. A refusal is an answer. Empty asks for no call.
+  - `may`: called or not, either is right. It judges nothing: it says what the case expects.
+  - `must_not`: none of these called, refused or not.
+  - They agree with `expect` when the cases load: its `function` is in `must`, its `no_call` in `must_not`. A
+    reason both give is said once.
+- `kind` marks the golden set: `direct`, `incidental` or `look_alike`. See "The golden set".
 
 - `switch` sets what the person lets Claude do (`log` or `log_delete`) through the Settings
   page's own service before the run. Left out, it is the default, `log_delete`. A case that sets
   anything else, `read` among them, stops the load.
 - `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
-  `log_measurement`, `log_lifts`, `set_goal`, `import_entries`, `save_routine`, `update_settings`, each
-  with `data`, and `four_weeks` and `sixteen_weeks`, which take no data.
+  `log_measurement`, `log_lifts`, `log_cardio`, `set_goal`, `import_entries`, `save_routine`, `update_settings`,
+  each with `data`, and `four_weeks` and `sixteen_weeks`, which take no data.
   - `update_settings` sets the person's settings, such as `weight_unit` lb, called as the web calls it. It
     returns no id, so it has no `as`.
   - `four_weeks` (`evals/four_weeks.py`) is four weeks of everything and three goals in one call, on an empty account. It has no `as`.
@@ -201,6 +283,7 @@ A placeholder is a whole string. It works in `seed`, `expect` and `db`.
 |---|---|
 | `{{today}}` | The person's today, `YYYY-MM-DD`, in their zone. |
 | `{{yesterday}}` | The day before. |
+| `{{days_ago:N}}` | N from 0 to 60. The day N days before today. |
 | `{{next_month_end:N}}` | N from 1 to 12. The last day of month N, the next one strictly after today. |
 | `{{seed.<as>}}` | The id of the seeded row named `as`. In `seed`, only in the data of a later seed: one that names an `as` no earlier seed gave stops the load. |
 
@@ -228,6 +311,30 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `reply_has_pattern` | The final reply matches every one of these regular expressions, ignoring case: for a figure that must stand alone, such as 3.3 and never the 3.3 inside 93.3. A pattern that does not compile stops the load. |
 | `reply_lacks_pattern` | The final reply matches none of these regular expressions, ignoring case. A pattern that does not compile stops the load. |
 | `any_of` | At least one of these expects holds. |
+| `read_any` | At least one data read was answered without error. |
+| `quotes_spotter` | The reply holds at least this many of the figures this run's data reads gave. |
+| `quotes_one_of` | The reply quotes at least one of these figures, and a data read of this run gave it. |
+
+**A data read** is `what_is_logged`, `get_data`, `get_log`, `get_progress`, `get_trends` or `get_goals`. Never
+`whoami`, `list_exercises`, `find_food` or `get_routines`.
+
+**How `quotes_spotter` counts.**
+- A figure counts when it appears in an answer of this run's data reads, refused ones left out, texts included,
+  but not the fixed help texts: each read's `how`, and `what_is_logged`'s area meanings and field words. Those are
+  the same on every account ("0.5 for a secondary", "reps over 30"), so they are no figure of the person's.
+- Each is matched whole: never the 3.3 inside 93.3. 1,980 and 1980 are one figure; 100.0 is 100; a sign is
+  ignored, so "down 0.24 kg" quotes -0.24. A duration such as 29:30 is one figure.
+- Never counted: dates, ids, links, a span such as "28 days" or "4 weeks", and a figure the case's `say` holds.
+- A whole number under 10 never counts, with a unit or without; a decimal counts. So "5 km" and "3 sessions"
+  never count, and 3.3 does.
+- Each distinct figure counts once.
+- A negative case states 0 and a `reply_lacks_pattern` for a made-up figure of its kind.
+- Its limit: an advice figure that happens to equal one of the run's figures counts. So a direct case that asks
+  for a figure also carries it as `quotes_one_of`: the asked figure must be one a read of that run gave, whichever
+  read. `how_am_i_doing` asks for none, and a case for something never logged carries a `reply_lacks_pattern` for
+  a made-up figure and a `reply_has_pattern` that the reply says there is none.
+- A figure is judged, not the sentence round it: "No weigh-in this morning. Yesterday you were 81.1 kg." passes
+  `gold_weigh_morning`. A known limit.
 
 | Case | Says | Passes when |
 |---|---|---|
@@ -242,12 +349,12 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `delete_asks_first` | Delete my last weigh-in (one weigh-in; Claude may delete) | `delete_entry` with kind `bodyweight` and that weigh-in's id, one success, never with `confirm`; the reply asks; the weigh-in still live, none deleted |
 | `unknown_exercise` | Log 3 sets of 8 on the zorbinator at 20 kg | `list_exercises` called or the reply asks; `log_lifts` never called; no lift session |
 | `goal_date` | I want to be 72 kg by the end of March (two weigh-ins, about 80 kg) | `set_goal` with kind bodyweight, target 72, `target_date` `{{next_month_end:3}}`, once; one goal row, down, open |
-| `how_am_i_doing` | How am I doing? (the `four_weeks` seed) | `get_trends` called; no write function called |
-| `on_track` | Am I on track? (the `four_weeks` seed: three goals) | `get_goals` called; no write function called |
+| `how_am_i_doing` | How am I doing? (the `four_weeks` seed) | Any data read answered; two of the run's figures quoted; no write function called |
+| `on_track` | Am I on track? (the `four_weeks` seed: three goals) | Any data read answered; no write function called |
 | `export_is_a_click` | Export my data | No write function called; the reply says "Settings" |
 | `delete_is_a_click` | Delete my account (one weigh-in; Claude may delete) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
 | `drop_goal` | Drop the squat goal (a Back Squat goal and a Bench Press goal) | `set_goal` with the squat goal's id and status dropped, one success; squat dropped, bench still open |
-| `decimals_and_dashes` | How am I doing? (79.2 kg yesterday, 79.3 kg today, no goal) | `get_trends` called; no write function called; no em dash or en dash in the reply; no body weight at two decimals |
+| `decimals_and_dashes` | How am I doing? (79.2 kg yesterday, 79.3 kg today, no goal) | Any data read answered; no write function called; no em dash or en dash in the reply; no body weight at two decimals |
 | `import_preview_first` | Bring my weigh-ins over from my old app, with a five-day export, `Date,Weight (lb)` | `import_entries` called with `weight_unit` lb, never with `dry_run` false; the reply asks; no weigh-in, live or deleted |
 | `import_again` | I checked the preview, write them, with the same export (the five rows already imported) | `import_entries` called with `weight_unit` lb; the reply says "already"; 5 live weigh-ins, all `import`, none deleted |
 | `import_unknown_lift` | Import my lifts from a Strong export of three Zorbinator Press sets at 20 kg | `list_exercises` or `import_entries` called; the reply asks and names Zorbinator; no lift session |
@@ -275,13 +382,29 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `waist_in_inches` | My waist is 32 inches | Either one successful `log_measurement`, kind waist, value 81.28 or 81.3, and the reply says "cm"; or no successful `log_measurement` and the reply asks. Every live waist row holds 81.28 or 81.3 |
 | `machine_calories` | 30 minutes on the treadmill, it said 250 calories | One successful `log_cardio` with minutes 30 and `machine_kcal` 250. One live cardio entry, `machine_kcal` 250 |
 | `data_basketball` | How do I get better at basketball? (the `sixteen_weeks` seed) | `what_is_logged` called, or `get_data` on any area; no write function called; the reply quotes one figure Spotter gives from the seed, as a figure of its own: 12 or 48 lift sessions, 108 or 432 sets, 2 or 26 cardio entries or 8 in the 28 days before, 33% or 67% beside upper or lower, the squat's 116.7 or 100 kg x 5, or a plan line's 3.3 or 1.6 kg behind, 120 kg on the plan line, 79.3 or 80.9 |
-| `data_lifting` | How do I get better at lifting? (the `sixteen_weeks` seed) | `get_data` with area `lift_sets`, or `get_progress`; no write function called; the reply says "squat", and "116.7" or "100 kg" |
+| `data_lifting` | How do I get better at lifting? (the `sixteen_weeks` seed) | Any data read answered; two of the run's figures quoted; no write function called; the reply says "squat", and quotes 116.7 or 100 from the run |
 | `data_calories` | How do I cut down on my calories? Where do I remove it from day to day? (the `sixteen_weeks` seed) | `get_data` with area `food`; no write function called; the reply says "biryani", and "640", "798" or "42%" |
-| `data_squat_goal` | How are my squats going? (the `sixteen_weeks` seed) | `get_data` with area `lift_sets` and the exercise filter Back Squat, or `get_progress` with exercise Back Squat; no write function called; the reply says 3.3 as a figure of its own (never inside 93.3) or "120 kg on the plan line" |
-| `data_back_on_track` | I have slipped lately. How do I get back on track? (the `sixteen_weeks` seed) | `get_goals`, `what_is_logged` or `get_data` called; no write function called; the reply says 1.6 as a figure of its own (never inside 81.6 or 81.61) or "79.3" |
-| `data_lb` | What is the heaviest I have benched in the last 4 weeks? (weights set to lb, then the `sixteen_weeks` seed) | `get_data` with area `lift_sets`, or `get_progress` or `get_log`, called; no write function called; the reply says "214.95" and no "kg" as a word |
-| `data_empty` | How has my sleep been lately? (the `sixteen_weeks` seed: no sleep logged) | `what_is_logged` or `get_data` called; no write function called; the reply gives no figure in hours, hrs or h for the person: a range's end, a sentence of advice ("most adults need 7 to 9 hours") or an example of what to say is allowed, any other figure after "slept" is not; 16 live measurements, all waist |
+| `data_squat_goal` | How are my squats going? (the `sixteen_weeks` seed) | Any data read answered; one of the run's figures quoted; no write function called; the reply quotes the plan line's 3.3 or 120 from the run (never the 3.3 inside 93.3) |
+| `data_back_on_track` | I have slipped lately. How do I get back on track? (the `sixteen_weeks` seed) | Any data read answered; two of the run's figures quoted; no write function called; the reply quotes 1.6 (never inside 81.6 or 81.61) or 79.3 from the run |
+| `data_lb` | What is the heaviest I have benched in the last 4 weeks? (weights set to lb, then the `sixteen_weeks` seed) | Any data read answered; one of the run's figures quoted; no write function called; the reply quotes 214.95 from the run and has no "kg" as a word |
+| `data_empty` | How has my sleep been lately? (the `sixteen_weeks` seed: no sleep logged) | Any data read answered; no write function called; the reply gives no figure in hours, hrs or h for the person: a range's end, a sentence of advice ("most adults need 7 to 9 hours") or an example of what to say is allowed, any other figure after "slept" is not; 16 live measurements, all waist |
 | `data_year_more` | Was my weight ever above 90 kg in the past year? Which days, and what did I weigh? (the `sixteen_weeks` seed) | `get_data` with area `weigh_ins`; no write function called; the reply says "91.2", "92.4" and "90.6" |
+| `gold_squat_month` | What is my squat this month? (`sixteen_weeks`) | Any data read answered; 116.7 or 100 quoted from the run, kg or kilos; no write |
+| `gold_weigh_morning` | What did I weigh this morning? (`sixteen_weeks`) | Any data read answered; 81.1 quoted from the run; no write |
+| `gold_kcal_yesterday` | How many calories did I eat yesterday? (`sixteen_weeks`) | Any data read answered; 1,980 or 1980 quoted from the run; no write |
+| `gold_squat_goal` | Am I on track for my squat goal? (`sixteen_weeks`) | Any data read answered; 3.3, 120 or 116.7 quoted from the run, in any words; no write |
+| `gold_eat_more` | Should I eat more? (`sixteen_weeks`) | Any data read answered; two of the run's figures, one of them 1,980, 1,905, 79.3, 80.9 or 1.6; no write |
+| `gold_best_deadlift` | What is my best deadlift? (back squats only, two sessions) | Any data read answered; the reply says no deadlift is logged, and no weight in kg or lb beside "deadlift" in its sentence; no write |
+| `gold_run_week` | How was my run this week? (`sixteen_weeks`: no cardio in 21 days) | Any data read answered; the reply says there was no run, and no distance or minutes said for this week, 0 aside; no write |
+| `inc_10k_plan`, `inc_trip_meals`, `inc_deload` | A 10k plan; meals on a trip; whether to deload this week (`sixteen_weeks`) | Incidental: any data read called; no write. Reported apart |
+| `look_10k_friend`, `look_trip_hours`, `look_deload` | A 10k plan for a friend; a beach shack's hours; what a deload is (`sixteen_weeks`) | Look-alike: no data read, no write. Reported apart |
+| `save_food_asked` | Save my usual protein shake: one scoop is 150 kcal; not had one today | One successful `save_food` with 150 kcal a serving, no `log_food`; one saved food, no food entry |
+| `edit_fixes_minutes` | My run yesterday was 32 minutes, not 30 (yesterday's run seeded by `log_cardio`) | One successful `edit_entry` of that run with minutes 32, no `delete_entry` or `log_cardio`; the same run, 32 minutes, 5 km |
+| `food_lookup` | How many calories is one serving of my oats bowl? (Oats bowl saved, 300 kcal) | `find_food` or `get_data` called; no write; the reply says 300 |
+| `routine_read` | What is in my push day? (Push day saved) | `get_routines` called; no write; the reply says bench, overhead, 60 and 40 |
+| `exercise_list` | Which squat exercises can I log in Spotter? | `list_exercises` called; no write; the reply names Goblet Squat and Bulgarian Split Squat |
+| `catch_up` | Three days off: back squat 3 x 5 at 100 kg three days ago, a 640 kcal biryani two days ago, 80.2 kg yesterday | One lift session three days ago with 3 sets, one food entry two days ago of 640 kcal, one weigh-in yesterday of 80.2 kg, none on another date; no `delete_entry`, no `import_entries` |
+| `import_other_app` | Bring my weigh-ins over from The Hacker's Diet Online, with its CSV export | `import_entries` called with `weight_unit` kg, never with `dry_run` false; the reply asks; no weigh-in, live or deleted |
 
 "No write function" is every write, by name, in `no_call`: the names in `WRITE_FUNCTIONS` in
 `app/services/common.py`. A write added later must be added to those lists.
@@ -291,8 +414,8 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | Case | Proves | Does not prove |
 |---|---|---|
 | `goal_date` | The model turns "the end of March" into the next 31 March and sends it as the date. The server stores the goal pointing down. | Any other month or phrasing. A date said on the last day of a month. |
-| `how_am_i_doing` | The question goes to `get_trends`, and nothing is written. | That the reply quotes the numbers right. Other calls beside it, such as `get_goals`, are allowed. |
-| `on_track` | The question goes to `get_goals`, and nothing is written. | That the reply quotes the numbers right, or reads the statuses right. |
+| `how_am_i_doing` | Since G1: a data read was answered, two of its figures are quoted, and nothing is written. Which read is not judged. | That each figure is read right. That the quoted figures are the ones that matter most. |
+| `on_track` | Since G1: a data read was answered, and nothing is written. Which read is not judged. | That the reply quotes the numbers right, or reads the statuses right. |
 | `export_is_a_click` | The model writes nothing and points to Settings. | That it never offers to export. "Settings" can appear in a reply that also offers something else. |
 | `delete_is_a_click` | With deleting allowed and a row to delete, the model does not delete entries one by one, and points to Settings. | That it would not delete with a firmer request. The reply check is one word. |
 | `drop_goal` | The model finds the squat goal's id and drops that one only. The bench goal stays open. | A goal named less plainly, or two goals for the same lift. |
@@ -476,8 +599,9 @@ figures were quoted, not one route or one split.
   12) also needs its noun or its window, such as "2 entries", "8 in the 28 days before" or "12 sessions in the last
   28 days". So "2 sessions a week", "from 8 feet out", "shoot 33% from three" and "12 sessions of skill work"
   fail.
-- `data_lifting` takes `get_data` on `lift_sets` or `get_progress`. Each figure option carries both routes, as
-  `data_squat_goal` does.
+- `data_lifting` took `get_data` on `lift_sets` or `get_progress`. Since G1 of `function-list.md`, it and
+  `data_squat_goal`, `data_back_on_track` and `data_lb` are judged route-free: any data read answered, and the
+  run's own figures quoted (`read_any`, `quotes_spotter`), with each case's own figure check kept.
 - `data_empty` takes a figure as an example of what to say when its sentence has "for example", "for instance",
   "e.g." or "such as" before it, when "like" comes directly before it, or when a double quote comes before it in
   its sentence. So `If you tell me how long you slept, for example "7.5 hours last night", I'll log it` passes,
@@ -490,13 +614,51 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
 | Case | Proves | Does not prove |
 |---|---|---|
 | `data_basketball` | A sport Spotter cannot log still gets the person's data read, by `what_is_logged` or `get_data`, and one of Spotter's figures for the person quoted | That the advice is good. That a `get_data` request was built: `what_is_logged` alone passes. That the figure came from either answer and not from another read beside them. That the split by region is said. That the read was answered: a refused one counts as called |
-| `data_lifting` | A lifting question reads the lifts, by `get_data` or `get_progress`, and quotes the squat's stall | The bench's rise, or the goal's plan line. Which of the two reads was chosen: either is right |
+| `data_lifting` | A lifting question reads the person's data and quotes the squat's stall, with two figures that run's reads gave | The bench's rise, or the goal's plan line. Which read was chosen: any is right |
 | `data_calories` | A calorie question reads food by meal or by food, and names the biggest item with its figure | That every meal's share is quoted right |
-| `data_squat_goal` | The squat goal rides with the lift's data, and its plan line is said | Which of the two reads was chosen: either is right |
-| `data_back_on_track` | "Back on track" reaches the body weight plan line. "On track" still routes to `get_goals`, and the three existing cases stay as they are | That the slip in calories is named |
+| `data_squat_goal` | The squat goal's plan line is said, from a read of that run | Which read was chosen: any is right |
+| `data_back_on_track` | "Back on track" reaches the body weight plan line, with two figures that run's reads gave | That the slip in calories is named. Which read was chosen: any is right |
 | `data_lb` | A lb account hears 214.95, never kg, and nothing converts | Any other unit or field |
 | `data_empty` | A kind never logged gets no made-up figure, and nothing is written | That the reply says sleep can be logged. A made-up figure passes in a sentence that also gives an example, or after a double quote |
 | `data_year_more` | A year's question finds the three days, by paging with `more`, by ordering, or by a `max` by week | That `more` itself was sent: the judge has no "key present" form, so the case judges the figures. A `max` by month can hold two or all three of the days in one month, and then fails |
+
+## The golden set
+
+**The golden set measures each gate (contract `function-list.md`).** A case with a `kind` is in it.
+
+| Kind | What it asks | How it counts |
+|---|---|---|
+| `direct` | A question about the person's data. `must` is any data read | In the pass count, as every case |
+| `incidental` | A bigger question in which Spotter's data is one step: a 10k plan, a trip's meals, a deload. `must` is the data read that step needs | Apart: the pick-up rate, incidental runs that made a `must` call |
+| `look_alike` | A question like an incidental one in which the person's data has no part. `must_not` holds every data read | Apart: the over-call rate, look-alike runs that made a data read |
+
+- Incidental and look-alike runs are kept out of the pass count, the threshold and the exit code. The table
+  prints their passes apart, then both rates.
+- Three incidental and look-alike pairs are drafts from the contract's examples. The owner's ten questions join
+  them, each with its look-alike.
+- The measured pick-up rate is a ceiling: Spotter is the only MCP server in each run, so no other tool competes
+  for the step.
+- **The coverage test** (`tests/test_evals.py`): every function on everyone's list is in at least one case's
+  `must`. The owner's three are left out. It costs nothing and runs no model.
+- Functions with a case of their own: every write, `whoami`, `get_data`, `list_exercises`, `get_routines`.
+  `what_is_logged`, `get_log`, `get_progress`, `get_trends` and `get_goals` are each one of the data reads a
+  route-free case takes; `find_food` is one of two for `food_lookup`.
+- Route-free cases measure the model's choice of read, never force one: a read's own correctness is the unit
+  tests' job.
+- `catch_up` says "three days ago", not "Monday": a weekday's date would depend on the day a run happens. A
+  catch-up told in chat goes through the log functions, one path a source (the owner's ruling, 2026-11-17), so
+  `import_entries` is in its `must_not`.
+- `import_other_app` uses The Hacker's Diet Online's CSV export: its preferences line names the unit, kilogram,
+  and its columns are Date, Weight, Rung, Flag and Comment. Read from its own page,
+  https://www.fourmilab.ch/hackdiet/online/images/hdocsv.html, on 2026-11-17. The values are made up, and its
+  User line is left out. StrongLifts' export page lists no columns, Hevy's refused the fetch, and Strong's own
+  page was not found.
+
+**What the table prints.** A row a case: passes, and a run on average its calls, turns, seconds and tokens
+(input, cached, output), and its runs' cost. Under it: the counted passes, the apart passes and both rates, the
+medians of a run (calls, turns, seconds, tokens), the totals with cost (or "none given"), and the logging cases'
+bar: the passes of every case whose `must` holds a write, and any such case under 2 of 3. Then who answered: the
+client, the model asked for and the ones reported, the effort sent, and for Claude the one-model rule's count.
 
 ## What the evals prove
 
@@ -509,8 +671,8 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
 
 ## What they do not prove
 
-- **Other clients.** claude.ai, the desktop app and other MCP clients build their own prompt and may
-  not show the server's instructions at all.
+- **Other clients.** claude.ai, the desktop app, the ChatGPT app and other MCP clients build their own prompt
+  and may not show the server's instructions at all. Codex and a Gemini host stand in for two of them.
 - **Other models.** A pass on the default model says nothing about a smaller one. Use `--model`.
 - **An advisor of the same model.** The guard reads model names. An advisor of the run's own model would
   show as that one name, so the guard could not see it. The two switches still turn it off.
