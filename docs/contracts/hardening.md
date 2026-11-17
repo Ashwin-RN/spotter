@@ -340,3 +340,16 @@ Not run here, left for the Postgres run:
 - `pg_constraint` and the deferred key's account and hard deletes;
 - the shared-database tests of `tests/test_hardening_schema.py`;
 - whether a reader that holds a later table before `"user"` deadlocks with 0012 (the review's question 1).
+
+## The Postgres run, 2026-11-17
+
+On `bc5bb71` (H1 and H2 joined), a throwaway Postgres 17 container, removed with its volume after. Steps 1 to 7 and 9 passed; step 8 gave 1,719 of 1,720.
+
+| Step | Seen |
+|---|---|
+| 1 to 6 | Rows of every kind written by `fd83753`'s code at `0011`, kept through the upgrade, the down and up, and each stop. Every rule in `pg_constraint`; NaN, Infinity and -Infinity each refused; a cross-owner link taken, then refused at commit; `call_log.id` and its sequence bigint; the downgrade's three stops each gave their line and left the database at `0012` |
+| 7 | D1: the delete waited on the row lock while the switch went to log, then got `not_allowed` word for word; nothing was deleted. D2: the export saw 9 sets, the state before a set added mid-export (11 with the one-moment read turned off) |
+| 8 | The one failure was the test's own: `test_the_goal_shape_rules_bind_only_their_own_kind` used a kind of 18 characters in a `String(16)` column, which SQLite never checks. Now `added_later`. `tests/test_routines.py` 96 of 96: `get_routines` sends 3 statements, one for its weights |
+| 9 | `history` at 2,000 sessions: 0.212 s (4.576 s on `fd83753`). `get_log` of a day 600 days back: 0.136 s (4.648 s). A sweep of 100,000 old call-log rows: three runs, 0.57 s, 0.34 s and 0.01 s of work, 50,000 rows at most a run, the 10-minute retry between them, the 100 recent rows kept |
+
+A correction to the owner's table at the top: for an old day, `get_log` now loads only that day's food, weigh-ins, measurements and cardio, but still every lift session up to that day, since its bests need the earlier sessions (D3, as decided). Not run: the deadlock question the H2 note leaves open.

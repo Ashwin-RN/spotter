@@ -249,7 +249,7 @@ def test_the_goal_shape_rules_bind_only_their_own_kind(ids):
     measure = {"kind": "measurement", "unit": "cm"}
     _refused(engine, "goal", ids, measure)  # no measurement kind
     _taken(engine, "goal", ids, {**measure, "measurement_kind": "waist"})
-    for kind in ("bodyweight", "cardio_weekly", "calories", "sessions", "a_kind_added_later"):
+    for kind in ("bodyweight", "cardio_weekly", "calories", "sessions", "added_later"):
         _taken(engine, "goal", ids, {"kind": kind})  # a new kind is free
 
 
