@@ -100,6 +100,10 @@ def test_every_figure_the_cases_look_for_holds(make_user, clock, today):
         groups = {r["region"]: (r["sets_sum"], r["sets_share"]) for r in table(answer)}
         assert set(groups) == {"upper", "lower"} and groups["upper"][0] == 2 * groups["lower"][0], start
         assert (groups["upper"][1], groups["lower"][1]) == (67, 33)
+    # data_basketball also passes on the counts what_is_logged gives: entries, the last 28 days, the 28 before.
+    areas = {a["area"]: a for a in services.what_is_logged(user_id)["areas"]}
+    assert [(areas[n]["entries"], areas[n]["last_28d"], areas[n]["prior_28d"]) for n in
+            ("lift_sessions", "lift_sets", "cardio")] == [(48, 12, 12), (432, 108, 108), (26, 2, 8)]
 
     # data_lifting and data_squat_goal: the squat at 100 kg x 5 since its 13th A session, so an estimated max of
     # 116.7 kg in every range of the last 7 weeks, and its goal rides with the lift's data.
@@ -313,19 +317,35 @@ WAIST_ROWS = {"measurement": [{"id": i, "kind": "waist", "value": 92 - 0.25 * i,
                               for i in range(16)]}
 
 # id: (passing runs, failing runs). Each run: (calls, reply, rows).
+CARDIO_BY_MONTH = ("get_data", {"area": "cardio", "from_date": "2026-07-29", "group_by": ["month"],
+                                 "totals": {"minutes": ["sum", "count"], "distance_km": ["sum"]}})
 RUNS = {
+    # The release run of 2026-11-17 (contract, notes): the data read by what_is_logged or get_data, any area, and
+    # any figure Spotter gave, quoted. The owner chose to take what_is_logged alone (option A).
     "data_basketball": (
         [(ran(WHO, CATALOGUE, LIFT_SETS), "Your sets are 67% upper body and 33% lower body.", {}),
-         (ran(LIFT_SETS), "About two thirds of your sets are upper body.", {})],
-        [(ran(WHO, CATALOGUE), "Your sets are 67% upper body and 33% lower body.", {}),  # never read the sets
-         (ran(("get_data", {"area": "food"})), "Your sets are 67% upper body.", {}),     # read another area
+         (ran(("get_data", {"area": "food"})), "You did 12 lift sessions in the last 28 days.", {}),  # another area
+         (ran(CATALOGUE, CARDIO_BY_MONTH),
+          "Cardio has dropped: 2 entries in the last 28 days, against 8 in the 28 days before.", {}),
+         (ran(WHO, CATALOGUE, ("get_trends", {}), CARDIO_BY_MONTH),  # the release run's run 1
+          'Your squat goal: Spotter says "116.7 kg now against 120 kg on the plan line today: 3.3 kg behind."', {}),
+         (ran(WHO, CATALOGUE),  # the release run's runs 2 and 3: what_is_logged alone, its figures quoted
+          "Your lifting is steady: 12 sessions in the last 28 days and 12 in the 28 before.\nCardio has dropped: 2 "
+          "entries in the last 28 days against 8 in the 28 before, the last on 27 Oct.", {})],
+        [(ran(WHO), "You did 12 lift sessions in the last 28 days.", {}),               # a figure, no Spotter read
+         (ran(WHO, ("get_trends", {}), ("get_goals", {})), "Your squat goal: 3.3 kg behind.", {}),  # other reads
          (ran(LIFT_SETS), "Train more legs and core.", {}),                              # no figure quoted
+         (ran(CATALOGUE), "Most of your training is upper body. Add jumps.", {}),        # no figure quoted
+         (ran(LIFT_SETS), "Shoot 33% from three. Do 2 sessions a week of 3 to 5 sets of 8.", {}),  # none Spotter's
          (ran(LIFT_SETS, ("log_lifts", {"sets": []})), "Your sets are 67% upper body.", {})]),  # wrote
     "data_lifting": (
-        [(ran(LIFT_SETS), "Back Squat has sat at 100 kg for 5 since August: an estimated max of 116.7 kg.", {})],
+        [(ran(LIFT_SETS), "Back Squat has sat at 100 kg for 5 since August: an estimated max of 116.7 kg.", {}),
+         (ran(("get_progress", {"exercise": "Back Squat"})), "Back Squat is at 116.7 kg.", {}),  # the lift's own read
+         (ran(WHO, ("get_progress", {}), ("get_trends", {}), ("get_goals", {})),  # the release run's runs 2 and 3
+          "Your last three squat days were all 3 x 5 at 100 kg. Estimated max 116.7 kg since Wed 23 Sep.", {})],
         [(ran(LIFT_SETS), "Your squat has stalled. Add weight.", {}),
          (ran(("get_data", {"area": "cardio"})), "Back Squat is at 116.7 kg.", {}),  # read another area
-         (ran(("get_progress", {"exercise": "Back Squat"})), "Back Squat is at 116.7 kg.", {}),  # no get_data
+         (ran(("get_goals", {})), "Back Squat is at 116.7 kg.", {}),                 # read no lifts
          (ran(LIFT_SETS, ("set_goal", {})), "Back Squat is at 116.7 kg.", {})]),
     "data_calories": (
         [(ran(("get_data", {"area": "food", "group_by": ["meal"]}), ("get_data", {"area": "food", "group_by": ["food"]})),
@@ -398,20 +418,60 @@ SLEEP_GOOD = ["Nothing is logged for sleep. Most adults aim for 7 to 9 hours a n
               "Spotter has no sleep logged.\nYou should aim for 7 to 9 hours.",
               "Sleep has 0 entries. You can log sleep_hours as a measurement, in h.",
               "No sleep is logged. Your waist went from 92 cm to 88.25 cm. Adults need 7 or 8 hours.",
-              "The average adult needs 7 to 9 hours."]
+              "The average adult needs 7 to 9 hours.",
+              # The release run of 2026-11-17: a figure given as an example of what to say, word for word first.
+              "I can't tell you how you've been sleeping, because you haven't logged any sleep in Spotter.\n\nI "
+              "searched your whole history, from 19 Nov 2025 to today, and found no sleep entries.\nWaist is the only "
+              "measurement you've logged so far.\n\nSpotter can track sleep in hours. If you tell me how long you "
+              "slept, for example \"7.5 hours last night\", I'll log it. Once you've logged a week or two, I can tell "
+              "you how your sleep is going.",
+              "If you tell me how long you slept, for example 7.5 hours, I'll log it.",
+              "Tell me your sleep, e.g. 8 hours, and I'll log it.",
+              "Log it in hours (e.g. 8 hours) and I'll track it.",
+              "Send me a number like 7 hours and I'll log it.",
+              "Tell me how long you slept, like 7 hours, and I'll log it.",
+              "Just say \"7 hours last night\" and I'll log it.",
+              "Just tell me “slept 6.5 hours” and I'll log it.",
+              "Spotter can hold sleep hours, such as 7.5 h a night.",
+              "For example: 7 hours last night.",
+              "For instance, 8 hours."]
 SLEEP_BAD = ["You have slept 6.5 hours a night on average.",
              "Your sleep: 7 hours most nights, 5h on Friday.",
              "Lately you slept about 6 hours a night.",
              "Your sleep averaged 7.2 hrs over the last 28 days.",
              "No sleep is logged, but you probably get 6 hours.",
-             "You slept 6 to 7 hours a night."]
+             "You slept 6 to 7 hours a night.",
+             # Still a figure for the person: no example marker before it in its sentence, or "like" not just before.
+             "You slept 7 hours.",
+             "About 6.5 hours a night, by your log.",
+             "You sleep about 6.5 hours a night.",
+             "You slept about 6.5 hours a night. For example, last night was short.",
+             "Most adults need 8 hours, and you slept 6 hours.",
+             "No sleep is logged. You probably get 6 hours, e.g. on work nights.",
+             "Like most people, you get about 6 hours.",
+             "It looks like you slept 6 hours a night."]
 SQUAT_ROUTE = ("get_progress", {"exercise": "Back Squat"})
 REVIEWED = {  # id: (the route's calls, rows, replies that pass, replies that fail)
+    # The eval fix round of 2026-11-17: every figure Spotter gives from the seed passes; advice figures do not.
     "data_basketball": (ran(LIFT_SETS), {},
-                        ["Your sets are 67% upper body.", "About a third of your sets are lower body.",
-                         "Two thirds of your sets are upper body."],
+                        ["Your sets are 67% upper body.", "Lower body is 33% of your sets.",
+                         "12 lift sessions in the last 28 days and 12 in the 28 before.",
+                         "You did 12 sessions in the last 4 weeks.", "48 sessions since 29 Jul.",
+                         "108 sets in the last 28 days, 432 in all.",
+                         "Cardio: 2 entries in the last 28 days, against 8 in the 28 days before.",
+                         "2 cardio sessions in the past 28 days, down from 8.",
+                         "Cardio went from 8 to 2.", "26 cardio entries, none since 27 Oct.",
+                         "Back Squat: 100 kg x 5, an estimated max of 116.7 kg.", "Squat goal: 3.3 kg behind.",
+                         "116.7 kg now against 120 kg on the plan line.", "You should be at 79.3 kg today."],
                         ["Add a third day of conditioning to your week.", "Do two thirds more court work.",
-                         "Most of your sets are upper body."]),
+                         "Most of your sets are upper body.", "About a third of your sets are lower body.",
+                         "Shoot 33% from three and you break even.", "Do 2 sessions a week while you're fresh.",
+                         "Start from 8 feet out and work back.", "Work up from 8 reps to 12.",
+                         "Do 12 sessions of skill work before the season.", "Do 12 sessions over the next 4 weeks.",
+                         "A 12-week program: 3 to 5 sets of 3 to 5 reps.", "Line sprints, 8 in a row.",
+                         "Add 2 cardio sessions a week.", "Rest 120 seconds between sets.",
+                         "Eat 1.6 to 2.2 g of protein per kg.", "Hold it for 116.75 seconds.",
+                         "A 1,108 sets program."]),
     "data_lifting": (ran(LIFT_SETS), {},
                      ["Back Squat has stalled at 100 kg x 5.", "Your squat's estimated max is 116.7 kg."],
                      ["Your deadlift went from 100 kg to 157.5 kg in 16 weeks.", "Your squat has stalled.",

@@ -544,13 +544,18 @@
     "say": "How do I get better at basketball?",
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {
-      "function": "get_data",
-      "inputs_include": {"area": "lift_sets"},
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"],
-      "any_of": [{"reply_has": ["33%"]}, {"reply_has": ["67%"]}, {"reply_has": ["a third of"]},
-                 {"reply_has": ["two thirds of"]}]
+      "any_of": [
+        {"reply_has_pattern": ["(?<![\\d.,])(?:12|48)(?!\\d|[.,]\\d)\\s+lift(?:ing)?\\s+(?:sessions|workouts)\\b|(?<![\\d.,])(?:12|48)(?!\\d|[.,]\\d)\\s+(?:sessions|workouts)\\b[^.!?\\n]{0,12}?\\b(?:last|past)\\s+(?:28 days|4 weeks|four weeks|month)\\b|(?<![\\d.,])48(?!\\d|[.,]\\d)\\s+(?:sessions|workouts)\\s+since\\b"], "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]},
+        {"reply_has_pattern": ["(?<![\\d.,])(?:108|432)(?!\\d|[.,]\\d)\\s+(?:lift\\s+)?sets\\b"], "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]},
+        {"reply_has_pattern": ["(?<![\\d.,])(?:2|26)(?!\\d|[.,]\\d)\\s+(?:cardio\\s+)?entries\\b|(?<![\\d.,])(?:2|26)(?!\\d|[.,]\\d)\\s+cardio\\s+(?:sessions|workouts)\\b[^.!?\\n]{0,12}?\\b(?:last|past)\\s+(?:28 days|4 weeks|four weeks|month)\\b"], "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]},
+        {"reply_has_pattern": ["\\b(?:against|down from)\\s+8(?!\\d|[.,]\\d)(?!\\s*(?:reps|sets|kg|lb|x|\u00d7|to\\b|-|feet|ft|min|minutes|seconds|s\\b))|(?<![\\d.,])8(?!\\d|[.,]\\d)\\s+in\\s+the\\s+(?:(?:28|four|4)\\s+(?:days\\s+|weeks\\s+)?(?:before|prior)|(?:previous|prior)\\s+(?:28 days|4 weeks|four weeks))\\b|\\bfrom\\s+8\\s+to\\s+2(?!\\d|[.,]\\d)(?!\\s*(?:reps|sets|kg|lb|x|\u00d7|to\\b|-|feet|ft|min|minutes|seconds|s\\b))"], "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]},
+        {"reply_has_pattern": ["\\b(?:upper|lower)\\b[^.!?\\n]{0,40}?(?<![\\d.,])(?:33|67)\\s*%|(?<![\\d.,])(?:33|67)\\s*%[^.!?\\n]{0,40}?\\b(?:upper|lower)\\b"], "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]},
+        {"reply_has_pattern": ["(?<![\\d.,])116\\.7(?!\\d)|(?<![\\d.,])100\\s*kg\\s*(?:x|\u00d7)\\s*5(?!\\d)"], "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]},
+        {"reply_has_pattern": ["(?<![\\d.,])(?:3\\.3|1\\.6)\\s*kg\\s+behind|(?<![\\d.,])120\\s*kg\\s+on\\s+the\\s+plan\\s+line|(?<![\\d.,])(?:79\\.3|80\\.9)(?!\\d)"], "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]}
+      ]
     }
   },
   {
@@ -558,13 +563,16 @@
     "say": "How do I get better at lifting?",
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {
-      "function": "get_data",
-      "inputs_include": {"area": "lift_sets"},
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"],
       "reply_has": ["squat"],
-      "any_of": [{"reply_has": ["116.7"]}, {"reply_has": ["100 kg"]}]
+      "any_of": [{"reply_has": ["116.7"],
+                  "any_of": [{"function": "get_data", "inputs_include": {"area": "lift_sets"}},
+                             {"function": "get_progress"}]},
+                 {"reply_has": ["100 kg"],
+                  "any_of": [{"function": "get_data", "inputs_include": {"area": "lift_sets"}},
+                             {"function": "get_progress"}]}]
     }
   },
   {
@@ -637,8 +645,8 @@
       "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
                   "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
                   "import_entries", "send_feedback", "save_routine"],
-      "reply_lacks_pattern": ["(?m)(?:^|[.!?:]\\s+)(?:(?!\\b(?:aim|aims|need|needs|recommend\\w*|advice|advis\\w*|guideline\\w*|most adults|should)\\b)(?:[^.!?\\n]|\\.(?=\\d)))*?(?<![\\d.])(?<!to )(?<!and )(?<!or )(?<!-)(?<!\u2013)\\d+(?:\\.\\d+)?\\s*(?:hours|hrs|h)\\b",
-                              "\\bslept\\b[^.!?\\n]{0,30}?\\d+(?:\\.\\d+)?\\s*(?:(?:to|or|-|\u2013)\\s*\\d+(?:\\.\\d+)?\\s*)?(?:hours|hrs|h)\\b"],
+      "reply_lacks_pattern": ["(?m)(?:^|(?<!\\be\\.g)(?<!\\bi\\.e)(?<!example)(?<!instance)[.!?:]\\s+)(?:(?!\\b(?:aim|aims|need|needs|recommend\\w*|advice|advis\\w*|guideline\\w*|most adults|should|example|examples|instance|e\\.g|such as)\\b)(?:[^.!?\\n\"\u201c\u201d]|\\.(?=\\d)))*?(?<![\\d.])(?<!to )(?<!and )(?<!or )(?<!-)(?<!\u2013)(?<!like )\\d+(?:\\.\\d+)?\\s*(?:hours|hrs|h)\\b",
+                              "(?m)(?:^|(?<!\\be\\.g)(?<!\\bi\\.e)(?<!example)(?<!instance)[.!?:]\\s+)(?:(?!\\b(?:example|examples|instance|e\\.g|such as)\\b)(?:[^.!?\\n\"\u201c\u201d]|\\.(?=\\d)))*?\\bslept\\b(?:(?!\\b(?:example|examples|instance|e\\.g|such as)\\b)[^.!?\\n\"\u201c\u201d]){0,30}?(?<!like )\\d+(?:\\.\\d+)?\\s*(?:(?:to|or|-|\u2013)\\s*\\d+(?:\\.\\d+)?\\s*)?(?:hours|hrs|h)\\b"],
       "any_of": [{"function": "what_is_logged"}, {"function": "get_data"}]
     },
     "db": [{"table": "measurement", "count": 16, "all": {"kind": "waist"}}]

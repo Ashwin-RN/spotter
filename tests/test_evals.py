@@ -1044,6 +1044,14 @@ def test_the_token_is_only_in_the_config():
     assert cli_command("claude", "x", "c.json", "sonnet")[-2:] == ["--model", "sonnet"]
 
 
+def test_each_run_is_cut_off_at_300_seconds_well_inside_its_token():
+    """180 until 2026-11-17: two data runs were cut off mid-answer after 10 to 15 calls (data-on-request.md, notes)."""
+    from evals import issuer, run
+    assert run.RUN_TIMEOUT == 300 < issuer.TOKEN_SECONDS
+    doc = " ".join((Path(__file__).resolve().parent.parent / "docs" / "evals.md").read_text(encoding="utf-8").split())
+    assert "Each run is cut off at 300 seconds." in doc and "180 seconds" not in doc
+
+
 def test_child_env_drops_the_session_markers_only():
     env, dropped = child_env({"CLAUDECODE": "1", "CLAUDE_CODE_SSE_PORT": "1", "CLAUDE_PID": "2", "AI_AGENT": "x",
                               "CLAUDE_CONFIG_DIR": "/c", "PATH": "/bin"})

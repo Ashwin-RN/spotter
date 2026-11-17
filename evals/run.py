@@ -30,7 +30,7 @@ from evals import judge
 from evals.issuer import DOMAIN, RESOURCE, FakeProvider, Key, claims, sign
 from evals.recorder import CallRecorder
 
-RUN_TIMEOUT = 180  # seconds per CLI run
+RUN_TIMEOUT = 300  # seconds per CLI run: 180 until 2026-11-17, when two data runs were cut off mid-answer
 TABLES = ("food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",
           "feedback", "routine")
 

@@ -106,7 +106,8 @@ changed within a day and one full run cost three times the estimate. Both below 
      `Authorization` header. It sits in the temporary directory and is deleted when the run ends.
    - The working directory is an empty temporary folder: no project `CLAUDE.md`, memory or settings.
    - `--no-session-persistence` keeps the runs out of the CLI's saved sessions.
-   - Each run is cut off at 180 seconds.
+   - Each run is cut off at 300 seconds. It was 180 until 17 November 2026, when two data runs were cut off
+     after 10 to 15 right calls, made one a turn.
 5. The token is never printed. Every printed or kept line is masked; the key pair dies with the process.
 
 ### The environment the CLI gets
@@ -239,13 +240,13 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `lb_routine_changed` | Log my push day, but bench was 230 today (weights set to lb; Push day saved: Bench Press 3 × 8 at weight_kg 102.06, Overhead Press 3 × 10 at weight_kg 61.23) | One successful `log_lifts`: Bench Press `weight_lb` 230 × 8, and Overhead Press either `weight_kg` 61.23 or `weight_lb` 135 × 10. No set sent `weight_lb` 102.06 or `weight_kg` 230. One live session today, `set_count` 6 |
 | `waist_in_inches` | My waist is 32 inches | Either one successful `log_measurement`, kind waist, value 81.28 or 81.3, and the reply says "cm"; or no successful `log_measurement` and the reply asks. Every live waist row holds 81.28 or 81.3 |
 | `machine_calories` | 30 minutes on the treadmill, it said 250 calories | One successful `log_cardio` with minutes 30 and `machine_kcal` 250. One live cardio entry, `machine_kcal` 250 |
-| `data_basketball` | How do I get better at basketball? (the `sixteen_weeks` seed) | `get_data` with area `lift_sets`; no write function called; the reply says "33%", "67%", "a third of" or "two thirds of" |
-| `data_lifting` | How do I get better at lifting? (the `sixteen_weeks` seed) | `get_data` with area `lift_sets`; no write function called; the reply says "squat", and "116.7" or "100 kg" |
+| `data_basketball` | How do I get better at basketball? (the `sixteen_weeks` seed) | `what_is_logged` called, or `get_data` on any area; no write function called; the reply quotes one figure Spotter gives from the seed, as a figure of its own: 12 or 48 lift sessions, 108 or 432 sets, 2 or 26 cardio entries or 8 in the 28 days before, 33% or 67% beside upper or lower, the squat's 116.7 or 100 kg x 5, or a plan line's 3.3 or 1.6 kg behind, 120 kg on the plan line, 79.3 or 80.9 |
+| `data_lifting` | How do I get better at lifting? (the `sixteen_weeks` seed) | `get_data` with area `lift_sets`, or `get_progress`; no write function called; the reply says "squat", and "116.7" or "100 kg" |
 | `data_calories` | How do I cut down on my calories? Where do I remove it from day to day? (the `sixteen_weeks` seed) | `get_data` with area `food`; no write function called; the reply says "biryani", and "640", "798" or "42%" |
 | `data_squat_goal` | How are my squats going? (the `sixteen_weeks` seed) | `get_data` with area `lift_sets` and the exercise filter Back Squat, or `get_progress` with exercise Back Squat; no write function called; the reply says 3.3 as a figure of its own (never inside 93.3) or "120 kg on the plan line" |
 | `data_back_on_track` | I have slipped lately. How do I get back on track? (the `sixteen_weeks` seed) | `get_goals`, `what_is_logged` or `get_data` called; no write function called; the reply says 1.6 as a figure of its own (never inside 81.6 or 81.61) or "79.3" |
 | `data_lb` | What is the heaviest I have benched in the last 4 weeks? (weights set to lb, then the `sixteen_weeks` seed) | `get_data` with area `lift_sets`, or `get_progress` or `get_log`, called; no write function called; the reply says "214.95" and no "kg" as a word |
-| `data_empty` | How has my sleep been lately? (the `sixteen_weeks` seed: no sleep logged) | `what_is_logged` or `get_data` called; no write function called; the reply gives no figure in hours, hrs or h for the person: a range's end or a sentence of advice ("most adults need 7 to 9 hours") is allowed, any figure after "slept" is not; 16 live measurements, all waist |
+| `data_empty` | How has my sleep been lately? (the `sixteen_weeks` seed: no sleep logged) | `what_is_logged` or `get_data` called; no write function called; the reply gives no figure in hours, hrs or h for the person: a range's end, a sentence of advice ("most adults need 7 to 9 hours") or an example of what to say is allowed, any other figure after "slept" is not; 16 live measurements, all waist |
 | `data_year_more` | Was my weight ever above 90 kg in the past year? Which days, and what did I weigh? (the `sixteen_weeks` seed) | `get_data` with area `weigh_ins`; no write function called; the reply says "91.2", "92.4" and "90.6" |
 
 "No write function" is every write, by name, in `no_call`: the names in `WRITE_FUNCTIONS` in
@@ -422,21 +423,45 @@ day. `tests/test_sixteen_weeks.py` checks every one through Spotter's own reads 
 - Lifts: Monday, Wednesday and Friday for sixteen weeks, two sessions in turn. Each holds 3 lower body sets and 6
   upper, so the sets split 33% lower and 67% upper. The squat has stayed at 100 kg x 5 for over 7 weeks: an
   estimated max of 116.7 kg. The bench climbs to 97.5 kg, 214.95 lb.
+- In any 28 days: 12 lift sessions and 108 sets, the same in the 28 days before; 48 sessions and 432 sets in all.
 - Food: 1,680 kcal a day, then 1,980 for the last 21 days, with a chicken biryani at 640 kcal for dinner and a
   Coke as a snack. Over the last 28 days dinner is 798 kcal a day, 42% of the total.
-- Cardio stops 21 days back. A waist each week, and nothing else measured: no sleep.
+- Cardio stops 21 days back: 2 entries in the last 28 days against 8 in the 28 days before, 26 in all. A waist
+  each week, and nothing else measured: no sleep.
 - Goals: body weight 78 kg, 1.6 kg behind the plan line; Back Squat 150 kg, 3.3 kg behind.
 - No figure a reply must say carries a thousands comma.
 
+**How they judge, since 17 November 2026.** The owner's aim is a description full enough for the model to build a
+clean data request for a general question. So a case judges that a data request was built and that Spotter's
+figures were quoted, not one route or one split.
+
+- `data_basketball` takes a read of the data by `what_is_logged` or by `get_data` on any area, the owner's pick, and
+  any one of the seed's figures in its table row. Each figure option carries both reads, as `data_lifting` does.
+  Whether the model builds a `get_data` request well is the job of a later study of the whole function list. Each figure
+  must stand alone: no digit, point or comma just before it, and no further digit after it. A small count (2, 8,
+  12) also needs its noun or its window, such as "2 entries", "8 in the 28 days before" or "12 sessions in the last
+  28 days". So "2 sessions a week", "from 8 feet out", "shoot 33% from three" and "12 sessions of skill work"
+  fail.
+- `data_lifting` takes `get_data` on `lift_sets` or `get_progress`. Each figure option carries both routes, as
+  `data_squat_goal` does.
+- `data_empty` takes a figure as an example of what to say when its sentence has "for example", "for instance",
+  "e.g." or "such as" before it, when "like" comes directly before it, or when a double quote comes before it in
+  its sentence. So `If you tell me how long you slept, for example "7.5 hours last night", I'll log it` passes,
+  and "You slept 7 hours" and "about 6.5 hours a night" fail.
+
+The release run of 17 November 2026, 51 cases at 3 runs, gave 144 of 153 under the judging before. Its kept runs,
+judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), `data_basketball` 3 of 3 (it was
+0). Two basketball runs called only `whoami` and `what_is_logged`, and quoted its figures: they pass now.
+
 | Case | Proves | Does not prove |
 |---|---|---|
-| `data_basketball` | A sport Spotter cannot log still gets Spotter's own split of the person's training, quoted | That the advice is good, or that core work being none is said |
-| `data_lifting` | A lifting question reads the sets and quotes the squat's stall | The bench's rise, or the goal's plan line |
+| `data_basketball` | A sport Spotter cannot log still gets the person's data read, by `what_is_logged` or `get_data`, and one of Spotter's figures for the person quoted | That the advice is good. That a `get_data` request was built: `what_is_logged` alone passes. That the figure came from either answer and not from another read beside them. That the split by region is said. That the read was answered: a refused one counts as called |
+| `data_lifting` | A lifting question reads the lifts, by `get_data` or `get_progress`, and quotes the squat's stall | The bench's rise, or the goal's plan line. Which of the two reads was chosen: either is right |
 | `data_calories` | A calorie question reads food by meal or by food, and names the biggest item with its figure | That every meal's share is quoted right |
 | `data_squat_goal` | The squat goal rides with the lift's data, and its plan line is said | Which of the two reads was chosen: either is right |
 | `data_back_on_track` | "Back on track" reaches the body weight plan line. "On track" still routes to `get_goals`, and the three existing cases stay as they are | That the slip in calories is named |
 | `data_lb` | A lb account hears 214.95, never kg, and nothing converts | Any other unit or field |
-| `data_empty` | A kind never logged gets no made-up figure, and nothing is written | That the reply says sleep can be logged |
+| `data_empty` | A kind never logged gets no made-up figure, and nothing is written | That the reply says sleep can be logged. A made-up figure passes in a sentence that also gives an example, or after a double quote |
 | `data_year_more` | A year's question finds the three days, by paging with `more`, by ordering, or by a `max` by week | That `more` itself was sent: the judge has no "key present" form, so the case judges the figures. A `max` by month can hold two or all three of the days in one month, and then fails |
 
 ## What the evals prove

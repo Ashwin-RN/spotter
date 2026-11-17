@@ -844,6 +844,17 @@ The figures, worked on 2026-11-16 by running a prototype of this seed on a scrat
 | `data_basketball` | "a third of" and "two thirds of", so "add a third day" does not pass |
 | Cardio and food in the seed | Within the 16 weeks; weigh-ins run the full year |
 
+**2026-11-17, the release run and the eval fix round.** The release's one run, 51 cases at 3 runs with `--model claude-opus-5-5`, gave 144 of 153. Its model line names `claude-fable-5-2` too: 11 runs list it beside `claude-opus-5-5`, 10 of them first, the one that cost the most. In every answered run the reply quoted Spotter's figures right. The owner's target for this item: "what we need to do is have a comprehensive desc that allows the model to build a data req cleanly to answer generic enough questions. that was the target here." So the cases now judge that a data request was built and that Spotter's figures were quoted, not one route or one split. The build is the record where it differs from the text above:
+
+| Point | As built |
+|---|---|
+| `data_basketball` | 0 of 3: two of the runs read only `what_is_logged` and quoted its figures. The owner chose to accept `what_is_logged`: the case now passes on a read by `what_is_logged` or by `get_data` on any area, carried in each figure option as `data_lifting` does. `get_data` is no longer required. Whether the model builds a `get_data` request well is now the job of the function list study. `inputs_include` lift_sets and the 33%, 67%, "a third of", "two thirds of" options are gone. The reply must quote one figure Spotter gives from the seed, as a figure of its own (`reply_has_pattern`, digit guards): 12 or 48 lift sessions, 108 or 432 sets, 2 or 26 cardio entries or 8 in the 28 days before, 33% or 67% beside upper or lower, the squat's 116.7 or 100 kg x 5, or a plan line's 3.3 or 1.6 kg behind, 120 kg on the plan line, 79.3 or 80.9. A small count needs its noun or its window. The counts hold on all nine todays of `tests/test_sixteen_weeks.py`, through `what_is_logged`. The case table's "Spotter's own split ... quoted" is superseded |
+| `data_lifting` | 1 of 3: the two others read the lifts by `get_progress`, with the right figures. Now `get_data` on lift_sets or `get_progress`, in each figure option, as `data_squat_goal` does. No judge change |
+| `data_empty` | 2 of 3: run 2's `for example "7.5 hours last night"`, an example of what to say, matched the made-up figure patterns. Both patterns now pass a figure whose sentence has "for example", "for instance", "e.g." or "such as" before it, one directly after "like", and one after a double quote in its sentence. "You slept 7 hours" and "about 6.5 hours a night" still fail |
+| `data_calories` run 3, `data_back_on_track` run 2 | Cut off at 180 s after 10 to 15 right calls, made one a turn. The server answered `get_data` in 32 ms on average. `evals/run.py`'s limit is now 300 s, in `docs/evals.md` too |
+| A sentence in `get_data`'s description that independent queries can go in one turn | Not built. It moved to a later study of the whole function list. `app/` is unchanged by this round |
+| Judged again on the kept runs | `data_lifting` 3 of 3, `data_empty` 3 of 3, `data_basketball` 3 of 3. `feedback_offered` run 2, an older case, is left as it is |
+
 ## Known limits
 
 | Limit | Why it stands |
