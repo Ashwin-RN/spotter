@@ -1044,6 +1044,151 @@ def test_the_token_is_only_in_the_config():
     assert cli_command("claude", "x", "c.json", "sonnet")[-2:] == ["--model", "sonnet"]
 
 
+# ---------------------------------------------------------------- the advisor is off, and one model a run (2026-11-17)
+
+@pytest.mark.parametrize("model", [None, "", "claude-opus-5-5", "sonnet"])
+def test_every_command_carries_the_empty_advisor_setting_as_one_argument(model):
+    command = cli_command("claude", "Waist 84", "c.json", model)
+    assert command.count("--settings") == 1
+    assert json.loads(command[command.index("--settings") + 1]) == {"advisorModel": ""}
+    assert ("--model" in command) is bool(model)
+
+
+def test_the_cli_s_environment_turns_the_advisor_tool_off_whatever_the_parent_held():
+    """The documented switch (https://code.claude.com/docs/en/advisor.md, "Turn the advisor off"). It starts with
+    CLAUDE_CODE_, which is dropped, so it is set on top, and a parent's own value is replaced, not named as dropped."""
+    assert child_env({"PATH": "/bin"}) == ({"PATH": "/bin", "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"}, [])
+    env, dropped = child_env({"CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "0", "CLAUDE_CODE_SSE_PORT": "1"})
+    assert env == {"CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"} and dropped == ["CLAUDE_CODE_SSE_PORT"]
+
+
+ANOTHER, MORE = "another model took part: ", "more than one model took part: "
+
+
+@pytest.mark.parametrize("models, model, extra, reason", [
+    (["claude-opus-5-5"], "claude-opus-5-5", [], None),
+    (["claude-opus-5-5", "claude-fable-5-2"], "claude-opus-5-5", ["claude-fable-5-2"], ANOTHER),
+    (["claude-fable-5-2", "claude-opus-5-5"], "claude-opus-5-5", ["claude-fable-5-2"], ANOTHER),  # it cost more
+    (["claude-opus-5-5", "claude-haiku-4-5"], "claude-opus-5-5", ["claude-haiku-4-5"], ANOTHER),  # a helper too
+    (["claude-sonnet-5-5"], "claude-opus-5-5", ["claude-sonnet-5-5"], ANOTHER),  # the pinned model took no part
+    (["claude-sonnet-5-5", "claude-fable-5-2"], "claude-opus-5-5", ["claude-sonnet-5-5", "claude-fable-5-2"], ANOTHER),
+    (["claude-sonnet-5-5"], "", [], None),  # --model "": the CLI's default, exactly one model
+    (["claude-sonnet-5-5"], None, [], None),
+    # More than one, with no full id to match: cost cannot tell the main model (the advisor cost more in 16 of 19).
+    (["claude-fable-5-2", "claude-sonnet-5-5"], "", ["claude-fable-5-2", "claude-sonnet-5-5"], MORE),
+    (["claude-sonnet-5-5", "claude-fable-5-2"], "", ["claude-fable-5-2", "claude-sonnet-5-5"], MORE),
+    (["claude-sonnet-5-5"], "sonnet", [], None),  # an alias: modelUsage names full ids, so exactly one is the rule
+    (["claude-sonnet-5-5", "claude-fable-5-2"], "sonnet", ["claude-fable-5-2", "claude-sonnet-5-5"], MORE),
+])
+def test_the_one_model_rule(models, model, extra, reason):
+    from evals.run import model_reasons, other_models
+    assert other_models(models, model) == extra
+    assert model_reasons(models, model) == ([reason + ", ".join(extra)] if reason else [])
+
+
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "", None])
+def test_a_run_that_reports_no_model_fails_but_is_not_counted_as_another(model):
+    from evals.run import model_reasons, other_models
+    assert other_models([], model) == []
+    assert model_reasons([], model) == ["the CLI reported no model, so no check that one model ran alone"]
+
+
+def _model_server(app_settings) -> LocalServer:
+    """One per test: two made in the same second would name their people alike."""
+    server = LocalServer(Path(tempfile.gettempdir()))  # not started: only its people and its recorder are used
+    server.settings = app_settings
+    server.recorder = CallRecorder(None)
+    return server
+
+
+def _run_with_models(server, monkeypatch, model_usage: dict, model: str | None) -> tuple[dict, list]:
+    """One run_once through a fake CLI whose JSON reports these models: (the outcome, the commands it was given)."""
+    from evals import run
+    given = []
+
+    def fake_cli(command, **kwargs):
+        given.append((command, kwargs["env"]))
+        stdout = json.dumps({**SAMPLE, "result": "Logged 80 kg.", "modelUsage": model_usage})
+        return run.subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(run.subprocess, "run", fake_cli)
+    case = {"id": "one_model", "say": "Weighed 80 kg", "expect": {"reply_has": ["Logged"]}}
+    env, _ = child_env({"PATH": "/bin"})
+    with tempfile.TemporaryDirectory() as folder:  # not tmp_path: pytest's own temp root is not always writable
+        outcome = run.run_once(server, case, "Asia/Kolkata", "claude", model, env, Path(folder), "one_model-1", False)
+    return outcome, given
+
+
+def test_a_run_with_only_the_pinned_model_passes(app_settings, monkeypatch):
+    outcome, given = _run_with_models(_model_server(app_settings), monkeypatch, {"claude-opus-5-5": {"costUSD": 0.14}},
+                                      "claude-opus-5-5")
+    assert (outcome["passed"], outcome["reasons"], outcome["other_models"]) == (True, [], [])
+    [(command, env)] = given
+    assert "--settings" in command and env["CLAUDE_CODE_DISABLE_ADVISOR_TOOL"] == "1"
+
+
+def test_a_run_a_second_model_took_part_in_fails_and_names_it(app_settings, monkeypatch):
+    """The release run of 2026-11-17: claude-fable-5-2, the advisor, beside the pinned model in 11 of 153 runs."""
+    usage = {"claude-opus-5-5": {"costUSD": 0.14}, "claude-fable-5-2": {"costUSD": 0.05}}
+    outcome, _ = _run_with_models(_model_server(app_settings), monkeypatch, usage, "claude-opus-5-5")
+    assert outcome["passed"] is False
+    assert outcome["reasons"] == ["another model took part: claude-fable-5-2"]  # the reply itself passed
+    assert outcome["other_models"] == ["claude-fable-5-2"]
+
+
+def test_with_the_cli_s_default_model_a_run_must_have_exactly_one(app_settings, monkeypatch):
+    server = _model_server(app_settings)
+    one, _ = _run_with_models(server, monkeypatch, {"claude-sonnet-5-5": {"costUSD": 0.05}}, "")
+    assert (one["passed"], one["other_models"]) == (True, [])
+    usage = {"claude-sonnet-5-5": {"costUSD": 0.05}, "claude-fable-5-2": {"costUSD": 0.04}}
+    two, given = _run_with_models(server, monkeypatch, usage, "")
+    assert two["passed"] is False and two["reasons"] == ["more than one model took part: claude-fable-5-2, claude-sonnet-5-5"]
+    assert two["other_models"] == ["claude-fable-5-2", "claude-sonnet-5-5"] and "--model" not in given[0][0]
+
+
+def test_the_summary_counts_the_runs_another_model_took_part_in():
+    from evals.run import model_line
+    runs = [{"other_models": []}, {"other_models": ["claude-fable-5-2"]}, {}, {"other_models": ["claude-fable-5-2"]}]
+    results = [{"id": "a", "runs": runs[:2]}, {"id": "b", "runs": runs[2:]}]
+    assert model_line(results) == "runs where another model took part: 2 of 4 (claude-fable-5-2)"
+    assert model_line([{"id": "a", "runs": [{"other_models": []}]}]) == "runs where another model took part: 0 of 1"
+
+
+def test_main_gives_every_run_the_advisor_off_and_prints_the_count(monkeypatch, capsys):
+    """main with its server and its runs replaced: no CLI, no port. The parent's own 0 is replaced by 1."""
+    from evals import run
+    monkeypatch.setenv("CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "0")
+    monkeypatch.setattr(run.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(run.judge, "load_cases", lambda: [{"id": "one_model", "say": "x", "expect": {"reply_asks": True}}])
+    envs = []
+    outcomes = iter([
+        {"passed": False, "reasons": ["another model took part: claude-fable-5-2"], "other_models": ["claude-fable-5-2"],
+         "models": ["claude-opus-5-5", "claude-fable-5-2"]},
+        {"passed": True, "reasons": [], "other_models": [], "models": ["claude-opus-5-5"]}])
+
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep):
+        envs.append(env)
+        return {"tokens": 0, "cost_usd": 0.0, "reply": "Done?", "calls": [], "seconds": 1.0, "instructions": True,
+                **next(outcomes)}
+
+    monkeypatch.setattr(run, "run_once", fake_run_once)
+    assert run.main(["--n", "2", "--time-zone", "Asia/Kolkata"]) == 1
+    out = capsys.readouterr().out
+    assert "runs where another model took part: 1 of 2 (claude-fable-5-2)" in out
+    assert "another model took part: claude-fable-5-2" in out.split("Failed runs:", 1)[1]
+    assert [e["CLAUDE_CODE_DISABLE_ADVISOR_TOOL"] for e in envs] == ["1", "1"]
+
+
+def test_the_evals_doc_says_the_advisor_is_off_and_the_one_model_rule():
+    doc = " ".join((Path(__file__).resolve().parent.parent / "docs" / "evals.md").read_text(encoding="utf-8").split())
+    for said in ("CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1", "https://code.claude.com/docs/en/advisor.md",
+                 "--settings '{\"advisorModel\": \"\"}'", "another model took part: claude-fable-5-2",
+                 "runs where another model took part"):
+        assert said in doc, said
+
+
 def test_each_run_is_cut_off_at_300_seconds_well_inside_its_token():
     """180 until 2026-11-17: two data runs were cut off mid-answer after 10 to 15 calls (data-on-request.md, notes)."""
     from evals import issuer, run
@@ -1055,7 +1200,7 @@ def test_each_run_is_cut_off_at_300_seconds_well_inside_its_token():
 def test_child_env_drops_the_session_markers_only():
     env, dropped = child_env({"CLAUDECODE": "1", "CLAUDE_CODE_SSE_PORT": "1", "CLAUDE_PID": "2", "AI_AGENT": "x",
                               "CLAUDE_CONFIG_DIR": "/c", "PATH": "/bin"})
-    assert env == {"CLAUDE_CONFIG_DIR": "/c", "PATH": "/bin"}
+    assert env == {"CLAUDE_CONFIG_DIR": "/c", "PATH": "/bin", "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"}  # the one it sets
     assert dropped == ["AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_SSE_PORT", "CLAUDE_PID"]
 
 

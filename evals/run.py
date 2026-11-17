@@ -40,6 +40,16 @@ TABLES = ("food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry
 SESSION_VARIABLES = ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT")
 SESSION_PREFIX = "CLAUDE_CODE_"
 
+# The advisor is off in every run, since 2026-11-17, on the owner's word: a run measures the model asked for, alone.
+# The advisor is the CLI's tool that hands the whole conversation to a second, stronger model; the user's own CLI
+# settings turn it on. In the release run of that day 11 of 153 runs called it: claude-fable-5-2 beside the pinned
+# model in modelUsage. Two layers. The documented switch is this variable, which also makes the CLI ignore any
+# advisorModel (https://code.claude.com/docs/en/advisor.md, "Turn the advisor off";
+# https://code.claude.com/docs/en/env-vars.md). The second is NO_ADVISOR_SETTINGS in cli_command, an empty
+# advisorModel: it worked on CLI 2.1.326, but no doc names it as a switch. --disallowedTools advisor did not.
+CHILD_SETS = {"CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"}
+NO_ADVISOR_SETTINGS = json.dumps({"advisorModel": ""})
+
 # A zone for each common offset, when the machine's own IANA name cannot be read (Windows).
 PREFERRED_ZONES = {330: "Asia/Kolkata", 0: "Europe/London", 60: "Europe/Paris", 120: "Europe/Athens",
                    180: "Europe/Moscow", 240: "Asia/Dubai", 300: "Asia/Karachi", 345: "Asia/Kathmandu",
@@ -52,9 +62,13 @@ PREFERRED_ZONES = {330: "Asia/Kolkata", 0: "Europe/London", 60: "Europe/Paris", 
 # ---------------------------------------------------------------- small pure helpers
 
 def child_env(environ: dict[str, str]) -> tuple[dict[str, str], list[str]]:
-    """The environment for the CLI, and the names dropped from it."""
-    dropped = sorted(k for k in environ if k in SESSION_VARIABLES or k.startswith(SESSION_PREFIX))
-    return {k: v for k, v in environ.items() if k not in dropped}, dropped
+    """The environment for the CLI, and the names dropped from it. CHILD_SETS is set on top, whatever the
+    parent held for those names: it is replaced, not counted as dropped."""
+    dropped = sorted(k for k in environ if (k in SESSION_VARIABLES or k.startswith(SESSION_PREFIX))
+                     and k not in CHILD_SETS)
+    env = {k: v for k, v in environ.items() if k not in dropped}
+    env.update(CHILD_SETS)
+    return env, dropped
 
 
 # The model every run uses unless --model says otherwise. Pinned on 2026-11-10 after the CLI's own default
@@ -64,10 +78,49 @@ DEFAULT_MODEL = "claude-opus-5-5"
 
 def cli_command(claude: str, say: str, config_path: str, model: str | None) -> list[str]:
     command = [claude, "-p", say, "--output-format", "json", "--mcp-config", config_path, "--strict-mcp-config",
-               "--allowedTools", "mcp__spotter__*", "--no-session-persistence"]
+               "--allowedTools", "mcp__spotter__*", "--no-session-persistence",
+               "--settings", NO_ADVISOR_SETTINGS]  # the advisor's second off switch: see CHILD_SETS
     if model:
         command += ["--model", model]
     return command
+
+
+def _full_id(model: str | None) -> bool:
+    return bool(model) and model.startswith("claude-")
+
+
+def other_models(models: list[str], model: str | None) -> list[str]:
+    """The models a run's modelUsage names beyond the one it should have, [] when it had only that one.
+
+    A full model id asked for (it starts with "claude-") is the one: every other model is extra, a small helper
+    model too, and all of them when that model took no part. An alias such as "sonnet", or none (--model "": the
+    CLI's default), cannot be matched by name, because modelUsage names full ids: then the run must have exactly
+    one model, and with more, every one is named. Cost cannot tell the main model: in the two runs kept on
+    2026-11-17 the advisor cost more than the pinned model in 16 of the 19 that had both. No model reported
+    gives []: model_reasons says it."""
+    if _full_id(model):
+        return [m for m in models if m != model]
+    return sorted(models) if len(models) > 1 else []
+
+
+def model_reasons(models: list[str], model: str | None) -> list[str]:
+    """Why a run fails the one-model rule, [] when it passes. See other_models."""
+    extra = other_models(models, model)
+    if extra and _full_id(model):
+        return [f"another model took part: {', '.join(extra)}"]
+    if extra:
+        return [f"more than one model took part: {', '.join(extra)}"]
+    if not models:
+        return ["the CLI reported no model, so no check that one model ran alone"]
+    return []
+
+
+def model_line(results: list[dict]) -> str:
+    """The summary's line counting the runs another model took part in."""
+    runs = [r for res in results for r in res["runs"]]
+    joined = sorted({m for r in runs for m in r.get("other_models") or []})
+    count = sum(1 for r in runs if r.get("other_models"))
+    return f"runs where another model took part: {count} of {len(runs)}" + (f" ({', '.join(joined)})" if joined else "")
 
 
 def mcp_config(port: int, token: str) -> dict:
@@ -284,7 +337,7 @@ def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str
     cwd.mkdir()
     config_path.write_text(json.dumps(mcp_config(server.port, token)), encoding="utf-8")
     outcome = {"passed": False, "tokens": 0, "cost_usd": 0.0, "reply": "", "reasons": [], "models": [],
-               "num_turns": None}
+               "other_models": [], "num_turns": None}
     started = time.monotonic()
     try:
         done = subprocess.run(cli_command(claude, case["say"], str(config_path), model), cwd=cwd, env=env,
@@ -317,6 +370,8 @@ def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str
     reasons = []
     if parsed["is_error"] or parsed["subtype"] != "success":
         reasons.append(f"CLI ended with {parsed['subtype']}")
+    outcome["other_models"] = other_models(parsed["models"], model)  # the one-model rule: see CHILD_SETS
+    reasons += model_reasons(parsed["models"], model)
     reasons += judge.judge(resolved, calls, parsed["reply"], person_rows(user_id))
     outcome["reasons"] = [judge.masked(r, token) for r in reasons]
     outcome["reply"] = judge.masked(outcome["reply"], token)
@@ -398,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     table, ok = judge.summarise(results, args.n, args.threshold)
     print(table)
     print(f"model: {', '.join(sorted(seen_models)) or 'not reported'}")
+    print(model_line(results))
     handshakes = [r.get("instructions") for res in results for r in res["runs"]]
     print(f"handshakes that carried the server's instructions: {sum(1 for h in handshakes if h)} of "
           f"{len(handshakes)} runs (whether the CLI shows them to the model is what the cases measure)")

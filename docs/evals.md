@@ -44,7 +44,7 @@ python -m evals.run --case yesterday --case saved_food --keep
 | `--n N` | Runs per case, each a fresh conversation. Default 3. |
 | `--threshold R` | The pass rate every case must reach, 0 to 1. Default 1.0. Exit code 1 when any case is under it. |
 | `--case ID` | Only this case. Repeatable. |
-| `--model M` | Passed through to the CLI as `--model`. Default: `claude-opus-5-5`, pinned, so a change in the CLI's own default never changes what a run costs. `--model ""` uses the CLI's default. |
+| `--model M` | Passed through to the CLI as `--model`. Default: `claude-opus-5-5`, pinned, so a change in the CLI's own default never changes what a run costs. `--model ""` uses the CLI's default. Each run must show this model alone: see "The advisor is off, and one model a run". |
 | `--keep` | Keeps the temporary directory: the database, each run's raw CLI output, `results.json`. |
 | `--time-zone Z` | The person's IANA time zone. Default: the machine's. |
 
@@ -99,13 +99,16 @@ changed within a day and one full run cost three times the estimate. Both below 
 
    ```
    claude -p "<say>" --output-format json --mcp-config <file> --strict-mcp-config
-          --allowedTools "mcp__spotter__*" --no-session-persistence [--model M]
+          --allowedTools "mcp__spotter__*" --no-session-persistence
+          --settings '{"advisorModel": ""}' [--model M]
    ```
 
    - The MCP config names one server, `http://127.0.0.1:PORT/mcp`, with the token in an
      `Authorization` header. It sits in the temporary directory and is deleted when the run ends.
    - The working directory is an empty temporary folder: no project `CLAUDE.md`, memory or settings.
    - `--no-session-persistence` keeps the runs out of the CLI's saved sessions.
+   - `--settings` with an empty `advisorModel` is the advisor's second off switch: see "The advisor is off, and
+     one model a run".
    - Each run is cut off at 300 seconds. It was 180 until 17 November 2026, when two data runs were cut off
      after 10 to 15 right calls, made one a turn.
 5. The token is never printed. Every printed or kept line is masked; the key pair dies with the process.
@@ -116,9 +119,40 @@ The CLI runs fine when started from inside a Claude Code session. The runner sti
 variables that session sets (`CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `AI_AGENT` and every
 `CLAUDE_CODE_*`), because some point a child at the parent's IDE and messaging sockets. Each run then
 is what it would be from a plain terminal. It prints the names it left out. `CLAUDE_CONFIG_DIR` and
-everything else pass through.
+everything else pass through. It sets one variable of its own: `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1`, whatever
+the parent held for it.
 
-User-level CLI settings and skills still load, as they would for the person.
+User-level CLI settings and skills still load, as they would for the person, except the advisor.
+
+### The advisor is off, and one model a run
+
+**Since 17 November 2026 every run is the model asked for, alone.** The owner wants reliable results more than a
+lower price, and a run that took a stronger model's help does not show what the model asked for does by itself.
+
+- The advisor is a CLI tool. It hands the whole conversation to a second, stronger model, whose advice the
+  model then takes. The user's own CLI settings turn it on, with `advisorModel`.
+- In the release run of 17 November 2026, 11 of 153 runs called it: `claude-fable-5-2` beside
+  `claude-opus-5-5` in the CLI's `modelUsage`. Such a run measures two models, not the one it names.
+- Two switches turn it off in every run:
+  - `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` in the CLI's environment. This is the documented switch: the CLI
+    then ignores any `advisorModel`. See https://code.claude.com/docs/en/advisor.md, "Turn the advisor
+    off", and https://code.claude.com/docs/en/env-vars.md.
+  - `--settings '{"advisorModel": ""}'` on the command line. It turned the advisor off on CLI 2.1.326, but
+    no doc names it as a switch. It stays as a second layer.
+  - `--disallowedTools advisor` did not turn it off on CLI 2.1.326.
+- After each run a guard reads the models in the CLI's `modelUsage`:
+  - With a full model id, such as the pinned `claude-opus-5-5`, any other model fails the run. A small
+    helper model fails it too. So does a run where the pinned model took no part.
+  - The reason names the extra models: "another model took part: claude-fable-5-2". The reply is still
+    judged, and its own reasons print beside it.
+  - With `--model ""`, or an alias such as `sonnet`, the run must show exactly one model. `modelUsage`
+    names full ids, never an alias. With more, the reason names them all, such as "more than one model took
+    part: claude-fable-5-2, claude-sonnet-5-5". Cost cannot tell the main model: in the two runs kept on 17
+    November 2026, the advisor cost more than `claude-opus-5-5` in 16 of the 19 that had both.
+  - A run whose output names no model fails too: "the CLI reported no model".
+- The summary prints a line under the model line, such as "runs where another model took part: 0 of 153".
+  Each run it counts is a failed run in the table. With `--keep`, `results.json` holds each run's
+  `other_models`.
 
 ## Where the ground truth comes from
 
@@ -478,6 +512,8 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
 - **Other clients.** claude.ai, the desktop app and other MCP clients build their own prompt and may
   not show the server's instructions at all.
 - **Other models.** A pass on the default model says nothing about a smaller one. Use `--model`.
+- **An advisor of the same model.** The guard reads model names. An advisor of the run's own model would
+  show as that one name, so the guard could not see it. The two switches still turn it off.
 - **One run is not a rate.** The model is not deterministic. That is why each case runs n times and
   the rate is printed as it is, not rounded up.
 - **The heuristics are heuristics.** `reply_asks` is a question mark; `reply_has` and `reply_lacks` are
