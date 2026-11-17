@@ -43,6 +43,8 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "gold_best_deadlift", "gold_run_week", "inc_10k_plan", "look_10k_friend", "inc_trip_meals",
                   "look_trip_hours", "inc_deload", "look_deload", "save_food_asked", "edit_fixes_minutes",
                   "food_lookup", "routine_read", "exercise_list", "catch_up", "import_other_app"}
+# function-list.md, G1's note of 2026-11-17: the golden package's reviewed cases follow G1's (tests/test_golden_cases.py)
+GOLDEN_PACKAGE = 164
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 
@@ -60,8 +62,8 @@ def answered(name, answer, arguments=None, is_error=False):
 
 def test_cases_file_loads_with_every_contract_case():
     cases = judge.load_cases()
-    assert len(cases) == len(CONTRACT_CASES)
-    assert CONTRACT_CASES == {c["id"] for c in cases}
+    assert len(cases) == len(CONTRACT_CASES) + GOLDEN_PACKAGE
+    assert CONTRACT_CASES == {c["id"] for c in cases[:len(CONTRACT_CASES)]}
     for case in cases:
         assert {"id", "say", "expect"} <= set(case)
         assert judge.case_problems(case) == []
@@ -829,7 +831,10 @@ def test_the_import_cases_judge_as_designed():
     assert judge.judge_calls(expect, [call("import_entries", {"rows": rows, "dry_run": True, "weight_unit": "lb"})],
                              "Shall I write them?") == []
     assert judge.judge_calls(expect, [call("import_entries", {"rows": rows, "dry_run": False, "weight_unit": "lb"})],
-                             "Written. Anything else?") == ["import_entries sent dry_run = false"]
+                             "Written. Anything else?")[0] == "import_entries sent dry_run = false"
+    # The golden package's fix round: a claim of done after a preview fails too (tests/test_golden_cases.py)
+    assert "it says 'Written'" in judge.judge_calls(expect, [call("import_entries", {"rows": rows, "weight_unit": "lb"})],
+                                                    "Written. Anything else?")[0]
     # Was {"rows": rows}: the call now names its unit, so the reply is the one fault, as before (fix round 3).
     assert judge.judge_calls(expect, [call("import_entries", {"rows": rows, "weight_unit": "lb"})],
                              "Here is the preview.") == ["the reply asks nothing"]
@@ -1295,12 +1300,15 @@ def test_every_case_carries_the_three_call_tags_and_they_agree_with_its_expect()
 
 
 def test_every_function_on_everyone_s_list_is_some_case_s_must():
-    """The coverage test: no cost, no run. The owner's three are listed for him alone, so they are left out."""
+    """The coverage test: no cost, no run. The owner's three are listed for him alone, so they are left out. It holds
+    for the full set and for the core, the cases each gate runs (python -m evals.run --core)."""
     from app import mcp_server
     everyone = set(mcp_server.NEEDS) - set(mcp_server.OWNER_FUNCTIONS)
     cases = judge.load_cases()
     musts = {name for c in cases for name in c["calls"]["must"]}
     assert everyone - musts == set()
+    core = [c for c in cases if c.get("core") is True]
+    assert len(core) == 101 and everyone - {name for c in core for name in c["calls"]["must"]} == set()
     named = {name for c in cases for key in ("must", "may", "must_not") for name in c["calls"][key]}
     assert named <= everyone  # no tag names a function nobody has, or the owner's
     # The two the release run of 2026-11-17 never called each have a case of their own.
@@ -1332,6 +1340,7 @@ def test_the_tags_are_checked_when_the_cases_load(tags, problem):
 def test_a_golden_kind_is_one_of_three_and_its_tags_say_what_it_measures():
     base = {"id": "a", "say": "x", "expect": {"reply_has": ["x"]}}
     assert judge.case_problems({**base, "kind": "golden"}) == ["kind must be one of direct, incidental, look_alike"]
+    assert judge.case_problems({**base, "kind": "ambiguous"}) == ["kind must be one of direct, incidental, look_alike"]
     none = {"must": [], "may": [], "must_not": []}
     assert judge.case_problems({**base, "kind": "incidental", "calls": none}) == [
         "an incidental case names the data read its step needs in calls.must"]
@@ -1343,7 +1352,8 @@ def test_a_golden_kind_is_one_of_three_and_its_tags_say_what_it_measures():
     kinds = {c["id"]: c["kind"] for c in cases if "kind" in c}
     assert {k for k, v in kinds.items() if v == "direct"} >= {"how_am_i_doing", "data_lifting", "data_back_on_track",
                                                                "data_empty"}
-    assert sorted(v for v in kinds.values() if v != "direct") == ["incidental"] * 3 + ["look_alike"] * 3
+    # G1's three pairs, then the golden package's 24 (tests/test_golden_cases.py)
+    assert sorted(v for v in kinds.values() if v != "direct") == ["incidental"] * 27 + ["look_alike"] * 27
 
 
 def test_must_needs_one_call_answered_and_must_not_none_called():
@@ -1651,8 +1661,34 @@ def test_main_runs_the_golden_set_alone_and_carries_each_case_s_kind_and_tags(mo
     golden = [c["id"] for c in judge.load_cases() if c.get("kind")]
     assert [s[0] for s in seen] == golden and {s[1:] for s in seen} == {("claude-sonnet-5-5", "medium")}
     out = capsys.readouterr().out
-    assert "pick-up rate: 3 of 3" not in out and "pick-up rate: 0 of 3 (0%) incidental runs" in out
+    assert "pick-up rate: 0 of 27 (0%) incidental runs" in out
     assert "client: claude, model asked for: claude-sonnet-5-5" in out and "effort sent: medium" in out
+
+
+def test_main_runs_the_core_alone_the_set_each_gate_runs(monkeypatch, capsys):
+    """function-list.md, G1's note of 2026-11-17: the core at each gate, the full set at the baseline and the release."""
+    from evals import run
+    monkeypatch.setattr(run.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    seen = []
+
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+        seen.append(case["id"])
+        return {"passed": True, "reasons": [], "reply": "", "calls": [], "seconds": 1.0, "models": [model],
+                "other_models": [], "tokens": 0, "cost_usd": 0.0}
+
+    monkeypatch.setattr(run, "run_once", fake_run_once)
+    assert run.main(["--core", "--n", "1", "--time-zone", "Asia/Kolkata"]) == 0
+    core = [c["id"] for c in judge.load_cases() if c.get("core") is True]
+    assert seen == core and len(core) == 101
+    assert "101 cases x 1 runs" in capsys.readouterr().out
+    seen.clear()
+    assert run.main(["--core", "--case", "connected_identity", "--case", "stated_number", "--n", "1",
+                     "--time-zone", "Asia/Kolkata"]) == 0
+    assert seen == ["connected_identity"]  # --case then --core: only the core cases named
+    assert run.main(["--core", "--case", "stated_number", "--n", "1", "--time-zone", "Asia/Kolkata"]) == 2
+    assert "no case to run" in capsys.readouterr().out
 
 
 def test_main_stops_a_gemini_model_on_a_quota_and_says_so(monkeypatch, capsys):

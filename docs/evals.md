@@ -39,6 +39,7 @@ python -m evals.run --n 1                one run each: a quick check
 python -m evals.run --threshold 0.66     the exit test: every case passes at least 2 of 3
 python -m evals.run --case yesterday --case saved_food --keep
 python -m evals.run --golden --model claude-sonnet-5-5
+python -m evals.run --core --model claude-sonnet-5-5
 python -m evals.run --client codex --model gpt-6-luna
 python -m evals.run --client gemini --golden --n 1
 ```
@@ -50,6 +51,7 @@ python -m evals.run --client gemini --golden --n 1
 | `--threshold R` | The pass rate every counted case must reach, 0 to 1. Default 1.0. Exit code 1 when any counted case is under it. |
 | `--case ID` | Only this case. Repeatable. |
 | `--golden` | Only the golden set: the cases with a `kind`. |
+| `--core` | Only the core: the cases with `core` true, the set each gate runs. With `--case`, only the core cases named. See "The golden set". |
 | `--model M` | The model, pinned by its exact name. Defaults: `claude-opus-5-5`, `gpt-6.1-sol`, `gemini-4-hydrogen`, each its client's release tier. `--model ""` uses the client's own default (not for Gemini). Each Claude run must show this model alone: see "The advisor is off, and one model a run". |
 | `--effort E` | The reasoning effort every run sends: see "Clients, models and effort". `--effort ""` sends none. |
 | `--gemini-key N` | Gemini only: which key of `.env.evals`, `GOOGLE_API_KEY_<N>`. Default 1. One key a run, never switched. |
@@ -244,7 +246,7 @@ record cannot be talked round.
 
 ## The cases
 
-`evals/cases.json`. Each case is `{id, say, calls, expect, kind?, switch?, seed?, db?}`.
+`evals/cases.json`. Each case is `{id, say, calls, expect, kind?, core?, pair?, switch?, seed?, db?}`.
 
 - `calls` is on every case: `{must, may, must_not}`, each a list of function names.
   - `must`: at least one of these called and answered. A refusal is an answer. Empty asks for no call.
@@ -253,6 +255,12 @@ record cannot be talked round.
   - They agree with `expect` when the cases load: its `function` is in `must`, its `no_call` in `must_not`. A
     reason both give is said once.
 - `kind` marks the golden set: `direct`, `incidental` or `look_alike`. See "The golden set".
+- `core`, true or false: whether `--core` runs it. Every case of the golden package carries it, and so do G1's golden
+  cases and the seven cases G1 added (`catch_up`, `import_other_app`, `save_food_asked`, `edit_fixes_minutes`,
+  `food_lookup`, `routine_read`, `exercise_list`), all true. A case without it is not in the core. A value that is
+  not true or false stops the load.
+- `pair`, on a look-alike of the golden package: the id of the incidental case it is paired with. It must name an
+  incidental case of the file, and only a look-alike carries one, or the load stops.
 
 - `switch` sets what the person lets Claude do (`log` or `log_delete`) through the Settings
   page's own service before the run. Left out, it is the default, `log_delete`. A case that sets
@@ -628,14 +636,16 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
 
 | Kind | What it asks | How it counts |
 |---|---|---|
-| `direct` | A question about the person's data. `must` is any data read | In the pass count, as every case |
+| `direct` | A question about the person's data, or a thing to log, change or refuse. `must` is any data read for a data question, else the function the message needs | In the pass count, as every case |
 | `incidental` | A bigger question in which Spotter's data is one step: a 10k plan, a trip's meals, a deload. `must` is the data read that step needs | Apart: the pick-up rate, incidental runs that made a `must` call |
 | `look_alike` | A question like an incidental one in which the person's data has no part. `must_not` holds every data read | Apart: the over-call rate, look-alike runs that made a data read |
 
 - Incidental and look-alike runs are kept out of the pass count, the threshold and the exit code. The table
   prints their passes apart, then both rates.
-- Three incidental and look-alike pairs are drafts from the contract's examples. The owner's ten questions join
-  them, each with its look-alike.
+- An incidental case whose `must` names fewer reads (`holiday_weight_deadline`, `run_goal_event`) counts as the
+  pick-up rule says: picked up only when a `must` call was made, whatever another read carried.
+- Three incidental and look-alike pairs are drafts from the contract's examples, and the golden package adds its
+  own (below). The owner's ten questions join them, each with its look-alike.
 - The measured pick-up rate is a ceiling: Spotter is the only MCP server in each run, so no other tool competes
   for the step.
 - **The coverage test** (`tests/test_evals.py`): every function on everyone's list is in at least one case's
@@ -653,6 +663,56 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
   https://www.fourmilab.ch/hackdiet/online/images/hdocsv.html, on 2026-11-17. The values are made up, and its
   User line is left out. StrongLifts' export page lists no columns, Hevy's refused the fetch, and Strong's own
   page was not found.
+
+### The golden package
+
+**Every case after `import_other_app` is the golden package (contract `function-list.md`, G1's note of
+2026-11-17): Codex's candidates, checked against the code by an outside reviewer, then built here.** Each carries
+`core`, and each look-alike its `pair`.
+
+- **The core runs at each gate, the full set at the baseline and the release** (the owner's pick). `--core` runs it.
+  The core is the package's core cases with G1's golden cases and the seven cases G1 added: the reviewed list
+  dropped its overlaps in favour of G1's drafts, so without them the core would miss those situations.
+  The coverage test holds for both: every function on everyone's list is the `must` of a case, and of a core case.
+- **Kinds.** The reviewer sorted the cases six ways: direct, incidental, look-alike, ambiguous, multi and
+  adversarial. The last three load as `direct`: they count in the pass count, as every direct case does.
+  - Ambiguous: words that fit more than one entry, kind or unit. Most pass when the reply asks and nothing is written.
+  - Multi: several things in one message. `must` passes on any one of its calls, so each part is judged on its own:
+    by the rows, by `ok_calls`, or by an `any_of` of one option for a second function's inputs.
+  - Adversarial: words that push past a rule, or instructions inside a food name, a note or an export. The text is
+    data: the case passes when the rule holds and the instruction is not followed.
+- **Tags by today's function list.** A data case is route-free, as G1's are: `must` is every data read, and the
+  figure the question asks for is a `quotes_one_of`, so only a read that gave it passes. A figure can come back at
+  different steps from different reads (a waist of 88.25 cm in `get_log`, 88.3 in `get_data`): both are listed.
+- **Figures from a read that is not a data read** (`whoami`, `find_food`, `get_routines`, `list_exercises`, a write's
+  own answer) are judged by `reply_has_pattern`, each figure standing alone, since `quotes_spotter` reads data reads
+  only.
+- **Seeds.** G1's `four_weeks` and `sixteen_weeks`, or case-level rows written out from the reviewer's words. Every
+  seed runs through `LocalServer.new_person` in the tests, so a seed that errors fails a test before a paid run.
+- **The owner's rulings kept.** A plain "squat" with no other squat logged is Back Squat, logged and named, never
+  asked (`hurried_squat`). A catch-up told in chat goes through the log functions (`two_lifting_days` holds
+  `import_entries` in its `must_not`, as `catch_up` does).
+
+**How the package is tested** (`tests/test_golden_cases.py`, no model, no network).
+- Each case is played as a run is: a person made and seeded by the runner's own `new_person`, the made-up run's calls
+  sent to the app's MCP endpoint behind the recorder, and the made-up reply judged with the person's rows.
+- Each case has a passing run and a failing one: a wrong figure, a call it should not make, a write not asked for, or a
+  reply that misses what it asks. A write the person did not ask for, added to the passing run, fails it.
+- A read case's passing runs pass on the nine fixed todays `tests/test_sixteen_weeks.py` uses, so each figure an
+  expect names is the seed's own on every weekday and across two month starts. The clock and the runner's dates are
+  pinned together.
+- The wrong-reply tries: a run meant to pass while wrong, on 28 cases. They are failing runs in the file.
+
+**What the package cannot judge.** A gap here is a case's known limit, not a pass it should not get.
+- A text inside an input: `inputs_include` compares a string whole, so a note's words, a feedback's words and a food's
+  name are not judged. `feedback_after_error` judges one call and one note; `food_name_injection` judges the kcal and
+  the source, not the name.
+- Call order, "at most once" and a retry: `delete_not_allowed` passes a refused `delete_entry` tried twice.
+- Which row a call names when no seed gives its id: `delete_yesterday_coke` and `delete_preview_clear_target` pass a
+  preview of another day's entry. `old_run_fix_and_snack` names the latest run by its date: the one run 21 to 27 days
+  back.
+- A sentence's meaning: a figure is judged, not the words round it, as G1's are.
+- The account's own email: `connected_identity` checks its shape, which the runner gives every person.
 
 **What the table prints.** A row a case: passes, and a run on average its calls, turns, seconds and tokens
 (input, cached, output), and its runs' cost. Under it: the counted passes, the apart passes and both rates, the

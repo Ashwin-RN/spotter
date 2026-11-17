@@ -275,7 +275,30 @@ and the owner is told. Why: at a 95% pass rate, 180 runs move by about 3 passes 
   Opus 5.5 and `gpt-6.1-sol` run at the baseline and the release.
 - The golden set grows by a package of its own after G1: 170 reviewed cases (Codex's 164 candidates checked against
   the code, 27 dropped as overlaps, 33 added). His pick: a core of 81 at each gate, the full set at the baseline and
-  the release.
+  the release. As built: 164 of the 170 went in (5 repeats of G1's cases, `account_clock` unjudgeable). The core is
+  101, not 81: the 77 new core cases and 24 of G1's cases (17 of them golden cases), which the reviewed list kept in
+  place of its repeats, 606 runs a gate on the two free-tier models. The owner agreed to 81; 101 is open for him.
+
+**2026-11-17, the judge, a fresh review after the golden package was built.** The same kind of hole had come back
+after three fix rounds, so a fresh reviewer probed the judge with aimed runs, no model run behind them: 125 of 136
+wrong runs written by hand passed, 55 of 59 made by rule passed, and 44 of 76 right runs in other words or more
+calls failed. Where the judge reads the record (rows, call arguments, a figure tied to the run's answers) it held.
+Where it reads the reply's words, each case carries its own patterns: a fix to one never reaches the others, and no
+list of phrasings is complete in either direction. The main holes:
+
+- A lift's sets and the person's settings are never compared: wrong sets with the right count, and a write nobody
+  asked for, pass.
+- A write's answer is not kept, so a preview of the wrong rows or entry passes.
+- A made-up figure beside the right one passes every figure case.
+- A claim of done in other words passes, and right replies that say nothing was done fail.
+- `reply_asks` is a question mark.
+- A right run made in more calls fails where `inputs_include` wants every entry in one call.
+
+Ruled by the owner: no fix round case by case; the golden package is committed as built, with a judge known to pass
+wrong runs; the judge is rebuilt to judge the record under a contract of its own: what the run changed, compared with
+a right run's change on a twin person; every answer kept and a preview judged by what it showed; one rule for
+figures; one shared rule for a claim of done, counted apart from the gate; a test that makes wrong runs by rule over
+every case. No baseline run, and no yes from him on the case table, until it is built.
 
 ### G2: the list diet (high)
 

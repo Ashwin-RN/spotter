@@ -61,6 +61,12 @@ kind, on a golden case only: direct, incidental or look_alike. Incidental and lo
 pass count, the threshold and the exit code, and reported apart: the pick-up rate (incidental runs that made a must
 call) and the over-call rate (look_alike runs that made a data read).
 
+core, true or false: whether the case is in the core, the set each gate runs (python -m evals.run --core). Every
+golden package case carries it, and G1's golden cases and the cases G1 added for a function carry it true; a case
+without it is not in the core.
+
+pair, on a look_alike case only: the id of the incidental case it is paired with, a case of the file.
+
 seed, rows created for the person before the run, through Spotter's own services, in order:
 
   {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "log_lifts" | "log_cardio" |
@@ -107,7 +113,7 @@ HIDDEN = "[token hidden]"
 EXPECT_KEYS = {"function", "inputs_include", "inputs_exclude", "inputs_forbid", "ok_calls", "no_call",
                "refused", "reply_asks", "reply_has", "reply_has_pattern", "reply_lacks",
                "reply_lacks_pattern", "any_of", "read_any", "quotes_spotter", "quotes_one_of"}
-CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db", "calls", "kind"}
+CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db", "calls", "kind", "core", "pair"}
 TAG_KEYS = ("must", "may", "must_not")
 KINDS = ("direct", "incidental", "look_alike")  # a golden case's kind
 APART = ("incidental", "look_alike")  # kept out of the pass count, reported apart
@@ -159,6 +165,13 @@ def case_problems(case: Any) -> list[str]:
         problems.append(f"switch must be one of {', '.join(SWITCHES)}")
     if "kind" in case and case["kind"] not in KINDS:
         problems.append(f"kind must be one of {', '.join(KINDS)}")
+    if "core" in case and not isinstance(case["core"], bool):
+        problems.append("core must be true or false")
+    if "pair" in case:
+        if not isinstance(case["pair"], str) or not case["pair"].strip():
+            problems.append("pair must be the id of a case")
+        elif case.get("kind") != "look_alike":
+            problems.append("only a look_alike case names a pair: the incidental case it is paired with")
     if "calls" in case:
         problems += _tag_problems(case["calls"], case.get("expect"), case.get("kind"))
     named: set = set()  # the "as" of the seeds so far: what a later seed's {{seed.<as>}} may name
@@ -324,6 +337,11 @@ def load_cases(path: Path = CASES_FILE) -> list[dict]:
         if label in seen:
             problems.append(f"{label}: duplicate id")
         seen.add(label)
+    kinds = {c.get("id"): c.get("kind") for c in cases if isinstance(c, dict)}
+    for case in cases:
+        if isinstance(case, dict) and isinstance(case.get("pair"), str) and case["pair"].strip() \
+                and kinds.get(case["pair"]) != "incidental":
+            problems.append(f"{case.get('id')}: pair {case['pair']} is not an incidental case in the file")
     if problems:
         raise ValueError("; ".join(problems))
     return cases

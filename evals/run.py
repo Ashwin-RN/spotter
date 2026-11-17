@@ -1,5 +1,5 @@
 """Run the evals: python -m evals.run [--client claude|codex|gemini] [--n 3] [--threshold 1.0] [--case ID ...]
-[--golden] [--model M] [--effort E] [--keep]
+[--golden] [--core] [--model M] [--effort E] [--keep]
 
 One local server for the whole run, with a temporary SQLite file. For each case, n fresh conversations with the
 client asked for, each with a new throwaway person: the Claude CLI (here), Codex (evals/codex_client.py) or a
@@ -449,6 +449,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="the pass rate every counted case must reach, 0 to 1 (default 1.0: every run)")
     parser.add_argument("--case", action="append", default=[], metavar="ID", help="run only this case (repeatable)")
     parser.add_argument("--golden", action="store_true", help="run only the golden set: the cases with a kind")
+    parser.add_argument("--core", action="store_true",
+                        help="run only the core: the cases marked core, the set each gate runs (function-list.md)")
     parser.add_argument("--model", default=None,
                         help="the model, pinned by its exact name (default: claude "
                              f"{DEFAULT_MODELS['claude']}, codex {DEFAULT_MODELS['codex']}, gemini "
@@ -519,6 +521,8 @@ def main(argv: list[str] | None = None) -> int:
         cases = [c for c in cases if c["id"] in args.case]
     if args.golden:
         cases = [c for c in cases if c.get("kind")]
+    if args.core:
+        cases = [c for c in cases if c.get("core") is True]
     if not cases:
         print("no case to run")
         return 2
