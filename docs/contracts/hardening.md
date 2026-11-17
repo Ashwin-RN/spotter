@@ -353,3 +353,13 @@ On `bc5bb71` (H1 and H2 joined), a throwaway Postgres 17 container, removed with
 | 9 | `history` at 2,000 sessions: 0.212 s (4.576 s on `fd83753`). `get_log` of a day 600 days back: 0.136 s (4.648 s). A sweep of 100,000 old call-log rows: three runs, 0.57 s, 0.34 s and 0.01 s of work, 50,000 rows at most a run, the 10-minute retry between them, the 100 recent rows kept |
 
 A correction to the owner's table at the top: for an old day, `get_log` now loads only that day's food, weigh-ins, measurements and cardio, but still every lift session up to that day, since its bests need the earlier sessions (D3, as decided). Not run: the deadlock question the H2 note leaves open.
+
+## After the release, 2026-11-17
+
+- Pick 3 done: Railway's healthcheck moved to `/ready` on the owner's click and deploy at 20:46, after H2's deploy. `/health` and `/ready` answered 200 after.
+- Exit check 7 was skipped on the owner's word: his is the only account on live, and it has nothing logged. What that left unread: the kept versions' values (`entry_version.before`), which `0012`'s own count does not read. `0012`'s count passed on the host.
+- Exit check 2's SQLite timings are in the H1 note above; the build log gives the Postgres ones.
+- Open, from a review of the repo's state the same evening, none run:
+  - `/ready` opens a database connection for anyone, outside the page limit. Whether a flood of it can hold the pool on Postgres, so real calls answer busy.
+  - The export gate and the page limit count per process. Whether Railway's start command runs one process.
+  - A build older than the database: a build without `0012` fails `alembic upgrade head` against a database at `0012`, and `/ready` answers 503 to any revision but its own. What Railway does on a rollback.

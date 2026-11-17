@@ -14,9 +14,10 @@ in tests. The README says what it does; this file says how changes are made.
 | `app/config.py` | The only module that reads the environment |
 | `migrations/versions/` | Alembic migrations, numbered `0001` up |
 | `tests/` | pytest. `tests/conftest.py` builds the app on a throwaway SQLite file |
-| `evals/` | `claude -p` against a local server. `python -m evals.run`, and `python -m evals.need` says whether a run is needed |
+| `evals/` | Claude, Codex or Gemini against a local server (`--client`). `python -m evals.run`, and `python -m evals.need` says whether a run is needed |
 | `docs/can-and-cant.md` | Served to the assistant as a resource: model-read text |
 | `docs/evals.md` | How the evals run |
+| `docs/domain-move.md` | The steps to move the site to its own domain |
 | `docs/contracts/` | One contract per stage or item, fixed before the build. A record once built: a later change adds a dated note rather than rewriting it |
 | `BUILD_LOG.md` | One entry per stage or item: the build, the reviews, the checks, the eval run |
 | `tools/` | `probe.py` checks a live server from outside, `mcp_call.py` calls one function, `load.py` is a local load test |

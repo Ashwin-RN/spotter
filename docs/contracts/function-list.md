@@ -300,6 +300,17 @@ a right run's change on a twin person; every answer kept and a preview judged by
 figures; one shared rule for a claim of done, counted apart from the gate; a test that makes wrong runs by rule over
 every case. No baseline run, and no yes from him on the case table, until it is built.
 
+**2026-11-17, at the waypoint (a review of the repo's state):**
+
+- The baseline as the list now stands: 235 cases, 181 golden, 101 core. As written, 2,820 second-tier runs (235
+  cases, 3 runs, 2 models, twice) and 1,086 Opus runs (181 golden cases, 3 runs, twice): about $206 at $0.19 a
+  run, about 16 times the 66 Opus runs and $12 above. The cost is said to the owner by side before the baseline
+  runs; the rebuild's contract may size it again.
+- G1 (`fd83753`) and the evals' advisor fix (`2718899`) were committed on `main` itself, not on a branch. Both
+  change eval files only. G1's baseline run is still owed.
+- The status line at the top says "for the owner's yes": his yes is given (the picks). His order since:
+  "hardening first, then F, then G2". Hardening is live.
+
 ### G2: the list diet (high)
 
 | Piece | What |

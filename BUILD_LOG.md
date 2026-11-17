@@ -1094,7 +1094,7 @@ The whole suite ran in the commit hook on D1 and on the fix round. On D2 the hoo
 - Paging is by offset: an entry logged or deleted between two pages can move a row across the page edge.
 - Totals are worked out in Python over the area's rows, not in the database. Fast at a year of data; to revisit as a person's history grows.
 - The data cases judge a reply by the figures they list. A right reply that quotes another of Spotter's figures fails.
-- Some runs' model line names `claude-fable-5-2` beside the pinned `claude-opus-5-5`. Why is not checked.
+- Some runs' model line names `claude-fable-5-2` beside the pinned `claude-opus-5-5`. Why is not checked. (2026-11-17: it was the advisor, 11 of 153 runs; off in every run since `2718899`, as `docs/evals.md` says.)
 
 ### The eval run
 
@@ -1119,7 +1119,7 @@ The whole suite ran in the commit hook on H1 (`4ddee93`), H2 (`bc5bb71`) and the
 
 ### Release
 
-H1 was live at 20:27 and H2 at 20:32 on 2026-11-17, each on the owner's word. The export check before H2 was skipped on his word: his is the only account, and it has nothing logged. After each deploy: `/health` 200, `/mcp` 401, `/` 200, the probe with no failures, and a fresh assistant session. After H2, `/ready` 200: the database is at `0012`.
+H1 was live at 20:27 and H2 at 20:32 on 2026-11-17, each on the owner's word. The export check before H2 was skipped on his word: his is the only account, and it has nothing logged. After each deploy: `/health` 200, `/mcp` 401, `/` 200, the probe with no failures, and a fresh assistant session. After H2, `/ready` 200: the database is at `0012`. Railway's healthcheck then moved to `/ready` on the owner's click and deploy at 20:46, and `/health` and `/ready` answered 200 after.
 
 ### Known limits
 

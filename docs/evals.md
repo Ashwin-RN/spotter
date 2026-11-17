@@ -5,7 +5,8 @@ from what the server received, over repeated runs. Three clients run them: the C
 
 ## When evals run
 
-Evals cost money, so they run once per release, and only when `python -m evals.need main` says yes.
+Evals cost money, so the whole set runs once per release, and only when `python -m evals.need main` says yes.
+Inside a build with gates (B6), the core runs at each gate: see the golden package below.
 
 ```
 python -m evals.need          against main
@@ -162,7 +163,7 @@ changed within a day and one full run cost three times the estimate. Both below 
    ```
    claude -p "<say>" --output-format json --mcp-config <file> --strict-mcp-config
           --allowedTools "mcp__spotter__*" --no-session-persistence
-          --settings '{"advisorModel": ""}' [--model M]
+          --settings '{"advisorModel": ""}' [--effort E] [--model M]
    ```
 
    - The MCP config names one server, `http://127.0.0.1:PORT/mcp`, with the token in an
@@ -278,7 +279,7 @@ record cannot be talked round.
     `{kind, entry_id, changes}`, all three, and `entry_id` is that row's `{{seed.<as>}}`.
 - `db` checks the person's live rows, or with `"state": "deleted"` the soft-deleted ones.
   - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`, `goal`,
-    `feedback`.
+    `feedback`, `routine`.
   - A `lift_session` row carries `set_count`: how many sets it holds.
   - A note is never kept as deleted: a deleted note's row is gone. So every feedback row is live.
   - A goal has no delete, so every goal row is live. Check `status` instead.
@@ -750,5 +751,9 @@ client, the model asked for and the ones reported, the effort sent, and for Clau
   - **What was tried.** On 2026-11-12 a rule that also read fixed waiting phrases was built, then narrowed.
     A reviewer found wrong replies that each version passed, and it was withdrawn. Those replies are now
     fixtures that must fail.
+- **Words stand in for the record in many cases.** A fresh review on 2026-11-17 probed the judge with aimed
+  runs: most wrong runs it tried passed where a case reads the reply's words (sets, settings, previews,
+  made-up figures, claims of done). The judge is rebuilt to judge the record before any baseline run: the
+  dated note in `docs/contracts/function-list.md`.
 - **Not the person's own data.** Every run is a throwaway person on a local copy. Nothing here touches
   the live site.

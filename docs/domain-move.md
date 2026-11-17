@@ -38,6 +38,7 @@ Both changes ask everyone to reconnect, so they go together, while the only acco
 | Check | Expected |
 |---|---|
 | `https://spottermcp.com/health` | 200 |
+| `https://spottermcp.com/ready` | 200 |
 | `https://spottermcp.com/mcp` with no token | 401, with `resource_metadata` on the new address |
 | `https://spottermcp.com/` | 200 |
 | `python tools/probe.py https://spottermcp.com` | Every check PASS |
