@@ -1071,3 +1071,31 @@ The whole suite ran in the commit hook on each code commit. On `194e7f0` the hoo
 ### The eval run
 
 All 43 cases, 3 runs each, on `claude-opus-5-5`, at `d4e9400`, from 16:38 to 17:24 on 2026-11-16: 129 of 129 runs passed, $21.0332 at list price. Among them the new cases: units' six (a weigh-in in lb, lifts in lb, a run in miles, the units question after a first lb log, a switch of units, a routine changed in lb) and input checks' two (a waist given in inches, and a machine's calories).
+
+## Data on request
+
+Built on 2026-11-16 and 2026-11-17 on one branch, in two packages, and released together. Its decisions and limits are in `docs/contracts/data-on-request.md`, with the build's own notes at its end.
+
+| Package | What it does |
+|---|---|
+| D1 | Two reads. `what_is_logged` says what the person has logged: each area's fields and what they mean, dates, counts, the names used, and the open goals. `get_data` answers one question over one area: fields, filters, a date range, groups, and totals (sum, average, highest, lowest, count, per day, share) worked out by Spotter, in the person's units. Eight areas, one field list tied to the models by a test. Body region and weighted muscles for the 41 lifts, from free-exercise-db. The open goals and today's amounts ride beside the data. A cursor with no state on the server, and a 30,000 character ceiling an answer. No migration |
+| D2 | A 16-week seed and 8 eval cases for open questions: the owner's three (basketball, lifting, calories), squats with their goal, getting back on track, a lb account, a kind never logged, and a year of weigh-ins |
+
+### The reviews
+
+The contract was read against the code, reconciled after the owner's later changes and reviewed twice before the build. Each package had one builder and one separate reviewer on a frozen copy, then one fix round. D1's review had one must fix, re-checked by a fresh reviewer: a range total of a measurement's value over several kinds mixed units, and is now empty. Its other fixes: at most 10 goals ride along and a page always keeps a row, a cursor longer than 200 characters is refused, a measurement's share needs one kind, a test bounds the statements an open lift goal adds, and the saved food join also checks the owner. D2's review found cases that passed or failed for the wrong reason: a figure matching inside a longer one, and sleep patterns that caught general advice. Both were fixed.
+
+### Checks
+
+The whole suite ran in the commit hook on D1 and on the fix round. On D2 the hook ran only the docs tests, because the files were staged in the same command as the commit; the whole suite on a clean export of that commit passed 6,098 tests, and `test_eval_need` passed 19 in the tree. On a real Postgres, 17.12 in a throwaway container, at the D2 commit: `tests/test_data.py` passed 86 of 86 and `tests/test_sixteen_weeks.py` 39 of 39. Timed on SQLite over a year of data in every area: `get_data` 99 ms, `what_is_logged` 111 ms.
+
+### Known limits
+
+- Paging is by offset: an entry logged or deleted between two pages can move a row across the page edge.
+- Totals are worked out in Python over the area's rows, not in the database. Fast at a year of data; to revisit as a person's history grows.
+- The data cases judge a reply by the figures they list. A right reply that quotes another of Spotter's figures fails.
+- Some runs' model line names `claude-fable-5-2` beside the pinned `claude-opus-5-5`. Why is not checked.
+
+### The eval run
+
+All 51 cases, 3 runs each, on `claude-opus-5-5`, at `e6174f7`, from 08:01 to 09:18 on 2026-11-17: 144 of 153 runs passed, $35.2311 at list price. In every answered run the reply quoted Spotter's figures right. The misses: two data cases asked for one route where another read gave the right figures, two runs were cut off at 180 s after 10 to 15 right calls, one checker read an example of what to say as a made-up sleep figure, and one older case missed once. The fix round (`6529133`) judges the data cases on Spotter's figures and a read of Spotter's data, and gives each run 300 s. The six cases again, 3 runs each, from 11:29 to 11:53: 17 of 18, $11.8049. The miss was a right reply quoting figures from `get_trends`, outside the case's list. Released on the owner's word with that one miss.
