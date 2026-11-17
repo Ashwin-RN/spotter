@@ -290,3 +290,18 @@ One review on a frozen copy: 2 must fixes, 6 should fixes, 10 nits. Each claim c
 | The known limit on 0012's locks | Added, marked not run |
 
 A re-check on a fresh frozen copy found all eight must and should fixes done, and three nits, fixed here: exit check 5 runs in a worktree only, the Postgres run's step 5 deletes the long-named food straight after its own stop, and D15 gives the downgrade's line. Left as a known gap: D16 does not cover `env.py`'s passed-in connection path, which nothing in the repo uses today.
+
+## Built, H1, 2026-11-17
+
+H1 was built as decided, reviewed on a frozen copy (no must fix, 1 should fix, 2 nits) and fixed in one round. `history` at 2,000 sessions of 5 sets, load included, on SQLite: 0.188 s by the builder, 0.197 s by the reviewer, against 4.56 s and 5.12 s for `fd83753` on the same rows. `python -m evals.need fd83753`: no.
+
+| Departure | Why |
+|---|---|
+| `tests/test_web.py`, 11 tests | The `get_progress` stand-ins take D6's web-only keyword; one test reads `reps_only` from `get_progress` in place of `_trend`; one counts one history read, not two; `_trend` with no account gives `{"bodyweight": None}` |
+| `tests/test_edit_history.py`, one test | With D9's old-first replace, SQLite gives the new sets the old row ids, so the test counts the inserts into `lift_set` in place of comparing ids. What is stored is the same |
+| `tests/test_mcp.py` | D1's `may_delete` reaches the service; `mcp_server.DELETE_CHECK` is the one `functools.partial(not_allowed, "delete_entry")`, built once |
+| `tests/test_goals.py`, `tests/test_four_weeks.py` | Both pinned `goal_charts`' keys; D6 adds `closed` |
+| `tests/test_page_rules.py` | Its Goals states hand `goal_charts` the closed goals, so the Closed goals card is drawn and checked again (the review's should fix) |
+| `app/web.py`, the day page | When the person's midnight passes between the page's date and `get_log`'s, today's page reads that day once more by its date, where it would 404 (the review's nit; `fd83753` drew it). A test crosses midnight through the clock seam |
+
+Not run here, left for the Postgres run: D2's one-moment read, D1 with two connections, D5's weights statement, D8's batched deletes.

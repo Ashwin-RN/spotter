@@ -973,7 +973,9 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
         return (account, arguments["kind"], arguments["entry_id"], "claude"), flags
     if name == "delete_entry":  # who calls, so a delete takes two calls (switch decision 7), and confirm when sent
         flags = {k: v for k, v in arguments.items() if k == "confirm"}
-        return (account, arguments["kind"], arguments["entry_id"], "claude"), flags
+        # and the wrapper's check of the switch, for the service to run again under the lock (hardening D1)
+        return (account, arguments["kind"], arguments["entry_id"], "claude"), {**flags,
+                                                                             "may_delete": mcp_server.DELETE_CHECK}
     if name in ("send_feedback", "get_data"):  # no by: a note comes only through MCP (feedback.md R3); a read
         return (account, arguments), {}
     if name == "whoami":  # what is offered, for its setup steps (first-day.md R9)

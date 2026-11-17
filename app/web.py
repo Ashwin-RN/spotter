@@ -24,7 +24,7 @@ and Settings.
                                    chart with its smoothed line
     /progress/{lift}               one lift: its chart, bests and sessions
     /goals                         each open goal as its own card with its path chart (goal_charts), the
-                                   closed ones (get_goals);
+                                   closed ones (goal_charts too: one read, hardening D6);
                                    Hit, Drop and Reopen POST to /goals/{goal_id}/status; one form for a new
                                    goal (POST), one kind at a time (?kind=)
     /foods                         the saved foods as a table (list_saved_foods), a fold-out that saves one
@@ -38,7 +38,7 @@ and Settings.
                                    do (POST to /settings/claude-can), the person's data (export, delete), and
                                    More (Saved foods, Saved routines, and Sign out for a phone). Each post lands on
                                    its own card, and a GET of /settings/targets or /settings/claude-can goes to that card
-    /settings/export               POST: a zip of CSVs, one per table the person owns
+    /settings/export               POST: a zip of CSVs, one per table the person owns, behind its gate (ExportGate)
     /settings/delete               GET: what goes; POST: the sign-in at the provider, then every row here,
                                    then the session, then a plain "deleted" page
     PLACEHOLDERS                   every other page links.py names, until its real page is built
@@ -912,6 +912,95 @@ def too_many_pages(request: Request, wait: int) -> Response:
     return response
 
 
+# ---------------------------------------------------------------- the export gate (contract hardening.md, D2)
+
+# The export writes no call-log row, so, as the page limit, its count lives in memory: one ExportGate per app (routes()
+# makes it), so per process. One export at a time per person, at most EXPORTS_AN_HOUR per person in
+# EXPORT_WINDOW_MINUTES, counted at the start, and at most EXPORTS_AT_ONCE at once in the process. A refused export is
+# not counted and builds nothing. Its 429 page says when to try again, in Retry-After too.
+EXPORTS_AN_HOUR = 5
+EXPORT_WINDOW_MINUTES = 60
+EXPORTS_AT_ONCE = 2
+
+
+def export_clock() -> float:
+    """The export gate's clock, in seconds. Tests replace it."""
+    return time.monotonic()
+
+
+class ExportGate:
+    """Each person's exports started in the last EXPORT_WINDOW_MINUTES, and the exports running, in this process's
+    memory."""
+
+    def __init__(self) -> None:
+        self._started: dict[int, deque[float]] = {}
+        self._running: set[int] = set()
+        self._lock = threading.Lock()
+
+    def take(self, user_id: int) -> tuple[str, int] | None:
+        """Start one export and return None; or, refused, count nothing and return (why, minutes to wait): running
+        (this person's export is under way), hour (EXPORTS_AN_HOUR in the window; the minutes until the oldest
+        counted one leaves it, at least 1) or busy (EXPORTS_AT_ONCE running in the process). free() ends it."""
+        now = export_clock()
+        window = EXPORT_WINDOW_MINUTES * 60
+        with self._lock:
+            if user_id in self._running:
+                return "running", 1
+            started = self._started.setdefault(user_id, deque())
+            while started and started[0] <= now - window:
+                started.popleft()
+            if len(started) >= EXPORTS_AN_HOUR:
+                return "hour", max(1, math.ceil((started[0] + window - now) / 60))
+            if len(self._running) >= EXPORTS_AT_ONCE:
+                return "busy", 1
+            started.append(now)
+            self._running.add(user_id)
+            if len(self._started) > PAGE_SWEEP_AT:
+                self._started = {k: v for k, v in self._started.items() if v and v[-1] > now - window}
+            return None
+
+    def free(self, user_id: int) -> None:
+        with self._lock:
+            self._running.discard(user_id)
+
+
+def export_refused(request: Request, why: str, wait: int) -> Response:
+    """The gate's 429 page, in the contract's words, with Retry-After."""
+    if why == "running":
+        response = message(request, "Export under way", "An export of this account is being put together now.",
+                           "Wait for it to download, then try again if you need another.", status_code=429)
+    elif why == "hour":
+        response = message(request, "Too many exports",
+                           f"This account has been exported {formatting.show(EXPORTS_AN_HOUR, 'count')} times in the "
+                           "last hour.",
+                           f"Try again in {formatting.show(wait, 'count')} minute{'s' if wait != 1 else ''}.",
+                           status_code=429)
+    else:
+        response = message(request, "Exports are busy", "Spotter is putting other exports together right now.",
+                           "Try again in a minute.", status_code=429)
+    response.headers["Retry-After"] = str(wait * 60)
+    return response
+
+
+def export_gated(endpoint, gate: ExportGate):
+    """The export behind its gate: a signed-in person's export is taken from the gate first, refused past it, and
+    freed when the zip is sent or the export fails. A signed-out visitor goes straight through, to the sign-in."""
+    async def run(request: Request) -> Response:
+        user = await current_user(request)
+        if user is None:
+            return await endpoint(request)
+        refused = gate.take(user.id)
+        if refused is not None:
+            return export_refused(request, *refused)
+        try:
+            return await endpoint(request)
+        finally:
+            gate.free(user.id)
+
+    run.__name__ = endpoint.__name__
+    return run
+
+
 def page_limited(endpoint, loads: PageLoads):
     """The endpoint behind the page limit: a signed-in person's GET is counted first, and refused past the limit.
     Anything else (a signed-out visitor, a POST) goes straight through."""
@@ -1554,19 +1643,25 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
     on = parse_day(request.path_params["date"])
     if on is None:
         return not_found_page(request)
-    result = await _db(services.get_log, user.id, on.isoformat(), 1, True)  # any day it can draw (inputs.md D8)
     today = users.today_for(user)
     later: list[date] = []  # days after today that hold an entry (left there by a change of time zone)
-    if (not failed(result) and on >= today) or codes(result) == {"date_in_future"}:
-        # Undated, get_log also lists those days, so a link to one never 404s and the days link to each other.
-        undated = await _db(services.get_log, user.id, None, 1)
-        if not failed(undated):
-            later = sorted(date.fromisoformat(d["date"]) for d in undated["days"] if d["date"] > today.isoformat())
-            if failed(result):
-                result = undated
+    if on >= today:
+        # Today or later: get_log once, undated (hardening D6). It lists today and the days after it that hold an entry,
+        # so a link to one never 404s and the days link to each other.
+        result = await _db(services.get_log, user.id, None, 1)
+        if not failed(result):
+            later = sorted(date.fromisoformat(d["date"]) for d in result["days"] if d["date"] > today.isoformat())
+    else:
+        result = await _db(services.get_log, user.id, on.isoformat(), 1, True)  # any day it can draw (inputs.md D8)
     if failed(result):
         return not_found_page(request)
     day = next((d for d in result["days"] if d["date"] == on.isoformat()), None)
+    if day is None and on <= today:
+        # The person's midnight passed between the page's date and get_log's own: today is no longer get_log's today,
+        # so it is read once more, dated, as an older day is. Only in this edge.
+        again = await _db(services.get_log, user.id, on.isoformat(), 1, True)
+        if not failed(again):
+            day = next((d for d in again["days"] if d["date"] == on.isoformat()), None)
     if day is None:
         return not_found_page(request)
     # Prev and next only ever name a day that has a page: up to today, every day; after it, only the
@@ -2468,27 +2563,24 @@ BODY_WEIGHT_DAYS = 28  # Progress' Body weight chart: the last 4 weeks
 
 
 def _trend(user_id: int, today: date | None = None) -> dict:
-    """What /progress shows beyond the reads it shares with Today: each lift's best set, and for a lift never
-    done above 0 kg its most reps in one set (lifts.history's best_set and reps_only, the numbers get_progress
-    uses), and the body weight chart. bodyweight_chart takes the weigh-in and goal rows themselves, so this
-    reads them. Nothing is written, and no figure is worked out here: the card's counts and callouts come
-    from get_trends and get_days.
+    """What /progress shows beyond the reads it shares with Today: the body weight chart. bodyweight_chart takes the
+    weigh-in and goal rows themselves, so this reads them. Each lift's best set and most reps come from get_progress'
+    own history (its for_page, hardening D6), so the page works the history out once. Nothing is written, and no
+    figure is worked out here: the card's counts and callouts come from get_trends and get_days.
 
     today: the date the page's other reads name (get_trends' today), so the chart's 28 days are theirs.
     Without it, the person's own date."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
-            return {"best_sets": {}, "reps_only": {}, "bodyweight": None}
+            return {"bodyweight": None}
         today = today or users.today_for(user)
         units = users.units_for(user)
-        history = lifts.history(s, user.id, today)
         weighed = body.weigh_ins(s, user.id, today)
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")))
         # The last 28 days, today included (section D): the same points as get_trends' series.
         since = today - timedelta(days=BODY_WEIGHT_DAYS - 1)
-        return {"best_sets": history["best_set"], "reps_only": history["reps_only"],
-                "bodyweight": exact_read(progress_data.bodyweight_chart, units)(weighed, goals, today, since)}
+        return {"bodyweight": exact_read(progress_data.bodyweight_chart, units)(weighed, goals, today, since)}
 
 
 def _lift_points(lift: dict) -> dict:
@@ -2503,7 +2595,7 @@ async def progress_page(request: Request) -> Response:
     if user is None:
         return redirect(links.page("sign_in"))
     units = users.units_for(user)
-    result = await _db(exact_read(services.get_progress, units), user.id)
+    result = await _db(partial(exact_read(services.get_progress, units), for_page=True), user.id)
     if failed(result):
         return not_found_page(request)
     # The tiles, their sheets and the Body weight card read what Today's glance block reads (glance_of), so the
@@ -2521,8 +2613,8 @@ async def progress_page(request: Request) -> Response:
     if not failed(cardio) and cardio["today"] != today.isoformat():
         cardio = await _db(services.get_cardio, user.id)
     activities = None if failed(cardio) or cardio["today"] != today.isoformat() else cardio["activities"]
-    return page(request, "progress.html", lifts=result["lifts"], best_sets=trend["best_sets"],
-                reps_only=trend["reps_only"], glance=glance, bodyweight=trend["bodyweight"],
+    return page(request, "progress.html", lifts=result["lifts"], best_sets=result.get("best_sets") or {},
+                reps_only=result.get("reps_only") or {}, glance=glance, bodyweight=trend["bodyweight"],
                 chart=charts.bodyweight_svg(trend["bodyweight"], today=today, units=units), slug=links.slug,
                 today=today, trends=None if failed(trends) else trends, activities=activities,
                 fastest=await fastest_in_miles(user.id, activities, units),
@@ -2569,14 +2661,6 @@ async def lift_names() -> dict[str, str]:
     return {links.slug(e["name"]): e["name"] for e in result.get("exercises", [])}
 
 
-def _reps_only(user_id: int, lift: str, today: date) -> dict | None:
-    """One lift's entry in lifts.history's reps_only, read as _trend reads it: {reps, date} for a lift never done
-    above 0 kg, else None. get_progress does not copy it. today: the date get_progress named, so both reads are
-    of one day."""
-    with db.new_session() as s:
-        return lifts.history(s, user_id, today)["reps_only"].get(lift)
-
-
 async def progress_lift_page(request: Request) -> Response:
     user = await current_user(request)
     if user is None:
@@ -2585,13 +2669,14 @@ async def progress_lift_page(request: Request) -> Response:
     if name is None:
         return not_found_page(request)
     units = users.units_for(user)
-    result = await _db(exact_read(services.get_progress, units), user.id, name)
+    result = await _db(partial(exact_read(services.get_progress, units), for_page=True), user.id, name)
     if failed(result):
         return not_found_page(request)
-    # The page's one date is get_progress' today. The reps_only read takes that date, so it never names another.
+    # The page's one date is get_progress' today, and its reps_only comes from the same read (hardening D6): {reps,
+    # date} for a lift never done above 0 kg, else None.
     lift = result["lift"]
     today = date.fromisoformat(result["today"])
-    bare = await _db(_reps_only, user.id, lift["exercise"], today)
+    bare = (result.get("reps_only") or {}).get(lift["exercise"])
     chart = progress_data.lift_chart(_lift_points(lift), lift["goals"], lift["exercise"])
     return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart, today=today, units=units),
                 today=today, bare=bare, sessions=list(reversed(lift["estimated_max_over_time"])),
@@ -2834,19 +2919,11 @@ async def exercise_names(kind: str) -> list[str]:
     return [e["name"] for e in result.get("exercises", [])]
 
 
-async def goal_reads(user_id: int, units=None) -> tuple[dict, dict]:
-    """The Goals page's two reads: get_goals with the closed goals, and goal_charts for the open goals, unrounded,
-    worded in units, the person's, as get_goals words them, and the page's one date. Each takes the person's date
-    from the clock, so read across their midnight the two can name two dates: both are read once more, as
-    glance_of does. If they still differ, goal_charts' date is the page's
-    for that one render: get_goals gives the page only its closed goals, whose labels, statuses and closing times
-    carry nothing worked out from the date. Either read's failure comes back as it is."""
-    for _ in range(2):
-        listed = await _db(services.get_goals, user_id, True)
-        charted = await _db(services.goal_charts, user_id, units)
-        if failed(listed) or failed(charted) or listed.get("today") == charted.get("today"):
-            break
-    return listed, charted
+async def goal_reads(user_id: int, units=None) -> dict:
+    """The Goals page's one read (hardening D6): goal_charts, the open goals unrounded, worded in units, the
+    person's, as get_goals words them, the closed goals as get_goals' include_closed gives them, and the page's one
+    date. One read, so one date and one lift history. Its failure comes back as it is."""
+    return await _db(services.goal_charts, user_id, units)
 
 
 async def goals_view(request: Request, user: User, kind: str = GOAL_KIND_FIRST, errors: dict | None = None,
@@ -2854,8 +2931,8 @@ async def goals_view(request: Request, user: User, kind: str = GOAL_KIND_FIRST, 
     """The Goals page, its Set a goal form showing `kind`: after a refusal, with each line under its field or at
     the top (loose), and what was typed kept."""
     units = users.units_for(user)
-    listed, charted = await goal_reads(user.id, units)
-    if failed(listed) or failed(charted):
+    charted = await goal_reads(user.id, units)
+    if failed(charted):
         return not_found_page(request)
     saved = GOAL_SAVED.get(request.query_params.get("saved") or "") if status_code == 200 else None
     notes = goal_notes_shown(request.query_params.get("notes")) if saved else []
@@ -2864,7 +2941,7 @@ async def goals_view(request: Request, user: User, kind: str = GOAL_KIND_FIRST, 
                 words={g["goal_id"]: goal_words(g, units) for g in goals},
                 charts={g["goal_id"]: goal_chart(g, today, units) for g in goals},
                 goal_unit=lambda g: goal_unit(g, units), weight_unit=GOAL_WEIGHT_UNIT,
-                closed=listed.get("closed") or [], errors=errors or {}, loose=loose or [], typed=typed or {},
+                closed=charted.get("closed") or [], errors=errors or {}, loose=loose or [], typed=typed or {},
                 saved=saved, kinds=GOAL_KINDS, kind=kind,
                 shows_start="start_value" in (errors or {}) or bool((typed or {}).get("start_value")),
                 lift_choices=[(n, n) for n in await exercise_names("lift")] if kind == "lift" else [],
@@ -3059,13 +3136,15 @@ def routes(settings: Settings) -> list[BaseRoute]:
                                 session_cookie=SESSION_COOKIE, max_age=SESSION_SECONDS,
                                 same_site="lax", https_only=settings.site_origin.startswith("https://")))
         loads = PageLoads()  # this app's page-load count: one app a process, so one count
+        exports = ExportGate()  # and its export count, the same way
         table = [("/", home, ["GET"]),
                  ("/hi", hi_there, ["GET"]),
                  ("/sign-in", sign_in, ["GET"]),
                  ("/auth/callback", callback, ["GET"]),
                  ("/sign-out", sign_out, ["POST"])]
-        # The signed-in pages, behind the page limit.
-        table += [(path, page_limited(endpoint, loads), methods) for path, endpoint, methods in PAGES]
+        # The signed-in pages, behind the page limit; the export behind its gate too.
+        table += [(path, page_limited(export_gated(endpoint, exports) if endpoint is export_page else endpoint, loads),
+                   methods) for path, endpoint, methods in PAGES]
         table += [(path, to_card(kind), ["GET"]) for path, kind in CARD_ADDRESSES]
         table += [(path, page_limited(placeholder, loads), ["GET"]) for path in PLACEHOLDERS.values()]
     else:

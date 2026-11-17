@@ -165,9 +165,19 @@ def _before(version: EntryVersion, exercises: dict) -> str:
     return json.dumps(values, ensure_ascii=False)
 
 
+def one_moment(s) -> None:
+    """On Postgres, the session's reads from here on are one REPEATABLE READ, READ ONLY transaction (hardening D2):
+    every file reads the database as it stood at the first read, so a session's sets are never read after an edit
+    its row was read before. Set through the connection's execution options before the first read. SQLite as before:
+    the tests and a laptop."""
+    if s.get_bind().dialect.name == "postgresql":
+        s.connection(execution_options={"isolation_level": "REPEATABLE READ", "postgresql_readonly": True})
+
+
 def export_data(user_id: int) -> dict:
     """Every row this person owns, deleted rows included. See the module notes."""
     with db.new_session() as s:
+        one_moment(s)
         user = s.get(User, user_id)
         if user is None:
             return no_account()

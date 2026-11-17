@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
-from app import config, db, exercises
+from app import calllog, config, db, exercises
 from app.config import ROOT, Settings
 from app.main import create_app
 from app.models import Base, User
@@ -131,6 +131,15 @@ def _database():
     db.dispose()  # Windows keeps the file locked while a connection is open
     config.use_settings(None)
     shutil.rmtree(TEST_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _inline_sweep(monkeypatch):
+    """The call log's sweep runs inside the call that finished, as it did before it ran beside the calls (contract
+    hardening.md, D8), so every test sees the order it always had: tests/test_hardening.py puts the thread back
+    where it tests it. And no retry time a failing sweep left in one test holds back the next."""
+    monkeypatch.setattr(calllog, "start_sweep", calllog.sweep)
+    calllog._retry = calllog._retry_keys = None
 
 
 @pytest.fixture(autouse=True)

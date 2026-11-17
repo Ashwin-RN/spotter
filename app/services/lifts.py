@@ -156,10 +156,18 @@ def _links(on: date, lifts: list[str]) -> dict:
             "progress": {lift: links.page("progress_lift", lift=lift) for lift in lifts}}
 
 
-def history(s: Session, user_id: int, today: date) -> dict:
+def history(s: Session, user_id: int, today: date, last_day: date | None = None) -> dict:
     """Per lift, from the person's live sessions, in the one order: (effective date, id). Every
     value from metrics. No session is left out for its date: one after today (after a change of
     time zone) counts as today's, and sits after the sessions logged before it today.
+
+    last_day (hardening D3): a day before today reads only the sessions dated on or before it, for get_log of an
+    old day. A best depends only on the sessions before it in the one order, so theirs are the same. A last day of
+    today or later reads every session: one dated after today counts as today's and can come first.
+
+    One ordered pass (hardening D4): per lift, the best estimate so far, the heaviest weight so far and whether an
+    earlier set exists; a session's new bests are judged against those (metrics.new_bests), as metrics.prs judges
+    one session against every earlier set.
 
     sessions:  the sessions used, oldest first
     points:    {lift: [(date, session best)]}   one point per session with a set of 1 to 10 reps
@@ -174,17 +182,18 @@ def history(s: Session, user_id: int, today: date) -> dict:
                not copy it. It exists because Epley is None at 0 kg, so such a lift has no best_set.
     bests:     {lift: [{date, exercise, kind, value, previous, session_id}]}
     """
-    sessions = sorted(s.scalars(
-        select(LiftSession).where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None))
-        .options(selectinload(LiftSession.sets).selectinload(LiftSet.exercise))),
-        key=lambda t: metrics.order_key(t.date, t.id, today))
+    query = select(LiftSession).where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None))
+    if last_day is not None and last_day < today:
+        query = query.where(LiftSession.date <= last_day)
+    sessions = sorted(s.scalars(query.options(selectinload(LiftSession.sets).selectinload(LiftSet.exercise))),
+                      key=lambda t: metrics.order_key(t.date, t.id, today))
     points: dict[str, list[tuple[date, float]]] = {}
     logged: dict[str, int] = {}
     last: dict[str, date] = {}
     last_top: dict[str, dict] = {}
     best_set: dict[str, dict] = {}
     bests: dict[str, list[dict]] = {}
-    prior: dict[str, list[tuple[float, int]]] = {}
+    so_far: dict[str, tuple[float | None, float | None]] = {}  # per lift with an earlier set: best estimate, heaviest
     most_reps: dict[str, dict] = {}   # per lift, the most reps in one set, whatever the weight
     weighted: set[str] = set()        # lifts with a set above 0 kg
     for t in sessions:
@@ -205,19 +214,28 @@ def history(s: Session, user_id: int, today: date) -> dict:
             logged[lift] = logged.get(lift, 0) + 1
             last[lift] = t.date
             last_top[lift] = {"date": t.date, "weight_kg": max(w for w, _ in lift_sets)}
-            best = metrics.session_best(lift_sets)
+            best, heaviest = metrics.session_best(lift_sets), metrics.max_weight(lift_sets)
             if best is not None:
                 points.setdefault(lift, []).append((t.date, best))
-            for hit in metrics.prs(prior.get(lift, []), lift_sets):
-                bests.setdefault(lift, []).append({"date": t.date.isoformat(), "exercise": lift, **hit,
-                                                   "session_id": t.id})
-            prior.setdefault(lift, []).extend(lift_sets)
+            if lift in so_far:  # a lift's first session has no baseline, so it sets no best (metrics.prs)
+                was_best, was_heaviest = so_far[lift]
+                for hit in metrics.new_bests(was_best, was_heaviest, best, heaviest):
+                    bests.setdefault(lift, []).append({"date": t.date.isoformat(), "exercise": lift, **hit,
+                                                       "session_id": t.id})
+            else:
+                was_best = was_heaviest = None
+            so_far[lift] = (_higher(was_best, best), _higher(was_heaviest, heaviest))
     # The loop compares the unrounded estimate; the output carries it at 1 dp, in a new dict.
     best_set = {lift: {**b, "estimated_max_kg": formatting.rounded(b["estimated_max_kg"], "estimated_max")}
                 for lift, b in best_set.items()}
     reps_only = {lift: most for lift, most in most_reps.items() if lift not in weighted}
     return {"sessions": sessions, "points": points, "logged": logged, "last": last, "last_top": last_top,
             "best_set": best_set, "reps_only": reps_only, "bests": bests}
+
+
+def _higher(a: float | None, b: float | None) -> float | None:
+    """The higher of two values, either of which may be None."""
+    return b if a is None else a if b is None else max(a, b)
 
 
 def _prior(s: Session, user_id: int, exercise_ids: set, name_of: dict, on: date, today: date,

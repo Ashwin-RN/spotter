@@ -225,16 +225,35 @@ def test_a_session_s_sets_come_back_in_the_order_they_were_logged(make_user):
     assert [(x["exercise"], x["weight_kg"], x["reps"]) for x in undone["entry"]["sets"]] == logged
 
 
+def sets_written(fn) -> tuple[object, int]:
+    """fn's result, and how many INSERTs into lift_set it sent. On SQLite a set list written again can take the ids of
+    the old one, which goes first (hardening D9), so the writes are counted, not the ids compared."""
+    inserts = []
+
+    def keep(conn, cursor, statement, parameters, context, executemany):
+        if statement.startswith("INSERT INTO lift_set"):
+            inserts.append(statement)
+
+    engine = db.get_engine()
+    event.listen(engine, "before_cursor_execute", keep)
+    try:
+        return fn(), len(inserts)
+    finally:
+        event.remove(engine, "before_cursor_execute", keep)
+
+
 def test_an_undo_of_an_edit_that_left_the_sets_alone_leaves_them_alone_too(make_user):
     uid = make_user().id
     session = make("lift_session", uid)
     ids = set_ids(session)
     assert services.edit_entry(uid, "lift_session", session, {"notes": "Light"}, "claude")["changed"] == ["notes"]
-    assert undo(uid, "lift_session", session)["entry"]["notes"] == "Heavy" and set_ids(session) == ids
+    undone, written = sets_written(lambda: undo(uid, "lift_session", session))
+    assert undone["entry"]["notes"] == "Heavy" and set_ids(session) == ids and written == 0
     assert len(ids) == 3
     edit("lift_session", uid, session)  # an edit of the sets: its undo writes them again, as it must
-    assert undo(uid, "lift_session", session)["undone"] is True and len(set_ids(session)) == 3
-    assert set_ids(session) != ids
+    undone, written = sets_written(lambda: undo(uid, "lift_session", session))
+    assert undone["undone"] is True and len(set_ids(session)) == 3
+    assert written > 0
 
 
 def test_an_undo_of_an_imported_entry_s_edit_gives_it_back_the_key_it_was_imported_under(make_user):

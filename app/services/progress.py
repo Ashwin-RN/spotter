@@ -118,12 +118,16 @@ def _lift_words(name: str, history: dict, today: date, units, whole: bool) -> st
     return text
 
 
-def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = False) -> dict:
+def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = False, for_page: bool = False) -> dict:
     """One lift over time, or a summary of every lift logged.
 
     exact: each lift's estimated maxes, bests and trend unrounded, the figures the summary says in lb. For the
     pages of a person who keeps weights in lb, so a page never reads a step off the summary (contract units.md, the
     U2 review's note). No MCP function passes it; the summary and the goals are the same either way.
+
+    for_page (hardening D6): a lift's result, one or every, also carries best_sets and reps_only, lifts.history's
+    best_set and reps_only from the same history, so Progress and a lift's page work the history out once. No MCP
+    function passes it either.
 
     With exercise: {today, lift {exercise, sessions, last_trained, estimated_max_over_time [{date,
     estimated_max_kg}], current_estimated_max_kg, best_set, bests [{date, kind, value, previous}], trend
@@ -164,7 +168,7 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
             out = {"today": today.isoformat(), "lift": one, "how": HOW,
                    "summary": note or _lift_words(only, history, today, units, whole=True),
                    "links": {"progress_lift": links.page("progress_lift", lift=only)}}
-            return _with_note(out, note)
+            return _with_note(_for_page(out, history) if for_page else out, note)
 
         rows = []
         for name in sorted(history["logged"]):
@@ -179,7 +183,12 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
                "summary": note or "\n".join(_lift_words(r["exercise"], history, today, units, whole=False)
                                             for r in rows),
                "links": {"progress": links.page("progress")}}
-        return _with_note(out, note)
+        return _with_note(_for_page(out, history) if for_page else out, note)
+
+
+def _for_page(out: dict, history: dict) -> dict:
+    """The result with the page's two extras (get_progress' for_page)."""
+    return {**out, "best_sets": history["best_set"], "reps_only": history["reps_only"]}
 
 
 def _with_note(out: dict, note: str | None) -> dict:

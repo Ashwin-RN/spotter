@@ -271,7 +271,7 @@ def test_goal_charts_agrees_with_get_goals(user):
     """The Goals page's read and get_goals, on the four weeks: the same plan lines, and neither carries a note."""
     added(user)
     charts, listed = services.goal_charts(user.id), services.get_goals(user.id)
-    assert set(charts) == {"today", "goals"} and "note" not in listed
+    assert set(charts) == {"today", "goals", "closed"} and "note" not in listed  # closed: hardening D6
     assert [n["now_basis"] for n in charts["goals"]] == ["average_7d", "best_28d", "best_28d"]
     assert [n["plan_line"] for n in charts["goals"]] == [n["plan_line"] for n in listed["goals"]]
 

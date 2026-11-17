@@ -75,7 +75,7 @@ from sqlalchemy import Index, select
 
 from app import db, formatting, links, metrics, rules, users
 from app.models import (
-    IMPORTED, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, Routine, SavedFood,
+    CLAUDE_CAN, IMPORTED, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, Routine, SavedFood,
     entry_models,
 )
 from app.rules import error, quote
@@ -206,7 +206,11 @@ def confirm_code(user_id: int, kind: str, row) -> str:
     return hashlib.sha256(f"{user_id}|{kind}|{row.id}|{at}".encode()).hexdigest()[:12]
 
 
-def delete_entry(user_id: int, kind: str, entry_id, by: str | None = None, confirm=None) -> dict:
+def delete_entry(user_id: int, kind: str, entry_id, by: str | None = None, confirm=None, may_delete=None) -> dict:
+    """may_delete (hardening D1): with by claude, the switch is checked again on the locked row, so a switch turned to
+    log while the call waited refuses it. may_delete(claude_can) is None to go on, or the refusal, returned as it is:
+    the MCP wrapper passes its own not_allowed. With by claude and none passed, only log_delete goes on; anything else
+    raises before anything changes. The web passes no by: the person's own click is never checked."""
     kinds = _deletable()
     model = _model(kinds, kind)
     if model is None:
@@ -215,6 +219,13 @@ def delete_entry(user_id: int, kind: str, entry_id, by: str | None = None, confi
         user = lock_user(s, user_id)
         if user is None:
             return no_account()
+        if by == "claude":
+            if may_delete is not None:
+                refused = may_delete(user.claude_can)
+                if refused is not None:
+                    return refused
+            elif user.claude_can != CLAUDE_CAN[0]:  # fails closed: log_delete, the one setting that lets a delete on
+                raise PermissionError
         limited = check_write_limit(s, user_id)
         if limited:
             return limited
@@ -593,7 +604,9 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
                     old, now = _change(field, current[field], new[field], row, today)
                     parts.append(f"{field} from {old} to {now}{how}")
         keep_version(s, row, by)  # every check has passed and something changes: the row as it stands is kept
-        if "sets" in changed:
+        if "sets" in changed:  # old first (hardening D9): no moment holds two sets with one session, lift and number
+            row.sets = []
+            s.flush()
             row.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in new["sets"]]
         for field in changed:
             if field == "exercise":

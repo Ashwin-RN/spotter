@@ -1162,7 +1162,7 @@ def test_every_statement_on_routine_names_the_person_s_id(client, make_user):
     assert read(other.id)["routines"][0]["lifts"][0]["weight_kg"] == 99.0
 
 
-GET_STATEMENTS = 5  # as built: the user, the routines, and lifts.history's sessions, their sets and their exercises
+GET_STATEMENTS = 3  # the user, the routines, and the one weights statement (hardening D5: no lifts.history)
 
 
 def test_get_routines_runs_a_fixed_number_of_statements_however_many_routines_and_sessions(make_user, clock):

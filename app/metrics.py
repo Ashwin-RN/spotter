@@ -173,11 +173,17 @@ def prs(prior_sets: list[tuple[float, int]], session_sets: list[tuple[float, int
     """
     if not prior_sets:
         return []
+    return new_bests(session_best(prior_sets), max_weight(prior_sets), session_best(session_sets),
+                     max_weight(session_sets))
+
+
+def new_bests(prev_e: float | None, prev_w: float | None, now_e: float | None, now_w: float | None) -> list[dict]:
+    """The rule prs applies, on the four figures it works out: a session's best Epley and heaviest weight against the
+    best and heaviest of every earlier set. Each kind strictly above its baseline, and none without one. lifts.history
+    keeps the earlier figures as it goes (hardening D4), so a long history is one pass."""
     out = []
-    prev_e, now_e = session_best(prior_sets), session_best(session_sets)
     if now_e is not None and prev_e is not None and now_e > prev_e:
         out.append({"kind": "estimated_max", "value": now_e, "previous": prev_e})
-    prev_w, now_w = max_weight(prior_sets), max_weight(session_sets)
     if now_w is not None and prev_w is not None and now_w > prev_w:
         out.append({"kind": "weight", "value": now_w, "previous": prev_w})
     return out
@@ -463,14 +469,32 @@ def goal_now_series(kind: str, points: list[tuple[date, float]], today: date,
 
     A point's date is its effective date (on_or_before), so one dated after today stands at today. On
     each date the figure reads that date's points and the earlier ones, as goal_now read them that day:
-    a 7-day average or a 28-day best ending on that date. One (date, value) per date."""
-    ordered = in_order(points, today)
-    dates = sorted({on_or_before(d, today) for d, _ in ordered if on_or_before(d, today) >= since})
+    a 7-day average or a 28-day best ending on that date. One (date, value) per date.
+
+    One pass (hardening D7): the points sorted once, in the one order; each date's window found by two bounds that
+    only move forward. Each figure is goal_now's on that date: a 7-day average summed fresh over its window in the
+    order goal_now sums it, a 28-day best or lowest over its window, else the latest on or before the date. A point
+    on or before a date has the same effective date seen from that date as from today, so goal_now's own re-sort
+    keeps this order."""
+    ordered = [(on_or_before(d, today), v) for d, v in in_order(points, today)]
+    dates = sorted({d for d, _ in ordered if d >= since})
+    days = BODYWEIGHT_AVG_DAYS if kind == "bodyweight" else RECENT_BEST_DAYS
     out = []
+    lo = hi = 0  # ordered[lo:hi]: the points of the window ending on the date; ordered[:hi]: those on or before it
     for day in dates:
-        value = goal_now(kind, [(d, v) for d, v in ordered if on_or_before(d, today) <= day], day)
-        if value is not None:
-            out.append((day, value))
+        while hi < len(ordered) and ordered[hi][0] <= day:
+            hi += 1
+        start = day - timedelta(days=days - 1)
+        while lo < hi and ordered[lo][0] < start:
+            lo += 1
+        window = [v for _, v in ordered[lo:hi]]
+        if kind in ("lift", "cardio_best") and window:
+            value = min(window) if kind == "cardio_best" else max(window)
+        elif kind == "bodyweight" and window:
+            value = round(sum(window) / len(window), 2)
+        else:
+            value = ordered[hi - 1][1]
+        out.append((day, value))
     return out
 
 

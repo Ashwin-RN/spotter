@@ -23,9 +23,10 @@ get_routines(user_id)
     A read: no lock, no write limit. Every live routine by name_key, then id, each lift with weight_kg (always kg),
     weight_from and last_date, and the routine's words: lift_words of its lifts with the weight to log, in the
     person's units. The weight to log is the heaviest set of the lift's latest live session in the one order
-    (lifts.history's last_top), unless the routine holds a weight for it and that session is dated before saved_on,
-    or there is no such session: then the routine's own weight. With neither, null. history runs once a call, and
-    only when a routine is there, so a read runs a fixed number of statements however many routines and sessions.
+    (latest_tops, the figures lifts.history's last_top gives), unless the routine holds a weight for it and that
+    session is dated before saved_on, or there is no such session: then the routine's own weight. With neither, null.
+    The weights are one statement, run only when a routine is there (hardening D5), so a read runs a fixed number of
+    statements however many routines and sessions.
 
 lift_words(lifts, page=False, units=None)
     The lifts in words, for a summary and the Routines page: "Bench Press 3 × 8 at 60 kg and Dip 3 × 10". A weight
@@ -38,10 +39,10 @@ the write limit (common.check_write_limit), before any other read or work.
 
 import json
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app import db, formatting, links, rules, users
-from app.models import Routine, User
+from app.models import Exercise, LiftSession, LiftSet, Routine, User
 from app.services import lifts
 from app.services.common import (
     check_by, check_data, check_write_limit, exercises, lock_user, no_account, sent, with_units_note,
@@ -205,6 +206,25 @@ def save_routine(user_id: int, data: dict | None, by: str) -> dict:
                                False)
 
 
+def latest_tops(s, user_id: int, today, names: set[str]) -> dict[str, dict]:
+    """{lift: {date, weight_kg}} for these lifts (hardening D5): each lift's latest live session in the one order
+    (effective date, then id), its real date and its heaviest set of the lift, as lifts.history's last_top gives them.
+    One statement, at most one row a lift: a window over each lift's sessions, newest first."""
+    effective = case((LiftSession.date > today, today), else_=LiftSession.date)  # metrics.on_or_before
+    per_session = (
+        select(Exercise.name.label("lift"), LiftSession.date.label("day"),
+               func.max(LiftSet.weight_kg).label("top"),
+               func.row_number().over(partition_by=Exercise.name,
+                                      order_by=(effective.desc(), LiftSession.id.desc())).label("n"))
+        .select_from(LiftSet).join(LiftSession, LiftSet.session_id == LiftSession.id)
+        .join(Exercise, LiftSet.exercise_id == Exercise.id)
+        .where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None), Exercise.name.in_(names))
+        .group_by(Exercise.name, LiftSession.id, LiftSession.date)
+        .subquery())
+    found = s.execute(select(per_session.c.lift, per_session.c.day, per_session.c.top).where(per_session.c.n == 1))
+    return {lift: {"date": day, "weight_kg": top} for lift, day, top in found}
+
+
 def get_routines(user_id: int) -> dict:
     """Every live routine, each lift with the weight to log. Returns {routines, how, summary[, note], links} or
     {error, message, fix}. See the module notes."""
@@ -214,7 +234,8 @@ def get_routines(user_id: int) -> dict:
             return no_account()
         rows = list(s.scalars(select(Routine).where(Routine.user_id == user.id, Routine.deleted_at.is_(None))
                               .order_by(Routine.name_key, Routine.id)))
-        last_top = lifts.history(s, user.id, users.today_for(user))["last_top"] if rows else {}
+        named = {x["exercise"] for row in rows for x in json.loads(row.lifts)}
+        last_top = latest_tops(s, user.id, users.today_for(user), named) if named else {}
         units = users.units_for(user)
     routines = []
     for row in rows:

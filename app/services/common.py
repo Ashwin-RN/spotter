@@ -538,7 +538,9 @@ def put_back(s: Session, row, values: dict) -> None:
     for column in row.__table__.columns:
         if column.name in values and column.name != "updated_at":
             setattr(row, column.key, values[column.name])
-    if "sets" in values and values["sets"] != _sets(row):
+    if "sets" in values and values["sets"] != _sets(row):  # old first (hardening D9), as edit_entry replaces them
+        row.sets = []
+        s.flush()
         row.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in values["sets"]]
     row.updated_at = db.utcnow()
     s.flush()

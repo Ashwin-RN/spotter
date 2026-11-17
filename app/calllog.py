@@ -24,6 +24,13 @@ KEY_HOURS (contract idempotency.md), at most once in KEY_SWEEP_HOURS, and on the
 entry versions older than VERSION_DAYS (contract edit-history.md) and the feedback older than FEEDBACK_DAYS
 (contract feedback.md).
 
+The sweep runs beside the calls (contract hardening.md, D8): finish() writes the row and returns, and when a sweep
+is due and none runs in this process, start_sweep starts one on a thread of its own (tests/conftest.py puts sweep
+itself in its place, so every test sweeps inline). Each delete goes in batches of SWEEP_BATCH rows a statement, each
+its own transaction, at most SWEEP_BATCHES a table a run; a table's batches stop at its first failure, with its one
+line. A group (the daily three, the hourly keys) is marked swept only when none of its deletes failed and each ended
+with a short batch; otherwise its last swept time stays and it is tried again SWEEP_RETRY_MINUTES on.
+
 crash_text(exc) describes an exception by its type and its stack frames only. It never includes the
 exception's message: a database error's message can carry the statement's values, which are the
 person's data.
@@ -37,7 +44,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
 from app import db
 from app.mcp_schemas import FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, RoutineLiftIn, SetIn
@@ -54,6 +61,9 @@ KEY_HOURS = 24  # how long a write's key is kept: an older row is absent, swept 
 KEY_SWEEP_HOURS = 1
 VERSION_DAYS = 90  # how long an entry's version is kept: an older one is never put back, swept or not
 FEEDBACK_DAYS = 365  # how long a note sent with send_feedback is kept, until the sweep after that
+SWEEP_BATCH = 1000  # rows a delete statement of the sweep takes at most
+SWEEP_BATCHES = 50  # statements a table takes at most in one sweep
+SWEEP_RETRY_MINUTES = 10  # how soon a group whose sweep failed or stopped at the cap is due again
 CALLERS = ("web", "claude")
 # Spotter's eight tables: the one value tried writes (kind=food_entry), and an import's rows counted by kind.
 TABLES = ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "routine", "goal")
@@ -95,6 +105,9 @@ REQUEST_ID: ContextVar[str | None] = ContextVar("spotter_request_id", default=No
 _NOTES: ContextVar[dict | None] = ContextVar("spotter_call_notes", default=None)
 _swept: datetime | None = None
 _swept_keys: datetime | None = None
+_retry: datetime | None = None  # the daily group is not due before this: its last sweep failed or stopped at the cap
+_retry_keys: datetime | None = None  # the same, for the write keys
+_running = False  # a sweep started by start_sweep runs in this process now
 _sweeping = threading.Lock()
 
 
@@ -117,7 +130,8 @@ def start(function: str, started_at: datetime, user_id: int | None, caller: str 
 def finish(row_id: int | None, ms: int, ok: bool, error_code: str | None, result_bytes: int,
            outcome: str | None = None, step: str | None = None, frame: str | None = None,
            notes: dict | None = None) -> None:
-    """Record how the call ended on the row start() wrote, then sweep. Nothing to do when start() wrote none."""
+    """Record how the call ended on the row start() wrote, then start a due sweep beside the call (start_sweep).
+    Nothing to do when start() wrote none."""
     if row_id is None:
         return
     code = error_code[:ERROR_CODE_MAX] if isinstance(error_code, str) else None
@@ -130,35 +144,92 @@ def finish(row_id: int | None, ms: int, ok: bool, error_code: str | None, result
     except Exception as exc:  # noqa: BLE001 - a lost outcome never costs the person their answer
         log.warning("The call log could not be written: %s", type(exc).__name__)
         return
-    sweep()
+    start_sweep()
+
+
+def _due(swept: datetime | None, hours: int, retry: datetime | None, now: datetime) -> bool:
+    """A group is due when it has never swept in this process or its hours have passed, and no retry time of its own
+    lies ahead."""
+    return (swept is None or now - swept >= timedelta(hours=hours)) and (retry is None or retry <= now)
+
+
+def _due_now(now: datetime) -> tuple[bool, bool]:
+    """(the daily group is due, the keys are due). Read under _sweeping."""
+    return _due(_swept, SWEEP_HOURS, _retry, now), _due(_swept_keys, KEY_SWEEP_HOURS, _retry_keys, now)
+
+
+def start_sweep() -> None:
+    """Start the sweep on a thread of its own, when a group is due and no sweep started here still runs. The call
+    that finished never waits on it. tests/conftest.py puts sweep in its place."""
+    global _running
+    with _sweeping:
+        if _running or not any(_due_now(db.utcnow())):
+            return
+        _running = True
+    try:
+        threading.Thread(target=_sweep_beside, daemon=True).start()
+    except BaseException:
+        with _sweeping:
+            _running = False
+        raise
+
+
+def _sweep_beside() -> None:
+    """The thread start_sweep starts: the sweep, then the next one may start."""
+    global _running
+    try:
+        sweep()
+    finally:
+        with _sweeping:
+            _running = False
 
 
 def sweep() -> None:
     """Delete the rows older than CALL_LOG_DAYS, the entry versions older than VERSION_DAYS and the feedback older
     than FEEDBACK_DAYS: the first time, then at most once in SWEEP_HOURS. And the write keys older than KEY_HOURS:
-    the first time, then at most once in KEY_SWEEP_HOURS. Each delete has its own transaction, so one that fails
-    never costs another. A failure is logged by type and swallowed."""
-    global _swept, _swept_keys
+    the first time, then at most once in KEY_SWEEP_HOURS. Each delete goes in batches, each its own transaction, so
+    one that fails never costs another. A failure is logged by type and swallowed. A group is marked swept only when
+    every delete of it finished; otherwise it is due again SWEEP_RETRY_MINUTES on (the module notes)."""
+    global _swept, _swept_keys, _retry, _retry_keys
     now = db.utcnow()
     with _sweeping:
-        calls = _swept is None or now - _swept >= timedelta(hours=SWEEP_HOURS)
-        keys = _swept_keys is None or now - _swept_keys >= timedelta(hours=KEY_SWEEP_HOURS)
-        _swept, _swept_keys = (now if calls else _swept), (now if keys else _swept_keys)
+        calls, keys = _due_now(now)
+    retry = now + timedelta(minutes=SWEEP_RETRY_MINUTES)
     if calls:
-        _delete_old("call log", CallLog.started_at, now - timedelta(days=CALL_LOG_DAYS))
-        _delete_old("entry versions", EntryVersion.created_at, now - timedelta(days=VERSION_DAYS))
-        _delete_old("feedback", Feedback.created_at, now - timedelta(days=FEEDBACK_DAYS))
+        done = [_delete_old("call log", CallLog.started_at, now - timedelta(days=CALL_LOG_DAYS)),
+                _delete_old("entry versions", EntryVersion.created_at, now - timedelta(days=VERSION_DAYS)),
+                _delete_old("feedback", Feedback.created_at, now - timedelta(days=FEEDBACK_DAYS))]
+        with _sweeping:
+            if all(done):
+                _swept, _retry = now, None
+            else:
+                _retry = retry
     if keys:
-        _delete_old("write keys", WriteKey.created_at, now - timedelta(hours=KEY_HOURS))
+        done = _delete_old("write keys", WriteKey.created_at, now - timedelta(hours=KEY_HOURS))
+        with _sweeping:
+            if done:
+                _swept_keys, _retry_keys = now, None
+            else:
+                _retry_keys = retry
 
 
-def _delete_old(what: str, column, before: datetime) -> None:
-    """One of the sweep's deletes: the rows of the column's table older than `before`."""
-    try:
-        with db.session_scope() as session:
-            session.execute(delete(column.class_).where(column < before))
-    except Exception as exc:  # noqa: BLE001 - the sweep never fails a call
-        log.warning("The %s could not be swept: %s", what, type(exc).__name__)
+def _delete_old(what: str, column, before: datetime) -> bool:
+    """One of the sweep's deletes: the rows of the column's table older than `before`, at most SWEEP_BATCH a
+    statement and SWEEP_BATCHES statements, each in its own transaction. True when it finished: a batch came back
+    short. False at the cap, or at the first failure, which is logged by type and stops the table's batches."""
+    model = column.class_
+    for _ in range(SWEEP_BATCHES):
+        try:
+            with db.session_scope() as session:
+                batch = select(model.id).where(column < before).order_by(model.id).limit(SWEEP_BATCH)
+                gone = session.execute(delete(model).where(model.id.in_(batch))
+                                       .execution_options(synchronize_session=False)).rowcount
+        except Exception as exc:  # noqa: BLE001 - the sweep never fails a call
+            log.warning("The %s could not be swept: %s", what, type(exc).__name__)
+            return False
+        if gone < SWEEP_BATCH:
+            return True
+    return False
 
 
 def new_notes() -> dict:

@@ -107,7 +107,11 @@ def get_log(user_id: int, date=None, days=1, any_date: bool = False) -> dict:
         def shown(d) -> bool:
             return start <= d <= end or (later_too and d > end)
 
-        history = lifts.history(s, user.id, today)
+        # Bounded in SQL (hardening D3): a date sent ends every read there, the lift history too when that day is before
+        # today. Undated, a row dated after today keeps its own block, so there is no upper bound.
+        bounded = not later_too and end < today
+        history = lifts.history(s, user.id, today, last_day=end) if bounded else lifts.history(s, user.id, today)
+        until = [] if later_too else [end]
         bests: dict[int, list[dict]] = {}
         for per_lift in history["bests"].values():
             for b in per_lift:
@@ -116,18 +120,22 @@ def get_log(user_id: int, date=None, days=1, any_date: bool = False) -> dict:
                                                               "text": lifts.best_text(raw, units)})
         sessions = [t for t in history["sessions"] if shown(t.date)]
         weigh_ins = [b for b in s.scalars(select(Bodyweight).where(
-            Bodyweight.user_id == user.id, Bodyweight.deleted_at.is_(None), Bodyweight.date >= start)
+            Bodyweight.user_id == user.id, Bodyweight.deleted_at.is_(None), Bodyweight.date >= start,
+            *(Bodyweight.date <= d for d in until))
             .order_by(Bodyweight.id)) if shown(b.date)]
         kinds = {k: n for n, k in enumerate(MEASUREMENT_KINDS)}
         measured = sorted((m for m in s.scalars(select(Measurement).where(
-            Measurement.user_id == user.id, Measurement.deleted_at.is_(None), Measurement.date >= start))
+            Measurement.user_id == user.id, Measurement.deleted_at.is_(None), Measurement.date >= start,
+            *(Measurement.date <= d for d in until)))
             if shown(m.date)), key=lambda m: (kinds.get(m.kind, len(kinds)), m.id))
 
         eaten = [f for f in s.scalars(select(FoodEntry).where(
-            FoodEntry.user_id == user.id, FoodEntry.deleted_at.is_(None), FoodEntry.date >= start)
+            FoodEntry.user_id == user.id, FoodEntry.deleted_at.is_(None), FoodEntry.date >= start,
+            *(FoodEntry.date <= d for d in until))
             .order_by(FoodEntry.id).options(selectinload(FoodEntry.saved_food))) if shown(f.date)]
         moved = [c for c in s.scalars(select(CardioEntry).where(
-            CardioEntry.user_id == user.id, CardioEntry.deleted_at.is_(None), CardioEntry.date >= start)
+            CardioEntry.user_id == user.id, CardioEntry.deleted_at.is_(None), CardioEntry.date >= start,
+            *(CardioEntry.date <= d for d in until))
             .order_by(CardioEntry.id).options(selectinload(CardioEntry.exercise))) if shown(c.date)]
 
         dates = [end - timedelta(days=n) for n in range(count)]

@@ -65,21 +65,22 @@ def goals_result(goals=(), closed=()) -> dict:
             "how": "", "summary": "", "links": {"goals": SITE + "/goals"}}
 
 
-def charts_result(goals=()) -> dict:
-    """goal_charts' shape: the open goals with their plan line, path, now_basis and line_ended."""
-    return {"today": "2026-11-10", "goals": list(goals)}
+def charts_result(goals=(), closed=()) -> dict:
+    """goal_charts' shape: the open goals with their plan line, path, now_basis and line_ended, and the closed goals
+    (hardening D6: the Goals page's one read)."""
+    return {"today": "2026-11-10", "goals": list(goals), "closed": list(closed)}
 
 
 @pytest.fixture
 def fake_goals(monkeypatch):
-    """fake_goals(goals, closed): get_goals and goal_charts answer with these, both on the one date; get_goals'
-    calls are recorded."""
+    """fake_goals(goals, closed): goal_charts answers with these, the page's one read (hardening D6), and its calls are
+    recorded. get_goals answers with them too, on the same date, for a test that reads it itself."""
     seen = []
 
     def install(goals=(), closed=()):
-        result, charted = goals_result(goals, closed), charts_result(goals)
-        monkeypatch.setattr(services, "get_goals", lambda *args: seen.append(args) or result, raising=False)
-        monkeypatch.setattr(services, "goal_charts", lambda *args: charted, raising=False)
+        result, charted = goals_result(goals, closed), charts_result(goals, closed)
+        monkeypatch.setattr(services, "get_goals", lambda *args: result, raising=False)
+        monkeypatch.setattr(services, "goal_charts", lambda *args: seen.append(args) or charted, raising=False)
         return seen
 
     return install
@@ -107,7 +108,7 @@ def test_goals_with_none_offers_the_body_weight_form(signed, fake_goals):
     seen = fake_goals()
     r = signed.get("/goals")
     assert r.status_code == 200 and "No open goals." in r.text and "Closed goals" not in r.text
-    assert seen == [(only_user().id, True)]  # closed goals asked for too
+    assert [args[0] for args in seen] == [only_user().id]  # one read, goal_charts, the closed goals with it (D6)
     form = form_parts(r.text)
     assert form["hidden"][:2] == [("csrf_token", session_of(signed)["csrf"]), ("kind", "bodyweight")]
     assert [name for name, _ in form["hidden"]] == ["csrf_token", "kind", "key"]  # the form's key, its last field
@@ -182,11 +183,13 @@ def test_goals_page_needs_sign_in_and_has_no_script(client, fake_goals):
     assert '<a class="tab tab-goals" href="/goals" aria-current="page">Goals</a>' in r.text  # in the navigation
 
 
-def test_a_get_goals_failure_is_a_404_page(signed, monkeypatch):
+def test_the_goals_page_never_reads_get_goals(signed, monkeypatch):
+    """Hardening D6: goal_charts is the page's one read, the closed goals with it, so a get_goals failure is never
+    seen (it was a 404 page while the page read both)."""
     monkeypatch.setattr(services, "get_goals", lambda *a: {"error": "no_account", "message": "x", "fix": "y"},
                         raising=False)
     r = signed.get("/goals")
-    assert r.status_code == 404 and "There is nothing here." in r.text
+    assert r.status_code == 200 and "There is nothing here." not in r.text
 
 
 # ---------------------------------------------------------------- the new-goal form
@@ -1851,37 +1854,21 @@ def test_the_frame_runs_head_strips_goals_closed_then_set_a_goal(signed, monkeyp
     assert "Open goals</h2>" not in page and page.count('<li class="goal"') == 2
 
 
-def test_the_page_reads_goal_charts_and_get_goals_of_one_day(signed, monkeypatch):
-    """Read across the person's midnight the two reads can name two dates: both are read once more. If they still
-    differ, goal_charts' date is the page's."""
+def test_the_page_reads_goal_charts_once_and_its_date_is_the_pages(signed, monkeypatch):
+    """Hardening D6: one read, goal_charts, the open goals and the closed ones on its one date. get_goals is never
+    read, so the two can no longer name two dates across the person's midnight."""
     got, charted = [], []
-    days = iter(["2026-12-31", "2027-01-01"])
-
-    def listed(*args):
-        got.append(args)
-        return {**goals_result(closed=CLOSED), "today": next(days, "2027-01-01")}
 
     def charts(*args):
         charted.append(args)
-        return {**charts_result([numbers(1)]), "today": "2027-01-01"}
+        return {**charts_result([numbers(1)], CLOSED), "today": "2027-01-01"}
 
-    monkeypatch.setattr(services, "get_goals", listed)
-    monkeypatch.setattr(services, "goal_charts", charts)
-    page = signed.get("/goals").text
-    assert len(got) == len(charted) == 2 and goal_card(page, 1)["by"] == ["by Tue 2 Feb"]
-    got.clear()
-    charted.clear()
     monkeypatch.setattr(services, "get_goals", lambda *a: got.append(a) or {**goals_result(closed=CLOSED),
                                                                              "today": "2026-12-31"})
+    monkeypatch.setattr(services, "goal_charts", charts)
     page = signed.get("/goals").text
-    assert len(got) == len(charted) == 2 and goal_card(page, 1)["by"] == ["by Tue 2 Feb"]
+    assert got == [] and len(charted) == 1 and goal_card(page, 1)["by"] == ["by Tue 2 Feb"]
     assert "Closed Thu 5 Nov 2026" in goal_item(page, 9)  # a closed day worded against goal_charts' 2027
-    got.clear()
-    charted.clear()
-    fake_same = {**goals_result(closed=CLOSED), "today": "2027-01-01"}
-    monkeypatch.setattr(services, "get_goals", lambda *a: got.append(a) or fake_same)
-    signed.get("/goals")
-    assert len(got) == len(charted) == 1  # one day at once: read once
 
 
 def test_a_goal_charts_failure_is_a_404_page(signed, monkeypatch):
@@ -2101,10 +2088,8 @@ def test_a_stand_in_read_with_no_plan_draws_no_chart_and_no_legend():
 
 
 def test_the_chart_takes_the_pages_one_today(signed, monkeypatch):
-    """get_goals and goal_charts name two days, then still two: the chart is drawn on goal_charts' today, the page's
-    date, not get_goals'."""
+    """The chart is drawn on goal_charts' today, the page's one date: the page reads no other (hardening D6)."""
     goal = numbers(1, path=PATH)
-    monkeypatch.setattr(services, "get_goals", lambda *a: {**goals_result(), "today": "2026-11-09"})
     monkeypatch.setattr(services, "goal_charts", lambda *a: {**charts_result([goal]), "today": "2026-11-10"})
     page = signed.get("/goals").text
     assert svg_of(page, 1) == str(charts.goal_svg(goal, "2026-11-10")) != str(charts.goal_svg(goal, "2026-11-09"))

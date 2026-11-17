@@ -1830,7 +1830,7 @@ def test_a_best_and_the_one_it_beat_widen_together_only_when_they_print_the_same
             "estimated_max_over_time": [{"date": "2026-11-02", "estimated_max_kg": 80.01},
                                         {"date": "2026-11-09", "estimated_max_kg": 80.04}],
             "bests": bests, "goals": []}
-    monkeypatch.setattr(services, "get_progress", lambda *args: {"today": "2026-11-10", "lift": lift})
+    monkeypatch.setattr(services, "get_progress", lambda *args, **kw: {"today": "2026-11-10", "lift": lift})
     page = client.get("/progress/back-squat").text
     shown = re.search(r'<h2 id="bests-title">Bests</h2>(.*?)</section>', page, re.S).group(1)
     assert "estimated max 80.04\u00a0kg, up from 80.01\u00a0kg" in shown
@@ -6530,7 +6530,8 @@ def test_progress_reads_the_glance_and_gives_its_date_to_the_chart(client, pinne
     monkeypatch.setattr(web, "glance_of", counted)
     # get_progress names another date: the chart still takes the glance's.
     real_progress = services.get_progress
-    monkeypatch.setattr(services, "get_progress", lambda uid, *a: {**real_progress(uid, *a), "today": "2026-10-01"})
+    monkeypatch.setattr(services, "get_progress",
+                        lambda uid, *a, **kw: {**real_progress(uid, *a, **kw), "today": "2026-10-01"})
     r = client.get("/progress")
     assert r.status_code == 200
     assert glances == [only_user().id] and seen == [date(2026, 11, 10)]
@@ -6932,15 +6933,15 @@ def test_with_no_lifts_the_lifts_card_says_what_to_do(client, pinned):
 
 
 def test_progress_reads_reps_only_from_the_lift_history(client, pinned, monkeypatch):
-    """The no-added-weight row's words and reps are lifts.history's reps_only, handed down by _trend: stood in for,
-    the row follows it."""
+    """The no-added-weight row's words and reps are lifts.history's reps_only, handed down by get_progress' for_page
+    (hardening D6; _trend handed it down before): stood in for, the row follows it."""
     sign_in(client)
     lift_state("no set of 1 to 10 reps")
-    real = web._trend
+    real = services.get_progress
 
-    def bare(user_id, today=None):
-        return {**real(user_id, today), "reps_only": {"Bench Press": {"reps": 15, "date": "2026-11-08"}}}
-    monkeypatch.setattr(web, "_trend", bare)
+    def bare(*args, **kw):
+        return {**real(*args, **kw), "reps_only": {"Bench Press": {"reps": 15, "date": "2026-11-08"}}}
+    monkeypatch.setattr(services, "get_progress", bare)
     _, rows = card_table(lower_card(client.get("/progress").text, "lifts-card"))
     assert rows == [["Bench Press", "Needs added weight", f"15{NB}reps", "Sun 8 Nov"]]
 
@@ -6952,8 +6953,8 @@ def test_the_estimated_max_goes_through_its_own_filter(client, pinned, monkeypat
     lift_state("one session, no trend")
     real = services.get_progress
 
-    def unrounded(uid, *args):
-        out = real(uid, *args)
+    def unrounded(uid, *args, **kw):
+        out = real(uid, *args, **kw)
         return {**out, "lifts": [{**row, "current_estimated_max_kg": 107.92} for row in out["lifts"]]} if not args else out
     monkeypatch.setattr(services, "get_progress", unrounded)
     _, rows = card_table(lower_card(client.get("/progress").text, "lifts-card"))
@@ -7223,8 +7224,8 @@ def test_a_best_with_no_previous_shows_its_value_only(client, pinned, monkeypatc
     lift_page_state("one session only")
     real = services.get_progress
 
-    def lone(uid, *args):
-        out = real(uid, *args)
+    def lone(uid, *args, **kw):
+        out = real(uid, *args, **kw)
         bests = [{"date": "2026-11-10", "kind": "estimated_max", "value": 118.1, "previous": None},
                  {"date": "2026-11-10", "kind": "weight", "value": 101.25, "previous": None}]
         return {**out, "lift": {**out["lift"], "bests": bests}} if args else out
@@ -7236,7 +7237,8 @@ def test_a_best_with_no_previous_shows_its_value_only(client, pinned, monkeypatc
 
 def test_the_lift_page_reads_reps_only_on_get_progress_date(client, monkeypatch):
     """One date for the page: get_progress' today. The clock moves a day once get_progress has answered, and the
-    reps_only read still names get_progress' date, never the next day's. The tile's day is worded against it."""
+    reps_only the page shows is get_progress' own, of its date, never the next day's: the history is worked out once
+    (hardening D6). The tile's day is worded against it."""
     from app.services import lifts as lift_service  # noqa: PLC0415
 
     clock = {"now": FIXED_NOW}
@@ -7245,8 +7247,8 @@ def test_the_lift_page_reads_reps_only_on_get_progress_date(client, monkeypatch)
     lift_page_state("no added weight")
     real_progress, real_history, named = services.get_progress, lift_service.history, []
 
-    def then_midnight(*args):
-        out = real_progress(*args)
+    def then_midnight(*args, **kw):
+        out = real_progress(*args, **kw)
         clock["now"] = FIXED_NOW + timedelta(days=1)
         return out
 
@@ -7256,7 +7258,7 @@ def test_the_lift_page_reads_reps_only_on_get_progress_date(client, monkeypatch)
     monkeypatch.setattr(services, "get_progress", then_midnight)
     monkeypatch.setattr(lift_service, "history", history)
     page = client.get("/progress/pull-up").text
-    assert len(named) >= 2 and set(named) == {date(2026, 11, 10)}
+    assert named == [date(2026, 11, 10)]  # one history, get_progress' own (hardening D6)
     assert [t[3:] for t in lift_tiles(page)][1] == ("10", "reps, best set", "Thu 5 Nov")
     assert users.today_for(only_user()) == date(2026, 11, 11)  # the next day's read would have named the 11th
 
@@ -7269,8 +7271,8 @@ def test_the_lift_pages_estimated_max_goes_through_its_own_filter(client, pinned
     lift_page_state("one session only")
     real = services.get_progress
 
-    def unrounded(uid, *args):
-        out = real(uid, *args)
+    def unrounded(uid, *args, **kw):
+        out = real(uid, *args, **kw)
         points = [{"date": "2026-11-03", "estimated_max_kg": 80.04}, {"date": "2026-11-10", "estimated_max_kg": 118.13}]
         return {**out, "lift": {**out["lift"], "current_estimated_max_kg": 107.92,
                                 "estimated_max_over_time": points}} if args else out
@@ -7486,9 +7488,9 @@ def test_the_trends_card_draws_from_the_glance_when_a_later_get_trends_would_fai
 
 
 def test_trend_with_no_account_answers_empty(client):
-    """T4: _trend's answer for an account that is gone: no best sets, no reps_only, no chart. Every key the page
-    reads is there."""
-    assert web._trend(987654) == {"best_sets": {}, "reps_only": {}, "bodyweight": None}
+    """T4: _trend's answer for an account that is gone: no chart. Every key the page reads is there: the best sets
+    and reps_only now come from get_progress (hardening D6)."""
+    assert web._trend(987654) == {"bodyweight": None}
 
 
 def test_the_maintenance_row_falls_back_to_its_own_words(client, pinned, monkeypatch):
@@ -7611,8 +7613,8 @@ def test_the_lift_page_words_its_days_against_get_progress_today_across_a_year_e
             {"exercise": "Back Squat", "weight_kg": kg, "reps": 5}]}, "claude")
     real = services.get_progress
 
-    def then_new_year(*args):
-        out = real(*args)
+    def then_new_year(*args, **kw):
+        out = real(*args, **kw)
         clock["now"] = datetime(2027, 1, 1, 12, 0, tzinfo=timezone.utc)
         return out
     monkeypatch.setattr(services, "get_progress", then_new_year)
@@ -7629,8 +7631,8 @@ def test_a_best_whose_previous_is_0_still_shows_up_from(client, pinned, monkeypa
     lift_page_state("one session only")
     real = services.get_progress
 
-    def from_zero(uid, *args):
-        out = real(uid, *args)
+    def from_zero(uid, *args, **kw):
+        out = real(uid, *args, **kw)
         bests = [{"date": "2026-11-10", "kind": "weight", "value": 101.25, "previous": 0.0}]
         return {**out, "lift": {**out["lift"], "bests": bests}} if args else out
     monkeypatch.setattr(services, "get_progress", from_zero)
@@ -7644,8 +7646,8 @@ def test_the_zero_kg_check_sees_a_tiles_figure_and_unit_in_two_spans(client, pin
     sign_in(client)
     lift_page_state("one session only")
     real = services.get_progress
-    monkeypatch.setattr(services, "get_progress", lambda uid, *args: (lambda out: {
-        **out, "lift": {**out["lift"], "current_estimated_max_kg": 0.04}} if args else out)(real(uid, *args)))
+    monkeypatch.setattr(services, "get_progress", lambda uid, *args, **kw: (lambda out: {
+        **out, "lift": {**out["lift"], "current_estimated_max_kg": 0.04}} if args else out)(real(uid, *args, **kw)))
     page = client.get("/progress/deadlift").text
     main = lift_main(page)
     assert lift_tiles(page)[0][3:5] == ("0", "kg, estimated max now")

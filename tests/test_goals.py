@@ -978,7 +978,8 @@ def test_goal_charts_is_get_goals_unrounded_with_path_and_now_basis(user):
         assert "error" not in goal(user, target_date=day(user, 60), **data)
     charts = services.goal_charts(user.id)
     listed = services.get_goals(user.id)
-    assert set(charts) == {"today", "goals"} and charts["today"] == listed["today"]
+    assert set(charts) == {"today", "goals", "closed"} and charts["today"] == listed["today"]
+    assert charts["closed"] == services.get_goals(user.id, True)["closed"]  # the Goals page's one read (hardening D6)
     web_only = ("path", "now_basis", "line_ended")
     bare = [{k: v for k, v in n.items() if k not in web_only} for n in charts["goals"]]
     assert goal_service.rounded_numbers(bare) == listed["goals"]

@@ -1723,11 +1723,11 @@ def _faked_goals(state: str) -> list[dict]:
 def test_goals_in_each_faked_state_keeps_every_rule(client, monkeypatch, state):
     """The faked Goals states (pass B13), with the two closed goals: the frame rules, the page rules, T1's text rules
     and T3's step 4 checks find nothing, and so do the card rule and every rule a route in BUILT keeps."""
-    from .test_web_goals import CLOSED, charts_result, goals_result  # noqa: PLC0415
+    from .test_web_goals import CLOSED, charts_result  # noqa: PLC0415
 
     goals = _faked_goals(state)
-    monkeypatch.setattr(services, "get_goals", lambda *a: goals_result(goals, CLOSED))
-    monkeypatch.setattr(services, "goal_charts", lambda *a: charts_result(goals))
+    # goal_charts carries the closed goals too: the Goals page's one read (hardening D6)
+    monkeypatch.setattr(services, "goal_charts", lambda *a: charts_result(goals, CLOSED))
     sign_in(client)
     uid = only_user().id
     r = client.get("/goals")

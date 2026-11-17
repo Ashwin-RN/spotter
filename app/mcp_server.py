@@ -352,6 +352,11 @@ def not_allowed(function: str, claude_can) -> dict | None:
             "links": {"settings": links.page("settings")}}
 
 
+# delete_entry's check of the switch again, on the locked row (contract hardening.md, D1): the service hands the row's
+# claude_can to it after the lock, so a switch turned to log while the call waited refuses it in these same words.
+DELETE_CHECK = functools.partial(not_allowed, "delete_entry")
+
+
 def is_owner(token: AccessToken | None) -> bool:
     """True when the verified token's subject is OWNER_USER_ID. Unset, nobody is."""
     owner = get_settings().owner_user_id
@@ -1148,7 +1153,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     ) -> Annotated[CallToolResult, DeleteEntryResult]:
         sent = _sent(confirm=confirm)
         return await wrapper.call("delete_entry", DeleteEntryResult,
-                                  lambda account: services.delete_entry(account, kind, entry_id, "claude", **sent))
+                                  lambda account: services.delete_entry(account, kind, entry_id, "claude", **sent,
+                                                                        may_delete=DELETE_CHECK))
 
     @server.tool(
         name="find_food",

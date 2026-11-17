@@ -970,7 +970,8 @@ def goal_charts(user_id: int, units=None) -> dict:
     result. units: the person's, for label and plan_line, as get_goals words them; None is kg and km.
 
     Returns {today, goals [goal numbers + path {plan [{date, value}], actual [{date, value}]},
-    now_basis, line_ended]} or {error, message, fix}. Read through
+    now_basis, line_ended], closed [get_goals' closed goals, as include_closed gives them]} or {error, message, fix}:
+    the Goals page's one read (hardening D6), so the page works a lift history out once. Read through
     load_numbers and goal_numbers, as get_goals is, so the two never disagree: rounded_numbers of these
     goals, without path, now_basis and line_ended, is get_goals' goals, but for a lift goal's actual_per_week in
     lb, which is the slope before its 2 dp (goal_numbers). A read: no lock, no write limit."""
@@ -979,8 +980,10 @@ def goal_charts(user_id: int, units=None) -> dict:
         if user is None:
             return no_account()
         today = users.today_for(user)
-        open_goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
-                                    .order_by(Goal.id).options(selectinload(Goal.exercise))))
+        rows = list(s.scalars(select(Goal).where(Goal.user_id == user.id).order_by(Goal.id)
+                              .options(selectinload(Goal.exercise))))
+        open_goals = [g for g in rows if g.status == "open"]
         loaded = load_numbers(s, user.id, today, open_goals)
         return {"today": today.isoformat(), "goals": goal_numbers(open_goals, loaded, today, charts=True,
-                                                                   units=units)}
+                                                                   units=units),
+                "closed": [_closed(g, units) for g in rows if g.status != "open"]}
