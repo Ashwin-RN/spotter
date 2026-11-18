@@ -1,7 +1,5 @@
 # Stage 5 contract: goals and trends
 
-**Note, 2026-11-18: superseded in part.** Sample data was removed everywhere: `docs/contracts/no-sample.md`. The trends and goals stand.
-
 **Goal: a person asks "how am I doing?" and "am I on track?" and gets numbers worked out from their own logs: a smoothed weight trend and its rate, what they eat on average, how training compares with their targets, an estimate of what they burn, and every goal with the pace it needs against the pace so far. The two clicks only they can make, export and delete, sit on Settings. An empty account can fill itself with sample data to see all of this before logging anything.**
 
 ## The first-use path, walked first
@@ -214,3 +212,5 @@ Each builder breaks its own behaviours before reporting and says how many turned
 2. Live, on an empty account: "Add sample data" → Today, Progress and Goals fill; the Goals page shows the three goals with the numbers the suite computed for that day; "How am I doing?" from Claude → `get_trends`, the same numbers; "Am I on track?" → `get_goals`; "Drop the squat goal" → dropped; "Remove sample data" → Today is empty again.
 3. Live: "Export my data" from Settings → a zip with every file. Delete account is the person's own click, never the agent's: it removes the account here and at the provider, and the next sign-in starts a fresh account.
 4. The evals: every case passes at least 2 of 3 runs, the rate reported as it is.
+
+**Note, 2026-11-18: superseded in part.** Sample data was removed everywhere: `docs/contracts/no-sample.md`. The trends and goals stand.

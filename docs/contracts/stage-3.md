@@ -1,7 +1,5 @@
 # Stage 3 contract: lifts, weight and measurements you can see
 
-**Note, 2026-11-18: superseded in part.** The three settings for what the assistant may do are now two, read and log, or read, log and delete (the default): `docs/contracts/switch.md`. The pages stand.
-
 **Goal: everything a person logs by talking shows on a web page the same minute, can be fixed or removed from either side, and Claude does only what the person has allowed.**
 
 ## The first-use path, walked first
@@ -151,3 +149,5 @@ User A gets `not_found` for user B's measurement and for an edit of any of B's e
    - Switch to "log and delete" on Settings → "Delete it" → gone from Today → "Restore it" → back.
    - "Waist 84" → shown; the same again → duplicate.
 3. Live: the same `log_lifts` message twice → duplicate (stage 2's test, re-run).
+
+**Note, 2026-11-18: superseded in part.** The three settings for what the assistant may do are now two, read and log, or read, log and delete (the default): `docs/contracts/switch.md`. The pages stand.
