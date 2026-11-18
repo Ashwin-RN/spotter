@@ -6,7 +6,7 @@ You say what you lifted, ate or weighed. Your assistant logs it through Spotter 
 
 **Status: live. Each stage, and each item built since, is recorded in `BUILD_LOG.md`.**
 
-Live: https://spotter-production-0c0f.up.railway.app
+Live: https://spottermcp.com
 
 ## Why use it
 
@@ -18,53 +18,124 @@ Live: https://spotter-production-0c0f.up.railway.app
 
 ## Set up
 
-1. **Sign in** at the live address above. The first sign-in creates your account and saves your time zone from the browser.
-2. **Add Spotter to your assistant** as a remote MCP server. Some call it a custom connector. The address is `https://spotter-production-0c0f.up.railway.app/mcp`. There is no key to paste: the assistant opens the sign-in page. Use the same account.
-3. **Say what you did**, such as "Back squat, 3 sets of 5 at 80 kg".
+1. **Add Spotter in your assistant** as a remote MCP server. Some call it a custom connector. The address is `https://spottermcp.com/mcp`. The steps for each app are under Your assistant below.
+2. **Sign in through the assistant.** There is no key to paste: the assistant opens Spotter's sign-in page, and you sign in with Google. The first sign-in creates your account and saves your time zone.
+3. **Paste the starter prompt** below into a new chat.
 
-Signing in from the assistant first also creates the account.
+Sign-in is open only to invited Google accounts for now.
+
+You can also sign in on the web at https://spottermcp.com, with the same Google account, to see your pages.
 
 While nothing is logged yet, your assistant hands you one link, `/hi`: a short page on what to say, what Spotter keeps and how to bring your history over from another app.
 
-The client must support remote MCP over streamable HTTP with OAuth sign-in.
+The app must support remote MCP over streamable HTTP with OAuth sign-in.
 
 ## Your assistant
 
 | Assistant | How to add Spotter | Status |
 |---|---|---|
-| [Claude apps](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp): web and desktop | Customize, then Connectors, then "+ Add", then "Add custom connector". Enter a name and the address, then follow the form to "Add". In a chat, press "+", then Connectors, and switch Spotter on. | Tried on the web. Desktop: from its docs. Free plans get one custom connector. On Team and Enterprise an owner adds it. |
-| [Claude Code](https://code.claude.com/docs/en/mcp) | Run the command below, then type `/mcp`, pick spotter and sign in. | Tried with Spotter. |
-| [ChatGPT](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt) | On the web: Plugins, then the plus button, then "Add custom MCP server". Enter the address, set up OAuth, then "Create as a plugin". Install it, then type @ in a chat and pick it. | From its docs. Full access needs Business, Enterprise or Edu. Pro can only read. |
-| [Cursor](https://cursor.com/docs/context/mcp) | In `~/.cursor/mcp.json`, add a server under `mcpServers` with its `url` set to the address, then sign in. | From its docs. |
-| [VS Code with Copilot](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) | Run "MCP: Add Server", choose HTTP, and enter the address. | From its docs. |
-| [Gemini app](https://support.google.com/gemini/answer/17209137) | On the web: Settings, then "Connected Apps". Under "Custom apps", enter the address, then "Next". | From its docs. US only, 18 or over, personal account, Keep Activity on. |
-| [Mistral](https://docs.mistral.ai/le-chat/knowledge-integrations/connectors/mcp-connectors) | In the sidebar: Context, then Connectors, then "New connector", then "Add custom connector". Enter a name and the address, leave Authentication on "Auto-detect", then "Add connector". Sign in and approve. | Tried with Spotter. |
-| [goose](https://goose-docs.ai/docs/getting-started/using-extensions) | Run `goose configure`, then "Add Extension", then "Remote Extension (Streamable HTTP)", and give it the address. | From its docs. |
+| [Claude apps](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp) | On the web or desktop: Customize, then Connectors, then "+ Add", then "Add custom connector". Enter a name and the address, then "Continue", and follow the form to "Add". In a chat, press "+", then Connectors, and switch Spotter on. | Tried on the web. Desktop: from its docs. The phone apps use it once it is added on the web or desktop. Free plans get one custom connector. On Team and Enterprise an owner adds it. |
+| [Claude Code](https://code.claude.com/docs/en/mcp) | Run its command under Commands, then type `/mcp`, pick spotter and sign in. | Tried with Spotter. |
+| [ChatGPT](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt) | On the web: Plugins, then the plus button, then "Add custom MCP server". Enter a name and the address, set up OAuth, tick the risk box, then "Create as a plugin". Install it, then type @ in a chat and pick it. | From its docs. Added on the web only. Full access needs Business, Enterprise or Edu. Pro can only read. |
+| [Gemini app](https://support.google.com/gemini/answer/17209137) | On gemini.google.com: Settings, then "Connected Apps". Under "Custom apps", add a custom app, enter the address, then "Next" and follow the steps. | From its docs. Added on the web only, then it works in the phone app too. US only, 18 or over, personal account, English, History on. |
+| [Grok](https://docs.x.ai/grok/connectors) | At grok.com/connectors: "New Connector", then "Custom". Enter the address and sign in. | From its docs. |
+| [Mistral](https://docs.mistral.ai/vibe/work/web/connectors/mcp-connectors) | In Work: Connectors, then "+ Add Connector", then the "Custom MCP Connector" tab. Enter a name with no spaces, such as spotter, and the address, then "Connect". Sign in and approve. | Tried with Spotter. On Free, Pro and Student plans the account owner adds it. |
+| [Perplexity](https://www.perplexity.ai/help-center/en/articles/13915507-adding-custom-remote-connectors) | Plugins in the sidebar, then "Add custom", then "Add MCP connector", then "Remote". Enter a name and the address. Under Advanced, set Authentication to OAuth and Transport to Streamable HTTP. Tick the box, then "Add", then press the card to sign in. | From its docs. In an organization, an admin must let members add connectors. |
+| [GitHub Copilot in VS Code](https://code.visualstudio.com/docs/agent-customization/mcp-servers) | Run "MCP: Add Server", choose HTTP, and enter the address. Or add the JSON under Commands. | From its docs. |
+| [Cursor](https://cursor.com/docs/mcp) | Add the JSON under Commands to `~/.cursor/mcp.json`, then sign in. | From its docs. |
 
-"From its docs" means the steps follow that client's own documentation and have not been tried with Spotter yet.
+"From its docs" means the steps follow that app's own docs and have not been tried with Spotter yet.
+
+What cannot add Spotter today: Microsoft Copilot, the consumer app, as no Microsoft page found says it can. ChatGPT's phone app, as adding is on the web only. And the ChatGPT plans its page does not name.
 
 Any other MCP client that supports remote servers with OAuth sign-in is added the same way, with the address. A client that only speaks stdio can go through the [mcp-remote](https://github.com/geelen/mcp-remote) bridge, by its README: `npx mcp-remote` followed by the address.
 
-Claude Code, run once:
+## Commands
+
+For the tools set up by a command or a file. Each is from that tool's own docs.
+
+[Claude Code](https://code.claude.com/docs/en/mcp), run once, then type `/mcp` and sign in:
 
 ```
-claude mcp add --transport http --scope user spotter https://spotter-production-0c0f.up.railway.app/mcp
+claude mcp add --transport http --scope user spotter https://spottermcp.com/mcp
+```
+
+[Codex CLI](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), in `~/.codex/config.toml`:
+
+```
+[mcp_servers.spotter]
+url = "https://spottermcp.com/mcp"
+```
+
+Then sign in with `codex mcp login spotter`.
+
+[Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), run once, then type `/mcp auth spotter` and sign in. Without `--scope user` it is added to the current project only:
+
+```
+gemini mcp add --transport http --scope user spotter https://spottermcp.com/mcp
+```
+
+[Cursor](https://cursor.com/docs/mcp), in `~/.cursor/mcp.json`:
+
+```
+{
+  "mcpServers": {
+    "spotter": {
+      "url": "https://spottermcp.com/mcp"
+    }
+  }
+}
+```
+
+[VS Code](https://code.visualstudio.com/docs/agents/reference/mcp-configuration), in `.vscode/mcp.json` or your user `mcp.json`:
+
+```
+{
+  "servers": {
+    "spotter": {
+      "type": "http",
+      "url": "https://spottermcp.com/mcp"
+    }
+  }
+}
+```
+
+[Zed](https://zed.dev/docs/ai/mcp), in its settings file. With no Authorization header, Zed asks you to sign in:
+
+```
+{
+  "context_servers": {
+    "spotter": {
+      "url": "https://spottermcp.com/mcp"
+    }
+  }
+}
+```
+
+## Starter prompt
+
+Paste this into a new chat once Spotter is added:
+
+```
+Hi Spotter, help me set up.
+Call whoami first and do what it says.
+Ask me one thing at a time, and save each answer as I give it.
+Use Spotter's numbers, not your own. If a number is an estimate, say so.
 ```
 
 ## What to say
 
 | You say | What happens |
 |---|---|
-| "Back squat, 3 sets of 5 at 80 kg" | The session is logged, and new bests are worked out against every earlier set |
-| "Weighed 79.4 this morning" | One weigh-in a day, with the 7-day average and the trend |
+| "Back squat, 3 sets of 5 at 80 kg" | The session is logged, with any new bests |
 | "Lunch: two rotis and dal" | The whole meal is logged at once, each number tagged with who supplied it |
-| "Save my push day: bench 3 sets of 8 at 60, dips 3 by 10" | The routine is kept by name, as a saved food is. "Log my push day" then logs its sets, each lift at the newest weight Spotter knows |
+| "Weighed 79.4 this morning" | One weigh-in a day, with the latest weigh-ins and the trend |
 | "30 minutes on the treadmill" | A calorie estimate from your body weight, kept beside the machine's number when you give one |
-| "Squat 100 by June" | A goal with a start, a target and the pace it needs |
-| "How am I doing?" | Your weight trend, average calories, sessions and cardio minutes |
-| "Am I on track?" | Each open goal's needed pace, its pace so far and its projected date |
-| "Tell Spotter's maker the progress chart is confusing" | The note is kept for the person who runs Spotter, with what you were doing, what you expected and what happened. No reply comes back through Spotter |
+| "How am I doing?" | Your weight trend, calories a day, lift sessions and cardio minutes against your targets, and your maintenance calories once enough is logged |
+| "Am I on track?" | Each open goal's needed pace, its pace so far and the date it is reached at that pace |
+| "Save my push day: bench 3 sets of 8 at 60, dips 3 by 10" | The routine is kept by name. "Log my push day" then logs its sets |
 | "Bring my weigh-ins over from my old app", with its export | A preview first, which writes nothing: what would go in, what is already there, what was refused. The assistant is told to write only when you say yes |
+| "Tell Spotter's maker the progress chart is confusing" | The note is kept for the person who runs Spotter. No reply comes back through Spotter |
 
 ## Under the hood
 
@@ -76,7 +147,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 - Feedback goes through the assistant. A note is sent only when the person asks or says yes to an offer, with a cap a person and the same note saved once. The owner alone reads the notes, each with the names of the functions that account called around then, never what was logged. A note is in the person's export and goes with the account.
 - Safety limits: a sized connection pool, a time limit on every query, lock wait and idle transaction, a read limit and a page limit per person, a 1 MiB cap on every request, and an export limit of one at a time and 5 an hour per person. The database checks its own rules too: a sign and a ceiling on every number a person's row holds, and the closed value lists. A database that is too busy answers that it is busy, not with a crash.
 - A call log with a trace: one row per call, with a request id that is also on the log lines and the response, the names of the fields sent and never a value, whether it wrote, and where a failed call stopped. Rows are deleted after 90 days.
-- Before every commit a hook runs the tests the commit needs: the docs tests for a docs-only change, the whole suite otherwise.
+- The tests run by hand before each push: the tests of the files touched, then the whole suite once.
 - Evals: Claude, Codex or a Gemini host against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. The cases are in `evals/cases.json`, 3 runs each. The runner pins each model and its reasoning effort. Each run's result is recorded in `BUILD_LOG.md`, and how the evals run is in `docs/evals.md`.
 
 ## Read more
@@ -85,6 +156,7 @@ claude mcp add --transport http --scope user spotter https://spotter-production-
 |---|---|
 | `docs/can-and-cant.md` | What Spotter records, what its numbers mean, and what it cannot know. Served to the assistant as an MCP resource |
 | `docs/evals.md` | How the evals run and what they do not prove |
+| `docs/domain-move.md` | The steps that moved the site to spottermcp.com, and the checks after |
 | `BUILD_LOG.md` | How each stage was built, reviewed and checked live |
 | `docs/contracts/` | Each stage's and each item's contract: what it had to do, fixed before its builders started |
 | `tools/probe.py` | Checks a running server from outside, without a token |

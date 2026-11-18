@@ -51,3 +51,15 @@ Both changes ask everyone to reconnect, so they go together, while the only acco
 - The old staging account is left empty and can no longer sign in. It is removed later.
 - The Railway address keeps serving, but a connector on it fails sign-in, since tokens are checked against the new address.
 - Later, by the owner's word: WHOIS privacy (whether the owner's details show in the domain's public record), and email forwarding through Cloudflare for a contact address.
+
+## Note of 2026-11-18
+
+Done:
+
+- The site, its DNS and sign-in are live at `spottermcp.com`.
+- Checked from outside at 12:02 on 2026-11-18: `/health` 200, `/ready` 200, `/` 200, and `/mcp` with no token 401, its `resource_metadata` on `https://spottermcp.com`.
+- The old Railway address still answers: `/health` 200, and its `/mcp` 401 points clients to `spottermcp.com`'s sign-in details, in the same `resource_metadata`.
+- `README.md` names the new address, with the steps for each assistant (step 8).
+- One connector added again on the new address, from Claude: a fresh session's `whoami` answers for the new account (account 2) with the new sign-in server, and lists 27 functions, the owner's 3 among them, so the owner setting points at the new account (steps 9 and 10, for that one connector).
+
+Not checked here: web sign-in landing on Today as a new account, the other connectors added again, and `tools/probe.py` against the new address.

@@ -26,8 +26,8 @@ in tests. The README says what it does; this file says how changes are made.
 
 | Kind | Example | Check |
 |---|---|---|
-| Docs only | README, a contract, BUILD_LOG | The docs tests. The commit hook picks them |
-| Code | A service, a page | The test files for the code touched, plain and with `-W error`. The hook runs the rest |
+| Docs only | README, a contract, BUILD_LOG | The docs tests |
+| Code | A service, a page | The test files for the code touched, plain and with `-W error`. The whole suite runs by hand before the push |
 | Model-read text | A function's description, the server's instructions, `docs/can-and-cant.md`, text inside a result such as a note or a fix line | As code, and `python -m evals.need main` says yes: an eval run is owed at the release |
 | Migration | A new table or column | As code, and one run on a local Postgres: up, down, up, over a written row |
 
@@ -43,8 +43,8 @@ root without a database set: it leaves a `spotter.db` that fails the schema test
 3. **Review.** A separate `reviewer` agent on a frozen copy (`git archive` of a tree), never the live tree.
    It changes nothing and confirms each finding with a probe.
 4. **Fix round.** One. A fresh re-check only when the review had a must fix; otherwise the fix diff is read.
-5. **Commit** through the hook, one item a commit, files added by name, one `git commit` a command: the
-   hook runs once, before the command starts. Plain messages: no co-author or tool lines.
+5. **Commit** on a quiet tree, one item a commit, files added by name. Plain messages: no co-author or
+   tool lines. The tests before a push are below.
 
 Items that touch the same files are built one after another. Independent items may build in parallel,
 each in its own git worktree, and are joined after.
@@ -53,8 +53,8 @@ each in its own git worktree, and are joined after.
 
 1. The items are committed on a branch.
 2. One eval run for the whole release, when `python -m evals.need main` says yes. Its cost is said first.
-3. Merge to `main` as a fast-forward and push. Railway deploys `main`: migrations run before the new
-   build serves.
+3. The tests before a push, below, on the exact commit. Merge to `main` as a fast-forward and push.
+   Railway deploys `main`: migrations run before the new build serves.
 4. Live check: `/health` 200, `/mcp` 401 with no token, `/` 200, `/ready` 200 (the database is at the
    code's migration head), and a fresh assistant session (a running one keeps the function list it
    started with).
@@ -62,11 +62,11 @@ each in its own git worktree, and are joined after.
 Removing a required result field or a column takes two deploys: optional first, removed later. A client
 holding the old function list breaks otherwise.
 
-## The commit hook
+## Tests before a push
 
-Before any `git commit`, a hook runs the tests the commit needs and blocks it when they fail: the docs
-tests for a docs-only commit, the whole suite otherwise. Commit on a quiet tree: the hook tests the main
-working tree, so no builder or test run may be using it.
+There is no commit hook for now. Before a push, the test files of the files touched run plain and with
+`-W error`, then the whole suite once on a clean export of the exact commit (`git archive` of it). A red
+run is never pushed. The hook is rebuilt once the code is stable.
 
 ## Text rules
 

@@ -1223,19 +1223,21 @@ LANDING_PREVIEW = {"title": "Spotter", "type": "website"}
 README_TABLE = links.REPOSITORY + "#your-assistant"
 # The landing's list of assistants: the README table's rows, in its order (tests/test_web.py holds the two equal).
 # The page never reads the README. The one place the page names products, so the one place it says Claude.
-ASSISTANTS = ("Claude apps", "Claude Code", "ChatGPT", "Cursor", "VS Code with Copilot", "Gemini app", "Mistral",
-              "goose")
+ASSISTANTS = ("Claude apps", "Claude Code", "ChatGPT", "Gemini app", "Grok", "Mistral", "Perplexity",
+              "GitHub Copilot in VS Code", "Cursor")
 # Each assistant's line on the landing: the README table's Status cell, word for word (tests/test_web.py holds them).
 ASSISTANT_NOTES = {
-    "Claude apps": "Tried on the web. Desktop: from its docs. Free plans get one custom connector. On Team and "
-                   "Enterprise an owner adds it.",
+    "Claude apps": "Tried on the web. Desktop: from its docs. The phone apps use it once it is added on the web or "
+                   "desktop. Free plans get one custom connector. On Team and Enterprise an owner adds it.",
     "Claude Code": "Tried with Spotter.",
-    "ChatGPT": "From its docs. Full access needs Business, Enterprise or Edu. Pro can only read.",
+    "ChatGPT": "From its docs. Added on the web only. Full access needs Business, Enterprise or Edu. Pro can only read.",
+    "Gemini app": "From its docs. Added on the web only, then it works in the phone app too. US only, 18 or over, "
+                  "personal account, English, History on.",
+    "Grok": "From its docs.",
+    "Mistral": "Tried with Spotter. On Free, Pro and Student plans the account owner adds it.",
+    "Perplexity": "From its docs. In an organization, an admin must let members add connectors.",
+    "GitHub Copilot in VS Code": "From its docs.",
     "Cursor": "From its docs.",
-    "VS Code with Copilot": "From its docs.",
-    "Gemini app": "From its docs. US only, 18 or over, personal account, Keep Activity on.",
-    "Mistral": "Tried with Spotter.",
-    "goose": "From its docs.",
 }
 
 # The example exchange of What it looks like. The landing has no account to ask, so it is this one constant: what

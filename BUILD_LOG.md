@@ -1127,3 +1127,13 @@ H1 was live at 20:27 and H2 at 20:32 on 2026-11-17, each on the owner's word. Th
 - On `env.py`'s passed-in connection path, a SQLite rebuild runs with foreign keys on and takes every lift set, and the check after cannot see it. Nothing in the repo uses that path.
 - Not run: whether a reader holding a later table before `"user"` would deadlock with a migration like `0012`.
 - Left for later, as the review placed them: `get_data` and `what_is_logged` in SQL with paging by key, the write lock holding back the call log's insert, and the order of an account delete's two steps.
+
+## The domain move and the README
+
+On 2026-11-18. Docs, and the landing's list of assistants. No migration and no model-read text.
+
+| Part | What it does |
+|---|---|
+| The domain move | The site, its DNS and sign-in are live at `spottermcp.com`. Checked from outside that day: `/health`, `/ready` and `/` 200, `/mcp` 401 with its sign-in details on the new address. The old Railway address still answers, and its 401 points to the same details. What was not checked is in the dated note at the end of `docs/domain-move.md` |
+| The README | The new address, the setup in three steps (add, sign in, the starter prompt), a row for each app whose own docs say it takes a remote MCP server with sign-in, the commands and files for the tools set up that way, a starter prompt that opens with the line `/hi` gives, and a shorter What to say. Each row was read against its vendor's page that day. The landing's list of assistants follows the table |
+| The tests | The commit hook is off for now. Before a push, the tests of the touched files run plain and with `-W error`, then the whole suite once on a clean export of the commit. `CLAUDE.md` says so |
