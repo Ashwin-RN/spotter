@@ -1,5 +1,7 @@
 # Stage 2 contract: one person, one account
 
+**Note, 2026-11-18: superseded in part.** The local tooling it lists (agents, a command, a commit hook) left the repo on 2026-11-11 (`BUILD_LOG.md`), and there is no commit hook now (`CLAUDE.md`). The account rules stand.
+
 **Goal: every signed-in person gets exactly one account, sees only their own data, and reaches the same account from Claude and from the web.**
 
 Spotter started from a trainer's notebook. This stage moves in the parts that fit one person (lifts, bodyweight, goals, the numbers worked out from them) and leaves the trainer-shaped parts out.

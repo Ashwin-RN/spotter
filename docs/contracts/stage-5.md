@@ -1,5 +1,7 @@
 # Stage 5 contract: goals and trends
 
+**Note, 2026-11-18: superseded in part.** Sample data was removed everywhere: `docs/contracts/no-sample.md`. The trends and goals stand.
+
 **Goal: a person asks "how am I doing?" and "am I on track?" and gets numbers worked out from their own logs: a smoothed weight trend and its rate, what they eat on average, how training compares with their targets, an estimate of what they burn, and every goal with the pace it needs against the pace so far. The two clicks only they can make, export and delete, sit on Settings. An empty account can fill itself with sample data to see all of this before logging anything.**
 
 ## The first-use path, walked first

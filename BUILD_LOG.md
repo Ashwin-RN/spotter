@@ -1,6 +1,6 @@
 # Build log
 
-**How Spotter is built.** One control session runs the build. For each stage it writes a contract (`docs/contracts/`), hands a builder agent a fixed list of files, runs the full suite itself, sends a separate reviewer agent over the diff, routes the findings back to the builder, then pushes and checks the live server. This file records what each stage did and what it found out.
+**How Spotter is built:** `CLAUDE.md` holds the process. This file records what each stage or item did and what it found out. An entry's process lines say how it was built at the time.
 
 ## Stage 1: the sign-in test
 
@@ -1127,6 +1127,16 @@ H1 was live at 20:27 and H2 at 20:32 on 2026-11-17, each on the owner's word. Th
 - On `env.py`'s passed-in connection path, a SQLite rebuild runs with foreign keys on and takes every lift set, and the check after cannot see it. Nothing in the repo uses that path.
 - Not run: whether a reader holding a later table before `"user"` would deadlock with a migration like `0012`.
 - Left for later, as the review placed them: `get_data` and `what_is_logged` in SQL with paging by key, the write lock holding back the call log's insert, and the order of an account delete's two steps.
+
+## The evals rebuilt, the advisor off, and the golden cases
+
+On 2026-11-17. Eval code and cases. No migration and no model-read text. Written on 2026-11-18, when the entry was found missing; read from the commits.
+
+| Commit | What it did |
+|---|---|
+| `2718899` | The advisor is off in every run (`CLAUDE_CODE_DISABLE_ADVISOR_TOOL`, and an empty `advisorModel` as a second layer). A run in which another model took part fails, so a run measures the model asked for, alone |
+| `fd83753` | B6 G1. The judge reads Spotter's own answers: a figure counts only if a data read of that run gave it. Every case carries must, may and must_not call tags, with a coverage test. `--client codex` and `--client gemini` (Gemini paced to the free tier). Calls, tokens and cost per case. Each model's default reasoning effort pinned. One failing run no longer ends the run |
+| `08ebc11` | The golden package: 164 reviewed golden cases (direct, incidental, look-alike, catch-up and import; every function at its floor), a core of 101 run with `--core`, and `tests/test_golden_cases.py` giving each case a passing and a failing run. Committed as built: a fresh review found the judge passes many wrong runs where it reads the reply's words, so by the owner's ruling it is rebuilt to judge the record before any baseline run (`docs/contracts/function-list.md`, the note of 2026-11-17) |
 
 ## The domain move and the README
 

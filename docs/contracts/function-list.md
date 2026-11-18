@@ -479,7 +479,8 @@ wrapper (`Wrapper.call`) and `whoami`. Before G2 starts: his pick on the order o
    schema at most 5,000 bytes; the instructions under 4,096 with R13's core in the first 512.
 3. The reviewer, on a frozen copy, calls `get_data` with 5 queries, the old shape, and each worked-out area through
    `/mcp`; and, after G5 deploy 1, a retired read.
-4. The tests for the files touched pass, plain and with `-W error`. The hook runs the rest.
+4. The tests for the files touched pass, plain and with `-W error`. The hook runs the rest. (Note, 2026-11-18: there is
+   no commit hook now; the whole suite runs by hand on a clean export of the commit before a push, `CLAUDE.md`.)
 5. `python -m evals.need main` says yes at G2 to G5: the full run on Opus 5.5 and gpt-6.1-sol is owed before each merge
    the deploy plan marks, its cost said first.
 6. **An absolute bar, beside the relative ones.** At each release, the logging cases (a case whose `must` is a write)

@@ -17,7 +17,7 @@ in tests. The README says what it does; this file says how changes are made.
 | `evals/` | Claude, Codex or Gemini against a local server (`--client`). `python -m evals.run`, and `python -m evals.need` says whether a run is needed |
 | `docs/can-and-cant.md` | Served to the assistant as a resource: model-read text |
 | `docs/evals.md` | How the evals run |
-| `docs/domain-move.md` | The steps to move the site to its own domain |
+| `docs/domain-move.md` | The steps that moved the site to `spottermcp.com`, done 2026-11-17, and the checks still open |
 | `docs/contracts/` | One contract per stage or item, fixed before the build. A record once built: a later change adds a dated note rather than rewriting it |
 | `BUILD_LOG.md` | One entry per stage or item: the build, the reviews, the checks, the eval run |
 | `tools/` | `probe.py` checks a live server from outside, `mcp_call.py` calls one function, `load.py` is a local load test |
@@ -26,7 +26,7 @@ in tests. The README says what it does; this file says how changes are made.
 
 | Kind | Example | Check |
 |---|---|---|
-| Docs only | README, a contract, BUILD_LOG | The docs tests |
+| Docs only | README, a contract, BUILD_LOG | The tests that read docs: `test_docs`, `test_web`, `test_switch`, `test_text_rules` (README), `test_evals`, `test_switch` (`docs/evals.md`), `test_data` (`docs/contracts/data-on-request.md`) |
 | Code | A service, a page | The test files for the code touched, plain and with `-W error`. The whole suite runs by hand before the push |
 | Model-read text | A function's description, the server's instructions, `docs/can-and-cant.md`, text inside a result such as a note or a fix line | As code, and `python -m evals.need main` says yes: an eval run is owed at the release |
 | Migration | A new table or column | As code, and one run on a local Postgres: up, down, up, over a written row |

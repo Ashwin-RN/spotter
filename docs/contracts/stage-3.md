@@ -1,5 +1,7 @@
 # Stage 3 contract: lifts, weight and measurements you can see
 
+**Note, 2026-11-18: superseded in part.** The three settings for what the assistant may do are now two, read and log, or read, log and delete (the default): `docs/contracts/switch.md`. The pages stand.
+
 **Goal: everything a person logs by talking shows on a web page the same minute, can be fixed or removed from either side, and Claude does only what the person has allowed.**
 
 ## The first-use path, walked first
