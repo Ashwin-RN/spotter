@@ -488,7 +488,8 @@ NOT_KEPT = ("id", "user_id", "created_at", "deleted_at")  # the columns a versio
 
 def version_of(row) -> dict:
     """A row as a version holds it: every stored column but NOT_KEPT, the hidden ones too, and a lift session's
-    sets as [exercise id, set number, weight, reps] in the order they were logged. One shape for all six kinds."""
+    sets as [exercise id, set number, weight, reps, time_s, distance_m] in the order they were logged (exercise-list.md
+    R15). One shape for all six kinds."""
     out = row_dict(row, NOT_KEPT)
     if isinstance(row, LiftSession):
         out["sets"] = _sets(row)
@@ -496,7 +497,14 @@ def version_of(row) -> dict:
 
 
 def _sets(row: LiftSession) -> list:
-    return [[x.exercise_id, x.set_number, x.weight_kg, x.reps] for x in sorted(row.sets, key=lambda x: x.id)]
+    return [[x.exercise_id, x.set_number, x.weight_kg, x.reps, x.time_s, x.distance_m]
+            for x in sorted(row.sets, key=lambda x: x.id)]
+
+
+def version_sets(sets: list) -> list:
+    """A version's sets, each as six items: one kept before exercise-list.md's deploy 2 holds four (exercise id, set
+    number, weight, reps), and reads with no time and no distance."""
+    return [list(x) + [None] * (6 - len(x)) for x in sets]
 
 
 def _versions(row) -> tuple:
@@ -535,15 +543,18 @@ def read_version(model, version: EntryVersion) -> dict:
 
 def put_back(s: Session, row, values: dict) -> None:
     """The row takes a version's values back (read_version): every column the version holds, and a lift session
-    its sets, which are left as they are when the version's are the row's own. updated_at is now. Never
-    deleted_at: a version does not hold it."""
+    its sets, which are left as they are when the version's are the row's own. A version's set of four items, from
+    before time and distance, reads as six (version_sets). updated_at is now. Never deleted_at: a version does not
+    hold it."""
     for column in row.__table__.columns:
         if column.name in values and column.name != "updated_at":
             setattr(row, column.key, values[column.name])
-    if "sets" in values and values["sets"] != _sets(row):  # old first (hardening D9), as edit_entry replaces them
+    kept = version_sets(values["sets"]) if "sets" in values else None
+    if kept is not None and kept != _sets(row):  # old first (hardening D9), as edit_entry replaces them
         row.sets = []
         s.flush()
-        row.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in values["sets"]]
+        row.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r, time_s=t, distance_m=d)
+                    for e, n, w, r, t, d in kept]
     row.updated_at = db.utcnow()
     s.flush()
     s.expire(row)  # what the row is joined to (its activity, its saved food, its sets) is read again

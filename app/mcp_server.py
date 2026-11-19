@@ -86,9 +86,9 @@ from app.mcp_schemas import (
     FOOD_NAME_RULE, IMPORT_ROWS, NEAR_CUTOFF, NEAR_MISSES, DeleteEntryResult, EditEntryResult, ExercisesResult,
     FindFoodResult, FoodEntryIn, GetDataResult, GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult,
     GetTrendsResult, ImportEntriesResult, ImportRowIn, LogBodyweightResult, LogCardioResult, LogFoodResult,
-    LogLiftsResult, LogMeasurementResult, Number, OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult,
-    RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn,
-    UpdateSettingsResult, WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
+    LogLiftsResult, LogMeasurementResult, LogSetIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult,
+    OwnerFeedbackResult, RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult,
+    SetGoalResult, SetIn, UpdateSettingsResult, WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
 )
 from app.models import CLAUDE_CAN, User
 from app.services import common, feedback, food, routines
@@ -139,10 +139,10 @@ IMPORT_DESCRIPTION = (
     "send times for sets that repeat. At most 10,000 imported rows in any 24 hours. "
     "Dates. Send each row's timestamp with its offset when the export gives one, or its date. Leave out rows "
     "more than 2 years old, and say how many were left out. "
-    "Names. Use exercise and activity names only from list_exercises, exactly as it gives them. When a name in "
-    "the export is not on the list, ask the person once per name which listed name it is, or whether to leave it "
-    "out. The closest names the result gives can be wrong. Never pick one on a guess, and never leave a lift out "
-    "without saying so. "
+    "Names. Search list_exercises for each lift and activity the export names, and send the name it gives, "
+    "exactly. When a name reaches nothing, ask the person once per name which listed name it is, or whether to "
+    "leave it out. The closest names the result gives can be wrong. Never pick one on a guess, and never leave a "
+    "lift out without saying so. A hold, a carry or a sled is refused: an import takes sets of reps. "
     "Health stores and food. From a phone's health store, send one value a day: the day's total steps, the "
     "night's total sleep, the day's resting heart rate as the app gives it, and the day's first weigh-in. Send "
     "each food entry's meal as the export names it. Send a food entry's calories only as the export gives them: "
@@ -396,8 +396,11 @@ class LookupMemo:
 ITEM_WORDS = {"sets": "set", "entries": "entry", "lifts": "lift", "rows": "row"}
 # An unknown key in an item (decision 2): the services' own words, by the list it was sent in. Each is
 # (what the item is, the fix, NEAR_MISSES' row). The import's rows allow any key: its service refuses one.
+# A list whose items are another model in one function is named by (function, list): log_lifts' sets are LogSetIn
+# (exercise-list.md R3), every other function's sets SetIn.
 ITEM_FIELDS = {
     "sets": ("a set", f"Use: {', '.join(SetIn.model_fields)}.", "set"),
+    ("log_lifts", "sets"): ("a set", f"Use: {', '.join(LogSetIn.model_fields)}.", "set"),
     "entries": ("a food entry", f"Use: {', '.join(food.ENTRY_FIELDS)}. source is decided by the server.", "entry"),
     "lifts": ("a lift", f"Use: {routines.LIFT_FIELDS_TEXT}.", "lift"),
 }
@@ -507,8 +510,9 @@ def _problem(function: str, schema: dict, arguments: dict, err: dict) -> dict:
     sent = _sent_at(arguments, loc, err.get("input"))
     at = f"{where}: " if where else ""
     on = f" on {where.lower()}" if where else ""
-    if kind == "extra_forbidden" and len(loc) >= 2 and loc[0] in ITEM_FIELDS:
-        what, fix, row = ITEM_FIELDS[loc[0]]
+    item = ITEM_FIELDS.get((function, loc[0])) or ITEM_FIELDS.get(loc[0]) if loc else None
+    if kind == "extra_forbidden" and len(loc) >= 2 and item:
+        what, fix, row = item
         key = str(loc[-1])
         taken = (_schema_at(schema, loc[:-1]) or {}).get("properties", {})
         return rules.error("invalid_field", f"{at}'{key_shown(key)}' is not a field of {what}.",
@@ -834,7 +838,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         annotations=WRITE,
     )
     async def log_lifts(
-        sets: Annotated[list[SetIn], Field(
+        sets: Annotated[list[LogSetIn], Field(
             description="The sets to log, in order: 1 to 60. Only sets not yet logged: earlier sets of that date are "
                         "already in its session. A session holds at most 60 sets.")],
         date: Annotated[str | None, Field(

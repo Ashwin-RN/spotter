@@ -968,7 +968,7 @@ def test_the_lift_set_by_set_case_judges_as_designed(app_settings):
     assert judge.judge_db(case["db"], person_rows(rows)) and judge.judge(
         case, [_lifted(rows, [("Bench Press", 80, 5)])], "Added.", person_rows(rows))
     _, refused = _lift_case(server, "lift_set_by_set")  # a refused call: nothing added
-    no = [_lifted(refused, [("Bench Press", 80, 31)])]
+    no = [_lifted(refused, [("Bench Press", 80, 101)])]  # reps 1 to 100 (exercise-list.md R6)
     assert no[0]["is_error"] is True and judge.judge(case, no, "Sorry.", person_rows(refused))
     assert person_rows(refused)["lift_session"][0]["set_count"] == 1
 

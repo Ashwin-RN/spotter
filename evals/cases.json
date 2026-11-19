@@ -3035,11 +3035,11 @@
     "kind": "direct",
     "core": false,
     "say": "did 50 push-ups in one set this morning, log it",
-    "calls": {"must": [],
-              "may": ["log_lifts", "whoami", "list_exercises"],
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
               "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"reply_asks": true, "reply_has_pattern": ["(?<![\\w.,])30(?!\\d|[.,]\\d)"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
-    "db": [{"table": "lift_session", "count": 0}]
+    "expect": {"function": "log_lifts", "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Push-Up", "reps": 50, "weight_kg": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Push-Up", "reps": 50, "weight_lb": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Push-Up", "reps": 50}]}, "inputs_exclude": ["sets.*.weight_kg", "sets.*.weight_lb"]}], "reply_lacks": ["?"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 1}}]
   },
   {
     "id": "look_coach_general",

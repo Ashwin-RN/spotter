@@ -672,7 +672,9 @@ def test_the_export_s_numbers_are_the_same_on_both_accounts_and_account_csv_name
     assert table(files[lb.id]["account.csv"])[0]["weight_unit"] == "lb"
     assert table(files[lb.id]["account.csv"])[0]["distance_unit"] == "mi"
     assert table(files[fresh.id]["account.csv"])[0]["weight_unit"] == ""
-    assert "Weights are in kg and distances in km in every file" in files[lb.id]["README.txt"]
+    # exercise-list.md R16: a lift set's distance_m is metres on every account.
+    assert "Weights are in kg, distances in km and a lift set's distance_m in metres, in every file" in files[lb.id][
+        "README.txt"]
 
 
 # ---------------------------------------------------------------- through MCP: the schemas, the trace, the list
@@ -700,7 +702,8 @@ def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_
     hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tools}
     # inputs.md moved every one after: with its changes taken out, exactly the thirteen differ from before units.
     held = {t["name"]: hashlib.sha256(compact(without_inputs(t)).encode()).hexdigest() for t in tools}
-    assert {name for name, sha in BEFORE_UNITS.items() if held[name] != sha} == THIRTEEN
+    # exercise-list.md's deploy 2 moved import_entries' names part too.
+    assert {name for name, sha in BEFORE_UNITS.items() if held[name] != sha} == THIRTEEN | {"import_entries"}
     assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED
     assert len(mcp_server.INSTRUCTIONS) == 4011  # data-on-request.md: DATA_RULE
     who = next(t for t in tools if t["name"] == "whoami")
@@ -776,7 +779,7 @@ def test_can_and_cant_says_the_units_as_the_contract_words_them(http):
                   "comes back with `units_note`: Claude asks once, and saves either answer.",
                   "**Not offered:** stones, inches for a body size, a best mile"):
         assert words in section, words
-    assert "(exercise, weight, reps)" in doc and "**Body weight:** one weigh-in a day." in doc
+    assert "the sets: exercise, weight, and reps, or a time, or a" in doc and "**Body weight:** one weigh-in a day." in doc
     assert "a weigh-in's weight or date" in doc and "| `update_settings` | Sets the person's time zone, units and" in doc
 
 
@@ -810,7 +813,7 @@ def test_0011_adds_the_two_columns_on_sqlite_and_comes_down_leaving_no_other_cha
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0011").down_revision == "0010" and script.get_current_head() == "0013"  # exercise list
+    assert script.get_revision("0011").down_revision == "0010" and script.get_current_head() == "0014"  # exercise list
 
 
 # ---------------------------------------------------------------- the six eval cases (decision 20)

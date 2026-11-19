@@ -225,8 +225,10 @@ def test_an_add_keeps_one_version_a_call_why_edit_by_its_caller_before_the_chang
     kept = versions(first["id"])
     assert [(v.user_id, v.by, v.why) for v in kept] == [(user.id, "claude", "edit"), (user.id, "web", "edit")]
     one, two = (json.loads(v.before) for v in kept)
-    assert ([x[1:] for x in one["sets"]], one["notes"]) == ([[1, 80.0, 5]], "Easy")
-    assert ([x[1:] for x in two["sets"]], two["notes"]) == ([[1, 80.0, 5], [2, 82.5, 5]], "Easy")
+    # A version's set holds six items since exercise-list.md R15: time_s and distance_m, null on a set of reps.
+    assert ([x[1:] for x in one["sets"]], one["notes"]) == ([[1, 80.0, 5, None, None]], "Easy")
+    assert ([x[1:] for x in two["sets"]], two["notes"]) == ([[1, 80.0, 5, None, None], [2, 82.5, 5, None, None]],
+                                                            "Easy")
     assert third["session"]["notes"] == "Easy\nHard" and third["session"]["logged_by"] == "web"
 
 
@@ -392,7 +394,7 @@ def test_both_refusals_at_once_come_back_together_sets_first_and_nothing_is_writ
                     "fix": f"{SETS_FIX} {NOTES_FIX}", "errors": [sets_error, notes_error]}
     assert stored(first["id"]) == before
     # The call's own checks come first, as before: a bad set is its own error, and the add is not judged.
-    own = log(user, ("Bench Press", 80, 31))
+    own = log(user, ("Bench Press", 80, 101))  # reps 1 to 100 (exercise-list.md R6)
     assert [e["error"] for e in own["errors"]] == ["reps_out_of_range"] and stored(first["id"]) == before
 
 

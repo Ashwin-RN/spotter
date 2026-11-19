@@ -101,6 +101,10 @@ _TABLE = {
     # get_data's (contract data-on-request.md): a number of minutes, never m:ss, and weight x reps.
     "minutes": ("0.1", "min", 1),
     "volume": ("0.1", "kg", 2),
+    # A lift set's time and distance (contract exercise-list.md R14, R16): whole seconds, and metres up to 2 dp, on
+    # every account.
+    "seconds": ("1", "s", 0),
+    "metres": ("0.01", "m", 2),
 }
 # The shown rows in lb and in mi (decision 9): quantity -> (shown step, unit text, widened step). Pace's steps are
 # seconds, as in _TABLE. A form field in lb or mi is filled at the shown step.

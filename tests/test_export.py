@@ -70,10 +70,11 @@ def test_every_table_and_every_file(make_user):
                         "target_cardio_minutes_per_week": "", "add_back_exercise_kcal": "false", "claude_can": "log_delete",
                         "created_at": account[0]["created_at"]}]
     sets = table(r["files"]["lift_sets.csv"])
+    # time_s and distance_m after reps, blank on a set of reps (exercise-list.md R15).
     assert sets == [{"session_id": str(ids["session"]), "exercise": "Back Squat", "set_number": "1",
-                     "weight_kg": "100", "reps": "5"},
+                     "weight_kg": "100", "reps": "5", "time_s": "", "distance_m": ""},
                     {"session_id": str(ids["session"]), "exercise": "Bench Press", "set_number": "1",
-                     "weight_kg": "60", "reps": "8"}]
+                     "weight_kg": "60", "reps": "8", "time_s": "", "distance_m": ""}]
     weigh_ins = table(r["files"]["bodyweight.csv"])
     assert {w["kg"] for w in weigh_ins} == {"80.5", "81"}           # a fraction stays, a whole number loses .0
     assert [f["kcal"] for f in table(r["files"]["food_entries.csv"])] == ["240", "180"]

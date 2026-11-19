@@ -194,15 +194,17 @@
   {% else %}<p class="empty-line">{{ empty }}</p>
   {% endif %}</section>{% endmacro %}
 
-{# A lift session's sets in a table, in its scrolling wrap: Exercise, Set, Weight (kg), Reps, the weight in units
-   (kg or lb). The unit sits in the header, so each weight is a bare figure. A set at 0 kg leaves its weight cell
-   blank, and sets with no weight above 0 kg show no Weight column at all. #}
-{% macro sets_table(sets, units=none) %}{% set weighted = sets|selectattr("weight_kg")|list %}<div class="table-wrap">
+{# A lift session's sets in a table, in its scrolling wrap: Exercise, Set, Weight (kg), Reps, Time (s), Distance (m),
+   the weight in units (kg or lb); time and distance are seconds and metres on every account. The unit sits in the
+   header, so each figure is bare. A set at 0 kg leaves its weight cell blank, and sets with no weight but 0 kg show
+   no Weight column at all; help shows as its minus weight. A column of reps, time or distance shows only when a set
+   holds one (exercise-list.md: a hold has no reps, a set of reps no time), and a set without one leaves it blank. #}
+{% macro sets_table(sets, units=none) %}{% set weighted = sets|selectattr("weight_kg")|list %}{% set with_reps = sets|selectattr("reps", "number")|list %}{% set timed = sets|selectattr("time_s", "number")|list %}{% set far = sets|selectattr("distance_m", "number")|list %}<div class="table-wrap">
   <table>
-    <thead><tr><th>Exercise</th><th class="num">Set</th>{% if weighted %}<th class="num">Weight ({{ unit_word("weight", units) }})</th>{% endif %}<th class="num">Reps</th></tr></thead>
+    <thead><tr><th>Exercise</th><th class="num">Set</th>{% if weighted %}<th class="num">Weight ({{ unit_word("weight", units) }})</th>{% endif %}{% if with_reps %}<th class="num">Reps</th>{% endif %}{% if timed %}<th class="num">Time (s)</th>{% endif %}{% if far %}<th class="num">Distance (m)</th>{% endif %}</tr></thead>
     <tbody>
     {% for s in sets %}
-    <tr><td>{{ s.exercise }}</td><td class="num">{{ s.set_number|show("count") }}</td>{% if weighted %}<td class="num">{% if s.weight_kg %}{{ s.weight_kg|show("weight_kg", unit=False, units=units) }}{% endif %}</td>{% endif %}<td class="num">{{ s.reps|show("reps") }}</td></tr>
+    <tr><td>{{ s.exercise }}</td><td class="num">{{ s.set_number|show("count") }}</td>{% if weighted %}<td class="num">{% if s.weight_kg %}{{ s.weight_kg|show("weight_kg", unit=False, units=units) }}{% endif %}</td>{% endif %}{% if with_reps %}<td class="num">{% if s.reps is number %}{{ s.reps|show("reps") }}{% endif %}</td>{% endif %}{% if timed %}<td class="num">{% if s.time_s is number %}{{ s.time_s|show("seconds", unit=False) }}{% endif %}</td>{% endif %}{% if far %}<td class="num">{% if s.distance_m is number %}{{ s.distance_m|show("metres", unit=False) }}{% endif %}</td>{% endif %}</tr>
     {% endfor %}
     </tbody>
   </table>

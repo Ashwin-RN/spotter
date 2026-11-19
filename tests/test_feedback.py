@@ -69,14 +69,14 @@ DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint":
 PUBLISHED = {
     "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
     "list_exercises": "3066492e2648709510f2e97d2928830a5128b86e32eb415ed51cbcff1d98f0ee",  # inputs
-    "log_lifts": "5db0acb399478aff8f7d4a271245bbf8ced0a32eaf0337f0a4e93fbac38c6661",  # gym logging: adds to a day; units; inputs; exercise list: SetOut
+    "log_lifts": "7fc937a99e93107df39ce72667560bfc5862f7af14db17c52532ea0ffc82d73a",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn
     "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
     "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs
     "get_progress": "afd01739efd47ad94fd7e4d4087a560999df7870fad3ca098acc756f48a88024",  # units; inputs
     "update_settings": "cdd9e2dc2bb0ce2a9e35d4d6cfa0e81e71ffec9bbfcb16a4945d6d858ad8ea64",  # units; inputs
-    "get_log": "2265874c383e6696c00dafd2df0f72548433182eb5fdf7458d282164af1e1d60",  # units; inputs; exercise list: SetOut
+    "get_log": "8edc8c59b546417614fc792e7cc4a933e158f651d30a8c42558a67fbe7e6d938",  # units; inputs; exercise list: SetOut
     "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
-    "edit_entry": "289e74116d1611d6e92051efae09d6fac6a3e2e2609249a6e48a8fd952343d83",  # units; inputs
+    "edit_entry": "16fa5dc6c082c156ed72e51b4a84e6491bbf957743f9def5860320ebb21425a3",  # units; inputs; exercise list: SetIn
     "restore_entry": "1fc5aa945a46c50c8203a702b4821fe42c6d39e35d3db0f27552c2099043c224",  # routines: kind routine; inputs
     "delete_entry": "1ec50c125535b54a79d67d619c802d49ddaf0aef69a88f53ff90ae66168d1282",  # routines: kind routine; units; inputs
     "find_food": "9ae7214dc6c6104ae9ae93325d6ed9b87c5296773febd70d07dd8a388ae56fde",  # inputs
@@ -85,9 +85,9 @@ PUBLISHED = {
     "log_cardio": "9e8a9435e365e49a651e6eccd56553f842ced35873ffa3111bfec3aec04cdcf9",  # units; inputs
     "get_trends": "76a12552c23e443d455dd77b910788c66030f05c3f4ea5b3df0d46d69845b30f",  # inputs
     "get_goals": "6d71cb0446594ce9d51a5eaa6719394018946cfa273a49d49a4bf559cc13a391",  # units; inputs
-    "import_entries": "c57c39754d9f49416f75e9542a02be58d59ad0dcc51fc952085012e80be84105",  # inputs
-    "save_routine": "33eb83b6dc12f454d43758b61a92aebc19ea31ee3dfbc3a3061a76b07d3eff2f",  # routines: new; units; inputs
-    "get_routines": "2f674c996eb19e408741b7a6f6be84fc38f4b17913046eb3c7231e739a26e18c",  # routines: new, R18's words; units; inputs
+    "import_entries": "1d890d48348660778e2105210bd298c8b5613f69c0981af43f9703b990960cec",  # inputs; exercise list: names, reps
+    "save_routine": "27d1ff111ec2cbfb5bf54956e71106f0ecbfc84191d69dc17586983cbaf137c9",  # routines: new; units; inputs; exercise list: reps, help
+    "get_routines": "163fef0a2c4ff1f1b17f8f385dda2290513b0f77b384a7b3f32b414ebb0556ee",  # routines: new, R18's words; units; inputs; exercise list: reps
     "owner_calls": "171f8c5c586e68e6885bc0d9014d5a2b7ef4ba4bafa217ee898c8338ffaed810",  # inputs
 }
 # switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE
@@ -210,7 +210,7 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0013"  # exercise list
+    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0014"  # exercise list
 
 
 def test_the_topics_are_a_tuple_in_the_models_and_no_status_is():

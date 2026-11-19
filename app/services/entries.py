@@ -75,7 +75,7 @@ from sqlalchemy import Index, select
 
 from app import db, formatting, links, metrics, rules, users
 from app.models import (
-    CLAUDE_CAN, IMPORTED, Bodyweight, CardioEntry, Exercise, FoodEntry, Goal, LiftSession, LiftSet, Measurement, Routine,
+    CLAUDE_CAN, IMPORTED, Bodyweight, CardioEntry, Exercise, FoodEntry, Goal, LiftSession, Measurement, Routine,
     SavedFood, entry_models,
 )
 from app.rules import error, quote
@@ -249,7 +249,8 @@ def entry_words(row, today, units=None) -> str | None:
     """The entry in one line, in the person's units (R14), for delete_entry: a session, a weigh-in, a cardio entry
     and a routine. None for any other kind."""
     if isinstance(row, LiftSession):
-        sets = [(x.exercise.name, x.weight_kg, x.reps) for x in sorted(row.sets, key=lambda x: x.id)]
+        sets = [(x.exercise.name, x.weight_kg, x.reps, x.time_s, x.distance_m)
+                for x in sorted(row.sets, key=lambda x: x.id)]
         return f"Lift session on {formatting.day(row.date, today)}: {lifts.sets_text(sets, units)}."
     if isinstance(row, Bodyweight):
         return body.weigh_in_text(row.kg, row.date, today, units)
@@ -349,8 +350,9 @@ def _undo_edit(s, model, kind: str, user_id: int, entry_id, by) -> dict:
 
 # ---------------------------------------------------------------- edit
 
-def _set_rows(row: LiftSession) -> list[tuple[int, int, float, int]]:
-    return [(x.exercise_id, x.set_number, x.weight_kg, x.reps) for x in sorted(row.sets, key=lambda x: x.id)]
+def _set_rows(row: LiftSession) -> list[tuple]:
+    """The session's sets as lifts.number_sets gives them: six items each, time and distance among them."""
+    return [lifts.set_row(x) for x in sorted(row.sets, key=lambda x: x.id)]
 
 
 def _quantity(field: str) -> str | None:
@@ -568,7 +570,8 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
                 name_of = dict(s.execute(select(Exercise.id, Exercise.name)).all())  # a retired lift too
 
                 def written(rows):  # "Back Squat 3 × 5 @ 60 kg", cut to a sane length
-                    return quote(lifts.sets_text([(name_of.get(e, "?"), w, r) for e, _, w, r in rows], units))
+                    return quote(lifts.sets_text([(name_of.get(e, "?"), w, r, t, d) for e, _, w, r, t, d in rows],
+                                                 units))
 
                 parts.append(f"sets from {written(current['sets'])} to {written(new['sets'])}")
             elif field == "notes":
@@ -607,7 +610,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
         if "sets" in changed:  # old first (hardening D9): no moment holds two sets with one session, lift and number
             row.sets = []
             s.flush()
-            row.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in new["sets"]]
+            row.sets = [lifts.new_set(k) for k in new["sets"]]
         for field in changed:
             if field == "exercise":
                 row.exercise_id, row.exercise = new["exercise"].id, new["exercise"]

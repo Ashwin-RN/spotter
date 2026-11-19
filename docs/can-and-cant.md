@@ -5,8 +5,9 @@ from it. It knows nothing else.
 
 ## What it records today
 
-- **Lift sessions:** the date, the sets (exercise, weight, reps) and optional notes. Sets
-  logged for a date go into that date's session, call by call. A second workout that day is a second
+- **Lift sessions:** the date, optional notes, and the sets: exercise, weight, and reps, or a time, or a
+  distance and time. A dumbbell weight is one hand's. Sets logged for a date go into that date's session, call by
+  call. A second workout that day is a second
   session when the person says so.
 - **Body weight:** one weigh-in a day.
 - **Measurements:** nine kinds, each with its own unit: waist, hips, chest, arm and thigh in cm,

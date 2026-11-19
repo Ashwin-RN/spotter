@@ -230,7 +230,7 @@ def test_every_validation_failure_comes_back_at_once(user):
         {"exercise": "Bak Squat", "weight_kg": 60, "reps": 5},
         {"exercise": "Bench Press", "weight_kg": 501, "reps": 5},
         {"exercise": "Bench Press", "weight_kg": -1, "reps": 5},
-        {"exercise": "Bench Press", "weight_kg": 40, "reps": 31},
+        {"exercise": "Bench Press", "weight_kg": 40, "reps": 101},  # 1 to 100 (exercise-list.md R6)
         {"exercise": "Bench Press", "weight_kg": 40, "reps": 0},
         {"exercise": "Bench Press", "weight_kg": 40, "reps": 5.5},
         {"exercise": "Bench Press", "weight_kg": float("nan"), "reps": 5},
@@ -263,7 +263,7 @@ def test_notes_are_text_without_control_characters_and_not_too_long(user):
     for bad, words in (("a\x00b", "control characters"), ("x" * 2001, "Shorten notes"), (["a list"], "as text")):
         r = log(user, ("Deadlift", 80, 5), notes=bad)
         assert r["error"] == "invalid_field" and words in r["fix"], r
-    both = log(user, ("Deadlift", 80, 31), notes="a\x00b")  # a bad set and bad notes: both reported
+    both = log(user, ("Deadlift", 80, 101), notes="a\x00b")  # a bad set and bad notes: both reported
     assert [e["error"] for e in both["errors"]] == ["reps_out_of_range", "invalid_field"]
     assert session_count(user.id) == 0
     ok = log(user, ("Deadlift", 80, 5), notes="felt good\n\tgrip went on the last set")

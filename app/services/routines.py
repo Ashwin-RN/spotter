@@ -1,14 +1,16 @@
 """Routines: a workout saved by name, and the weight to log for each of its lifts (contract routines.md).
 
 save_routine(user_id, data, by)
-    data: name (1 to 64 characters), lifts [{exercise, sets (1 to 10), reps (1 to 30), weight_kg? (0 to 500, or
-    null) or weight_lb? (0 to 1,102.31), never both}] (1 to 20 lifts, at most 60 sets in all). Returns {kind:
-    "routine", id, created, routine {id, name, lifts, saved_on, updated_at}, summary, links {routines}[, units_note]}
-    or {error, message, fix}.
+    data: name (1 to 64 characters), lifts [{exercise, sets (1 to 10), reps (1 to 100), weight_kg? (0 to 500, -200
+    to 0 on the two assisted lifts as log_lifts takes it, or null) or weight_lb? (0 to 1,102.31), never both}] (1 to
+    20 lifts, at most 60 sets in all). Returns {kind: "routine", id, created, routine {id, name, lifts, saved_on,
+    updated_at}, summary, links {routines}[, units_note]} or {error, message, fix}.
     - A weight_lb is kept as weight_kg at 2 dp (contract units.md R10): the stored lifts are always {exercise, sets,
       reps, weight_kg}, in kg, so the same lifts again in kg write nothing. The summary is in the person's units.
     - Every failure at once (rules.combine), nothing written. An exercise is a name on the lift list, case and spaces
-      forgiven, and the list's own name is stored. The name is checked as sent, stripped, then stored with its
+      forgiven, and the list's own name is stored. A routine holds lifts of sets and reps only (exercise-list.md
+      R10): a hold, a carry or a sled is refused, to be logged with log_lifts. The name is checked as sent, stripped,
+      then stored with its
       spaces folded (R19): no newline, tab or run of spaces reaches a summary.
     - The row is found by user_id and name_key (the name, spaces folded, casefolded), deleted rows included. A new
       name makes a row. A name held replaces its name as sent, spaces folded, its lifts and saved_on (the person's
@@ -26,7 +28,9 @@ get_routines(user_id)
     (latest_tops, the figures lifts.history's last_top gives), unless the routine holds a weight for it and that
     session is dated before saved_on, or there is no such session: then the routine's own weight. With neither, null.
     The weights are one statement, run only when a routine is there (hardening D5), so a read runs a fixed number of
-    statements however many routines and sessions.
+    statements however many routines and sessions. A lift saved before that now records a time, or a distance and
+    time (Plank, Side Plank, Farmer's Carry, Suitcase Carry), is left out of the lifts to log and of the routine's
+    words, and the summary says so once a lift, with how to log it (exercise-list.md R10). The routine keeps it.
 
 lift_words(lifts, page=False, units=None)
     The lifts in words, for a summary and the Routines page: "Bench Press 3 × 8 at 60 kg and Dip 3 × 10". A weight
@@ -57,6 +61,18 @@ NONE_YET = "No routines saved yet."
 NONE_NOTE = "No routines saved yet. save_routine saves one."
 
 
+# A lift a routine held before it recorded a time, or a distance and time (exercise-list.md R10): how to ask for it.
+ASK_FOR = {"time": ("how long", "time_s"), "distance and time": ("how far", "distance_m")}
+
+
+def left_out_line(lift: str) -> str:
+    """get_routines' line for a lift a routine holds that is no longer a lift of sets and reps: 'Plank is left out:
+    it records time now. Ask the person how long, and log it with time_s.'"""
+    what = rules.records(lift)
+    ask, field = ASK_FOR[what]
+    return f"{lift} is left out: it records {what} now. Ask the person {ask}, and log it with {field}."
+
+
 def too_many() -> dict:
     """The cap's refusal, for a save and for a restore."""
     most = formatting.show(rules.ROUTINES_MAX, "count")
@@ -77,7 +93,9 @@ def lift_words(items: list[dict], page: bool = False, units=None) -> str:
     parts = []
     for x in items:
         words = f"{x['exercise']} {formatting.show(x['sets'], 'count')} × {formatting.show(x['reps'], 'reps')}"
-        if x["weight_kg"] is not None:
+        if x["weight_kg"] is not None and x["weight_kg"] < 0:  # help, as lifts.sets_text says it (R14)
+            words += f" with {formatting.show(-x['weight_kg'], 'weight_kg', page=page, units=units)} help"
+        elif x["weight_kg"] is not None:
             words += f" at {formatting.show(x['weight_kg'], 'weight_kg', page=page, units=units)}"
         parts.append(words)
     return lifts._joined(parts)
@@ -112,6 +130,9 @@ def _lift(raw, n: int, names: list[str]) -> tuple[dict, list[dict]]:
         name, _ = rules.match_exercise(sent, names)
         if name is None:
             errors.append(rules.unknown_exercise(sent, names, f"{where}: "))
+        elif "reps" not in rules.measures_of(name):
+            errors.append(rules.error("invalid_field", f"{where}: {name} records {rules.records(name)}: a routine "
+                                      "holds lifts of sets and reps.", "Log it with log_lifts."))
     sets, err = _whole(raw.get("sets"), "sets", where, n, rules.ROUTINE_LIFT_SETS, "invalid_field")
     errors += [err] if err else []
     reps, err = _whole(raw.get("reps"), "reps", where, n, rules.HARD_RULES["reps"], "reps_out_of_range")
@@ -125,13 +146,28 @@ def _lift(raw, n: int, names: list[str]) -> tuple[dict, list[dict]]:
     else:
         sent_kg = weight  # in kg, converted unrounded from lb: the range is checked on it, then it is kept
         weight, err = rules.number(weight, float, "weight_kg", where)
-        lo, hi = rules.HARD_RULES["weight_kg"]
-        if err is None and not lo <= rules.to_float(sent_kg) <= hi:
+        # The range log_lifts takes for the lift (exercise-list.md R6): help, -200 to 0 kg, on the two assisted lifts
+        # only, so a weight get_routines hands out from the last session can be saved back.
+        lo, hi = rules.weight_range(name)
+        kg = rules.to_float(sent_kg) if err is None else None
+        tail = ", or leave it out"
+        if err is None and rules.takes_help(name):
+            tail = ": the help as a minus weight, or leave it out"
+            if not lo <= kg <= hi:
+                shown = rules.span(lo, hi, "weight_kg")
+                err = rules.error("weight_out_of_range",
+                                  f"{where}: weight {rules.as_sent(raw.get('weight_kg'))} kg is outside {shown} kg.",
+                                  f"Give weight_kg on lift {n} from {shown}{tail}.")
+        elif err is None and name is not None and kg < 0:
+            err = rules.error("weight_out_of_range",
+                              f"{where}: a minus weight is help, on Assisted Pull-Up or Assisted Dip only.",
+                              f"Give weight_kg on lift {n} from {lo} to {hi}, or leave it out.")
+        elif err is None and not lo <= kg <= hi:
             err = rules.error("weight_out_of_range",
                               f"{where}: weight {rules.as_sent(raw.get('weight_kg'))} kg is outside {lo} to {hi} kg.",
                               f"Give weight_kg on lift {n} from {lo} to {hi}, or leave it out.")
         if err and sent_in == "weight_lb":
-            err = rules.in_unit(err, "weight_lb", raw["weight_lb"], (lo, hi), "weight_kg", where, ", or leave it out")
+            err = rules.in_unit(err, "weight_lb", raw["weight_lb"], (lo, hi), "weight_kg", where, tail)
         errors += [err] if err else []
     return {"exercise": name, "sets": sets, "reps": reps, "weight_kg": weight}, errors
 
@@ -237,10 +273,13 @@ def get_routines(user_id: int) -> dict:
         named = {x["exercise"] for row in rows for x in json.loads(row.lifts)}
         last_top = latest_tops(s, user.id, users.today_for(user), named) if named else {}
         units = users.units_for(user)
-    routines = []
+    routines, left_out = [], []
     for row in rows:
         items = []
         for x in json.loads(row.lifts):
+            if "reps" not in rules.measures_of(x["exercise"]):
+                left_out.append(x["exercise"])
+                continue
             top = last_top.get(x["exercise"])
             if top is not None and (x["weight_kg"] is None or top["date"] >= row.saved_on):
                 weight, source = top["weight_kg"], "last_session"
@@ -256,6 +295,7 @@ def get_routines(user_id: int) -> dict:
     names = lifts._joined([r["name"] for r in routines])
     out = {"routines": routines, "how": HOW,
            "summary": f"{formatting.show(n, 'count')} routine{'' if n == 1 else 's'}: {names}." if n else NONE_YET}
+    out["summary"] += "".join(f" {left_out_line(lift)}" for lift in dict.fromkeys(left_out))
     if not n:
         out["note"] = NONE_NOTE
     return {**out, "links": {"routines": links.page("routines")}}

@@ -690,11 +690,15 @@ RUNS: dict[str, dict[str, list]] = {
                                                             "leave it out?")],
         "fail": [([("list_exercises", {"kind": "cardio"}), ("log_cardio", {"exercise": "Badminton", "minutes": 60})],
                   "Logged tennis as Badminton. OK?")]},
+    # exercise-list.md: reps 1 to 100, so 50 push-ups log as one Push-Up set of 50, with no question.
     "pushups_over_30": {
         "pass": [([("log_lifts", {"sets": [{"exercise": "Push-Up", "weight_kg": 0, "reps": 50}]})],
-                  "Spotter takes 1 to 30 reps a set. How should I log the 50?")],
+                  "Logged one set of 50 push-ups.")],
         "fail": [([("log_lifts", {"sets": [{"exercise": "Push-Up", "weight_kg": 0, "reps": 25}] * 2})],
-                  "Logged 2 sets of 25. OK?")]},
+                  "Logged 2 sets of 25."),
+                 ([], "Spotter takes 1 to 30 reps a set. How should I log the 50?"),
+                 ([("log_lifts", {"sets": [{"exercise": "Push-Up", "weight_kg": 0, "reps": 50}]})],
+                  "Logged 50 push-ups. Was that one set?")]},
     # ---------------------------------------------------------------- multi, loaded as direct
     "morning_body_bundle": {
         "pass": [([("log_bodyweight", {"kg": 81.2}),
@@ -1096,7 +1100,7 @@ RIGHT_TRIES = {
     "which_press": ["Which press was it: bench or overhead?"],
     "tennis_not_listed": ["Tennis isn't one of Spotter's activities. Should I log it as another one, like Badminton, or "
                           "skip it?"],
-    "pushups_over_30": ["That's over Spotter's limit of 30 reps a set. Shall I log it some other way, or leave it?"],
+    "pushups_over_30": ["Logged: Push-Up, 1 set of 50.", "Done, 50 push-ups in one set this morning."],
     "delete_not_allowed": ["Deleting is turned off for me on this account. You can turn it on, or delete it yourself, in "
                            "Settings."],
     "hurried_squat": ["Logged: Back Squat, 3 sets of 5 at 100 kg."],

@@ -37,18 +37,20 @@ from .test_web import client, only_user, post, seam, sign_in, today_of, web_clie
 # ---------------------------------------------------------------- the published list (decisions 1 and 17)
 
 # Each function as published at 194e7f0, before this work: the SHA-256 of the tool as compact JSON with sorted keys.
-# log_lifts and get_log: as published after exercise-list.md's deploy 1, where SetOut gained time_s and distance_m.
+# log_lifts and get_log: as published after exercise-list.md's deploy 1, where SetOut gained time_s and distance_m. Then
+# its package C4b moved log_lifts (LogSetIn), get_log (SetOut), edit_entry (SetIn), import_entries, save_routine and
+# get_routines (reps 1 to 100, the import's names part).
 BEFORE_INPUTS = {
     "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",
     "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
-    "log_lifts": "4cbdeaee299b31b80b6b272b844f2354ae1ad2495f185f2f043d08242e66179e",  # exercise list: SetOut
+    "log_lifts": "6b294968499fbf2cc9565f4730732ee0db7abe23d6a5f27f934f8d7dffe2928e",  # exercise list: SetOut, LogSetIn
     "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",
     "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",
     "get_progress": "3a2ee9d44c6ceae92c3717eb9768c0e356caea2861867cc96ca260d3a1e7d0d3",
     "update_settings": "1053550decae70f255f0edaf894b730c1da9315e2d989ae1e5e2536eee85c879",
-    "get_log": "1b71e7403fab5027e28c835b58c55476c91a2df2500594b30f1220bc03762b89",  # exercise list: SetOut
+    "get_log": "933a9ccbec22e3f7af483f14a1c8ba50124b339ea44da199c68f3e82699ff580",  # exercise list: SetOut
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
-    "edit_entry": "b84ccadc88110fd59cde09f0bcfafd44c80ba3c55a5b0f9632ac4107ab96c26d",
+    "edit_entry": "ed8836a8660181de8b475fe0c2ad932c6eada9c0a3600c0aec07363cb8417ffe",  # exercise list: SetIn
     "restore_entry": "ea098328552576986f8c0a410757d424478eb0566b104e2eb76d3de4b24cf8a9",
     "delete_entry": "ed03ec3aad90a1ffa9f8b00175bf5a7c1b7d18c92ce20d7032ee43fbf8fd749f",
     "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",
@@ -57,10 +59,10 @@ BEFORE_INPUTS = {
     "log_cardio": "da89a42e48c3285acff7665f4b3e7828b184b03090db16f0a1c1f371332407be",
     "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
     "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",
-    "import_entries": "8e1bce9821e8547d62c9768c5b05b9a7c686c7437e2f34e80d8275a4a82d5ffd",
+    "import_entries": "5bfa3ce4279e3aca8619fdcc0dbc987081ca9b27f79fa9a74dd836377bc865c5",  # exercise list
     "send_feedback": "63bf4722f94c7863dcafce688f8864224c46cbf30868d971e5347475a0686184",
-    "save_routine": "3f4bcc4e8295e09588cd09e099aed979b38f03b5ee6bc89ecb484369d41024ce",
-    "get_routines": "c18c1a2dfb39ff16ab62337b575bfe87187a3ea915c6fa422f8378ed0fc9adcf",
+    "save_routine": "e81b245fee495c163a00f08b0b2a722e55f10fc9e6dd82b3fd448390ec2657d3",  # exercise list
+    "get_routines": "78e248ca7238234a02929f03e6fb5d9486cb7daabd17e0ef2415da4d44a06e4f",  # exercise list
     "owner_calls": "79ec889297b107ba7f25781a2ace0a058b712960510d994d36788485da57d787",
     "owner_feedback": "242b0d08f0ca2b4bb696ec818f327ede1d2b2b71b6959dba0e687cc9b628a5f7",
     "owner_delete_feedback": "e6d44e98f7ac2ce9945b277c0c592c7bde7ba6060b6628990f3a1bc16764909b",
@@ -83,7 +85,8 @@ DESCRIPTIONS = {
         "The value in the kind's unit: cm for the body sizes, steps, hours of sleep, bpm, ml.",
         "The value in the kind's unit: cm for the body sizes, steps, hours of sleep, bpm, ml. Spotter takes no inches."),
 }
-FORBIDDING = ("SetIn", "FoodEntryIn", "RoutineLiftIn")  # the three argument objects of decision 1
+FORBIDDING = ("SetIn", "FoodEntryIn", "RoutineLiftIn",  # the three argument objects of decision 1
+              "LogSetIn")  # and log_lifts' own set model since exercise-list.md R3
 
 
 def sha(tool: dict) -> str:
@@ -755,7 +758,7 @@ TOP_BASE = {"log_measurement": {"kind": "waist", "value": 84}, "edit_entry": {"k
             "update_settings": {"time_zone": "UTC"}}
 ITEM_CALLS = {  # an item's list: the call around it, the item, its place's words, the service's own fix
     "set": ("log_lifts", "sets", {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}, "Set 1", "a set",
-            "Use: exercise, weight_kg, weight_lb, reps."),
+            "Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m."),  # exercise-list.md R6
     "lift": ("save_routine", "lifts", {"exercise": "Bench Press", "sets": 3, "reps": 8}, "Lift 1", "a lift",
              "Use: exercise, sets, reps, weight_kg or weight_lb."),
     "entry": ("log_food", "entries", {"description": "Dal", "kcal": 180}, "Entry 1", "a food entry",
@@ -1268,10 +1271,14 @@ def test_a_schema_refusal_with_a_key_keeps_no_key_and_answers_the_same_again(per
 
 # ---------------------------------------------------------------- the fix round, each red without its fix
 
+# A minus weight below 0 says R6's words since exercise-list.md: help is on the two assisted lifts only.
+MINUS = "Lift 1: a minus weight is help, on Assisted Pull-Up or Assisted Dip only."
+
+
 @pytest.mark.parametrize("weight, message", [
-    ({"weight_kg": -0.001}, "Lift 1: weight -0.001 kg is outside 0 to 500 kg."),
+    ({"weight_kg": -0.001}, MINUS),
     ({"weight_kg": 500.004}, "Lift 1: weight 500.004 kg is outside 0 to 500 kg."),
-    ({"weight_lb": -0.01}, "Lift 1: weight_lb -0.01 lb is outside 0 to 1,102.31 lb.")])
+    ({"weight_lb": -0.01}, MINUS)])
 def test_a_routine_lift_s_weight_is_checked_as_sent(person, weight, message):
     """Decision 5 in routines.py: the range on the weight unrounded, then the keep (was: kept at 2 dp, then 0 kg)."""
     _, _, user = person

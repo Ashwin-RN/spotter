@@ -141,7 +141,7 @@ def _sessions(user_id: int, days: list, by_name: dict) -> list[LiftSession]:
         keyed = lifts.number_sets(sets, by_name)
         session = LiftSession(user_id=user_id, date=d, notes="", logged_by=BY,
                               dedupe_key=lifts.session_key(d, "", keyed))
-        session.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in keyed]
+        session.sets = [LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r, *_ in keyed]
         out.append(session)
     return out
 

@@ -189,7 +189,8 @@ def test_a_version_holds_every_stored_column_but_four_the_hidden_one_too_and_a_s
     for name in columns:
         value = first[name]
         assert held[name] == (value.isoformat() if hasattr(value, "isoformat") else value), name
-    assert kind != "lift_session" or [tuple(x) for x in held["sets"]] == first["sets"]
+    # A version's set holds six items since exercise-list.md R15: time_s and distance_m, null on a set of reps.
+    assert kind != "lift_session" or [tuple(x) for x in held["sets"]] == [(*x, None, None) for x in first["sets"]]
     assert version.created_at >= first["updated_at"] and version.request_id is None  # no request: a direct call
 
 
@@ -1186,9 +1187,9 @@ def test_the_export_has_a_file_of_the_versions_with_the_values_as_json_and_no_hi
     # Names, not ids, for what the shared lists hold: a set as lift_sets.csv gives it, the session's id aside.
     assert values[0] == {"date": was["date"].isoformat(), "notes": "Heavy", "logged_by": "claude",
                          "updated_at": was["updated_at"].isoformat(), "sets": [
-                             {"exercise": "Back Squat", "set_number": 1, "weight_kg": 100.0, "reps": 5},
-                             {"exercise": "Bench Press", "set_number": 1, "weight_kg": 60.0, "reps": 8},
-                             {"exercise": "Back Squat", "set_number": 2, "weight_kg": 105.0, "reps": 3}]}
+                             {"exercise": "Back Squat", "set_number": 1, "weight_kg": 100.0, "reps": 5, **NO_TIME},
+                             {"exercise": "Bench Press", "set_number": 1, "weight_kg": 60.0, "reps": 8, **NO_TIME},
+                             {"exercise": "Back Squat", "set_number": 2, "weight_kg": 105.0, "reps": 3, **NO_TIME}]}
     assert list(values[0]["sets"][0]) == list(export.SET_COLUMNS[1:])
     # A cardio entry's activity by name, under the name cardio_entries.csv gives its column, where the id was.
     ran, columns = first["cardio_entry"], [c.name for c in CardioEntry.__table__.columns]
@@ -1200,7 +1201,7 @@ def test_the_export_has_a_file_of_the_versions_with_the_values_as_json_and_no_hi
     # A food entry's saved food stays an id: saved_foods.csv carries the id it names.
     assert values[4]["saved_food_id"] == roti and table(exported["files"]["saved_foods.csv"])[0]["id"] == str(roti)
     # The row itself holds what was stored: the ids.
-    assert json.loads(versions()[0].before)["sets"] == [list(x) for x in was["sets"]]
+    assert json.loads(versions()[0].before)["sets"] == [[*x, None, None] for x in was["sets"]]  # six items (R15)
     assert json.loads(versions()[3].before)["exercise_id"] == ran["exercise_id"]
     assert values[1] == {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120, "grams_per_serving": 40,
                          "updated_at": first["saved_food"]["updated_at"].isoformat()}
@@ -1224,6 +1225,9 @@ def test_the_export_writes_a_person_s_own_letters_in_the_json_and_not_as_escapes
     assert json.loads(table(text)[0]["before"])["notes"] == note
 
 
+NO_TIME = {"time_s": None, "distance_m": None}  # a set of reps, as a version and the export give it
+
+
 def test_the_export_writes_null_for_an_exercise_id_that_names_no_exercise_and_does_not_stop(make_user):
     uid = make_user().id
     session, run = make("lift_session", uid), make("cardio_entry", uid)
@@ -1234,7 +1238,8 @@ def test_the_export_writes_null_for_an_exercise_id_that_names_no_exercise_and_do
                            before=json.dumps({"exercise_id": 10 ** 6, "minutes": 20.0})))
     kept = table(services.export_data(uid)["files"]["entry_versions.csv"])
     assert [json.loads(row["before"]) for row in kept] == [
-        {"notes": None, "sets": [{"exercise": None, "set_number": 1, "weight_kg": 50.0, "reps": 5}]},
+        # A version of four items a set, from before time and distance, reads with both null (exercise-list.md R15).
+        {"notes": None, "sets": [{"exercise": None, "set_number": 1, "weight_kg": 50.0, "reps": 5, **NO_TIME}]},
         {"exercise": None, "minutes": 20.0}]
 
 
@@ -1346,7 +1351,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0013"  # exercise list
+    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0014"  # exercise list
 
 
 def test_every_kind_s_table_name_fits_the_version_s_kind_column():

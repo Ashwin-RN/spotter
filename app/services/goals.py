@@ -4,7 +4,8 @@ set_goal(user_id, data, by)
     A new goal of one of four kinds (KINDS_NOW). Every kind needs target_value and target_date
     (after today, and at most 5 years on: rules.goal_latest, else date_too_far); text is optional, up to 2,000
     characters. Every range is checked on the value as sent, then kept at its step, halves away from zero.
-      lift         exercise (a lift name). target_value: an estimated max in kg, above 0 to LIFT_MAX (the
+      lift         exercise (a lift name, of a lift that records reps: a hold, a carry or a sled is refused,
+                   contract exercise-list.md R10). target_value: an estimated max in kg, above 0 to LIFT_MAX (the
                    estimated max of the heaviest weight the rules allow at 10 reps).
       bodyweight   target_value: kg, 20 to 400.
       measurement  measurement_kind: waist, hips, chest, arm, thigh or resting_hr. target_value in that
@@ -601,6 +602,10 @@ def _identity(s, kind: str, data: dict, errors: list, warnings: list):
             if hit is None:
                 errors.append(_wrong_kind(s, data["exercise"], "cardio")
                               or _at(rules.unknown_exercise(data["exercise"], list(by_name)), "exercise"))
+            elif "reps" not in rules.measures_of(hit):  # a hold, a carry or a sled has no estimated max (R10)
+                errors.append(rules.error("invalid_field", f"{hit} records {rules.records(hit)}: a lift goal needs a "
+                                          "lift of weight and reps.", "Use a lift from list_exercises with kind lift.",
+                                          field="exercise"))
             else:
                 exercise = by_name[hit]
     elif kind == "cardio_best":

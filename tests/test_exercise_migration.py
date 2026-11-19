@@ -1,6 +1,8 @@
 """The exercise list's key and sets of time and distance, package C4a.1 (contract exercise-list.md, "Migrations 0013
 and 0014", R2, R7): migration 0013 up, down and up over rows of every kind for two people; its keys, its stops and its
 rules; the offline Postgres SQL; the sync by key; and the set's two new columns in log_lifts' and get_log's sets.
+Package C4b adds 0014, the one-off delete (R9): every lift set, session, lift_session version and log_lifts key goes,
+for both people, and every other row stays; its line of counts; its offline SQL; its down, which changes nothing.
 
 The up, down and up tests build their own SQLite files. The services write only at the head: the models are the
 head's, so a database is taken down after the writes to stand at 0012.
@@ -15,13 +17,13 @@ from alembic import command
 from sqlalchemy import Engine, inspect, select
 from sqlalchemy.exc import IntegrityError
 
-from app import db, exercises, mcp_schemas, services
+from app import config, db, exercises, mcp_schemas, services
 from app.config import ROOT
 from app.db import make_engine
 from app.models import Exercise, LiftSession, LiftSet
 from app.services import common, lifts
 
-from .conftest import alembic_config
+from .conftest import alembic_config, settings
 from .test_hardening_schema import (
     NOW, UQ_SET_NUMBER, _agree, _key_check, _master, _plain, _sqlite_at, _version, before_0013, write_everything,
 )
@@ -415,31 +417,32 @@ def test_a_renamed_row_keeps_its_id_its_key_and_its_sets(fixed_now, monkeypatch,
 
 def test_an_unlisted_key_is_retired_never_matched_its_history_still_read_and_listed_again_comes_back(
         fixed_now, monkeypatch, make_user, db_session):
+    # Dead Bug, a lift of weight and reps: since C4b a Plank set is a time (exercise-list.md R6), not 100 kg x 5.
     uid = _person(make_user)
-    logged = _squat_session(uid, "Plank")
-    plank = _row(db_session, "plank")
+    logged = _squat_session(uid, "Dead Bug")
+    bug = _row(db_session, "dead_bug")
     listed = exercises.rows()
-    _listed_as(monkeypatch, lambda rows: [r for r in rows if r["key"] != "plank"])
+    _listed_as(monkeypatch, lambda rows: [r for r in rows if r["key"] != "dead_bug"])
     assert exercises.sync(db_session) == 0
     db_session.commit()
-    assert _row(db_session, "plank").retired is True
-    assert "Plank" not in [e.name for e in common.exercises(db_session)]
-    assert "Plank" not in [e.name for e in common.exercises(db_session, "lift")]
+    assert _row(db_session, "dead_bug").retired is True
+    assert "Dead Bug" not in [e.name for e in common.exercises(db_session)]
+    assert "Dead Bug" not in [e.name for e in common.exercises(db_session, "lift")]
     assert len(common.exercises(db_session)) == len(listed) - 1
-    refused = services.log_lifts(uid, {"sets": [{"exercise": "Plank", "weight_kg": 0, "reps": 30}]}, "claude")
+    refused = services.log_lifts(uid, {"sets": [{"exercise": "Dead Bug", "weight_kg": 0, "reps": 30}]}, "claude")
     assert refused["error"] == "unknown_exercise", refused
     day = services.get_log(uid, "2026-11-09")
     [session] = day["days"][0]["sessions"]
-    assert [x["exercise"] for x in session["sets"]] == ["Plank"]  # the history still reads it
+    assert [x["exercise"] for x in session["sets"]] == ["Dead Bug"]  # the history still reads it
     with db_session.no_autoflush:
         held = db_session.get(LiftSession, logged["id"])
-        assert [x.exercise.name for x in held.sets] == ["Plank"]
+        assert [x.exercise.name for x in held.sets] == ["Dead Bug"]
     monkeypatch.setattr(exercises, "rows", lambda: listed)
     assert exercises.sync(db_session) == 0
     db_session.commit()
-    back = _row(db_session, "plank")
-    assert (back.id, back.retired) == (plank.id, False)
-    assert "Plank" in [e.name for e in common.exercises(db_session, "lift")]
+    back = _row(db_session, "dead_bug")
+    assert (back.id, back.retired) == (bug.id, False)
+    assert "Dead Bug" in [e.name for e in common.exercises(db_session, "lift")]
 
 
 def test_a_rename_onto_a_held_name_stops_the_sync_with_its_line_before_any_change(monkeypatch, db_session):
@@ -490,7 +493,7 @@ def test_log_lifts_and_get_log_give_each_set_its_time_and_distance_as_null(fixed
 
 def test_a_set_of_time_reads_back_with_null_reps_and_fits_the_published_set(fixed_now, make_user, db_session):
     uid = _person(make_user)
-    logged = _squat_session(uid, "Plank")
+    logged = _squat_session(uid)  # since C4b a Plank set of 100 kg x 5 is refused: the session is a squat's
     plank = _row(db_session, "plank")
     db_session.add(LiftSet(session_id=logged["id"], exercise_id=plank.id, set_number=2, weight_kg=0, reps=None,
                            time_s=60))
@@ -508,10 +511,138 @@ def test_a_set_of_time_reads_back_with_null_reps_and_fits_the_published_set(fixe
         {"exercise": "Plank", "set_number": 1, "weight_kg": 0, "reps": 30}).time_s is None
 
 
-def test_deploy_1_still_writes_no_set_without_reps(fixed_now, make_user):
+def test_deploy_2_writes_a_set_of_time_and_a_minus_weight_on_an_assisted_lift_only(fixed_now, make_user):
+    # Deploy 1 wrote no set without reps and no minus weight. Deploy 2 (C4b) writes both, by each lift's rule (R6).
     uid = _person(make_user)
-    for sent in ({"exercise": "Plank", "weight_kg": 0}, {"exercise": "Plank", "weight_kg": 0, "time_s": 60}):
-        r = services.log_lifts(uid, {"sets": [sent]}, "claude")
-        assert "error" in r or "errors" in r, r
+    assert services.log_lifts(uid, {"sets": [{"exercise": "Plank", "weight_kg": 0}]}, "claude")["error"] == (
+        "missing_field")
+    hold = services.log_lifts(uid, {"sets": [{"exercise": "Plank", "weight_kg": 0, "time_s": 60}]}, "claude")
+    assert hold["session"]["sets"][0]["time_s"] == 60 and hold["session"]["sets"][0]["reps"] is None
     r = services.log_lifts(uid, {"sets": [{"exercise": "Back Squat", "weight_kg": -20, "reps": 5}]}, "claude")
-    assert "error" in r or "errors" in r, r  # a minus weight waits for deploy 2 too
+    assert r["error"] == "weight_out_of_range", r  # help on the two assisted lifts only
+    helped = services.log_lifts(uid, {"sets": [{"exercise": "Assisted Pull-Up", "weight_kg": -20, "reps": 8}]},
+                                "claude")
+    assert helped["session"]["sets"][-1]["weight_kg"] == -20
+
+
+# ---------------------------------------------------------------- 0014: the one-off delete (R9)
+
+DELETE_UP, DELETE_DOWN = "0014", "0013"
+CLEARED = ("lift_set", "lift_session")
+AT = NOW.strftime("%Y-%m-%d %H:%M:%S.%f")  # a time as raw SQL writes it: no datetime adapter
+
+
+def _delete_migration():
+    path = ROOT / "migrations" / "versions" / "0014_lift_sets_cleared.py"
+    spec = importlib.util.spec_from_file_location("migration_0014", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _at_0013_with_lifts_of_every_kind(address: str, monkeypatch) -> list[int]:
+    """At 0013, rows of every kind for two people (write_everything: sessions with an edit and an undo, so lift_session
+    versions), and besides, a soft-deleted session of the first person's, a log_lifts key of each and a version of
+    another kind. Returns the two ids."""
+    command.upgrade(alembic_config(address), DELETE_DOWN)
+    people = write_everything(address, monkeypatch)
+    engine = make_engine(address)
+    try:
+        with engine.begin() as c:
+            lift = c.exec_driver_sql("SELECT id FROM exercise WHERE name = 'Back Squat'").scalar()
+            gone = c.exec_driver_sql("INSERT INTO lift_session (user_id, date, notes, dedupe_key, logged_by, "
+                                     "created_at, updated_at, deleted_at) VALUES (?, '2026-11-07', '', 'k', 'web', ?, "
+                                     "?, ?) RETURNING id", (people[0], *[AT] * 3)).scalar()
+            c.exec_driver_sql(SET, (gone, lift, 1, 90, 5, None, None))
+            for n, uid in enumerate(people):
+                c.exec_driver_sql("INSERT INTO write_key (user_id, key, function, fingerprint, created_at) "
+                                  "VALUES (?, ?, 'log_lifts', 'f', ?)", (uid, f"lifts-key-{n}", AT))
+    finally:
+        engine.dispose()
+    return people
+
+
+def test_0014_deletes_every_lift_set_session_version_and_log_lifts_key_for_both_people_and_keeps_every_other_row(
+        monkeypatch):
+    address = _sqlite_at("cleared.db")
+    people = _at_0013_with_lifts_of_every_kind(address, monkeypatch)
+    engine = make_engine(address)
+    try:
+        before = _named(engine)
+        for table in CLEARED:
+            assert {r.get("user_id") for r in before["lift_session"]} == set(people) and before[table], table
+        assert any(r["deleted_at"] is not None for r in before["lift_session"])  # a soft-deleted one too
+        versions = [r for r in before["entry_version"] if r["kind"] == "lift_session"]
+        keys = [r for r in before["write_key"] if r["function"] == "log_lifts"]
+        assert {r["user_id"] for r in versions} == {r["user_id"] for r in keys} == set(people)
+        assert [r for r in before["write_key"] if r["function"] != "log_lifts"]  # write_everything's log_food key
+        assert [r for r in before["entry_version"] if r["kind"] != "lift_session"]  # a weigh-in's edit
+        out = io.StringIO()
+        with redirect_stdout(out):
+            command.upgrade(alembic_config(address), DELETE_UP)
+        assert out.getvalue().splitlines() == [
+            f"0014 deleted: {len(before['lift_set'])} lift sets, {len(before['lift_session'])} lift sessions, "
+            f"{len(versions)} versions, {len(keys)} keys."]
+        assert (len(before["lift_set"]), len(before["lift_session"]), len(versions), len(keys)) == (9, 5, 4, 2)
+        assert _version(engine) == DELETE_UP
+        after = _named(engine)
+        assert after["lift_set"] == [] and after["lift_session"] == []
+        assert after["entry_version"] == [r for r in before["entry_version"] if r["kind"] != "lift_session"]
+        assert after["write_key"] == [r for r in before["write_key"] if r["function"] != "log_lifts"]
+        kept = {t for t in before if t not in (*CLEARED, "entry_version", "write_key")}
+        assert {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "goal", "routine",
+                "feedback", "call_log", "exercise", "user"} <= kept
+        assert {t: after[t] for t in kept} == {t: before[t] for t in kept}  # every other row, as it was
+        assert any(r["kind"] == "lift" for r in after["goal"])  # a lift goal stays, with no set to read
+        assert _key_check(engine) == [] and _agree(engine) == []
+        # Its down changes nothing and brings nothing back; up again deletes nothing more and says so.
+        command.downgrade(alembic_config(address), DELETE_DOWN)
+        assert _version(engine) == DELETE_DOWN and _named(engine) == after
+        again = io.StringIO()
+        with redirect_stdout(again):
+            command.upgrade(alembic_config(address), DELETE_UP)
+        assert again.getvalue().splitlines() == ["0014 deleted: 0 lift sets, 0 lift sessions, 0 versions, 0 keys."]
+        assert _named(engine) == after
+    finally:
+        engine.dispose()
+
+
+def test_after_0014_the_services_read_and_write_as_on_an_empty_account(monkeypatch):
+    address = _sqlite_at("cleared-then-logged.db")
+    people = _at_0013_with_lifts_of_every_kind(address, monkeypatch)
+    command.upgrade(alembic_config(address), DELETE_UP)
+    config.use_settings(settings(database_url=address))
+    try:
+        for uid in people:
+            assert all(day["sessions"] == [] for day in services.get_log(uid, "2026-11-10", 7)["days"])
+            for gone in range(1, 6):  # the five sessions, the soft-deleted one among them: none comes back
+                assert services.restore_entry(uid, "lift_session", gone, "claude")["error"] == "not_found"
+            r = services.log_lifts(uid, {"date": "2026-11-09", "sets": [
+                {"exercise": "Plank", "weight_kg": 0, "time_s": 60}]}, "claude")
+            assert "error" not in r and r["summary"].startswith("Plank 60 s on "), r
+    finally:
+        db.dispose()
+        config.use_settings(settings())
+
+
+def test_0014_is_data_only_and_its_offline_sql_is_the_four_deletes_in_order_with_no_read_and_no_line():
+    migration = _delete_migration()
+    assert migration.revision == DELETE_UP and migration.down_revision == DELETE_DOWN
+    cfg = alembic_config(POSTGRES)
+    out = io.StringIO()
+    with redirect_stdout(out):
+        command.upgrade(cfg, f"{DELETE_DOWN}:{DELETE_UP}", sql=True)
+    sql = out.getvalue()
+    lines = ["DELETE FROM lift_set;", "DELETE FROM lift_session;",
+             "DELETE FROM entry_version WHERE entry_version.kind = 'lift_session';",
+             "DELETE FROM write_key WHERE write_key.function = 'log_lifts';"]
+    for line in lines:
+        assert sql.count(line) == 1, line
+    assert [sql.index(line) for line in lines] == sorted(sql.index(line) for line in lines)
+    assert "SELECT" not in sql and "0014 deleted" not in sql  # offline: no count, no line
+    for word in ("ALTER", "CREATE", "DROP", "UPDATE", "INSERT"):
+        assert word not in sql.replace("UPDATE alembic_version", ""), word  # data only
+    down = io.StringIO()
+    with redirect_stdout(down):
+        command.downgrade(cfg, f"{DELETE_UP}:{DELETE_DOWN}", sql=True)
+    assert "DELETE FROM lift" not in down.getvalue() and "INSERT INTO lift" not in down.getvalue()

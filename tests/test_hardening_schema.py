@@ -35,7 +35,7 @@ from .test_web import client, seam, sign_in, web_client  # noqa: F401 - fixtures
 
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
 HARDENING = "0012"  # the revision this file's migration tests run to
-HEAD = "0013"  # the code's head, which /ready reads (exercise-list.md)
+HEAD = "0014"  # the code's head, which /ready reads (exercise-list.md: 0014, the one-off delete)
 
 # ---------------------------------------------------------------- the rules of D12, as the contract lists them
 

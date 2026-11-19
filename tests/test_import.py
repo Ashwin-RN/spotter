@@ -598,11 +598,11 @@ def test_a_row_refusal_is_the_refusal_its_own_log_function_gives(user):
     """The same rule, the same words: only the row's number and the field's import name are added."""
     def without_set(message):
         return message.split(": ", 1)[1]
-    r = imp(user, weigh(ago(1), 1234.5), lift(ago(1), ("Back Squat", 100, 31)), measure(ago(1), "steps", 8000.5),
+    r = imp(user, weigh(ago(1), 1234.5), lift(ago(1), ("Back Squat", 100, 101)), measure(ago(1), "steps", 8000.5),
             meal(ago(1), ("Feast", 5000.6, "dinner")), run(ago(1), "Outdoor Run", 30, 5, speed=30),
             run(ago(2), "Outdoor Run", 601))
     own = [services.log_bodyweight(user.id, {"kg": 1234.5}, "web"),
-           services.log_lifts(user.id, {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 31}]}, "web"),
+           services.log_lifts(user.id, {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 101}]}, "web"),
            services.log_measurement(user.id, {"kind": "steps", "value": 8000.5}, "web"),
            services.log_food(user.id, {"entries": [{"description": "Feast", "kcal": 5000.6, "meal": "dinner"}]}, "web"),
            services.log_cardio(user.id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5, "speed_kmh": 30},
@@ -676,7 +676,7 @@ def test_a_set_with_a_field_it_does_not_take_fails_the_row(user):
 
 
 def test_a_row_with_many_problems_names_the_first_three_and_counts_the_rest(user):
-    r = imp(user, lift(ago(1), *[("Nope", 900, 50)] * 3))
+    r = imp(user, lift(ago(1), *[("Nope", 900, 150)] * 3))
     message = r["failed"][0]["message"]
     assert message.startswith("Row 1: 9 problems. Set 1: 'Nope' is not on the exercise list.")
     assert message.endswith(" And 6 more.")
@@ -1244,7 +1244,7 @@ def test_more_than_60_set_items_fail_the_row_and_nothing_is_dropped(user):
 
 
 def test_every_one_of_60_items_is_checked(user):
-    r = imp(user, lift(ago(1), *[("Bench Press", 60, 5)] * 59, ("Zorbinator", 9999, 99)))
+    r = imp(user, lift(ago(1), *[("Bench Press", 60, 5)] * 59, ("Zorbinator", 9999, 199)))
     assert r["row_outcomes"]["failed"] == 1 and r["unknown_names"][0]["name"] == "Zorbinator"
     assert r["failed"][0]["message"].startswith("Row 1: 3 problems. Set 60: ")
 

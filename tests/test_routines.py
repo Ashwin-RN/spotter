@@ -75,12 +75,13 @@ GET_DESCRIPTION = (
     "in your reply which sets were logged.")  # units.md
 KEY_WORDS = mcp_server.KEY_DESCRIPTION
 LIFT_IN = {"exercise": "The lift, exactly as list_exercises gives it.", "sets": "How many sets of it, 1 to 10.",
-           "reps": "Reps in each set, a whole number from 1 to 30.",
-           "weight_kg": ("The weight in kg, 0 to 500, only when the person gave one. Leave it out otherwise: "
-                         "get_routines then gives the weight of the lift's latest session. Send weight_kg or "
-                         "weight_lb, never both."),
+           "reps": "Reps in each set, a whole number from 1 to 100.",
+           "weight_kg": ("The weight in kg, 0 to 500, only when the person gave one. Help on Assisted Pull-Up or "
+                         "Assisted Dip as a minus weight. Leave it out otherwise: get_routines then gives the weight "
+                         "of the lift's latest session. Send weight_kg or weight_lb, never both."),
            "weight_lb": ("The weight in lb, 0 to 1,102.31, only when the person gave one in pounds, or with no unit "
-                         "and units.weight is lb. Leave it out otherwise.")}  # units.md R10
+                         "and units.weight is lb. Help on Assisted Pull-Up or Assisted Dip as a minus weight. Leave "
+                         "it out otherwise.")}  # units.md R10; exercise-list.md: help, as R6 takes it
 NAME_IN = "The routine's name, as the person says it, such as Push day. 1 to 64 characters."
 LIFTS_IN = "Each lift, in the order done: 1 to 20 lifts, and at most 60 sets in all."
 ID_WORDS = "The routine's id, for delete_entry and restore_entry with kind routine."
@@ -499,15 +500,16 @@ REFUSALS = {
     "sets of 2.5": ({"name": "Push day", "lifts": [GOOD, lift(sets=2.5)]},
                     one("Lift 2: sets must be a whole number.", "Give sets on lift 2 as a whole number.",
                         "not_a_whole_number")),
-    "reps 31": ({"name": "Push day", "lifts": [GOOD, lift(reps=31)]},
-                one("Lift 2: reps 31 is outside 1 to 30.", "Give reps on lift 2 from 1 to 30.", "reps_out_of_range")),
+    "reps 101": ({"name": "Push day", "lifts": [GOOD, lift(reps=101)]},  # 1 to 100 (exercise-list.md R10)
+                one("Lift 2: reps 101 is outside 1 to 100.", "Give reps on lift 2 from 1 to 100.", "reps_out_of_range")),
     "reps missing": ({"name": "Push day", "lifts": [GOOD, {"exercise": "Dip", "sets": 3}]},
                      one("Lift 2: reps is missing.", "Give reps on lift 2.", "missing_field")),
     "a weight of 501": ({"name": "Push day", "lifts": [GOOD, lift(weight=501)]},
                         one("Lift 2: weight 501 kg is outside 0 to 500 kg.",
                             "Give weight_kg on lift 2 from 0 to 500, or leave it out.", "weight_out_of_range")),
+    # A minus weight is help, on the two assisted lifts only (exercise-list.md R6): R6's words.
     "a weight below 0": ({"name": "Push day", "lifts": [GOOD, lift(weight=-2.5)]},
-                         one("Lift 2: weight -2.5 kg is outside 0 to 500 kg.",
+                         one("Lift 2: a minus weight is help, on Assisted Pull-Up or Assisted Dip only.",
                              "Give weight_kg on lift 2 from 0 to 500, or leave it out.", "weight_out_of_range")),
     "a weight of words": ({"name": "Push day", "lifts": [GOOD, lift(weight="heavy")]},
                           one("Lift 2: weight_kg 'heavy' is not a number.", "Give weight_kg on lift 2 as a number.",
@@ -529,14 +531,14 @@ def test_each_check_alone_refuses_in_its_words_and_writes_nothing(user, case):
 
 
 def test_several_problems_come_back_at_once_in_order_and_the_total_names_this_routine_when_the_name_was_refused(user):
-    data = {"lifts": [lift(sets=10)] * 6 + [lift(reps=31, weight=501), lift("Zorbinator", sets=4)], "x": 1}
+    data = {"lifts": [lift(sets=10)] * 6 + [lift(reps=101, weight=501), lift("Zorbinator", sets=4)], "x": 1}
     refused = services.save_routine(user.id, data, "claude")
     assert [e["error"] for e in refused["errors"]] == [
         "missing_field", "invalid_field", "reps_out_of_range", "weight_out_of_range", "unknown_exercise",
         "sets_count_out_of_range"]
     assert refused["errors"][-1]["message"] == ("This routine would hold 67 sets. A routine holds at most 60, so that "
                                                 "it fits in one session.")
-    assert refused["message"].startswith("6 problems. name is missing. 'x' is not a field of a routine. Lift 7: reps 31")
+    assert refused["message"].startswith("6 problems. name is missing. 'x' is not a field of a routine. Lift 7: reps 101")
     assert table() == []
     some = services.save_routine(user.id, {"name": "Push day", "lifts": [lift(sets=11)] + [lift(sets=10)] * 6}, "claude")
     assert [e["error"] for e in some["errors"]] == ["invalid_field"]  # a lift's sets refused: no total is said
@@ -741,7 +743,7 @@ def test_the_same_key_and_call_twice_is_one_save_and_the_first_answer_and_its_se
 
 def test_a_key_on_a_refused_save_is_free(writer):
     http, token, _ = writer
-    refused = failed(http, token, "save_routine", {"name": "Push day", "lifts": [lift(reps=31)], "key": K})
+    refused = failed(http, token, "save_routine", {"name": "Push day", "lifts": [lift(reps=101)], "key": K})
     assert refused["error"] == "reps_out_of_range" and keys() == []
     assert ok(http, token, "save_routine", {"name": "Push day", "lifts": [lift()], "key": K})["created"] is True
 
@@ -845,7 +847,9 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     # Routines moved delete_entry, restore_entry and whoami; units then moved its thirteen (units.md), of these.
     units = {"whoami", "log_lifts", "log_bodyweight", "log_cardio", "edit_entry", "set_goal", "update_settings",
              "get_progress", "get_goals", "get_log", "delete_entry"}
-    assert {n for n in BEFORE if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami"} | units
+    # The exercise list (exercise-list.md, deploy 2) moved import_entries' names part, beside those.
+    assert {n for n in BEFORE if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami",
+                                                            "import_entries"} | units
     assert hashes["restore_entry"] != BEFORE["restore_entry"] and "restore_entry" not in units
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
     assert everyone == [n for n in names if n not in mcp_server.OWNER_FUNCTIONS] and len(everyone) == web.FUNCTION_COUNT
@@ -1241,7 +1245,7 @@ def test_0010_builds_the_table_on_sqlite_and_comes_down_leaving_no_other_change(
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0013"  # exercise list
+    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0014"  # exercise list
 
 
 def test_the_model_is_no_entry_table_and_its_columns_are_in_the_contract_s_order():

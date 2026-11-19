@@ -18,7 +18,8 @@ def one(**kw):
 def test_names_match_ignoring_case_and_spaces():
     assert rules.match_exercise("  back   SQUAT ", NAMES) == ("Back Squat", [])
     _, sets, err = rules.check_session(None, one(exercise="push-up", weight_kg=0), NAMES, TODAY)
-    assert err is None and sets == [{"exercise": "Push-Up", "weight_kg": 0.0, "reps": 5}]
+    assert err is None and sets == [{"exercise": "Push-Up", "weight_kg": 0.0, "reps": 5, "time_s": None,
+                                      "distance_m": None}]  # exercise-list.md R6
 
 
 def test_unknown_exercise_gives_the_closest_names():
@@ -39,7 +40,7 @@ def test_nan_inf_and_bools_are_not_numbers():
 def test_every_problem_reported_at_once():
     rows = [{"exercise": "Bak Squat", "weight_kg": 60, "reps": 5},
             {"exercise": "Bench Press", "weight_kg": 501, "reps": 5},
-            {"exercise": "Bench Press", "weight_kg": 40, "reps": 31},
+            {"exercise": "Bench Press", "weight_kg": 40, "reps": 101},  # 1 to 100 (exercise-list.md R6)
             {"exercise": "Bench Press", "weight_kg": 40, "reps": 5.5},
             {"exercise": "", "weight_kg": "x", "reps": 5}]
     _, sets, err = rules.check_session("05/11/2026", rows, NAMES, TODAY)
@@ -168,7 +169,7 @@ def test_a_huge_refused_number_keeps_the_message_short():
                                     ["Back Squat"], today)
     messages = [e["message"] for e in err["errors"]]
     assert "Set 1: weight 1e+300 kg is outside 0 to 500 kg." in messages
-    assert "Set 1: reps 1e+300 is outside 1 to 30." in messages
+    assert "Set 1: reps 1e+300 is outside 1 to 100." in messages
     assert len(err["message"]) < 400 and all(len(m) < 100 for m in messages)
     assert rules.bounded("kcal", 10 ** 30)[1]["message"].startswith("kcal 1000000000000000000000000000000 is outside")
     assert len(rules.measurement_value("steps", 10 ** 200)[1]["message"]) < 200

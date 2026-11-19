@@ -595,7 +595,7 @@ def test_0004_applies_on_an_empty_database_and_follows_0003():
         engine.dispose()
     from alembic.script import ScriptDirectory
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0013"  # exercise list
+    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0014"  # exercise list
 
 
 def test_the_postgres_sql_deletes_the_marked_rows_and_drops_the_columns():

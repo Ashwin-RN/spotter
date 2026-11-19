@@ -117,6 +117,14 @@ FOOD_NAME_RULE = (
 
 # ---------------------------------------------------------------- arguments
 
+# What a set's weight means, after "Use 0 for bodyweight work." (contract exercise-list.md, Model-read text).
+# A routine's weight takes the help sentence too: save_routine takes R6's weight range for each lift.
+_HELP_WEIGHT = "Help on Assisted Pull-Up or Assisted Dip as a minus weight."
+_SET_WEIGHT_MEANS = "For dumbbells, kettlebells or two cables, one hand's weight. " + _HELP_WEIGHT
+
+
+# edit_entry's sets. What a set takes comes from its lift (exercise-list.md R6): reps, a hold's time, or a carry's
+# distance and time. The docstring is published as the model's description.
 class SetIn(BaseModel):
     """One set of a lift session."""
 
@@ -126,20 +134,32 @@ class SetIn(BaseModel):
     weight_kg: Number | None = Field(
         default=None,
         description="The weight lifted in kg, 0 to 500, when the person said kg, or gave no unit and units.weight is "
-                    "kg, or it came from get_routines. Use 0 for bodyweight work. Send weight_kg or weight_lb, never "
-                    "both.")
+                    "kg, or it came from get_routines. Use 0 for bodyweight work. " + _SET_WEIGHT_MEANS + " Send "
+                    "weight_kg or weight_lb, never both.")
     weight_lb: Number | None = Field(
         default=None,
         description="The weight lifted in lb, 0 to 1,102.31, when the person said pounds, or gave no unit and "
-                    "units.weight is lb. Send it as said: Spotter converts it. Use 0 for bodyweight work. Send "
-                    "weight_kg or weight_lb, never both.")
-    reps: Whole = Field(description="Reps done in this set, a whole number from 1 to 30.")
+                    "units.weight is lb. Send it as said: Spotter converts it. Use 0 for bodyweight work. "
+                    + _SET_WEIGHT_MEANS + " Send weight_kg or weight_lb, never both.")
+    reps: Whole | None = Field(
+        default=None,
+        description="Reps in this set, a whole number from 1 to 100. Leave out for a hold or a carry.")
+    time_s: Whole | None = Field(default=None, description="A hold's or a carry's time in seconds, 1 to 3,600.")
+    distance_m: Number | None = Field(
+        default=None, description="A carry's or a sled's distance in metres, 1 to 5,000.")
+
+
+# log_lifts' sets (exercise-list.md R3): SetIn's fields, in a model of its own, so that log_lifts can take the person's
+# own words for a lift where edit_entry takes a name as written. Until the matcher (package C4c) the name is exact here
+# too, so the two publish the same fields and words.
+class LogSetIn(SetIn):
+    """One set of a lift session."""
 
 
 # A routine's lift (contract routines.md). The result models below take these words for the same fields.
 ROUTINE_EXERCISE = "The lift, exactly as list_exercises gives it."
 ROUTINE_SETS = "How many sets of it, 1 to 10."
-ROUTINE_REPS = "Reps in each set, a whole number from 1 to 30."
+ROUTINE_REPS = "Reps in each set, a whole number from 1 to 100."
 
 
 class RoutineLiftIn(BaseModel):
@@ -152,12 +172,13 @@ class RoutineLiftIn(BaseModel):
     reps: Whole = Field(description=ROUTINE_REPS)
     weight_kg: Number | None = Field(
         default=None,
-        description="The weight in kg, 0 to 500, only when the person gave one. Leave it out otherwise: get_routines "
-                    "then gives the weight of the lift's latest session. Send weight_kg or weight_lb, never both.")
+        description="The weight in kg, 0 to 500, only when the person gave one. " + _HELP_WEIGHT + " Leave it out "
+                    "otherwise: get_routines then gives the weight of the lift's latest session. Send weight_kg or "
+                    "weight_lb, never both.")
     weight_lb: Number | None = Field(
         default=None,
         description="The weight in lb, 0 to 1,102.31, only when the person gave one in pounds, or with no unit and "
-                    "units.weight is lb. Leave it out otherwise.")
+                    "units.weight is lb. " + _HELP_WEIGHT + " Leave it out otherwise.")
 
 
 class FoodEntryIn(BaseModel):
@@ -204,7 +225,7 @@ class ImportSetIn(BaseModel):
     exercise: str = Field(description="The exercise name, exactly as list_exercises gives it.")
     weight: Number = Field(
         description="The weight lifted, in the call's weight_unit, as the export writes it. 0 for bodyweight work.")
-    reps: Whole = Field(description="Reps done in this set, a whole number from 1 to 30.")
+    reps: Whole = Field(description="Reps done in this set, a whole number from 1 to 100.")
     times: Whole | None = Field(
         default=None,
         description="How many sets in a row had this weight and reps, 1 to 20, so 3 sets of 5 is one item. Leave "
@@ -467,7 +488,7 @@ class ExercisesResult(BaseModel):
 class SetOut(BaseModel):
     exercise: str = Field(description="The exercise name.")
     set_number: int = Field(description="The set's number within this exercise in this session, from 1.")
-    weight_kg: float = Field(description="Weight in kg; 0 for bodyweight work.")
+    weight_kg: float = Field(description="Weight in kg: one hand's for a pair, minus for help, 0 for bodyweight work.")
     # Optional since exercise-list.md's deploy 1: a set of time or distance has no reps.
     reps: int | None = Field(default=None, description="Reps done, or null for a hold or a carry.")
     time_s: int | None = Field(default=None, description="A hold's or a carry's time in seconds, or null.")

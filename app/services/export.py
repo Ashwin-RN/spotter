@@ -8,7 +8,8 @@ export_data(user_id)
     - entry_versions.csv: what an entry held before each edit or undo still kept (contract
       edit-history.md): its kind, the entry's id, when, who, why, and the values as JSON (_before): as stored,
       without LEFT_OUT, and with names as the other files give them. A set is {exercise, set_number,
-      weight_kg, reps}, and a cardio entry's exercise_id is exercise, as in cardio_entries.csv. A food entry's
+      weight_kg, reps, time_s, distance_m}, null where a version kept before time and distance holds none
+      (exercise-list.md R15), and a cardio entry's exercise_id is exercise, as in cardio_entries.csv. A food entry's
       saved food stays an id: saved_foods.csv has it. An id that names no exercise is written as null. The
       person's own letters are written as they are, never as escapes.
     - feedback.csv: each note the person sent Spotter's maker that is still kept (contract feedback.md): its id,
@@ -24,7 +25,8 @@ export_data(user_id)
     - Each CSV starts with the UTF-8 byte-order mark (D16), so a spreadsheet reads it as UTF-8. The web
       writes the text as it gets it.
     - Every number is in kg and km, whatever units the account shows (contract units.md); account.csv names the
-      units chosen, weight_unit and distance_unit, blank when none was.
+      units chosen, weight_unit and distance_unit, blank when none was. A set's time_s is seconds and distance_m
+      metres, on every account (exercise-list.md R16); lift_sets.csv has them after reps (R15).
     - Headers are lower snake_case, a fixed-unit number column named with its unit (weight_kg,
       avg_hr_bpm). A text cell that starts with =, +, - or @ gets a leading apostrophe, so a
       spreadsheet shows it as text and never runs it as a formula.
@@ -46,7 +48,7 @@ from app.models import (
     Bodyweight, CardioEntry, EntryVersion, Exercise, Feedback, FoodEntry, Goal, LiftSession, LiftSet, Measurement,
     Routine, SavedFood, User,
 )
-from app.services.common import no_account
+from app.services.common import no_account, version_sets
 
 ACCOUNT_COLUMNS = ("account_id", "email", "name", "time_zone", "weight_unit", "distance_unit", "calorie_target_kcal",
                    "target_sessions_per_week", "target_cardio_minutes_per_week", "add_back_exercise_kcal",
@@ -65,7 +67,7 @@ TABLES = {
 }
 BOM = "\ufeff"           # the byte-order mark each CSV starts with (D16)
 FORMULA_START = "=+-@"   # what a spreadsheet would read as the start of a formula
-SET_COLUMNS = ("session_id", "exercise", "set_number", "weight_kg", "reps")
+SET_COLUMNS = ("session_id", "exercise", "set_number", "weight_kg", "reps", "time_s", "distance_m")
 VERSION_COLUMNS = ("kind", "entry_id", "created_at", "by", "why", "before")
 FEEDBACK_COLUMNS = ("id", "created_at", "topic", "text", "doing", "expected", "happened")
 ORDER = ("account.csv", "lift_sessions.csv", "lift_sets.csv", "bodyweight.csv", "measurements.csv", "goals.csv",
@@ -78,7 +80,8 @@ Everything Spotter holds for this account, one CSV file per kind of record.
 
   account.csv         the account and its settings, one row
   lift_sessions.csv   each lift session
-  lift_sets.csv       each set, by session_id (the id in lift_sessions.csv)
+  lift_sets.csv       each set, by session_id (the id in lift_sessions.csv): reps, or a hold's
+                      time_s in seconds, or a carry's distance_m in metres and its time_s
   bodyweight.csv      each weigh-in, in kg
   measurements.csv    each measurement, in its unit
   goals.csv           each goal, open or closed
@@ -105,8 +108,9 @@ logged_by, in lift_sessions, bodyweight, measurements, food_entries and cardio_e
 came in: web (on Spotter's own pages), claude (through the assistant) or import (brought over from
 another app's export with import_entries).
 Times are UTC (ISO 8601, with +00:00). Dates are the account's own local dates.
-Weights are in kg and distances in km in every file, whatever units the account shows. account.csv
-names the units chosen: weight_unit and distance_unit, blank when none was chosen.
+Weights are in kg, distances in km and a lift set's distance_m in metres, in every file, whatever
+units the account shows. account.csv names the units chosen: weight_unit and distance_unit, blank
+when none was chosen.
 A blank cell means no value. Exercises, activities and saved foods are given by name.
 """
 
@@ -157,8 +161,8 @@ def _before(version: EntryVersion, exercises: dict) -> str:
     """A version's values for entry_versions.csv. See the module notes."""
     values = {k: x for k, x in json.loads(version.before).items() if k not in LEFT_OUT}
     if "sets" in values:
-        values["sets"] = [{"exercise": exercises.get(e), "set_number": n, "weight_kg": w, "reps": r}
-                          for e, n, w, r in values["sets"]]
+        values["sets"] = [{"exercise": exercises.get(e), "set_number": n, "weight_kg": w, "reps": r, "time_s": t,
+                           "distance_m": d} for e, n, w, r, t, d in version_sets(values["sets"])]
     if version.kind == CardioEntry.__tablename__:  # the activity by name, where the id was
         values = {"exercise" if k == "exercise_id" else k: exercises.get(x) if k == "exercise_id" else x
                   for k, x in values.items()}
@@ -194,7 +198,8 @@ def export_data(user_id: int) -> dict:
             files[name], rows[name] = _table(s, model, renamed, user.id, names)
         sets = s.scalars(select(LiftSet).join(LiftSession).where(LiftSession.user_id == user.id)
                          .order_by(LiftSet.session_id, LiftSet.id).options(selectinload(LiftSet.exercise)))
-        set_rows = [[x.session_id, x.exercise.name, x.set_number, x.weight_kg, x.reps] for x in sets]
+        set_rows = [[x.session_id, x.exercise.name, x.set_number, x.weight_kg, x.reps, x.time_s, x.distance_m]
+                    for x in sets]
         files["lift_sets.csv"], rows["lift_sets.csv"] = _csv(list(SET_COLUMNS), set_rows), len(set_rows)
         versions = s.scalars(select(EntryVersion).where(EntryVersion.user_id == user.id).order_by(EntryVersion.id))
         kept = [[v.kind, v.entry_id, v.created_at, v.by, v.why, _before(v, names["exercise"])] for v in versions]

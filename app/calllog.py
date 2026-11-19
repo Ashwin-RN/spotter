@@ -47,7 +47,7 @@ from pathlib import Path
 from sqlalchemy import delete, select, update
 
 from app import db
-from app.mcp_schemas import FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, RoutineLiftIn, SetIn
+from app.mcp_schemas import FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, LogSetIn, RoutineLiftIn, SetIn
 from app.models import CallLog, EntryVersion, Feedback, WriteKey
 
 log = logging.getLogger("spotter.calllog")
@@ -85,7 +85,7 @@ KNOWN_NAMES = frozenset({
     # get_data's (contract data-on-request.md, decision 21). The keys inside filters and totals are field names:
     # the known ones are written in braces, the rest counted in other[n].
     "area", "fields", "filters", "from_date", "to_date", "group_by", "totals", "order", "cursor",
-}) | {name for model in (SetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn)
+}) | {name for model in (SetIn, LogSetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn)
        for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.
 STEPS = {"no_subject": "account", "signups_closed": "account", "no_account": "account",

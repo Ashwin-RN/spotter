@@ -2,7 +2,8 @@
 
 log_lifts(user_id, data, by)
     data: date (YYYY-MM-DD; blank = the person's today; never after today, at most two years back),
-    sets [{exercise, weight_kg or weight_lb, reps}] (1 to 60), notes (optional, up to 2,000 characters),
+    sets [{exercise, weight_kg or weight_lb, reps or time_s or distance_m and time_s}] (1 to 60; what a set takes is
+    its lift's, rules.check_session), notes (optional, up to 2,000 characters),
     new_session (optional). allow_repeat is read by nothing: an old client may still send it. A weight_lb is
     kept in kg (rules.check_session); the summary and every best's text are in the person's units
     (contract units.md), and a set sent in lb while the person has not chosen carries units_note.
@@ -14,6 +15,8 @@ log_lifts(user_id, data, by)
     key is worked out again over the whole session (an imported one keeps its key), and updated_at moves.
     It is refused, with nothing written, when the session would pass 60 sets or its notes 2,000
     characters. There is no duplicate guard: a set said again is added, and duplicate is always false.
+    A set with no reps (a hold, a carry) has no estimated max and no heaviest weight: metrics.epley and
+    metrics.max_weight count only sets of reps, so history and _prior read it and Epley skips it.
     New bests are found against every earlier set of each lift: every session that comes before this
     one in the one order (see metrics.on_or_before). For a new session dated today that is every
     session, a later-dated one included; for a back-dated one, the ones on or before its date. An add
@@ -41,6 +44,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import db, formatting, links, metrics, rules, users
+from app.exercises import BY_NAME as LISTED
 from app.models import IMPORTED, LiftSession, LiftSet
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, exercises, keep_version, lock_user, no_account, row_dict,
@@ -102,26 +106,63 @@ def _joined(items: list[str]) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
-def sets_text(sets: list[tuple[str, float, int]], units=None) -> str:
+def _set_words(name: str, w, r, t, d, units=None) -> tuple:
+    """One set's words (contract exercise-list.md R14): (what is done, its weight, what follows the weight, whether
+    it is a set of reps). What is done is the reps, the seconds or the metres, with " a side" for a lift done one side
+    at a time. The weight is "at 25 kg", "at 25 kg each" for a pair, "with 20 kg help" for a minus weight, or None at
+    0 kg. After the weight, a carry's time: "in 45 s". The load type and sides are the list's; a name not on it, a
+    retired one or "?", reads plain."""
+    row = LISTED.get(name)
+    side = " a side" if row is not None and row.sides == "each" else ""
+    if d is not None:
+        done = formatting.show(d, "metres")
+    elif t is not None:
+        done = formatting.show(t, "seconds")
+    else:
+        done = formatting.show(r, "reps") if r is not None else ""
+    if w is not None and w < 0:
+        weight = f"with {formatting.show(-w, 'weight_kg', units=units)} help"
+    elif w:
+        each = " each" if row is not None and row.load_type == "per_hand" else ""
+        weight = f"at {formatting.show(w, 'weight_kg', units=units)}{each}"
+    else:
+        weight = None
+    after = f"in {formatting.show(t, 'seconds')}" if d is not None and t is not None else None
+    return done + side, weight, after, t is None and d is None
+
+
+def sets_text(sets: list[tuple], units=None) -> str:
     """'Back Squat 3 \u00d7 5 at 80 kg and Bench Press 60 kg \u00d7 5, 60 kg \u00d7 4' from (exercise,
-    weight, reps), in order: one part a lift, joined as a list. Sets are grouped by their shown weight and reps
-    (R8), so two sets that read 225 lb \u00d7 5 read "2 \u00d7 5 at 225 lb" whatever kg they hold. In kg shown
-    equals stored, so no kg text moves."""
-    groups: dict[str, list[tuple[str | None, int]]] = {}
-    for name, w, r in sets:
-        groups.setdefault(name, []).append((formatting.show(w, "weight_kg", units=units) if w else None, r))
+    weight, reps[, time_s, distance_m]), in order: one part a lift, joined as a list. Sets are grouped by their shown
+    words (R8), so two sets that read 225 lb \u00d7 5 read "2 \u00d7 5 at 225 lb" whatever kg they hold. In kg shown
+    equals stored, so no kg text moves. Each kind's words (exercise-list.md R14): a pair "3 \u00d7 10 at 25 kg each",
+    one side at a time "3 \u00d7 10 a side at 20 kg each", help "3 \u00d7 8 with 20 kg help", a hold
+    "Plank 2 \u00d7 60 s" and "Plank 60 s at 10 kg", a carry "Farmer's Carry 2 \u00d7 40 m at 32 kg each in 45 s",
+    a band "Band Pull-Apart 3 \u00d7 15". One set of time or distance reads with no count before it."""
+    groups: dict[str, list[tuple]] = {}
+    for name, w, r, *rest in sets:
+        t, d = (list(rest) + [None, None])[:2]
+        groups.setdefault(name, []).append(_set_words(name, w, r, t, d, units))
     times = "\u00d7"
     parts = []
     for name, rows in groups.items():
         if len(set(rows)) == 1:
-            w, r = rows[0]
-            parts.append(f"{name} {formatting.show(len(rows), 'count')} {times} {formatting.show(r, 'reps')}"
-                         + (f" at {w}" if w else ""))
+            done, weight, after, of_reps = rows[0]
+            count = f"{formatting.show(len(rows), 'count')} {times} " if of_reps or len(rows) > 1 else ""
+            parts.append(" ".join(x for x in (f"{name} {count}{done}", weight, after) if x))
         else:
-            parts.append(f"{name} " + ", ".join(
-                f"{w} {times} {formatting.show(r, 'reps')}" if w
-                else f"{formatting.show(r, 'reps')} reps" for w, r in rows))
+            parts.append(f"{name} " + ", ".join(_mixed(*row) for row in rows))
     return _joined(parts)
+
+
+def _mixed(done: str, weight, after, of_reps: bool) -> str:
+    """One set among a lift's sets that differ: "60 kg \u00d7 5", "25 kg each \u00d7 10 a side", "8 reps",
+    "8 reps with 20 kg help", "60 s at 10 kg", "40 m at 32 kg each in 45 s"."""
+    if of_reps and weight and weight.startswith("at "):
+        return f"{weight[3:]} \u00d7 {done}"
+    if of_reps:
+        done = done[:-len(" a side")] + " reps a side" if done.endswith(" a side") else f"{done} reps"
+    return " ".join(x for x in (done, weight, after) if x)
 
 
 def session_dict(t: LiftSession) -> dict:
@@ -133,23 +174,41 @@ def session_dict(t: LiftSession) -> dict:
     return out
 
 
-def number_sets(sets: list[dict], by_name: dict, after: dict | None = None) -> list[tuple[int, int, float, int]]:
-    """(exercise_id, set_number, weight_kg, reps) for checked sets, numbered per exercise in the
-    order given, from 1 or on from after {exercise_id: highest set number held}. Logging and editing
-    both use it."""
+def number_sets(sets: list[dict], by_name: dict, after: dict | None = None) -> list[tuple]:
+    """(exercise_id, set_number, weight_kg, reps, time_s, distance_m) for checked sets, numbered per exercise in the
+    order given, from 1 or on from after {exercise_id: highest set number held}. Logging, editing and the import use
+    it. The six items are a set as a version and the duplicate key hold it (exercise-list.md R15)."""
     counts = dict(after or {})
     keyed = []
     for x in sets:
         ex_id = by_name[x["exercise"]].id
         counts[ex_id] = counts.get(ex_id, 0) + 1
-        keyed.append((ex_id, counts[ex_id], x["weight_kg"], x["reps"]))
+        keyed.append((ex_id, counts[ex_id], x["weight_kg"], x["reps"], x.get("time_s"), x.get("distance_m")))
     return keyed
+
+
+def set_row(x: LiftSet) -> tuple:
+    """A stored set as number_sets gives one: (exercise_id, set_number, weight_kg, reps, time_s, distance_m)."""
+    return (x.exercise_id, x.set_number, x.weight_kg, x.reps, x.time_s, x.distance_m)
+
+
+def new_set(keyed) -> LiftSet:
+    """A set to store, from number_sets' six items."""
+    e, n, w, r, t, d = keyed
+    return LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r, time_s=t, distance_m=d)
+
+
+def text_rows(sets: list[dict]) -> list[tuple]:
+    """Checked sets as sets_text reads them: (exercise, weight, reps, time_s, distance_m)."""
+    return [(x["exercise"], x["weight_kg"], x["reps"], x.get("time_s"), x.get("distance_m")) for x in sets]
 
 
 def session_key(on: date, notes: str, keyed: list[tuple]) -> str:
     """What makes two sessions the same: the date, the notes and the set list (order across lifts
-    does not matter; the numbering within a lift does)."""
-    return dedupe_key(on, notes, sorted(keyed))
+    does not matter; the numbering within a lift does). A set with a time or a distance counts its six items, so two
+    holds that differ only in time are two sets (exercise-list.md R15); a set of reps alone counts its first four, so
+    its key is the key it had before time and distance."""
+    return dedupe_key(on, notes, sorted(tuple(x[:4]) if all(v is None for v in x[4:]) else tuple(x) for x in keyed))
 
 
 def _links(on: date, lifts: list[str]) -> dict:
@@ -305,15 +364,15 @@ def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name
         return rules.combine(errors)
 
     name_of = {e.id: name for name, e in by_name.items()}
-    held = [(x.exercise_id, x.set_number, x.weight_kg, x.reps) for x in had]
+    held = [set_row(x) for x in had]
     top: dict[int, int] = {}
-    for ex_id, n, _, _ in held:
+    for ex_id, n, *_ in held:
         top[ex_id] = max(top.get(ex_id, 0), n)
     keyed = number_sets(sets, by_name, top)
     prior = _prior(s, session.user_id, {k[0] for k in keyed}, name_of, on, today, before=session.id)
     new_bests, firsts = [], []
     for lift in dict.fromkeys(x["exercise"] for x in sets):
-        was = [(w, r) for ex_id, _, w, r in held if name_of.get(ex_id) == lift]
+        was = [(w, r) for ex_id, _, w, r, *_ in held if name_of.get(ex_id) == lift]
         now = was + [(x["weight_kg"], x["reps"]) for x in sets if x["exercise"] == lift]
         if not prior.get(lift):
             firsts.append(first_text(lift, now, units))
@@ -323,14 +382,14 @@ def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name
                       if hit["kind"] not in before or hit["value"] > before[hit["kind"]]]
 
     keep_version(s, session, by)  # every check has passed: the session as it stands is kept
-    session.sets.extend(LiftSet(exercise_id=e, set_number=n, weight_kg=w, reps=r) for e, n, w, r in keyed)
+    session.sets.extend(new_set(k) for k in keyed)
     if notes:
         session.notes = joined
     if session.logged_by != IMPORTED:  # an imported session keeps the key it was imported under, as an edit does
         session.dedupe_key = session_key(on, session.notes, held + keyed)
     session.updated_at = db.utcnow()
     s.flush()
-    summary = (f"Added {sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets], units)} to the "
+    summary = (f"Added {sets_text(text_rows(sets), units)} to the "
                "session on "
                f"{formatting.day(on, today)}. It now has {_count(len(held) + len(keyed))} sets.")
     lifts = list(dict.fromkeys(name_of.get(ex_id) for ex_id, *_ in held + keyed))
@@ -379,11 +438,11 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
                      for hit in metrics.prs(prior.get(lift, []), lift_sets)]
 
         session = LiftSession(user_id=user.id, date=on, notes=notes, logged_by=by, dedupe_key=key)
-        session.sets = [LiftSet(exercise_id=ex_id, set_number=n, weight_kg=w, reps=r) for ex_id, n, w, r in keyed]
+        session.sets = [new_set(k) for k in keyed]
         s.add(session)
         s.flush()
 
-        summary = (f"{sets_text([(x['exercise'], x['weight_kg'], x['reps']) for x in sets], units)} on "
+        summary = (f"{sets_text(text_rows(sets), units)} on "
                    f"{formatting.day(on, today)}.")
         firsts = [first_text(lift, lift_sets, units) for lift, lift_sets in grouped.items() if not prior.get(lift)]
         out = {"kind": KIND, "id": session.id, "duplicate": False, "session": session_dict(session),

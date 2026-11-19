@@ -17,7 +17,8 @@ import_entries(user_id, data, by)
     keep them at the column's 2 dp, so the same file gives the same stored numbers every time. A
     refusal of a converted number quotes it as sent, with the range, in the call's unit.
       lift_session  sets [{exercise, weight, reps, times?}] (times 1 to 20: one item for "3 sets of
-                    5"), notes?. At most 60 sets once times is counted.
+                    5"), notes?. At most 60 sets once times is counted. Sets of reps only: a lift that
+                    records a time, or a distance and time, fails its row (exercise-list.md R11).
       bodyweight    weight
       measurement   measurement_kind, value
       food_entry    entries [{description, kcal, meal}] (1 to 30): the other app's own numbers, stored
@@ -76,7 +77,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 from app import db, formatting, links, metrics, rules, users
-from app.models import IMPORTED, Bodyweight, CardioEntry, FoodEntry, LiftSession, LiftSet, Measurement
+from app.models import IMPORTED, Bodyweight, CardioEntry, FoodEntry, LiftSession, Measurement
 from app.services import body, cardio, common, food, lifts, measurements
 from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account
 from app.services.entries import SESSION_NOTE
@@ -118,6 +119,9 @@ CARDIO_ESTIMATE_NOTE = "Calorie estimates for imported cardio use body weight no
 NO_WEIGH_IN_NOTE = "No weigh-in yet, so imported cardio has no calorie estimate."
 
 _AT = re.compile(r"^(Set|Entry) (\d+): ")
+# A lift whose sets are not sets of reps, a hold, a carry or a sled, fails its row once a lift (exercise-list.md R11):
+# the words after "Plank records time: ", and the fix. Time and distance in the import are a later change.
+REPS_ONLY = ("an import takes sets of reps.", "Leave it out and tell the person.")
 
 
 # ---------------------------------------------------------------- small pieces
@@ -330,14 +334,16 @@ def _check_lift(raw: dict, on, today, by_name: dict, factor: float) -> tuple[dic
                           "reps": item.get("reps")})
     if not isinstance(items, list):
         converted = items  # check_session refuses it in its own words
-    _, sets, err = rules.check_session(on or today, converted, names, today, pounds=False)
+    _, sets, err = rules.check_session(on or today, converted, names, today, pounds=False, reps_only=REPS_ONLY)
     if err:
         for e in err["errors"]:
             at = _AT.match(e["message"])
             if e["error"] == "weight_out_of_range" and at:
                 k = int(at.group(2))
-                e = _call_unit(e, "weight", sent[k - 1].get("weight"), factor, rules.HARD_RULES["weight_kg"],
-                               "weight_kg", f"Set {k}", ", 0 for bodyweight")
+                lift = rules.match_exercise(converted[k - 1].get("exercise"), names)[0]
+                tail = ": the help as a minus weight" if rules.takes_help(lift) else ", 0 for bodyweight"  # R6
+                e = _call_unit(e, "weight", sent[k - 1].get("weight"), factor, rules.weight_range(lift),
+                               "weight_kg", f"Set {k}", tail)
             errors.append(_renamed(e, "weight_kg", "weight"))
         for e in err["errors"]:  # the set a missed name came from, by the number its message names
             at = _AT.match(e["message"]) if e["error"] == "unknown_exercise" else None
@@ -354,7 +360,7 @@ def _check_lift(raw: dict, on, today, by_name: dict, factor: float) -> tuple[dic
                                   f"to {hi}.", f"Send at most {hi} sets a session, times counted.")], missed
     keyed = lifts.number_sets(expanded, by_name)
     return {"sets": expanded, "notes": notes, "keyed": keyed,
-            "match": tuple(sorted((ex, n, round(w, 2), r) for ex, n, w, r in keyed))}, [], missed
+            "match": tuple(sorted((ex, n, round(w, 2), r) for ex, n, w, r, *_ in keyed))}, [], missed
 
 
 def _check_bodyweight(raw: dict, factor: float) -> tuple[dict | None, list[dict]]:
@@ -780,7 +786,7 @@ def _write(s, user, to_write: list[dict], today: date) -> dict:
     for r in by_kind["lift_session"]:
         session = LiftSession(user_id=user.id, date=r["date"], notes=r["notes"], logged_by=IMPORTED,
                               dedupe_key=lifts.session_key(r["date"], r["notes"], r["keyed"]))
-        session.sets = [LiftSet(exercise_id=ex, set_number=n, weight_kg=w, reps=reps) for ex, n, w, reps in r["keyed"]]
+        session.sets = [lifts.new_set(k) for k in r["keyed"]]
         r["row"] = session
     for r in by_kind["food_entry"]:
         key = food.entry_key(r["date"], [food.entry_tuple(e) for e in r["unmatched"]])

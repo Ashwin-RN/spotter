@@ -33,10 +33,12 @@ IN_C_ONLY = {"met", "speed", "incline"}
 IN_UNITS = {"weight_rate", "weight_target"}
 # data-on-request.md: get_data's minutes (a number, never m:ss) and volume (weight x reps).
 IN_DATA = {"minutes", "volume"}
+# exercise-list.md R14: a lift set's time and distance.
+IN_SETS = {"seconds", "metres"}
 
 
 def test_every_quantity_has_a_step():
-    assert set(f.STEP) == NAMED_IN_L | IN_C_ONLY | IN_UNITS | IN_DATA
+    assert set(f.STEP) == NAMED_IN_L | IN_C_ONLY | IN_UNITS | IN_DATA | IN_SETS
 
 
 @pytest.mark.parametrize("quantity, step", [
@@ -47,7 +49,7 @@ def test_every_quantity_has_a_step():
     ("steps", 1), ("ml", 1), ("servings", 0.01), ("count", 1), ("count_avg", 0.1), ("rate", 0.01),
     ("weight_change", 0.01), ("goal_target", 0.01),
     ("session_time", 1 / 60), ("pace", 1 / 60), ("goal_time", 1 / 60), ("time_pace", 1 / 60),
-    ("time_gap", 1 / 60), ("minutes", 0.1), ("volume", 0.1),
+    ("time_gap", 1 / 60), ("minutes", 0.1), ("volume", 0.1), ("seconds", 1), ("metres", 0.01),
 ])
 def test_step(quantity, step):
     assert f.STEP[quantity] == pytest.approx(step)
@@ -142,6 +144,9 @@ RULES = [
     # Whole seconds and the word, no sign: the value is minutes.
     ("time_gap", 0.2, "12 seconds"), ("time_gap", 1 / 60, "1 second"), ("time_gap", -0.2, "12 seconds"),
     ("time_gap", 0, "0 seconds"), ("time_gap", 2.0, "120 seconds"), ("time_gap", 20.0, "1,200 seconds"),
+    # exercise-list.md R14: a set's whole seconds, and its metres up to 2 dp.
+    ("seconds", 60, "60 s"), ("seconds", 3600, "3,600 s"), ("metres", 40.0, "40 m"), ("metres", 12.5, "12.5 m"),
+    ("metres", 0.125, "0.13 m"), ("metres", 5000, "5,000 m"),
 ]
 
 

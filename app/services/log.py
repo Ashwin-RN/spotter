@@ -49,8 +49,8 @@ def oldest_day(user: User):
 
 def _day_summary(day_sessions: list, weigh_in, cardio_rows: list, today, units) -> str:
     """A day's lift sessions, weigh-in and cardio in words (R14), in the person's units; "" for a day with none."""
-    parts = [lifts.sets_text([(x.exercise.name, x.weight_kg, x.reps) for x in sorted(t.sets, key=lambda x: x.id)],
-                             units) + "." for t in day_sessions if t.sets]
+    parts = [lifts.sets_text([(x.exercise.name, x.weight_kg, x.reps, x.time_s, x.distance_m)
+                              for x in sorted(t.sets, key=lambda x: x.id)], units) + "." for t in day_sessions if t.sets]
     if weigh_in is not None:
         parts.append(f"Weigh-in {formatting.show(weigh_in.kg, 'weigh_in', units=units)}.")
     parts += [cardio.summary(c, today, units) for c in cardio_rows]

@@ -676,6 +676,8 @@ SERVICE_REFUSALS = {
     ("_measurement_kind", "invalid_field", "measurement_kind"): [("invalid_field", "measurement_kind")],
     ("_measurement_kind", "invalid_kind", "measurement_kind"): [("invalid_kind", "measurement_kind")],
     ("_wrong_kind", "invalid_field", "exercise"): [("invalid_field", "exercise")],
+    # exercise-list.md R10: a hold, a carry or a sled, refused for a lift goal, answered by the same line.
+    ("_identity", "invalid_field", "exercise"): [("invalid_field", "exercise")],
     ("_identity", "<match_cardio>", None): [("missing_field", "exercise"), ("unknown_exercise", "exercise")],
     ("_identity", "<dict>", "exercise"): [("missing_field", "exercise")],  # match_cardio's missing_field, renamed
     ("_identity", "missing_field", "exercise"): [("missing_field", "exercise")],

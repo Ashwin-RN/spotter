@@ -482,3 +482,18 @@ The `exercise_alias` table (for when something writes aliases at runtime). Packs
   - `tests/test_cardio.py:51-53`: the sync adds 25 cardio rows, not 15.
   - `tests/test_mcp.py:2442-2443`: "Squat (Barbell)" gets three closest names over 267 rows until C4c reads it as Back Squat.
   - `tests/test_text_rules.py:685` and `tests/text_rules.py`: the exemptions in (a).
+
+2026-11-19, C4b:
+
+- (d) `pushups_over_30` moved from C4g to C4b, so each commit is green: 50 push-ups log as one Push-Up set of 50,
+  with no question (`evals/cases.json`, `tests/test_golden_cases.py`).
+- (e) A routine takes R6's weight range for each lift, so a help weight round-trips: `save_routine` takes -200 to
+  0 kg on Assisted Pull-Up and Assisted Dip, and what `get_routines` hands out from the last session can be saved
+  back. Decided at C4b's review.
+- (f) A rollback to deploy 1 after deploy 2 has written a hold, a carry or an edit is not safe: the old code's
+  `get_log` and `delete_entry` raise on a set with no reps, and undo and export on a six-item version. Deploy 2 is not
+  rolled back by code. A fix goes forward.
+- (g) `0014` deletes only `log_lifts` write keys. A kept `import_entries`, `edit_entry`, `delete_entry` or
+  `restore_entry` answer that names a lift session stays up to 24 hours: the contract's choice.
+- (h) For C4e: `what_is_logged` also raises over a hold, as `get_data` does (`app/services/fields.py:631`, the
+  session volume with reps None).

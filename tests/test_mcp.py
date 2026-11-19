@@ -523,9 +523,10 @@ def test_the_arguments_are_typed_parameters(http):
         "machine_kcal", "notes", "allow_repeat", "key"]
     assert list(schemas["list_exercises"]["properties"]) == ["kind", "category"]
     assert schemas["whoami"]["properties"] == {}
-    one_set = schemas["log_lifts"]["$defs"]["SetIn"]
-    assert one_set["properties"]["reps"]["type"] == "integer"
-    assert set(one_set["required"]) == {"exercise", "reps"}  # units.md R9: weight_kg or weight_lb
+    one_set = schemas["log_lifts"]["$defs"]["LogSetIn"]  # exercise-list.md R3: log_lifts' own set model
+    assert one_set["properties"]["reps"]["anyOf"][0]["type"] == "integer"
+    # units.md R9: weight_kg or weight_lb. exercise-list.md R6: reps, a time or a distance, by the lift.
+    assert set(one_set["required"]) == {"exercise"}
 
 
 def test_every_real_result_validates_and_its_keys_are_the_models(http):
@@ -2502,7 +2503,8 @@ def test_the_import_description_carries_what_the_long_rule_said(http):
                   "without its unit is refused, a preview too",
                   "Send each row's timestamp with its offset when the export gives one, or its date",
                   "Leave out rows more than 2 years old, and say how many were left out",
-                  "Use exercise and activity names only from list_exercises",
+                  "Search list_exercises for each lift and activity the export names",  # exercise-list.md
+                  "A hold, a carry or a sled is refused: an import takes sets of reps.",
                   "ask the person once per name", "The closest names the result gives can be wrong",
                   "Never pick one on a guess", "never leave a lift out without saying so",
                   "From a phone's health store, send one value a day",

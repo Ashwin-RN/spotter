@@ -16,11 +16,14 @@ The fix says what to send instead, so Claude can correct the call and retry.
   entry_date(value, today, noun) -> (date | None, error | None)
         Blank means today. Never after today (an entry records what has happened), never more
         than two years back.
-  check_session(date_value, rows, names, today, pounds=True) -> (session_date, sets, error | None)
-        A lift session: a valid date; 1 to 60 sets; each set's exercise on the list, weight 0 to
-        500 kg, reps 1 to 30 whole. sets: [{exercise (canonical), weight_kg, reps}]. Every failure at once.
-        Each set sends weight_kg or weight_lb (one_of); pounds=False is the import's: weight_kg only, in its
-        words of before units. The weight's range is checked on the number unrounded, then kept at 2 dp.
+  check_session(date_value, rows, names, today, pounds=True, reps_only=None) -> (session_date, sets, error | None)
+        A lift session: a valid date; 1 to 60 sets; each set's exercise on the list, and what its lift records
+        (contract exercise-list.md R6, measures_of): reps 1 to 100 whole, or time_s 1 to 3,600 whole, or
+        distance_m 1 to 5,000 with time_s. Weight 0 to 500 kg; -200 to 0 kg on the two assisted lifts (help);
+        none, stored as 0, on a band. sets: [{exercise (canonical), weight_kg, reps, time_s, distance_m}]. Every
+        failure at once. Each set sends weight_kg or weight_lb (one_of); pounds=False is the import's: weight_kg
+        only, in its words of before units. A range is checked on the number unrounded, then kept at its step.
+        reps_only: the import's refusal of a lift that records no reps (R11).
 
 Units (contract units.md, decision 15). The one table of factors, UNITS, and its helpers, which the import and
 logging both use: converted (a number in lb, mi or in, in the stored unit), inward (a stored range in another
@@ -41,12 +44,21 @@ import unicodedata
 from datetime import date, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal, localcontext
 
-from app import formatting
+from app import exercises, formatting
 
 HARD_RULES = {
-    "reps": (1, 30),
+    "reps": (1, 100),
     "weight_kg": (0, 500),
+    "help_kg": (-200, 0),        # the weight on Assisted Pull-Up and Assisted Dip: help, as a minus weight
+    "time_s": (1, 3600),         # a hold's or a carry's seconds, whole
+    "distance_m": (1, 5000),     # a carry's or a sled's metres, 2 dp
 }
+# The two lifts whose weight is help (contract exercise-list.md, decision 9), by key.
+HELP_LIFTS = ("assisted_pull_up", "assisted_dip")
+# What a set of a lift records, by the lift's measures (exercise-list.md R6), in a refusal's words.
+RECORDS = {("weight", "reps"): "reps", ("reps",): "reps", ("weight", "time"): "time",
+           ("weight", "distance", "time"): "distance and time"}
+SET_FIELD_WORDS = {"reps": "reps", "time_s": "time", "distance_m": "distance"}
 SESSION_SETS = (1, 60)
 BODYWEIGHT_KG = (20, 400)
 # A routine (contract routines.md): at most this many live a person, its lifts, each lift's sets, its name's length.
@@ -489,13 +501,119 @@ def entry_date(value, today: date, noun: str = "entries") -> tuple[date | None, 
     return parsed, None
 
 
-def check_session(date_value, rows, names: list[str], today: date,
-                  pounds: bool = True) -> tuple[date | None, list[dict], dict | None]:
+def measures_of(name) -> tuple[str, ...]:
+    """What a set of this lift records, from the list's own row (app.exercises). A name not on the list, a retired
+    row's among them, records weight and reps, as every lift did before."""
+    row = exercises.BY_NAME.get(name) if isinstance(name, str) else None
+    return row.measures if row is not None else ("weight", "reps")
+
+
+def records(name) -> str:
+    """What a set of this lift records, in words: reps, time, or distance and time."""
+    return RECORDS.get(measures_of(name), "reps")
+
+
+def takes_help(name) -> bool:
+    """Whether this lift's weight is help, a minus weight: Assisted Pull-Up and Assisted Dip (decision 9)."""
+    row = exercises.BY_NAME.get(name) if isinstance(name, str) else None
+    return row is not None and row.key in HELP_LIFTS
+
+
+def weight_range(name) -> tuple[float, float]:
+    """The weight a set of this lift takes, in kg: -200 to 0 on the two assisted lifts, else 0 to 500 (R6)."""
+    return HARD_RULES["help_kg"] if takes_help(name) else HARD_RULES["weight_kg"]
+
+
+def _set_weight(row: dict, n: int, where: str, name, band: bool, pounds: bool) -> tuple[float | None, list[dict]]:
+    """A set's weight, checked by its lift (R6): (weight in kg, errors). A band set takes none above 0, and none sent
+    stores 0. A minus weight is help on the two assisted lifts only. Every other lift takes 0 to 500 kg."""
+    sent_in, value, err = (one_of(row, "weight_kg", "weight_lb", where, needed=not band) if pounds
+                           else ("weight_kg", row.get("weight_kg"), None))
+    if err:
+        return None, [err]
+    if sent_in is None:  # a band set with no weight sent
+        return 0.0, []
+    weight, err = number(value, float, "weight_kg", where)
+    kg = to_float(value) if err is None else None  # unrounded: -0.01 lb is refused, never 0 kg
+    lo, hi = weight_range(name)
+    sent = as_sent(row.get("weight_kg"))  # as sent: a huge number stays short (quote cuts it)
+    tail = ""
+    if err is None and band and kg != 0:  # any weight but 0, a minus one too: a band has none
+        # log_lifts takes no weight on a band; the import's weight is required, so it is sent as 0 there.
+        fix = (f"Leave the weight out on set {n}: a band set stores 0 kg." if pounds
+               else f"Send weight 0 on set {n}: a band set stores 0 kg.")
+        return None, [error("invalid_field", f"{where}: {name} records reps, not weight.", fix)]
+    if err is None and takes_help(name):
+        tail = ": the help as a minus weight"
+        if not lo <= kg <= hi:
+            err = error("weight_out_of_range", f"{where}: weight {sent} kg is outside {span(lo, hi, 'weight_kg')} kg.",
+                        f"Give weight_kg on set {n} from {span(lo, hi, 'weight_kg')}{tail}.")
+    elif err is None and name is not None and kg < 0:
+        err = error("weight_out_of_range",
+                    f"{where}: a minus weight is help, on Assisted Pull-Up or Assisted Dip only.",
+                    f"Give weight_kg on set {n} from {lo} to {hi} (0 for bodyweight).")
+    elif err is None and not lo <= kg <= hi:
+        err = error("weight_out_of_range", f"{where}: weight {sent} kg is outside {lo} to {hi} kg.",
+                    f"Give weight_kg on set {n} from {lo} to {hi} (0 for bodyweight).")
+    if err and sent_in == "weight_lb":
+        err = in_unit(err, "weight_lb", row["weight_lb"], (lo, hi), "weight_kg", where, tail)
+    return (None, [err]) if err else (weight, [])
+
+
+# A set's reps, time and distance: (kind, the error code of its range, the words after the range in a fix).
+SET_NUMBERS = {"reps": (int, "reps_out_of_range", ""), "time_s": (int, "time_out_of_range", ", in seconds"),
+               "distance_m": (float, "distance_out_of_range", ", in metres")}
+NEEDED = {"reps": "reps", "time": "time_s", "distance and time": "distance_m"}  # the field a set must have
+
+
+def _set_numbers(row: dict, n: int, where: str, name) -> tuple[dict, list[dict]]:
+    """A set's reps, time_s and distance_m, checked by what its lift records (R6): ({field: value or None}, errors).
+    A lift of weight and reps, or a band's, needs reps; a hold needs time_s; a carry or a sled needs distance_m and
+    takes time_s. A field the lift does not record is invalid_field. A name not matched has its numbers checked for
+    their ranges alone, and reps is needed when no time or distance is sent."""
+    sent = [f for f in SET_NUMBERS if row.get(f) is not None and not (isinstance(row[f], str) and not row[f].strip())]
+    errors = []
+    if name is None:
+        allowed, needed = set(SET_NUMBERS), (None if sent else "reps")
+    else:
+        what = records(name)
+        measures = measures_of(name)
+        allowed = {f for f, word in (("reps", "reps"), ("time_s", "time"), ("distance_m", "distance"))
+                   if word in measures}
+        needed = NEEDED[what]
+        errors = [error("invalid_field", f"{where}: {name} records {what}, not {SET_FIELD_WORDS[f]}.",
+                        f"Send {needed} on set {n}.") for f in sent if f not in allowed]
+        if errors:
+            needed = None  # the fix already says what to send
+    out = {}
+    for field, (kind, code, tail) in SET_NUMBERS.items():
+        out[field] = None
+        if field not in allowed or (field not in sent and field != needed):
+            continue
+        value, err = number(row.get(field), kind, field, where)
+        lo, hi = HARD_RULES[field]
+        if err is None and not lo <= to_float(row.get(field)) <= hi:  # unrounded, as a weight is
+            shown = span(lo, hi, "count")
+            err = error(code, f"{where}: {field} {as_sent(row.get(field))} is outside {shown}.",
+                        f"Give {field} on set {n} from {shown}{tail}.")
+        if err:
+            errors.append(err)
+        else:
+            out[field] = value
+    return out, errors
+
+
+def check_session(date_value, rows, names: list[str], today: date, pounds: bool = True,
+                  reps_only: tuple[str, str] | None = None) -> tuple[date | None, list[dict], dict | None]:
     """A lift session, checked. Every failure combined (see combine).
 
-    Returns (session date, sets [{exercise, weight_kg, reps}] with canonical names, None) or (None, [], error).
-    A blank date means today. Weight may be 0 (bodyweight work). Each set sends weight_kg or weight_lb, and a
-    weight_lb is kept in kg (R9). pounds=False takes weight_kg alone, in the words it had before: the import's.
+    Returns (session date, sets [{exercise, weight_kg, reps, time_s, distance_m}] with canonical names, None) or
+    (None, [], error). A blank date means today. What a set takes comes from its lift's measures on the list
+    (contract exercise-list.md R6): reps, a time, or a distance and a time; reps 1 to 100. Weight may be 0
+    (bodyweight work), and is help, a minus weight, on the two assisted lifts only. Each set sends weight_kg or
+    weight_lb, and a weight_lb is kept in kg (R9). pounds=False takes weight_kg alone, in the words it had before:
+    the import's. reps_only, (the words after "records time: ", the fix), refuses a set of a lift that records no
+    reps once a lift, its own checks left out: the import's sets are sets of reps (R11).
     """
     errors = []
     session_date, err = entry_date(date_value, today, "sessions")
@@ -507,9 +625,7 @@ def check_session(date_value, rows, names: list[str], today: date,
         errors.append(error("sets_count_out_of_range", f"The session has {len(rows)} sets; it needs {lo} to {hi}.",
                             f"Send one row per set, {lo} to {hi} rows: exercise, "
                             f"{'weight_kg or weight_lb' if pounds else 'weight_kg'}, reps."))
-    w_lo, w_hi = HARD_RULES["weight_kg"]
-    r_lo, r_hi = HARD_RULES["reps"]
-    sets = []
+    sets, refused = [], set()
     for n, row in enumerate(rows[:hi], start=1):
         row = row if isinstance(row, dict) else {}
         where = f"Set {n}"
@@ -522,28 +638,16 @@ def check_session(date_value, rows, names: list[str], today: date,
             name, _ = match_exercise(raw_name, names)
             if name is None:
                 errors.append(unknown_exercise(raw_name, names, f"{where}: "))
-        sent_in, value, err = (one_of(row, "weight_kg", "weight_lb", where, needed=True) if pounds
-                               else ("weight_kg", row.get("weight_kg"), None))
-        weight = None
-        if err:
-            errors.append(err)
-        else:
-            weight, err = number(value, float, "weight_kg", where)
-            if err is None and not w_lo <= to_float(value) <= w_hi:  # unrounded: -0.01 lb is refused, never 0 kg
-                sent = as_sent(row.get("weight_kg"))  # as sent: a huge number stays short (quote cuts it)
-                err = error("weight_out_of_range", f"{where}: weight {sent} kg is outside {w_lo} to {w_hi} kg.",
-                            f"Give weight_kg on set {n} from {w_lo} to {w_hi} (0 for bodyweight).")
-            if err and sent_in == "weight_lb":
-                err = in_unit(err, "weight_lb", row["weight_lb"], (w_lo, w_hi), "weight_kg", where)
-            errors += [err] if err else []
-        reps, err = number(row.get("reps"), int, "reps", where)
-        if err:
-            errors.append(err)
-        elif not r_lo <= reps <= r_hi:
-            errors.append(error("reps_out_of_range", f"{where}: reps {as_sent(row.get('reps'))} is outside "
-                                f"{r_lo} to {r_hi}.",
-                                f"Give reps on set {n} from {r_lo} to {r_hi}."))
-        sets.append({"exercise": name, "weight_kg": weight, "reps": reps})
+        if reps_only is not None and name is not None and "reps" not in measures_of(name):
+            if name not in refused:
+                refused.add(name)
+                errors.append(error("invalid_field", f"{name} records {records(name)}: {reps_only[0]}", reps_only[1]))
+            continue
+        weight, found = _set_weight(row, n, where, name, measures_of(name) == ("reps",) if name else False, pounds)
+        errors += found
+        numbers, found = _set_numbers(row, n, where, name)
+        errors += found
+        sets.append({"exercise": name, "weight_kg": weight, **numbers})
     if errors:
         return None, [], combine(errors)
     return session_date, sets, None
