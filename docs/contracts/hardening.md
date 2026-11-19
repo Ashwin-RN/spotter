@@ -363,3 +363,7 @@ A correction to the owner's table at the top: for an old day, `get_log` now load
   - `/ready` opens a database connection for anyone, outside the page limit. Whether a flood of it can hold the pool on Postgres, so real calls answer busy.
   - The export gate and the page limit count per process. Whether Railway's start command runs one process.
   - A build older than the database: a build without `0012` fails `alembic upgrade head` against a database at `0012`, and `/ready` answers 503 to any revision but its own. What Railway does on a rollback.
+
+## Note, 2026-11-20: the exercise list (`docs/contracts/exercise-list.md`)
+
+`0013` widens `ck_lift_set_weight_kg` to -1,000 to 1,000 and makes `reps` nullable, with three new rules on `lift_set` (`ck_lift_set_time_s`, `ck_lift_set_distance_m`, `ck_lift_set_measure`). `0014` deletes every lift set, lift session, their versions and the `log_lifts` write keys once, with one line of counts; its down changes nothing.

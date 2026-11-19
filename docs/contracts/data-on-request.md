@@ -870,3 +870,11 @@ The figures, worked on 2026-11-16 by running a prototype of this seed on a scrat
 ## Not in this work
 
 The card's "Scoped, not in this build": one field list for writes, targets as rows, a goal as a change, new sports and their parts, a set's time or distance. Basketball as an activity. Streaks. A page for either function, and the body map. Lifts beyond the 41.
+
+## Note, 2026-11-20: the exercise list (`docs/contracts/exercise-list.md`)
+
+The volume rule, by load type and sides (`volume_kg` on `lift_sets`, `lift_sessions` and `days`): weight x reps, x 2 for a pair, x 2 for one side at a time; 0 at 0 kg or below, so a band set and a set with help count 0; a set of time or distance has none, and a session or day of holds or carries alone counts 0.
+
+The 41-lift table above stays the record of 2026-11-16. The list in code (`app/exercise_rows.py`) is now the home of every lift's muscles, primary at 1 and secondary at 0.5, and R13 (h) no longer binds: Suitcase Carry has muscles. Every carry and sled is full body.
+
+`lift_sets` gains `time_s` and `distance_m` (default columns) and `family` (a column, a filter and a group). A plain word on `exercise` or `family` takes the lifts of it the person logged.

@@ -291,3 +291,9 @@ Each lift is worded by R7.
 ## Not in this work
 
 A form that saves or logs a routine. Marking a session with the routine it came from. A routine's own history or progress. A schedule ("push on Mondays"). Cardio in a routine. Supersets, rest times, timed holds. Undo of a replace. `edit_entry` on a routine. Routines in the import. Volume by muscle. Pounds. A change to `log_lifts` or to the instructions. The setup step and the `/hi` lines, which come with the setup work.
+
+## Note, 2026-11-20: the exercise list (`docs/contracts/exercise-list.md`)
+
+Reps 1 to 100. A routine takes only lifts of sets and reps (exercise-list.md R10): a hold, a carry or a sled is refused, and `get_routines` leaves such a lift out with a line. A band lift takes no weight; a minus weight is help on the two assisted lifts.
+
+A plain word is refused in `save_routine` with its lifts; a lift's own name is taken as written. `get_routines` says to send each lift with `exact` true.

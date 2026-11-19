@@ -179,3 +179,11 @@ Not in this work: pounds and miles on a log (another item); the confirm card and
 **An eval run follows the build.** `log_lifts`' description and arguments change, and every conversation holds the tool list. So the whole set runs: 29 cases, 3 runs each, on `claude-opus-5-5`. The last whole run of 26 cases cost $12.78 at list price, about $0.49 a case. 29 cases are about $14.25. A run of only the three new cases and the two that already touch lifts (`unknown_exercise`, `import_unknown_lift`) would be about $2.45.
 
 **As built, 2026-11-15.** Two comment lines outside the file list, in `app/services/food.py` and `app/services/entries.py`, were made true: they named the lifts' guard. The first call of a day starts a session and has nothing for `undo_edit` to take back: it answers `nothing_to_undo`, and `delete_entry` takes it back. The same notes sent twice are joined twice.
+
+## Note, 2026-11-20: the exercise list (`docs/contracts/exercise-list.md`)
+
+A set is weight and reps, or a time, or a distance and time, by what its lift records: reps 1 to 100, time 1 to 3,600 s, distance 1 to 5,000 m, help on the two assisted lifts as a minus weight, -200 to 0 kg.
+
+`log_lifts` takes a lift in the person's own words: a name, an alias, a plural, "Name (Equipment)", or a plain word such as squat or bench, which takes the usual lift, or the one the person has logged that fits the set, and asks (`pick_lift`) when two fit; `exact` true skips the step.
+
+The "Not in this work" line's timed holds, carries and sets over 30 are done there.

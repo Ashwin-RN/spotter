@@ -358,3 +358,7 @@ Inches for a body size, stones, a best-mile time, the unit an entry was said in,
 - A form posted after a units switch is read in the unit it was drawn in: by the field it sent, `kg` or `lb`, `distance_km` or `distance_mi`, `speed_kmh` or `speed_mph`. An untouched edit form posted after a switch writes nothing.
 - `goal_charts` takes units, so the Goals page says `get_goals`' label and plan line as they are.
 - No page shows a best time's name yet (1, 5 or 10 km). A card that shows one will need the kg and km exception.
+
+## Note, 2026-11-20: the exercise list (`docs/contracts/exercise-list.md`)
+
+`distance_m` and `time_s` on a lift set are metres and seconds on every account, a person on miles too (exercise-list.md R16).

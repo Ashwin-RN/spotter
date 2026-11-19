@@ -589,7 +589,7 @@ The `exercise_alias` table (for when something writes aliases at runtime). Packs
 
 2026-11-19, C4f:
 
-- (z) A side, built on the owner's pick A, his final word still pending; a reversal is text only. The 42 lifts with
+- (z) A side, built on the owner's pick A (his word, 2026-11-19: "ok, go ahead A i guess"). The 42 lifts with
   sides `each` record one side's reps or time, and their volume doubles (C4e), but nothing told the assistant so.
   `SetIn` and `LogSetIn` (so `log_lifts` and `edit_entry`): `reps` and `time_s` add "On a lift done one side at a
   time, one side's reps." / "... one side's time." `list_exercises`' `records` says "reps a side", "time a side"

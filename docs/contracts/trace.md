@@ -62,3 +62,7 @@ Not in this work: the docs (`README.md`, `BUILD_LOG.md`), done after the review;
 ## Note, 2026-11-17: the sweep runs beside the calls
 
 From `docs/contracts/hardening.md` (D8, D13). The call log's retention is unchanged: rows older than 90 days go, at most once in 24 hours. The sweep no longer runs inside the call that finishes: when one is due, it starts on a thread of its own and deletes in batches of 1,000 rows a statement, each its own transaction, at most 50 a table a run. A table that fails or stops at the cap is tried again 10 minutes on. `call_log.id` is 64-bit on Postgres, with its sequence (migration `0012`).
+
+## Note, 2026-11-20: the exercise list (`docs/contracts/exercise-list.md`)
+
+`notes` also holds `pair`, the per-hand ratios of a `log_lifts` call: a figure worked from two weights, never a weight (exercise-list.md R12).
