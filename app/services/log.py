@@ -115,9 +115,8 @@ def get_log(user_id: int, date=None, days=1, any_date: bool = False) -> dict:
         bests: dict[int, list[dict]] = {}
         for per_lift in history["bests"].values():
             for b in per_lift:
-                raw = {k: b[k] for k in ("exercise", "kind", "value", "previous")}
-                bests.setdefault(b["session_id"], []).append({**lifts.rounded_best(raw),
-                                                              "text": lifts.best_text(raw, units)})
+                raw = {k: b[k] for k in ("exercise", "kind", "value", "previous", *lifts.BEST_PLACES) if k in b}
+                bests.setdefault(b["session_id"], []).append(lifts.shown_best(raw, units))  # where it stands too
         sessions = [t for t in history["sessions"] if shown(t.date)]
         weigh_ins = [b for b in s.scalars(select(Bodyweight).where(
             Bodyweight.user_id == user.id, Bodyweight.deleted_at.is_(None), Bodyweight.date >= start,

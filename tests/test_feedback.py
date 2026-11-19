@@ -69,12 +69,12 @@ DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint":
 PUBLISHED = {
     "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
     "list_exercises": "b899d5d817816d56a3fc4e84664ed8a4f81e023085f2728e76aa9cbd87b774e6",  # exercise list C4d: search
-    "log_lifts": "f2ea67db5748b34050f921a96b2729cd78f6a7c6d7f97eebd5972b89934057ee",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words
+    "log_lifts": "a5429b293c4260e5757880efaa2414d1f92f5beac0a967957ee631f2eb6f6dbb",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words; C4e: NewBest's kinds
     "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
     "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs
-    "get_progress": "afd01739efd47ad94fd7e4d4087a560999df7870fad3ca098acc756f48a88024",  # units; inputs
+    "get_progress": "70b15225d04a92d823c21775af729b4691173071168c2652142ef2fd2780f278",  # units; inputs; exercise list C4e: Best's kinds
     "update_settings": "cdd9e2dc2bb0ce2a9e35d4d6cfa0e81e71ffec9bbfcb16a4945d6d858ad8ea64",  # units; inputs
-    "get_log": "8edc8c59b546417614fc792e7cc4a933e158f651d30a8c42558a67fbe7e6d938",  # units; inputs; exercise list: SetOut
+    "get_log": "d5bd1cf80037cdb4817f483fd66d9643c7c8917f32c6b3925ce1c4e541fc3c4c",  # units; inputs; exercise list: SetOut; C4e: NewBest's kinds
     "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
     "edit_entry": "16fa5dc6c082c156ed72e51b4a84e6491bbf957743f9def5860320ebb21425a3",  # units; inputs; exercise list: SetIn
     "restore_entry": "1fc5aa945a46c50c8203a702b4821fe42c6d39e35d3db0f27552c2099043c224",  # routines: kind routine; inputs

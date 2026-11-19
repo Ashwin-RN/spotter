@@ -526,11 +526,17 @@ class Session(BaseModel):
     sets: list[SetOut] = Field(description="Every set, in the order logged.")
 
 
+# A best's kinds and units (contract exercise-list.md, "Bests"): a hold, a carry, a band and help have their own.
+BEST_KINDS = ("estimated_max (estimated one-rep max), weight (heaviest weight lifted), least_help (the least help, a "
+              "minus weight), reps (most reps), time (longest hold) or carry (heaviest load over a distance).")
+BEST_UNITS = "kg, or reps for reps, or seconds for time"
+
+
 class NewBest(BaseModel):
     exercise: str = Field(description="The lift.")
-    kind: str = Field(description="estimated_max (estimated one-rep max) or weight (heaviest weight lifted).")
-    value: float = Field(description="The new best, in kg.")
-    previous: float = Field(description="The best before this session, in kg.")
+    kind: str = Field(description=BEST_KINDS)
+    value: float = Field(description=f"The new best: {BEST_UNITS}.")
+    previous: float = Field(description=f"The best before this session: {BEST_UNITS}.")
     text: str = Field(description="The new best in words, ready to quote.")
 
 
@@ -830,9 +836,9 @@ class BestSet(BaseModel):
 
 class Best(BaseModel):
     date: str = Field(description="When it was set, YYYY-MM-DD.")
-    kind: str = Field(description="estimated_max or weight (heaviest weight lifted).")
-    value: float = Field(description="The new best, in kg.")
-    previous: float = Field(description="The best before it, in kg.")
+    kind: str = Field(description=BEST_KINDS)
+    value: float = Field(description=f"The new best: {BEST_UNITS}.")
+    previous: float = Field(description=f"The best before it: {BEST_UNITS}.")
 
 
 class LiftTrend(BaseModel):

@@ -831,7 +831,21 @@ def get_data(user_id: int, data: dict) -> dict:
         return _answer(s, user, plan, units)
 
 
+def _narrowed(s, user: User, area: Area, query: Query) -> Query:
+    """The query with each filter whose field narrows (Field.narrow) narrowed by the person's own rows, all time: a
+    plain word on family takes the families of the candidates this person logged (exercise-list.md R18). The rows
+    are the person's alone, so another account's lifts never widen it."""
+    hooks = {name: f.narrow for name in query.filters if (f := field_named(area, name)) is not None and f.narrow}
+    if not hooks:
+        return query
+    every = area.load(s, user, None, None)
+    return dataclasses.replace(query, filters={**query.filters,
+                                               **{name: narrow(query.filters[name], every)
+                                                  for name, narrow in hooks.items()}})
+
+
 def _answer(s, user: User, plan: Plan, units) -> dict:
+    plan.query = _narrowed(s, user, plan.area, plan.query)
     area, query = plan.area, plan.query
     rows = area.load(s, user, query.start, query.end)
     logged = (area.logged_days(s, user, query.start, query.end) if area.logged_days

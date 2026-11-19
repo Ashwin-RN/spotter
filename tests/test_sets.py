@@ -280,8 +280,10 @@ def test_an_add_to_the_day_s_session_keeps_its_time_and_distance_and_says_them(u
 def test_a_set_with_no_reps_sets_no_best_and_reads_no_estimate(uid):
     first = log(uid, *SESSION)
     assert first["new_bests"] == []
-    again = log(uid, {"exercise": "Plank", "weight_kg": 20, "time_s": 90})
-    assert again["new_bests"] == [] and "No new bests." in again["summary"]  # no weight best without reps
+    # A heavier hold that is shorter sets no weight best without reps (and, since C4e, no time best: 45 s is short
+    # of the 60 s held before, the mark with no earlier set as heavy).
+    again = log(uid, {"exercise": "Plank", "weight_kg": 20, "time_s": 45})
+    assert again["new_bests"] == [] and "No new bests." in again["summary"]
     history = services.get_progress(uid)
     assert "error" not in history, history
 

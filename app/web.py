@@ -2616,7 +2616,9 @@ async def progress_page(request: Request) -> Response:
         cardio = await _db(services.get_cardio, user.id)
     activities = None if failed(cardio) or cardio["today"] != today.isoformat() else cardio["activities"]
     return page(request, "progress.html", lifts=result["lifts"], best_sets=result.get("best_sets") or {},
-                reps_only=result.get("reps_only") or {}, glance=glance, bodyweight=trend["bodyweight"],
+                reps_only=result.get("reps_only") or {}, records=result.get("records") or {},
+                record_words=record_words, no_estimate=lifts.NO_ESTIMATE,
+                glance=glance, bodyweight=trend["bodyweight"],
                 chart=charts.bodyweight_svg(trend["bodyweight"], today=today, units=units), slug=links.slug,
                 today=today, trends=None if failed(trends) else trends, activities=activities,
                 fastest=await fastest_in_miles(user.id, activities, units),
@@ -2676,14 +2678,43 @@ async def progress_lift_page(request: Request) -> Response:
     if failed(result):
         return not_found_page(request)
     # The page's one date is get_progress' today, and its reps_only comes from the same read (hardening D6): {reps,
-    # date} for a lift never done above 0 kg, else None.
+    # date} for a lift never done above 0 kg, else None. record: lifts.records' best set of a lift of another kind
+    # than standard (a hold, a carry, a band, help), from the same read, else None.
     lift = result["lift"]
     today = date.fromisoformat(result["today"])
     bare = (result.get("reps_only") or {}).get(lift["exercise"])
+    record = (result.get("records") or {}).get(lift["exercise"])
     chart = progress_data.lift_chart(_lift_points(lift), lift["goals"], lift["exercise"])
     return page(request, "progress_lift.html", lift=lift, chart=charts.chart_svg(chart, today=today, units=units),
                 today=today, bare=bare, sessions=list(reversed(lift["estimated_max_over_time"])),
-                best_widened=lambda best: best_widened(best, units), best_labels=lifts.BEST_LABELS)
+                record=record, record_tile=record_tile(lift["exercise"], record, units) if record else None,
+                best_words=(result.get("best_words") or {}).get(lift["exercise"]),
+                record_words=record_words, best_widened=lambda best: best_widened(best, units),
+                best_labels=lifts.BEST_LABELS, best_quantities=lifts.BEST_QUANTITIES)
+
+
+def record_words(lift: str, record: dict, units=None) -> str:
+    """A record's set in words for a page, a no-break space before each unit (lifts.record_words)."""
+    return lifts.record_words(lift, record, units, page=True)
+
+
+def record_tile(lift: str, record: dict, units=None) -> tuple[str, str, str | None]:
+    """A lift page's first tile for a lift of another kind than standard: (its name for a screen reader, the number,
+    the words after it). "Longest hold: ", "90", "s, longest hold". A pair's weight says each, as the Best set tile
+    does; no help on an assisted lift is said as such."""
+    kind, weight = record["kind"], formatting.unit_word("weight", units)
+    if kind == "band":
+        return "Most reps: ", formatting.show(record["reps"], "reps"), "reps, most reps"
+    if kind == "hold":
+        return "Longest hold: ", formatting.show(record["time_s"], "seconds", unit=False), "s, longest hold"
+    if kind == "help" and record["weight_kg"] == 0:
+        return "Least help: ", "No help", None
+    number = formatting.show(abs(record["weight_kg"]), "weight_kg", unit=False, units=units)
+    if kind == "help":
+        return "Least help: ", number, f"{weight}, least help"
+    row = exercise_list.BY_NAME.get(lift)
+    each = " each" if row is not None and row.load_type == "per_hand" else ""
+    return "Heaviest load: ", number, f"{weight}{each}, heaviest load"
 
 
 def best_widened(best: dict, units=None) -> bool:
@@ -2694,7 +2725,7 @@ def best_widened(best: dict, units=None) -> bool:
     previous, kind = best.get("previous"), best.get("kind")
     if previous is None or (kind != "estimated_max" and (units is None or units.weight != "lb")):
         return False
-    quantity = "estimated_max" if kind == "estimated_max" else "weight_kg"
+    quantity = lifts.BEST_QUANTITIES.get(kind, "weight_kg")  # most reps and a hold's seconds are whole: never widen
     return formatting.show(best["value"], quantity, units=units) == formatting.show(previous, quantity, units=units)
 
 

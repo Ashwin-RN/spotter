@@ -65,8 +65,8 @@ INPUTS = {
     "cursor": "more from the last answer, as it came, with the same query.",
 }
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
-LIFT_SETS_FIELDS = ("date, session_id, exercise, category, region, muscle, set_number, weight_kg, reps, "
-                    "estimated_max_kg, volume_kg, sets")
+LIFT_SETS_FIELDS = ("date, session_id, exercise, family, category, region, muscle, set_number, weight_kg, reps, "
+                    "time_s, distance_m, estimated_max_kg, volume_kg, sets")
 
 
 def ago(n: int) -> date:
@@ -91,6 +91,8 @@ def _exercise_ids() -> dict[str, int]:
 
 
 def lift(uid: int, day: date, sets: list[tuple], notes: str = "", deleted: bool = False) -> int:
+    """A session written straight to the tables. A set is (lift, kg, reps), or (lift, kg, reps, time_s,
+    distance_m) for a hold or a carry."""
     ids = _exercise_ids()
     with db.session_scope() as s:
         session = LiftSession(user_id=uid, date=day, notes=notes, dedupe_key="k", logged_by="web",
@@ -98,10 +100,11 @@ def lift(uid: int, day: date, sets: list[tuple], notes: str = "", deleted: bool 
         s.add(session)
         s.flush()
         numbers: dict[str, int] = {}
-        for name, kg, reps in sets:
+        for name, kg, reps, *more in sets:
+            time_s, distance_m = (more + [None, None])[:2]
             numbers[name] = numbers.get(name, 0) + 1
             s.add(LiftSet(session_id=session.id, exercise_id=ids[name], set_number=numbers[name], weight_kg=kg,
-                          reps=reps))
+                          reps=reps, time_s=time_s, distance_m=distance_m))
         return session.id
 
 
@@ -391,7 +394,8 @@ def test_a_new_area_and_a_new_field_are_entries_only(make_client, person, monkey
 def full(uid: int) -> dict:
     """One known row of every area, every derived field among them."""
     ids = {"session": lift(uid, ago(2), [("Back Squat", 100, 5), ("Back Squat", 100, 12), ("Pull-Up", 0, 6),
-                                         ("Bench Press", 60, 8), ("Suitcase Carry", 30, 1)], notes="Good")}
+                                         ("Bench Press", 60, 8), ("Suitcase Carry", 30, None, 60, 40)],
+                         notes="Good")}
     ids["run"] = run(uid, ago(3), "Outdoor Run", 30, 5, speed_kmh=10, avg_hr=150, machine_kcal=300,
                      estimated_kcal=280, estimate_weight_kg=80.25, notes="Easy")
     ids["bike"] = run(uid, ago(3), "Stationary Bike", 30)
@@ -411,16 +415,18 @@ def test_each_area_s_rows_carry_their_stored_and_derived_cells(person):
     sets = table(data(person, area="lift_sets"))
     assert sets[-1] == {"date": ago(2).isoformat(), "session_id": ids["session"], "exercise": "Back Squat",
                         "category": "squat", "region": "lower", "set_number": 1, "weight_kg": 100, "reps": 5,
-                        "estimated_max_kg": 116.7, "volume_kg": 500}
+                        "time_s": None, "distance_m": None, "estimated_max_kg": 116.7, "volume_kg": 500}
     by_reps = {(r["exercise"], r["reps"]): r for r in sets}
     assert by_reps[("Back Squat", 12)]["estimated_max_kg"] is None  # outside 1 to 10 reps
     assert by_reps[("Back Squat", 12)]["set_number"] == 2
     assert by_reps[("Pull-Up", 6)]["estimated_max_kg"] is None and by_reps[("Pull-Up", 6)]["volume_kg"] == 0
-    assert by_reps[("Suitcase Carry", 1)]["region"] == "full_body"
+    carry = by_reps[("Suitcase Carry", None)]  # a set of distance and time: no reps, no volume
+    assert carry["region"] == "full_body" and (carry["time_s"], carry["distance_m"]) == (60, 40)
+    assert carry["volume_kg"] is None and carry["estimated_max_kg"] is None
     assert table(data(person, area="lift_sessions")) == [{
         "date": ago(2).isoformat(), "id": ids["session"],
         "exercises": "Back Squat, Pull-Up, Bench Press, Suitcase Carry",
-        "sets": 5, "volume_kg": 2210, "notes": "Good"}]
+        "sets": 5, "volume_kg": 2180, "notes": "Good"}]  # 500 + 1,200 + 0 + 480; the carry has none
     cardio = {r["activity"]: r for r in table(data(person, area="cardio"))}
     assert cardio["Outdoor Run"] == {"date": ago(3).isoformat(), "id": ids["run"], "activity": "Outdoor Run",
                                      "category": "run", "minutes": 30, "distance_km": 5, "pace_per_km": "6:00",
@@ -452,7 +458,7 @@ def test_each_area_s_rows_carry_their_stored_and_derived_cells(person):
          "cardio_minutes": 0, "food_entries": 1, "kcal": 600, "weight_kg": None, "measurements": 0},
         {"date": ago(1).isoformat(), "lift_sessions": 0, "lift_sets": 0, "volume_kg": 0, "cardio_entries": 0,
          "cardio_minutes": 0, "food_entries": 3, "kcal": 1075, "weight_kg": 80.4, "measurements": 1},
-        {"date": ago(2).isoformat(), "lift_sessions": 1, "lift_sets": 5, "volume_kg": 2210, "cardio_entries": 0,
+        {"date": ago(2).isoformat(), "lift_sessions": 1, "lift_sets": 5, "volume_kg": 2180, "cardio_entries": 0,
          "cardio_minutes": 0, "food_entries": 0, "kcal": None, "weight_kg": None, "measurements": 0},
         {"date": ago(3).isoformat(), "lift_sessions": 0, "lift_sets": 0, "volume_kg": 0, "cardio_entries": 2,
          "cardio_minutes": 60, "food_entries": 0, "kcal": None, "weight_kg": None, "measurements": 0}]
@@ -489,8 +495,8 @@ def test_deleted_entries_are_left_out_of_every_row_total_count_filled_and_entrie
     assert counts == {"lift_sets": 1, "lift_sessions": 1, "cardio": 0, "weigh_ins": 1, "measurements": 0, "food": 1,
                       "saved_foods": 1, "days": 1}
     assert field_row(area_of(logged, "food"), "kcal")[-1] == 1
-    assert area_of(logged, "lift_sets")["names"] == {"exercise": ["Bench Press"], "category": ["push"],
-                                                     "region": ["upper"],
+    assert area_of(logged, "lift_sets")["names"] == {"exercise": ["Bench Press"], "family": ["Bench Press"],
+                                                     "category": ["push"], "region": ["upper"],
                                                      "muscle": ["chest", "shoulders", "triceps"]}
 
 
@@ -563,7 +569,8 @@ ERRORS = [
         "invalid_field", "fields and group_by do not go together: with group_by each row is a group.",
         "Leave fields out with group_by, and name in totals what to work out for each group.")),
     ({"area": "lift_sets", "filters": {"colour": "red"}}, (
-        "invalid_field", "'colour' is not a filter of lift_sets.", "lift_sets filters on: exercise, category, region, "
+        "invalid_field", "'colour' is not a filter of lift_sets.", "lift_sets filters on: exercise, family, category, "
+                                                                   "region, "
                                                                    "muscle.")),
     ({"area": "weigh_ins", "filters": {"kind": "waist"}}, ("invalid_field", "weigh_ins takes no filters.",
                                                            "Leave filters out for weigh_ins.")),
@@ -593,7 +600,7 @@ ERRORS = [
                                                      "Use one of: you_said, saved_food, usda, claude_estimate.")),
     ({"area": "lift_sets", "group_by": ["colour"]}, (
         "invalid_field", "'colour' is not a group of lift_sets.",
-        "lift_sets groups by: day, week, month, exercise, category, region, muscle.")),
+        "lift_sets groups by: day, week, month, exercise, family, category, region, muscle.")),
     ({"area": "lift_sets", "group_by": ["week", "month"]}, (
         "invalid_field", "group_by holds week and month: one of day, week and month at most.",
         "Keep one of day, week and month in group_by.")),
@@ -757,21 +764,22 @@ def test_per_day_of_a_measurement_divides_by_the_days_with_that_kind(person):
 
 def test_grouped_by_muscle_a_set_counts_in_each_muscle_at_its_weight(person):
     # Suitcase Carry has muscles since the exercise list (contract exercise-list.md, "Muscles and region"): the
-    # farmer's walk entry's, forearms 1 and six secondaries at 0.5. Its set of reps is C4b's to change.
-    lift(person, ago(1), [("Bench Press", 60, 8), ("Suitcase Carry", 40, 1)])
+    # farmer's walk entry's, forearms 1 and six secondaries at 0.5. Its set is of distance and time (note (j)), so it
+    # counts in sets and has no volume.
+    lift(person, ago(1), [("Bench Press", 60, 8), ("Suitcase Carry", 40, None, 50, 30)])
     answer = data(person, area="lift_sets", group_by=["muscle"],
                   totals={"sets": ["sum", "count", "share"], "volume_kg": ["sum"]})
     carry = lambda muscle, share: {  # noqa: E731
-        "muscle": muscle, "sets_sum": 0.5, "sets_count": 1, "sets_share": share, "volume_kg_sum": 20}
+        "muscle": muscle, "sets_sum": 0.5, "sets_count": 1, "sets_share": share, "volume_kg_sum": None}
     assert table(answer) == [
         {"muscle": "chest", "sets_sum": 1, "sets_count": 1, "sets_share": 17, "volume_kg_sum": 480},
-        {"muscle": "forearms", "sets_sum": 1, "sets_count": 1, "sets_share": 17, "volume_kg_sum": 40},
+        {"muscle": "forearms", "sets_sum": 1, "sets_count": 1, "sets_share": 17, "volume_kg_sum": None},
         carry("abdominals", 9), carry("glutes", 9), carry("hamstrings", 8), carry("lower back", 8),
         carry("quadriceps", 8),
         {"muscle": "shoulders", "sets_sum": 0.5, "sets_count": 1, "sets_share": 8, "volume_kg_sum": 240},
         carry("traps", 8),
         {"muscle": "triceps", "sets_sum": 0.5, "sets_count": 1, "sets_share": 8, "volume_kg_sum": 240}]
-    assert answer["totals"] == {"columns": ["sets_sum", "sets_count", "volume_kg_sum"], "values": [2, 2, 520]}
+    assert answer["totals"] == {"columns": ["sets_sum", "sets_count", "volume_kg_sum"], "values": [2, 2, 480]}
     only = data(person, area="lift_sets", filters={"muscle": "triceps"}, group_by=["muscle"],
                 totals={"sets": ["sum"]})
     assert table(only) == [{"muscle": "triceps", "sets_sum": 0.5}]
@@ -853,7 +861,7 @@ def test_a_lb_and_mi_account_reads_its_own_units(make_user):
     weigh(uid, ago(1), 80)
     sets = data(uid, area="lift_sets")
     assert sets["columns"] == ["date", "session_id", "exercise", "category", "region", "set_number", "weight_lb",
-                               "reps", "estimated_max_lb", "volume_lb"]
+                               "reps", "time_s", "distance_m", "estimated_max_lb", "volume_lb"]
     assert table(sets)[-1]["weight_lb"] == 214.95 and table(sets)[0]["volume_lb"] == 1102.3
     cardio = table(data(uid, area="cardio", fields=["distance_mi", "pace_per_km", "speed_kmh", "estimate_weight_kg"]))
     assert cardio == [{"distance_mi": 3.11, "pace_per_mi": "9:39", "speed_mph": 6.2, "estimate_weight_lb": 176.4}]
@@ -1067,9 +1075,11 @@ def test_what_is_logged_on_a_full_account(person):
     assert (sets["entries"], sets["first"], sets["last"], sets["last_28d"], sets["prior_28d"]) == (
         6, ago(40).isoformat(), ago(2).isoformat(), 5, 1)
     assert sets["names"]["exercise"] == ["Back Squat", "Bench Press", "Pull-Up", "Suitcase Carry"]
-    assert field_row(sets, "weight_kg") == ["weight_kg", "The weight lifted. 0 for bodyweight work.", "kg", "stored",
+    assert field_row(sets, "weight_kg") == ["weight_kg", "The weight lifted: one hand's for a pair, a minus weight for "
+                                            "help, 0 for bodyweight work.", "kg", "stored",
                                             "count, avg, max, min", False, False, 6]
-    assert field_row(sets, "muscle")[-1] == 6 and field_row(sets, "estimated_max_kg")[-1] == 4  # every lift has muscles
+    assert field_row(sets, "muscle")[-1] == 6 and field_row(sets, "estimated_max_kg")[-1] == 3  # every lift has muscles
+    assert field_row(sets, "time_s")[-1] == 1 and field_row(sets, "distance_m")[-1] == 1  # the carry's
     food = area_of(logged, "food")
     assert food["names"]["food"][0] == "chicken biryani" and food["names"]["meal"] == ["dinner", "lunch"]
     assert area_of(logged, "days")["entries"] == 5  # days with any entry

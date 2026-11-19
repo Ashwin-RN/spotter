@@ -143,6 +143,7 @@ WORKS_PART = (
     f"Bests. Each weighted set of {count(1)} to {count(M.EPLEY_MAX_REPS)} reps gives an estimated one-rep max, by the "
     "Epley formula.",  # the review's L1: weighted
     "A new best beats every earlier set of that lift, by that estimate or by weight.",
+    "A hold counts by time, a carry by load, a band by reps and help by less of it.",  # exercise-list.md (C4e)
     f"Your lift now is your best session of the last {count(M.RECENT_BEST_DAYS)} days, or your latest before that. "
     "One light day does not pull it down.",
     f"Body weight now. The average of your weigh-ins in the last {count(M.BODYWEIGHT_AVG_DAYS)} days, or your latest "

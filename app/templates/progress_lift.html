@@ -7,7 +7,8 @@
    get_progress' own, or lifts.history's reps_only for a lift never done above 0 kg, through the filters. Every
    day is worded against get_progress' today. A lift with no estimated max says why, in the Lifts card's words:
    reps_only holding the lift means it needs added weight, else a weighted set of 1 to 10 reps. No figure reads
-   0 kg. #}
+   0 kg. A lift of a hold, a carry, a band or help (record, lifts.records) has no estimated max: its tiles say its
+   record and that set, and it has no chart and no Sessions card, which read the estimated max. #}
 <div class="page-head">
   <h1>{{ lift.exercise }}</h1>
   <nav class="day-nav" aria-label="Back">
@@ -15,7 +16,13 @@
   </nav>
 </div>
 
-{% if lift.sessions %}
+{% if lift.sessions and record %}
+<div class="tiles">
+  {{ parts.tile("max", record_tile[0], record_tile[1], record_tile[2]) }}
+  {{ parts.tile("best", "Best set: ", record_words(lift.exercise, record, units), "best set", record.date|day(today)) }}
+  {{ parts.tile("sessions", "Sessions: ", lift.sessions|show("count"), "session" if lift.sessions == 1 else "sessions", "last trained " ~ lift.last_trained|day(today)) }}
+</div>
+{% elif lift.sessions %}
 {% set best, estimated = lift.best_set, lift.current_estimated_max_kg is not none %}{% set weight = unit_word("weight", units) %}
 {% set reason = "Needs added weight" if bare else "Needs a weighted set of 1 to 10 reps" %}
 <div class="tiles">
@@ -34,6 +41,8 @@
   {{ parts.tile("sessions", "Sessions: ", lift.sessions|show("count"), "session" if lift.sessions == 1 else "sessions", "last trained " ~ lift.last_trained|day(today)) }}
 </div>
 
+{% endif %}
+{% if lift.sessions and not record %}
 {# The chart card: the lift chart, with the estimated max now as its figure. No session of 1 to 10 reps with
    added weight: no chart, and the card says why. #}
 {{ parts.chart_card("max", "max-title", "Estimated max", "Worked out from your sets, not a tested max",
@@ -42,15 +51,19 @@
                     "The chart starts from a set with added weight." if bare
                     else "The chart starts from a weighted set of 1 to 10 reps.") }}
 
+{% endif %}
+{% if lift.sessions %}
 {# The Bests card: each new best, newest first, in the service's words (lifts.BEST_LABELS), the day a link. A
-   pair that prints the same shows widened, together. A best with no previous shows its value only. #}
+   pair that prints the same shows widened, together. A best with no previous shows its value only. A lift of a
+   hold, a carry, a band or help says each best in best_words (lifts.best_phrase): where it stands, and help as
+   help that went down. #}
 <section class="card bests-card{% if not lift.bests %} is-empty{% endif %}" aria-labelledby="bests-title">
   <h2 id="bests-title">Bests</h2>
   {% if lift.bests %}
   <ul class="bests">
     {% for b in lift.bests|reverse %}
-    {% set q, wide = ("estimated_max" if b.kind == "estimated_max" else "weight_kg"), best_widened(b) %}
-    <li><span><a href="/day/{{ b.date }}">{{ b.date|day(today) }}</a>: {{ best_labels.get(b.kind, b.kind) }} {{ b.value|show(q, wide) }}{% if b.previous is not none %}, up from {{ b.previous|show(q, wide) }}{% endif %}</span></li>
+    {% set q, wide = best_quantities.get(b.kind, "weight_kg"), best_widened(b) %}
+    <li><span><a href="/day/{{ b.date }}">{{ b.date|day(today) }}</a>: {% if best_words %}{{ best_words[loop.revindex0] }}{% else %}{{ best_labels.get(b.kind, b.kind) }} {{ b.value|show(q, wide) }}{% if b.previous is not none %}, up from {{ b.previous|show(q, wide) }}{% endif %}{% endif %}</span></li>
     {% endfor %}
   </ul>
   {% else %}
@@ -58,6 +71,8 @@
   {% endif %}
 </section>
 
+{% endif %}
+{% if lift.sessions and not record %}
 {# The Sessions card: each session with an estimated max, newest first, the day a link. #}
 <section class="card{% if not sessions %} is-empty{% endif %}" aria-labelledby="sessions-title">
   <h2 id="sessions-title">Sessions</h2>
@@ -71,7 +86,8 @@
   <p class="empty-line">No session has an estimated max yet.</p>
   {% endif %}
 </section>
-{% else %}
+{% endif %}
+{% if not lift.sessions %}
 <div class="card is-empty"><p class="empty-line">No sets of {{ lift.exercise }} logged yet. Tell your assistant what you lifted and it shows here.</p></div>
 {% endif %}
 {% endblock %}

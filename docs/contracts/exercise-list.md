@@ -555,3 +555,34 @@ The `exercise_alias` table (for when something writes aliases at runtime). Packs
   goes as text and again as structured content.
 - (s) For C4e: a retired lift's page still answers 404. Its slug now resolves (`web.lift_names` reads retired rows),
   but `get_progress` refuses a retired name, where R2 wants the pages to read it.
+
+2026-11-19, C4e:
+
+- (t) A hold's and a carry's bests, as built (`metrics.other_bests`). A hold gives one best for each weight the
+  session holds: its longest time there, above the longest earlier time at the same or a heavier weight, or, with no
+  earlier set that heavy, above every earlier time. So 10 kg for 90 s after 0 kg for 60 s is a best, up from 60 s
+  at 0 kg, and 10 kg for 30 s is not. A carry or a sled gives one best for each distance: its heaviest weight there,
+  above the heaviest earlier weight at the same or a longer distance, or, with none that long, above every earlier
+  weight (34 kg over 80 m after 32 kg over 40 m is a best). Every best so has a previous. One best for each weight or
+  distance, not one a session, so a best `log_lifts` announced stays in `get_progress` and `get_log` when a set is
+  added to the session after it. Help keeps one best a session, as the bests table's "else" says.
+- (u) A best names where it stands, so it never reads against the record beside it: "longest hold 45 s at 10 kg, up
+  from 30 s", "up from 60 s at 0 kg" when the earlier set was at another weight, "heaviest load 36 kg over 40 m, up
+  from 32 kg", "most reps 8 with 20 kg help, up from 6", "least help 20 kg, down from 30 kg", "no help, down from
+  10 kg". The first session's mark and `get_progress`' summary lines say the same. Weights follow the person's
+  units; a carry's distance stays in metres for a person on miles (R16). `NewBest` and `Best` carry no new field:
+  the weight or distance is in the text alone.
+- (v) The `family` filter with a plain word takes the families of the candidates the person logged, as R18 says.
+  The match hook sees only the value sent, so it keeps a word's candidates as they are, and a new `Field.narrow`
+  hook narrows them after the load: `data._narrowed` reads the person's own sets, all time, and keeps the family of
+  each candidate among them. Another account's sets are never read. A family named by a lift stays, logged or not.
+- (w) Model-read lines changed outside the table, each owing the release's eval run: `progress.HOW` (what a new
+  best is, by kind), `docs/can-and-cant.md:36` (the same), `get_data`'s `weight_kg` meaning (one hand's weight for a
+  pair, a minus weight for help, 0 for bodyweight work), and the `lift_sessions` and `days` volume meanings (a set
+  of time or distance adds nothing; a session of holds or carries alone counts 0).
+- (x) `time_s` and `distance_m` are default columns of `lift_sets`. A default answer on a small account (10 sets,
+  one session, a hold and a carry among them), as compact JSON in UTF-8 bytes: 1,088 bytes before, 1,204 after.
+- (y) Three files outside C4e's row were edited, each to finish one of C4e's own items, on the main chat's word:
+  `app/services/data.py` (the narrowing step of (v)), `app/services/log.py` (a best in `get_log`, and so on the
+  day page, names where it stands, as `log_lifts` says it: (u)), and `app/templates/hi.html` (the /hi page's line
+  on bests named only the estimate and the weight; it now names the hold, the carry, the band and help).

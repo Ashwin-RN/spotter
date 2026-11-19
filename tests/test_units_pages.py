@@ -489,7 +489,10 @@ def test_a_best_that_reads_the_same_in_lb_widens_with_the_one_it_beat():
     assert web.best_widened(heaviest, LB_MI) and not web.best_widened(heaviest)
     assert formatting.show(102.06, "weight_kg", widened=True, units=LB_MI) != \
         formatting.show(102.05, "weight_kg", widened=True, units=LB_MI)
-    assert set(lifts.BEST_LABELS) == {"estimated_max", "weight"}
+    # The kinds since exercise-list.md's bests table (C4e): reps and a hold's seconds are whole, so never widen.
+    assert set(lifts.BEST_LABELS) == {"estimated_max", "weight", "least_help", "reps", "time", "carry"}
+    assert not web.best_widened({"kind": "reps", "value": 12, "previous": 11}, LB_MI)
+    assert web.best_widened({"kind": "least_help", "value": -20.01, "previous": -20.0}, LB_MI)
 
 
 def test_every_line_the_lb_and_mi_forms_can_draw_keeps_the_text_rules():

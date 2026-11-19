@@ -12,8 +12,11 @@ Strength
       Estimated one-rep max: weight x (1 + reps / 30), 2 dp. None for reps outside 1 to 10 or weight <= 0.
   session_best(sets: [(weight_kg, reps)]) -> float | None
       The highest Epley estimate among one session's sets of one lift.
-  prs(prior_sets, session_sets) -> [{"kind": "estimated_max" | "weight", "value", "previous"}]
-      New bests for one lift against every earlier set of it. [] when there is no earlier set.
+  prs(prior_sets, session_sets, kind="standard") -> [{"kind", "value", "previous"}]
+      New bests for one lift against every earlier set of it. [] when there is no earlier set. standard:
+      estimated_max and weight; help: least_help or reps; band: reps; hold: time; carry: carry (other_bests).
+  set_volume(weight_kg, reps, pair=False, one_side=False) -> float | None
+      weight x reps, x 2 for a pair, x 2 for one side at a time; None with no reps; 0 at 0 kg or below.
   recent_best(points: [(date, value)], today, days=28, lower_is_better=False) -> float | None
       A lift's current estimated max: the best session in the last 28 days, else the latest session.
       lower_is_better: the lowest instead (a cardio time for a distance).
@@ -133,8 +136,9 @@ def epley(weight_kg: float, reps: int) -> float | None:
 
 
 def session_best(sets: list[tuple[float, int]]) -> float | None:
-    """Highest Epley estimate among one session's sets for one lift. None if no set qualifies."""
-    values = [e for e in (epley(w, r) for w, r in sets) if e is not None]
+    """Highest Epley estimate among one session's sets for one lift. None if no set qualifies. A set is (weight,
+    reps), or (weight, reps, time_s, distance_m): the first two are read."""
+    values = [e for e in (epley(x[0], x[1]) for x in sets) if e is not None]
     return max(values) if values else None
 
 
@@ -157,24 +161,100 @@ def recent_best(points: list[tuple[date, float]], today: date, days: int = RECEN
 
 
 def max_weight(sets: list[tuple[float, int]]) -> float | None:
-    """The heaviest weight lifted for at least one rep. None if there is none above 0."""
-    weights = [w for w, r in sets if w is not None and w > 0 and r is not None and r >= 1]
+    """The heaviest weight lifted for at least one rep. None if there is none above 0. A set is (weight, reps), or
+    (weight, reps, time_s, distance_m)."""
+    weights = [x[0] for x in sets if x[0] is not None and x[0] > 0 and x[1] is not None and x[1] >= 1]
     return max(weights) if weights else None
 
 
-def prs(prior_sets: list[tuple[float, int]], session_sets: list[tuple[float, int]]) -> list[dict]:
+def set_volume(weight_kg: float | None, reps: int | None, pair: bool = False, one_side: bool = False) -> float | None:
+    """One set's volume (contract exercise-list.md, "Load types and sides"): weight x reps, x 2 for a pair of
+    weights (one a hand), x 2 for one side at a time. They stack: 20 kg dumbbells for 10 a leg on a Bulgarian split
+    squat are 20 x 2 x 10 x 2 = 800 kg. None for a set with no reps (a hold, a carry, a sled). 0 at 0 kg or below:
+    bodyweight work, help and a band count 0."""
+    if weight_kg is None or reps is None:
+        return None
+    if weight_kg <= 0:
+        return 0
+    return weight_kg * reps * (2 if pair else 1) * (2 if one_side else 1)
+
+
+# The bests a lift takes (contract exercise-list.md, "Bests"): standard is the estimated max and the heaviest weight.
+BEST_KINDS = ("standard", "help", "band", "hold", "carry")
+
+
+def prs(prior_sets: list[tuple], session_sets: list[tuple], kind: str = "standard") -> list[dict]:
     """New bests set by this session for ONE lift, against every earlier set of that lift.
 
-    Two kinds, each strictly greater than the earlier best:
+    standard, two kinds, each strictly greater than the earlier best:
       "estimated_max": the session's best Epley (1 to 10 rep sets only) above the best earlier Epley.
       "weight": the heaviest weight this session (any reps) above the heaviest earlier weight.
+    The other kinds (help, band, hold, carry) are other_bests', on sets of (weight, reps, time_s, distance_m).
     Each kind needs a baseline, so a lift's first session never reports a new best.
     Returns [{"kind", "value", "previous"}], [] if none.
     """
     if not prior_sets:
         return []
+    if kind != "standard":
+        return other_bests(kind, prior_sets, session_sets)
     return new_bests(session_best(prior_sets), max_weight(prior_sets), session_best(session_sets),
                      max_weight(session_sets))
+
+
+def _most(values) -> float | None:
+    held = [v for v in values if v is not None]
+    return max(held) if held else None
+
+
+def other_bests(kind: str, prior_sets: list[tuple], session_sets: list[tuple]) -> list[dict]:
+    """A session's bests of a lift that takes no estimated max, against every earlier set of it (contract
+    exercise-list.md, "Bests"; the notes from the build of C4e). Sets are (weight, reps, time_s, distance_m). Each best
+    is strictly above the earlier set it is compared with, so it always has a previous.
+      help (Assisted Pull-Up, Assisted Dip): one best a session. "least_help", the weight, when it is above every
+            earlier set's: -20 kg beats -30 kg. Else, at the best weight held so far, "reps": more reps than any
+            earlier set at it, with weight_kg, that help.
+      band: "reps", more reps than any earlier set.
+      hold: "time", one best for each weight the session holds: its longest time there, above the longest earlier
+            time at the same or a heavier weight, or with none that heavy, above every earlier time. weight_kg is
+            the set's weight, previous_weight_kg the earlier set's (the same weight first on a tie, then the
+            heaviest).
+      carry (a carry or a sled): "carry", one best for each distance: its heaviest weight there, above the heaviest
+            earlier weight at the same or a longer distance, or with none that long, above every earlier weight.
+            distance_m and previous_distance_m, as for a hold.
+    In order of weight or distance. [] for any other kind."""
+    if not prior_sets or not session_sets:
+        return []
+    if kind == "help":
+        was, now = _most(x[0] for x in prior_sets), _most(x[0] for x in session_sets)
+        if was is None or now is None or now < was:
+            return []
+        if now > was:
+            return [{"kind": "least_help", "value": now, "previous": was}]
+        was_reps = _most(x[1] for x in prior_sets if x[0] == was)
+        now_reps = _most(x[1] for x in session_sets if x[0] == now)
+        if was_reps is not None and now_reps is not None and now_reps > was_reps:
+            return [{"kind": "reps", "value": now_reps, "previous": was_reps, "weight_kg": now}]
+        return []
+    if kind == "band":
+        was, now = _most(x[1] for x in prior_sets), _most(x[1] for x in session_sets)
+        return [{"kind": "reps", "value": now, "previous": was}] if None not in (was, now) and now > was else []
+    if kind == "hold":  # (the figure, its place): the time at a weight
+        at, figure, place, value, previous = 0, 2, "weight_kg", "time", "previous_weight_kg"
+    elif kind == "carry":  # the weight over a distance
+        at, figure, place, value, previous = 3, 0, "distance_m", "carry", "previous_distance_m"
+    else:
+        return []
+    earlier = [(x[figure], x[at]) for x in prior_sets if x[figure] is not None and x[at] is not None]
+    out = []
+    for where in sorted({x[at] for x in session_sets if x[at] is not None and x[figure] is not None}):
+        top = max(x[figure] for x in session_sets if x[at] == where and x[figure] is not None)
+        near = [e for e in earlier if e[1] >= where] or earlier  # none that heavy or that long: every earlier set
+        if not near:
+            continue
+        base, base_at = max(near, key=lambda e: (e[0], e[1] == where, e[1]))
+        if top > base:
+            out.append({"kind": value, "value": top, "previous": base, place: where, previous: base_at})
+    return out
 
 
 def new_bests(prev_e: float | None, prev_w: float | None, now_e: float | None, now_w: float | None) -> list[dict]:

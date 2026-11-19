@@ -33,7 +33,9 @@ fit. Every other function takes names as `list_exercises` gives them.
   not a tested one-rep max.
 - **Current estimated max** is the best session in the last 28 days, or the latest session's when none
   is that recent.
-- **A new best** beats every earlier set of that lift. A lift's first session has nothing to beat, so
+- **A new best** beats every earlier set of that lift: a higher estimated max or a heavier weight; on a
+  band, more reps; on an assisted lift, less help, then more reps at it. A hold's longer time counts at
+  its weight, and a carry's heavier load at its distance. A lift's first session has nothing to beat, so
   it sets the mark and is never a new best; `log_lifts` says so in its summary.
 - **Body weight now** is the 7-day average, or the latest weigh-in when the last 7 days have none.
   Goals and calorie estimates use it.
@@ -376,9 +378,11 @@ Each answer holds with the same time zone set at both runs. The last row is the 
   the next rows.
 - **Units.** Every value is in the person's units, and each column's name says which.
 - **Body region** of a lift (upper, lower, core or full body) comes from its main muscles in
-  free-exercise-db, save the two carries, which are full body.
-- **Muscles.** Each lift's muscles are free-exercise-db's. Grouped by muscle, a set counts 1 for its main
-  muscle and 0.5 for each other muscle it works.
+  free-exercise-db, save every carry and sled, which are full body.
+- **Muscles.** Each lift's muscles are free-exercise-db's. Dead Hang's are Spotter's own: forearms and
+  lats. Grouped by muscle, a set counts 1 for its main muscle and 0.5 for each other muscle it works.
+- **Volume** is weight x reps, x 2 for a pair of weights (dumbbells, kettlebells or two cables), x 2 for
+  one side at a time. A hold or a carry has none. A set at 0 kg or below, help among them, counts 0.
 - **Not offered:** joins across areas in one call, deleted entries, raw queries.
 
 ## Export and delete: the person's own clicks

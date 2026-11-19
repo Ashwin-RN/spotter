@@ -94,6 +94,9 @@ class Field:
     key: Callable[[Row], object] | None = None      # a group's key when it is not value
     shown: Callable[[list[Row]], object] | None = None   # a group's cell from its rows
     total_quantity: dict[str, str] = field(default_factory=dict)   # total to quantity; else the field's
+    # A filter's matched value narrowed by the person's own rows, all time, after the load (data._narrowed): a plain
+    # word on family takes the families of the candidates this person logged (exercise-list.md R18).
+    narrow: Callable[[object, list[Row]], object] | None = None
 
 
 @dataclass(frozen=True)
@@ -276,13 +279,14 @@ def _kept(s: Session, key: tuple, read: Callable[[], object]):
 
 def _lifting(s: Session, user: User, start, end) -> list[tuple]:
     """Every live session in range with its sets and lifts, in one statement: (session id, date, notes, set id, set
-    number, weight, reps, lift, category), a session with no set once with nulls."""
+    number, weight, reps, time_s, distance_m, lift, category), a session with no set once with nulls."""
     today = users.today_for(user)
 
     def read():
         return list(s.execute(
             select(LiftSession.id, LiftSession.date, LiftSession.notes, LiftSet.id, LiftSet.set_number,
-                   LiftSet.weight_kg, LiftSet.reps, Exercise.name, Exercise.category)
+                   LiftSet.weight_kg, LiftSet.reps, LiftSet.time_s, LiftSet.distance_m, Exercise.name,
+                   Exercise.category)
             .outerjoin(LiftSet, LiftSet.session_id == LiftSession.id)
             .outerjoin(Exercise, Exercise.id == LiftSet.exercise_id)
             .where(LiftSession.user_id == user.id, LiftSession.deleted_at.is_(None),
@@ -293,14 +297,14 @@ def _lifting(s: Session, user: User, start, end) -> list[tuple]:
 
 def load_sets(s: Session, user: User, start, end) -> list[Row]:
     return [{"date": d, "id": set_id, "session_id": sid, "exercise": lift, "category": category,
-             "set_number": number, "weight_kg": weight, "reps": reps}
-            for sid, d, _, set_id, number, weight, reps, lift, category in _lifting(s, user, start, end)
-            if set_id is not None]
+             "set_number": number, "weight_kg": weight, "reps": reps, "time_s": time_s, "distance_m": distance_m}
+            for sid, d, _, set_id, number, weight, reps, time_s, distance_m, lift, category
+            in _lifting(s, user, start, end) if set_id is not None]
 
 
 def load_sessions(s: Session, user: User, start, end) -> list[Row]:
     out: dict[int, Row] = {}
-    for sid, d, notes, set_id, _, weight, reps, lift, _ in _lifting(s, user, start, end):
+    for sid, d, notes, set_id, _, weight, reps, _, _, lift, _ in _lifting(s, user, start, end):
         row = out.setdefault(sid, {"date": d, "id": sid, "notes": notes, "sets": []})
         if set_id is not None:
             row["sets"].append((lift, weight, reps))
@@ -424,7 +428,7 @@ def load_days(s: Session, user: User, start, end) -> list[Row]:
         if (d := day(row)) is not None:
             d["lift_sessions"] += 1
             d["lift_sets"] += len(row["sets"])
-            d["volume_kg"] += sum(w * r for _, w, r in row["sets"])
+            d["volume_kg"] += _sets_volume(row)
     for row in load_cardio(s, user, start, end):
         if (d := day(row)) is not None:
             d["cardio_entries"] += 1
@@ -461,7 +465,7 @@ CARDIO_CATEGORY = {name: category for name, category, _, _ in exercises.CARDIO}
 def _lift_passes(name: str | None, filters: dict) -> bool:
     """A lift goal rides when its lift passes every lift filter sent: a muscle at either weight (R13)."""
     checks = {"exercise": lambda: name, "exercises": lambda: name, "category": lambda: LIFT_CATEGORY.get(name),
-              "region": lambda: exercises.REGIONS.get(name)}
+              "region": lambda: exercises.REGIONS.get(name), "family": lambda: _family({"exercise": name})}
     for key, value_of in checks.items():
         if key in filters and value_of() not in filters[key]:
             return False
@@ -537,8 +541,57 @@ def _one(row: Row) -> int:
     return 1
 
 
+def volume(lift: str | None, weight_kg, reps) -> float | None:
+    """One set's volume by its lift's load type and sides (contract exercise-list.md, "Load types and sides";
+    metrics.set_volume): x 2 for a pair (per_hand), x 2 for one side at a time (sides each). None with no reps, 0 at
+    0 kg or below. A name not on the list, a retired one, is weight x reps."""
+    row = exercises.BY_NAME.get(lift) if isinstance(lift, str) else None
+    return metrics.set_volume(weight_kg, reps, pair=row is not None and row.load_type == "per_hand",
+                              one_side=row is not None and row.sides == "each")
+
+
 def _volume(row: Row) -> float | None:
-    return None if row["weight_kg"] is None or row["reps"] is None else row["weight_kg"] * row["reps"]
+    return volume(row["exercise"], row["weight_kg"], row["reps"])
+
+
+def _sets_volume(row: Row) -> float:
+    """A session's volume: its sets' by the rule, a set with none (a hold, a carry) adding nothing."""
+    return sum(v for v in (volume(lift, w, r) for lift, w, r in row["sets"]) if v is not None)
+
+
+def _family(row: Row) -> str | None:
+    """The lift's family, as its default lift's name. None for a name not on the list, a retired one."""
+    lift = exercises.BY_NAME.get(row["exercise"])
+    return exercises.BY_KEY[lift.family].name if lift is not None and lift.kind == "lift" else None
+
+
+def _family_of(name: str) -> str:
+    return exercises.BY_KEY[exercises.BY_NAME[name].family].name
+
+
+CANDIDATE = "candidate:"  # a plain word's candidate in family's matched value, until family_narrow: no name holds ":"
+
+
+def family_filter(names: list[str]):
+    """family: any lift of a family names it, as its default lift's name. A plain word names its candidates, each as
+    CANDIDATE + name, for family_narrow to take the families of those the person logged (contract
+    exercise-list.md R18). Else unknown_exercise, as on_list refuses."""
+    def one(name):
+        hit, word, candidates = rules.find_exercise(name, names)
+        if not (hit or word):
+            return None, rules.unknown_exercise(name, names, "filters.family: ")
+        return ((_family_of(hit),) if hit else tuple(CANDIDATE + c for c in candidates)), None
+    return _each("filters.family", one)
+
+
+def family_narrow(held: frozenset, rows: list[Row]) -> frozenset:
+    """family's filter after the load: a family named stays; a plain word's candidate gives its family only when the
+    person has a set of it, so "dumbbell press" is not Overhead Press for someone who logged only Dumbbell Bench
+    Press. rows: the person's own sets, all time."""
+    logged = {r["exercise"] for r in rows}
+    named = {x for x in held if not x.startswith(CANDIDATE)}
+    return frozenset(named | {_family_of(x[len(CANDIDATE):]) for x in held
+                              if x.startswith(CANDIDATE) and x[len(CANDIDATE):] in logged})
 
 
 def _primary(row: Row) -> str | None:
@@ -580,6 +633,12 @@ def _measurement_quantity(row: Row) -> str:
 
 
 LIFT_NAMES = [name for name, _ in exercises.LIFTS]
+# A set's volume, in what_is_logged's words (contract exercise-list.md, Model-read text).
+VOLUME = ("weight x reps, x 2 for a pair of weights, x 2 for one side at a time. None for a set of time or "
+          "distance. 0 at 0 kg or below.")
+# A session's and a day's: the same rule, a set of time or distance adding nothing.
+ADDED_UP = ("weight x reps, x 2 for a pair of weights, x 2 for one side at a time, 0 at 0 kg or below. A set of time "
+            "or distance adds nothing. A session of holds or carries alone counts 0.")
 CARDIO_NAMES = [name for name, _, _, _ in exercises.CARDIO]
 AVG = {"avg": "count_avg", "per_day": "count_avg"}
 SUM = {"sum": "count_avg", "per_day": "count_avg"}
@@ -595,6 +654,10 @@ LIFT_SETS = Area(
               False, ("lift_set.session_id",), _at("session_id")),
         Field("exercise", "The lift, as list_exercises names it.", None, None, True, (), True, True,
               ("lift_set.exercise_id", "exercise.name"), _at("exercise"), match=on_list("exercise", LIFT_NAMES)),
+        Field("family", "The lift's movement on any equipment, named by its usual lift, such as Bench Press for "
+                        "Dumbbell Bench Press. A filter takes any lift of it, or a plain word such as squat.", None,
+              None, False, (), True, True, (), _family, match=family_filter(LIFT_NAMES), narrow=family_narrow,
+              default=False),
         Field("category", "The lift's movement: squat, hinge, push, pull, carry, core or accessory.", None, None, True,
               (), True, True, ("exercise.category",), _at("category"),
               match=one_of("category", "category", exercises.CATEGORIES)),
@@ -603,20 +666,23 @@ LIFT_SETS = Area(
               match=one_of("region", "region", exercises.REGION_NAMES)),
         Field("muscle", "A muscle the lift works, as free-exercise-db names it, such as chest or triceps. As a column, "
                         "the lift's primary muscle. Grouped by, a set counts 1 for each primary muscle and 0.5 for "
-                        "each secondary, in sets and volume. Null for Suitcase Carry.", None, None, False, (), True,
-              True, (), _primary, fan=_muscles, match=one_of("muscle", "muscle", exercises.MUSCLE_NAMES),
-              default=False),
+                        "each secondary, in sets and volume.", None, None, False, (), True, True, (), _primary,
+              fan=_muscles, match=one_of("muscle", "muscle", exercises.MUSCLE_NAMES), default=False),
         Field("set_number", "The set's number within its lift in the session, from 1.", "count", None, True, (), False,
               False, ("lift_set.set_number",), _at("set_number")),
-        Field("weight_kg", "The weight lifted. 0 for bodyweight work.", "weight_kg", "weight", True,
+        Field("weight_kg", "The weight lifted: one hand's for a pair, a minus weight for help, 0 for bodyweight "
+                           "work.", "weight_kg", "weight", True,
               ("avg", "max", "min"), False, False, ("lift_set.weight_kg",), _at("weight_kg")),
         Field("reps", "Reps in the set.", "reps", None, True, ("sum", "avg", "max", "min", "per_day"), False, False,
               ("lift_set.reps",), _at("reps"), total_quantity=AVG),
+        Field("time_s", "A hold's or a carry's time in seconds, or null.", "seconds", "s", True,
+              ("sum", "avg", "max", "min", "per_day"), False, False, ("lift_set.time_s",), _at("time_s")),
+        Field("distance_m", "A carry's or a sled's distance in metres, or null.", "metres", "m", True,
+              ("sum", "avg", "max", "min", "per_day"), False, False, ("lift_set.distance_m",), _at("distance_m")),
         Field("estimated_max_kg", "Epley's estimated one-rep max: weight times 1 plus reps over 30. Null outside 1 to "
                                   "10 reps or at 0 kg.", "estimated_max", "weight", False, ("avg", "max", "min"),
               False, False, (), lambda row: metrics.epley(row["weight_kg"], row["reps"])),
-        Field("volume_kg", "weight x reps. A 0 kg set counts 0.", "volume", "weight", False, T, False, False, (),
-              _volume, weighted=True),
+        Field("volume_kg", VOLUME, "volume", "weight", False, T, False, False, (), _volume, weighted=True),
         Field("sets", "One for each set: count it, or sum it for sets weighted by muscle.", "count", None, False,
               ("sum", "per_day", "share"), False, False, (), _one, weighted=True, total_quantity=SUM),
     ),
@@ -634,8 +700,8 @@ LIFT_SESSIONS = Area(
               match=on_list("exercises", LIFT_NAMES)),
         Field("sets", "Sets in it.", "count", None, False, ("sum", "avg", "max", "min", "per_day"), False, False,
               ("lift_set.id",), lambda row: len(row["sets"]), total_quantity=AVG),
-        Field("volume_kg", "weight x reps over its sets.", "volume", "weight", False, T, False, False,
-              ("lift_set.weight_kg", "lift_set.reps"), lambda row: sum(w * r for _, w, r in row["sets"])),
+        Field("volume_kg", "Its sets' volume added up: " + ADDED_UP, "volume", "weight", False, T, False, False,
+              ("lift_set.weight_kg", "lift_set.reps"), _sets_volume),
         Field("notes", "The person's notes.", None, None, True, (), False, False, ("lift_session.notes",),
               _at("notes")),
         Field("sessions", "One for each session: count it.", "count", None, False, ("share",), False, False, (), _one,
@@ -768,8 +834,8 @@ DAYS = Area(
               (), _at("lift_sessions"), total_quantity=AVG),
         Field("lift_sets", "Sets that day.", "count", None, False, ("sum", "avg", "max"), False, False, (),
               _at("lift_sets"), total_quantity=AVG),
-        Field("volume_kg", "weight x reps that day.", "volume", "weight", False, ("sum", "avg", "max"), False, False,
-              (), _at("volume_kg")),
+        Field("volume_kg", "That day's sets' volume added up: " + ADDED_UP, "volume", "weight", False,
+              ("sum", "avg", "max"), False, False, (), _at("volume_kg")),
         Field("cardio_entries", "Cardio entries that day.", "count", None, False, ("sum", "avg", "max"), False, False,
               (), _at("cardio_entries"), total_quantity=AVG),
         Field("cardio_minutes", "Cardio minutes that day.", "minutes", "min", False, ("sum", "avg", "max"), False,
@@ -793,7 +859,7 @@ AREAS: dict[str, Area] = {a.name: a for a in (LIFT_SETS, LIFT_SESSIONS, CARDIO, 
 _ENTRY = ("user_id", "dedupe_key", "logged_by", "created_at", "updated_at", "deleted_at")
 INTERNAL_COLUMNS: dict[str, tuple[str, ...]] = {
     "lift_session": _ENTRY, "bodyweight": _ENTRY, "measurement": _ENTRY, "food_entry": _ENTRY, "cardio_entry": _ENTRY,
-    "lift_set": ("id", "time_s", "distance_m"),  # no set holds a time or a distance before exercise-list.md's deploy 2
+    "lift_set": ("id",),
     "saved_food": ("user_id", "name_key", "created_at", "updated_at", "deleted_at"),
     "exercise": ("id", "key", "kind", "met", "compendium_code", "retired"),
     "usda_food": ("fdc_id", "data_type", "kcal_per_100g", "fetched_at"),

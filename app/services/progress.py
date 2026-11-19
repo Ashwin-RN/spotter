@@ -18,8 +18,10 @@ get_progress(user_id, exercise=None)
     summary (contract units.md R14): progress in a few lines, in the person's units, from the unrounded figures.
     One lift: "Bench Press: estimated max now 262.5 lb. Best set 225 lb × 5 on Sun 15 Nov. 12 sessions.", then
     " Trend +1.2 lb a week over 6 weeks." with a trend. Every lift: each lift's first sentence and its sessions,
-    one line a lift. A lift never done above 0: "Pull-up: most reps 12, 8 sessions." A cardio activity: its
-    sessions, then its latest as cardio.summary words it. With nothing logged, the note.
+    one line a lift. A lift never done above 0: "Pull-up: most reps 12, 8 sessions." A lift of another kind than
+    standard (lifts.best_kind: help, band, hold, carry) says its record (lifts.records): "Plank: longest hold 90 s,
+    3 sessions.", and in the one-lift view its best set and day. A cardio activity: its sessions, then its latest
+    as cardio.summary words it. With nothing logged, the note.
 
 lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals, today, since=None)
     The data app.charts draws, from the same numbers. Each body weight point carries its smoothed
@@ -33,7 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app import db, formatting, links, metrics, rules, users
-from app.models import Goal, User
+from app.models import Exercise, Goal, User
 from app.services import cardio, lifts
 from app.services.common import exercises, no_account
 from app.services.goals import goal_numbers, load_numbers, rounded_numbers
@@ -41,7 +43,9 @@ from app.services.goals import goal_numbers, load_numbers, rounded_numbers
 HOW = ("estimated max = Epley, from sets of 1 to 10 reps; one point per session (the session's best). "
        f"The current estimated max is the best session in the last {metrics.RECENT_BEST_DAYS} days, or the latest "
        "session's when none is that recent; best_estimated_max_kg is the best ever. A new best "
-       "is a session best or heaviest weight above every earlier set of that lift. Trend and goal projection = a "
+       "beats every earlier set of that lift: a higher estimated max or a heavier weight; on a band, more reps; on "
+       "an assisted lift, less help, then more reps at it. A hold's longer time counts at its weight, and a carry's "
+       "heavier load at its distance. Trend and goal projection = a "
        f"straight line through the last {metrics.PROJECTION_DAYS // 7} weeks, needing "
        f"{metrics.PROJECTION_MIN_POINTS} points. needed_per_week is the steady change that reaches the target by "
        "its date; actual_per_week is the trend so far. Quote these numbers; do not work out your own.")
@@ -91,11 +95,21 @@ def _sessions(n: int) -> str:
 _slope_per_week = metrics.slope_per_week
 
 
-def _lift_words(name: str, history: dict, today: date, units, whole: bool) -> str:
+def _lift_words(name: str, history: dict, today: date, units, whole: bool, records: dict | None = None) -> str:
     """One lift's sentences for the summary. whole: the one-lift view, with the best set and the trend; else its
-    first sentence and its sessions, on one line."""
+    first sentence and its sessions, on one line. records: lifts.records. A lift of another kind than standard says
+    its record: "Plank: longest hold 90 s. Best set 90 s at 10 kg on Sun 15 Nov. 3 sessions.", or on one line
+    "Plank: longest hold 90 s, 3 sessions."."""
     pts = history["points"].get(name, [])
     sessions = _sessions(history["logged"].get(name, 0))
+    rec = (records or {}).get(name)
+    if rec is not None:
+        figure = lifts.record_figure(rec["kind"], (rec["weight_kg"], rec["reps"], rec["time_s"], rec["distance_m"]),
+                                     units)
+        if not whole:
+            return f"{name}: {figure}, {sessions}."
+        return (f"{name}: {figure}. Best set {lifts.record_words(name, rec, units)} on "
+                f"{formatting.day(rec['date'], today)}. {sessions}.")
     now = metrics.recent_best(pts, today)
     if now is None:
         most = history["reps_only"].get(name)
@@ -129,8 +143,10 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
     U2 review's note). No MCP function passes it; the summary and the goals are the same either way.
 
     for_page (hardening D6): a lift's result, one or every, also carries best_sets and reps_only, lifts.history's
-    best_set and reps_only from the same history, so Progress and a lift's page work the history out once. No MCP
-    function passes it either.
+    best_set and reps_only from the same history, so Progress and a lift's page work the history out once, and
+    records (lifts.records) when a lift of another kind than standard is logged. A retired lift's name is read too
+    (contract exercise-list.md R2: the pages read a retired lift's history); without for_page it is refused as any
+    name not on the list, since every matcher leaves retired rows out. No MCP function passes it either.
 
     With exercise: {today, lift {exercise, sessions, last_trained, estimated_max_over_time [{date,
     estimated_max_kg}], current_estimated_max_kg, best_set, bests [{date, kind, value, previous}], trend
@@ -151,7 +167,7 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
         units = users.units_for(user)
         only, several = None, None
         if exercise not in (None, ""):
-            listed = exercises(s)
+            listed = exercises(s) + (_retired(s) if for_page else [])
             names = [e.name for e in listed]
             only, word, candidates = rules.find_exercise(exercise, names)
             if only is None and word is None:
@@ -160,6 +176,7 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
             if activity is not None and activity.kind == "cardio":
                 return _cardio(s, user, activity, today, units)
         history = lifts.history(s, user.id, today)
+        records = lifts.records(history["sessions"])
         if exercise not in (None, "") and only is None:  # a plain word: the candidates the person logged (R19)
             logged = [c for c in candidates if history["logged"].get(c)]
             if len(logged) >= 2:
@@ -175,9 +192,9 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
             one = _one(only, history, numbers, today, exact)
             note = None if one["sessions"] else f"No sets of {only} logged yet."
             out = {"today": today.isoformat(), "lift": one, "how": HOW,
-                   "summary": note or _lift_words(only, history, today, units, whole=True),
+                   "summary": note or _lift_words(only, history, today, units, whole=True, records=records),
                    "links": {"progress_lift": links.page("progress_lift", lift=only)}}
-            return _with_note(_for_page(out, history) if for_page else out, note)
+            return _with_note(_for_page(out, history, records, units) if for_page else out, note)
 
         if several is not None:
             numbers = [g for g in numbers if g.get("exercise") in several]
@@ -191,15 +208,28 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
                          "goal_status": one["goal"]["status"] if one["goal"] else None})
         note = None if rows else "No lift sessions logged yet."
         out = {"today": today.isoformat(), "lifts": rows, "goals": numbers, "how": HOW,
-               "summary": note or "\n".join(_lift_words(r["exercise"], history, today, units, whole=False)
-                                            for r in rows),
+               "summary": note or "\n".join(_lift_words(r["exercise"], history, today, units, whole=False,
+                                                         records=records) for r in rows),
                "links": {"progress": links.page("progress")}}
-        return _with_note(_for_page(out, history) if for_page else out, note)
+        return _with_note(_for_page(out, history, records, units) if for_page else out, note)
 
 
-def _for_page(out: dict, history: dict) -> dict:
-    """The result with the page's two extras (get_progress' for_page)."""
-    return {**out, "best_sets": history["best_set"], "reps_only": history["reps_only"]}
+def _retired(s) -> list[Exercise]:
+    """The retired lifts, for a page's read alone (get_progress' for_page)."""
+    return list(s.scalars(select(Exercise).where(Exercise.retired.is_(True), Exercise.kind == "lift")
+                          .order_by(Exercise.id)))
+
+
+def _for_page(out: dict, history: dict, records: dict, units=None) -> dict:
+    """The result with the page's extras (get_progress' for_page): best_sets and reps_only, and when any lift of
+    another kind than standard is logged, records and best_words: {lift: each of its bests in words for a page, in
+    the order of its bests}, naming where each stands (lifts.best_phrase), which a result's bests do not carry."""
+    out = {**out, "best_sets": history["best_set"], "reps_only": history["reps_only"]}
+    if records:
+        out["records"] = records
+        out["best_words"] = {lift: [lifts.best_phrase(b, units, page=True) for b in history["bests"].get(lift, [])]
+                             for lift in records}
+    return out
 
 
 def _with_note(out: dict, note: str | None) -> dict:
