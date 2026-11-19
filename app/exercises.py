@@ -162,7 +162,7 @@ def key_of(name: str) -> str:
     """A row's key from its name: lowercased, apostrophes dropped, "&" as "and", and each run of hyphens, slashes,
     brackets, commas, full stops and spaces as one underscore, none at either end. "Farmer's Carry" is farmers_carry.
     migrations/versions/0013_exercise_list.py holds the same rule."""
-    key = name.lower().replace("'", "").replace("’", "").replace("&", "and")
+    key = name.lower().replace("'", "").replace(chr(0x2019), "").replace("&", "and")
     return re.sub(r"[-/(),.\s]+", "_", key).strip("_")
 
 
