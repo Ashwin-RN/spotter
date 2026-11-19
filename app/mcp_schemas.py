@@ -149,11 +149,17 @@ class SetIn(BaseModel):
         default=None, description="A carry's or a sled's distance in metres, 1 to 5,000.")
 
 
-# log_lifts' sets (exercise-list.md R3): SetIn's fields, in a model of its own, so that log_lifts can take the person's
-# own words for a lift where edit_entry takes a name as written. Until the matcher (package C4c) the name is exact here
-# too, so the two publish the same fields and words.
+# log_lifts' sets (exercise-list.md R3): SetIn's fields, in a model of its own, so that log_lifts takes the person's own
+# words for a lift where edit_entry takes a name as written. exact true takes the name as written, with no word step:
+# the answer to pick_lift's question, or a name from get_routines.
 class LogSetIn(SetIn):
     """One set of a lift session."""
+
+    exercise: str = Field(description="The lift in the person's own words, such as squat, or a name from "
+                                      "list_exercises.")
+    exact: StrictBool | None = Field(
+        default=None, description="true only for a name the person picked from Spotter's question, or a name from "
+                                  "get_routines: it is taken as written.")
 
 
 # A routine's lift (contract routines.md). The result models below take these words for the same fields.
@@ -1427,7 +1433,8 @@ class SavedRoutineLift(BaseModel):
     exercise: str = Field(description=ROUTINE_EXERCISE)
     sets: int = Field(description=ROUTINE_SETS)
     reps: int = Field(description=ROUTINE_REPS)
-    weight_kg: float | None = Field(description="The weight the person gave, in kg, or null when none was given.")
+    weight_kg: float | None = Field(description="The weight the person gave, in kg, or null when none was given. 0 "
+                                                "for a band lift. " + _HELP_WEIGHT)
 
 
 class SavedRoutine(BaseModel):
@@ -1458,7 +1465,7 @@ class LiftToLog(BaseModel):
     weight_kg: float | None = Field(
         description="The weight to log, in kg: the heaviest set of this lift's latest session, unless the routine "
                     "was saved on a later day than that session, with a weight of its own. Send it in weight_kg as "
-                    "it is, never converted. Null when there is neither: ask the person.")
+                    "it is, never converted. Null when there is neither: ask the person. " + _HELP_WEIGHT)
     weight_from: str | None = Field(description="Where weight_kg came from: last_session, routine, or null.")
     last_date: str | None = Field(
         description="The date of this lift's latest session, or null when it was never logged.")

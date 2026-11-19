@@ -30,7 +30,9 @@ SETS_FIX = "Send new_session true to start another session that day, or send few
 NOTES_FIX = "Send shorter notes, or change the session's notes with edit_entry."
 DESCRIPTION = ("Records sets of lifting. Sets for a date go into that date's session: the first call starts it, and "
                "each later call adds its sets to it. So send only the sets not yet logged. Returns the whole session, "
-               "any new bests, and a one-line summary. restore_entry with undo_edit takes back the last sets added.")
+               "any new bests, and a one-line summary. restore_entry with undo_edit takes back the last sets added. "
+               "Send the person's own word for a lift; Spotter picks it and the summary names it. pick_lift means two "
+               "lifts fit: ask which.")  # exercise-list.md C4c
 ARGUMENTS = {
     "sets": ("The sets to log, in order: 1 to 60. Only sets not yet logged: earlier sets of that date are already in "
              "its session. A session holds at most 60 sets."),
@@ -593,10 +595,11 @@ def flat(statement: str) -> str:
     return " ".join(statement.split())
 
 
-ADD_STATEMENTS = 11  # as built, for one new set: the lock, the user, the write limit, the exercises, the session,
-# its sets, the earlier sets, the version and the look for versions past ten, the session's update, the new set.
-# On SQLite the ORM inserts each new set on its own, as a new session's sets always were: k new sets are 10 + k.
-# On Postgres it sends them as one insert (insertmanyvalues): k new sets are 11, whatever k is.
+ADD_STATEMENTS = 12  # as built, for one new set: the lock, the user, the write limit, the exercises, the session,
+# its sets, the earlier sets, the version and the look for versions past ten, the session's update, the new set; and,
+# since exercise-list.md C4c, the history read of a plain word: Bench Press is a default's own name (R5, decision 2).
+# On SQLite the ORM inserts each new set on its own, as a new session's sets always were: k new sets are 11 + k.
+# On Postgres it sends them as one insert (insertmanyvalues): k new sets are 12, whatever k is.
 
 
 def test_an_add_locks_first_and_once_and_runs_as_many_statements_on_a_session_of_30_sets_as_on_one_of_3(make_user):

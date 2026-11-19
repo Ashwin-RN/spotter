@@ -679,7 +679,7 @@ def test_restore_entry_publishes_undo_edit_and_no_allow_repeat_and_the_instructi
     results = tool["outputSchema"]["properties"]
     assert "redone" not in results and results["duplicate"]["description"] == (
         "With undo_edit: true when the last edit was already undone, so nothing changed. Say so.")
-    assert len(mcp_server.INSTRUCTIONS) == 4011 and "undo" not in mcp_server.INSTRUCTIONS  # switch decision 18
+    assert len(mcp_server.INSTRUCTIONS) == 4086 and "undo" not in mcp_server.INSTRUCTIONS  # switch decision 18
     # No other function's arguments changed: the stale form's field is the web's alone.
     names = {name for t in tool_list(http, sign()) for name in t["inputSchema"]["properties"]}
     assert "undo_edit" in names and not {"updated_at", "drawn_at", "by"} & names

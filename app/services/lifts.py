@@ -2,8 +2,8 @@
 
 log_lifts(user_id, data, by)
     data: date (YYYY-MM-DD; blank = the person's today; never after today, at most two years back),
-    sets [{exercise, weight_kg or weight_lb, reps or time_s or distance_m and time_s}] (1 to 60; what a set takes is
-    its lift's, rules.check_session), notes (optional, up to 2,000 characters),
+    sets [{exercise, weight_kg or weight_lb, reps or time_s or distance_m and time_s, exact?}] (1 to 60; what a set
+    takes is its lift's, rules.check_session), notes (optional, up to 2,000 characters),
     new_session (optional). allow_repeat is read by nothing: an old client may still send it. A weight_lb is
     kept in kg (rules.check_session); the summary and every best's text are in the person's units
     (contract units.md), and a set sent in lb while the person has not chosen carries units_note.
@@ -14,7 +14,13 @@ log_lifts(user_id, data, by)
     sets are appended and carry each exercise's set numbers on, the notes are joined on a new line, the
     key is worked out again over the whole session (an imported one keeps its key), and updated_at moves.
     It is refused, with nothing written, when the session would pass 60 sets or its notes 2,000
-    characters. There is no duplicate guard: a set said again is added, and duplicate is always false.
+    characters.
+    A set's exercise is the person's own word or a listed name (contract exercise-list.md, R3 to R5, note (i)): a
+    plain word, a default's own name too, takes the lift the person's live sets point to among the candidates that
+    fit the set (rules.check_session with logging, the history from last_logged): none of those logged, the first
+    that fits; one, that one; two or more, the call is refused as pick_lift and nothing is written. A set with exact
+    true is taken as written.
+    There is no duplicate guard: a set said again is added, and duplicate is always false.
     A set with no reps (a hold, a carry) has no estimated max and no heaviest weight: metrics.epley and
     metrics.max_weight count only sets of reps, so history and _prior read it and Epley skips it.
     New bests are found against every earlier set of each lift: every session that comes before this
@@ -40,12 +46,12 @@ Every write here locks the user row first (common.lock_user), then checks the wr
 
 from datetime import date
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import db, formatting, links, metrics, rules, users
 from app.exercises import BY_NAME as LISTED
-from app.models import IMPORTED, LiftSession, LiftSet
+from app.models import IMPORTED, Exercise, LiftSession, LiftSet
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, exercises, keep_version, lock_user, no_account, row_dict,
     sent, truthy, with_units_note,
@@ -293,6 +299,19 @@ def history(s: Session, user_id: int, today: date, last_day: date | None = None)
             "best_set": best_set, "reps_only": reps_only, "bests": bests}
 
 
+def last_logged(s: Session, user_id: int, names: list[str]) -> dict[str, date]:
+    """{lift: the date of its latest live session} for those of these lifts the person has logged: the history a
+    plain word's step reads in log_lifts (exercise-list.md R5). One statement."""
+    if not names:
+        return {}
+    return dict(s.execute(
+        select(Exercise.name, func.max(LiftSession.date))
+        .select_from(LiftSet).join(LiftSession, LiftSession.id == LiftSet.session_id)
+        .join(Exercise, Exercise.id == LiftSet.exercise_id)
+        .where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None), Exercise.name.in_(names))
+        .group_by(Exercise.name)).all())
+
+
 def _higher(a: float | None, b: float | None) -> float | None:
     """The higher of two values, either of which may be None."""
     return b if a is None else a if b is None else max(a, b)
@@ -413,7 +432,8 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
             return limited
         today = users.today_for(user)
         by_name = {e.name: e for e in exercises(s, "lift")}
-        on, sets, err = rules.check_session(data.get("date"), data.get("sets"), list(by_name), today)
+        on, sets, err = rules.check_session(data.get("date"), data.get("sets"), list(by_name), today, logging=True,
+                                            last_logged=lambda names: last_logged(s, user.id, names))
         notes, notes_err = rules.text(data.get("notes"), "notes")
         if err or notes_err:
             return rules.combine((err["errors"] if err else []) + ([notes_err] if notes_err else []))

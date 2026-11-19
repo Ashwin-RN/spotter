@@ -2434,16 +2434,14 @@ def test_a_row_of_the_wrong_type_is_refused_whole_by_the_schema_and_writes_nothi
     assert import_calls() == 1 and entry_rows() == 0
 
 
-def test_squat_barbell_gets_only_the_closest_name_the_rule_gives(http):
-    """The instructions promise no closest name: for Strong's "Squat (Barbell)" the rule offers three barbell names
-    over the full exercise list (contract exercise-list.md, C4a.2). C4c's matcher reads it as Back Squat."""
+def test_squat_barbell_is_read_as_back_squat(http):
+    """The instructions promise no closest name. Strong's "Squat (Barbell)" got three barbell names as its closest
+    until C4c's matcher, which reads it as Back Squat (contract exercise-list.md, "Matching order")."""
     token, today = import_person(http)
     r = ok(http, token, "import_entries", {"rows": [
         {"kind": "lift_session", "date": (today - timedelta(days=3)).isoformat(),
          "sets": [{"exercise": "Squat (Barbell)", "weight": 100, "reps": 5}]}], "weight_unit": "kg"})
-    closest = ["Barbell Row", "Barbell Curl", "Barbell Shrug"]
-    assert r["unknown_names"] == [{"name": "Squat (Barbell)", "kind": "lift", "rows": 1, "closest": closest}]
-    assert r["failed"][0]["closest"] == closest
+    assert r["unknown_names"] == [] and r["failed"] == [] and r["row_outcomes"]["written"] == 1
     for text in (mcp_server.IMPORT_RULE, mcp_server.IMPORT_DESCRIPTION):
         assert "Back Squat" not in text and "Barbell Row" not in text
 
@@ -2611,7 +2609,7 @@ def test_can_and_cant_states_the_import_as_built():
                   f"| Rows a call | {imports.ROWS[0]} to {imports.ROWS[1]} |",
                   "| Sets and food entries a call | 1,000 at most, together |",
                   "| Imported rows in any 24 hours | 10,000, deleted ones counted.", "166 days",
-                  "for \"Squat (Barbell)\" the closest is Barbell Row", "Version 1 has no undo",
+                  "They can be wrong. \"Squat (Barbell)\" is read as Back Squat.", "Version 1 has no undo",
                   "remembered by its own content and date", "it comes back on its first day",
                   "If they edit it, delete it, and the same file is sent again, it comes back too",
                   "a later export holds fewer entries for that first day",

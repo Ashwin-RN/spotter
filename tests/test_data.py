@@ -1108,7 +1108,7 @@ def test_both_are_published_with_their_words_arguments_and_the_read_only_hints(h
                 assert tr.check(spec["description"], tr.CLAUDE) == [], (name, prop)
     assert mcp_server.INSTRUCTIONS.count(mcp_server.DATA_RULE) == 1
     assert mcp_server.GOALS_RULE + " " + mcp_server.DATA_RULE + " " in mcp_server.INSTRUCTIONS
-    assert len(mcp_server.INSTRUCTIONS) == 4011 < 4096
+    assert len(mcp_server.INSTRUCTIONS) == 4086 < 4096  # exercise-list.md C4c: the sentence on a person's own words
     assert mcp_server.INSTRUCTIONS.endswith("do not also quote latest, should_be_today or ahead_by.")
 
 

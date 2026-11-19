@@ -208,7 +208,8 @@ INSTRUCTIONS = (
     "If whoami carries time_zone_note, set the time zone with update_settings before logging anything: use the "
     "person's time zone if you already know it, otherwise ask once which city they are in. Never send the person "
     "to a page for it. "
-    "Use exercise names exactly as list_exercises gives them. "
+    "Log a lift in the person's own words, such as squat or bench: Spotter picks the lift. Use other names as "
+    "list_exercises gives them. "
     "Leave the date out for something done today: today is the person's own date. "
     "Quote Spotter's numbers; never estimate your own, except a food's kcal, as the food rule says. "
     "If a call returns an error, read its fix and retry. "
@@ -833,7 +834,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         description=(
             "Records sets of lifting. Sets for a date go into that date's session: the first call starts it, and "
             "each later call adds its sets to it. So send only the sets not yet logged. Returns the whole session, "
-            "any new bests, and a one-line summary. restore_entry with undo_edit takes back the last sets added."
+            "any new bests, and a one-line summary. restore_entry with undo_edit takes back the last sets added. "
+            "Send the person's own word for a lift; Spotter picks it and the summary names it. pick_lift means two "
+            "lifts fit: ask which."
         ),
         annotations=WRITE,
     )
@@ -1406,8 +1409,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         description=(
             "The person's saved routines, each lift with its sets, its reps and the weight to log. Call it when the "
             "person names a routine, such as log my push day. To log one, send its sets with log_lifts, one item a "
-            "set, with each change the person names, and leave the date out for today. Send each weight_kg as given, in "
-            "weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and send the answer in "
+            "set with exact true, with each change the person names, and leave the date out for today. Send each "
+            "weight_kg as given, in weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and send the answer in "
             "the field of its unit. Say in your reply which sets were logged."
         ),
         annotations=READ_ONLY,

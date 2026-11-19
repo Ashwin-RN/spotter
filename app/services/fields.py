@@ -191,8 +191,9 @@ def _sent_names(where: str, value) -> tuple[list[str] | None, dict | None]:
                              NAME_FIX)
 
 
-def _each(where: str, one: Callable[[str], tuple[str | None, dict | None]]):
-    """A match hook: every name through one, every refusal at once."""
+def _each(where: str, one: Callable[[str], tuple[str | tuple[str, ...] | None, dict | None]]):
+    """A match hook: every name through one, every refusal at once. one may give several names for one sent: a
+    plain word's candidates."""
     def match(value) -> tuple[frozenset | None, dict | None]:
         names, err = _sent_names(where, value)
         if err:
@@ -202,6 +203,8 @@ def _each(where: str, one: Callable[[str], tuple[str | None, dict | None]]):
             hit, problem = one(name)
             if problem:
                 errors.append(problem)
+            elif isinstance(hit, tuple):
+                found.update(hit)
             else:
                 found.add(hit)
         return (None, rules.combine(errors)) if errors else (frozenset(found), None)
@@ -209,10 +212,14 @@ def _each(where: str, one: Callable[[str], tuple[str | None, dict | None]]):
 
 
 def on_list(field_name: str, names: list[str]):
-    """exercise, exercises and activity: rules.match_exercise over their list, unknown_exercise on a miss."""
+    """exercise, exercises and activity: rules.find_exercise over their list, unknown_exercise on a miss. A plain
+    word that is not a name, such as squat, is a read (contract exercise-list.md, decision 4): it takes every one of
+    its candidates, so the rows hold every candidate the person logged, and with none logged, none."""
     def one(name):
-        hit, _ = rules.match_exercise(name, names)
-        return (hit, None) if hit else (None, rules.unknown_exercise(name, names, f"filters.{field_name}: "))
+        hit, word, candidates = rules.find_exercise(name, names)
+        if hit or word:
+            return hit or candidates, None
+        return None, rules.unknown_exercise(name, names, f"filters.{field_name}: ")
     return _each(f"filters.{field_name}", one)
 
 

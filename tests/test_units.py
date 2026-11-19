@@ -696,7 +696,7 @@ def test_through_mcp_a_lb_person_logs_and_the_trace_writes_the_names_sent(http):
     assert ok(http, token, "whoami")["units"] == {"weight": "lb", "distance": "km"}
 
 
-def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_are_4011(make_client):
+def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_are_4086(make_client):
     client = make_client(owner_user_id=OWNER)
     tools = tool_list(client, sign_for(OWNER))
     hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tools}
@@ -705,7 +705,7 @@ def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_
     # exercise-list.md's deploy 2 moved import_entries' names part too.
     assert {name for name, sha in BEFORE_UNITS.items() if held[name] != sha} == THIRTEEN | {"import_entries"}
     assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED
-    assert len(mcp_server.INSTRUCTIONS) == 4011  # data-on-request.md: DATA_RULE
+    assert len(mcp_server.INSTRUCTIONS) == 4086  # data-on-request.md: DATA_RULE; exercise-list.md C4c
     who = next(t for t in tools if t["name"] == "whoami")
     assert who["description"].endswith(
         " If it carries setup, walk setup.missing as setup.how says. It carries units: send each number in the field "

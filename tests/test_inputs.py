@@ -43,7 +43,7 @@ from .test_web import client, only_user, post, seam, sign_in, today_of, web_clie
 BEFORE_INPUTS = {
     "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",
     "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
-    "log_lifts": "6b294968499fbf2cc9565f4730732ee0db7abe23d6a5f27f934f8d7dffe2928e",  # exercise list: SetOut, LogSetIn
+    "log_lifts": "185cdd612f2f66615221cb35fd37631156298761ad3919fe02aed78633703d85",  # exercise list: SetOut, LogSetIn, exact
     "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",
     "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",
     "get_progress": "3a2ee9d44c6ceae92c3717eb9768c0e356caea2861867cc96ca260d3a1e7d0d3",
@@ -61,8 +61,8 @@ BEFORE_INPUTS = {
     "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",
     "import_entries": "5bfa3ce4279e3aca8619fdcc0dbc987081ca9b27f79fa9a74dd836377bc865c5",  # exercise list
     "send_feedback": "63bf4722f94c7863dcafce688f8864224c46cbf30868d971e5347475a0686184",
-    "save_routine": "e81b245fee495c163a00f08b0b2a722e55f10fc9e6dd82b3fd448390ec2657d3",  # exercise list
-    "get_routines": "78e248ca7238234a02929f03e6fb5d9486cb7daabd17e0ef2415da4d44a06e4f",  # exercise list
+    "save_routine": "4f6d9d6043be339a956fea50f3d2f32e8fe4a28359dc9113a5bc31072e53cbed",  # exercise list; C4c: help, band
+    "get_routines": "6a11804f8ac54325ba55a61f65dfded200fc3185a3e07f4e16f3975021ed01d7",  # exercise list; C4c: exact true, help
     "owner_calls": "79ec889297b107ba7f25781a2ace0a058b712960510d994d36788485da57d787",
     "owner_feedback": "242b0d08f0ca2b4bb696ec818f327ede1d2b2b71b6959dba0e687cc9b628a5f7",
     "owner_delete_feedback": "e6d44e98f7ac2ce9945b277c0c592c7bde7ba6060b6628990f3a1bc16764909b",
@@ -133,7 +133,7 @@ def test_the_published_list_differs_only_by_additional_properties_and_the_three_
 
 
 def test_the_instructions_are_unchanged():
-    assert len(mcp_server.INSTRUCTIONS) == 4011  # data-on-request.md: DATA_RULE joined after
+    assert len(mcp_server.INSTRUCTIONS) == 4086  # data-on-request.md: DATA_RULE joined after; exercise-list.md C4c
 
 
 # ---------------------------------------------------------------- the person and the calls
@@ -758,7 +758,7 @@ TOP_BASE = {"log_measurement": {"kind": "waist", "value": 84}, "edit_entry": {"k
             "update_settings": {"time_zone": "UTC"}}
 ITEM_CALLS = {  # an item's list: the call around it, the item, its place's words, the service's own fix
     "set": ("log_lifts", "sets", {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}, "Set 1", "a set",
-            "Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m."),  # exercise-list.md R6
+            "Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m, exact."),  # exercise-list.md R6, R3
     "lift": ("save_routine", "lifts", {"exercise": "Bench Press", "sets": 3, "reps": 8}, "Lift 1", "a lift",
              "Use: exercise, sets, reps, weight_kg or weight_lb."),
     "entry": ("log_food", "entries", {"description": "Dal", "kcal": 180}, "Entry 1", "a food entry",

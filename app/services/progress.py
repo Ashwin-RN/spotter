@@ -4,6 +4,9 @@ get_progress(user_id, exercise=None)
     With an exercise: its estimated max per session, the best set, every new best with its date,
     the trend over the last 6 weeks, and its open goals with the pace each needs against the pace so far.
     Without: one line per lift the person has logged, and every open goal of every kind.
+    A plain word that is not a name, such as squat (contract exercise-list.md R19), never asks: with one of its
+    candidates logged, that lift in full; with two or more, the every-lift form with only those lifts and their
+    goals; with none, its default, as a lift never logged.
     Every number comes from app.metrics, through lifts.history and goals.load_numbers and
     goals.goal_numbers, the same path get_goals and set_goal take. With nothing logged yet, the note
     says so.
@@ -146,17 +149,23 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
             return no_account()
         today = users.today_for(user)
         units = users.units_for(user)
-        only = None
+        only, several = None, None
         if exercise not in (None, ""):
             listed = exercises(s)
             names = [e.name for e in listed]
-            only, _ = rules.match_exercise(exercise, names)
-            if only is None:
+            only, word, candidates = rules.find_exercise(exercise, names)
+            if only is None and word is None:
                 return rules.unknown_exercise(exercise, names)
-            activity = next(e for e in listed if e.name == only)
-            if activity.kind == "cardio":
+            activity = next((e for e in listed if e.name == only), None)
+            if activity is not None and activity.kind == "cardio":
                 return _cardio(s, user, activity, today, units)
         history = lifts.history(s, user.id, today)
+        if exercise not in (None, "") and only is None:  # a plain word: the candidates the person logged (R19)
+            logged = [c for c in candidates if history["logged"].get(c)]
+            if len(logged) >= 2:
+                several = set(logged)
+            else:
+                only = logged[0] if logged else candidates[0]
         goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
                                .order_by(Goal.id).options(selectinload(Goal.exercise))))
         loaded = load_numbers(s, user.id, today, goals, lift_history=history)
@@ -170,8 +179,10 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
                    "links": {"progress_lift": links.page("progress_lift", lift=only)}}
             return _with_note(_for_page(out, history) if for_page else out, note)
 
+        if several is not None:
+            numbers = [g for g in numbers if g.get("exercise") in several]
         rows = []
-        for name in sorted(history["logged"]):
+        for name in sorted(n for n in history["logged"] if several is None or n in several):
             one = _one(name, history, numbers, today, exact)
             rows.append({"exercise": name, "sessions": one["sessions"], "last_trained": one["last_trained"],
                          "current_estimated_max_kg": one["current_estimated_max_kg"],

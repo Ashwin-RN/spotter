@@ -3,7 +3,8 @@
 save_routine(user_id, data, by)
     data: name (1 to 64 characters), lifts [{exercise, sets (1 to 10), reps (1 to 100), weight_kg? (0 to 500, -200
     to 0 on the two assisted lifts as log_lifts takes it, or null) or weight_lb? (0 to 1,102.31), never both}] (1 to
-    20 lifts, at most 60 sets in all). Returns {kind: "routine", id, created, routine {id, name, lifts, saved_on,
+    20 lifts, at most 60 sets in all). A band lift takes no weight but 0, and is stored at 0 kg, as log_lifts stores
+    its sets. Returns {kind: "routine", id, created, routine {id, name, lifts, saved_on,
     updated_at}, summary, links {routines}[, units_note]} or {error, message, fix}.
     - A weight_lb is kept as weight_kg at 2 dp (contract units.md R10): the stored lifts are always {exercise, sets,
       reps, weight_kg}, in kg, so the same lifts again in kg write nothing. The summary is in the person's units.
@@ -90,10 +91,14 @@ def routine_dict(row: Routine) -> dict:
 
 
 def lift_words(items: list[dict], page: bool = False, units=None) -> str:
+    """'Bench Press 3 × 5 at 60 kg and Assisted Pull-Up 3 × 8 with 20 kg help'. A band lift says no weight: it has
+    none (exercise-list.md R6)."""
     parts = []
     for x in items:
         words = f"{x['exercise']} {formatting.show(x['sets'], 'count')} × {formatting.show(x['reps'], 'reps')}"
-        if x["weight_kg"] is not None and x["weight_kg"] < 0:  # help, as lifts.sets_text says it (R14)
+        if rules.measures_of(x["exercise"]) == ("reps",):
+            pass
+        elif x["weight_kg"] is not None and x["weight_kg"] < 0:  # help, as lifts.sets_text says it (R14)
             words += f" with {formatting.show(-x['weight_kg'], 'weight_kg', page=page, units=units)} help"
         elif x["weight_kg"] is not None:
             words += f" at {formatting.show(x['weight_kg'], 'weight_kg', page=page, units=units)}"
@@ -137,12 +142,20 @@ def _lift(raw, n: int, names: list[str]) -> tuple[dict, list[dict]]:
     errors += [err] if err else []
     reps, err = _whole(raw.get("reps"), "reps", where, n, rules.HARD_RULES["reps"], "reps_out_of_range")
     errors += [err] if err else []
+    band = name is not None and rules.measures_of(name) == ("reps",)  # a band lift: no weight, stored as 0 kg (R6)
     sent_in, weight, err = rules.one_of(raw, "weight_kg", "weight_lb", where)
     if err:
         errors.append(err)
         weight = None
     elif sent_in is None:
-        weight = None
+        weight = 0.0 if band else None
+    elif band:
+        weight, err = rules.number(weight, float, "weight_kg", where)
+        if err is None and weight != 0:  # any weight but 0, a minus one too, in log_lifts' words
+            err = rules.error("invalid_field", f"{where}: {name} records reps, not weight.",
+                              f"Leave the weight out on lift {n}: a band lift stores 0 kg.")
+        errors += [err] if err else []
+        weight = 0.0 if err is None else None
     else:
         sent_kg = weight  # in kg, converted unrounded from lb: the range is checked on it, then it is kept
         weight, err = rules.number(weight, float, "weight_kg", where)

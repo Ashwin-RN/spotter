@@ -103,7 +103,9 @@ R6_REFUSALS = {
     "distance_m 5000.01": ({"exercise": "Farmer's Carry", "weight_kg": 32, "distance_m": 5000.01},
                            ("distance_out_of_range", "Set 1: distance_m 5000.01 is outside 1 to 5,000.",
                             "Give distance_m on set 1 from 1 to 5,000, in metres.")),
-    "a minus weight on a lift with no help": ({"exercise": "Pull-Up", "weight_kg": -20, "reps": 8},
+    # Pull-Up and Dip are their words' own names, and since C4c a minus weight on a word is the assisted lift (note
+    # (i)): exact true keeps these two on the lift as written, where R6 refuses the minus weight.
+    "a minus weight on a lift with no help": ({"exercise": "Pull-Up", "weight_kg": -20, "reps": 8, "exact": True},
                                               ("weight_out_of_range",
                                                "Set 1: a minus weight is help, on Assisted Pull-Up or Assisted Dip "
                                                "only.", "Give weight_kg on set 1 from 0 to 500 (0 for bodyweight).")),
@@ -116,7 +118,7 @@ R6_REFUSALS = {
     "help in lb past -200 kg": ({"exercise": "Assisted Pull-Up", "weight_lb": -441, "reps": 8},
                                 ("weight_out_of_range", "Set 1: weight_lb -441 lb is outside -440.92 to 0 lb.",
                                  "Give weight_lb on set 1 from -440.92 to 0 lb: the help as a minus weight.")),
-    "a minus weight in lb on a lift with no help": ({"exercise": "Dip", "weight_lb": -10, "reps": 8},
+    "a minus weight in lb on a lift with no help": ({"exercise": "Dip", "weight_lb": -10, "reps": 8, "exact": True},
                                                     ("weight_out_of_range",
                                                      "Set 1: a minus weight is help, on Assisted Pull-Up or Assisted "
                                                      "Dip only.", "Give weight_lb on set 1 from 0 to 1,102.31 lb.")),
@@ -465,15 +467,17 @@ def test_the_sets_table_gains_time_and_distance_only_when_a_set_holds_them():
 # ---------------------------------------------------------------- through /mcp: log_lifts' own set model (R3)
 
 def test_log_lifts_takes_its_own_set_model_and_edit_entry_takes_set_in_with_the_same_fields_for_now(writer):
+    """Since C4c (R3) log_lifts' sets also take exact and the person's own words: tests/test_matcher.py."""
     http, token, account = writer
     tools = {t["name"]: t for t in tool_list(http, token)}
     logged = tools["log_lifts"]["inputSchema"]
     edit = tools["edit_entry"]["inputSchema"]
     assert "LogSetIn" in logged["$defs"] and "SetIn" not in logged["$defs"] and "SetIn" in edit["$defs"]
-    assert list(LogSetIn.model_fields) == list(SetIn.model_fields) == [
+    assert list(LogSetIn.model_fields) == [*SetIn.model_fields, "exact"] and list(SetIn.model_fields) == [
         "exercise", "weight_kg", "weight_lb", "reps", "time_s", "distance_m"]
     props = logged["$defs"]["LogSetIn"]["properties"]
-    assert props == edit["$defs"]["SetIn"]["properties"]
+    same = {k: v for k, v in props.items() if k not in ("exercise", "exact")}
+    assert same == {k: v for k, v in edit["$defs"]["SetIn"]["properties"].items() if k != "exercise"}
     assert logged["$defs"]["LogSetIn"]["required"] == ["exercise"]
     assert props["reps"]["description"] == "Reps in this set, a whole number from 1 to 100. Leave out for a hold or a carry."
     assert props["time_s"]["description"] == "A hold's or a carry's time in seconds, 1 to 3,600."
@@ -485,7 +489,7 @@ def test_log_lifts_takes_its_own_set_model_and_edit_entry_takes_set_in_with_the_
     assert hold["session"]["sets"][0]["time_s"] == 60 and hold["summary"].startswith("Plank 60 s on ")
     wrong = failed(http, token, "log_lifts", {"sets": [{"exercise": "Plank", "weight_kg": 0, "seconds": 60}]})
     assert wrong["message"] == "Set 1: 'seconds' is not a field of a set."
-    assert wrong["fix"].startswith("Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m.")
+    assert wrong["fix"].startswith("Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m, exact.")
     again = failed(http, token, "edit_entry", {"kind": "lift_session", "entry_id": hold["id"],
                                                "sets": [{"exercise": "Plank", "weight_kg": 0, "seconds": 90}]})
     assert again["fix"].startswith("Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m.")

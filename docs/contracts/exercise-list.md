@@ -497,3 +497,31 @@ The `exercise_alias` table (for when something writes aliases at runtime). Packs
   `restore_entry` answer that names a lift session stays up to 24 hours: the contract's choice.
 - (h) For C4e: `what_is_logged` also raises over a hold, as `get_data` does (`app/services/fields.py:631`, the
   session volume with reps None).
+
+2026-11-19, C4c:
+
+- (i) The history step picks only among a word's candidates that fit the set sent. A candidate fits when it records
+  what was sent (reps, or the time and distance sent), is not a band lift (a band lift is reached only by its own
+  name or alias), and takes help if and only if the weight sent is below 0, in kg or lb. The history table runs over
+  the logged candidates that fit. With none of those, the first candidate in list order that fits; with none fitting
+  at all, the first candidate, which then gets its own refusal. So a minus weight on "pull-ups" is Assisted Pull-Up
+  with no question, and a weight sent as 0 or more is never an assisted lift (a minus weight that stores as 0, such
+  as -0.004, still reads as help, as the same set by its exact name does). Found at C4c's review (pull-ups with
+  added weight became Assisted Pull-Up; walking lunge became Sandbag Lunge). The owner (2026-11-19), on someone who
+  has only logged Assisted Pull-Up and says "pull-ups" with no help: "Yeah, A makes sense." (log Pull-Up at
+  bodyweight, named in the reply).
+- (j) `tests/test_data.py` :394 and :761 keep Suitcase Carry sets of reps written straight to the table: four
+  assertions read the carry's muscles. C4e moves them to distance.
+- (k) The closest-name search takes about 1 s for 60 unknown names and about 16 s for 1,000 (an import's cap), twice
+  the time before C4c, under the person's lock. Not fixed in C4c.
+- (l) The key rule of "Matching order" step 1 also reads a final "ies" on a word of more than 4 letters as "y"
+  (carries, flies), before the "es" rule. None of the 1,097 names, aliases and words ends in "ies", so no key on
+  the list moves and no two meet. `tests/test_exercise_list.py`'s `norm` holds the same rule; the sheet's own check
+  script needs it too.
+- (m) 2026-11-19: `docs/can-and-cant.md:25-26` was reworded to the fit rule at C4c's re-check: "Spotter takes the
+  usual lift, or the one the person has logged that fits the set, and asks when two fit." The first review had found
+  it matched the contract's words; the rule changed after, by note (i).
+- (n) A limit, left as is: the fit filter checks that a lift records what was sent, not that the set holds everything
+  the lift needs. So "walking lunges" with a time and no distance gets Sandbag Lunge's "distance_m is missing" rather
+  than Walking Lunge's own refusal, and a word holding both a carry and a hold could pick the carry for a time alone
+  (no word holds a hold today). Nothing wrong is written.

@@ -69,10 +69,10 @@ SAVE_DESCRIPTION = (
     "it with get_log and send each lift with its number of sets, its reps and its heaviest weight.")
 GET_DESCRIPTION = (
     "The person's saved routines, each lift with its sets, its reps and the weight to log. Call it when the person "
-    "names a routine, such as log my push day. To log one, send its sets with log_lifts, one item a set, with each "
-    "change the person names, and leave the date out for today. Send each weight_kg as given, in weight_kg, whatever "
+    "names a routine, such as log my push day. To log one, send its sets with log_lifts, one item a set with exact "
+    "true, with each change the person names, and leave the date out for today. Send each weight_kg as given, in weight_kg, whatever "
     "the person's units. Where weight_kg is null, ask the person, and send the answer in the field of its unit. Say "
-    "in your reply which sets were logged.")  # units.md
+    "in your reply which sets were logged.")  # units.md; exercise-list.md R3: exact true
 KEY_WORDS = mcp_server.KEY_DESCRIPTION
 LIFT_IN = {"exercise": "The lift, exactly as list_exercises gives it.", "sets": "How many sets of it, 1 to 10.",
            "reps": "Reps in each set, a whole number from 1 to 100.",
@@ -796,7 +796,8 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
     lift_out = out["$defs"]["SavedRoutineLift"]["properties"]
     assert {k: v["description"] for k, v in lift_out.items()} == {
         **{k: LIFT_IN[k] for k in ("exercise", "sets", "reps")},
-        "weight_kg": "The weight the person gave, in kg, or null when none was given."}
+        "weight_kg": ("The weight the person gave, in kg, or null when none was given. 0 for a band lift. Help on "
+                      "Assisted Pull-Up or Assisted Dip as a minus weight.")}  # exercise-list.md, C4c's fix round
     assert out["$defs"]["RoutinesLinks"]["properties"]["routines"]["description"] == LINKS_WORDS
     got = getting["outputSchema"]
     assert {k: v["description"] for k, v in got["properties"].items()} == {
@@ -811,7 +812,8 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
         **{k: LIFT_IN[k] for k in ("exercise", "sets", "reps")},
         "weight_kg": ("The weight to log, in kg: the heaviest set of this lift's latest session, unless the routine "
                       "was saved on a later day than that session, with a weight of its own. Send it in weight_kg "
-                      "as it is, never converted. Null when there is neither: ask the person."),  # units.md
+                      "as it is, never converted. Null when there is neither: ask the person. Help on Assisted "
+                      "Pull-Up or Assisted Dip as a minus weight."),  # units.md; exercise-list.md, C4c's fix round
         "weight_from": "Where weight_kg came from: last_session, routine, or null.",
         "last_date": "The date of this lift's latest session, or null when it was never logged."}
 
@@ -855,8 +857,8 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     assert everyone == [n for n in names if n not in mcp_server.OWNER_FUNCTIONS] and len(everyone) == web.FUNCTION_COUNT
 
 
-def test_the_instructions_do_not_change_4011_characters():  # data-on-request.md: DATA_RULE joined after
-    assert len(mcp_server.INSTRUCTIONS) == 4011
+def test_the_instructions_do_not_change_4086_characters():  # data-on-request.md: DATA_RULE; exercise-list.md C4c
+    assert len(mcp_server.INSTRUCTIONS) == 4086
     assert "routine" not in mcp_server.INSTRUCTIONS
 
 

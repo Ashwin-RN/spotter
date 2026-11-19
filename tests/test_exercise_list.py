@@ -30,9 +30,9 @@ WORDS = exercise_rows.WORDS
 
 def norm(text: str) -> str:
     """The matcher's key as the sheet's checks hold it: "Name (Equipment)" read as "Equipment Name"; casefold; no
-    apostrophes or dots; "&" as "and"; hyphens and slashes as spaces; a plural "es" after ch, sh, ss, x or y off a
-    word of more than 4 letters, else a final s (not ss) off a word of 3 letters or more; then no spaces.
-    C4c's rules.name_key takes its place here once it exists."""
+    apostrophes or dots; "&" as "and"; hyphens and slashes as spaces; on a word of more than 4 letters a final "ies" as
+    "y", else a plural "es" after ch, sh, ss, x or y off it; else a final s (not ss) off a word of 3 letters or more;
+    then no spaces. Written out as the oracle: tests/test_matcher.py holds rules.name_key equal to it (C4c)."""
     t = text.strip()
     m = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", t)
     if m:
@@ -41,7 +41,9 @@ def norm(text: str) -> str:
     t = re.sub(r"[-/]", " ", t)
     out = []
     for w in t.split():
-        if len(w) > 4 and re.search(r"(ch|sh|ss|x|y)es$", w):
+        if len(w) > 4 and w.endswith("ies"):  # C4c's fix round: carries, flies
+            w = w[:-3] + "y"
+        elif len(w) > 4 and re.search(r"(ch|sh|ss|x|y)es$", w):
             w = w[:-2]
         elif len(w) > 2 and w.endswith("s") and not w.endswith("ss"):
             w = w[:-1]

@@ -22,8 +22,9 @@ from it. It knows nothing else.
 - **Targets:** calories a day, lift sessions a week and cardio minutes a week. A weekly amount is a
   target set with `update_settings`, not a goal: it has no start and no date.
 
-Exercise and cardio activity names come from one shared list. Use them exactly as `list_exercises`
-gives them.
+Exercise and cardio activity names come from one shared list. A lift can be logged in the person's own
+words: Spotter takes the usual lift, or the one the person has logged that fits the set, and asks when two
+fit. Every other function takes names as `list_exercises` gives them.
 
 ## What its numbers are
 
@@ -231,8 +232,8 @@ fields of that kind. Every row it writes is marked `import` in `logged_by`, whoe
   call that does not fit the function's shape, such as a set with 2.5 reps, is refused whole before
   Spotter reads it: nothing is written, and it is not counted as a write.
 - **Names.** A name not on the exercise list fails its row, and is never guessed. `unknown_names` gives
-  each such name once, with the closest listed names Spotter found. They can be wrong: for
-  "Squat (Barbell)" the closest is Barbell Row.
+  each such name once, with the closest listed names Spotter found. They can be wrong.
+  "Squat (Barbell)" is read as Back Squat.
 - **Food** comes in as the other app's own numbers: tagged `you_said`, estimated false, and never among
   the recent entries `find_food` offers. Each entry needs its meal.
 - **Cardio** gets its calorie estimate from body weight now, as every earlier-dated entry's does. With no

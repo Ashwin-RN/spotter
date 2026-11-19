@@ -69,7 +69,7 @@ DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint":
 PUBLISHED = {
     "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
     "list_exercises": "3066492e2648709510f2e97d2928830a5128b86e32eb415ed51cbcff1d98f0ee",  # inputs
-    "log_lifts": "7fc937a99e93107df39ce72667560bfc5862f7af14db17c52532ea0ffc82d73a",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn
+    "log_lifts": "f2ea67db5748b34050f921a96b2729cd78f6a7c6d7f97eebd5972b89934057ee",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words
     "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
     "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs
     "get_progress": "afd01739efd47ad94fd7e4d4087a560999df7870fad3ca098acc756f48a88024",  # units; inputs
@@ -86,12 +86,13 @@ PUBLISHED = {
     "get_trends": "76a12552c23e443d455dd77b910788c66030f05c3f4ea5b3df0d46d69845b30f",  # inputs
     "get_goals": "6d71cb0446594ce9d51a5eaa6719394018946cfa273a49d49a4bf559cc13a391",  # units; inputs
     "import_entries": "1d890d48348660778e2105210bd298c8b5613f69c0981af43f9703b990960cec",  # inputs; exercise list: names, reps
-    "save_routine": "27d1ff111ec2cbfb5bf54956e71106f0ecbfc84191d69dc17586983cbaf137c9",  # routines: new; units; inputs; exercise list: reps, help
-    "get_routines": "163fef0a2c4ff1f1b17f8f385dda2290513b0f77b384a7b3f32b414ebb0556ee",  # routines: new, R18's words; units; inputs; exercise list: reps
+    "save_routine": "235aceb04e92e26d0d8f59f1e9e3cfb8d36e91ef77226646f4baeac03b41b1e2",  # routines: new; units; inputs; exercise list: reps, help; C4c: help, band
+    "get_routines": "5617aa03015d24116c3c0628e19da61391c99e3b21513e05ad346dbcd695e7e6",  # routines: new, R18's words; units; inputs; exercise list: reps; the matcher: exact true; C4c: help
     "owner_calls": "171f8c5c586e68e6885bc0d9014d5a2b7ef4ba4bafa217ee898c8338ffaed810",  # inputs
 }
-# switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE
-INSTRUCTIONS_AS_BUILT = "0aa8baaee659785159ee103fea7760bee064bd85170faea722d296122e080442"
+# switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE; exercise-list.md C4c: a lift in the person's
+# own words
+INSTRUCTIONS_AS_BUILT = "58536677f56a8f7d739eddabc0a704bd5b9133d24361561cfc344f5d88a7e095"
 
 
 def notes() -> list[Feedback]:

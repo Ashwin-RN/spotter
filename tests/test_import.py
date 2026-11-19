@@ -167,7 +167,7 @@ def mixed_rows():
             lift(ago(2), ("Back Squat", 100, 5, 3)), meal(ago(2), ("Oats", 350, "breakfast"), ("Dal", 500, "lunch")),
             run(ago(1), "Outdoor Run", 30, 5), weigh(ago(1), 79.9),
             weigh(ago(5), 81),                      # day taken: a hand weigh-in that day
-            lift(ago(4), ("Squat (Barbell)", 100, 5)),  # refused: not on the list
+            lift(ago(4), ("Squat (Cambered Bar)", 100, 5)),  # refused: not on the list
             measure(ago(6), "waist", 85)]           # already there: logged by hand, the same value
 
 
@@ -623,16 +623,18 @@ def test_a_row_refusal_is_the_refusal_its_own_log_function_gives(user):
 
 
 def test_a_session_with_one_unknown_set_fails_whole_and_unknown_names_groups_it(user):
-    r = imp(user, lift(ago(3), ("Back Squat", 100, 5), ("Squat (Barbell)", 100, 5)),
-            lift(ago(2), ("squat  (barbell)", 105, 5), ("Squat (Barbell)", 100, 3)),
+    # Was "Squat (Barbell)": the matcher reads it as Back Squat now (exercise-list.md C4c).
+    r = imp(user, lift(ago(3), ("Back Squat", 100, 5), ("Squat (Cambered Bar)", 100, 5)),
+            lift(ago(2), ("squat  (cambered bar)", 105, 5), ("Squat (Cambered Bar)", 100, 3)),
             lift(ago(1), ("Deadlift", 140, 5)), run(ago(1), "Zorbinator Run", 30))
     assert total(LiftSession, user.id) == 1   # Spotter never drops a set itself
     assert r["counts"]["lift_session"] == {"written": 1, "already_there": 0, "day_taken": 0, "failed": 2}
     first = r["failed"][0]
-    assert first["message"] == "Row 1, set 2: 'Squat (Barbell)' is not on the exercise list."
-    own = services.log_lifts(user.id, {"sets": [{"exercise": "Squat (Barbell)", "weight_kg": 100, "reps": 5}]}, "web")
+    assert first["message"] == "Row 1, set 2: 'Squat (Cambered Bar)' is not on the exercise list."
+    own = services.log_lifts(user.id, {"sets": [{"exercise": "Squat (Cambered Bar)", "weight_kg": 100, "reps": 5}]},
+                             "web")
     assert first["error"] == "unknown_exercise" and first["closest"] == own["closest"] and own["closest"]
-    assert r["unknown_names"][0] == {"name": "Squat (Barbell)", "kind": "lift", "rows": 2,
+    assert r["unknown_names"][0] == {"name": "Squat (Cambered Bar)", "kind": "lift", "rows": 2,
                                      "closest": first["closest"]}
     assert r["unknown_names"][1]["name"] == "Zorbinator Run" and r["unknown_names"][1]["kind"] == "cardio"
     assert len(r["unknown_names"]) == 2
@@ -1171,7 +1173,7 @@ def test_trends_read_imported_weigh_ins_as_they_read_logged_ones(user, make_user
 # ---------------------------------------------------------------- 29: the result's size, and its shape
 
 def test_with_200_failing_rows_the_result_lists_50_counts_the_rest_and_stays_small(user):
-    r = imp(user, *[lift(ago(n % 700 + 1), ("Squat (Barbell)", 100, 5), ("Bench (Barbell)", 60, 5))
+    r = imp(user, *[lift(ago(n % 700 + 1), ("Squat (Cambered Bar)", 100, 5), ("Bench (Cambered Bar)", 60, 5))
                     for n in range(200)])
     assert len(r["failed"]) == 50 and r["more_failed"] == 150 and r["row_outcomes"]["failed"] == 200
     assert "The first 50 refused rows are listed, and 150 more were refused." in r["note"]

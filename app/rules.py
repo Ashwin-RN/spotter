@@ -11,19 +11,25 @@ The fix says what to send instead, so Claude can correct the call and retry.
   to_float(value), to_date(value)        a finite number or a date, else None; never raise. Text is a number
         only in NUMBER_TEXT's one grammar, and a date only as YYYY-MM-DD (ISO_DAY), both ASCII digits
   keep(number, places) -> float          a number at its step, halves away from zero, after its range check
-  match_exercise(name, names) -> (canonical name | None, closest names)
-  unknown_exercise(name, names, where="") -> dict
+  name_key(text) -> str                  the matcher's key: case, apostrophes, dots, hyphens, plurals and spaces
+  find_exercise(name, names, logging=False) -> (row name | None, plain word | None, its candidates)
+  match_exercise(name, names) -> (canonical name | None, closest names, or a plain word's candidates)
+  unknown_exercise(name, names, where="", logging=False) -> dict
+        The matcher (contract exercise-list.md, "Matching order"): see the notes above name_key.
   entry_date(value, today, noun) -> (date | None, error | None)
         Blank means today. Never after today (an entry records what has happened), never more
         than two years back.
-  check_session(date_value, rows, names, today, pounds=True, reps_only=None) -> (session_date, sets, error | None)
+  check_session(date_value, rows, names, today, pounds=True, reps_only=None, logging=False, last_logged=None)
+        -> (session_date, sets, error | None)
         A lift session: a valid date; 1 to 60 sets; each set's exercise on the list, and what its lift records
         (contract exercise-list.md R6, measures_of): reps 1 to 100 whole, or time_s 1 to 3,600 whole, or
         distance_m 1 to 5,000 with time_s. Weight 0 to 500 kg; -200 to 0 kg on the two assisted lifts (help);
         none, stored as 0, on a band. sets: [{exercise (canonical), weight_kg, reps, time_s, distance_m}]. Every
         failure at once. Each set sends weight_kg or weight_lb (one_of); pounds=False is the import's: weight_kg
         only, in its words of before units. A range is checked on the number unrounded, then kept at its step.
-        reps_only: the import's refusal of a lift that records no reps (R11).
+        reps_only: the import's refusal of a lift that records no reps (R11). logging: log_lifts' plain words and
+        their history step over the candidates that fit the set, pick_lift when two or more of those are logged (R3
+        to R5, note (i)).
 
 Units (contract units.md, decision 15). The one table of factors, UNITS, and its helpers, which the import and
 logging both use: converted (a number in lb, mi or in, in the stored unit), inward (a stored range in another
@@ -38,6 +44,7 @@ against the stored range.
 """
 
 import difflib
+import functools
 import math
 import re
 import unicodedata
@@ -344,27 +351,144 @@ def _key(name: str) -> str:
     return " ".join(str(name or "").split()).casefold()
 
 
-def match_exercise(name, names: list[str]) -> tuple[str | None, list[str]]:
-    """Exact match ignoring case and extra spaces. On a miss, up to three closest names; a name far
-    longer than any on the list gets none, without searching."""
+# ---------------------------------------------------------------- the matcher (contract exercise-list.md)
+#
+# One matcher for every name a person or an export sends: a lift, a cardio activity, an alias, a plain word.
+# Step 1 is the key (name_key), and "Name (Equipment)" tried with the bracketed word at each place in the name.
+# In log_lifts (check_session with logging) a plain word comes next, a default's own name too, then the history
+# step over the candidates that fit the set sent (_fits, note (i)): the person's live sets among those pick the lift,
+# or two or more of them logged ask (pick_lift, R4); with none logged, the first that fits. A set with exact true skips the word step (R3). Everywhere else the exact name comes first, then an alias,
+# then a plain word that is not a name: a read takes every candidate the person logged, a write is refused with the
+# candidates (decision 28). A miss is unknown_exercise with up to 3 close names over names and aliases; an alias
+# shows its lift's name, never itself. Only the names passed count, so a retired row, or a lift sent where an
+# activity is wanted, matches nothing by any route.
+
+_PLURAL_ES = re.compile(r"(ch|sh|ss|x|y)es$")
+_BRACKETED = re.compile(r"(.+?)\(([^()]+)\)")  # "Squat (Barbell)": the name, then the bracketed word
+CLOSE_SHOWN = 3  # the most close names a refusal gives
+
+
+def name_key(text) -> str:
+    """The matcher's key: casefold; no apostrophes or dots; "&" as "and"; hyphens and slashes as spaces; on a word of
+    more than 4 letters a final "ies" as "y" (carries, flies), else a plural "es" after ch, sh, ss, x or y off it; else
+    a final s (not ss) off a word of 3 letters or more; then no spaces. "Farmer's Carries" and "farmers carry" are one
+    key (contract exercise-list.md, the note of 2026-11-19 on "-ies")."""
+    t = str(text).casefold().replace("'", "").replace(chr(0x2019), "").replace(".", "").replace("&", " and ")
+    words = []
+    for w in re.sub(r"[-/]", " ", t).split():
+        if len(w) > 4 and w.endswith("ies"):
+            w = w[:-3] + "y"
+        elif len(w) > 4 and _PLURAL_ES.search(w):
+            w = w[:-2]
+        elif len(w) > 2 and w.endswith("s") and not w.endswith("ss"):
+            w = w[:-1]
+        words.append(w)
+    return "".join(words)
+
+
+def _places(text: str) -> list[str]:
+    """The forms step 1 tries, in order. "Name (Equipment)", as export files write it: the bracketed word at each
+    place in the name, before its first word first. Any other text: itself."""
+    m = _BRACKETED.fullmatch(text.strip())
+    if m is None or not m.group(2).strip() or not m.group(1).split():
+        return [text]
+    words, inner = m.group(1).split(), m.group(2).strip()
+    return [" ".join(words[:i] + [inner] + words[i:]) for i in range(len(words) + 1)]
+
+
+class _Lookup:
+    """The keys of one list of names: each name, each alias of a listed row whose name is there, each plain word
+    with its candidates there (the default first), and the texts close names are found among."""
+
+    def __init__(self, names: tuple[str, ...]):
+        held = set(names)
+        self.names = {name_key(n): n for n in names}
+        self.aliases = {name_key(a): n for a, n in exercises.ALIASES.items() if n in held}
+        self.words = {}
+        for word, w in exercises.WORDS.items():
+            candidates = tuple(c for c in w["candidates"] if c in held)
+            if candidates:
+                self.words[name_key(word)] = (word, candidates)
+        # Close names: every name and alias as written, an alias standing for its row's name (note (a)).
+        self.close = {**{_key(a): n for a, n in exercises.ALIASES.items() if n in held}, **{_key(n): n for n in names}}
+
+
+@functools.lru_cache(maxsize=16)
+def _lookup(names: tuple[str, ...]) -> _Lookup:
+    return _Lookup(names)
+
+
+def find_exercise(name, names: list[str], logging: bool = False) -> tuple[str | None, str | None, tuple[str, ...]]:
+    """(the row reached, the plain word reached, that word's candidates among names). One of the first two at most.
+    logging (log_lifts without exact): at each place a plain word first, a default's own name too, then a name, then
+    an alias. Otherwise a name, an alias, then a plain word. The first place that reaches any of them wins. Text
+    that is not a string, or far longer than any name, reaches nothing."""
+    if not isinstance(name, str) or not _key(name) or len(_key(name)) > NAME_MAX:
+        return None, None, ()
+    look = _lookup(tuple(names))
+    for place in _places(name):
+        key = name_key(place)
+        word = look.words.get(key)
+        if logging and word:
+            return None, word[0], word[1]
+        hit = look.names.get(key) or look.aliases.get(key)
+        if hit:
+            return hit, None, ()
+        if word:
+            return None, word[0], word[1]
+    return None, None, ()
+
+
+def _closest(name, names: list[str]) -> list[str]:
+    """Up to 3 listed names close to what was sent, over names and aliases, each lift once by its name."""
     key = _key(name) if isinstance(name, str) else ""
-    by_key = {_key(n): n for n in names}
-    hit = by_key.get(key)
+    if not key or len(key) > NAME_MAX:
+        return []
+    return list(_close_to(key, tuple(names)))
+
+
+@functools.lru_cache(maxsize=1024)
+def _close_to(key: str, names: tuple[str, ...]) -> tuple[str, ...]:
+    """_closest's search, kept for a name sent again: an import or a session may send one name many times."""
+    close = _lookup(names).close
+    found = difflib.get_close_matches(key, list(close), n=CLOSE_SHOWN * 4, cutoff=0.5)
+    return tuple(dict.fromkeys(close[c] for c in found))[:CLOSE_SHOWN]
+
+
+def either(items) -> str:
+    """'A', 'A or B', 'A, B or C'."""
+    items = list(items)
+    return ", ".join(items[:-1]) + " or " + items[-1] if len(items) > 1 else "".join(items)
+
+
+def match_exercise(name, names: list[str]) -> tuple[str | None, list[str]]:
+    """A name as written, outside log_lifts (find_exercise): (the row's name, []) for a name or an alias, in any case,
+    spacing or plural. A plain word that is not a name gives (None, its candidates); any other miss up to three close
+    names, and a name far longer than any on the list none, without searching."""
+    hit, word, candidates = find_exercise(name, names)
     if hit:
         return hit, []
-    if not key or len(key) > NAME_MAX:
-        return None, []
-    close = difflib.get_close_matches(key, list(by_key), n=3, cutoff=0.5)
-    return None, [by_key[c] for c in close]
+    if word:
+        return None, list(candidates)
+    return None, _closest(name, names)
 
 
-def unknown_exercise(name, names: list[str], where: str = "") -> dict:
-    _, close = match_exercise(name, names)
+def unknown_exercise(name, names: list[str], where: str = "", logging: bool = False) -> dict:
+    """The refusal of a name that reaches no one row. A plain word: it names more than one lift, ask which (decision
+    28). Any other: not on the list, with the close names; in log_lifts (logging) the fix asks the person or a
+    search, elsewhere it asks for a listed name."""
+    _, word, candidates = find_exercise(name, names)
+    if word:
+        return error("unknown_exercise", f"{where}'{quote(name)}' names more than one lift.",
+                     f"Ask the person which: {either(candidates)}.", closest=list(candidates))
+    close = _closest(name, names)
     hint = f"Closest names: {', '.join(close)}." if close else "No close name found."
+    fix = "Ask the person which lift it is, or search list_exercises." if logging else \
+        "Use a name exactly as list_exercises gives it."
     return error(
         "unknown_exercise",
         f"{where}'{quote(name)}' is not on the exercise list.",
-        f"{hint} Use a name exactly as list_exercises gives it.",
+        f"{hint} {fix}",
         closest=close,
     )
 
@@ -603,8 +727,51 @@ def _set_numbers(row: dict, n: int, where: str, name) -> tuple[dict, list[dict]]
     return out, errors
 
 
+PICK_FIX = "Ask the person which, then send that name with exact true."  # pick_lift's fix (R4)
+
+
+def _minus(row: dict) -> bool:
+    """Whether the set sends a weight below 0, in kg or lb: help. Read before the weight's own checks, so anything that
+    is not a number reads as no minus weight and is refused there in its own words. Never raises."""
+    for field in ("weight_kg", "weight_lb"):
+        if _given(row.get(field)) and not isinstance(row.get(field), bool):
+            weight = to_float(row.get(field))
+            return weight is not None and weight < 0
+    return False
+
+
+def _fits(name: str, row: dict) -> bool:
+    """Whether a candidate's numbers mean the same as the set as sent (contract exercise-list.md, note (i)): it records
+    what was sent (reps, or the time and distance sent); it is no band lift, which only its own name or alias reaches;
+    and it takes help if and only if the weight sent is below 0."""
+    measures = measures_of(name)
+    sent = {f for f in SET_NUMBERS if _given(row.get(f))}
+    if "reps" in sent and "reps" not in measures:
+        return False
+    if ("time_s" in sent and "time" not in measures) or ("distance_m" in sent and "distance" not in measures):
+        return False
+    if measures == ("reps",):
+        return False
+    return takes_help(name) == _minus(row)
+
+
+def _pick(word: str, candidates: tuple[str, ...], last: dict, row: dict) -> tuple[str | None, list[str]]:
+    """The history step for a plain word in log_lifts (contract exercise-list.md, "Families and plain words", note
+    (i)), over the candidates whose numbers fit the set as sent (_fits): with two or more of them logged, (None, those)
+    and the person is asked; with one logged, (that one, []); with none logged, the first that fits in list order;
+    with none fitting at all, the first candidate, which then gets its own refusal."""
+    fitting = [c for c in candidates if _fits(c, row)]
+    logged = [c for c in fitting if c in last]
+    if len(logged) >= 2:
+        return None, logged
+    if logged:
+        return logged[0], []
+    return (fitting[0] if fitting else candidates[0]), []
+
+
 def check_session(date_value, rows, names: list[str], today: date, pounds: bool = True,
-                  reps_only: tuple[str, str] | None = None) -> tuple[date | None, list[dict], dict | None]:
+                  reps_only: tuple[str, str] | None = None, logging: bool = False,
+                  last_logged=None) -> tuple[date | None, list[dict], dict | None]:
     """A lift session, checked. Every failure combined (see combine).
 
     Returns (session date, sets [{exercise, weight_kg, reps, time_s, distance_m}] with canonical names, None) or
@@ -614,6 +781,15 @@ def check_session(date_value, rows, names: list[str], today: date, pounds: bool 
     weight_lb, and a weight_lb is kept in kg (R9). pounds=False takes weight_kg alone, in the words it had before:
     the import's. reps_only, (the words after "records time: ", the fix), refuses a set of a lift that records no
     reps once a lift, its own checks left out: the import's sets are sets of reps (R11).
+
+    Names (R5): an edit and the import take a name as written (match_exercise), and a plain word is refused with its
+    candidates. logging=True is log_lifts': a set's plain word, a default's own name too, picks its lift from the
+    candidates that fit the set (_fits: what it records, no band lift, help if and only if the weight sent is below
+    0) and the person's history, unless the set sends exact true (R3). last_logged(names) -> {name: date} reads that
+    history once for every candidate the call's words name: the latest live session date of each logged one. A set
+    for which two or more fitting candidates are logged is refused as pick_lift, one refusal a word, at the first
+    such set, with candidates [{name, last}], and that set's weight and numbers are not checked further (R4). Another
+    set of the same word that fits only one logged lift, or none, is picked and checked as usual.
     """
     errors = []
     session_date, err = entry_date(date_value, today, "sessions")
@@ -625,19 +801,36 @@ def check_session(date_value, rows, names: list[str], today: date, pounds: bool 
         errors.append(error("sets_count_out_of_range", f"The session has {len(rows)} sets; it needs {lo} to {hi}.",
                             f"Send one row per set, {lo} to {hi} rows: exercise, "
                             f"{'weight_kg or weight_lb' if pounds else 'weight_kg'}, reps."))
-    sets, refused = [], set()
-    for n, row in enumerate(rows[:hi], start=1):
-        row = row if isinstance(row, dict) else {}
-        where = f"Set {n}"
+    rows = [row if isinstance(row, dict) else {} for row in rows[:hi]]
+    raws = []  # each set's name as sent, stripped
+    for row in rows:
         raw = row.get("exercise")
-        raw_name = raw.strip() if isinstance(raw, str) else ("" if raw is None else raw)
-        name = None
+        raws.append(raw.strip() if isinstance(raw, str) else ("" if raw is None else raw))
+    reached = [find_exercise(raw, names, logging=logging and row.get("exact") is not True) if raw else (None, None, ())
+               for raw, row in zip(raws, rows)]
+    words = {word: candidates for row, (_, word, candidates) in zip(rows, reached)
+             if word and logging and row.get("exact") is not True}
+    last = {}
+    if logging and words and last_logged is not None:
+        last = last_logged(sorted({c for candidates in words.values() for c in candidates}))
+    sets, refused, asked = [], set(), set()
+    for n, (row, raw_name, (name, word, candidates)) in enumerate(zip(rows, raws, reached), start=1):
+        where = f"Set {n}"
         if not raw_name:
             errors.append(error("missing_field", f"{where}: exercise is missing.", f"Give an exercise name on set {n}."))
-        else:
-            name, _ = match_exercise(raw_name, names)
+        elif word and logging and row.get("exact") is not True:
+            name, logged = _pick(word, candidates, last, row)
             if name is None:
-                errors.append(unknown_exercise(raw_name, names, f"{where}: "))
+                if word not in asked:
+                    asked.add(word)
+                    errors.append(error(
+                        "pick_lift",
+                        f"{where}: '{quote(raw_name)}' could be "
+                        f"{either(f'{c} (last {last[c].isoformat()})' for c in logged)}.",
+                        PICK_FIX, candidates=[{"name": c, "last": last[c].isoformat()} for c in logged]))
+                continue
+        elif name is None:
+            errors.append(unknown_exercise(raw_name, names, f"{where}: ", logging=logging))
         if reps_only is not None and name is not None and "reps" not in measures_of(name):
             if name not in refused:
                 refused.add(name)
