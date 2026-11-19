@@ -5,7 +5,8 @@ entry held before each edit (entry_version), and 0008 the notes people send Spot
 changes data only: every account's claude_can becomes log_delete. 0010 adds the routines (routine). 0011 adds
 the person's units (user.weight_unit and user.distance_unit). 0012 (contract hardening.md) widens saved_food.name_key, adds
 the sweep's three created_at indexes, one set number per session and lift, a food entry's saved food tied to its owner,
-a 64-bit call-log id on Postgres, and the database's own rules.
+a 64-bit call-log id on Postgres, and the database's own rules. 0013 (contract exercise-list.md) gives each exercise a
+stable key and a retired mark, and a set its time_s and distance_m, with reps now nullable.
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -17,8 +18,9 @@ a 64-bit call-log id on Postgres, and the database's own rules.
   lists meant to grow stay unchecked: goal and measurement kinds, a measurement's unit, meals, food sources, feedback
   topics, an exercise's kind and category.
 - Since 0012 the database also holds a sign rule and a wide ceiling on every number a person's row holds, and three
-  goal shape rules. The rules' text lives only in migrations/versions/0012_hardening.py: the models declare none, and
-  compare_metadata does not read them.
+  goal shape rules. The rules' text lives only in migrations/versions/0012_hardening.py and, for the rules 0013 changes
+  and adds on lift_set, in migrations/versions/0013_exercise_list.py: the models declare none, and compare_metadata
+  does not read them.
 
 The migration in migrations/versions/ builds these tables. A test checks the two agree.
 """
@@ -146,16 +148,19 @@ class User(Base):
 
 
 class Exercise(Base):
-    """The shared exercise list. Synced by name from app/exercises.py."""
+    """The shared exercise list. Synced by key from app/exercises.py. A row is never deleted: one whose key is no
+    longer listed is retired, and keeps its sets."""
 
     __tablename__ = "exercise"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True)  # lower snake, from the name by the rule (0013)
     name: Mapped[str] = mapped_column(String(64), unique=True)
     kind: Mapped[str] = mapped_column(String(8))  # one of EXERCISE_KINDS
     category: Mapped[str] = mapped_column(String(16))
     met: Mapped[float | None] = mapped_column(Float, nullable=True)
     compendium_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    retired: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())  # no longer on the list
 
 
 class LiftSession(EntryColumns, Base):
@@ -191,7 +196,9 @@ class LiftSet(Base):
     exercise_id: Mapped[int] = mapped_column(Integer, ForeignKey("exercise.id"))
     set_number: Mapped[int] = mapped_column(Integer)
     weight_kg: Mapped[float] = mapped_column(Float)
-    reps: Mapped[int] = mapped_column(Integer)
+    reps: Mapped[int | None] = mapped_column(Integer, nullable=True)  # null for a hold or a carry (0013)
+    time_s: Mapped[int | None] = mapped_column(Integer, nullable=True)  # seconds
+    distance_m: Mapped[float | None] = mapped_column(Float, nullable=True)  # metres
 
     session: Mapped[LiftSession] = relationship(back_populates="sets")
     exercise: Mapped[Exercise] = relationship()

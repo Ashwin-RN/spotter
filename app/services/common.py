@@ -457,7 +457,9 @@ def duplicate_note(noun: str) -> str:
 
 
 def exercises(s: Session, kind: str | None = None) -> list[Exercise]:
-    query = select(Exercise).order_by(Exercise.id)
+    """Every row on the list of a kind, by id. A retired row is left out: it is never matched (exercise-list.md R2).
+    A session's sets still reach it through their own exercise."""
+    query = select(Exercise).where(Exercise.retired.is_(False)).order_by(Exercise.id)
     if kind is not None:
         query = query.where(Exercise.kind == kind)
     return list(s.scalars(query))

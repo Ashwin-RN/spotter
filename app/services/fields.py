@@ -786,9 +786,9 @@ AREAS: dict[str, Area] = {a.name: a for a in (LIFT_SETS, LIFT_SESSIONS, CARDIO, 
 _ENTRY = ("user_id", "dedupe_key", "logged_by", "created_at", "updated_at", "deleted_at")
 INTERNAL_COLUMNS: dict[str, tuple[str, ...]] = {
     "lift_session": _ENTRY, "bodyweight": _ENTRY, "measurement": _ENTRY, "food_entry": _ENTRY, "cardio_entry": _ENTRY,
-    "lift_set": ("id",),
+    "lift_set": ("id", "time_s", "distance_m"),  # no set holds a time or a distance before exercise-list.md's deploy 2
     "saved_food": ("user_id", "name_key", "created_at", "updated_at", "deleted_at"),
-    "exercise": ("id", "kind", "met", "compendium_code"),
+    "exercise": ("id", "key", "kind", "met", "compendium_code", "retired"),
     "usda_food": ("fdc_id", "data_type", "kcal_per_100g", "fetched_at"),
 }
 OTHER_TABLES: dict[str, str] = {

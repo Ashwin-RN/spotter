@@ -468,7 +468,10 @@ class SetOut(BaseModel):
     exercise: str = Field(description="The exercise name.")
     set_number: int = Field(description="The set's number within this exercise in this session, from 1.")
     weight_kg: float = Field(description="Weight in kg; 0 for bodyweight work.")
-    reps: int = Field(description="Reps done.")
+    # Optional since exercise-list.md's deploy 1: a set of time or distance has no reps.
+    reps: int | None = Field(default=None, description="Reps done, or null for a hold or a carry.")
+    time_s: int | None = Field(default=None, description="A hold's or a carry's time in seconds, or null.")
+    distance_m: float | None = Field(default=None, description="A carry's or a sled's distance in metres, or null.")
 
 
 class Session(BaseModel):

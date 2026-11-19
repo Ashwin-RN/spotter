@@ -508,7 +508,7 @@ def test_0009_turns_every_account_to_log_delete_moves_no_updated_at_and_comes_do
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0012"  # units
+    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0013"  # exercise list
 
 
 def test_0009_s_statement_is_built_so_postgres_gets_user_quoted(monkeypatch):

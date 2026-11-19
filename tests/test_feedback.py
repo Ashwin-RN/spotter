@@ -69,12 +69,12 @@ DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint":
 PUBLISHED = {
     "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
     "list_exercises": "3066492e2648709510f2e97d2928830a5128b86e32eb415ed51cbcff1d98f0ee",  # inputs
-    "log_lifts": "7ad201d9321cf8011b00e7c456195f043cbc7e54138d01125f530a68986b2163",  # gym logging: adds to a day; units; inputs
+    "log_lifts": "5db0acb399478aff8f7d4a271245bbf8ced0a32eaf0337f0a4e93fbac38c6661",  # gym logging: adds to a day; units; inputs; exercise list: SetOut
     "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
     "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs
     "get_progress": "afd01739efd47ad94fd7e4d4087a560999df7870fad3ca098acc756f48a88024",  # units; inputs
     "update_settings": "cdd9e2dc2bb0ce2a9e35d4d6cfa0e81e71ffec9bbfcb16a4945d6d858ad8ea64",  # units; inputs
-    "get_log": "47061b96ee8c0d4fe0fa278b5a15444bccf0a9d6b39e69500645adcb9950d9a9",  # units; inputs
+    "get_log": "2265874c383e6696c00dafd2df0f72548433182eb5fdf7458d282164af1e1d60",  # units; inputs; exercise list: SetOut
     "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
     "edit_entry": "289e74116d1611d6e92051efae09d6fac6a3e2e2609249a6e48a8fd952343d83",  # units; inputs
     "restore_entry": "1fc5aa945a46c50c8203a702b4821fe42c6d39e35d3db0f27552c2099043c224",  # routines: kind routine; inputs
@@ -210,7 +210,7 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0012"  # units
+    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0013"  # exercise list
 
 
 def test_the_topics_are_a_tuple_in_the_models_and_no_status_is():

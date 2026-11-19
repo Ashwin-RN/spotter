@@ -1346,7 +1346,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0012"  # units
+    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0013"  # exercise list
 
 
 def test_every_kind_s_table_name_fits_the_version_s_kind_column():

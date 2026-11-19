@@ -20,6 +20,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, event, inspect, select, text
+from sqlalchemy import column as sa_column, table as sa_table
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import configure_mappers
 
@@ -33,7 +34,8 @@ from .conftest import TEST_DIR, alembic_config, settings
 from .test_web import client, seam, sign_in, web_client  # noqa: F401 - fixtures
 
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
-HEAD = "0012"
+HARDENING = "0012"  # the revision this file's migration tests run to
+HEAD = "0013"  # the code's head, which /ready reads (exercise-list.md)
 
 # ---------------------------------------------------------------- the rules of D12, as the contract lists them
 
@@ -87,10 +89,20 @@ SWEEP_INDEXES = {"write_key": "ix_write_key_created_at", "entry_version": "ix_en
 REBUILT = ("user", "lift_session", "lift_set", "bodyweight", "measurement", "goal", "saved_food", "food_entry",
            "cardio_entry", "entry_version")
 
+# Migration 0013 (exercise-list.md): lift_set's weight_kg rule widens to -1,000, and two number rules and the measure
+# rule join it. The lists above stay 0012's; the built database is at the head, so its tests read these.
+NUMBER_RULES_AT_HEAD = tuple(("lift_set", "weight_kg", -1000, True, 1000, False) if r[:2] == ("lift_set", "weight_kg")
+                             else r for r in NUMBER_RULES) + (
+    ("lift_set", "time_s", 1, True, 100_000, True),
+    ("lift_set", "distance_m", 0, False, 100_000, False),
+)
+CHECKS_AT_HEAD = sorted({*CHECKS, "ck_lift_set_time_s", "ck_lift_set_distance_m", "ck_lift_set_measure"})
+
 
 def test_the_lists_are_the_contract_s():
     assert len(NUMBER_RULES) == 24 and len(LIST_RULES) == 12 and len(CHECKS) == 39
     assert sorted({t for t, *_ in NUMBER_RULES} | {t for t, *_ in LIST_RULES}) == sorted(REBUILT)
+    assert len(NUMBER_RULES_AT_HEAD) == 26 and len(CHECKS_AT_HEAD) == 42
 
 
 def _checks(connection) -> dict[str, set[str]]:
@@ -108,9 +120,9 @@ def test_every_rule_is_in_the_built_database():
         keys = {k["name"]: k for k in found.get_foreign_keys("food_entry")}
         indexes = {t: {i["name"]: i["column_names"] for i in found.get_indexes(t)} for t in SWEEP_INDEXES}
         key_width = {col["name"]: col for col in found.get_columns("saved_food")}["name_key"]["type"].length
-    assert sorted(name for names in checks.values() for name in names) == CHECKS
+    assert sorted(name for names in checks.values() for name in names) == CHECKS_AT_HEAD
     assert set(checks) == set(REBUILT)
-    for name in CHECKS:
+    for name in CHECKS_AT_HEAD:
         assert any(name.startswith(f"ck_{t}_") and name in checks[t] for t in checks), name
     assert uniques["lift_set"][UQ_SET_NUMBER] == ["session_id", "exercise_id", "set_number"]
     assert uniques["saved_food"][UQ_SAVED_FOOD] == ["user_id", "id"]
@@ -207,7 +219,7 @@ def ids():
         return _ids(c)
 
 
-@pytest.mark.parametrize("rule", NUMBER_RULES, ids=lambda r: f"{r[0]}.{r[1]}")
+@pytest.mark.parametrize("rule", NUMBER_RULES_AT_HEAD, ids=lambda r: f"{r[0]}.{r[1]}")
 def test_each_number_rule_takes_its_edges_and_refuses_one_step_outside(ids, rule):
     table, column, low, low_taken, high, whole = rule
     step = 1 if whole else 0.01
@@ -220,7 +232,8 @@ def test_each_number_rule_takes_its_edges_and_refuses_one_step_outside(ids, rule
     else:
         _taken(engine, table, ids, {column: low + step})
         _refused(engine, table, ids, {column: low})
-    _refused(engine, table, ids, {column: -high})
+    if -high < low:  # lift_set.weight_kg's low is -high since 0013: its edges above say it
+        _refused(engine, table, ids, {column: -high})
     if not whole:
         _refused(engine, table, ids, {column: math.inf})  # what "above 0" alone would let through
         if engine.dialect.name == "postgresql":
@@ -373,9 +386,29 @@ def _sqlite_at(name: str) -> str:
 
 
 def _write_at_0011(address: str, monkeypatch) -> dict:
-    """Rows of every kind, written by the services into the database at this address (at 0011), for two people.
+    """Rows of every kind, written by the services into the database at this address, for two people, which is left
+    at 0011. The models are the code head's (0013 added columns no older table has), so the services write at the
+    head and the database is taken down to 0011 after. The two saved foods whose 130-character keys stop 0012's
+    downgrade are saved at 0011 itself, through the service, which reads no table 0012 or 0013 changed."""
+    cfg = alembic_config(address)
+    command.upgrade(cfg, HEAD)
+    people = write_everything(address, monkeypatch)
+    command.downgrade(cfg, "0011")
+    config.use_settings(settings(database_url=address))
+    try:
+        for uid in people:
+            assert "error" not in services.save_food(uid, {"name": "ß" * 65, "serving_label": "1 bowl",
+                                                           "kcal_per_serving": 90}, "web")
+    finally:
+        db.dispose()
+        config.use_settings(settings())
+    return {"people": people}
+
+
+def write_everything(address: str, monkeypatch) -> list[int]:
+    """Rows of every kind, written by the services into the database at this address (at the head), for two people.
     The write key, the call-log rows and the two caches go in through the models: no service called here writes
-    them on its own."""
+    them on its own. Returns the two people's ids."""
     monkeypatch.setattr(db, "utcnow", lambda: NOW)
     monkeypatch.setattr(usda, "food", lambda fdc: ({"fdc_id": fdc, "description": "Bananas, raw",
                                                    "data_type": "SR Legacy", "kcal_per_100g": 89.0}, None))
@@ -395,7 +428,7 @@ def _write_at_0011(address: str, monkeypatch) -> dict:
             s.add(UsdaSearch(query_key="banana", fdc_ids="[173944]"))
             s.add_all(CallLog(user_id=people[n % 2].id, function="whoami", started_at=NOW, ms=1, ok=True,
                               result_bytes=10) for n in range(100))
-        return {"people": [u.id for u in people]}
+        return [u.id for u in people]
     finally:
         db.dispose()
         config.use_settings(settings())
@@ -421,7 +454,6 @@ def _everything(uid: int) -> None:
     ok(services.log_measurement(uid, {"kind": "steps", "value": 9000, "date": "2026-11-09"}, "claude"))
     roti = ok(services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
                                        "grams_per_serving": 40}, "web"))["id"]
-    ok(services.save_food(uid, {"name": "ß" * 65, "serving_label": "1 bowl", "kcal_per_serving": 90}, "web"))
     ok(services.log_food(uid, {"entries": [{"saved_food_id": roti, "servings": 2},
                                            {"description": "dal", "kcal": 180, "estimated": True},
                                            {"usda_fdc_id": 173944, "grams": 120}]}, "claude"))
@@ -486,11 +518,11 @@ def test_0012_up_down_and_up_over_rows_the_services_wrote_at_0011(monkeypatch):
         assert len(at_0011["goal"]) == 8 and len(at_0011["saved_food"]) == 4 and len(at_0011["user"]) == 2
         linked = [r for r in at_0011["food_entry"] if r[8] is not None]
         assert len(linked) == 2  # one a person, each on their own saved food
-        command.upgrade(cfg, HEAD)
-        assert _version(engine) == HEAD
+        command.upgrade(cfg, HARDENING)
+        assert _version(engine) == HARDENING
         assert _rows(engine) == at_0011  # every row, set and link kept
         assert _key_check(engine) == []
-        assert _agree(engine) == []
+        assert before_0013(_agree(engine)) == []  # at 0012: less what 0013 adds
         master_up = _master(engine)
         assert {n for n in master_up if master_up[n] != master_0011.get(n)} == set(REBUILT) | set(
             SWEEP_INDEXES.values())
@@ -498,7 +530,7 @@ def test_0012_up_down_and_up_over_rows_the_services_wrote_at_0011(monkeypatch):
         with pytest.raises(SystemExit) as stopped:
             command.downgrade(cfg, "0011")
         assert stopped.value.code == "0012 down stopped: name_key 2 rows. Nothing was changed."
-        assert _version(engine) == HEAD and _rows(engine) == at_0011 and _master(engine) == master_up
+        assert _version(engine) == HARDENING and _rows(engine) == at_0011 and _master(engine) == master_up
         with engine.begin() as c:
             c.exec_driver_sql("DELETE FROM saved_food WHERE length(name_key) > 128")
         at_0011 = _rows(engine)
@@ -507,8 +539,8 @@ def test_0012_up_down_and_up_over_rows_the_services_wrote_at_0011(monkeypatch):
         assert _version(engine) == "0011"
         assert _rows(engine) == at_0011 and _key_check(engine) == []
         assert _checks_of(engine) == {}
-        command.upgrade(cfg, HEAD)
-        assert _rows(engine) == at_0011 and _key_check(engine) == [] and _agree(engine) == []
+        command.upgrade(cfg, HARDENING)
+        assert _rows(engine) == at_0011 and _key_check(engine) == [] and before_0013(_agree(engine)) == []
         assert _master(engine) == master_up  # the rebuilt tables come back word for word
         with pytest.raises(IntegrityError), engine.begin() as c:  # and refuse as the first upgrade did
             c.exec_driver_sql("INSERT INTO bodyweight (user_id, date, kg, dedupe_key, logged_by, created_at, "
@@ -529,7 +561,7 @@ def test_the_downgrade_leaves_0011_s_tables_as_0011_built_them():
     """Down from 0012 gives back each rebuilt table's columns, keys, uniques and indexes, and no rule."""
     plain, round_trip = _sqlite_at("plain.db"), _sqlite_at("round-trip.db")
     command.upgrade(alembic_config(plain), "0011")
-    command.upgrade(alembic_config(round_trip), HEAD)
+    command.upgrade(alembic_config(round_trip), HARDENING)
     command.downgrade(alembic_config(round_trip), "0011")
     shapes = []
     for address in (plain, round_trip):
@@ -595,7 +627,7 @@ def test_a_bad_row_at_0011_stops_the_upgrade_with_one_line_a_rule_and_changes_no
             expected = _plant_one_bad_row_a_rule(c)
         before, master = _rows(engine), _master(engine)
         with pytest.raises(SystemExit) as stopped:
-            command.upgrade(cfg, HEAD)
+            command.upgrade(cfg, HARDENING)
         assert sorted(str(stopped.value.code).splitlines()) == expected
         assert _version(engine) == "0011" and _master(engine) == master and _rows(engine) == before
         with engine.begin() as c:  # one bad row alone: one line
@@ -609,27 +641,29 @@ def test_a_bad_row_at_0011_stops_the_upgrade_with_one_line_a_rule_and_changes_no
             c.exec_driver_sql("UPDATE bodyweight SET kg = -5")
             c.exec_driver_sql("DELETE FROM user WHERE id NOT IN (SELECT user_id FROM bodyweight)")
         with pytest.raises(SystemExit) as stopped:
-            command.upgrade(cfg, HEAD)
+            command.upgrade(cfg, HARDENING)
         assert stopped.value.code == "0012 stopped: ck_bodyweight_kg 1 rows. Nothing was changed."
         assert _version(engine) == "0011"
         with engine.begin() as c:
             c.exec_driver_sql("UPDATE bodyweight SET kg = 80")
-        command.upgrade(cfg, HEAD)
-        assert _version(engine) == HEAD and _key_check(engine) == []
+        command.upgrade(cfg, HARDENING)
+        assert _version(engine) == HARDENING and _key_check(engine) == []
     finally:
         engine.dispose()
 
 
 def _sync(c) -> None:
-    table = Base.metadata.tables["exercise"]
+    """The list's rows into a database before 0013, in 0012's columns: key and retired come with 0013."""
+    columns = ("name", "kind", "category", "met", "compendium_code")
+    table = sa_table("exercise", *(sa_column(name) for name in columns))
     for row in exercises.rows():
-        c.execute(table.insert().values(**row))
+        c.execute(table.insert().values(**{name: row[name] for name in columns}))
 
 
 def test_a_long_name_key_at_0012_stops_the_downgrade_and_once_gone_the_downgrade_runs():
     address = _sqlite_at("long-key.db")
     cfg = alembic_config(address)
-    command.upgrade(cfg, HEAD)
+    command.upgrade(cfg, HARDENING)
     engine = make_engine(address)
     try:
         with engine.begin() as c:
@@ -641,7 +675,7 @@ def test_a_long_name_key_at_0012_stops_the_downgrade_and_once_gone_the_downgrade
         with pytest.raises(SystemExit) as stopped:
             command.downgrade(cfg, "0011")
         assert stopped.value.code == "0012 down stopped: name_key 1 rows. Nothing was changed."
-        assert _version(engine) == HEAD and _master(engine) == master and _rows(engine) == before
+        assert _version(engine) == HARDENING and _master(engine) == master and _rows(engine) == before
         with engine.begin() as c:
             c.exec_driver_sql("DELETE FROM saved_food WHERE length(name_key) > 128")
         command.downgrade(cfg, "0011")
@@ -673,13 +707,13 @@ def test_inside_a_migration_on_sqlite_foreign_keys_are_off_and_the_run_still_com
     address = _sqlite_at("pragma.db")
     event.listen(Engine, "before_cursor_execute", watch)
     try:
-        command.upgrade(alembic_config(address), HEAD)
+        command.upgrade(alembic_config(address), HARDENING)
     finally:
         event.remove(Engine, "before_cursor_execute", watch)
     assert len(seen) >= len(REBUILT) and set(seen) == {0}
     engine = make_engine(address)
     try:
-        assert _version(engine) == HEAD
+        assert _version(engine) == HARDENING
         with engine.connect() as c:
             assert set(inspect(c).get_table_names()) == set(Base.metadata.tables) | {"alembic_version"}
             assert c.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1  # a new connection: on again
@@ -703,10 +737,10 @@ def test_a_broken_key_after_the_migrations_fails_the_run():
                               "VALUES (999, 1, 1, 100, 5)")  # a set whose session is not there
             c.commit()
         with pytest.raises(SystemExit) as failed:
-            command.upgrade(cfg, HEAD)
+            command.upgrade(cfg, HARDENING)
         assert failed.value.code == ("FAILED: the migrations ran, to 0012, and PRAGMA foreign_key_check then found 1 "
                                      "rows, in lift_set.")
-        assert _version(engine) == HEAD  # SQLite committed each migration: the line says where it stands
+        assert _version(engine) == HARDENING  # SQLite committed each migration: the line says where it stands
     finally:
         engine.dispose()
 
@@ -829,9 +863,27 @@ NEW_IN_0012 = {*SWEEP_INDEXES.values(), FK_OWNER, UQ_SET_NUMBER, UQ_SAVED_FOOD}
 
 
 def before_0012(diffs: list) -> list:
-    """compare_metadata's list at a revision before 0012, less 0012's own entries (name_key's width among them)."""
+    """compare_metadata's list at a revision before 0012, less 0012's own entries (name_key's width among them) and
+    0013's (before_0013)."""
     def is_0012(d) -> bool:
         if isinstance(d, list):  # a column's changes come nested: here only name_key's width
             return all(x[0] == "modify_type" and (x[2], x[3]) == ("saved_food", "name_key") for x in d)
         return d[0] in ("add_index", "add_fk", "add_constraint") and d[1].name in NEW_IN_0012
-    return [d for d in diffs if not is_0012(d)]
+    return [d for d in before_0013(diffs) if not is_0012(d)]
+
+
+# What compare_metadata shows at a revision before 0013 that 0013 adds (exercise-list.md): four columns, reps made
+# nullable, and the key's unique. The rules are not in the models.
+NEW_COLUMNS_IN_0013 = {("exercise", "key"), ("exercise", "retired"), ("lift_set", "time_s"), ("lift_set", "distance_m")}
+UQ_EXERCISE_KEY = "uq_exercise_key"
+
+
+def before_0013(diffs: list) -> list:
+    """compare_metadata's list at a revision before 0013, less 0013's own entries."""
+    def is_0013(d) -> bool:
+        if isinstance(d, list):  # a column's changes come nested: here only reps made nullable
+            return all(x[0] == "modify_nullable" and (x[2], x[3]) == ("lift_set", "reps") for x in d)
+        if d[0] == "add_column":
+            return (d[2], d[3].name) in NEW_COLUMNS_IN_0013
+        return d[0] == "add_constraint" and d[1].name == UQ_EXERCISE_KEY
+    return [d for d in diffs if not is_0013(d)]

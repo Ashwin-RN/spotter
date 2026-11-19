@@ -75,8 +75,8 @@ from sqlalchemy import Index, select
 
 from app import db, formatting, links, metrics, rules, users
 from app.models import (
-    CLAUDE_CAN, IMPORTED, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet, Measurement, Routine, SavedFood,
-    entry_models,
+    CLAUDE_CAN, IMPORTED, Bodyweight, CardioEntry, Exercise, FoodEntry, Goal, LiftSession, LiftSet, Measurement, Routine,
+    SavedFood, entry_models,
 )
 from app.rules import error, quote
 from app.services import body, cardio, food, lifts, measurements, routines
@@ -565,7 +565,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
         parts = []
         for field in changed:
             if field == "sets":
-                name_of = {e.id: e.name for e in exercises(s, "lift")}
+                name_of = dict(s.execute(select(Exercise.id, Exercise.name)).all())  # a retired lift too
 
                 def written(rows):  # "Back Squat 3 × 5 @ 60 kg", cut to a sane length
                     return quote(lifts.sets_text([(name_of.get(e, "?"), w, r) for e, _, w, r in rows], units))

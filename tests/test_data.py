@@ -265,7 +265,7 @@ def test_the_regions_and_muscles_cover_the_41_lifts_by_the_rule():
         ("calves", "forearms", "glutes", "hamstrings", "lats", "middle back", "quadriceps", "traps"), 0.5)}
     assert exercises.REGIONS["Deadlift"] == "lower" and exercises.REGIONS["Pallof Press"] == "core"
     # Neither is a column, nor in list_exercises.
-    assert set(exercises.rows()[0]) == {"name", "kind", "category", "met", "compendium_code"}
+    assert set(exercises.rows()[0]) == {"key", "name", "kind", "category", "met", "compendium_code"}
 
 
 def contract_table() -> dict[str, tuple]:

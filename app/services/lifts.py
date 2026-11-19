@@ -125,10 +125,11 @@ def sets_text(sets: list[tuple[str, float, int]], units=None) -> str:
 
 
 def session_dict(t: LiftSession) -> dict:
-    """A session with its sets, in the order they were logged."""
+    """A session with its sets, in the order they were logged. time_s and distance_m are null on a set of reps."""
     out = row_dict(t)
     out["sets"] = [{"exercise": x.exercise.name, "set_number": x.set_number, "weight_kg": x.weight_kg,
-                    "reps": x.reps} for x in sorted(t.sets, key=lambda x: x.id)]
+                    "reps": x.reps, "time_s": x.time_s, "distance_m": x.distance_m}
+                   for x in sorted(t.sets, key=lambda x: x.id)]
     return out
 
 

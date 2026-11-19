@@ -37,15 +37,16 @@ from .test_web import client, only_user, post, seam, sign_in, today_of, web_clie
 # ---------------------------------------------------------------- the published list (decisions 1 and 17)
 
 # Each function as published at 194e7f0, before this work: the SHA-256 of the tool as compact JSON with sorted keys.
+# log_lifts and get_log: as published after exercise-list.md's deploy 1, where SetOut gained time_s and distance_m.
 BEFORE_INPUTS = {
     "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",
     "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
-    "log_lifts": "5d42d7aaf0fe4f936503a529535cc7619afbfeba0d763324e4e6e6cbbbadde32",
+    "log_lifts": "4cbdeaee299b31b80b6b272b844f2354ae1ad2495f185f2f043d08242e66179e",  # exercise list: SetOut
     "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",
     "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",
     "get_progress": "3a2ee9d44c6ceae92c3717eb9768c0e356caea2861867cc96ca260d3a1e7d0d3",
     "update_settings": "1053550decae70f255f0edaf894b730c1da9315e2d989ae1e5e2536eee85c879",
-    "get_log": "5f5796e3a4d0089eb3a2aa92f5d5a84e4fa8cb6bb94162e8def01bf5238af3c2",
+    "get_log": "1b71e7403fab5027e28c835b58c55476c91a2df2500594b30f1220bc03762b89",  # exercise list: SetOut
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
     "edit_entry": "b84ccadc88110fd59cde09f0bcfafd44c80ba3c55a5b0f9632ac4107ab96c26d",
     "restore_entry": "ea098328552576986f8c0a410757d424478eb0566b104e2eb76d3de4b24cf8a9",

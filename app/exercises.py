@@ -1,12 +1,15 @@
 """The shared exercise list. The same name every time, so charts and progress line up.
 
-sync(session) adds any exercise missing from the database, matched by name, and brings an existing
-cardio row's MET and Compendium code up to the list; nothing else changes, and running it twice
-changes nothing. The deploy runs it after the migrations:
+Each row has a key (key_of: the name by the rule of contract exercise-list.md), which never changes once a row is
+on the list: the database knows a row by it, not by its name. sync(session) matches the table's rows to the list by
+key: it adds a listed row the table lacks, brings a held row's name, category, MET and Compendium code up to the
+list, retires a row whose key is not listed and brings back one that is. Rows are never deleted, and running it
+twice changes nothing. The deploy runs it after the migrations:
 
     python -m app.exercises
 """
 
+import re
 import sys
 
 from sqlalchemy import select
@@ -155,29 +158,61 @@ CARDIO: list[tuple[str, str, float, str]] = [
 COMPENDIUM = "2024 Adult Compendium of Physical Activities"
 
 
+def key_of(name: str) -> str:
+    """A row's key from its name: lowercased, apostrophes dropped, "&" as "and", and each run of hyphens, slashes,
+    brackets, commas, full stops and spaces as one underscore, none at either end. "Farmer's Carry" is farmers_carry.
+    migrations/versions/0013_exercise_list.py holds the same rule."""
+    key = name.lower().replace("'", "").replace("’", "").replace("&", "and")
+    return re.sub(r"[-/(),.\s]+", "_", key).strip("_")
+
+
 def rows() -> list[dict]:
     """Every exercise on the list, as column values."""
-    lifts = [{"name": name, "kind": "lift", "category": category, "met": None, "compendium_code": None}
-             for name, category in LIFTS]
-    cardio = [{"name": name, "kind": "cardio", "category": category, "met": met, "compendium_code": code}
-              for name, category, met, code in CARDIO]
+    lifts = [{"key": key_of(name), "name": name, "kind": "lift", "category": category, "met": None,
+              "compendium_code": None} for name, category in LIFTS]
+    cardio = [{"key": key_of(name), "name": name, "kind": "cardio", "category": category, "met": met,
+               "compendium_code": code} for name, category, met, code in CARDIO]
     return lifts + cardio
 
 
-def sync(session: Session) -> int:
-    """Add every listed exercise the database does not have yet, by name. Returns how many were added.
+SYNCED = ("name", "category", "met", "compendium_code")  # what sync brings up to the list on a held row
 
-    An existing row keeps its name, kind and category. An existing cardio row takes the list's met and
-    compendium_code when they differ, so a corrected Compendium value reaches a live database. Running
-    it twice changes nothing. The caller commits."""
-    existing = {e.name: e for e in session.scalars(select(Exercise))}
+
+class SyncStopped(Exception):
+    """A listed row would take a name another row holds. Its text is one line, the two keys."""
+
+
+def sync(session: Session) -> int:
+    """Match the table to the list by key. Returns how many rows were added.
+
+    A listed key the table lacks is added. A held row takes the list's name, category, met and compendium_code when
+    they differ, so a rename or a corrected Compendium value reaches a live database; its id and kind stay. A row
+    whose key is not listed is retired, and one listed again is brought back. No row is deleted. A listed row whose
+    name another row holds stops the sync with SyncStopped, before any change. Running it twice changes nothing.
+    The caller commits."""
+    held = {e.key: e for e in session.scalars(select(Exercise))}
+    key_holding = {e.name: e.key for e in held.values()}
     listed = rows()
-    added = [Exercise(**row) for row in listed if row["name"] not in existing]
     for row in listed:
-        held = existing.get(row["name"])
-        if held is not None and held.kind == "cardio" and row["kind"] == "cardio":
-            if (held.met, held.compendium_code) != (row["met"], row["compendium_code"]):
-                held.met, held.compendium_code = row["met"], row["compendium_code"]
+        other = key_holding.get(row["name"])
+        if other is not None and other != row["key"]:
+            raise SyncStopped(f"Exercise sync stopped: {row['key']} and {other} would hold one name. "
+                              "Nothing was changed.")
+    added = []
+    for row in listed:
+        e = held.get(row["key"])
+        if e is None:
+            added.append(Exercise(**row))
+            continue
+        for column in SYNCED:
+            if getattr(e, column) != row[column]:
+                setattr(e, column, row[column])
+        if e.retired:
+            e.retired = False
+    keys = {row["key"] for row in listed}
+    for key, e in held.items():
+        if key not in keys and not e.retired:
+            e.retired = True
     session.add_all(added)
     session.flush()
     return len(added)
@@ -192,6 +227,8 @@ def main() -> None:
             total = len(session.scalars(select(Exercise.id)).all())
     except DatabaseNotConfigured as problem:
         sys.exit(f"FAILED: {problem}")  # one line on stderr, exit status 1
+    except SyncStopped as problem:
+        sys.exit(str(problem))  # one line on stderr, exit status 1: session_scope rolled back
     finally:
         dispose()
     print(f"Exercise list synced: {added} added, {total} in all.")

@@ -198,14 +198,16 @@ def test_the_exercise_sync_fills_an_empty_table_and_is_idempotent(db_session):
     assert all(met and code for _, _, kind, _, met, code in after if kind == "cardio")
 
 
-def test_the_sync_adds_only_what_is_missing_and_changes_nothing_else(db_session):
+def test_the_sync_adds_only_what_is_missing_and_brings_a_held_row_up_to_the_list(db_session):
+    # By key since exercise-list.md R2: a held row's category comes back to the list's; its id and kind stay.
     squat = db_session.scalar(select(Exercise).where(Exercise.name == "Back Squat"))
     squat.category = "changed-here"
     db_session.delete(db_session.scalar(select(Exercise).where(Exercise.name == "Plank")))
     db_session.commit()
     assert exercises.sync(db_session) == 1
     db_session.commit()
-    assert db_session.get(Exercise, squat.id).category == "changed-here"
+    back = db_session.get(Exercise, squat.id)
+    assert (back.category, back.kind, back.key) == ("squat", "lift", "back_squat")
     assert db_session.scalar(select(Exercise).where(Exercise.name == "Plank")) is not None
 
 
@@ -244,7 +246,7 @@ def test_the_postgres_sql_carries_the_server_defaults():
 def test_session_scope_rolls_back_on_an_error():
     with pytest.raises(RuntimeError):
         with db.session_scope() as session:
-            session.add(Exercise(name="Rolled Back Lift", kind="lift", category="push"))
+            session.add(Exercise(key="rolled_back_lift", name="Rolled Back Lift", kind="lift", category="push"))
             session.flush()  # the row is written inside the transaction
             raise RuntimeError("boom")
     with db.session_scope() as session:
@@ -593,7 +595,7 @@ def test_0004_applies_on_an_empty_database_and_follows_0003():
         engine.dispose()
     from alembic.script import ScriptDirectory
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0012"  # hardening
+    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0013"  # exercise list
 
 
 def test_the_postgres_sql_deletes_the_marked_rows_and_drops_the_columns():
