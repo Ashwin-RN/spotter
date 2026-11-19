@@ -630,3 +630,91 @@ The `exercise_alias` table (for when something writes aliases at runtime). Packs
   set before the first bench set, the dumbbell set is logged first, so a later set asks again.
 - (af) `distance_m` on `SetIn` and `LogSetIn` adds "On a lift done one side at a time, one side's distance.", as
   `reps` and `time_s` say (Suitcase Carry is the one such lift). Hashes moved again: `log_lifts`, `edit_entry`.
+
+2026-11-19, C4g:
+
+- (ag) `evals/recorder.py`, outside C4g's row, on the main chat's word: it keeps every call's answer as `result`,
+  a refusal's among them. `error_code` must read a refusal's `errors` list, where a `pick_lift` can sit behind another
+  code, and `answer_has` reads a write's answer (`hand_check`). `answer` stays as it was, for data reads only, so
+  `quotes_spotter` reads what it read before. The recorder's test is in `tests/test_evals.py`.
+- (ah) The judge's vocabulary, as built: `error_code`, `no_error_code` and `refusals`, each `{function: code}`, and
+  `answer_has`, `{function: key}` or `{function: {...}}`. "Any `log_lifts` call has `error_code` X" is `refusals`:
+  every call of it refused with X, and no call at all passes, so `log_lifts` is in those cases' `may`, not `must`.
+  `no_error_code` is the form for "no `pick_lift`"; no case uses it, since `read_plain_word` holds every write in
+  its `no_call` and no read refuses with `pick_lift` (corrected at C4g's fix round). A `db` check takes `where`, which narrows its rows, so "no Back Squat set" and
+  "today's three sets" are one check each. A `lift_set` row carries its session's `date` and `deleted_at`.
+- (ai) 22 new cases, not 21: `split_squat_a_side` ("did bulgarian split squats 3x10 each leg with 20kg dumbbells"),
+  a lift done one side at a time, by the main chat's word. Each new case is `direct` and `core` false, so the core
+  stays at 101; growing it is the owner's call. The cases go from 235 to 257, the golden package from 164 to 186.
+- (aj) Two cases outside the changed list, on the main chat's word: `unknown_exercise` and `which_press` forbade any
+  `log_lifts` call. The instructions now say to log a lift in the person's own words, and a refused try of "zorbinator"
+  or "press" is right, so `log_lifts` moves to their `may`, and every such call must be refused as `unknown_exercise`.
+  Both still need no lift session.
+- (ak) As built, every set sends a weight, 0 for bodyweight work: a plank or a push-up with no weight is refused
+  (`missing_field`). The new cases' `inputs_include` asks for no weight where the person said none, and the rows check
+  the 0. A push-up set of 120 sent with no weight is refused with `missing_field` first and `reps_out_of_range` in
+  `errors`: `pushups_over_100` reads both.
+- (al) Cases that cannot judge what the table says: the import preview counts sessions and names no lift, so
+  `import_exact_smith` judges the name sent, Bench Press, and the preview's count of one lift session to write; that
+  an import takes a name as written is the unit tests' (`tests/test_matcher.py`). `import_outside_defaults` passes on
+  a `list_exercises` answer that holds Hack Squat, by a search or a kind or category, or on an import that sends Hack
+  Squat. `read_plain_word` passes on any data read that shows both squats; it does not prove R19, since no model-read
+  text says `get_progress` takes a plain word. `pick_lift_answer` judges both turns' calls together: "no `pick_lift`
+  in turn 2" stands on the rows and the final reply.
+- (am) Case words: `pick_lift_answer` says "log squat 3x5 at 80 for me", since `word_both_logged` keeps the table's
+  "squat 3x5 at 80" and no two cases share their words. Seeds send `exact` true on every set. The 13 changed cases keep
+  their weights, units and reps in `inputs_include`; only the name moved to the rows. `lift_added_later` keeps its
+  forbid of a sent "Back Squat": a squat resent by any word also fails its `set_count`.
+- (an) `then` on the Claude CLI: the first turn sends `--session-id` in place of `--no-session-persistence`, the
+  second `--resume`, in the same working folder. Neither flag was checked against a live CLI. If one is wrong, the CLI
+  prints no result document and the run fails with that turn's reason; if the second turn starts a fresh conversation,
+  the case's rows fail. Both turns stay in the CLI's saved sessions. Codex and the Gemini runner send the first turn
+  only, and the run prints so.
+- (ao) Found in the build's own check: a refused `log_lifts` is now allowed in `unknown_exercise`, `which_press`,
+  `unknown_lift_close`, `pushups_over_100` and `word_both_logged`, so each also fails a claim of done ("Logged bench.
+  Right?") by a `reply_lacks_pattern` of the shape G1's import and delete cases use. The two hand-check cases need the
+  reply to ask about a hand or both hands; "each" alone is the summary's own word and no longer passes.
+- (ap) Test files edited outside C4g's row, each for one reason: `tests/test_routines.py` (`routine_logged`'s db now
+  gives two reasons for a set short, the session's and the Bench Press rows'), `tests/test_units.py` (its hand-made
+  rows of `lb_routine_changed` gain the `lift_set` rows the case now reads).
+
+2026-11-20, C4g's fix round (the review: no case failed right behaviour; one must fix, five should fix). Each wrong run
+the review found passing is a failing run in `tests/test_golden_cases.py`:
+
+- (aq) Must fix: `pick_lift_answer` passed a guess made in the first turn. `run_once` counts the calls the server holds
+  when the first turn ends and marks each call's turn; `judge_turns` fails a two-turn case when a write succeeded
+  before the second line, "a write succeeded before the second turn was sent". Codex and Gemini no longer run a
+  two-turn case's first turn: they fail it unrun, with the reason `run.TWO_TURNS_UNSENT`.
+- (ar) The hand-check cases need the hand words and the question mark in one sentence; the imports ask, never claim an
+  import (G1's import pattern), and `import_outside_defaults` never says Hack Squat is off the list; `read_plain_word`
+  quotes two of the run's figures, one a seeded squat's (`quotes_one_of`, `quotes_spotter` 2).
+- (as) Every new case whose words mean today checks its rows' date; `split_squat_a_side` also refuses "sets of 20";
+  the claim of done adds recorded, entered and tracked, and a verb that ends its sentence ("Zorbinator recorded.");
+  the plain-word cases with one lift to take (`word_no_history`, `word_smith_history`, `word_named_equipment`,
+  `word_dumbbell_history`) and `dumbbell_each` ask nothing.
+- (at) Every seeded lift set in `evals/cases.json` sends `exact` true: the 14 sets of `gold_best_deadlift`,
+  `undo_session_note`, `same_again_no_context`, `logged_session_to_routine`, `undo_pasted_set_list`, `lb_bench_goal`
+  and `edit_lift_weight` too.
+- (au) Where the Claude CLI keeps a session is written nowhere in this repo; the main chat read this PC's store and the
+  CLI on 2026-11-20: `<config dir>/projects/<project folder>/<session id>.jsonl`, with a folder `<session id>/` beside it
+  at times, the config dir `CLAUDE_CONFIG_DIR` when set, else `~/.claude`. After a two-turn run, `run.forget_session`
+  deletes every match of `projects/*/<session id>.jsonl` and `projects/*/<session id>` (the id a UUID as written,
+  checked), then each match's project folder if it is then empty, and nothing else. It does not rely on how the CLI
+  names a project folder. A match whose real path is outside `projects` (a junction or a link) is left and named, and
+  so is any delete that fails, in the run and the summary. Tested on a fake config dir only. Whether a resumed turn reports a running total of cost and tokens is not checked: the runner adds the
+  two turns, and the doc says a running total would count the first turn twice.
+
+2026-11-20, C4g's re-check (no new must fix; the guess in turn 1 now fails):
+
+- (av) `pick_lift_answer`'s reply must name Back Squat and 80 kg and say no "Smith".
+- (aw) `judge_turns` also reads the case's own `error_code` by turn: `pick_lift` must come in the first turn ("no
+  log_lifts call in the first turn was refused with pick_lift") and in no call of the second ("... refused with
+  pick_lift again").
+- (ax) `forget_session` finds a session by its id, never by the project folder's name (the CLI writes every character
+  but a to z, A to Z and 0 to 9 as "-", cut at 200 with a hash, read from the CLI): it also deletes the folder
+  `<session id>/` beside the file, removes each emptied project folder, and leaves, and names, a match whose real path is
+  outside `projects`. `run.cli_project_folder` is gone; the test's fake CLI names its folder by the CLI's rule.
+- (ay) The hand-check cases need the question to be about the hands: two hand phrases joined by "or" in the question's
+  sentence, or a question word opening it before them. A sentence also ends at ";" and an en or em dash.
+- (az) The import claim pattern, on G1's three import cases and the two new ones, also catches logged, added, "Saved
+  to your log", "in your log now" and "now in Spotter".

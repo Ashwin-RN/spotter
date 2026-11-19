@@ -863,7 +863,9 @@ def test_the_six_cases_load_last_and_judge_both_ways(app_settings):
     lifts_case = judge.resolve(six[-1], variables)
     sets = [{"exercise": "Bench Press", "weight_lb": 230, "reps": 8}] * 3 + \
            [{"exercise": "Overhead Press", "weight_kg": 61.23, "reps": 10}] * 3
-    session = {"lift_session": [{"id": 1, "set_count": 6, "date": "2026-11-15", "deleted_at": None}]}
+    session = {"lift_session": [{"id": 1, "set_count": 6, "date": "2026-11-15", "deleted_at": None}],
+               "lift_set": [{"exercise": "Bench Press", "weight_kg": 104.33, "reps": 8, "deleted_at": None}] * 3
+               + [{"exercise": "Overhead Press", "weight_kg": 61.23, "reps": 10, "deleted_at": None}] * 3}  # C4g
     assert judge.judge(lifts_case, [{"name": "log_lifts", "arguments": {"sets": sets}, "is_error": False}],
                        "Logged your push day.", session) == []
     converted = [{**s, "weight_lb": 102.06} if s["exercise"] == "Bench Press" else s for s in sets]

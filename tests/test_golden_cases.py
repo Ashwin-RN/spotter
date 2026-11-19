@@ -34,6 +34,7 @@ ZONE = "Asia/Kolkata"
 TODAYS = [date(2026, 11, 16) + timedelta(days=i) for i in range(7)] + [date(2026, 12, 1), date(2027, 3, 1)]
 DAY = date(2026, 11, 17)  # a Tuesday: the day every case is played on once
 FAKE = "not sent"  # a call recorded as made, without sending it: a write a failing run adds
+THEN = ("the second turn",)  # in a run's calls: the calls after it were made in the second turn, as run_once marks them
 W = list(judge.WRITE_FUNCTIONS)
 LAST_G1 = "import_other_app"
 # G1's cases in the core (the coordinator's change, 2026-11-17): its 17 golden cases, its catch-up and import,
@@ -107,9 +108,15 @@ class Player:
         return Person(user_id, token, {**dates_on(self.today), **{f"seed.{k}": v for k, v in seeded.items()}}, email)
 
     def play(self, person: Person, calls: list) -> list[dict]:
-        """Sends each call, and returns the run's record: only these calls, a fake one as made and answered."""
+        """Sends each call, and returns the run's record: only these calls, a fake one as made and answered. With
+        THEN among them, each call is marked with its turn, 1 before THEN and 2 after, as run_once marks a two-turn
+        run's calls."""
         out = []
+        turn = 1 if THEN in calls else None
         for item in calls:
+            if item == THEN:
+                turn = 2
+                continue
             name, arguments = item[0], item[1]
             arguments = arguments(person) if callable(arguments) else judge.resolve(arguments, person.variables)
             if len(item) > 2 and item[2] == FAKE:
@@ -122,7 +129,7 @@ class Player:
             assert r.status_code == 200, r.text
             made = self.recorder.calls(person.token)[before:]
             assert [c["name"] for c in made] == [name]
-            out += made
+            out += [{**c, "turn": turn} if turn else c for c in made]
         return out
 
     def verdict(self, case: dict, person: Person, calls: list, reply) -> list[str]:
@@ -1201,6 +1208,296 @@ for id_, replies in REVIEW_RIGHT.items():
     RUNS[id_]["pass"] += [(calls, reply) for reply in replies]
 
 
+# ---------------------------------------------------------------- exercise-list.md, C4g: the lifts by the person's words
+
+def lift(word, weight, reps=None, n=1, **extra):
+    """n sets of one lift as the person said it, weight in kg (weight_lb when lb=True), and reps, or time_s and
+    distance_m in extra."""
+    unit = "weight_lb" if extra.pop("lb", False) else "weight_kg"
+    one = {"exercise": word, unit: weight, **({"reps": reps} if reps is not None else {}), **extra}
+    return [dict(one) for _ in range(n)]
+
+
+def logs(*groups, **extra):
+    return ("log_lifts", {"sets": [s for g in groups for s in g], **extra})
+
+
+SPLIT = "Logged Bulgarian Split Squat, 3 x 10 a side at 20 kg each."
+HACK = {"weight_unit": "kg", "rows": [{"kind": "lift_session", "date": "2026-10-20",
+                                       "sets": [{"exercise": "Hack Squat", "weight": 100, "reps": 8, "times": 3}]}]}
+BENCH_IMPORT = {"weight_unit": "kg", "rows": [{"kind": "lift_session", "date": "2026-10-20",
+                                               "sets": [{"exercise": "Bench Press", "weight": 60, "reps": 5,
+                                                         "times": 3}]}]}
+PICKED = logs(lift("Back Squat", 80, 5, 3, exact=True))
+C4G_RUNS = {
+    "word_no_history": {
+        "pass": [([logs(lift("bench", 60, 8, 3))], "Logged Bench Press: 3 x 8 at 60 kg.")],
+        "fail": [([logs(lift("smith bench press", 60, 8, 3))], "Logged Bench Press: 3 x 8 at 60 kg."),  # another lift
+                 ([logs(lift("bench", 60, 8, 3))], "Logged 3 sets of 8 at 60 kg.")]},  # the lift not named
+    "word_smith_history": {
+        "pass": [([logs(lift("squat", 60, 5, 3))], "Logged Smith Squat, 3 x 5 at 60 kg, as before.")],
+        "fail": [([logs(lift("Back Squat", 60, 5, 3, exact=True))], "Logged Smith Squat, 3 x 5 at 60 kg."),
+                 ([logs(lift("squat", 60, 5, 3))], "Logged Back Squat, 3 x 5 at 60 kg.")]},
+    "word_both_logged": {
+        "pass": [([logs(lift("squat", 80, 5, 3))], "You have logged Back Squat and Smith Squat. Which was it?")],
+        "fail": [([logs(lift("Back Squat", 80, 5, 3, exact=True))], "Logged Back Squat. Or was it Smith Squat?"),
+                 ([logs(lift("squat", 80, 5, 3))], "Which squat was it?"),
+                 ([], "Back Squat or Smith Squat?")]},  # asked before Spotter did
+    "pick_lift_answer": {  # the two turns' calls, the final reply
+        "pass": [([logs(lift("squat", 80, 5, 3)), THEN, PICKED], "Logged Back Squat, 3 x 5 at 80 kg.")],
+        "fail": [([logs(lift("squat", 80, 5, 3)), THEN, logs(lift("Smith Squat", 80, 5, 3, exact=True))],
+                  "Logged Smith Squat, 3 x 5 at 80 kg."),
+                 ([THEN, PICKED], "Logged Back Squat, 3 x 5 at 80 kg."),  # no pick_lift: the first turn never asked
+                 ([logs(lift("squat", 80, 5, 3)), THEN, logs(lift("squat", 80, 5, 3))], "Which one, again?"),
+                 ([logs(lift("squat", 80, 5, 3)), THEN, PICKED], "Logged Back Squat. Anything else?"),
+                 # the fix round's must fix: a guess in the first turn, after the refusal, before any answer
+                 ([logs(lift("squat", 80, 5, 3)), PICKED], "It is already logged as Back Squat, 3 x 5 at 80 kg.")]},
+    "word_named_equipment": {
+        "pass": [([logs(lift("barbell bench press", 60, 5, 3))], "Logged Bench Press, 3 x 5 at 60 kg.")],
+        "fail": [([logs(lift("bench", 60, 5, 3))], "Logged Bench Press, 3 x 5 at 60 kg.")]},  # Smith, by history
+    "word_dumbbell_history": {
+        "pass": [([logs(lift("bench", 30, 8, 3))], "Logged Bench Press, 3 x 8 at 30 kg.")],
+        "fail": [([logs(lift("dumbbell bench press", 30, 8, 3))], "Logged Bench Press with dumbbells, 30 kg each.")]},
+    "dumbbell_each": {
+        "pass": [([logs(lift("dumbbell bench press", 25, 10, 3))], "Logged Dumbbell Bench Press, 3 x 10 at 25 kg each.")],
+        "fail": [([logs(lift("dumbbell bench press", 50, 10, 3))], "Logged 3 x 10 at 50 kg, 25 kg each."),
+                 ([logs(lift("dumbbell bench press", 25, 10, 3))], "Logged 3 x 10 at 25 kg.")]},
+    "hand_check_family": {
+        "pass": [([logs(lift("dumbbell bench press", 50, 8))],
+                  "Logged Dumbbell Bench Press, 1 x 8 at 50 kg each. Was that 50 kg in each hand, or 25 kg a hand?")],
+        "fail": [([logs(lift("dumbbell bench press", 25, 8))], "Logged it as 25 kg a hand. Right?"),  # halved by itself
+                 ([logs(lift("dumbbell bench press", 50, 8))], "Logged Dumbbell Bench Press at 50 kg each.")]},
+    "hand_check_link": {
+        "pass": [([logs(lift("hammer curls", 20, 10, 3))],
+                  "Logged Dumbbell Hammer Curl, 3 x 10 at 20 kg each. Was that 20 kg in each hand, or 10 kg a hand?")],
+        "fail": [([logs(lift("hammer curls", 10, 10, 3))], "Logged 10 kg a hand. Right?"),
+                 ([logs(lift("hammer curls", 20, 10, 3))], "Logged Dumbbell Hammer Curl, 3 x 10 at 20 kg each.")]},
+    "hold_plank": {
+        "pass": [([logs(lift("plank", 0, n=2, time_s=90))], "Logged Plank, 2 x 90 s.")],
+        "fail": [([logs(lift("plank", 0, 90, 2))], "Logged 2 planks of 90."),  # as reps: refused
+                 ([logs(lift("plank", 0, n=1, time_s=90))], "Logged Plank, 90 s.")]},
+    "dead_hang": {
+        "pass": [([logs(lift("dead hang", 0, time_s=45))], "Logged Dead Hang, 45 s.")],
+        "fail": [([logs(lift("dead hang", 0, 45))], "Logged."),
+                 ([logs(lift("dead hang", 0, n=1, time_s=90))], "Logged Dead Hang, 90 s.")]},
+    "carry_farmers": {
+        "pass": [([logs(lift("farmer's carry", 32, n=2, distance_m=40))],
+                  "Logged Farmer's Carry, 2 x 40 m at 32 kg each.")],
+        "fail": [([logs(lift("farmer's carry", 64, n=2, distance_m=40))], "Logged 2 x 40 m at 64 kg."),
+                 ([logs(lift("farmer's carry", 32, n=1, distance_m=80))], "Logged 80 m at 32 kg each.")]},
+    "hyrox_wall_balls": {
+        "pass": [([logs(lift("wall balls", 6, 100))], "Logged Wall Ball, 1 x 100 at 6 kg.")],
+        "fail": [([logs(lift("wall balls", 6, 50, 2))], "Logged Wall Ball, 2 x 50 at 6 kg.")]},
+    "box_jumps": {
+        "pass": [([logs(lift("box jumps", 0, 5, 4))], "Logged Box Jump, 4 x 5.")],
+        "fail": [([logs(lift("box jumps", 0, 20))], "Logged 20 box jumps."),
+                 ([logs(lift("burpees", 0, 5, 4))], "Logged Box Jump, 4 x 5.")]},
+    "burpees": {
+        "pass": [([logs(lift("burpees", 0, 15, 3))], "Logged Burpee, 3 x 15.")],
+        "fail": [([logs(lift("burpee broad jumps", 0, n=3, distance_m=80))], "Logged Burpee, 3 x 15."),
+                 ([logs(lift("burpees", 0, 15, 3)), fake("log_cardio", {"exercise": "Outdoor Walk", "minutes": 10})],
+                  "Logged Burpee, 3 x 15, and the cardio.")]},
+    "assisted_pull_up": {
+        "pass": [([logs(lift("assisted pull-ups", -20, 8, 3))], "Logged Assisted Pull-Up, 3 x 8 with 20 kg help."),
+                 ([logs(lift("pull-ups", -20, 8, 3))], "Logged Assisted Pull-Up, 3 x 8 with 20 kg help.")],  # note (i)
+        "fail": [([logs(lift("pull-ups", 20, 8, 3))], "Logged Pull-Up, 3 x 8 at 20 kg."),
+                 ([logs(lift("assisted pull-ups", -30, 8, 3))], "Logged 3 x 8 with 30 kg help.")]},
+    "unknown_lift_close": {
+        "pass": [([logs(lift("cambered bar skull crushers", 30, 10, 3))],
+                  "Cambered bar skull crushers are not on Spotter's list. Was it EZ Bar Skull Crusher, or another?"),
+                 ([("list_exercises", {"search": "skull crusher"})],
+                  "Which lift is it: EZ Bar Skull Crusher or Dumbbell Skull Crusher?"),
+                 ([], "Which skull crusher was it, and on what bar?")],
+        "fail": [([logs(lift("ez bar skull crusher", 30, 10, 3))], "Logged it as EZ Bar Skull Crusher. Right?"),
+                 ([logs(lift("cambered bar skull crushers", 30, 10, 3))], "Logged your skull crushers.")]},
+    "read_plain_word": {
+        "pass": [([("get_progress", {})],  # the every-lift form gives each lift's estimated max
+                  "Back Squat: an estimated max of 119.6 kg now. Smith Squat: 84.6 kg."),
+                 ([("get_progress", {"exercise": "squat"})],
+                  "Your Back Squat estimated max is 119.6 kg, and your Smith Squat's is 84.6 kg."),
+                 ([data("lift_sets", filters={"exercise": "squat"})],
+                  "Back Squat went from 100 to 102.5 kg, Smith Squat from 70 to 72.5 kg.")],
+        "fail": [([("get_progress", {"exercise": "Back Squat"})], "Back Squat: an estimated max of 119.6 kg now."),
+                 ([("get_progress", {})], "Back Squat and Smith Squat are both up. Want a plan?"),
+                 ([], "Back Squat and Smith Squat are both going well.")]},
+    "import_exact_smith": {
+        "pass": [([("import_entries", BENCH_IMPORT)],
+                  "Preview, nothing written: 1 lift session on 20 Oct, Bench Press 3 x 5 at 60 kg. Write it?")],
+        "fail": [([("import_entries", {**BENCH_IMPORT, "rows": [{**BENCH_IMPORT["rows"][0], "sets": [
+            {"exercise": "Smith Bench Press", "weight": 60, "reps": 5, "times": 3}]}]})],
+                  "Preview: Bench Press, 3 x 5 at 60 kg. Write it?"),
+                 ([("import_entries", {**BENCH_IMPORT, "dry_run": False})], "Imported Bench Press.")]},
+    "import_outside_defaults": {
+        "pass": [([("list_exercises", {"search": "hack squat"}), ("import_entries", HACK)],
+                  "Hack Squat is on Spotter's list. Preview: 1 session, 3 x 8 at 100 kg. Write it?"),
+                 ([("list_exercises", {"search": "hack squat"})], "Hack Squat is on the list. Shall I preview it?"),
+                 ([("import_entries", HACK)], "Preview: Hack Squat, 3 x 8 at 100 kg. Write it?")],
+        "fail": [([("list_exercises", {}), ("import_entries", {**HACK, "rows": [{**HACK["rows"][0], "sets": [
+            {"exercise": "Back Squat", "weight": 100, "reps": 8, "times": 3}]}]})],
+                  "Hack Squat is not on the short list, so the preview has Back Squat. Write it?"),
+                 ([("list_exercises", {"search": "hack squat"}), ("import_entries", {**HACK, "dry_run": False})],
+                  "Imported Hack Squat. Anything else?")]},
+    "pushups_over_100": {
+        "pass": [([logs(lift("push-ups", 0, 120))],
+                  "Spotter takes up to 100 reps a set, so nothing is logged. Was it 100 and 20, or another split?"),
+                 ([], "Spotter takes 1 to 100 reps in a set. How should I split the 120?")],
+        "fail": [([logs(lift("push-ups", 0, 60, 2))], "Logged 2 sets of 60, since 100 is the most. Fine?"),
+                 ([logs(lift("push-ups", 0, 120))], "Logged 120 push-ups.")]},
+    "split_squat_a_side": {
+        "pass": [([logs(lift("bulgarian split squats", 20, 10, 3))], SPLIT)],
+        "fail": [([logs(lift("bulgarian split squats", 20, 20, 3))], "Logged 3 x 20 at 20 kg each."),
+                 ([logs(lift("bulgarian split squats", 40, 10, 3))], "Logged 3 x 10 at 40 kg."),
+                 ([logs(lift("bulgarian split squats", 20, 10, 6))], "Logged 6 sets of 10, three a leg."),
+                 ([logs(lift("bulgarian split squats", 20, 10, 3))], "Logged 3 x 20 reps, both legs, at 20 kg each.")]},
+}
+RUNS.update(C4G_RUNS)
+
+# The changed lift cases of the package: a run in the person's own words passes, and one whose word reaches another lift
+# fails on the rows, the case's whole reason since the name moved out of inputs_include.
+C4G_WORDS = {
+    "mixed_unit_session": ([logs(lift("deadlifts", 110, 4, 2), lift("bench", 155, 6, 3, lb=True))],
+                           [logs(lift("trap bar deadlift", 110, 4, 2), lift("bench", 155, 6, 3, lb=True))]),
+    "bodyweight_pullups": ([logs(*[lift("pullups", 0, r) for r in (7, 6, 5)])],
+                           [logs(*[lift("chin-ups", 0, r) for r in (7, 6, 5)])]),
+    "two_separate_workouts": ([logs(lift("back squat", 85, 3, 3)), logs(lift("ohp", 30, 8, 2), new_session=True)],
+                              [logs(lift("front squat", 85, 3, 3)), logs(lift("ohp", 30, 8, 2), new_session=True)]),
+    "two_lifting_days": ([logs(lift("bench", 50, 10), lift("bench", 50, 9), lift("bench", 50, 8), date="{{days_ago:2}}"),
+                          logs(lift("barbell rows", 42.5, 12, 2), date="{{yesterday}}")],
+                         [logs(lift("bench", 50, 10), lift("bench", 50, 9), lift("bench", 50, 8), date="{{days_ago:2}}"),
+                          logs(lift("dumbbell rows", 42.5, 12, 2), date="{{yesterday}}")]),
+    "hurried_squat": ([logs(lift("squat", 100, 5, 3))], [logs(lift("smith squat", 100, 5, 3))]),
+    "rambling_day_log": ([("log_bodyweight", {"kg": 79.8}),
+                          ("log_food", {"entries": [{"description": "Chicken wrap", "kcal": 520, "meal": "lunch"}]}),
+                          logs(lift("back squats", 90, 5, 3), lift("bench", 65, 8, 3)),
+                          ("log_cardio", {"exercise": "Outdoor Walk", "minutes": 25})],
+                         [("log_bodyweight", {"kg": 79.8}),
+                          ("log_food", {"entries": [{"description": "Chicken wrap", "kcal": 520, "meal": "lunch"}]}),
+                          logs(lift("front squats", 90, 5, 3), lift("bench", 65, 8, 3)),
+                          ("log_cardio", {"exercise": "Outdoor Walk", "minutes": 25})]),
+    "pushups_over_30": ([logs(lift("push-ups", 0, 50))], [logs(lift("dips", 0, 50))]),
+}
+for id_, (right, wrong) in C4G_WORDS.items():
+    reply = RUNS[id_]["pass"][0][1]
+    RUNS[id_]["pass"].append((right, reply))
+    RUNS[id_]["fail"].append((wrong, reply))
+RUNS["which_press"]["pass"].append(([logs(lift("press", 45, 6, 4))], "Press is not one lift. Bench or overhead?"))
+# A claim of done after a refusal, now that a refused log_lifts is allowed; and a hand check that never reached the
+# person, the summary's "each" alone (the fix round of C4g's build).
+CLAIMS = {
+    "which_press": ([logs(lift("press", 45, 6, 4))], "Logged bench. Right?"),
+    "unknown_lift_close": ([logs(lift("cambered bar skull crushers", 30, 10, 3))], "Logged them as EZ Bar Skull Crusher. OK?"),
+    "pushups_over_100": ([logs(lift("push-ups", 0, 120))], "Logged 100 push-ups. Is that right?"),
+    "word_both_logged": ([logs(lift("squat", 80, 5, 3))], "Logged Back Squat. Or was it Smith Squat?"),
+    "hand_check_family": ([logs(lift("dumbbell bench press", 50, 8))],
+                          "Logged Dumbbell Bench Press, 1 x 8 at 50 kg each. Anything else?"),
+    "hand_check_link": ([logs(lift("hammer curls", 20, 10, 3))],
+                        "Logged Dumbbell Hammer Curl, 3 x 10 at 20 kg each. Anything else?"),
+}
+for id_, run_ in CLAIMS.items():
+    RUNS[id_]["fail"].append(run_)
+
+
+# The changed cases before import_other_app (G1's and earlier): played as the package's are, by the same player. Each
+# passes in the person's own words, and fails when a word reaches another lift; unknown_exercise and the rest of
+# its kind now take a refused try of the person's word (exercise-list.md, C4g).
+ROUTINE_BENCH = {"exercise": "Bench Press", "exact": True}
+EARLIER = {  # id: (passing runs, failing runs), each run (calls, reply)
+    "lift_one_sentence": ([([logs(lift("back squat", 100, 5, 3), lift("bench press", 80, 8, 2), lift("bench press", 80, 6))],
+                            "Logged.")],
+                          [([logs(lift("front squat", 100, 5, 3), lift("bench press", 80, 8, 2),
+                                  lift("bench press", 80, 6))], "Logged.")]),
+    "lift_set_by_set": ([([logs(lift("bench", 80, 5))], "Added to today's session.")],
+                        [([logs(lift("dumbbell bench press", 80, 5))], "Added.")]),
+    "lift_added_later": ([([logs(lift("barbell rows", 50, 10, 3))], "Added.")],
+                         [([logs(lift("dumbbell rows", 50, 10, 3))], "Added.")]),
+    "routine_logged": ([([logs(lift("Bench Press", 60, 8, 3, exact=True), lift("Overhead Press", 40, 10, 3, exact=True))],
+                         "Logged your push day."),
+                        ([logs(lift("bench", 60, 8, 3), lift("overhead press", 40, 10, 3))], "Logged your push day.")],
+                       [([logs(lift("incline bench", 60, 8, 3), lift("overhead press", 40, 10, 3))],
+                         "Logged your push day.")]),
+    "routine_changed": ([([logs(lift("bench", 62.5, 8, 3), lift("Overhead Press", 40, 10, 3, exact=True))], "Logged.")],
+                        [([logs(lift("smith bench press", 62.5, 8, 3), lift("Overhead Press", 40, 10, 3, exact=True))],
+                          "Logged.")]),
+    "lb_lifts": ([([logs(lift("bench", 225, 5, lb=True), lift("bench", 185, 8, 3, lb=True))], "Logged, in lb.")],
+                 [([logs(lift("incline bench", 225, 5, lb=True), lift("bench", 185, 8, 3, lb=True))], "Logged, in lb.")]),
+    "lb_routine_changed": ([([logs(lift("Bench Press", 230, 8, 3, lb=True, exact=True),
+                                   lift("Overhead Press", 61.23, 10, 3, exact=True))], "Logged.")],
+                           [([logs(lift("smith bench press", 230, 8, 3, lb=True),
+                                   lift("Overhead Press", 61.23, 10, 3, exact=True))], "Logged.")]),
+    "unknown_exercise": ([([logs(lift("zorbinator", 20, 8, 3))], "Zorbinator is not on Spotter's list. Which lift is it?"),
+                          ([("list_exercises", {})], "Which lift is the zorbinator?")],
+                         [([logs(lift("zorbinator", 20, 8, 3)), logs(lift("bench press", 20, 8, 3))],
+                           "Logged it as Bench Press. Right?"),
+                          ([], "Logged."),
+                          ([logs(lift("zorbinator", 20, 8, 3))], "Logged it as Bench Press. Right?")]),  # a claim
+}
+
+
+# The fix round of C4g's review: each wrong run it found passing is a failing run here.
+C4G_REVIEW = [
+    ("hand_check_family", [logs(lift("dumbbell bench press", 50, 8))],
+     "Logged Dumbbell Bench Press, 1 x 8 at 50 kg per hand. Anything else?"),
+    ("hand_check_family", [logs(lift("dumbbell bench press", 50, 8))],
+     "Logged Dumbbell Bench Press, 50 kg in total for 8. Want to log more?"),
+    ("hand_check_link", [logs(lift("hammer curls", 20, 10, 3))],
+     "Logged Dumbbell Hammer Curl, 3 x 10 at 20 kg each hand. Anything else today?"),
+    ("import_exact_smith", [("import_entries", BENCH_IMPORT)], "Imported Bench Press, 3 x 5 at 60 kg on 20 Oct."),
+    ("import_exact_smith", [("import_entries", BENCH_IMPORT)],  # a preview, never put to the person
+     "Preview, nothing written yet: 1 lift session on 20 Oct, Bench Press 3 x 5 at 60 kg."),
+    ("import_outside_defaults", [("list_exercises", {"search": "hack squat"}), ("import_entries", HACK)],
+     "Hack Squat is on Spotter's list. Preview, nothing written yet: 1 session, 3 x 8 at 100 kg."),
+    ("import_outside_defaults", [("list_exercises", {"search": "hack squat"}), ("import_entries", HACK)],
+     "Imported Hack Squat, 3 x 8 at 100 kg. Anything else?"),
+    ("import_outside_defaults", [("list_exercises", {"search": "hack squat"})],
+     "Hack Squat is not on Spotter's list. Which lift should I use instead?"),
+    ("read_plain_word", [("list_exercises", {}), ("get_log", {})], "Back Squat and Smith Squat are both going well."),
+    ("read_plain_word", [("get_progress", {})], "Back Squat is up to 140 kg for 5, and Smith Squat to 95 kg for 5."),
+    ("word_no_history", [logs(lift("bench", 60, 8, 3), date="{{yesterday}}")], "Logged Bench Press: 3 x 8 at 60 kg."),
+    ("split_squat_a_side", [logs(lift("bulgarian split squats", 20, 10, 3))],
+     "Logged Bulgarian Split Squat: 3 sets of 20 at 20 kg each."),
+    ("word_both_logged", [logs(lift("squat", 80, 5, 3))], "Recorded it as Back Squat. Or was it Smith Squat?"),
+    ("unknown_exercise", [logs(lift("zorbinator", 20, 8, 3))], "Zorbinator recorded. Which machine was it?"),
+    ("pushups_over_100", [logs(lift("push-ups", 0, 120))], "Recorded 100 push-ups, the most a set takes. Is that right?"),
+    ("word_smith_history", [logs(lift("squat", 60, 5, 3))], "Logged Smith Squat, 3 x 5 at 60 kg. Or was it Back Squat?"),
+    ("dumbbell_each", [logs(lift("dumbbell bench press", 25, 10, 3))],
+     "Logged Dumbbell Bench Press, 3 x 10 at 25 kg each. Was 25 kg each hand or both?"),
+    ("word_no_history", [logs(lift("bench", 60, 8, 3))], "Logged Bench Press: 3 x 8 at 60 kg. Or was it Smith?"),
+    ("word_named_equipment", [logs(lift("barbell bench press", 60, 5, 3))], "Logged Bench Press. Or the Smith one?"),
+    ("word_dumbbell_history", [logs(lift("bench", 30, 8, 3))], "Logged Bench Press, 3 x 8 at 30 kg. Dumbbells?"),
+]
+SQUAT = logs(lift("squat", 80, 5, 3))
+DB50, CURLS = [logs(lift("dumbbell bench press", 50, 8))], [logs(lift("hammer curls", 20, 10, 3))]
+PREVIEW = [("import_entries", BENCH_IMPORT)]
+C4G_REVIEW += [  # the re-check of the fix round
+    ("pick_lift_answer", [SQUAT, THEN, PICKED], "Logged Smith Squat, 3 x 5 at 80 kg."),
+    ("pick_lift_answer", [SQUAT, THEN, PICKED], "All set."),
+    ("pick_lift_answer", [SQUAT, THEN, PICKED], "Logged it: 3 x 5 at 80 kg."),  # the lift not named
+    ("pick_lift_answer", [SQUAT, THEN, PICKED], "Logged Back Squat 3 x 5 at 80 kg, and the Smith Squat too."),
+    ("pick_lift_answer", [SQUAT, THEN, PICKED], "Logged Back Squat, 5 x 3 at 100 kg."),
+    ("pick_lift_answer", [THEN, SQUAT, PICKED], "Logged Back Squat, 3 x 5 at 80 kg."),  # turn 1 asked with no call
+    ("pick_lift_answer", [SQUAT, THEN, SQUAT, PICKED], "Logged Back Squat, 3 x 5 at 80 kg."),  # asked again
+    ("hand_check_family", DB50, "Logged Dumbbell Bench Press at 50 kg per hand, want to log another set?"),
+    ("hand_check_family", DB50, "Logged Dumbbell Bench Press at 50 kg per hand \u2013 want to log another set?"),
+    ("hand_check_family", DB50, "Logged Dumbbell Bench Press at 50 kg per hand; want to log another set?"),
+    ("hand_check_link", CURLS, "Logged Dumbbell Hammer Curl at 20 kg each hand, want to log another set?"),
+    ("hand_check_link", CURLS, "Logged Dumbbell Hammer Curl at 20 kg each hand \u2013 anything else?"),
+    ("hand_check_link", CURLS, "Logged Dumbbell Hammer Curl at 20 kg each hand; anything else?"),
+    ("import_exact_smith", PREVIEW, "I've logged Bench Press 3 x 5 at 60 kg for 20 Oct. Anything else?"),
+    ("import_exact_smith", PREVIEW, "I've added Bench Press for 20 Oct. Want more?"),
+    ("import_exact_smith", PREVIEW, "Saved to your log: Bench Press 3 x 5 at 60 kg on 20 Oct. Anything else?"),
+    ("import_exact_smith", PREVIEW, "Bench Press 3 x 5 at 60 kg is in your log now. Anything else?"),
+    ("import_outside_defaults", [("list_exercises", {"search": "hack squat"}), ("import_entries", HACK)],
+     "Hack Squat 3 x 8 at 100 kg is now in Spotter. Anything else?"),
+]
+RUNS["hand_check_family"]["pass"] += [(DB50, "Logged. Was that 50 kg a hand or in total?"),
+                                      (DB50, "Logged Dumbbell Bench Press. Is 50 kg per hand right?")]
+RUNS["hand_check_link"]["pass"] += [(CURLS, "Logged 3 x 10. Is 20 kg per hand right, or was that both hands?")]
+for id_, calls, reply in C4G_REVIEW:
+    if id_ in EARLIER:
+        EARLIER[id_][1].append((calls, reply))
+    else:
+        RUNS[id_]["fail"].append((calls, reply))
+
 def _writes(calls: list) -> bool:
     return any(c[0] in judge.WRITE_FUNCTIONS and not (len(c) > 2 and c[2] == FAKE) for c in calls)
 
@@ -1215,7 +1512,7 @@ def read_case(case_id: str) -> bool:
 def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     new = new_cases()
     ids = [c["id"] for c in new]
-    assert len(ids) == len(set(ids)) == 164 and set(ids) == set(RUNS)
+    assert len(ids) == len(set(ids)) == 186 and set(ids) == set(RUNS)  # 164, and C4g's 22
     assert all(RUNS[i]["pass"] and RUNS[i]["fail"] for i in ids)
     every = judge.load_cases()
     g1 = every[:len(every) - len(new)]
@@ -1224,7 +1521,7 @@ def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     assert {c["id"] for c in g1 if c.get("kind")} <= G1_CORE
     assert all(isinstance(c["core"], bool) and c["kind"] in judge.KINDS for c in new)
     kinds = Counter(c["kind"] for c in new)
-    assert kinds == {"direct": 116, "incidental": 24, "look_alike": 24}
+    assert kinds == {"direct": 138, "incidental": 24, "look_alike": 24}
     assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 61, "incidental": 8, "look_alike": 8}
     by_id = {c["id"]: c for c in every}
     for c in new:
@@ -1304,6 +1601,35 @@ def test_each_case_seeds_and_judges_a_passing_and_a_failing_run(case_id, player)
         assert player.verdict(case, player.person(case), calls + [fake(must_not[0])], reply), case_id
 
 
+@pytest.mark.parametrize("case_id", list(EARLIER))
+def test_the_changed_earlier_cases_pass_in_the_person_s_words_and_fail_on_another_lift(case_id, player):
+    """exercise-list.md, C4g: the lift cases before the package judge the written rows' lift, not the name sent."""
+    case = next(c for c in judge.load_cases() if c["id"] == case_id)
+    assert case not in new_cases()
+    good, bad = EARLIER[case_id]
+    for calls, reply in good:
+        assert player.verdict(case, player.person(case), calls, reply) == [], (case_id, reply)
+    for calls, reply in bad:
+        assert player.verdict(case, player.person(case), calls, reply), (case_id, reply)
+
+
+def test_every_seeded_lift_set_sends_exact_so_a_seed_is_the_lift_it_names():
+    """exercise-list.md, C4g: a seed goes through log_lifts, whose word step would read a default's own name, such as
+    Back Squat, as the person's history picks it."""
+    for case in judge.load_cases():
+        for seed in case.get("seed") or []:
+            if seed["service"] == "log_lifts":
+                assert all(s.get("exact") is True for s in seed["data"]["sets"]), case["id"]
+
+
+def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
+    new = [c["id"] for c in new_cases()]
+    assert new[-len(C4G_RUNS):] == list(C4G_RUNS)
+    assert all(c["kind"] == "direct" and c["core"] is False for c in new_cases() if c["id"] in C4G_RUNS)
+    assert sum(1 for c in judge.load_cases() if c.get("core") is True) == 101
+    assert [c["id"] for c in judge.load_cases() if c.get("then")] == ["pick_lift_answer"]
+
+
 # ---------------------------------------------------------------- the read cases on nine todays
 
 LB_ROWS = [{"kind": "bodyweight", "date": f"2026-10-0{d}", "weight": w}
@@ -1329,14 +1655,17 @@ G1_DONE = {  # id: (calls, passing replies, failing replies)
     "import_preview_first": ([("import_entries", {"weight_unit": "lb", "rows": LB_ROWS})],
                              ["Preview: 5 weigh-ins would be written. Shall I write them?",
                               "Nothing has been written yet: 5 weigh-ins in lb. Write them?"],
-                             ["Imported all 5. Anything else?", "The 5 weigh-ins are imported. Want more?"]),
+                             ["Imported all 5. Anything else?", "The 5 weigh-ins are imported. Want more?",
+                              "I've logged all 5 weigh-ins. Want more?", "Saved to your log: 5 weigh-ins. Anything else?",
+                              "The 5 weigh-ins are in your log now. Anything else?"]),
     "import_unknown_lift": ([("list_exercises", {})],
                             ["Zorbinator Press isn't on Spotter's list. Which lift is it?",
                              "Which exercise is Zorbinator Press? Nothing is written yet."],
-                            ["Imported Zorbinator Press as Bench Press. OK?"]),
+                            ["Imported Zorbinator Press as Bench Press. OK?", "I've added it as Bench Press. OK?"]),
     "import_other_app": ([("import_entries", {"weight_unit": "kg", "rows": KG_ROWS})],
                          ["Preview: 5 weigh-ins in kg. Write them?", "These 5 would be written. Go ahead?"],
-                         ["Done: 5 weigh-ins imported. Anything else?"]),
+                         ["Done: 5 weigh-ins imported. Anything else?",
+                          "Your 5 weigh-ins are now in Spotter. Anything else?"]),
     "repeat_sent": ([("log_measurement", {"kind": "waist", "value": 84})],
                     ["That waist of 84 cm is already logged today, so nothing new was written.",
                      "84 cm was already there for today: nothing written."],

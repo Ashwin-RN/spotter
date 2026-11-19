@@ -5,8 +5,10 @@ before the app does, hands the app the same bytes, and reads the answer on the w
 sign-in token:
 - each tools/call: the function name, its arguments as sent, whether the answer was isError (a JSON-RPC
   error, such as an unknown function or arguments that break the schema, counts as an error), and whether any
-  answer came at all; for a data read (judge.DATA_READS), the answer itself: its structuredContent, else its
-  text, read as JSON where it parses (contract function-list.md, G1: quotes_spotter reads it);
+  answer came at all; the answer itself as result, for every call, refused or not: its structuredContent, else
+  its text, read as JSON where it parses (contract exercise-list.md, C4g: error_code and answer_has read it); and
+  for a data read (judge.DATA_READS) the same answer again as answer (contract function-list.md, G1:
+  quotes_spotter reads it, and only it);
 - the other JSON-RPC methods seen (server/discover or initialize, tools/list, ...), and whether the
   handshake's answer carried the server's instructions.
 
@@ -81,8 +83,8 @@ class CallRecorder:
     # ------------------------------------------------------------ what the runner reads
 
     def calls(self, token: str) -> list[dict]:
-        """Every tools/call this token made, in order: {name, arguments, is_error, answered, error}, and answer
-        for a data read."""
+        """Every tools/call this token made, in order: {name, arguments, is_error, answered, error, result}, and
+        answer for a data read."""
         with self._lock:
             return [dict(c) for c in self._calls.get(token_key(token), [])]
 
@@ -171,6 +173,7 @@ class CallRecorder:
                         "answered": bool(answer),
                         "error": (result.get("structuredContent") or {}).get("error")
                         if isinstance(result.get("structuredContent"), dict) else None,
+                        "result": answer_of(result),
                     })
                     if params.get("name") in DATA_READS:
                         self._calls[key][-1]["answer"] = answer_of(result)

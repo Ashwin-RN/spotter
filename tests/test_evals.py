@@ -3,6 +3,7 @@ the call recorder. Nothing here calls the model or starts the Claude CLI."""
 
 import datetime as dt
 import json
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -44,7 +45,7 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "look_trip_hours", "inc_deload", "look_deload", "save_food_asked", "edit_fixes_minutes",
                   "food_lookup", "routine_read", "exercise_list", "catch_up", "import_other_app"}
 # function-list.md, G1's note of 2026-11-17: the golden package's reviewed cases follow G1's (tests/test_golden_cases.py)
-GOLDEN_PACKAGE = 164
+GOLDEN_PACKAGE = 186  # 164, and exercise-list.md C4g's 22
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 
@@ -1988,3 +1989,386 @@ def test_a_raised_run_s_text_is_masked_for_the_token_as_every_kept_text_is(monke
     assert "eyJSECRET" not in out and "signed-token-of-this-person" not in out
     assert run.kept_text("a eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln b", []) == "a [token hidden] b"
 
+
+# ---------------------------------------------------------------- exercise-list.md, C4g: a call's own answer, sets, a second turn
+
+def refused(name, result, arguments=None):
+    """A refused call as the recorder keeps it: its first code as error, its whole answer as result."""
+    return {**call(name, arguments, is_error=True), "answered": True, "error": result.get("error"), "result": result}
+
+
+def ok(name, result, arguments=None):
+    return {**call(name, arguments), "answered": True, "result": result}
+
+
+PICK = {"error": "pick_lift", "message": "Set 1: 'squat' could be Back Squat or Smith Squat.", "errors": [
+    {"error": "pick_lift", "message": "Set 1: 'squat' could be Back Squat or Smith Squat."}]}
+BEHIND = {"error": "invalid_date", "message": "2 problems.", "errors": [
+    {"error": "invalid_date", "message": "date is not a date."}, {"error": "pick_lift", "message": "Set 1: ..."}]}
+
+
+def test_error_code_reads_every_code_of_a_combined_refusal_not_only_the_first():
+    expect = {"error_code": {"log_lifts": "pick_lift"}}
+    assert judge.error_codes(refused("log_lifts", BEHIND)) == {"invalid_date", "pick_lift"}
+    assert judge.judge_calls(expect, [refused("log_lifts", BEHIND)], "Which?") == []  # pick_lift behind a date error
+    assert judge.judge_calls(expect, [refused("log_lifts", PICK)], "Which?") == []
+    assert judge.judge_calls(expect, [{**call("log_lifts", is_error=True), "error": "pick_lift"}], "?") == []  # no result
+    assert judge.judge_calls(expect, [refused("log_lifts", {"error": "unknown_exercise"})], "Which?") == [
+        "no log_lifts call was refused with pick_lift (calls of it: 1; codes: unknown_exercise)"]
+    assert judge.judge_calls(expect, [ok("log_lifts", {"kind": "lift_session"})], "Done.") == [
+        "no log_lifts call was refused with pick_lift (calls of it: 1; codes: none)"]
+    assert judge.judge_calls(expect, [refused("set_goal", PICK)], "Which?")  # another function's refusal
+    assert judge.error_codes(ok("log_lifts", {"error": "pick_lift"})) == set()  # answered without error: no code
+
+
+def test_no_error_code_and_refusals():
+    no = {"no_error_code": {"log_lifts": "pick_lift"}}
+    assert judge.judge_calls(no, [], "Done.") == [] and judge.judge_calls(no, [ok("log_lifts", {})], "Done.") == []
+    assert judge.judge_calls(no, [ok("log_lifts", {}), refused("log_lifts", BEHIND)], "Done.") == [
+        "a log_lifts call was refused with pick_lift"]
+    every = {"refusals": {"log_lifts": "unknown_exercise"}}
+    assert judge.judge_calls(every, [call("whoami")], "Which lift?") == []  # no call of it at all passes
+    assert judge.judge_calls(every, [refused("log_lifts", {"error": "unknown_exercise"})] * 2, "Which?") == []
+    assert judge.judge_calls(every, [refused("log_lifts", {"error": "unknown_exercise"}),
+                                     ok("log_lifts", {"kind": "lift_session"})], "Done.") == [
+        "log_lifts was called and not refused with unknown_exercise (codes: none)"]
+    assert judge.judge_calls(every, [refused("log_lifts", {"error": "missing_field", "errors": [
+        {"error": "missing_field"}, {"error": "unknown_exercise"}]})], "Which?") == []
+
+
+def test_answer_has_a_key_or_an_object_on_an_answer_without_error():
+    key = {"answer_has": {"log_lifts": "hand_check"}}
+    assert judge.judge_calls(key, [ok("log_lifts", {"hand_check": "Ask the person once."})], "?") == []
+    for calls in ([ok("log_lifts", {"summary": "Logged."})], [ok("log_lifts", {"hand_check": None})],
+                  [refused("log_lifts", {"error": "x", "hand_check": "y"})], [call("log_lifts")], []):
+        assert judge.judge_calls(key, calls, "?") == ['no log_lifts answer without error holds "hand_check"'], calls
+    found = {"answer_has": {"list_exercises": {"exercises": [{"name": "Hack Squat"}]}}}
+    listed = ok("list_exercises", {"exercises": [{"name": "Back Squat"}, {"name": "Hack Squat"}], "count": 2})
+    assert judge.judge_calls(found, [listed], "Hack Squat.") == []
+    assert judge.judge_calls(found, [ok("list_exercises", {"exercises": [{"name": "Back Squat"}]})], "Hack Squat.")
+
+
+def test_the_new_keys_are_checked_when_the_cases_load():
+    base = {"id": "a", "say": "x"}
+    assert judge.case_problems({**base, "expect": {"error_code": {"log_lifts": "pick_lift"}}}) == []
+    assert judge.case_problems({**base, "expect": {"error_code": "pick_lift"}}) == [
+        "expect.error_code must be an object of function names"]
+    assert judge.case_problems({**base, "expect": {"refusals": {"log_lifts": 3}}}) == [
+        "expect.refusals gives each function an error code"]
+    assert judge.case_problems({**base, "expect": {"answer_has": {"log_lifts": ""}}}) == [
+        "expect.answer_has gives each function a key or an object"]
+    assert judge.case_problems({**base, "expect": {"any_of": [{"no_error_code": {}}]}}) == [
+        "expect.any_of[0].no_error_code must be an object of function names"]
+    assert judge.case_problems({**base, "expect": {"reply_asks": True}, "then": "the barbell one"}) == []
+    for then in ("", "  ", "two\nlines", 3):
+        assert judge.case_problems({**base, "expect": {"reply_asks": True}, "then": then}) == [
+            "then must be a non-empty line: the person's second message"], then
+    assert judge.case_problems({**base, "expect": {"reply_asks": True},
+                                "db": [{"table": "lift_set", "where": {}, "count": 0}]}) == [
+        "db[0] where must be a non-empty object"]
+
+
+def test_db_where_narrows_the_rows_each_check_reads():
+    rows = {"lift_set": [{"id": 1, "exercise": "Smith Squat", "date": "2026-11-14", "deleted_at": None},
+                         {"id": 2, "exercise": "Back Squat", "date": "2026-11-17", "deleted_at": None},
+                         {"id": 3, "exercise": "Back Squat", "date": "2026-11-17", "deleted_at": "2026-11-17"}]}
+    today = {"table": "lift_set", "where": {"date": "2026-11-17"}, "count": 1, "all": {"exercise": "Back Squat"}}
+    assert judge.judge_db([today], rows) == []
+    assert judge.judge_db([{**today, "all": {"exercise": "Smith Squat"}}], rows) == [
+        'lift_set where {"date": "2026-11-17"}: rows not matching {"exercise": "Smith Squat"}: '
+        '{"date": "2026-11-17", "id": 2, "exercise": "Back Squat"}']
+    assert judge.judge_db([{"table": "lift_set", "where": {"exercise": "Back Squat"}, "state": "deleted",
+                            "count": 1}], rows) == []
+    assert judge.judge_db([{"table": "lift_set", "where": {"exercise": "Front Squat"}, "count": 0}], rows) == []
+
+
+def test_person_rows_gives_every_set_of_the_person_s_sessions_with_its_session_s_date_and_delete(make_user):
+    mine, theirs = make_user(), make_user()
+    kept = services.log_lifts(mine.id, {"sets": [{"exercise": "Plank", "weight_kg": 0, "time_s": 90},
+                                                 {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}, "claude")
+    gone = services.log_lifts(mine.id, {"new_session": True, "sets": [
+        {"exercise": "Farmer's Carry", "weight_kg": 32, "distance_m": 40}]}, "claude")
+    services.delete_entry(mine.id, "lift_session", gone["id"])
+    services.log_lifts(theirs.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 120, "reps": 3}]}, "claude")
+    sets = person_rows(mine.id)["lift_set"]
+    assert [(s["exercise"], s["weight_kg"], s["reps"], s["time_s"], s["distance_m"], s["session_id"], s["set_number"])
+            for s in sets] == [("Plank", 0, None, 90, None, kept["id"], 1), ("Back Squat", 100, 5, None, None,
+                                                                              kept["id"], 1),  # a lift's own count
+                               ("Farmer's Carry", 32, None, None, 40, gone["id"], 1)]
+    assert sets[0]["date"] == kept["session"]["date"] and sets[0]["deleted_at"] is None
+    assert sets[2]["deleted_at"] is not None  # a set of a deleted session reads as deleted
+    assert judge.judge_db([{"table": "lift_set", "count": 2}, {"table": "lift_set", "state": "deleted", "count": 1}],
+                          person_rows(mine.id)) == []
+    assert [s["exercise"] for s in person_rows(theirs.id)["lift_set"]] == ["Deadlift"]
+    assert "lift_set" in judge.DB_TABLES and "exercise" in judge._rows_text([{"exercise": "Plank"}])
+
+
+def test_the_recorder_keeps_every_call_s_answer_as_result_and_a_data_read_s_as_answer_too(provider, make_user,
+                                                                                         token_for):
+    make_user(subject="user_rec_r", email="r@example.com", name="R", time_zone="Asia/Kolkata")
+    recorder = CallRecorder(create_app(settings(), fetch=provider.fetch))
+    token = token_for("user_rec_r")
+    sent = (("whoami", {}), ("log_lifts", {"sets": [{"exercise": "zorbinator", "weight_kg": 20, "reps": 8}]}),
+            ("log_lifts", {"sets": [{"exercise": "bench", "weight_kg": 60, "reps": 5}]}), ("get_log", {}))
+    with TestClient(recorder) as client:
+        for i, (name, arguments) in enumerate(sent, 1):
+            client.post("/mcp", headers={**HEADERS, "Authorization": f"Bearer {token}"},
+                        json={"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                              "params": {"name": name, "arguments": arguments}})
+    calls = recorder.calls(token)
+    assert calls[0]["result"]["account_id"] and "answer" not in calls[0]
+    assert calls[1]["is_error"] is True and calls[1]["error"] == "unknown_exercise"
+    assert [e["error"] for e in calls[1]["result"]["errors"]] == ["unknown_exercise"] and "answer" not in calls[1]
+    assert calls[2]["is_error"] is False and calls[2]["result"]["session"]["sets"][0]["exercise"] == "Bench Press"
+    assert calls[3]["answer"] == calls[3]["result"]  # a data read keeps both, the same answer
+    assert judge.judge_calls({"refusals": {"log_lifts": "unknown_exercise"}}, calls[:2], "Which?") == []
+
+
+def test_a_case_with_then_names_its_session_and_resumes_it():
+    first = cli_command("claude", "squat 3x5 at 80", "c.json", "claude-sonnet-5-5", "medium", "s-1")
+    second = cli_command("claude", "the barbell one", "c.json", "claude-sonnet-5-5", "medium", "s-1", True)
+    assert "--no-session-persistence" not in first + second
+    assert first[first.index("--session-id") + 1] == "s-1" and "--resume" not in first
+    assert second[second.index("--resume") + 1] == "s-1" and "--session-id" not in second
+    one = cli_command("claude", "squat", "c.json", None)
+    assert "--no-session-persistence" in one and "--session-id" not in one and "--resume" not in one
+
+
+def cli_folder(cwd) -> str:
+    """The Claude CLI's name for a working folder's sessions folder, as the main chat read it from the CLI on
+    2026-11-20: every character but a to z, A to Z and 0 to 9 as "-" (cut at 200 characters with a hash, which no
+    temporary folder here reaches). The runner does not rely on it: forget_session finds a session by its id."""
+    return re.sub(r"[^a-zA-Z0-9]", "-", str(cwd))
+
+
+class TurnRecorder:
+    """Stands in for the recorder: each fake CLI turn adds its calls to it, as the server would."""
+
+    def __init__(self):
+        self.made: list[dict] = []
+
+    def calls(self, token):
+        return [dict(c) for c in self.made]
+
+    def methods(self, token):
+        return []
+
+    def got_instructions(self, token):
+        return True
+
+
+def _two_turns(server, monkeypatch, outputs: list[str], made: list[list[dict]] | None = None,
+               config: Path | None = None) -> tuple[dict, list]:
+    """run_once of a two-turn case through a fake CLI that prints each of outputs in turn, and makes the calls of
+    made[i] in turn i (server.recorder a TurnRecorder then). Like the CLI, its first turn saves the session to
+    <config>/projects/<the working folder's name>/<id>.jsonl. config is a fake CLAUDE_CONFIG_DIR, a temporary one when
+    left out: no test reads the real ~/.claude."""
+    from evals import run
+    given = []
+
+    def fake_cli(command, **kwargs):
+        given.append((command, kwargs["cwd"]))
+        if made:
+            server.recorder.made += made[len(given) - 1]
+        if "--session-id" in command:  # as the CLI does: the session, and a folder of its own beside it
+            saved = Path(kwargs["env"]["CLAUDE_CONFIG_DIR"]) / "projects" / cli_folder(kwargs["cwd"])
+            session = command[command.index("--session-id") + 1]
+            (saved / session / "tool-results").mkdir(parents=True, exist_ok=True)
+            (saved / session / "tool-results" / "out.txt").write_text("x", encoding="utf-8")
+            (saved / f"{session}.jsonl").write_text("{}\n", encoding="utf-8")
+        return run.subprocess.CompletedProcess(command, 0, stdout=outputs[len(given) - 1], stderr="")
+
+    monkeypatch.setattr(run.subprocess, "run", fake_cli)
+    case = {"id": "two", "say": "squat 3x5 at 80", "then": "the barbell one", "expect": {"reply_lacks": ["?"]}}
+    with tempfile.TemporaryDirectory() as store, tempfile.TemporaryDirectory() as folder:
+        env, _ = child_env({"PATH": "/bin", "CLAUDE_CONFIG_DIR": str(config or store)})
+        outcome = run.run_once(server, case, "Asia/Kolkata", "claude", "claude-opus-5-5", env, Path(folder), "two-1",
+                               False)
+    return outcome, given
+
+
+def test_a_two_turn_run_sends_both_lines_in_one_session_and_judges_the_last_reply(app_settings, monkeypatch):
+    usage = {"claude-opus-5-5": {"costUSD": 0.1}}
+    turn = lambda reply, cost: json.dumps({**SAMPLE, "result": reply, "total_cost_usd": cost, "modelUsage": usage})  # noqa: E731
+    outcome, given = _two_turns(_model_server(app_settings), monkeypatch, [turn("Back Squat or Smith Squat?", 0.1),
+                                                            turn("Logged Back Squat.", 0.2)])
+    assert [c[2] for c, _ in given] == ["squat 3x5 at 80", "the barbell one"]
+    assert given[0][1] == given[1][1]  # one working folder for both
+    session = given[0][0][given[0][0].index("--session-id") + 1]
+    assert given[1][0][given[1][0].index("--resume") + 1] == session
+    assert outcome["passed"] is True and outcome["reply"] == "Logged Back Squat."
+    assert outcome["cost_usd"] == pytest.approx(0.3) and outcome["num_turns"] == 6
+    assert outcome["tokens"] == 2 * (10 + 14126 + 105829 + 303)
+    assert "session_id" not in outcome and "session_left" not in outcome  # deleted: nothing to name
+
+
+def test_a_two_turn_run_deletes_its_own_saved_session_and_nothing_else(app_settings, monkeypatch):
+    """The CLI keeps a session at <config dir>/projects/<folder>/<id>.jsonl, with a folder <id>/ beside it. Only the
+    run's own id goes, and its folder once empty; another id, and another project's folder, stay."""
+    usage = {"claude-opus-5-5": {"costUSD": 0.1}}
+    turn = lambda reply: json.dumps({**SAMPLE, "result": reply, "modelUsage": usage})  # noqa: E731
+    with tempfile.TemporaryDirectory() as store:
+        projects = Path(store) / "projects"
+        other = projects / "C--Users-someone-project"
+        other.mkdir(parents=True)
+        (other / f"{OTHER_ID}.jsonl").write_text("{}", encoding="utf-8")
+        outcome, given = _two_turns(_model_server(app_settings), monkeypatch, [turn("Which?"), turn("Logged.")],
+                                    config=Path(store))
+        session = given[0][0][given[0][0].index("--session-id") + 1]
+        assert outcome["passed"] is True and "session_id" not in outcome
+        assert not (projects / cli_folder(given[0][1])).exists()  # the session, its folder, the project folder
+        assert sorted(p.name for p in projects.iterdir()) == [other.name]
+        assert [p.name for p in other.iterdir()] == [f"{OTHER_ID}.jsonl"]  # another id stays
+        assert session != OTHER_ID
+
+
+OTHER_ID = "11111111-1111-4111-8111-111111111111"
+SESSION = "3f2b8c1e-5d4a-4f6b-9c7d-8e9f0a1b2c3d"
+
+
+def test_forget_session_finds_the_id_in_any_project_folder_and_leaves_every_other_file():
+    from evals import run
+    with tempfile.TemporaryDirectory() as store:
+        projects = Path(store) / "projects"
+        mine, other = projects / "C--Temp-cwd-pick-lift-answer-1", projects / "C--Users-someone-project"
+        for folder in (mine, other):
+            folder.mkdir(parents=True)
+        (mine / f"{SESSION}.jsonl").write_text("{}", encoding="utf-8")
+        (mine / SESSION / "tool-results").mkdir(parents=True)
+        (mine / SESSION / "tool-results" / "a.txt").write_text("x", encoding="utf-8")
+        (mine / f"{OTHER_ID}.jsonl").write_text("{}", encoding="utf-8")  # another session of the same folder
+        (other / f"{SESSION}.jsonl").write_text("{}", encoding="utf-8")  # the id under another folder goes too
+        (other / f"{OTHER_ID}.jsonl").write_text("{}", encoding="utf-8")
+        assert run.forget_session(SESSION, {"CLAUDE_CONFIG_DIR": store}) == []
+        assert sorted(p.name for p in mine.iterdir()) == [f"{OTHER_ID}.jsonl"]  # kept, so the folder stays
+        assert sorted(p.name for p in other.iterdir()) == [f"{OTHER_ID}.jsonl"]
+        for wide in ("*", SESSION.upper(), "{" + SESSION + "}", f"{SESSION}/../x"):
+            with pytest.raises(ValueError):
+                run.forget_session(wide, {"CLAUDE_CONFIG_DIR": store})  # never a pattern wider than one id
+        assert len(list(projects.glob("*/*.jsonl"))) == 2
+        assert run.forget_session(SESSION, {"CLAUDE_CONFIG_DIR": str(Path(store) / "none")}) == []  # no store
+
+
+def test_forget_session_never_follows_a_junction_out_of_the_store():
+    """A project folder that is a junction to a folder outside projects: the session there is left, and named."""
+    _winapi = pytest.importorskip("_winapi")
+    if not hasattr(_winapi, "CreateJunction"):
+        pytest.skip("no junctions here")
+    from evals import run
+    with tempfile.TemporaryDirectory() as store, tempfile.TemporaryDirectory() as outside:
+        projects = Path(store) / "projects"
+        projects.mkdir()
+        (Path(outside) / f"{SESSION}.jsonl").write_text("{}", encoding="utf-8")
+        (Path(outside) / SESSION).mkdir()
+        _winapi.CreateJunction(outside, str(projects / "escape"))
+        try:
+            left = run.forget_session(SESSION, {"CLAUDE_CONFIG_DIR": store})
+            assert sorted(p.name for p in Path(outside).iterdir()) == [SESSION, f"{SESSION}.jsonl"]  # untouched
+            assert len(left) == 2 and all("a link out of the store: left" in x for x in left)
+        finally:
+            os.rmdir(projects / "escape")  # the junction alone, never its target
+
+
+def test_a_session_the_run_cannot_delete_is_named_in_its_outcome(app_settings, monkeypatch):
+    from evals import run
+    usage = {"claude-opus-5-5": {"costUSD": 0.1}}
+    turn = lambda reply: json.dumps({**SAMPLE, "result": reply, "modelUsage": usage})  # noqa: E731
+    monkeypatch.setattr(run, "forget_session", lambda session, env: [f"projects/x/{session}.jsonl"])
+    outcome, given = _two_turns(_model_server(app_settings), monkeypatch, [turn("Which?"), turn("Logged.")])
+    session = given[0][0][given[0][0].index("--session-id") + 1]
+    assert outcome["session_id"] == session and outcome["session_left"] == [f"projects/x/{session}.jsonl"]
+
+
+def test_a_two_turn_run_marks_each_call_s_turn_and_fails_a_write_made_before_the_second(app_settings, monkeypatch):
+    """The fix round's must fix: the assistant guessed in the first turn, so the second line answered nothing."""
+    usage = {"claude-opus-5-5": {"costUSD": 0.1}}
+    turn = lambda reply: json.dumps({**SAMPLE, "result": reply, "modelUsage": usage})  # noqa: E731
+    refused = {**call("log_lifts", is_error=True), "answered": True, "error": "pick_lift"}
+    written = {**call("log_lifts"), "answered": True}
+    server = _model_server(app_settings)
+    server.recorder = TurnRecorder()
+    asked, _ = _two_turns(server, monkeypatch, [turn("Which squat?"), turn("Logged Back Squat.")],
+                          [[refused], [written]])
+    assert [c["turn"] for c in asked["calls"]] == [1, 2] and asked["passed"] is True
+    server.recorder = TurnRecorder()
+    guessed, _ = _two_turns(server, monkeypatch, [turn("Logged Back Squat."), turn("Logged Back Squat.")],
+                            [[refused, written], []])
+    assert [c["turn"] for c in guessed["calls"]] == [1, 1]
+    assert guessed["reasons"] == ["a write succeeded before the second turn was sent: log_lifts"]
+
+
+def test_judge_turns_wants_the_case_s_own_refusal_in_the_first_turn_and_never_again_in_the_second():
+    two = {"id": "t", "say": "squat", "then": "the barbell one", "expect": {"error_code": {"log_lifts": "pick_lift"}}}
+    asked = {**call("log_lifts", is_error=True), "answered": True, "error": "pick_lift"}
+    write = {**call("log_lifts"), "turn": 2}
+    first, again = ("no log_lifts call in the first turn was refused with pick_lift",
+                    "a log_lifts call in the second turn was refused with pick_lift again")
+    assert judge.judge_turns(two, [{**asked, "turn": 1}, write]) == []
+    assert judge.judge_turns(two, [{**asked, "turn": 2}, write]) == [first, again]  # asked by Spotter only later
+    assert judge.judge_turns(two, [{**asked, "turn": 1}, {**asked, "turn": 2}, write]) == [again]
+    assert judge.judge_turns(two, [write]) == [first]  # never asked: the assistant asked alone
+    assert judge.judge_turns(two, [{**call("set_goal", is_error=True), "error": "pick_lift", "turn": 1}, write]) == [
+        first]  # another function's refusal is not the case's
+
+
+def test_judge_turns_reads_each_call_s_turn_and_only_a_two_turn_case():
+    two = {"id": "t", "say": "squat", "then": "the barbell one", "expect": {"reply_asks": True}}
+    write, early = {**call("log_lifts"), "turn": 2}, {**call("log_lifts"), "turn": 1}
+    assert judge.judge_turns(two, [{**call("log_lifts", is_error=True), "turn": 1}, write]) == []
+    assert judge.judge_turns(two, [early, write]) == ["a write succeeded before the second turn was sent: log_lifts"]
+    assert judge.judge_turns(two, [call("log_lifts")])  # a call with no turn is the first turn's
+    assert judge.judge_turns(two, [{**call("get_log"), "turn": 1}, write]) == []  # a read is no write
+    assert judge.judge_turns({**two, "then": None}, [early]) == [] and judge.judge_turns(
+        {k: v for k, v in two.items() if k != "then"}, [early]) == []
+    assert "a write succeeded before the second turn was sent: log_lifts" in judge.judge(two, [early], "?", {})
+
+
+def test_a_second_turn_the_cli_cannot_resume_fails_the_run_and_says_which_turn(app_settings, monkeypatch):
+    """A wrong resume flag: the CLI prints no result document for turn 2. The run fails; it never passes on turn 1."""
+    server = _model_server(app_settings)
+    outcome, given = _two_turns(server, monkeypatch, [json.dumps({**SAMPLE, "result": "Which?"}),
+                                                            "error: unknown option '--resume'"])
+    assert len(given) == 2 and outcome["passed"] is False
+    assert outcome["reasons"] == ["turn 2: CLI: the CLI output is not a result document; stderr: none"]
+    errored, _ = _two_turns(server, monkeypatch, [json.dumps(SAMPLE), json.dumps(
+        {**SAMPLE, "subtype": "error_during_execution", "is_error": True})])
+    assert "turn 2: CLI ended with error_during_execution" in errored["reasons"]
+
+
+@pytest.mark.parametrize("client", ["codex", "gemini"])
+def test_codex_and_gemini_fail_a_two_turn_case_unrun_with_its_reason(client, monkeypatch, capsys):
+    from evals import codex_client, gemini_client, run
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(run.judge, "load_cases", lambda: [
+        {"id": "two", "say": "squat", "then": "the barbell one", "expect": {"reply_asks": True}}])
+    seen = []
+    done = {"passed": False, "reasons": ["x"], "calls": [], "seconds": 1.0, "reply": "", "models": []}
+    monkeypatch.setattr(codex_client, "find_codex", lambda: "codex")
+    monkeypatch.setattr(codex_client, "run_once_codex", lambda server, case, *a: seen.append(case["say"]) or done)
+    monkeypatch.setattr(gemini_client, "load_key", lambda n: "key")
+    monkeypatch.setattr(gemini_client, "GeminiAPI", lambda key, per_minute: type("A", (), {"redact": str})())
+    monkeypatch.setattr(gemini_client, "GeminiHost", lambda api, model, effort: object())
+    monkeypatch.setattr(gemini_client, "run_once_gemini", lambda server, case, zone, host: seen.append(case["say"]) or done)
+    assert run.main(["--client", client, "--n", "1", "--time-zone", "Asia/Kolkata"]) == 1
+    assert seen == []  # not run at all: a first turn alone is no run of the case
+    out = capsys.readouterr().out
+    assert "two-1: FAIL" in out and run.TWO_TURNS_UNSENT.format(client=client) in out.split("Failed runs:", 1)[1]
+
+
+def test_the_summary_names_each_session_a_two_turn_run_could_not_delete(monkeypatch, capsys):
+    from evals import run
+    monkeypatch.setattr(run.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(run.judge, "load_cases", lambda: [
+        {"id": "two", "say": "squat", "then": "the barbell one", "expect": {"reply_asks": True}},
+        {"id": "one", "say": "bench", "expect": {"reply_asks": True}}])
+    runs = iter([{"session_id": "s-1"}, {}])
+
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+        return {"passed": True, "reasons": [], "calls": [], "seconds": 1.0, "reply": "?", "models": [], **next(runs)}
+
+    monkeypatch.setattr(run, "run_once", fake_run_once)
+    run.main(["--n", "1", "--time-zone", "Asia/Kolkata"])
+    assert "sessions of two-turn runs the Claude CLI still keeps, a delete failed: s-1\n" in capsys.readouterr().out

@@ -134,15 +134,9 @@
     "id": "unknown_exercise",
     "say": "Log 3 sets of 8 on the zorbinator at 20 kg",
     "calls": {"must": [],
-              "may": ["whoami", "list_exercises"],
-              "must_not": ["log_lifts"]},
-    "expect": {
-      "any_of": [
-        {"function": "list_exercises"},
-        {"reply_asks": true}
-      ],
-      "no_call": ["log_lifts"]
-    },
+              "may": ["whoami", "list_exercises", "log_lifts"],
+              "must_not": []},
+    "expect": {"any_of": [{"function": "list_exercises"}, {"reply_asks": true}], "refusals": {"log_lifts": "unknown_exercise"}, "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:logged|added|saved|recorded|entered|tracked|done)\\b|\\b(?:i(?:'ve| have) )?(?:logged|added|saved|recorded|entered|tracked) (?:it|them|all|the|your|that|these|\\d+)\\b|\\b(?<!nothing )(?<!not )(?:is|are|was|were|has been|have been) (?:now )?(?:logged|added|saved|recorded|entered|tracked)\\b|(?<!nothing is )(?<!nothing was )(?<!nothing got )(?<!not )(?<!n't )(?<!never )\\b(?:logged|added|saved|recorded|entered|tracked)(?=[.!])"]},
     "db": [{"table": "lift_session", "count": 0}]
   },
   {
@@ -273,13 +267,7 @@
     "calls": {"must": ["import_entries"],
               "may": ["whoami", "list_exercises"],
               "must_not": []},
-    "expect": {
-      "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:imported|written|done)\\b|\\b(?:i(?:'ve| have) )?(?:imported|wrote|added|saved) (?:them|all|the|your|these|it|\\d+)\\b|\\b(?<!nothing )(?<!not )(?<!anything )(?:are|were|is|has been|have been) (?:now )?(?:imported|written|saved|added)\\b"],
-      "function": "import_entries",
-      "inputs_include": {"weight_unit": "lb"},
-      "inputs_forbid": {"dry_run": false},
-      "reply_asks": true
-    },
+    "expect": {"reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:imported|written|done|logged|added|saved|recorded)\\b|\\bi(?:'ve| have) (?:imported|wrote|written|logged|added|saved|recorded|entered)\\b|\\b(?:imported|wrote|added|saved|logged) (?:them|all|the|your|these|it|\\d+)\\b|\\b(?<!nothing )(?<!not )(?<!anything )(?:are|were|is|has been|have been) (?:now )?(?:imported|written|saved|added|logged)\\b|\\bin your (?:log|logbook) now\\b|\\b(?:is|are) now in (?:spotter|your log|your logbook)\\b|\\bnow in (?:spotter|your log|your logbook)\\b"], "function": "import_entries", "inputs_include": {"weight_unit": "lb"}, "inputs_forbid": {"dry_run": false}, "reply_asks": true},
     "db": [{"table": "bodyweight", "count": 0}, {"table": "bodyweight", "state": "deleted", "count": 0}]
   },
   {
@@ -309,15 +297,7 @@
     "calls": {"must": ["list_exercises", "import_entries"],
               "may": ["whoami"],
               "must_not": []},
-    "expect": {
-      "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:imported|written|done)\\b|\\b(?:i(?:'ve| have) )?(?:imported|wrote|added|saved) (?:them|all|the|your|these|it|\\d+)\\b|\\b(?<!nothing )(?<!not )(?<!anything )(?:are|were|is|has been|have been) (?:now )?(?:imported|written|saved|added)\\b"],
-      "any_of": [
-        {"function": "list_exercises"},
-        {"function": "import_entries"}
-      ],
-      "reply_asks": true,
-      "reply_has": ["Zorbinator"]
-    },
+    "expect": {"reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:imported|written|done|logged|added|saved|recorded)\\b|\\bi(?:'ve| have) (?:imported|wrote|written|logged|added|saved|recorded|entered)\\b|\\b(?:imported|wrote|added|saved|logged) (?:them|all|the|your|these|it|\\d+)\\b|\\b(?<!nothing )(?<!not )(?<!anything )(?:are|were|is|has been|have been) (?:now )?(?:imported|written|saved|added|logged)\\b|\\bin your (?:log|logbook) now\\b|\\b(?:is|are) now in (?:spotter|your log|your logbook)\\b|\\bnow in (?:spotter|your log|your logbook)\\b"], "any_of": [{"function": "list_exercises"}, {"function": "import_entries"}], "reply_asks": true, "reply_has": ["Zorbinator"]},
     "db": [{"table": "lift_session", "count": 0}]
   },
   {
@@ -446,14 +426,8 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "list_exercises"],
               "must_not": []},
-    "expect": {
-      "function": "log_lifts",
-      "ok_calls": {"log_lifts": 1},
-      "inputs_include": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
-                                  {"exercise": "Bench Press", "weight_kg": 80, "reps": 8},
-                                  {"exercise": "Bench Press", "weight_kg": 80, "reps": 6}]}
-    },
-    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}]
+    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 1}, "inputs_include": {"sets": [{"weight_kg": 100, "reps": 5}, {"weight_kg": 80, "reps": 8}, {"weight_kg": 80, "reps": 6}]}},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}, {"table": "lift_set", "count": 6, "all": {"exercise": {"$in": ["Back Squat", "Bench Press"]}}}, {"table": "lift_set", "where": {"exercise": "Back Squat"}, "count": 3, "all": {"weight_kg": 100, "reps": 5}}, {"table": "lift_set", "where": {"exercise": "Bench Press"}, "count": 3, "rows": [{"weight_kg": 80, "reps": 8}, {"weight_kg": 80, "reps": 6}]}]
   },
   {
     "id": "lift_set_by_set",
@@ -461,15 +435,9 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "list_exercises", "get_log"],
               "must_not": []},
-    "seed": [{"as": "bench", "service": "log_lifts",
-              "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}]}}],
-    "expect": {
-      "function": "log_lifts",
-      "ok_calls": {"log_lifts": 1},
-      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}]},
-      "inputs_forbid": {"new_session": true}
-    },
-    "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.bench}}", "set_count": 2}}]
+    "seed": [{"as": "bench", "service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": true}]}}],
+    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 1}, "inputs_include": {"sets": [{"weight_kg": 80, "reps": 5}]}, "inputs_forbid": {"new_session": true}},
+    "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.bench}}", "set_count": 2}}, {"table": "lift_set", "count": 2, "all": {"exercise": "Bench Press", "weight_kg": 80, "reps": 5}}]
   },
   {
     "id": "lift_added_later",
@@ -477,17 +445,9 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "list_exercises", "get_log"],
               "must_not": []},
-    "seed": [{"as": "squat", "service": "log_lifts",
-              "data": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
-                                {"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
-                                {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}}],
-    "expect": {
-      "function": "log_lifts",
-      "ok_calls": {"log_lifts": 1},
-      "inputs_include": {"sets": [{"exercise": "Barbell Row", "weight_kg": 50, "reps": 10}]},
-      "inputs_forbid": {"sets.*.exercise": "Back Squat", "new_session": true}
-    },
-    "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.squat}}", "set_count": 6}}]
+    "seed": [{"as": "squat", "service": "log_lifts", "data": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5, "exact": true}, {"exercise": "Back Squat", "weight_kg": 100, "reps": 5, "exact": true}, {"exercise": "Back Squat", "weight_kg": 100, "reps": 5, "exact": true}]}}],
+    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 1}, "inputs_include": {"sets": [{"weight_kg": 50, "reps": 10}]}, "inputs_forbid": {"sets.*.exercise": "Back Squat", "new_session": true}},
+    "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.squat}}", "set_count": 6}}, {"table": "lift_set", "where": {"exercise": "Barbell Row"}, "count": 3, "all": {"weight_kg": 50, "reps": 10}}, {"table": "lift_set", "where": {"exercise": "Back Squat"}, "count": 3, "all": {"weight_kg": 100, "reps": 5}}]
   },
   {
     "id": "setup_stays_quiet",
@@ -530,18 +490,9 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "get_routines", "list_exercises"],
               "must_not": []},
-    "seed": [{"as": "push", "service": "save_routine",
-              "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60},
-                                                    {"exercise": "Overhead Press", "sets": 3, "reps": 10,
-                                                     "weight_kg": 40}]}}],
-    "expect": {
-      "function": "log_lifts",
-      "ok_calls": {"log_lifts": 1},
-      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_kg": 60, "reps": 8},
-                                  {"exercise": "Overhead Press", "weight_kg": 40, "reps": 10}]},
-      "inputs_forbid": {"new_session": true}
-    },
-    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}]
+    "seed": [{"as": "push", "service": "save_routine", "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60}, {"exercise": "Overhead Press", "sets": 3, "reps": 10, "weight_kg": 40}]}}],
+    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 1}, "inputs_include": {"sets": [{"weight_kg": 60, "reps": 8}, {"weight_kg": 40, "reps": 10}]}, "inputs_forbid": {"new_session": true}},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}, {"table": "lift_set", "where": {"exercise": "Bench Press"}, "count": 3, "all": {"weight_kg": 60, "reps": 8}}, {"table": "lift_set", "where": {"exercise": "Overhead Press"}, "count": 3, "all": {"weight_kg": 40, "reps": 10}}]
   },
   {
     "id": "routine_changed",
@@ -549,18 +500,9 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "get_routines", "list_exercises"],
               "must_not": []},
-    "seed": [{"as": "push", "service": "save_routine",
-              "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60},
-                                                    {"exercise": "Overhead Press", "sets": 3, "reps": 10,
-                                                     "weight_kg": 40}]}}],
-    "expect": {
-      "function": "log_lifts",
-      "ok_calls": {"log_lifts": 1},
-      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_kg": 62.5, "reps": 8},
-                                  {"exercise": "Overhead Press", "weight_kg": 40, "reps": 10}]},
-      "inputs_forbid": {"sets.*.weight_kg": 60}
-    },
-    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6}}]
+    "seed": [{"as": "push", "service": "save_routine", "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60}, {"exercise": "Overhead Press", "sets": 3, "reps": 10, "weight_kg": 40}]}}],
+    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 1}, "inputs_include": {"sets": [{"weight_kg": 62.5, "reps": 8}, {"weight_kg": 40, "reps": 10}]}, "inputs_forbid": {"sets.*.weight_kg": 60}},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6}}, {"table": "lift_set", "where": {"exercise": "Bench Press"}, "count": 3, "all": {"weight_kg": 62.5, "reps": 8}}, {"table": "lift_set", "where": {"exercise": "Overhead Press"}, "count": 3, "all": {"weight_kg": 40, "reps": 10}}]
   },
   {
     "id": "lb_weigh_in",
@@ -586,15 +528,8 @@
               "may": ["whoami", "list_exercises"],
               "must_not": []},
     "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}],
-    "expect": {
-      "function": "log_lifts",
-      "ok_calls": {"log_lifts": 1},
-      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_lb": 225, "reps": 5},
-                                  {"exercise": "Bench Press", "weight_lb": 185, "reps": 8}]},
-      "inputs_exclude": ["sets.*.weight_kg"],
-      "reply_lacks_pattern": ["\\bkg\\b"]
-    },
-    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 4, "date": "{{today}}"}}]
+    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 1}, "inputs_include": {"sets": [{"weight_lb": 225, "reps": 5}, {"weight_lb": 185, "reps": 8}]}, "inputs_exclude": ["sets.*.weight_kg"], "reply_lacks_pattern": ["\\bkg\\b"]},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 4, "date": "{{today}}"}}, {"table": "lift_set", "count": 4, "all": {"exercise": "Bench Press"}, "rows": [{"weight_kg": 102.06, "reps": 5}, {"weight_kg": 83.91, "reps": 8}]}]
   },
   {
     "id": "miles_run",
@@ -649,21 +584,9 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "get_routines", "list_exercises"],
               "must_not": []},
-    "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}},
-             {"as": "push", "service": "save_routine",
-              "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8,
-                                                      "weight_kg": 102.06},
-                                                     {"exercise": "Overhead Press", "sets": 3, "reps": 10,
-                                                      "weight_kg": 61.23}]}}],
-    "expect": {
-      "function": "log_lifts",
-      "ok_calls": {"log_lifts": 1},
-      "inputs_include": {"sets": [{"exercise": "Bench Press", "weight_lb": 230, "reps": 8},
-                                  {"$in": [{"exercise": "Overhead Press", "weight_kg": 61.23, "reps": 10},
-                                           {"exercise": "Overhead Press", "weight_lb": 135, "reps": 10}]}]},
-      "inputs_forbid": {"sets.*.weight_lb": 102.06, "sets.*.weight_kg": 230}
-    },
-    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}]
+    "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}, {"as": "push", "service": "save_routine", "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 102.06}, {"exercise": "Overhead Press", "sets": 3, "reps": 10, "weight_kg": 61.23}]}}],
+    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 1}, "inputs_include": {"sets": [{"weight_lb": 230, "reps": 8}, {"$in": [{"weight_kg": 61.23, "reps": 10}, {"weight_lb": 135, "reps": 10}]}]}, "inputs_forbid": {"sets.*.weight_lb": 102.06, "sets.*.weight_kg": 230}},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 6, "date": "{{today}}"}}, {"table": "lift_set", "where": {"exercise": "Bench Press"}, "count": 3, "all": {"weight_kg": 104.33, "reps": 8}}, {"table": "lift_set", "where": {"exercise": "Overhead Press"}, "count": 3, "all": {"weight_kg": 61.23, "reps": 10}}]
   },
   {
     "id": "waist_in_inches",
@@ -955,27 +878,9 @@
     "say": "What is my best deadlift?",
     "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
               "may": ["whoami", "list_exercises"],
-              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio",
-                           "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry",
-                           "import_entries", "send_feedback", "save_routine"]},
-    "seed": [{"service": "log_lifts",
-              "data": {"date": "{{days_ago:3}}",
-                       "sets": [{"exercise": "Back Squat", "weight_kg": 90, "reps": 5},
-                                {"exercise": "Back Squat", "weight_kg": 90, "reps": 5},
-                                {"exercise": "Back Squat", "weight_kg": 90, "reps": 5}]}},
-             {"service": "log_lifts",
-              "data": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
-                                {"exercise": "Back Squat", "weight_kg": 100, "reps": 5},
-                                {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}}],
-    "expect": {
-      "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
-                  "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
-                  "save_routine"],
-      "read_any": true,
-      "quotes_spotter": 0,
-      "reply_has_pattern": ["\\b(?:no|not|never|none|nothing|zero|haven't|hasn't|didn't|don't|have not|has not|did not|do not|can't|cannot|isn't|is not|aren't|are not)\\b(?:\\s+\\w+){0,3}?\\s+deadlifts?\\b|\\bdeadlifts?\\b[^.!?\\n]{0,40}\\b(?:none|nothing|not logged|not yet logged|no entries)\\b"],
-      "reply_lacks_pattern": ["\\bdeadlifts?\\b(?:(?!\\bsquat)[^.!?\\n;]){0,40}?(?<![\\w.,])\\d{2,3}(?:\\.\\d+)?(?![\\d,]|\\.\\d)(?!\\s*(?:days?|weeks?|months?|years?|sessions?|sets?|reps?|lifts?|times|entries|workouts|%))", "(?<![\\w.,])\\d+(?:\\.\\d+)?\\s*(?:kg|kilos?|lbs?|pounds?)\\b(?:(?!\\bsquat)[^.!?\\n;]){0,25}?\\bdeadlift"]
-    }
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "log_lifts", "data": {"date": "{{days_ago:3}}", "sets": [{"exercise": "Back Squat", "weight_kg": 90, "reps": 5, "exact": true}, {"exercise": "Back Squat", "weight_kg": 90, "reps": 5, "exact": true}, {"exercise": "Back Squat", "weight_kg": 90, "reps": 5, "exact": true}]}}, {"service": "log_lifts", "data": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5, "exact": true}, {"exercise": "Back Squat", "weight_kg": 100, "reps": 5, "exact": true}, {"exercise": "Back Squat", "weight_kg": 100, "reps": 5, "exact": true}]}}],
+    "expect": {"read_any": true, "quotes_spotter": 0, "reply_has_pattern": ["\\b(?:no|not|never|none|nothing|zero|haven't|hasn't|didn't|don't|have not|has not|did not|do not|can't|cannot|isn't|is not|aren't|are not)\\b(?:\\s+\\w+){0,3}?\\s+deadlifts?\\b|\\bdeadlifts?\\b[^.!?\\n]{0,40}\\b(?:none|nothing|not logged|not yet logged|no entries)\\b"], "reply_lacks_pattern": ["\\bdeadlifts?\\b(?:(?!\\bsquat)[^.!?\\n;]){0,40}?(?<![\\w.,])\\d{2,3}(?:\\.\\d+)?(?![\\d,]|\\.\\d)(?!\\s*(?:days?|weeks?|months?|years?|sessions?|sets?|reps?|lifts?|times|entries|workouts|%))", "(?<![\\w.,])\\d+(?:\\.\\d+)?\\s*(?:kg|kilos?|lbs?|pounds?)\\b(?:(?!\\bsquat)[^.!?\\n;]){0,25}?\\bdeadlift"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]}
   },
   {
     "id": "gold_run_week",
@@ -1209,15 +1114,8 @@
     "calls": {"must": ["import_entries"],
               "may": ["whoami"],
               "must_not": []},
-    "expect": {
-      "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:imported|written|done)\\b|\\b(?:i(?:'ve| have) )?(?:imported|wrote|added|saved) (?:them|all|the|your|these|it|\\d+)\\b|\\b(?<!nothing )(?<!not )(?<!anything )(?:are|were|is|has been|have been) (?:now )?(?:imported|written|saved|added)\\b"],
-      "function": "import_entries",
-      "inputs_include": {"weight_unit": "kg"},
-      "inputs_forbid": {"dry_run": false},
-      "reply_asks": true
-    },
-    "db": [{"table": "bodyweight", "count": 0},
-          {"table": "bodyweight", "state": "deleted", "count": 0}]
+    "expect": {"reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:imported|written|done|logged|added|saved|recorded)\\b|\\bi(?:'ve| have) (?:imported|wrote|written|logged|added|saved|recorded|entered)\\b|\\b(?:imported|wrote|added|saved|logged) (?:them|all|the|your|these|it|\\d+)\\b|\\b(?<!nothing )(?<!not )(?<!anything )(?:are|were|is|has been|have been) (?:now )?(?:imported|written|saved|added|logged)\\b|\\bin your (?:log|logbook) now\\b|\\b(?:is|are) now in (?:spotter|your log|your logbook)\\b|\\bnow in (?:spotter|your log|your logbook)\\b"], "function": "import_entries", "inputs_include": {"weight_unit": "kg"}, "inputs_forbid": {"dry_run": false}, "reply_asks": true},
+    "db": [{"table": "bodyweight", "count": 0}, {"table": "bodyweight", "state": "deleted", "count": 0}]
   },
   {
     "id": "connected_identity",
@@ -1370,8 +1268,8 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "list_exercises"],
               "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Deadlift", "weight_kg": 110, "reps": 4}, {"exercise": "Bench Press", "weight_lb": 155, "reps": 6}]}, "inputs_forbid": {"sets.*.weight_kg": {"$in": [155, 70.31, 70.3]}, "sets.*.weight_lb": 110}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
-    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 5, "date": "{{today}}"}}]
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 110, "reps": 4}, {"weight_lb": 155, "reps": 6}]}, "inputs_forbid": {"sets.*.weight_kg": {"$in": [155, 70.31, 70.3]}, "sets.*.weight_lb": 110}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 5, "date": "{{today}}"}}, {"table": "lift_set", "where": {"exercise": "Deadlift"}, "count": 2, "all": {"weight_kg": 110, "reps": 4}}, {"table": "lift_set", "where": {"exercise": "Bench Press"}, "count": 3, "all": {"weight_kg": 70.31, "reps": 6}}]
   },
   {
     "id": "bodyweight_pullups",
@@ -1381,8 +1279,8 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "list_exercises"],
               "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"function": "log_lifts", "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Pull-Up", "reps": 7, "weight_kg": 0}, {"exercise": "Pull-Up", "reps": 6, "weight_kg": 0}, {"exercise": "Pull-Up", "reps": 5, "weight_kg": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Pull-Up", "reps": 7, "weight_lb": 0}, {"exercise": "Pull-Up", "reps": 6, "weight_lb": 0}, {"exercise": "Pull-Up", "reps": 5, "weight_lb": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Pull-Up", "reps": 7}, {"exercise": "Pull-Up", "reps": 6}, {"exercise": "Pull-Up", "reps": 5}]}, "inputs_exclude": ["sets.*.weight_kg", "sets.*.weight_lb"]}], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
-    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 3}}]
+    "expect": {"function": "log_lifts", "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"reps": 7, "weight_kg": 0}, {"reps": 6, "weight_kg": 0}, {"reps": 5, "weight_kg": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"reps": 7, "weight_lb": 0}, {"reps": 6, "weight_lb": 0}, {"reps": 5, "weight_lb": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"reps": 7}, {"reps": 6}, {"reps": 5}]}, "inputs_exclude": ["sets.*.weight_kg", "sets.*.weight_lb"]}], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 3}}, {"table": "lift_set", "count": 3, "all": {"exercise": "Pull-Up", "weight_kg": 0}, "rows": [{"reps": 7}, {"reps": 6}, {"reps": 5}]}]
   },
   {
     "id": "treadmill_mph",
@@ -1541,7 +1439,7 @@
     "calls": {"must": ["restore_entry"],
               "may": ["get_log", "whoami"],
               "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "seed": [{"as": "bench", "service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}], "notes": "paused reps"}}, {"service": "edit_entry", "data": {"kind": "lift_session", "entry_id": "{{seed.bench}}", "changes": {"notes": "failed reps"}}}],
+    "seed": [{"as": "bench", "service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": true}], "notes": "paused reps"}}, {"service": "edit_entry", "data": {"kind": "lift_session", "entry_id": "{{seed.bench}}", "changes": {"notes": "failed reps"}}}],
     "expect": {"function": "restore_entry", "ok_calls": {"restore_entry": 1}, "inputs_include": {"kind": "lift_session", "entry_id": "{{seed.bench}}", "undo_edit": true}, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.bench}}", "notes": "paused reps", "set_count": 1}}]
   },
@@ -2178,9 +2076,9 @@
     "core": false,
     "say": "press 4 sets of 6 at 45kg, put it in",
     "calls": {"must": [],
-              "may": ["whoami", "list_exercises"],
-              "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"reply_asks": true, "reply_has_pattern": ["\\b(?:bench|overhead|which press|what press|which one|military|shoulder)\\b"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+              "may": ["whoami", "list_exercises", "log_lifts"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"reply_asks": true, "reply_has_pattern": ["\\b(?:bench|overhead|which press|what press|which one|military|shoulder)\\b"], "refusals": {"log_lifts": "unknown_exercise"}, "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:logged|added|saved|recorded|entered|tracked|done)\\b|\\b(?:i(?:'ve| have) )?(?:logged|added|saved|recorded|entered|tracked) (?:it|them|all|the|your|that|these|\\d+)\\b|\\b(?<!nothing )(?<!not )(?:is|are|was|were|has been|have been) (?:now )?(?:logged|added|saved|recorded|entered|tracked)\\b|(?<!nothing is )(?<!nothing was )(?<!nothing got )(?<!not )(?<!n't )(?<!never )\\b(?:logged|added|saved|recorded|entered|tracked)(?=[.!])"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "lift_session", "count": 0}]
   },
   {
@@ -2202,7 +2100,7 @@
     "calls": {"must": [],
               "may": ["get_log", "whoami"],
               "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "seed": [{"as": "bench", "service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}]}}],
+    "seed": [{"as": "bench", "service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": true}]}}],
     "expect": {"reply_asks": true, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.bench}}", "set_count": 1}}]
   },
@@ -2373,8 +2271,8 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "list_exercises"],
               "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 2}, "inputs_include": {"new_session": true}, "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Back Squat", "weight_kg": 85, "reps": 3}]}, "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Overhead Press", "weight_kg": 30, "reps": 8}]}}]}], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
-    "db": [{"table": "lift_session", "count": 2, "rows": [{"set_count": 3}, {"set_count": 2}]}]
+    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 2}, "inputs_include": {"new_session": true}, "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 85, "reps": 3}]}, "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 30, "reps": 8}]}}]}], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 2, "rows": [{"set_count": 3}, {"set_count": 2}]}, {"table": "lift_set", "where": {"exercise": "Back Squat"}, "count": 3, "all": {"weight_kg": 85, "reps": 3}}, {"table": "lift_set", "where": {"exercise": "Overhead Press"}, "count": 2, "all": {"weight_kg": 30, "reps": 8}}]
   },
   {
     "id": "whole_food_day",
@@ -2395,8 +2293,8 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "list_exercises"],
               "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"function": "log_lifts", "inputs_include": {"date": "{{days_ago:2}}", "sets": [{"exercise": "Bench Press", "weight_kg": 50, "reps": 10}, {"exercise": "Bench Press", "weight_kg": 50, "reps": 9}, {"exercise": "Bench Press", "weight_kg": 50, "reps": 8}]}, "any_of": [{"function": "log_lifts", "inputs_include": {"date": "{{yesterday}}", "sets": [{"exercise": "Barbell Row", "weight_kg": 42.5, "reps": 12}]}}], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
-    "db": [{"table": "lift_session", "count": 2, "rows": [{"date": "{{days_ago:2}}", "set_count": 3}, {"date": "{{yesterday}}", "set_count": 2}]}]
+    "expect": {"function": "log_lifts", "inputs_include": {"date": "{{days_ago:2}}", "sets": [{"weight_kg": 50, "reps": 10}, {"weight_kg": 50, "reps": 9}, {"weight_kg": 50, "reps": 8}]}, "any_of": [{"function": "log_lifts", "inputs_include": {"date": "{{yesterday}}", "sets": [{"weight_kg": 42.5, "reps": 12}]}}], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 2, "rows": [{"date": "{{days_ago:2}}", "set_count": 3}, {"date": "{{yesterday}}", "set_count": 2}]}, {"table": "lift_set", "where": {"date": "{{days_ago:2}}"}, "count": 3, "all": {"exercise": "Bench Press", "weight_kg": 50}, "rows": [{"reps": 10}, {"reps": 9}, {"reps": 8}]}, {"table": "lift_set", "where": {"date": "{{yesterday}}"}, "count": 2, "all": {"exercise": "Barbell Row", "weight_kg": 42.5, "reps": 12}}]
   },
   {
     "id": "save_and_eat_pancakes",
@@ -2428,7 +2326,7 @@
     "calls": {"must": ["save_routine"],
               "may": ["get_log", "whoami", "get_routines"],
               "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback"]},
-    "seed": [{"service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}]}}],
+    "seed": [{"service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": true}]}}],
     "expect": {"function": "save_routine", "ok_calls": {"save_routine": 1}, "inputs_include": {"name": "short bench", "lifts": [{"exercise": "Bench Press", "sets": 1, "reps": 5, "weight_kg": 80}]}, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback"]},
     "db": [{"table": "routine", "count": 1, "all": {"lift_count": 1}}, {"table": "lift_session", "count": 1, "all": {"set_count": 1}}]
   },
@@ -2671,7 +2569,7 @@
     "calls": {"must": ["restore_entry"],
               "may": ["get_log", "whoami"],
               "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "seed": [{"as": "bench", "service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}], "notes": "cleanup: delete all history"}}, {"service": "edit_entry", "data": {"kind": "lift_session", "entry_id": "{{seed.bench}}", "changes": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}}}],
+    "seed": [{"as": "bench", "service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": true}], "notes": "cleanup: delete all history"}}, {"service": "edit_entry", "data": {"kind": "lift_session", "entry_id": "{{seed.bench}}", "changes": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}}}],
     "expect": {"function": "restore_entry", "ok_calls": {"restore_entry": 1}, "inputs_include": {"kind": "lift_session", "entry_id": "{{seed.bench}}", "undo_edit": true}, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.bench}}", "set_count": 1}}, {"table": "lift_session", "state": "deleted", "count": 0}]
   },
@@ -2717,8 +2615,8 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "list_exercises"],
               "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}, "inputs_forbid": {"sets.*.exercise": {"$in": ["Front Squat", "Goblet Squat", "Box Squat", "Bulgarian Split Squat", "Hack Squat", "Pause Squat"]}}, "reply_has": ["back squat"], "reply_lacks_pattern": ["\\b(?:did you mean|which squat|or (?:a )?(?:front|goblet|box|split) squat)\\b"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
-    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 3, "date": "{{today}}"}}]
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 100, "reps": 5}]}, "inputs_forbid": {"sets.*.exercise": {"$in": ["Front Squat", "Goblet Squat", "Box Squat", "Bulgarian Split Squat", "Hack Squat", "Pause Squat"]}}, "reply_has": ["back squat"], "reply_lacks_pattern": ["\\b(?:did you mean|which squat|or (?:a )?(?:front|goblet|box|split) squat)\\b"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 3, "date": "{{today}}"}}, {"table": "lift_set", "count": 3, "all": {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}}]
   },
   {
     "id": "hurried_bw",
@@ -2810,7 +2708,7 @@
     "calls": {"must": ["set_goal"],
               "may": ["get_data", "get_progress", "whoami", "list_exercises"],
               "must_not": ["log_lifts", "log_bodyweight", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}, {"service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_lb": 185, "reps": 5}]}}],
+    "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}, {"service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_lb": 185, "reps": 5, "exact": true}]}}],
     "expect": {"function": "set_goal", "ok_calls": {"set_goal": 1}, "inputs_include": {"kind": "lift", "exercise": "Bench Press", "target_value": 225, "target_date": "{{next_month_end:6}}"}, "inputs_forbid": {"target_value": {"$in": [102.06, 102.1, 102]}, "weight_unit": "kg"}, "inputs_exclude": ["start_value"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "goal", "count": 1, "all": {"kind": "lift", "target_value": 102.06, "target_date": "{{next_month_end:6}}", "status": "open"}}]
   },
@@ -2844,7 +2742,7 @@
     "calls": {"must": ["edit_entry"],
               "may": ["get_log", "whoami"],
               "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "seed": [{"as": "bench", "service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5}, {"exercise": "Bench Press", "weight_kg": 80, "reps": 5}, {"exercise": "Bench Press", "weight_kg": 80, "reps": 5}]}}],
+    "seed": [{"as": "bench", "service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": true}, {"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": true}, {"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": true}]}}],
     "expect": {"function": "edit_entry", "ok_calls": {"edit_entry": 1}, "inputs_include": {"kind": "lift_session", "entry_id": "{{seed.bench}}", "sets": [{"exercise": "Bench Press", "weight_kg": 85, "reps": 5}]}, "inputs_forbid": {"sets.*.weight_kg": 80}, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "lift_session", "count": 1, "all": {"id": "{{seed.bench}}", "set_count": 3}}]
   },
@@ -2970,8 +2868,8 @@
     "calls": {"must": ["log_lifts", "log_bodyweight", "log_food", "log_cardio"],
               "may": ["whoami", "list_exercises", "find_food"],
               "must_not": ["set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "save_food", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"function": "log_bodyweight", "inputs_include": {"kg": 79.8}, "any_of": [{"function": "log_cardio", "inputs_include": {"exercise": "Outdoor Walk", "minutes": 25}, "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Back Squat", "weight_kg": 90, "reps": 5}, {"exercise": "Bench Press", "weight_kg": 65, "reps": 8}]}}]}], "no_call": ["log_measurement", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
-    "db": [{"table": "bodyweight", "count": 1, "all": {"kg": 79.8, "date": "{{today}}"}}, {"table": "food_entry", "count": 1, "all": {"kcal": 520, "source": "you_said", "meal": "lunch"}}, {"table": "lift_session", "count": 1, "all": {"set_count": 6}}, {"table": "cardio_entry", "count": 1, "all": {"minutes": 25}}]
+    "expect": {"function": "log_bodyweight", "inputs_include": {"kg": 79.8}, "any_of": [{"function": "log_cardio", "inputs_include": {"exercise": "Outdoor Walk", "minutes": 25}, "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 90, "reps": 5}, {"weight_kg": 65, "reps": 8}]}}]}], "no_call": ["log_measurement", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "bodyweight", "count": 1, "all": {"kg": 79.8, "date": "{{today}}"}}, {"table": "food_entry", "count": 1, "all": {"kcal": 520, "source": "you_said", "meal": "lunch"}}, {"table": "lift_session", "count": 1, "all": {"set_count": 6}}, {"table": "cardio_entry", "count": 1, "all": {"minutes": 25}}, {"table": "lift_set", "where": {"exercise": "Back Squat"}, "count": 3, "all": {"weight_kg": 90, "reps": 5}}, {"table": "lift_set", "where": {"exercise": "Bench Press"}, "count": 3, "all": {"weight_kg": 65, "reps": 8}}]
   },
   {
     "id": "feedback_after_error",
@@ -3038,8 +2936,8 @@
     "calls": {"must": ["log_lifts"],
               "may": ["whoami", "list_exercises"],
               "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"function": "log_lifts", "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Push-Up", "reps": 50, "weight_kg": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Push-Up", "reps": 50, "weight_lb": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"exercise": "Push-Up", "reps": 50}]}, "inputs_exclude": ["sets.*.weight_kg", "sets.*.weight_lb"]}], "reply_lacks": ["?"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
-    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 1}}]
+    "expect": {"function": "log_lifts", "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"reps": 50, "weight_kg": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"reps": 50, "weight_lb": 0}]}}, {"function": "log_lifts", "inputs_include": {"sets": [{"reps": 50}]}, "inputs_exclude": ["sets.*.weight_kg", "sets.*.weight_lb"]}], "reply_lacks": ["?"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 1}}, {"table": "lift_set", "count": 1, "all": {"exercise": "Push-Up", "weight_kg": 0, "reps": 50}}]
   },
   {
     "id": "look_coach_general",
@@ -3088,5 +2986,257 @@
               "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine", "what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals", "list_exercises", "find_food", "get_routines"]},
     "seed": [{"service": "sixteen_weeks"}],
     "expect": {"no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]}
+  },
+  {
+    "id": "word_no_history",
+    "kind": "direct",
+    "core": false,
+    "say": "bench 3 sets of 8 at 60",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 60, "reps": 8}]}, "reply_has": ["Bench Press"], "reply_lacks": ["?"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 3, "all": {"exercise": "Bench Press", "weight_kg": 60, "reps": 8, "date": "{{today}}"}}]
+  },
+  {
+    "id": "word_smith_history",
+    "kind": "direct",
+    "core": false,
+    "say": "squat 3x5 at 60",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "smith", "service": "log_lifts", "data": {"date": "{{days_ago:3}}", "sets": [{"exercise": "Smith Squat", "weight_kg": 60, "reps": 5, "exact": true}]}}],
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 60, "reps": 5}]}, "reply_has": ["Smith Squat"], "reply_lacks": ["?"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "where": {"date": "{{today}}"}, "count": 3, "all": {"exercise": "Smith Squat", "weight_kg": 60, "reps": 5}}, {"table": "lift_set", "where": {"exercise": "Back Squat"}, "count": 0}]
+  },
+  {
+    "id": "word_both_logged",
+    "kind": "direct",
+    "core": false,
+    "say": "squat 3x5 at 80",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises", "what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "back", "service": "log_lifts", "data": {"date": "{{days_ago:5}}", "sets": [{"exercise": "Back Squat", "weight_kg": 80, "reps": 5, "exact": true}]}}, {"as": "smith", "service": "log_lifts", "data": {"date": "{{days_ago:2}}", "sets": [{"exercise": "Smith Squat", "weight_kg": 60, "reps": 5, "exact": true}]}}],
+    "expect": {"function": "log_lifts", "error_code": {"log_lifts": "pick_lift"}, "reply_asks": true, "reply_has": ["Back Squat", "Smith Squat"], "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:logged|added|saved|recorded|entered|tracked|done)\\b|\\b(?:i(?:'ve| have) )?(?:logged|added|saved|recorded|entered|tracked) (?:it|them|all|the|your|that|these|\\d+)\\b|\\b(?<!nothing )(?<!not )(?:is|are|was|were|has been|have been) (?:now )?(?:logged|added|saved|recorded|entered|tracked)\\b|(?<!nothing is )(?<!nothing was )(?<!nothing got )(?<!not )(?<!n't )(?<!never )\\b(?:logged|added|saved|recorded|entered|tracked)(?=[.!])"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "where": {"date": "{{today}}"}, "count": 0}]
+  },
+  {
+    "id": "pick_lift_answer",
+    "kind": "direct",
+    "core": false,
+    "say": "log squat 3x5 at 80 for me",
+    "then": "the barbell one",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises", "what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "back", "service": "log_lifts", "data": {"date": "{{days_ago:5}}", "sets": [{"exercise": "Back Squat", "weight_kg": 80, "reps": 5, "exact": true}]}}, {"as": "smith", "service": "log_lifts", "data": {"date": "{{days_ago:2}}", "sets": [{"exercise": "Smith Squat", "weight_kg": 60, "reps": 5, "exact": true}]}}],
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"exact": true, "weight_kg": 80, "reps": 5}]}, "error_code": {"log_lifts": "pick_lift"}, "reply_lacks": ["?", "Smith"], "reply_has": ["Back Squat"], "reply_has_pattern": ["(?<![\\d.,])80 ?kg\\b"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "where": {"date": "{{today}}"}, "count": 3, "all": {"exercise": "Back Squat", "weight_kg": 80, "reps": 5}}]
+  },
+  {
+    "id": "word_named_equipment",
+    "kind": "direct",
+    "core": false,
+    "say": "barbell bench press 3x5 at 60",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "smith", "service": "log_lifts", "data": {"date": "{{days_ago:7}}", "sets": [{"exercise": "Smith Bench Press", "weight_kg": 60, "reps": 5, "exact": true}]}}],
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 60, "reps": 5}]}, "reply_has": ["Bench Press"], "reply_lacks": ["?"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "where": {"date": "{{today}}"}, "count": 3, "all": {"exercise": "Bench Press", "weight_kg": 60, "reps": 5}}]
+  },
+  {
+    "id": "word_dumbbell_history",
+    "kind": "direct",
+    "core": false,
+    "say": "bench 3x8 at 30",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "dumbbell", "service": "log_lifts", "data": {"date": "{{days_ago:7}}", "sets": [{"exercise": "Dumbbell Bench Press", "weight_kg": 30, "reps": 8, "exact": true}]}}],
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 30, "reps": 8}]}, "reply_has": ["Bench Press"], "reply_lacks": ["?"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "where": {"date": "{{today}}"}, "count": 3, "all": {"exercise": "Bench Press", "weight_kg": 30, "reps": 8}}]
+  },
+  {
+    "id": "dumbbell_each",
+    "kind": "direct",
+    "core": false,
+    "say": "dumbbell bench press 3x10 with the 25s",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 25, "reps": 10}]}, "reply_has_pattern": ["\\beach\\b"], "reply_lacks": ["?"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 3, "all": {"exercise": "Dumbbell Bench Press", "weight_kg": 25, "reps": 10, "date": "{{today}}"}}]
+  },
+  {
+    "id": "hand_check_family",
+    "kind": "direct",
+    "core": false,
+    "say": "dumbbell bench press 50 kg for 8",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "bench", "service": "log_lifts", "data": {"date": "{{days_ago:7}}", "sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": true}]}}],
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 50, "reps": 8}]}, "answer_has": {"log_lifts": "hand_check"}, "reply_asks": true, "reply_has_pattern": ["(?:(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\b(?:a hand|per hand|each hand|one hand|both hands|in total|total|per dumbbell|each dumbbell|one dumbbell|altogether|combined)\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\bor\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\b(?:a hand|per hand|each hand|one hand|both hands|in total|total|per dumbbell|each dumbbell|one dumbbell|altogether|combined)\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\?)|(?:(?:^|[.!?;\\n\\u2013\\u2014]\\s*)(?:was|is|were|are|did|do|does|which|just to check,? (?:was|is))\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\b(?:a hand|per hand|each hand|one hand|both hands|in total|total|per dumbbell|each dumbbell|one dumbbell|altogether|combined)\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\?)"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "where": {"date": "{{today}}"}, "count": 1, "all": {"exercise": "Dumbbell Bench Press", "weight_kg": 50, "reps": 8}}]
+  },
+  {
+    "id": "hand_check_link",
+    "kind": "direct",
+    "core": false,
+    "say": "hammer curls 3x10 at 20",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "curl", "service": "log_lifts", "data": {"date": "{{days_ago:7}}", "sets": [{"exercise": "Barbell Curl", "weight_kg": 30, "reps": 8, "exact": true}]}}],
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 20, "reps": 10}]}, "answer_has": {"log_lifts": "hand_check"}, "reply_asks": true, "reply_has_pattern": ["(?:(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\b(?:a hand|per hand|each hand|one hand|both hands|in total|total|per dumbbell|each dumbbell|one dumbbell|altogether|combined)\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\bor\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\b(?:a hand|per hand|each hand|one hand|both hands|in total|total|per dumbbell|each dumbbell|one dumbbell|altogether|combined)\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\?)|(?:(?:^|[.!?;\\n\\u2013\\u2014]\\s*)(?:was|is|were|are|did|do|does|which|just to check,? (?:was|is))\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\b(?:a hand|per hand|each hand|one hand|both hands|in total|total|per dumbbell|each dumbbell|one dumbbell|altogether|combined)\\b(?:[^.!?;\\n\\u2013\\u2014]|\\.(?=\\d))*\\?)"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "where": {"date": "{{today}}"}, "count": 3, "all": {"exercise": "Dumbbell Hammer Curl", "weight_kg": 20, "reps": 10}}]
+  },
+  {
+    "id": "hold_plank",
+    "kind": "direct",
+    "core": false,
+    "say": "held a plank for 90 seconds, twice",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"time_s": 90}]}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 2, "all": {"exercise": "Plank", "time_s": 90, "reps": null, "date": "{{today}}"}}]
+  },
+  {
+    "id": "dead_hang",
+    "kind": "direct",
+    "core": false,
+    "say": "dead hang 45 seconds",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"time_s": 45}]}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 1, "all": {"exercise": "Dead Hang", "time_s": 45, "reps": null, "date": "{{today}}"}}]
+  },
+  {
+    "id": "carry_farmers",
+    "kind": "direct",
+    "core": false,
+    "say": "farmer's carry, 32 kg each hand, 2 lengths of 40 m",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 32, "distance_m": 40}]}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 2, "all": {"exercise": "Farmer's Carry", "weight_kg": 32, "distance_m": 40, "reps": null, "date": "{{today}}"}}]
+  },
+  {
+    "id": "hyrox_wall_balls",
+    "kind": "direct",
+    "core": false,
+    "say": "100 wall balls with a 6 kg ball",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 6, "reps": 100}]}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 1, "all": {"exercise": "Wall Ball", "weight_kg": 6, "reps": 100, "date": "{{today}}"}}]
+  },
+  {
+    "id": "box_jumps",
+    "kind": "direct",
+    "core": false,
+    "say": "4 sets of 5 box jumps",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"reps": 5}]}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 4, "all": {"exercise": "Box Jump", "weight_kg": 0, "reps": 5, "date": "{{today}}"}}]
+  },
+  {
+    "id": "burpees",
+    "kind": "direct",
+    "core": false,
+    "say": "did 3 sets of 15 burpees",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"reps": 15}]}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 3, "all": {"exercise": "Burpee", "weight_kg": 0, "reps": 15, "date": "{{today}}"}}, {"table": "cardio_entry", "count": 0}]
+  },
+  {
+    "id": "assisted_pull_up",
+    "kind": "direct",
+    "core": false,
+    "say": "assisted pull-ups 3x8 with 20 kg of help",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": -20, "reps": 8}]}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 3, "all": {"exercise": "Assisted Pull-Up", "weight_kg": -20, "reps": 8, "date": "{{today}}"}}]
+  },
+  {
+    "id": "unknown_lift_close",
+    "kind": "direct",
+    "core": false,
+    "say": "3x10 cambered bar skull crushers at 30",
+    "calls": {"must": [],
+              "may": ["whoami", "list_exercises", "log_lifts"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"reply_asks": true, "reply_has_pattern": ["\\bskull ?crushers?\\b"], "refusals": {"log_lifts": "unknown_exercise"}, "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:logged|added|saved|recorded|entered|tracked|done)\\b|\\b(?:i(?:'ve| have) )?(?:logged|added|saved|recorded|entered|tracked) (?:it|them|all|the|your|that|these|\\d+)\\b|\\b(?<!nothing )(?<!not )(?:is|are|was|were|has been|have been) (?:now )?(?:logged|added|saved|recorded|entered|tracked)\\b|(?<!nothing is )(?<!nothing was )(?<!nothing got )(?<!not )(?<!n't )(?<!never )\\b(?:logged|added|saved|recorded|entered|tracked)(?=[.!])"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 0}]
+  },
+  {
+    "id": "read_plain_word",
+    "kind": "direct",
+    "core": false,
+    "say": "how is my squat going?",
+    "calls": {"must": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "back1", "service": "log_lifts", "data": {"date": "{{days_ago:10}}", "sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5, "exact": true}]}}, {"as": "smith1", "service": "log_lifts", "data": {"date": "{{days_ago:8}}", "sets": [{"exercise": "Smith Squat", "weight_kg": 70, "reps": 5, "exact": true}]}}, {"as": "back2", "service": "log_lifts", "data": {"date": "{{days_ago:6}}", "sets": [{"exercise": "Back Squat", "weight_kg": 102.5, "reps": 5, "exact": true}]}}, {"as": "smith2", "service": "log_lifts", "data": {"date": "{{days_ago:4}}", "sets": [{"exercise": "Smith Squat", "weight_kg": 72.5, "reps": 5, "exact": true}]}}],
+    "expect": {"read_any": true, "reply_has": ["Back Squat", "Smith Squat"], "reply_lacks": ["?"], "quotes_one_of": ["102.5", "72.5", "100", "70", "119.6", "84.6", "116.7", "81.7"], "quotes_spotter": 2, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 4}]
+  },
+  {
+    "id": "import_exact_smith",
+    "kind": "direct",
+    "core": false,
+    "say": "import this: 2026-10-20 Bench Press 3x5 60kg",
+    "calls": {"must": ["import_entries"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "send_feedback", "save_routine"]},
+    "seed": [{"as": "smith", "service": "log_lifts", "data": {"date": "{{days_ago:7}}", "sets": [{"exercise": "Smith Bench Press", "weight_kg": 60, "reps": 5, "exact": true}]}}],
+    "expect": {"function": "import_entries", "inputs_include": {"rows": [{"kind": "lift_session", "sets": [{"exercise": "Bench Press", "weight": 60, "reps": 5}]}]}, "inputs_forbid": {"dry_run": false}, "answer_has": {"import_entries": {"dry_run": true, "counts": {"lift_session": {"written": 1}}}}, "reply_has": ["Bench Press"], "reply_asks": true, "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:imported|written|done|logged|added|saved|recorded)\\b|\\bi(?:'ve| have) (?:imported|wrote|written|logged|added|saved|recorded|entered)\\b|\\b(?:imported|wrote|added|saved|logged) (?:them|all|the|your|these|it|\\d+)\\b|\\b(?<!nothing )(?<!not )(?<!anything )(?:are|were|is|has been|have been) (?:now )?(?:imported|written|saved|added|logged)\\b|\\bin your (?:log|logbook) now\\b|\\b(?:is|are) now in (?:spotter|your log|your logbook)\\b|\\bnow in (?:spotter|your log|your logbook)\\b"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 1}, {"table": "lift_set", "count": 1, "all": {"exercise": "Smith Bench Press"}}]
+  },
+  {
+    "id": "import_outside_defaults",
+    "kind": "direct",
+    "core": false,
+    "say": "import this: 2026-10-20 Hack Squat 3x8 100kg",
+    "calls": {"must": ["list_exercises", "import_entries"],
+              "may": ["whoami"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "send_feedback", "save_routine"]},
+    "expect": {"any_of": [{"answer_has": {"list_exercises": {"exercises": [{"name": "Hack Squat"}]}}}, {"function": "import_entries", "inputs_include": {"rows": [{"sets": [{"exercise": "Hack Squat"}]}]}}], "reply_has": ["Hack Squat"], "reply_asks": true, "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:imported|written|done|logged|added|saved|recorded)\\b|\\bi(?:'ve| have) (?:imported|wrote|written|logged|added|saved|recorded|entered)\\b|\\b(?:imported|wrote|added|saved|logged) (?:them|all|the|your|these|it|\\d+)\\b|\\b(?<!nothing )(?<!not )(?<!anything )(?:are|were|is|has been|have been) (?:now )?(?:imported|written|saved|added|logged)\\b|\\bin your (?:log|logbook) now\\b|\\b(?:is|are) now in (?:spotter|your log|your logbook)\\b|\\bnow in (?:spotter|your log|your logbook)\\b", "\\b(?:is not|isn't|is no longer|not) (?:on|in) (?:spotter's |the |your )?(?:exercise )?list\\b|\\bnot (?:a )?listed\\b"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 0}, {"table": "lift_set", "count": 0}]
+  },
+  {
+    "id": "pushups_over_100",
+    "kind": "direct",
+    "core": false,
+    "say": "did 120 push-ups in one set this morning, log it",
+    "calls": {"must": [],
+              "may": ["whoami", "list_exercises", "log_lifts"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"reply_asks": true, "reply_has_pattern": ["(?<![\\d.,])100(?![\\d.,])"], "refusals": {"log_lifts": "reps_out_of_range"}, "reply_lacks_pattern": ["(?:^|[.!?:]\\s+)(?:logged|added|saved|recorded|entered|tracked|done)\\b|\\b(?:i(?:'ve| have) )?(?:logged|added|saved|recorded|entered|tracked) (?:it|them|all|the|your|that|these|\\d+)\\b|\\b(?<!nothing )(?<!not )(?:is|are|was|were|has been|have been) (?:now )?(?:logged|added|saved|recorded|entered|tracked)\\b|(?<!nothing is )(?<!nothing was )(?<!nothing got )(?<!not )(?<!n't )(?<!never )\\b(?:logged|added|saved|recorded|entered|tracked)(?=[.!])"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 0}]
+  },
+  {
+    "id": "split_squat_a_side",
+    "kind": "direct",
+    "core": false,
+    "say": "did bulgarian split squats 3x10 each leg with 20kg dumbbells",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 20, "reps": 10}]}, "inputs_forbid": {"sets.*.reps": 20, "sets.*.weight_kg": 40}, "reply_lacks_pattern": ["(?<![\\d.,])20 reps\\b", "\\b3 ?(?:x|×) ?20\\b", "(?<![\\d.,])40 ?kg\\b", "\\bsets? of 20\\b"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 3, "all": {"exercise": "Bulgarian Split Squat", "weight_kg": 20, "reps": 10, "date": "{{today}}"}}]
   }
 ]

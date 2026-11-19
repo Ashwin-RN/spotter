@@ -149,6 +149,35 @@ case. The last measured release run, data on request on 2026-11-17: 144 of 153 r
      `Authorization` header. It sits in the temporary directory and is deleted when the run ends.
    - The working directory is an empty temporary folder: no project `CLAUDE.md`, memory or settings.
    - `--no-session-persistence` keeps the runs out of the CLI's saved sessions.
+   - A case with a second turn (`then`) is two CLI calls in one working folder, with one config file. The first
+     sends `--session-id <a new id>` in place of `--no-session-persistence`, so it is saved. The second sends
+     `--resume <that id>` with the second line. Each turn is cut off at 300 seconds. The run's reply is the second
+     turn's; its tokens, cost and turns are both turns' added.
+   - Each call is marked with its turn: the runner counts the calls the server holds when the first turn ends. A
+     write that succeeded in the first turn fails the case, "a write succeeded before the second turn was sent": the
+     second line must be the answer the write waited for, not a turn after a guess. The refusal the case is built on
+     (its expect's `error_code`, `pick_lift` in `pick_lift_answer`) must come in the first turn and in no call of the
+     second: "no log_lifts call in the first turn was refused with pick_lift", "a log_lifts call in the second turn
+     was refused with pick_lift again".
+   - **Not checked: whether a resumed turn reports its own cost and tokens or a running total of the session.** The
+     runner adds the two turns' figures. If the second turn reports a running total, a two-turn case's cost and
+     tokens count the first turn twice, and the table overstates that case.
+   - **The two flags were not checked against a live CLI.** If one is wrong, the CLI prints no result document, and
+     the run fails with that turn's reason, such as `turn 2: CLI: the CLI output is not a result document`. If the
+     second turn starts a fresh conversation instead, it cannot know the first, and the case's rows fail. A two-turn
+     case never passes on its first turn alone.
+   - **A two-turn run's conversation is saved by the Claude CLI**, since the first turn cannot carry
+     `--no-session-persistence`, and the runner deletes it after the run (`run.forget_session`). The CLI keeps a
+     session at `<config dir>/projects/<project folder>/<session id>.jsonl`, and may keep a folder
+     `<project folder>/<session id>/` beside it (its tool results). The config dir is `CLAUDE_CONFIG_DIR` when set,
+     else `~/.claude`. Read from this PC's store and the CLI on 20 November 2026.
+   - The runner does not rely on how the CLI names a project folder. It deletes every match of
+     `projects/*/<session id>.jsonl` and `projects/*/<session id>`, the id a UUID as the runner wrote it, so the
+     patterns name that session alone, then each match's project folder if it is then empty. A match whose real path
+     is outside `projects`, through a junction or a link, is left and named. Nothing else is touched.
+   - A file the runner cannot delete, or leaves, keeps the session's id in the run (`session_id` and `session_left`
+     in `results.json`), and the summary prints one line, "sessions of two-turn runs the Claude CLI still keeps, a
+     delete failed: ...". Delete those files by hand.
    - `--settings` with an empty `advisorModel` is the advisor's second off switch: see "The advisor is off, and
      one model a run".
    - Each run is cut off at 300 seconds. It was 180 until 17 November 2026, when two data runs were cut off
@@ -162,6 +191,9 @@ case. The last measured release run, data on request on 2026-11-17: 144 of 153 r
    sent back as received. Requests are paced to 5 a minute, the free tier's limit (`--gemini-per-minute`): each
    waits until 12 seconds have passed since the one before. A 429 or 503 still backs off once; a 429 that persists
    stops that model. A run cut off keeps its usage, finish reasons and back-off log.
+   Codex and the Gemini runner send one message a conversation. A case with `then` fails there unrun, with the
+   reason "codex sends one message a conversation, so this case's second turn cannot be sent: failed, not run" (or
+   gemini): a first turn alone is no run of the case.
 7. A run that raises is that run's failure, its reason the error, and the runs go on. A stop (a Gemini quota)
    keeps the run it stopped as a failure with the stop as its reason. With `--keep`, `results.json` is written
    whatever ended the runs.
@@ -215,6 +247,9 @@ lower price, and a run that took a stronger model's help does not show what the 
 - `evals/recorder.py` wraps the app. It reads every JSON-RPC body sent to `/mcp` and every answer:
   each `tools/call` with its function name and arguments as sent, whether the answer was `isError`, and whether
   any answer came. For a data read it keeps the answer itself, so `quotes_spotter` can read its figures.
+- Every call's answer is kept as `result` too, a refusal's among them (contract `exercise-list.md`, C4g), so
+  `error_code`, `refusals` and `answer_has` read what Spotter answered. `quotes_spotter` still reads only the data
+  reads.
 - Records are keyed by a hash of each run's token, so runs never mix.
 - The `db` checks read the throwaway person's rows after the run. The food tag (`source`) is the
   server's, so the row is the proof of what the call meant.
@@ -226,7 +261,12 @@ record cannot be talked round.
 
 ## The cases
 
-`evals/cases.json`. Each case is `{id, say, calls, expect, kind?, core?, pair?, switch?, seed?, db?}`.
+`evals/cases.json`. Each case is `{id, say, calls, expect, then?, kind?, core?, pair?, switch?, seed?, db?}`.
+
+- `then` is a second line the person sends in the same conversation, after the first reply. The case is judged on
+  the calls of both turns and on the final reply, and a write that succeeded before the second line fails it. It
+  is one line, as `say` is. See "How a run works" for how the Claude CLI goes on with a conversation, and why Codex
+  and Gemini fail such a case unrun.
 
 - `calls` is on every case: `{must, may, must_not}`, each a list of function names.
   - `must`: at least one of these called and answered. A refusal is an answer. Empty asks for no call.
@@ -257,9 +297,14 @@ record cannot be talked round.
   - `edit_entry` edits a row seeded before it, so the person has an edit to undo. Its `data` is
     `{kind, entry_id, changes}`, all three, and `entry_id` is that row's `{{seed.<as>}}`.
 - `db` checks the person's live rows, or with `"state": "deleted"` the soft-deleted ones.
-  - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`, `goal`,
-    `feedback`, `routine`.
+  - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`,
+    `lift_set`, `goal`, `feedback`, `routine`.
   - A `lift_session` row carries `set_count`: how many sets it holds.
+  - A `lift_set` row is one set of the person's: `exercise` (the lift's name as Spotter wrote it), `weight_kg`,
+    `reps`, `time_s`, `distance_m`, `set_number`, `session_id`, and its session's `date` and `deleted_at`. A set of
+    a deleted session reads as deleted.
+  - `where` narrows a check to the rows that match it, such as one date or one lift: `{"table": "lift_set",
+    "where": {"date": "{{today}}"}, "count": 3, "all": {"exercise": "Smith Squat"}}`.
   - A note is never kept as deleted: a deleted note's row is gone. So every feedback row is live.
   - A goal has no delete, so every goal row is live. Check `status` instead.
 
@@ -302,6 +347,10 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `read_any` | At least one data read was answered without error. |
 | `quotes_spotter` | The reply holds at least this many of the figures this run's data reads gave. |
 | `quotes_one_of` | The reply quotes at least one of these figures, and a data read of this run gave it. |
+| `error_code` | `{function: code}`: a call of it was refused with this code. A refusal's codes are its own and every one in its `errors` list, so a `pick_lift` behind a date error counts. |
+| `no_error_code` | `{function: code}`: no call of it was refused with this code. |
+| `refusals` | `{function: code}`: every call of it was refused with this code. No call at all passes. |
+| `answer_has` | `{function: key}`: a call of it answered without error holds this key, not null, such as `hand_check`. Or `{function: {...}}`: its answer matches the object, as `inputs_include` matches. |
 
 **A data read** is `what_is_logged`, `get_data`, `get_log`, `get_progress`, `get_trends` or `get_goals`. Never
 `whoami`, `list_exercises`, `find_food` or `get_routines`.
@@ -335,7 +384,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `repeat_sent` | Waist 84 (84 already logged today) | `log_measurement` is called; the server may answer duplicate |
 | `delete_ambiguous` | Delete my weigh-in (two weigh-ins on two days; Claude may delete) | `delete_entry` never called; both weigh-ins still live |
 | `delete_asks_first` | Delete my last weigh-in (one weigh-in; Claude may delete) | `delete_entry` with kind `bodyweight` and that weigh-in's id, one success, never with `confirm`; the reply asks; the weigh-in still live, none deleted |
-| `unknown_exercise` | Log 3 sets of 8 on the zorbinator at 20 kg | `list_exercises` called or the reply asks; `log_lifts` never called; no lift session |
+| `unknown_exercise` | Log 3 sets of 8 on the zorbinator at 20 kg | `list_exercises` called or the reply asks; any `log_lifts` call refused as `unknown_exercise`; no lift session |
 | `goal_date` | I want to be 72 kg by the end of March (two weigh-ins, about 80 kg) | `set_goal` with kind bodyweight, target 72, `target_date` `{{next_month_end:3}}`, once; one goal row, down, open |
 | `how_am_i_doing` | How am I doing? (the `four_weeks` seed) | Any data read answered; two of the run's figures quoted; no write function called |
 | `on_track` | Am I on track? (the `four_weeks` seed: three goals) | Any data read answered; no write function called |
@@ -354,19 +403,19 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `setup_asks_first` | Hi Spotter, help me set up (nothing logged yet) | `whoami` called; `log_bodyweight`, `log_lifts`, `set_goal`, `update_settings`, `save_food`, `log_food`, `log_cardio`, `log_measurement`, `import_entries` and `save_routine` never called; the reply asks and says "weigh"; no weigh-in, no goal |
 | `setup_picks_up` | Help me finish setting up Spotter (80.9 kg logged yesterday, a body weight goal of 77 kg by the end of March) | `whoami` called; `log_bodyweight`, `set_goal`, `log_lifts`, `update_settings`, `save_food`, `import_entries` and `save_routine` never called; the reply asks and says "lift"; one weigh-in, one goal |
 | `delete_regretted` | You deleted a weigh-in I wanted to keep. I never asked for that, and I do not want it to happen again. (one live weigh-in) | `delete_entry` never called; the reply says "Settings"; the weigh-in still live |
-| `lift_one_sentence` | Back squat 3 sets of 5 at 100 kg, then bench press 80 kg for 8, 8 and 6 | One successful `log_lifts`, its sets holding Back Squat 100 × 5, Bench Press 80 × 8 and Bench Press 80 × 6. One live session, `set_count` 6 |
-| `lift_set_by_set` | Bench press 80 kg for 5 (Bench Press 80 × 5 logged today) | One successful `log_lifts` with Bench Press 80 × 5, never `new_session` true. One live session, the seeded one, `set_count` 2 |
-| `lift_added_later` | Also did barbell rows, 3 sets of 10 at 50 kg (Back Squat 100 × 5, three sets, logged today) | One successful `log_lifts` with Barbell Row 50 × 10, never a Back Squat set, never `new_session` true. One live session, the seeded one, `set_count` 6 |
+| `lift_one_sentence` | Back squat 3 sets of 5 at 100 kg, then bench press 80 kg for 8, 8 and 6 | One successful `log_lifts`, its sets holding 100 × 5, 80 × 8 and 80 × 6. One live session, `set_count` 6: three Back Squat sets of 100 × 5 and three Bench Press sets, 80 × 8 and 80 × 6 among them |
+| `lift_set_by_set` | Bench press 80 kg for 5 (Bench Press 80 × 5 logged today) | One successful `log_lifts` with 80 × 5, never `new_session` true. One live session, the seeded one, `set_count` 2, both Bench Press 80 × 5 |
+| `lift_added_later` | Also did barbell rows, 3 sets of 10 at 50 kg (Back Squat 100 × 5, three sets, logged today) | One successful `log_lifts` with 50 × 10, never a Back Squat set, never `new_session` true. One live session, the seeded one, `set_count` 6: three Barbell Row sets of 50 × 10 and the three Back Squat sets |
 | `setup_stays_quiet` | I weighed 80.4 kg this morning (80.9 kg logged yesterday, so `whoami` carries `setup` and no note) | `log_bodyweight` with kg 80.4; `log_lifts`, `set_goal`, `update_settings`, `save_food`, `import_entries` and `save_routine` never called; the reply asks nothing (no "?") and does not say "set up" or "setup"; two live weigh-ins, yesterday's 80.9 and today's 80.4 |
 | `routine_saved` | Save my push day: bench press 3 sets of 8, overhead press 3 sets of 10, dips 3 sets of 10 | One successful `save_routine`, name "push day" (any case), lifts Bench Press 3 × 8, Overhead Press 3 × 10, Dip 3 × 10, and no `weight_kg` in any lift. No `log_lifts`. One live routine with 3 lifts |
-| `routine_logged` | Log my push day (Push day saved: Bench Press 3 × 8 at 60, Overhead Press 3 × 10 at 40) | One successful `log_lifts`, its sets holding Bench Press 60 × 8 and Overhead Press 40 × 10, never `new_session` true. One live session today, `set_count` 6 |
-| `routine_changed` | Log my push day, but bench was 62.5 today (the same routine saved) | One successful `log_lifts`, its sets holding Bench Press 62.5 × 8 and Overhead Press 40 × 10, and no set at 60. One live session, `set_count` 6 |
+| `routine_logged` | Log my push day (Push day saved: Bench Press 3 × 8 at 60, Overhead Press 3 × 10 at 40) | One successful `log_lifts`, its sets holding 60 × 8 and 40 × 10, never `new_session` true. One live session today, `set_count` 6: three Bench Press sets of 60 × 8, three Overhead Press sets of 40 × 10 |
+| `routine_changed` | Log my push day, but bench was 62.5 today (the same routine saved) | One successful `log_lifts`, its sets holding 62.5 × 8 and 40 × 10, and no set at 60. One live session, `set_count` 6: three Bench Press sets of 62.5 × 8, three Overhead Press sets of 40 × 10 |
 | `lb_weigh_in` | Weighed 185 this morning (weights set to lb) | One successful `log_bodyweight` with `lb` 185 and no `kg`. The reply has "185" and no "kg" as a word. One live weigh-in today, kg 83.91 |
-| `lb_lifts` | Bench 225 for 5, then 3 sets of 8 at 185 (weights set to lb) | One successful `log_lifts` with Bench Press `weight_lb` 225 × 5 and `weight_lb` 185 × 8, no `weight_kg`. The reply has no "kg" as a word. One live session today, `set_count` 4 |
+| `lb_lifts` | Bench 225 for 5, then 3 sets of 8 at 185 (weights set to lb) | One successful `log_lifts` with `weight_lb` 225 × 5 and `weight_lb` 185 × 8, no `weight_kg`. The reply has no "kg" as a word. One live session today, `set_count` 4, every set Bench Press, at 102.06 kg × 5 and 83.91 kg × 8 |
 | `miles_run` | Ran 3 miles outside in 27 minutes (distances set to mi) | One successful `log_cardio`, Outdoor Run, `distance_mi` 3, minutes 27, no `distance_km`. The reply has "9:00" and no "km" as a word. One live cardio entry, distance_km 4.83 |
 | `units_asked` | I weigh 185 lb (84 kg logged yesterday, units never chosen) | One successful `log_bodyweight` with `lb` 185. No `update_settings`. The reply asks. Two live weigh-ins, today's kg 83.91 |
 | `units_switch` | Show my weights in pounds and my runs in miles from now on | One successful `update_settings` with weight_unit lb and distance_unit mi. No log call |
-| `lb_routine_changed` | Log my push day, but bench was 230 today (weights set to lb; Push day saved: Bench Press 3 × 8 at weight_kg 102.06, Overhead Press 3 × 10 at weight_kg 61.23) | One successful `log_lifts`: Bench Press `weight_lb` 230 × 8, and Overhead Press either `weight_kg` 61.23 or `weight_lb` 135 × 10. No set sent `weight_lb` 102.06 or `weight_kg` 230. One live session today, `set_count` 6 |
+| `lb_routine_changed` | Log my push day, but bench was 230 today (weights set to lb; Push day saved: Bench Press 3 × 8 at weight_kg 102.06, Overhead Press 3 × 10 at weight_kg 61.23) | One successful `log_lifts`: `weight_lb` 230 × 8, and either `weight_kg` 61.23 or `weight_lb` 135 × 10. No set sent `weight_lb` 102.06 or `weight_kg` 230. One live session today, `set_count` 6: three Bench Press sets of 104.33 kg × 8, three Overhead Press sets of 61.23 kg × 10 |
 | `waist_in_inches` | My waist is 32 inches | Either one successful `log_measurement`, kind waist, value 81.28 or 81.3, and the reply says "cm"; or no successful `log_measurement` and the reply asks. Every live waist row holds 81.28 or 81.3 |
 | `machine_calories` | 30 minutes on the treadmill, it said 250 calories | One successful `log_cardio` with minutes 30 and `machine_kcal` 250. One live cardio entry, `machine_kcal` 250 |
 | `data_basketball` | How do I get better at basketball? (the `sixteen_weeks` seed) | `what_is_logged` called, or `get_data` on any area; no write function called; the reply quotes one figure Spotter gives from the seed, as a figure of its own: 12 or 48 lift sessions, 108 or 432 sets, 2 or 26 cardio entries or 8 in the 28 days before, 33% or 67% beside upper or lower, the squat's 116.7 or 100 kg x 5, or a plan line's 3.3 or 1.6 kg behind, 120 kg on the plan line, 79.3 or 80.9 |
@@ -471,7 +520,7 @@ code. A run is one message from the person, so no case can say yes to a preview.
 
 | Case | Proves | Does not prove |
 |---|---|---|
-| `delete_asks_first` | Asked plainly to delete, the model makes the first call only, with the right kind and id, and asks the person. Nothing is deleted. | That it sends the code after a yes: the runner has no second turn. The tests through MCP prove the two calls. The reply check is a question mark. |
+| `delete_asks_first` | Asked plainly to delete, the model makes the first call only, with the right kind and id, and asks the person. Nothing is deleted. | That it sends the code after a yes: the case has one turn. The tests through MCP prove the two calls. The reply check is a question mark. |
 | `delete_regretted` | Told a delete was not wanted, the model deletes nothing and names Settings. | That it restores the entry: the seeded weigh-in is live, so there is nothing to restore. That it says deleting can be turned off: the reply check is one word. |
 
 A model that asks before any `delete_entry` call does not pass `delete_asks_first`: after the preview it would have
@@ -479,14 +528,15 @@ to ask the person a second time.
 
 ### The three gym logging cases
 
-Every `log_lifts` call for a date adds its sets to that date's session. `lift_set` cannot be a `db` table, so
-the set count is read from `set_count` on the session row.
+Every `log_lifts` call for a date adds its sets to that date's session. The set count is `set_count` on the session
+row. Since C4g each set is also a `lift_set` row with the name of the lift Spotter wrote, so a case judges that
+lift, whatever word the assistant sent: "bench" and "Bench Press" both pass where Bench Press was written.
 
 | Case | Proves | Does not prove |
 |---|---|---|
 | `lift_one_sentence` | A workout said in one sentence becomes one call, one session, six sets, with the person's numbers | That three equal sets are sent as three items: `inputs_include` cannot count, so the set count is read from the row |
 | `lift_set_by_set` | A set equal to one already logged that day is added to the same session, with no question and no second session. Before this work it failed: the call came back duplicate | That the assistant keeps doing it over five sets in one conversation: a run is one message. The seed stands in for the earlier sets, made before the run, so the assistant did not see them logged |
-| `lift_added_later` | Told of one more lift, the assistant sends only the new sets, and they land in the day's session | That it never resends earlier sets it logged itself in the same conversation: no second turn. Only one phrasing |
+| `lift_added_later` | Told of one more lift, the assistant sends only the new sets, and they land in the day's session | That it never resends earlier sets it logged itself in the same conversation: the case has one turn. Only one phrasing |
 
 ### The three routine cases
 
@@ -510,7 +560,7 @@ at 2 decimal places; 4.83 is 3 x 1.609344; 102.06 and 61.23 are 225 and 135 lb, 
 | `lb_weigh_in` | A bare number on a lb account goes in as lb, is kept as kg, and comes back in lb | That every later read stays in lb: one message a run |
 | `lb_lifts` | Each set takes the pound field, and the reply never falls back to kg | That a set said in kg on a lb account goes in `weight_kg`: one phrasing |
 | `miles_run` | A distance in miles goes in as said, and the pace comes back per mile | Speed in mph: unit tests hold it |
-| `units_asked` | The first lb log on an account that never chose asks, and does not switch on its own | That the yes is saved: no second turn. `units_switch` covers the save |
+| `units_asked` | The first lb log on an account that never chose asks, and does not switch on its own | That the yes is saved: the case has one turn. `units_switch` covers the save |
 | `units_switch` | The assistant finds the setting from plain words | That pages follow: unit tests hold it |
 | `lb_routine_changed` | A routine's kg weight goes in `weight_kg` as given, or in lb as its words say it, and the changed lift in lb | The newest-wins rule on a lb account: unit tests hold it |
 
@@ -617,7 +667,8 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
 
 **Every case after `import_other_app` is the golden package (contract `function-list.md`, G1's note of
 2026-11-17): Codex's candidates, checked against the code by an outside reviewer, then built here.** Each carries
-`core`, and each look-alike its `pair`.
+`core`, and each look-alike its `pair`. The exercise list's 22 cases follow them (contract `exercise-list.md`, C4g), in
+the same package and played the same way: see "The exercise list cases".
 
 - **The core runs at each gate, the full set at the baseline and the release** (the owner's pick). `--core` runs it.
   The core is the package's core cases with G1's golden cases and the seven cases G1 added: the reviewed list
@@ -668,6 +719,64 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
 medians of a run (calls, turns, seconds, tokens), the totals with cost (or "none given"), and the logging cases'
 bar: the passes of every case whose `must` holds a write, and any such case under 2 of 3. Then who answered: the
 client, the model asked for and the ones reported, the effort sent, and for Claude the one-model rule's count.
+
+### The exercise list cases
+
+**Every lift is logged in the person's own words since the exercise list (contract `exercise-list.md`, C4g).** So no
+case checks the name a call sent. The 13 cases that did now check the lift of the written `lift_set` rows, with the
+same weights, units and reps in `inputs_include`; `pushups_over_30` now logs one set of 50. Each has a passing run in
+the person's words ("bench", "pullups", "barbell rows") and a failing one whose word reaches another lift
+(`tests/test_golden_cases.py`, `C4G_WORDS` and `EARLIER`). `unknown_exercise` and `which_press` take a refused try of
+the person's word: every `log_lifts` call there must be refused as `unknown_exercise`. Since a refused call is now
+allowed, those two, `unknown_lift_close`, `pushups_over_100` and `word_both_logged` also fail a claim of done, such as
+"Logged bench. Right?" or "Zorbinator recorded.", by a `reply_lacks_pattern` of the shape G1's import and delete
+cases use, with recorded, entered and tracked beside logged. The two hand-check cases need a question about the
+hands: in the question's sentence, two hand phrases joined by "or" ("50 kg a hand or in total?"), or a question word
+opening it before the hand words ("Is 50 kg per hand right?"). A sentence ends at a full stop, "!", "?", ";", a line, or
+an en or em dash. So "each" alone, the summary's own word, fails, and so does "50 kg per hand, want to log another
+set?". The two import cases ask and never claim an import, by G1's import pattern widened as the lift cases' is
+(logged, added, "Saved to your log", "in your log now", "now in Spotter"), as G1's three import cases now are too; and
+`import_outside_defaults` never says Hack Squat is off the list. A plain word with one lift to take is logged and named
+without a question (`word_no_history`, `word_smith_history`, `word_named_equipment`, `word_dumbbell_history`,
+`dumbbell_each`: no "?"), as `hurried_squat` is. Every new case whose words mean today checks the rows' date.
+
+Every seeded lift set in the file sends `exact` true, so a seeded Back Squat stays Back Squat after a seeded Smith
+Squat. The new
+cases follow the last, each `direct` and `core` false: the core stays at 101.
+
+| Case | Says (seed) | Passes when |
+|---|---|---|
+| `word_no_history` | bench 3 sets of 8 at 60 | Three Bench Press sets of 60 × 8; the reply names Bench Press |
+| `word_smith_history` | squat 3x5 at 60 (Smith Squat 3 days ago) | Today's three sets are Smith Squat 60 × 5; no Back Squat set; the reply names Smith Squat |
+| `word_both_logged` | squat 3x5 at 80 (Back Squat 5 days ago, Smith Squat 2 days ago) | A `log_lifts` call refused with `pick_lift`; no set today; the reply asks and names both |
+| `pick_lift_answer` | log squat 3x5 at 80 for me, then "the barbell one" (the same seed) | A `pick_lift` refusal in the first turn and none in the second, no write before the second line, then a `log_lifts` call with `exact` true; today's three sets are Back Squat 80 × 5; the final reply names Back Squat and 80 kg, never Smith, and asks nothing |
+| `word_named_equipment` | barbell bench press 3x5 at 60 (Smith Bench Press a week ago) | Today's three sets are Bench Press 60 × 5; the reply names Bench Press |
+| `word_dumbbell_history` | bench 3x8 at 30 (only Dumbbell Bench Press, a week ago) | Today's three sets are Bench Press 30 × 8: "bench" names the bar lifts, and none is logged |
+| `dumbbell_each` | dumbbell bench press 3x10 with the 25s | Three Dumbbell Bench Press sets at 25 kg; the reply says "each" |
+| `hand_check_family` | dumbbell bench press 50 kg for 8 (Bench Press 80 × 5 a week ago) | One Dumbbell Bench Press set at 50 kg, as sent; the call's answer holds `hand_check`; the reply asks about a hand or both |
+| `hand_check_link` | hammer curls 3x10 at 20 (Barbell Curl 30 × 8 a week ago) | Three Dumbbell Hammer Curl sets at 20 kg, as sent; `hand_check` in the answer; the reply asks |
+| `hold_plank` | held a plank for 90 seconds, twice | Two Plank sets, `time_s` 90, no reps |
+| `dead_hang` | dead hang 45 seconds | One Dead Hang set, `time_s` 45, no reps |
+| `carry_farmers` | farmer's carry, 32 kg each hand, 2 lengths of 40 m | Two Farmer's Carry sets, 32 kg, `distance_m` 40, no reps |
+| `hyrox_wall_balls` | 100 wall balls with a 6 kg ball | One Wall Ball set, 6 kg × 100 |
+| `box_jumps` | 4 sets of 5 box jumps | Four Box Jump sets of 5 |
+| `burpees` | did 3 sets of 15 burpees | Three Burpee sets of 15; no `log_cardio` call; no cardio entry |
+| `assisted_pull_up` | assisted pull-ups 3x8 with 20 kg of help | Three Assisted Pull-Up sets at -20 kg × 8. "pull-ups" at -20 passes too |
+| `unknown_lift_close` | 3x10 cambered bar skull crushers at 30 | No set; any `log_lifts` call refused as `unknown_exercise`; the reply asks and names the skull crusher |
+| `read_plain_word` | how is my squat going? (Back Squat and Smith Squat, each twice) | A data read answered without error; no write; the reply names both, quotes two of the run's figures, one of them a seeded squat's (102.5, 72.5, 100, 70, or an estimated max: 119.6, 84.6, 116.7, 81.7), and asks nothing |
+| `import_exact_smith` | import this: 2026-10-20 Bench Press 3x5 60kg (Smith Bench Press a week ago) | An `import_entries` call sends Bench Press, never `dry_run` false, and its preview counts one lift session to write; no set written; the reply names Bench Press |
+| `import_outside_defaults` | import this: 2026-10-20 Hack Squat 3x8 100kg | A `list_exercises` answer holds Hack Squat (a search, or a kind or category), or an `import_entries` call sends Hack Squat; no session; the reply names Hack Squat and asks |
+| `pushups_over_100` | did 120 push-ups in one set this morning, log it | No set; any `log_lifts` call refused with `reps_out_of_range`; the reply asks and says 100 |
+| `split_squat_a_side` | did bulgarian split squats 3x10 each leg with 20kg dumbbells | Three Bulgarian Split Squat sets of 20 kg × 10: reps a side, one hand's weight; no set sent 20 reps or 40 kg; the reply says no 20 reps, no 3 x 20 and no 40 kg |
+
+| Proves | Does not prove |
+|---|---|
+| The assistant sends the person's word, or a name, and the lift Spotter writes is the one the case wants, by the rows | Which word was sent: the rows are judged, not the call's name |
+| A question Spotter asks (`pick_lift`, `hand_check`, a reps refusal) reaches the reply | That it asks once over a longer conversation: `pick_lift_answer` has two turns, every other case one |
+| `pick_lift_answer`: Spotter asks in the first turn and nothing is written there; the answer is sent with `exact` true in the second, which Spotter does not ask again, and logs Back Squat | That the second turn made no other refused call: only the case's own `pick_lift` is read by turn. On Codex and Gemini it fails unrun |
+| `import_exact_smith`: the assistant sends the export's own name. The import takes a name as written (unit tests hold that it lands on Bench Press) | Which lift the preview names: a preview counts sessions and names no lift |
+| `read_plain_word`: a read shows the person both squats, and the reply names both | That `get_progress` took the plain word: any read that shows both passes, and no model-read text says `get_progress` takes one |
+| `word_dumbbell_history`: the design's pick, Bench Press, which the owner is told before the run | That the person meant a barbell |
 
 ## What the evals prove
 

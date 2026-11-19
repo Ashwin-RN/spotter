@@ -4,7 +4,13 @@ Nothing here starts a server, opens a database or calls the model, so all of it 
 
 A case (evals/cases.json):
 
-  {"id": "...", "say": "what the person types", "expect": {...}, "switch": "..."?, "seed": [...]?, "db": [...]?}
+  {"id": "...", "say": "what the person types", "expect": {...}, "then": "..."?, "switch": "..."?, "seed": [...]?,
+   "db": [...]?}
+
+then, a second line the person sends in the same conversation after the first reply (contract exercise-list.md,
+C4g). The case is judged on the calls of both turns and on the final reply. One line, as say is. A write that
+succeeded in the first turn fails it (judge_turns): the second line must be the answer the write waited for.
+evals/run.py runs it on the Claude CLI; on Codex and the Gemini runner it fails unrun, with its reason.
 
 switch, what the person lets Claude do (log or log_delete), set through services.set_claude_can
 before the run, as the Settings page sets it. Left out: the default, log_delete. Any other value, read among
@@ -47,6 +53,17 @@ expect, every key optional, all of them must hold:
   quotes_one_of     figures, such as ["116.7", "100"]: the reply quotes at least one of them, and a data read of this
                     run gave it, by quotes_spotter's rules. The figure a direct case asks about, tied to the run.
 
+  The four that read a call's own answer (contract exercise-list.md, C4g). Each is {function: what}, and needs no
+  function key. A refusal's codes are its own code and every code in its errors list, so a code that is not the
+  first of a combined refusal still counts (a pick_lift behind a date error).
+  error_code        {function: code}: at least one call of it was refused with this code, such as pick_lift.
+  no_error_code     {function: code}: no call of it was refused with this code.
+  refusals          {function: code}: every call of it was refused with this code. No call at all passes: for
+                    "any log_lifts call is refused as unknown_exercise", with log_lifts in the case's may.
+  answer_has        {function: key} or {function: {...}}: at least one call of it was answered without error, and
+                    its answer holds this key with a value that is not null, such as hand_check; or, for an object,
+                    the answer matches it as inputs_include matches arguments.
+
 calls, the case's tags, on every case (contract function-list.md, "The golden set"):
 
   {"must": [...], "may": [...], "must_not": [...]}
@@ -85,11 +102,14 @@ seed, rows created for the person before the run, through Spotter's own services
 
 db, checks on the person's rows after the run:
 
-  {"table": "food_entry", "state": "live", "count": 1, "all": {...}, "rows": [{...}, ...]}
+  {"table": "food_entry", "state": "live", "where": {...}, "count": 1, "all": {...}, "rows": [{...}, ...]}
   state: live (the default: rows not deleted) or deleted (soft-deleted rows only);
+  where: only the rows that match it are checked, such as one date or one lift;
   count: exactly this many such rows; all: every one matches; rows: each matcher matches some row.
   A lift_session row carries set_count: how many sets it holds (evals/run.py's person_rows counts them). A
-  routine row carries lift_count: how many lifts its lifts JSON holds.
+  routine row carries lift_count: how many lifts its lifts JSON holds. A lift_set row is one set of the person's
+  (contract exercise-list.md, C4g): exercise (the lift's name), weight_kg, reps, time_s, distance_m, set_number,
+  session_id, and its session's date and deleted_at, so a set of a deleted session reads as deleted.
 
 Placeholders, as a whole string: "{{today}}" and "{{yesterday}}" (the person's own dates, YYYY-MM-DD),
 "{{days_ago:N}}" (N from 0 to DAYS_AGO, 60: the day N days before today), and "{{next_month_end:N}}" (N from 1 to
@@ -112,8 +132,10 @@ HIDDEN = "[token hidden]"
 
 EXPECT_KEYS = {"function", "inputs_include", "inputs_exclude", "inputs_forbid", "ok_calls", "no_call",
                "refused", "reply_asks", "reply_has", "reply_has_pattern", "reply_lacks",
-               "reply_lacks_pattern", "any_of", "read_any", "quotes_spotter", "quotes_one_of"}
-CASE_KEYS = {"id", "say", "expect", "switch", "seed", "db", "calls", "kind", "core", "pair"}
+               "reply_lacks_pattern", "any_of", "read_any", "quotes_spotter", "quotes_one_of",
+               "error_code", "no_error_code", "refusals", "answer_has"}
+CODE_KEYS = ("error_code", "no_error_code", "refusals")  # {function: code}, read from the call's answer
+CASE_KEYS = {"id", "say", "expect", "then", "switch", "seed", "db", "calls", "kind", "core", "pair"}
 TAG_KEYS = ("must", "may", "must_not")
 KINDS = ("direct", "incidental", "look_alike")  # a golden case's kind
 APART = ("incidental", "look_alike")  # kept out of the pass count, reported apart
@@ -126,15 +148,15 @@ WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food",
                    "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
                    "import_entries", "send_feedback")
 DAYS_AGO = 60  # {{days_ago:N}} for N from 0 to this (evals/run.py's dates_for gives them)
-DB_KEYS = {"table", "state", "count", "all", "rows"}
+DB_KEYS = {"table", "state", "where", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
 SWITCHES = ("log", "log_delete")
 SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "log_lifts", "log_cardio", "set_goal",
                  "import_entries", "edit_entry", "save_routine", "update_settings"}  # update_settings: units.md R20
 EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
 NO_DATA_SERVICES = {"four_weeks", "sixteen_weeks"}  # called as seed_service(name)(user_id): see seed_service
-DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",
-             "feedback", "routine"}
+DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "lift_set",
+             "goal", "feedback", "routine"}
 _PLACEHOLDER = re.compile(r"^\{\{\s*([a-z_]+(?:\.[A-Za-z0-9_]+|:[0-9]+)?)\s*\}\}$")
 
 
@@ -159,6 +181,8 @@ def case_problems(case: Any) -> list[str]:
         problems.append("id must be a non-empty string")
     if "say" in case and (not isinstance(case["say"], str) or not case["say"].strip()):
         problems.append("say must be a non-empty string")
+    if "then" in case and (not isinstance(case["then"], str) or not case["then"].strip() or "\n" in case["then"]):
+        problems.append("then must be a non-empty line: the person's second message")
     if "expect" in case:
         problems += _expect_problems(case["expect"], "expect")
     if "switch" in case and case["switch"] not in SWITCHES:
@@ -199,6 +223,8 @@ def case_problems(case: Any) -> list[str]:
             problems.append(f"db[{i}] has unknown keys {sorted(set(check) - DB_KEYS)}")
         elif check.get("state", "live") not in DB_STATES:
             problems.append(f"db[{i}] state must be live or deleted")
+        elif "where" in check and (not isinstance(check["where"], dict) or not check["where"]):
+            problems.append(f"db[{i}] where must be a non-empty object")
     return problems
 
 
@@ -257,6 +283,16 @@ def _expect_problems(expect: Any, where: str) -> list[str]:
         problems.append(f"{where}.quotes_spotter must be a whole number, 0 or more")
     if "quotes_one_of" in expect:
         problems += _one_of_problems(expect["quotes_one_of"], f"{where}.quotes_one_of")
+    for key in CODE_KEYS + ("answer_has",):
+        if key in expect:
+            value = expect[key]
+            if not isinstance(value, dict) or not value or not all(isinstance(f, str) and f for f in value):
+                problems.append(f"{where}.{key} must be an object of function names")
+            elif key in CODE_KEYS and not all(isinstance(v, str) and v for v in value.values()):
+                problems.append(f"{where}.{key} gives each function an error code")
+            elif key == "answer_has" and not all((isinstance(v, str) and v) or (isinstance(v, dict) and v)
+                                                 for v in value.values()):
+                problems.append(f"{where}.answer_has gives each function a key or an object")
     for i, sub in enumerate(expect.get("any_of") or []):
         problems += _expect_problems(sub, f"{where}.any_of[{i}]")
     return problems
@@ -418,9 +454,55 @@ def values_at(data: Any, path: str) -> list[Any]:
 
 # ---------------------------------------------------------------- judging
 
+def error_codes(call: dict) -> set[str]:
+    """Every error code a refused call's answer carries: its own code and each code in its errors list (a combined
+    refusal, rules.combine). Read from the answer the recorder keeps as result, and from its error. A call answered
+    without error has none."""
+    if not call.get("is_error"):
+        return set()
+    found = set()
+    for source in (call.get("result"), {"error": call.get("error")}):
+        if isinstance(source, dict):
+            if isinstance(source.get("error"), str):
+                found.add(source["error"])
+            found |= {e["error"] for e in source.get("errors") or [] if isinstance(e, dict)
+                      and isinstance(e.get("error"), str)}
+    return found
+
+
+def _holds(answer: Any, want: Any) -> bool:
+    """answer_has: a key present with a value that is not null, or an object matched as a nested subset."""
+    if isinstance(want, str):
+        return isinstance(answer, dict) and answer.get(want) is not None
+    return matches(answer, want)
+
+
+def _code_reasons(expect: dict, calls: list[dict]) -> list[str]:
+    """Why the run fails error_code, no_error_code, refusals and answer_has, or []."""
+    reasons = []
+    for name, code in (expect.get("error_code") or {}).items():
+        mine = [c for c in calls if c["name"] == name]
+        if not any(code in error_codes(c) for c in mine):
+            got = sorted({x for c in mine for x in error_codes(c)})
+            reasons.append(f"no {name} call was refused with {code} (calls of it: {len(mine)}; codes: "
+                           f"{', '.join(got) or 'none'})")
+    for name, code in (expect.get("no_error_code") or {}).items():
+        if any(code in error_codes(c) for c in calls if c["name"] == name):
+            reasons.append(f"a {name} call was refused with {code}")
+    for name, code in (expect.get("refusals") or {}).items():
+        bad = [c for c in calls if c["name"] == name and code not in error_codes(c)]
+        if bad:
+            reasons.append(f"{name} was called and not refused with {code} "
+                           f"(codes: {'; '.join(', '.join(sorted(error_codes(c))) or 'none' for c in bad)})")
+    for name, want in (expect.get("answer_has") or {}).items():
+        if not any(c["name"] == name and not c["is_error"] and _holds(c.get("result"), want) for c in calls):
+            reasons.append(f"no {name} answer without error holds {json.dumps(want)}")
+    return reasons
+
+
 def judge_calls(expect: dict, calls: list[dict], reply: str, say: str = "") -> list[str]:
-    """Why this run fails the expect, or [] when it passes. calls: [{name, arguments, is_error}, with answer for
-    a data read (evals/recorder.py)]. say: the case's own words, whose figures quotes_spotter leaves out."""
+    """Why this run fails the expect, or [] when it passes. calls: [{name, arguments, is_error, result}, with answer
+    for a data read (evals/recorder.py)]. say: the case's own words, whose figures quotes_spotter leaves out."""
     reasons: list[str] = []
     called = [c["name"] for c in calls]
     function = expect.get("function")
@@ -451,6 +533,7 @@ def judge_calls(expect: dict, calls: list[dict], reply: str, say: str = "") -> l
     for name in expect.get("no_call") or []:
         if name in called:
             reasons.append(f"{name} was called and should not have been")
+    reasons += _code_reasons(expect, calls)
     text = reply or ""
     if expect.get("reply_asks") and "?" not in text:
         reasons.append("the reply asks nothing")
@@ -652,7 +735,10 @@ def judge_db(checks: list[dict], rows: dict[str, list[dict]]) -> list[str]:
     for check in checks or []:
         deleted = check.get("state", "live") == "deleted"
         table = check["table"] + (" (deleted)" if deleted else "")
-        have = [r for r in rows.get(check["table"], []) if (r.get("deleted_at") is not None) == deleted]
+        have = [r for r in rows.get(check["table"], []) if (r.get("deleted_at") is not None) == deleted
+                and ("where" not in check or matches(r, check["where"]))]
+        if "where" in check:
+            table += f" where {json.dumps(check['where'])}"
         if "count" in check and len(have) != check["count"]:
             reasons.append(f"{table}: {len(have)} rows, expected {check['count']}")
         if "all" in check:
@@ -668,7 +754,7 @@ def judge_db(checks: list[dict], rows: dict[str, list[dict]]) -> list[str]:
 def _rows_text(rows: list[dict]) -> str:
     keep = ("date", "kind", "value", "kg", "meal", "description", "kcal", "source", "estimated", "saved_food_id",
             "servings", "minutes", "exercise_id", "estimated_kcal", "id", "status", "target_value", "target_date",
-            "set_count", "lift_count")
+            "set_count", "lift_count", "exercise", "weight_kg", "reps", "time_s", "distance_m", "session_id")
     return "; ".join(json.dumps({k: r[k] for k in keep if k in r}) for r in rows)
 
 
@@ -676,8 +762,28 @@ def judge(case: dict, calls: list[dict], reply: str, rows: dict[str, list[dict]]
     """The whole verdict for one run of an already-resolved case: [] is a pass. The expect, the calls tags and the
     rows; a reason the expect and the tags give alike is said once."""
     reasons = (judge_calls(case["expect"], calls, reply, case.get("say", ""))
-               + judge_tags(case.get("calls"), calls) + judge_db(case.get("db") or [], rows))
+               + judge_tags(case.get("calls"), calls) + judge_db(case.get("db") or [], rows) + judge_turns(case, calls))
     return list(dict.fromkeys(reasons))
+
+
+def judge_turns(case: dict, calls: list[dict]) -> list[str]:
+    """A case with a second turn: no write may succeed before the second line was sent, or the assistant acted on a
+    guess and the second line was never its answer; and each code of its expect's error_code is a refusal of the first
+    turn and of no call in the second. A call's turn is its turn key (evals/run.py's run_once sets 1 or 2); a call
+    without one counts as the first turn's."""
+    if not case.get("then"):
+        return []
+    early = [c["name"] for c in calls if c.get("turn", 1) == 1 and c["name"] in WRITE_FUNCTIONS and not c["is_error"]]
+    reasons = [f"a write succeeded before the second turn was sent: {', '.join(early)}"] if early else []
+    # The question a two-turn case is built on (its expect's error_code, such as pick_lift) is Spotter's in the first
+    # turn, and the second turn answers it: never asked first by the assistant alone, never asked again.
+    for name, code in (case.get("expect", {}).get("error_code") or {}).items():
+        mine = [c for c in calls if c["name"] == name and code in error_codes(c)]
+        if not any(c.get("turn", 1) == 1 for c in mine):
+            reasons.append(f"no {name} call in the first turn was refused with {code}")
+        if any(c.get("turn", 1) == 2 for c in mine):
+            reasons.append(f"a {name} call in the second turn was refused with {code} again")
+    return reasons
 
 
 # ---------------------------------------------------------------- the CLI's output

@@ -1330,8 +1330,8 @@ def test_the_routine_logged_case_judges_as_designed(app_settings):
     _, short = _lift_case(server, "routine_logged")  # one set short: set_count 5
     five = [_logged(short, ROUTINE_SETS[1:])]
     assert judge.judge_calls(case["expect"], five, "Logged.") == []
-    [why] = judge.judge_db(case["db"], person_rows(short))
-    assert why.startswith("lift_session: rows not matching") and '"set_count": 5' in why
+    why = judge.judge_db(case["db"], person_rows(short))  # and the Bench Press rows, 2 of 3 (exercise-list.md, C4g)
+    assert why[0].startswith("lift_session: rows not matching") and '"set_count": 5' in why[0]
 
 
 def test_the_routine_changed_case_judges_as_designed(app_settings):

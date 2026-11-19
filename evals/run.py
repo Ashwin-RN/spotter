@@ -27,6 +27,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+import uuid
 import zoneinfo
 from pathlib import Path
 
@@ -104,11 +105,22 @@ EFFORTS = {"claude": ("low", "medium", "high", "xhigh", "max"),
            "codex": ("low", "medium", "high", "xhigh", "max", "ultra"),
            "gemini": ("minimal", "low", "medium", "high", "xhigh")}
 DAYS_AGO = judge.DAYS_AGO  # {{days_ago:N}} for N from 0 to this
+# The reason a case with a second turn (then) fails on Codex or Gemini, unrun: their runners send one message a
+# conversation, and a first turn alone is no run of the case.
+TWO_TURNS_UNSENT = "{client} sends one message a conversation, so this case's second turn cannot be sent: failed, not run"
 
 
-def cli_command(claude: str, say: str, config_path: str, model: str | None, effort: str | None = None) -> list[str]:
+def cli_command(claude: str, say: str, config_path: str, model: str | None, effort: str | None = None,
+                session: str | None = None, resume: bool = False) -> list[str]:
+    """One turn's command. A one-turn case keeps the run out of the CLI's saved sessions. A case with a second turn
+    (then) names its session: the first turn starts it with --session-id and is saved, so the second can go on with
+    --resume (contract exercise-list.md, C4g; the two flags were not checked against a live CLI)."""
+    if session is None:
+        kept = ["--no-session-persistence"]
+    else:
+        kept = ["--resume", session] if resume else ["--session-id", session]
     command = [claude, "-p", say, "--output-format", "json", "--mcp-config", config_path, "--strict-mcp-config",
-               "--allowedTools", "mcp__spotter__*", "--no-session-persistence",
+               "--allowedTools", "mcp__spotter__*", *kept,
                "--settings", NO_ADVISOR_SETTINGS]  # the advisor's second off switch: see CHILD_SETS
     if effort:
         command += ["--effort", effort]
@@ -359,7 +371,10 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
     """The person's rows, deleted ones too (judge_db tells them apart by deleted_at), in every table a
     case can check, from the running settings' database. Dates and times come back as ISO strings. A
     lift_session row also carries set_count: how many lift_set rows it holds (0 for none), from one counted
-    query over all of the person's sessions. A routine row carries lift_count: how many lifts its lifts JSON holds."""
+    query over all of the person's sessions. A routine row carries lift_count: how many lifts its lifts JSON holds.
+    lift_set, which has no user_id of its own, is every set of the person's sessions, one row a set (contract
+    exercise-list.md, C4g): its id, session_id, set_number, exercise (the lift's name), weight_kg, reps, time_s and
+    distance_m, with its session's date and deleted_at, so a set of a deleted session reads as deleted."""
     from sqlalchemy import func, select
 
     from app import db
@@ -372,9 +387,16 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
             query = select(table).where(table.c.user_id == user_id)
             found[name] =[{k: _plain(v) for k, v in row._mapping.items()} for row in connection.execute(query)]
         sets, sessions = Base.metadata.tables["lift_set"], Base.metadata.tables["lift_session"]
+        lifts = Base.metadata.tables["exercise"]
         counted = dict(connection.execute(
             select(sets.c.session_id, func.count()).join(sessions, sets.c.session_id == sessions.c.id)
             .where(sessions.c.user_id == user_id).group_by(sets.c.session_id)).all())
+        query = (select(sets.c.id, sets.c.session_id, sets.c.set_number, lifts.c.name.label("exercise"),
+                        sets.c.weight_kg, sets.c.reps, sets.c.time_s, sets.c.distance_m, sessions.c.date,
+                        sessions.c.deleted_at)
+                 .join(sessions, sets.c.session_id == sessions.c.id).join(lifts, sets.c.exercise_id == lifts.c.id)
+                 .where(sessions.c.user_id == user_id).order_by(sets.c.id))
+        found["lift_set"] = [{k: _plain(v) for k, v in row._mapping.items()} for row in connection.execute(query)]
     for row in found["lift_session"]:
         row["set_count"] = counted.get(row["id"], 0)
     for row in found["routine"]:
@@ -383,6 +405,53 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
 
 
 # ---------------------------------------------------------------- one run
+
+def forget_session(session: str, env: dict[str, str]) -> list[str]:
+    """Deletes what a two-turn run left in the Claude CLI's own store, and nothing else (contract exercise-list.md,
+    C4g). The store is <config dir>/projects, the config dir the CLI's CLAUDE_CONFIG_DIR when set, else ~/.claude; a
+    session is <project folder>/<session>.jsonl, and the CLI may keep a folder <project folder>/<session>/ beside it
+    (tool-results). How the CLI names a project folder is not relied on: every match of projects/*/<session>.jsonl and
+    projects/*/<session> goes, then each match's project folder if it is then empty. session must be a UUID as written,
+    so the patterns name that session alone. A match whose resolved path is outside projects (a junction or a link out
+    of it) is left, and named. Returns the paths it could not delete or left."""
+    if str(uuid.UUID(session)) != session:  # raises on anything that is no UUID: the patterns must never widen
+        raise ValueError(f"not a session id as the runner writes one: {session!r}")
+    projects = Path(env.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    if not projects.is_dir():
+        return []
+    root = projects.resolve()
+    failed = []
+    for path in list(projects.glob(f"*/{session}.jsonl")) + list(projects.glob(f"*/{session}")):
+        try:
+            if not path.resolve().is_relative_to(root) or path.is_symlink() or path.is_junction():
+                failed.append(f"{path} (a link out of the store: left)")
+                continue
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            folder = path.parent
+            if folder.resolve().parent == root and not any(folder.iterdir()):
+                folder.rmdir()
+        except OSError:
+            failed.append(str(path))
+    return failed
+
+
+def _joined(turns: list[dict]) -> dict:
+    """The parsed CLI output of a run's turns as one: the last turn's reply, the tokens, cost and model steps of all
+    of them added, every model any turn reported, every permission denial."""
+    if len(turns) == 1:
+        return turns[0]
+    out = dict(turns[-1])
+    for key in ("tokens", "input_tokens", "cached_tokens", "output_tokens", "cost_usd"):
+        out[key] = sum(t[key] for t in turns)
+    steps = [t["num_turns"] for t in turns if judge._number(t.get("num_turns"))]
+    out["num_turns"] = sum(steps) if steps else None
+    out["models"] = list(dict.fromkeys(m for t in turns for m in t["models"]))
+    out["permission_denials"] = [d for t in turns for d in t["permission_denials"]]
+    return out
+
 
 def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str | None, env: dict[str, str],
              workdir: Path, label: str, keep: bool, effort: str | None = None) -> dict:
@@ -394,39 +463,64 @@ def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str
     cwd.mkdir()
     config_path.write_text(json.dumps(mcp_config(server.port, token)), encoding="utf-8")
     outcome = {**blank_outcome("claude", model, effort), "cost_usd": 0.0}
+    # A case with then is two turns of one conversation: the first names a session, the second resumes it, in the
+    # same working folder with the same config file (contract exercise-list.md, C4g). Each turn has its own timeout.
+    says = [case["say"]] + ([case["then"]] if case.get("then") else [])
+    session = str(uuid.uuid4()) if len(says) > 1 else None
+    turns: list[dict] = []
+    failed = None
+    first_turn = None  # how many calls the recorder held when the first turn ended
     started = time.monotonic()
     try:
-        done = subprocess.run(cli_command(claude, case["say"], str(config_path), model, effort), cwd=cwd, env=env,
-                              stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", errors="replace",
-                              timeout=RUN_TIMEOUT, shell=False)
-        stdout, stderr = done.stdout or "", done.stderr or ""
-    except subprocess.TimeoutExpired as e:
-        stdout = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode("utf-8", "replace")
-        stderr = f"timed out after {RUN_TIMEOUT} s"
+        for i, say in enumerate(says):
+            try:
+                done = subprocess.run(cli_command(claude, say, str(config_path), model, effort, session, i > 0),
+                                      cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                                      encoding="utf-8", errors="replace", timeout=RUN_TIMEOUT, shell=False)
+                stdout, stderr = done.stdout or "", done.stderr or ""
+            except subprocess.TimeoutExpired as e:
+                stdout = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode("utf-8", "replace")
+                stderr = f"timed out after {RUN_TIMEOUT} s"
+            if i == 0:
+                first_turn = len(server.recorder.calls(token))
+            name = label if i == 0 else f"{label}-turn{i + 1}"
+            if keep:
+                (workdir / f"out-{name}.json").write_text(judge.masked(stdout, token), encoding="utf-8")
+                if stderr:
+                    (workdir / f"err-{name}.txt").write_text(judge.masked(stderr, token), encoding="utf-8")
+            try:
+                turns.append(judge.parse_cli_output(stdout))
+            except judge.CliOutputError as e:
+                failed = (f"{f'turn {i + 1}: ' if i else ''}CLI: {e}; stderr: "
+                          f"{judge.masked(stderr.strip()[-500:], token) or 'none'}")
+                break
     finally:
         config_path.unlink(missing_ok=True)  # the only file that held the token
     outcome["seconds"] = round(time.monotonic() - started, 1)
-    if keep:
-        (workdir / f"out-{label}.json").write_text(judge.masked(stdout, token), encoding="utf-8")
-        if stderr:
-            (workdir / f"err-{label}.txt").write_text(judge.masked(stderr, token), encoding="utf-8")
     shutil.rmtree(cwd, ignore_errors=True)
+    left = forget_session(session, env) if session is not None else []  # the CLI's saved conversation
 
     calls = server.recorder.calls(token)
+    if session is not None:  # each call's turn, so judge_turns can tell a write made before the second line
+        for n, c in enumerate(calls):
+            c["turn"] = 1 if n < first_turn else 2
+        if left:  # a delete failed: the summary names the session, so it can be removed by hand
+            outcome["session_id"] = session
+            outcome["session_left"] = left
     outcome["calls"] = calls
     outcome["methods"] = server.recorder.methods(token)
     outcome["instructions"] = server.recorder.got_instructions(token)
-    try:
-        parsed = judge.parse_cli_output(stdout)
-    except judge.CliOutputError as e:
-        outcome["reasons"] = [f"CLI: {e}; stderr: {judge.masked(stderr.strip()[-500:], token) or 'none'}"]
+    if failed:
+        outcome["reasons"] = [failed]
         return outcome
+    parsed = _joined(turns)
     outcome.update({k: parsed[k] for k in ("tokens", "input_tokens", "cached_tokens", "output_tokens", "cost_usd",
                                            "reply", "models", "num_turns")})
     outcome["permission_denials"] = parsed["permission_denials"]
     reasons = []
-    if parsed["is_error"] or parsed["subtype"] != "success":
-        reasons.append(f"CLI ended with {parsed['subtype']}")
+    for i, turn in enumerate(turns):
+        if turn["is_error"] or turn["subtype"] != "success":
+            reasons.append(f"{f'turn {i + 1}: ' if len(turns) > 1 else ''}CLI ended with {turn['subtype']}")
     outcome["other_models"] = other_models(parsed["models"], model)  # the one-model rule: see CHILD_SETS
     reasons += model_reasons(parsed["models"], model)
     reasons += judge.judge(resolved, calls, parsed["reply"], person_rows(user_id))
@@ -560,6 +654,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.client == "claude":
             return run_once(server, case, zone, claude, args.model, env, workdir, label, args.keep,
                             effort=args.effort)
+        if case.get("then"):  # contract exercise-list.md, C4g: no way to go on with a conversation is built here
+            return {**blank_outcome(args.client, args.model, args.effort),
+                    "reasons": [TWO_TURNS_UNSENT.format(client=args.client)]}
         if args.client == "codex":
             return codex_client.run_once_codex(server, case, zone, codex, args.model, args.effort, env, workdir,
                                                label, args.keep)
@@ -611,7 +708,10 @@ def main(argv: list[str] | None = None) -> int:
     handshakes = [r.get("instructions") for res in results for r in res["runs"]]
     print(f"handshakes that carried the server's instructions: {sum(1 for h in handshakes if h)} of "
           f"{len(handshakes)} runs (whether the client shows them to the model is what the cases measure)")
-    failures = [(res["id"], i, r) for res in results for i, r in enumerate(res["runs"], 1) if not r["passed"]]
+    kept = [r["session_id"] for res in results for r in res["runs"] if r.get("session_id")]
+    if kept:  # a two-turn run's saved conversation that forget_session could not delete (docs/evals.md)
+        print(f"sessions of two-turn runs the Claude CLI still keeps, a delete failed: {', '.join(kept)}")
+    failures =[(res["id"], i, r) for res in results for i, r in enumerate(res["runs"], 1) if not r["passed"]]
     if failures:
         print("\nFailed runs:")
         for case_id, i, r in failures:
