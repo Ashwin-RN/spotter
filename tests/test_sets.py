@@ -481,9 +481,13 @@ def test_log_lifts_takes_its_own_set_model_and_edit_entry_takes_set_in_with_the_
     same = {k: v for k, v in props.items() if k not in ("exercise", "exact")}
     assert same == {k: v for k, v in edit["$defs"]["SetIn"]["properties"].items() if k != "exercise"}
     assert logged["$defs"]["LogSetIn"]["required"] == ["exercise"]
-    assert props["reps"]["description"] == "Reps in this set, a whole number from 1 to 100. Leave out for a hold or a carry."
-    assert props["time_s"]["description"] == "A hold's or a carry's time in seconds, 1 to 3,600."
-    assert props["distance_m"]["description"] == "A carry's or a sled's distance in metres, 1 to 5,000."
+    assert props["reps"]["description"] == (  # one side's: exercise-list.md, note of 2026-11-19, C4f (z)
+        "Reps in this set, a whole number from 1 to 100. Leave out for a hold or a carry. On a lift done one side at a "
+        "time, one side's reps.")
+    assert props["time_s"]["description"] == (
+        "A hold's or a carry's time in seconds, 1 to 3,600. On a lift done one side at a time, one side's time.")
+    assert props["distance_m"]["description"] == (
+        "A carry's or a sled's distance in metres, 1 to 5,000. On a lift done one side at a time, one side's distance.")
     for field in ("weight_kg", "weight_lb"):
         assert ("Use 0 for bodyweight work. For dumbbells, kettlebells or two cables, one hand's weight. Help on "
                 "Assisted Pull-Up or Assisted Dip as a minus weight.") in props[field]["description"]

@@ -633,8 +633,20 @@ def measures_of(name) -> tuple[str, ...]:
 
 
 def records(name) -> str:
-    """What a set of this lift records, in words: reps, time, or distance and time."""
+    """What a set of this lift records, in words: reps, time, or distance and time. These words are keys (NEEDED,
+    routines.ASK_FOR) and a refusal's words: they never say a side."""
     return RECORDS.get(measures_of(name), "reps")
+
+
+A_SIDE = " a side"  # a lift done one side at a time (sides each): its reps, time or distance are one side's
+
+
+def records_listed(row) -> str | None:
+    """What a set of this list row records, as list_exercises gives it: RECORDS' words, with " a side" for a lift done
+    one side at a time: "reps a side", "time a side", "distance and time a side". None for a row whose measures RECORDS
+    does not hold (cardio). Built on the owner's pending pick A (exercise-list.md, note of 2026-11-19, C4f)."""
+    what = RECORDS.get(row.measures)
+    return None if what is None else what + (A_SIDE if row.sides == "each" else "")
 
 
 def takes_help(name) -> bool:

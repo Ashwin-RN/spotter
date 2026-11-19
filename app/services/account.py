@@ -425,7 +425,7 @@ def _item(e: Exercise) -> dict:
         weight = HELP_WORDS if lift.key in rules.HELP_LIFTS else WEIGHT_WORDS.get(lift.load_type)
     return {"name": e.name, "kind": e.kind, "category": e.category, "met": e.met, "compendium_code": e.compendium_code,
             "equipment": EQUIPMENT_WORDS.get(lift.equipment) if lift else None, "weight": weight,
-            "records": rules.RECORDS.get(lift.measures) if lift else None}
+            "records": rules.records_listed(lift) if lift else None}
 
 
 def _rows(s, kind: str | None = None, retired: bool = False) -> list[Exercise]:

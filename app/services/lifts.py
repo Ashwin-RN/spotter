@@ -26,6 +26,14 @@ log_lifts(user_id, data, by)
     kind (best_kind: help, band, hold, carry) takes its own bests instead (contract exercise-list.md, "Bests";
     metrics.other_bests): least help or most reps at it, most reps, the longest hold at a weight, the heaviest load
     over a distance. Its first session names its record's figure as the mark to beat.
+    The per-hand check (contract exercise-list.md, decision 32, R12, R13; hand_check): a set of a per_hand lift
+    (dumbbells, kettlebells, two cables) is stored as sent, one hand's weight. Its heaviest set in the call, doubled,
+    is the pair total, compared with the person's heaviest live set of one bar lift (compared_lift), the call's own
+    sets of it counted, each figure as the person sees it. Above it, the result carries hand_check, one line a lift,
+    asking once: no line when an earlier live set of the same lift, logged after the bar lift's first live set above
+    0 kg (set ids, the order of logging), doubled, is already above that bar best, since the person was asked then.
+    Whenever the bar lift is logged above 0 kg the call log notes the ratio (pair_note): ids and ratios, never a
+    weight.
     New bests are found against every earlier set of each lift: every session that comes before this
     one in the one order (see metrics.on_or_before). For a new session dated today that is every
     session, a later-dated one included; for a back-dated one, the ones on or before its date. An add
@@ -56,8 +64,8 @@ from datetime import date
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import db, formatting, links, metrics, rules, users
-from app.exercises import BY_NAME as LISTED
+from app import calllog, db, formatting, links, metrics, rules, users
+from app.exercises import BY_NAME as LISTED, FAMILIES
 from app.models import IMPORTED, Exercise, LiftSession, LiftSet
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, exercises, keep_version, lock_user, no_account, row_dict,
@@ -547,6 +555,119 @@ def _count(n: int) -> str:
     return formatting.show(n, "count")
 
 
+# ---------------------------------------------------------------- the per-hand check
+
+PAIR_NOTE = "pair"  # the call log's key for the per-hand ratios (R12)
+
+
+def compared_lift(name) -> str | None:
+    """The bar lift a per_hand lift's pair total is compared with (exercise-list.md, "The per-hand check"): in the
+    lift's own family its bar_total lift, the barbell one where the family holds two, else its only one; in a family
+    with no bar_total lift, the same in the family its compare_with names. None for a lift that is not per_hand, a
+    name not on the list, or a family with neither."""
+    row = LISTED.get(name) if isinstance(name, str) else None
+    if row is None or row.load_type != "per_hand":
+        return None
+    for family in (row.family, row.compare_with):
+        bars = [m for m in FAMILIES.get(family, ()) if m.load_type == "bar_total"]
+        if bars:
+            return next((m for m in bars if m.equipment == "barbell"), bars[0]).name
+    return None
+
+
+def _live_sets(s: Session, user_id: int, names: set[str]) -> dict[str, list[tuple[int, float]]]:
+    """{lift: [(set id, weight)]} for every live set of these lifts, this person's only. A set's id is the order it
+    was logged in, whatever its date. One statement."""
+    found: dict[str, list[tuple[int, float]]] = {}
+    if not names:
+        return found
+    for name, set_id, weight in s.execute(
+            select(Exercise.name, LiftSet.id, LiftSet.weight_kg)
+            .select_from(LiftSet).join(LiftSession, LiftSession.id == LiftSet.session_id)
+            .join(Exercise, Exercise.id == LiftSet.exercise_id)
+            .where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None), Exercise.name.in_(names))):
+        found.setdefault(name, []).append((set_id, weight))
+    return found
+
+
+def _ratio(pair: float, bar: float) -> str:
+    """The pair total over the bar best at 2 dp, no needless zeros and no comma: '1.25', '0.8', '2'."""
+    return str(formatting.shown_number(pair / bar, "rate"))
+
+
+def pair_note(items: list[str]) -> str:
+    """The call log's word for the per-hand ratios: '<exercise id>:<ratio>' joined by commas, cut at a whole item so
+    that 'pair=' and the word fit the notes column (calllog.NOTES_MAX)."""
+    room = calllog.NOTES_MAX - len(PAIR_NOTE) - 1
+    kept: list[str] = []
+    for item in items:
+        if len(",".join([*kept, item])) > room:
+            break
+        kept.append(item)
+    return ",".join(kept)
+
+
+def hand_check(s: Session, user_id: int, sets: list[dict], by_name: dict,
+               units=None) -> tuple[str | None, list[str]]:
+    """The per-hand check over a call's checked sets, read before anything is written (module notes):
+    (hand_check's text or None, the pair note's items). A lift's line: 'Dumbbell Bench Press: 50 kg each is 100 kg in
+    both hands, above the heaviest Bench Press set logged, 80 kg. Ask the person once: 50 a hand, or 25 a hand? If 25,
+    change it with edit_entry.' Weights in the person's units; the number stored is never changed.
+
+    Every compare is of the figures as the person sees them, in their units at the shown step (formatting.shown_number),
+    so 92.5 lb each against a 185 lb bench is at it, not above (found at C4f's review). An earlier set of the lift
+    stops the line only when it was logged after the bar lift's first live set above 0 kg, in the order sets were
+    logged (set ids), whatever their dates: a set logged before the bar lift was was never asked about. When the call
+    holds the bar lift's first set above 0 kg, no stored set of the lift counts (exercise-list.md, note of 2026-11-19,
+    C4f)."""
+    heaviest: dict[str, float] = {}  # the call's heaviest set of each lift, in the order sent
+    for x in sets:
+        w = x["weight_kg"]
+        if w is not None:
+            heaviest[x["exercise"]] = max(w, heaviest.get(x["exercise"], w))
+    compared = {lift: bar for lift in heaviest if (bar := compared_lift(lift)) is not None}
+    if not compared:
+        return None, []
+    stored = _live_sets(s, user_id, set(compared) | set(compared.values()))
+    lines, items = [], []
+
+    def show(value, unit: bool = True) -> str:
+        return formatting.show(value, "weight_kg", unit=unit, units=units)
+
+    def seen(value) -> float:
+        """A weight as the person sees it: in their units, at the shown step."""
+        return formatting.shown_number(value, "weight_kg", units=units)
+
+    for lift, bar in compared.items():
+        bar_sets = [(i, x) for i, x in stored.get(bar, []) if x is not None and x > 0]
+        bar_best = _higher(max((x for _, x in bar_sets), default=None), heaviest.get(bar))  # the call's own count
+        if bar_best is None or bar_best <= 0:  # the bar lift never logged above 0 kg: nothing to compare with
+            continue
+        w = heaviest[lift]
+        items.append(f"{by_name[lift].id}:{_ratio(2 * w, bar_best)}")
+        first_bar = min((i for i, _ in bar_sets), default=None)  # None: the call holds the bar lift's first such set
+        earlier = None if first_bar is None else max(
+            (x for i, x in stored.get(lift, []) if i > first_bar and x is not None), default=None)
+        if seen(2 * w) <= seen(bar_best) or (earlier is not None and seen(2 * earlier) > seen(bar_best)):
+            continue  # not above, or the person was asked before and kept the weight
+        half = show(w / 2, unit=False)
+        lines.append(f"{lift}: {show(w)} each is {show(2 * w)} in both hands, above the heaviest {bar} set logged, "
+                     f"{show(bar_best)}. Ask the person once: {show(w, unit=False)} a hand, or {half} a hand? "
+                     f"If {half}, change it with edit_entry.")
+    return (" ".join(lines) or None), items
+
+
+def _with_hand_check(out: dict, check: tuple[str | None, list[str]]) -> dict:
+    """A written result with the per-hand check: hand_check when a line fired, and the ratios noted on the call's
+    row. A refusal carries neither."""
+    if "error" in out or "errors" in out:
+        return out
+    text, items = check
+    if items:
+        calllog.note(PAIR_NOTE, pair_note(items))
+    return {**out, "hand_check": text} if text else out
+
+
 def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name: dict, by: str, today: date,
          units=None) -> dict:
     """The call's sets added to the date's session, as an edit of it (see the module notes). Refused past
@@ -606,7 +727,8 @@ def _add(s: Session, session: LiftSession, sets: list[dict], notes: str, by_name
 
 def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
     """Log sets of lifting: into the date's session, or a new one. Returns {kind, id, duplicate (always false),
-    session, new_bests, summary, links[, units_note]} or {error, message, fix}. See the module notes for the rules."""
+    session, new_bests, summary, links[, hand_check][, units_note]} or {error, message, fix}. See the module notes for
+    the rules."""
     data, err = check_data(data)
     err = err or check_by(by)
     if err:
@@ -631,9 +753,10 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
             select(LiftSession).where(LiftSession.user_id == user.id, LiftSession.date == on,
                                       LiftSession.deleted_at.is_(None)).order_by(LiftSession.id.desc()).limit(1))
         units = users.units_for(user)
+        check = hand_check(s, user.id, sets, by_name, units)  # before any write: the stored sets are earlier ones
         if target is not None:
-            return with_units_note(_add(s, target, sets, notes, by_name, by, today, units), user,
-                                   _sent_lb(data.get("sets")), False)
+            return with_units_note(_with_hand_check(_add(s, target, sets, notes, by_name, by, today, units), check),
+                                   user, _sent_lb(data.get("sets")), False)
 
         keyed = number_sets(sets, by_name)
         key = session_key(on, notes, keyed)
@@ -655,4 +778,4 @@ def log_lifts(user_id: int, data: dict | None, by: str) -> dict:
         firsts = [first_text(lift, lift_sets, units) for lift, lift_sets in grouped.items() if not prior.get(lift)]
         out = {"kind": KIND, "id": session.id, "duplicate": False, "session": session_dict(session),
                "new_bests": new_bests, "summary": summary + _tail(new_bests, firsts), "links": _links(on, lifts)}
-        return with_units_note(out, user, _sent_lb(data.get("sets")), False)
+        return with_units_note(_with_hand_check(out, check), user, _sent_lb(data.get("sets")), False)

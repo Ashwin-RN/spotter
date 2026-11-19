@@ -121,6 +121,9 @@ FOOD_NAME_RULE = (
 # A routine's weight takes the help sentence too: save_routine takes R6's weight range for each lift.
 _HELP_WEIGHT = "Help on Assisted Pull-Up or Assisted Dip as a minus weight."
 _SET_WEIGHT_MEANS = "For dumbbells, kettlebells or two cables, one hand's weight. " + _HELP_WEIGHT
+# A set of a lift done one side at a time holds one side's reps, time or distance (sides each; list_exercises' records says
+# "a side"). Built on the owner's pending pick A (exercise-list.md, note of 2026-11-19, C4f).
+_ONE_SIDE = "On a lift done one side at a time, one side's "
 
 
 # edit_entry's sets. What a set takes comes from its lift (exercise-list.md R6): reps, a hold's time, or a carry's
@@ -143,10 +146,12 @@ class SetIn(BaseModel):
                     + _SET_WEIGHT_MEANS + " Send weight_kg or weight_lb, never both.")
     reps: Whole | None = Field(
         default=None,
-        description="Reps in this set, a whole number from 1 to 100. Leave out for a hold or a carry.")
-    time_s: Whole | None = Field(default=None, description="A hold's or a carry's time in seconds, 1 to 3,600.")
+        description="Reps in this set, a whole number from 1 to 100. Leave out for a hold or a carry. " + _ONE_SIDE
+                    + "reps.")
+    time_s: Whole | None = Field(
+        default=None, description="A hold's or a carry's time in seconds, 1 to 3,600. " + _ONE_SIDE + "time.")
     distance_m: Number | None = Field(
-        default=None, description="A carry's or a sled's distance in metres, 1 to 5,000.")
+        default=None, description="A carry's or a sled's distance in metres, 1 to 5,000. " + _ONE_SIDE + "distance.")
 
 
 # log_lifts' sets (exercise-list.md R3): SetIn's fields, in a model of its own, so that log_lifts takes the person's own
@@ -487,8 +492,9 @@ class ExerciseItem(BaseModel):
         default=None,
         description="How a lift's weight is logged: bar and plates, one hand's weight, one weight, added weight (help "
                     "as minus), or none; null for cardio.")
-    records: str | None = Field(default=None,
-                                description="What a set records: reps, time, or distance and time; for cardio, null.")
+    records: str | None = Field(
+        default=None, description="What a set records: reps, time, or distance and time, with a side for a lift done "
+                                  "one side at a time; for cardio, null.")
 
 
 class ExercisesResult(BaseModel):
@@ -559,6 +565,10 @@ class LogLiftsResult(BaseModel):
                                      "then new bests, or for a lift's first session the mark it sets (a first "
                                      "session is never a new best).")
     links: LiftLinks = Field(description="Pages to offer the person. Put links last in a reply.")
+    # The per-hand check (contract exercise-list.md, decision 32, R13): one line a lift, only when one fires.
+    hand_check: str | None = Field(
+        default=None, description="Present when a dumbbell, kettlebell or two-cable weight may be both hands' total: "
+                                  "ask the person once, as it says. The weight was logged as sent.")
     units_note: str | None = Field(default=None, description=UNITS_NOTE)
 
 

@@ -428,6 +428,8 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     lb_token = sign(claims(sub="user_01POUNDS", email="pounds@example.com", name="Pounds"))
     whoami(client, lb_token)
     keep("log_lifts", {"sets": [{"exercise": "Bench Press", "weight_lb": 225, "reps": 5}]}, as_token=lb_token)
+    # A pair total above that bench: hand_check (exercise-list.md R13), on an add to the day's session.
+    keep("log_lifts", {"sets": [{"exercise": "Dumbbell Bench Press", "weight_lb": 120, "reps": 8}]}, as_token=lb_token)
     weighed = keep("log_bodyweight", {"lb": 185}, as_token=lb_token)
     keep("log_cardio", {"exercise": "Outdoor Run", "minutes": 27, "distance_mi": 3}, as_token=lb_token)
     keep("edit_entry", {"kind": "bodyweight", "entry_id": weighed["id"], "lb": 184}, as_token=lb_token)

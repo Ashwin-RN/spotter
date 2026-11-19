@@ -43,15 +43,15 @@ from .test_web import client, only_user, post, seam, sign_in, today_of, web_clie
 # get_log and get_progress (NewBest's and Best's kinds and units).
 BEFORE_INPUTS = {
     "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",
-    "list_exercises": "4cadf49aa82f551f2e856a7fdf90ec4b5c1c757c9a1bea36ede4157be2d83fdc",  # exercise list C4d: search
-    "log_lifts": "8e3b7e3c09151272b7cea3310532b4ed512a1ea6c5c425bd29510dd73fa020b6",  # exercise list: LogSetIn; C4e: NewBest
+    "list_exercises": "00569bbb5241240bff4eb3124c0c01d5cf997ba2bb1e8c520911d47af4be5476",  # exercise list C4d: search; C4f: a side
+    "log_lifts": "a159262feef60dcec47898b78c6b6de9a901acecba5d03ff45e833241f02f9b2",  # exercise list: LogSetIn; C4e: NewBest; C4f: hand_check, a side
     "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",
     "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",
     "get_progress": "7a3d6d383d8ccdc796fe25315d55eac7f1f65c7532bb27c0570014eb8c6485dd",  # exercise list C4e: Best
     "update_settings": "1053550decae70f255f0edaf894b730c1da9315e2d989ae1e5e2536eee85c879",
     "get_log": "dcfab8951e9a8aa501e136054150cb05c07477ad2eda6ca87b6dfc5114e059e5",  # exercise list: SetOut; C4e: NewBest
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
-    "edit_entry": "ed8836a8660181de8b475fe0c2ad932c6eada9c0a3600c0aec07363cb8417ffe",  # exercise list: SetIn
+    "edit_entry": "439ebe36878ea588adcf05654e1d0967c69acb057b0e47a4c523c462545ba9e7",  # exercise list: SetIn; C4f: a side
     "restore_entry": "ea098328552576986f8c0a410757d424478eb0566b104e2eb76d3de4b24cf8a9",
     "delete_entry": "ed03ec3aad90a1ffa9f8b00175bf5a7c1b7d18c92ce20d7032ee43fbf8fd749f",
     "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",

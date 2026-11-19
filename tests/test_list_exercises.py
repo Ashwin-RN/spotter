@@ -164,7 +164,8 @@ def test_a_lift_row_says_its_equipment_how_its_weight_is_logged_and_what_a_set_r
         e = every[m.name]
         if m.kind == "lift":
             assert e["equipment"] == account.EQUIPMENT_WORDS[m.equipment], m.name
-            assert e["records"] == rules.records(m.name), m.name
+            # On a lift done one side at a time it says so (exercise-list.md, note of 2026-11-19, C4f).
+            assert e["records"] == rules.records(m.name) + (" a side" if m.sides == "each" else ""), m.name
             assert e["weight"] in set(account.WEIGHT_WORDS.values()) | {account.HELP_WORDS}, m.name
     assert set(account.EQUIPMENT_WORDS) == set(exercises.EQUIPMENT)  # a plain word for every value the list takes
     assert all("_" not in words for words in account.EQUIPMENT_WORDS.values())
@@ -403,7 +404,9 @@ def test_through_mcp_the_function_takes_search_and_answers_as_the_service_does(w
     assert item["weight"]["description"] == (
         "How a lift's weight is logged: bar and plates, one hand's weight, one weight, added weight (help as minus), "
         "or none; null for cardio.")
-    assert item["records"]["description"] == "What a set records: reps, time, or distance and time; for cardio, null."
+    assert item["records"]["description"] == (
+        "What a set records: reps, time, or distance and time, with a side for a lift done one side at a time; "
+        "for cardio, null.")
     assert out["properties"]["count"]["description"] == (
         "How many exercises match, or with nothing sent, how many Spotter knows.")
     texts = [tool["description"], *(props[k]["description"] for k in ("kind", "category", "search"))] + [

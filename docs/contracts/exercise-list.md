@@ -586,3 +586,47 @@ The `exercise_alias` table (for when something writes aliases at runtime). Packs
   `app/services/data.py` (the narrowing step of (v)), `app/services/log.py` (a best in `get_log`, and so on the
   day page, names where it stands, as `log_lifts` says it: (u)), and `app/templates/hi.html` (the /hi page's line
   on bests named only the estimate and the weight; it now names the hold, the carry, the band and help).
+
+2026-11-19, C4f:
+
+- (z) A side, built on the owner's pick A, his final word still pending; a reversal is text only. The 42 lifts with
+  sides `each` record one side's reps or time, and their volume doubles (C4e), but nothing told the assistant so.
+  `SetIn` and `LogSetIn` (so `log_lifts` and `edit_entry`): `reps` and `time_s` add "On a lift done one side at a
+  time, one side's reps." / "... one side's time." `list_exercises`' `records` says "reps a side", "time a side"
+  (Side Plank) or "distance and time a side" (Suitcase Carry) for those 42 (`rules.records_listed`), and
+  `ExerciseItem.records`' description adds "with a side for a lift done one side at a time". `rules.RECORDS` and
+  `rules.records` keep their words: they are keys (`NEEDED`, `routines.ASK_FOR`) and the words of R6, R10 and R11.
+  The server instructions are unchanged. Hashes moved: `list_exercises`, `log_lifts`, `edit_entry`.
+- (aa) The per-hand check, as built (`lifts.hand_check`). The bar best is the person's heaviest live set of the
+  compared lift, whatever its date, with the call's own sets of it counted, so "bench 60 and dumbbell bench 40
+  each" in one call asks. A bar lift never above 0 kg is not logged for the check: no line and no ratio. The pair
+  total is the call's heaviest set of the lift, doubled. Earlier sets are every live set of the lift stored before
+  the call, the day's own session among them on an add, narrowed by (ae). `hand_check` is one
+  string, the lifts' lines joined by a space, absent when none fires; a refused call carries neither it nor a note.
+  The ratio is at 2 dp with no needless zeros ("1.25", "0.8", "2"). `log_lifts`' description gains nothing: the
+  field's description and the line itself say what to do.
+- (ab) Files outside C4f's row, each for one reason: `app/rules.py` and `app/services/account.py` (one line: the
+  `records` value) for (z); `tests/test_list_exercises.py` (the `records` value and its description) and
+  `tests/test_sets.py` (the `reps` and `time_s` words), both for (z); `tests/test_inputs.py` (the three hashes). In
+  the row: `tests/test_feedback.py` (the three hashes) and `tests/test_mcp.py` (`every_result` logs a pair above the
+  bench, so a real result carries `hand_check`).
+- (ac) Found at C4f's review: on a lb account a pair total equal to the bar best still asked ("92.5 lb each is 185 lb
+  in both hands, above the heaviest Bench Press set logged, 185 lb"), since the compare was in kg over weights stored
+  at 0.01 kg. Every compare of the check (the pair total against the bar best, and an earlier set's) is now of the
+  figures as the person sees them, in their units at the shown step (`formatting.shown_number`). So 185 lb and 92.5
+  lb each ask nothing; 185 lb and 95 lb each ask.
+- (ad) `hand_check`'s description names cables too, since the check fires on two cables (Cable Chest Press): "Present
+  when a dumbbell, kettlebell or two-cable weight may be both hands' total: ask the person once, as it says. The
+  weight was logged as sent."
+- (ae) R13 narrowed, picked at C4f's re-check, the owner to be told. An earlier set of the pair lift
+  stops the line only when it was logged after the bar lift's first live set above 0 kg. "After" is the order the
+  sets were logged in (set ids), never their dates, so a back-dated set, or two calls on one day, neither asks twice
+  nor stays silent with nobody asked. A bar lift logged only at 0 kg starts nothing. When the call holds the bar
+  lift's first set above 0 kg, no stored set of the pair lift counts. So dumbbell bench 50, then bench 80, then
+  dumbbell bench 50 asks. "As it stands now" holds for the rest: the bar best is the heaviest live bar set. The
+  re-check asked for session ids; set ids are used, since a dumbbell set added to the bench's own session in a later
+  call must count, and an add keeps the session's id. Two known limits: an import or an edit written after the first
+  bar set still stops the ask, though it runs no check and nobody was asked; and in one call that sends the dumbbell
+  set before the first bench set, the dumbbell set is logged first, so a later set asks again.
+- (af) `distance_m` on `SetIn` and `LogSetIn` adds "On a lift done one side at a time, one side's distance.", as
+  `reps` and `time_s` say (Suitcase Carry is the one such lift). Hashes moved again: `log_lifts`, `edit_entry`.

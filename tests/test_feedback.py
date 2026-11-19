@@ -68,15 +68,15 @@ DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint":
 # moved every one (additionalProperties false on each, and three descriptions): tests/test_inputs.py diffs the two.
 PUBLISHED = {
     "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
-    "list_exercises": "b899d5d817816d56a3fc4e84664ed8a4f81e023085f2728e76aa9cbd87b774e6",  # exercise list C4d: search
-    "log_lifts": "a5429b293c4260e5757880efaa2414d1f92f5beac0a967957ee631f2eb6f6dbb",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words; C4e: NewBest's kinds
+    "list_exercises": "52f0fb4f9245da8281c13052d8ae35fab385d18a06ca6c9bdf74ce9074373aab",  # exercise list C4d: search; C4f: a side
+    "log_lifts": "fbb56822abc39fc069e68d9f60bd84d66fa4233d79b8c858abda85403ada10d0",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words; C4e: NewBest's kinds; C4f: hand_check, a side
     "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
     "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs
     "get_progress": "70b15225d04a92d823c21775af729b4691173071168c2652142ef2fd2780f278",  # units; inputs; exercise list C4e: Best's kinds
     "update_settings": "cdd9e2dc2bb0ce2a9e35d4d6cfa0e81e71ffec9bbfcb16a4945d6d858ad8ea64",  # units; inputs
     "get_log": "d5bd1cf80037cdb4817f483fd66d9643c7c8917f32c6b3925ce1c4e541fc3c4c",  # units; inputs; exercise list: SetOut; C4e: NewBest's kinds
     "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
-    "edit_entry": "16fa5dc6c082c156ed72e51b4a84e6491bbf957743f9def5860320ebb21425a3",  # units; inputs; exercise list: SetIn
+    "edit_entry": "5274d313b456524076329e34db887b7eb1ed3e579ddc58da761f573f16360d6a",  # units; inputs; exercise list: SetIn; C4f: a side
     "restore_entry": "1fc5aa945a46c50c8203a702b4821fe42c6d39e35d3db0f27552c2099043c224",  # routines: kind routine; inputs
     "delete_entry": "1ec50c125535b54a79d67d619c802d49ddaf0aef69a88f53ff90ae66168d1282",  # routines: kind routine; units; inputs
     "find_food": "9ae7214dc6c6104ae9ae93325d6ed9b87c5296773febd70d07dd8a388ae56fde",  # inputs
