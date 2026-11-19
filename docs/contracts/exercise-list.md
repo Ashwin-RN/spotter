@@ -469,3 +469,16 @@ logged takes Bench Press, as designed; the gap between the deploys is his to say
 ## Not in this work
 
 The `exercise_alias` table (for when something writes aliases at runtime). Packs (Hyrox as a training kind, running, yoga). A session with splits and a total time. Watts, level, floors and rounds. Timed items in a routine (C5). Time and distance in the import. A kept per-person choice for a plain word. The body map page. A fixed per-hand ratio. Yoga and Pilates.
+
+## Notes from the build
+
+2026-11-19, C4a.2:
+
+- (a) C4a.2 exempts five alias lines of `app/exercise_rows.py` from T1's AI-vocabulary rule. Each holds the gym name "leverage", a plate-loaded machine, on a line of its own. The five are in `tests/text_rules.py` `EXEMPT_LINES`, and `tests/test_text_rules.py:685` pins the file among the exempt ones. This holds only while no result shows an alias, so C4c and C4d keep aliases unshown.
+- (b) On live, row ids mix lifts and cardio: the 56, then the 211 new. Any listing that needs an order (C4d's bare list, the resource) sorts by the list's own order, not by id.
+- (c) Test files edited outside C4a.2's row, each for one reason:
+  - `tests/test_exercise_migration.py`: its pins of 56 and 55 rows follow the full list, and a database at `0012` holds only the 56 live names.
+  - `tests/test_data.py` beyond `:249` and `:272-293`: Suitcase Carry now has muscles, so its muscle filter, muscle groups, muscle names and filled count change. Its set of reps stays for C4b.
+  - `tests/test_cardio.py:51-53`: the sync adds 25 cardio rows, not 15.
+  - `tests/test_mcp.py:2442-2443`: "Squat (Barbell)" gets three closest names over 267 rows until C4c reads it as Back Squat.
+  - `tests/test_text_rules.py:685` and `tests/text_rules.py`: the exemptions in (a).

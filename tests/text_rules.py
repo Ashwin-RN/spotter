@@ -908,6 +908,12 @@ EXEMPT_LINES = (
               "Three ASCII dots in a log line. No one reads it on a page or in a result."),
     Exemption("app/services/common.py", "return f\"{value + 0.0:.2f}\"  # + 0.0 turns -0.0 into 0.0",
               "The dedupe key: a format spec that never reaches a person."),
+    # "Leverage" is a plate-loaded machine's own name in five aliases of the owner's reviewed exercise list
+    # (contract exercise-list.md, R16a). Each such alias sits on a line of its own. An alias is matcher input and is
+    # never shown.
+    *(Exemption("app/exercise_rows.py", f'"{alias}",', "A machine's own name in a lift's aliases. No one reads it.")
+      for alias in ("leverage chest press", "incline leverage chest press", "decline leverage chest press",
+                    "leverage shoulder press", "leverage iso row")),
 )
 
 # A character allowed in one file's string constants: the byte-order mark export.py writes (D16).

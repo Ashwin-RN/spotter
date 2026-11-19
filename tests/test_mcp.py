@@ -2434,13 +2434,15 @@ def test_a_row_of_the_wrong_type_is_refused_whole_by_the_schema_and_writes_nothi
 
 
 def test_squat_barbell_gets_only_the_closest_name_the_rule_gives(http):
-    """The instructions promise no closest name: for Strong's "Squat (Barbell)" the rule offers Barbell Row."""
+    """The instructions promise no closest name: for Strong's "Squat (Barbell)" the rule offers three barbell names
+    over the full exercise list (contract exercise-list.md, C4a.2). C4c's matcher reads it as Back Squat."""
     token, today = import_person(http)
     r = ok(http, token, "import_entries", {"rows": [
         {"kind": "lift_session", "date": (today - timedelta(days=3)).isoformat(),
          "sets": [{"exercise": "Squat (Barbell)", "weight": 100, "reps": 5}]}], "weight_unit": "kg"})
-    assert r["unknown_names"] == [{"name": "Squat (Barbell)", "kind": "lift", "rows": 1, "closest": ["Barbell Row"]}]
-    assert r["failed"][0]["closest"] == ["Barbell Row"]
+    closest = ["Barbell Row", "Barbell Curl", "Barbell Shrug"]
+    assert r["unknown_names"] == [{"name": "Squat (Barbell)", "kind": "lift", "rows": 1, "closest": closest}]
+    assert r["failed"][0]["closest"] == closest
     for text in (mcp_server.IMPORT_RULE, mcp_server.IMPORT_DESCRIPTION):
         assert "Back Squat" not in text and "Barbell Row" not in text
 

@@ -245,19 +245,20 @@ def test_every_area_has_its_count_field_and_every_field_its_totals_among_the_sev
                 assert all(fields.field_named(area, n) for n in f.ratio)
 
 
-def test_the_regions_and_muscles_cover_the_41_lifts_by_the_rule():
-    assert set(exercises.REGIONS) == set(exercises.MUSCLES) == set(LIFT_NAMES) and len(LIFT_NAMES) == 41
+def test_the_regions_and_muscles_cover_every_lift_by_the_rule():
+    # Since the exercise list (contract exercise-list.md, "Muscles and region"): every lift has muscles, Suitcase
+    # Carry too, and every lift in the carry category, the carries and the sleds, is full_body.
+    assert set(exercises.REGIONS) == set(exercises.MUSCLES) == set(LIFT_NAMES) and len(LIFT_NAMES) == 242
     assert set(exercises.REGIONS.values()) <= {"upper", "lower", "core", "full_body"}
     regions = {r: sum(1 for v in exercises.REGIONS.values() if v == r) for r in ("lower", "upper", "core", "full_body")}
-    assert regions == {"lower": 17, "upper": 17, "core": 5, "full_body": 2}
+    assert regions == {"lower": 86, "upper": 129, "core": 22, "full_body": 5}
+    carries = {name for name, category in exercises.LIFTS if category == "carry"}
+    assert carries == {"Farmer's Carry", "Suitcase Carry", "Sled Push", "Sled Pull", "Sled Drag"}
     for name, worked in exercises.MUSCLES.items():
         assert set(worked) <= set(exercises.MUSCLE_NAMES) and set(worked.values()) <= {1.0, 0.5}, name
         primary = [m for m, w in worked.items() if w == 1]
-        if name == "Suitcase Carry":
-            assert worked == {} and exercises.REGIONS[name] == "full_body"
-            continue
         assert len(primary) == 1, name
-        expected = "full_body" if name == "Farmer's Carry" else exercises.REGION_OF[primary[0]]
+        expected = "full_body" if name in carries else exercises.REGION_OF[primary[0]]
         assert exercises.REGIONS[name] == expected, name
     assert len(exercises.MUSCLE_NAMES) == 17
     assert exercises.MUSCLES["Bench Press"] == {"chest": 1, "shoulders": 0.5, "triceps": 0.5}
@@ -284,8 +285,15 @@ def contract_table() -> dict[str, tuple]:
 
 
 def test_the_muscles_regions_and_entries_are_the_contract_s_table_exactly():
+    # The table is the record of 2026-11-16: its 40 rows with an entry still hold. Suitcase Carry, none there, takes
+    # the farmer's walk entry as a near entry since the exercise list (exercise-list.md, "Muscles and region").
     rows = contract_table()
-    assert list(rows) == LIFT_NAMES
+    assert len(rows) == 41 and set(rows) <= set(LIFT_NAMES)
+    assert rows.pop("Suitcase Carry") == (None, (), (), "full_body")
+    assert exercises.FREE_EXERCISE_DB["Suitcase Carry"] == "Farmers_Walk"
+    assert exercises.BY_NAME["Suitcase Carry"].muscle_source == "fedb_near"
+    assert exercises.MUSCLES["Suitcase Carry"] == exercises.MUSCLES["Farmer's Carry"]
+    assert exercises.REGIONS["Suitcase Carry"] == "full_body"
     for name, (entry, primary, secondary, region) in rows.items():
         assert exercises.FREE_EXERCISE_DB[name] == entry, name
         assert exercises.MUSCLES[name] == {**dict.fromkeys(primary, 1.0), **dict.fromkeys(secondary, 0.5)}, name
@@ -516,8 +524,8 @@ def test_each_kind_of_filter_and_a_list_of_names(person):
     assert names(data(person, area="lift_sets", filters={"category": "Hinge"})) == ["Romanian Deadlift"]
     assert names(data(person, area="lift_sets", filters={"region": "upper"})) == ["Bench Press", "Pull-Up"]
     assert names(data(person, area="lift_sets", filters={"muscle": "Triceps"})) == ["Bench Press"]  # a secondary
-    assert names(data(person, area="lift_sets", filters={"muscle": "lower back"})) == ["Back Squat",
-                                                                                      "Romanian Deadlift"]
+    assert names(data(person, area="lift_sets", filters={"muscle": "lower back"})) == [
+        "Back Squat", "Romanian Deadlift", "Suitcase Carry"]  # Suitcase Carry's farmer's walk muscles
     assert [r["activity"] for r in table(data(person, area="cardio", filters={"activity": "outdoor run"}))] == [
         "Outdoor Run"]
     assert [r["activity"] for r in table(data(person, area="cardio", filters={"category": "cycle"}))] == [
@@ -748,24 +756,32 @@ def test_per_day_of_a_measurement_divides_by_the_days_with_that_kind(person):
 # ---------------------------------------------------------------- groups
 
 def test_grouped_by_muscle_a_set_counts_in_each_muscle_at_its_weight(person):
+    # Suitcase Carry has muscles since the exercise list (contract exercise-list.md, "Muscles and region"): the
+    # farmer's walk entry's, forearms 1 and six secondaries at 0.5. Its set of reps is C4b's to change.
     lift(person, ago(1), [("Bench Press", 60, 8), ("Suitcase Carry", 40, 1)])
     answer = data(person, area="lift_sets", group_by=["muscle"],
                   totals={"sets": ["sum", "count", "share"], "volume_kg": ["sum"]})
+    carry = lambda muscle, share: {  # noqa: E731
+        "muscle": muscle, "sets_sum": 0.5, "sets_count": 1, "sets_share": share, "volume_kg_sum": 20}
     assert table(answer) == [
-        {"muscle": "chest", "sets_sum": 1, "sets_count": 1, "sets_share": 33, "volume_kg_sum": 480},
-        {"muscle": None, "sets_sum": 1, "sets_count": 1, "sets_share": 33, "volume_kg_sum": 40},
-        {"muscle": "shoulders", "sets_sum": 0.5, "sets_count": 1, "sets_share": 17, "volume_kg_sum": 240},
-        {"muscle": "triceps", "sets_sum": 0.5, "sets_count": 1, "sets_share": 17, "volume_kg_sum": 240}]
+        {"muscle": "chest", "sets_sum": 1, "sets_count": 1, "sets_share": 17, "volume_kg_sum": 480},
+        {"muscle": "forearms", "sets_sum": 1, "sets_count": 1, "sets_share": 17, "volume_kg_sum": 40},
+        carry("abdominals", 9), carry("glutes", 9), carry("hamstrings", 8), carry("lower back", 8),
+        carry("quadriceps", 8),
+        {"muscle": "shoulders", "sets_sum": 0.5, "sets_count": 1, "sets_share": 8, "volume_kg_sum": 240},
+        carry("traps", 8),
+        {"muscle": "triceps", "sets_sum": 0.5, "sets_count": 1, "sets_share": 8, "volume_kg_sum": 240}]
     assert answer["totals"] == {"columns": ["sets_sum", "sets_count", "volume_kg_sum"], "values": [2, 2, 520]}
     only = data(person, area="lift_sets", filters={"muscle": "triceps"}, group_by=["muscle"],
                 totals={"sets": ["sum"]})
     assert table(only) == [{"muscle": "triceps", "sets_sum": 0.5}]
     assert table(data(person, area="lift_sets", fields=["exercise", "muscle"])) == [
-        {"exercise": "Suitcase Carry", "muscle": None}, {"exercise": "Bench Press", "muscle": "chest"}]
+        {"exercise": "Suitcase Carry", "muscle": "forearms"}, {"exercise": "Bench Press", "muscle": "chest"}]
     assert "muscle" not in data(person, area="lift_sets")["columns"]
     lift(person, ago(2), [("Dip", 0, 10), ("Dip", 0, 10)])
     names = area_of(services.what_is_logged(person), "lift_sets")["names"]["muscle"]
-    assert names == ["triceps", "chest", "shoulders"]  # 2.5, 2 and 2 weighted sets, ties by name
+    assert names == ["triceps", "chest", "shoulders", "forearms", "abdominals", "glutes", "hamstrings", "lower back",
+                     "quadriceps", "traps"]  # 2.5, 2, 2, 1, then 0.5 each, ties by name
 
 
 def test_grouped_by_category_push_against_pull(person):
@@ -1053,7 +1069,7 @@ def test_what_is_logged_on_a_full_account(person):
     assert sets["names"]["exercise"] == ["Back Squat", "Bench Press", "Pull-Up", "Suitcase Carry"]
     assert field_row(sets, "weight_kg") == ["weight_kg", "The weight lifted. 0 for bodyweight work.", "kg", "stored",
                                             "count, avg, max, min", False, False, 6]
-    assert field_row(sets, "muscle")[-1] == 5 and field_row(sets, "estimated_max_kg")[-1] == 4
+    assert field_row(sets, "muscle")[-1] == 6 and field_row(sets, "estimated_max_kg")[-1] == 4  # every lift has muscles
     food = area_of(logged, "food")
     assert food["names"]["food"][0] == "chicken biryani" and food["names"]["meal"] == ["dinner", "lunch"]
     assert area_of(logged, "days")["entries"] == 5  # days with any entry

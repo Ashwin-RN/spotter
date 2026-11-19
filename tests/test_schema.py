@@ -213,7 +213,7 @@ def test_the_sync_adds_only_what_is_missing_and_brings_a_held_row_up_to_the_list
 
 def test_the_lift_list_has_unique_names_that_fit_the_columns():
     names = [row["name"] for row in exercises.rows()]
-    assert len(names) == len(set(names)) == 41 + 15
+    assert len(names) == len(set(names)) == 242 + 25  # the exercise list (contract exercise-list.md)
     assert all(len(n) <= 64 for n in names)
     for row in exercises.rows():
         allowed = exercises.CATEGORIES if row["kind"] == "lift" else exercises.CARDIO_CATEGORIES

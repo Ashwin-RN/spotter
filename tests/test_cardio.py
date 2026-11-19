@@ -31,7 +31,7 @@ def rows(user_id):
 
 def test_the_cardio_rows_are_synced_with_met_and_code(db_session):
     cardio = services.list_exercises(kind="cardio")["exercises"]
-    assert [e["name"] for e in cardio] == [name for name, *_ in exercises.CARDIO] and len(cardio) == 15
+    assert [e["name"] for e in cardio] == [name for name, *_ in exercises.CARDIO] and len(cardio) == 25
     walk = next(e for e in cardio if e["name"] == "Treadmill Walk")
     assert walk == {"name": "Treadmill Walk", "kind": "cardio", "category": "walk", "met": 3.8,
                     "compendium_code": "17355"}
@@ -48,10 +48,10 @@ def test_the_sync_adds_cardio_once(db_session):
     with db.session_scope() as s:
         s.execute(delete(Exercise).where(Exercise.kind == "cardio"))
     with db.session_scope() as s:
-        assert exercises.sync(s) == 15
+        assert exercises.sync(s) == 25
     with db.session_scope() as s:
         assert exercises.sync(s) == 0
-        assert len(list(s.scalars(select(Exercise).where(Exercise.kind == "cardio")))) == 15
+        assert len(list(s.scalars(select(Exercise).where(Exercise.kind == "cardio")))) == 25
 
 
 def test_a_lift_name_is_not_a_cardio_activity(user):
@@ -238,9 +238,10 @@ def test_a_back_dated_estimate_says_it_used_body_weight_now(user):
 
 
 def test_the_sync_brings_a_corrected_met_to_an_existing_row(db_session, monkeypatch):
-    corrected = [(n, c, 4.1 if n == "Treadmill Walk" else m, "17999" if n == "Treadmill Walk" else code)
-                 for n, c, m, code in exercises.CARDIO]
-    monkeypatch.setattr(exercises, "CARDIO", corrected)
+    # The sync reads rows(), built from the list's rows since the exercise list (contract exercise-list.md, R1).
+    corrected = [{**r, "met": 4.1, "compendium_code": "17999"} if r["name"] == "Treadmill Walk" else r
+                 for r in exercises.rows()]
+    monkeypatch.setattr(exercises, "rows", lambda: corrected)
     assert exercises.sync(db_session) == 0
     db_session.commit()
     walk = db_session.scalar(select(Exercise).where(Exercise.name == "Treadmill Walk"))

@@ -212,7 +212,9 @@ def test_the_new_rules_refuse_one_step_outside(at_head, values):
 def test_the_migration_holds_the_56_live_names_with_their_keys_by_the_rule():
     migration = _migration()
     listed = {row["name"]: row["key"] for row in exercises.rows()}
-    assert migration.LIVE == listed and len(listed) == 56
+    # The list holds the 56 live names with their keys, and since the exercise list 211 more (exercise-list.md).
+    assert {name: listed[name] for name in migration.LIVE} == migration.LIVE and len(migration.LIVE) == 56
+    assert len(listed) == 267
     assert all(migration.key_of(name) == exercises.key_of(name) == key for name, key in listed.items())
     assert migration.revision == UP and migration.down_revision == DOWN
     assert listed["Farmer's Carry"] == "farmers_carry" and listed["Step-Up"] == "step_up"
@@ -223,11 +225,11 @@ def test_the_migration_holds_the_56_live_names_with_their_keys_by_the_rule():
 
 
 def _at_0012_with(address: str, names: list[str]) -> Engine:
-    """A database at 0012 holding the list's rows and these names besides, as 0012's sync would leave them."""
+    """A database at 0012 holding the 56 live rows and these names besides, as 0012's sync would leave them."""
     command.upgrade(alembic_config(address), DOWN)
     engine = make_engine(address)
     with engine.begin() as c:
-        for name in [row["name"] for row in exercises.rows()] + names:
+        for name in list(_migration().LIVE) + names:
             c.exec_driver_sql("INSERT INTO exercise (name, kind, category) VALUES (?, 'lift', 'push')", (name,))
     return engine
 
@@ -303,7 +305,7 @@ def test_the_downgrade_stops_on_a_set_with_no_reps_and_on_a_minus_weight_and_run
         names = {col["name"] for col in inspect(c).get_columns("exercise")}
         exercise_rows = c.exec_driver_sql("SELECT count(*) FROM exercise").scalar()
     assert columns["reps"] is False and "time_s" not in columns and "distance_m" not in columns
-    assert "key" not in names and "retired" not in names and exercise_rows == 56  # the rows stay
+    assert "key" not in names and "retired" not in names and exercise_rows == len(exercises.rows())  # the rows stay
     old = "INSERT INTO lift_set (session_id, exercise_id, set_number, weight_kg, reps) VALUES (?, ?, ?, ?, ?)"
     with pytest.raises(IntegrityError):
         _exec(at_head, old, session, lift, 5, -1, 5)  # 0012's weight rule is back
@@ -423,7 +425,7 @@ def test_an_unlisted_key_is_retired_never_matched_its_history_still_read_and_lis
     assert _row(db_session, "plank").retired is True
     assert "Plank" not in [e.name for e in common.exercises(db_session)]
     assert "Plank" not in [e.name for e in common.exercises(db_session, "lift")]
-    assert len(common.exercises(db_session)) == 55
+    assert len(common.exercises(db_session)) == len(listed) - 1
     refused = services.log_lifts(uid, {"sets": [{"exercise": "Plank", "weight_kg": 0, "reps": 30}]}, "claude")
     assert refused["error"] == "unknown_exercise", refused
     day = services.get_log(uid, "2026-11-09")
@@ -468,7 +470,7 @@ def test_a_new_key_whose_name_another_row_holds_stops_the_sync_too_and_the_deplo
 def test_the_sync_fills_an_empty_table_with_every_key_and_none_retired(db_session):
     db_session.execute(Exercise.__table__.delete())
     db_session.commit()
-    assert exercises.sync(db_session) == 56
+    assert exercises.sync(db_session) == len(exercises.rows()) == 267
     db_session.commit()
     held = {e.key: (e.name, e.retired) for e in db_session.scalars(select(Exercise))}
     assert held == {r["key"]: (r["name"], False) for r in exercises.rows()}

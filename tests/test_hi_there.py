@@ -179,8 +179,8 @@ KEEPS_PART = (
     "It takes no stones, and no inches for a body size. Weights are kg or lb and distances km or miles: say which you "
     "use.",
     "It counts calories, not protein, carbs or fat.",
-    f"It knows lifts by its own list of {count(len(exercises.LIFTS))} names. A name not on the list is refused, never "
-    "guessed.",
+    f"It knows lifts by its own list of {count(len(exercises.LIFTS))} names. A plain word such as squat takes the "
+    "usual lift, or the one you have logged. A name Spotter does not know is refused, never guessed.",
     "It sends no reminders and no email, and does not sync with a phone or a watch.")
 SWITCH_LINE = ('You decide what your assistant may do. A switch on Settings has two settings: "Read, log and delete" and '
                '"Read and log". It starts at "Read, log and delete".')

@@ -682,7 +682,7 @@ def test_each_named_exemption_would_be_a_finding_without_it():
 
 def test_the_named_exemptions_are_the_contracts():
     assert {e.path for e in tr.EXEMPT_LINES} == {
-        "app/links.py", "app/rules.py", "app/auth.py", "app/services/common.py"}
+        "app/links.py", "app/rules.py", "app/auth.py", "app/services/common.py", "app/exercise_rows.py"}
     assert all(e.reason for e in tr.EXEMPT_LINES)
     assert tr.exempt_characters("app/services/export.py") == {BOM}
     assert tr.exempt_characters("app/services/food.py") == set()

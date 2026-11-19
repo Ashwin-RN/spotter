@@ -430,11 +430,11 @@ def test_whoami_for_a_missing_account():
 
 def test_list_exercises_and_filters():
     every = services.list_exercises()["exercises"]
-    assert len(every) == len(LIFTS) + 15
-    assert every[0] == {"name": "Back Squat", "kind": "lift", "category": "squat", "met": None, "compendium_code": None}
+    assert len(every) == len(LIFTS) + 25  # the exercise list (contract exercise-list.md): its first row
+    assert every[0] == {"name": "Bench Press", "kind": "lift", "category": "push", "met": None, "compendium_code": None}
     lifts = services.list_exercises(kind="lift")["exercises"]
     assert lifts == every[:len(LIFTS)] and all(e["kind"] == "lift" for e in lifts)
-    assert len(services.list_exercises(kind="cardio")["exercises"]) == 15
+    assert len(services.list_exercises(kind="cardio")["exercises"]) == 25
     pulls = services.list_exercises(category="pull")["exercises"]
     assert pulls and all(e["category"] == "pull" for e in pulls)
     assert services.list_exercises(kind="lift", category="carry")["exercises"][0]["name"] == "Farmer's Carry"
