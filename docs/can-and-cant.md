@@ -454,7 +454,7 @@ Claude may call these functions, and nothing else:
 | Function | What it does |
 |---|---|
 | `whoami` | Says whose account this is, today's date for them, and what Claude may do. Call it first. |
-| `list_exercises` | The exercise names to use. |
+| `list_exercises` | The exercise names, and a search. |
 | `log_lifts` | Records sets of lifting, into that day's session. |
 | `log_bodyweight` | Records one weigh-in. |
 | `set_goal` | Sets a goal of any of the four kinds, or changes or closes one. |

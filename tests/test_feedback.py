@@ -68,7 +68,7 @@ DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint":
 # moved every one (additionalProperties false on each, and three descriptions): tests/test_inputs.py diffs the two.
 PUBLISHED = {
     "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
-    "list_exercises": "3066492e2648709510f2e97d2928830a5128b86e32eb415ed51cbcff1d98f0ee",  # inputs
+    "list_exercises": "b899d5d817816d56a3fc4e84664ed8a4f81e023085f2728e76aa9cbd87b774e6",  # exercise list C4d: search
     "log_lifts": "f2ea67db5748b34050f921a96b2729cd78f6a7c6d7f97eebd5972b89934057ee",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words
     "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
     "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs

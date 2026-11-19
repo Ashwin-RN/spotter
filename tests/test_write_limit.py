@@ -153,7 +153,7 @@ def test_every_write_function_name_counts(user):
 
 def test_reads_are_never_limited(user):
     calls(user.id, WRITE_LIMIT * 3)
-    for r in (services.whoami(user.id), services.list_exercises(), services.get_progress(user.id),
+    for r in (services.whoami(user.id), services.list_exercises(user.id), services.get_progress(user.id),
               services.get_log(user.id, days=7), services.get_entry(user.id, "bodyweight", 1)):
         assert r.get("error") != "too_many_writes", r
 

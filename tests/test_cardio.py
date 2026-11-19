@@ -30,16 +30,16 @@ def rows(user_id):
 # ---------------------------------------------------------------- the activity list
 
 def test_the_cardio_rows_are_synced_with_met_and_code(db_session):
-    cardio = services.list_exercises(kind="cardio")["exercises"]
+    cardio = services.all_exercises("cardio")["exercises"]  # exercise-list.md R8: every row
     assert [e["name"] for e in cardio] == [name for name, *_ in exercises.CARDIO] and len(cardio) == 25
     walk = next(e for e in cardio if e["name"] == "Treadmill Walk")
     assert walk == {"name": "Treadmill Walk", "kind": "cardio", "category": "walk", "met": 3.8,
-                    "compendium_code": "17355"}
+                    "compendium_code": "17355", "equipment": None, "weight": None, "records": None}
     assert all(e["met"] and len(e["compendium_code"]) == 5 for e in cardio)
     assert {e["category"] for e in cardio} <= set(exercises.CARDIO_CATEGORIES)
-    lifts = services.list_exercises(kind="lift")["exercises"]
+    lifts = services.all_exercises("lift")["exercises"]
     assert all(e["met"] is None and e["compendium_code"] is None for e in lifts)
-    assert services.list_exercises(category="run")["exercises"][0]["name"] == "Treadmill Run"
+    assert [e for e in services.all_exercises()["exercises"] if e["category"] == "run"][0]["name"] == "Treadmill Run"
 
 
 def test_the_sync_adds_cardio_once(db_session):

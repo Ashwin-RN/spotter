@@ -481,12 +481,26 @@ class ExerciseItem(BaseModel):
         description="A cardio activity's MET value, from the 2024 Adult Compendium of Physical Activities; null "
                     "for a lift.")
     compendium_code: str | None = Field(description="The Compendium row the MET value comes from; null for a lift.")
+    equipment: str | None = Field(default=None,
+                                  description="A lift's equipment, such as dumbbell or machine; null for cardio.")
+    weight: str | None = Field(
+        default=None,
+        description="How a lift's weight is logged: bar and plates, one hand's weight, one weight, added weight (help "
+                    "as minus), or none; null for cardio.")
+    records: str | None = Field(default=None,
+                                description="What a set records: reps, time, or distance and time; for cardio, null.")
 
 
 class ExercisesResult(BaseModel):
     model_config = TOP
 
-    exercises: list[ExerciseItem] = Field(description="Every exercise that matches, in list order.")
+    exercises: list[ExerciseItem] = Field(
+        description="The exercises, in list order. Bare: the person's own first, then the usual lifts, then cardio. "
+                    "A search: at most 10, those whose name holds it first.")
+    count: int | None = Field(default=None,
+                              description="How many exercises match, or with nothing sent, how many Spotter knows.")
+    note: str | None = Field(default=None,
+                             description="With nothing sent: what the list holds, and how to find the rest.")
 
 
 # ---------------------------------------------------------------- log_lifts

@@ -2387,7 +2387,7 @@ def test_a_day_with_no_food_or_cardio(client):
     assert '<div class="meal' not in food and "<dl" not in food and "Target" not in food and "Net" not in food
     assert "No cardio logged on this day" in page
     activities = re.search(r'<select id="cardio-exercise" name="exercise" required>(.*?)</select>', page, re.S).group(1)
-    names = [e["name"] for e in services.list_exercises("cardio")["exercises"]]
+    names = [e["name"] for e in services.all_exercises("cardio")["exercises"]]
     assert re.findall(r'<option value="([^"]+)">', activities) == names and len(names) >= 15
     assert ATTRIBUTION not in page and "<footer" not in page
 
@@ -4384,7 +4384,7 @@ def test_each_side_fold_out_holds_the_contracts_fields_and_button(client):
     assert required == {"cardio-exercise": True, "cardio-minutes": True, "cardio-distance": False, "kg": True,
                         "measurement-kind": True, "measurement-value": True}
     activities = [(o.attrs["value"], o.text()) for o in folds["add-cardio"].find_all("option")]
-    assert activities == [(e["name"], e["name"]) for e in services.list_exercises("cardio")["exercises"]]
+    assert activities == [(e["name"], e["name"]) for e in services.all_exercises("cardio")["exercises"]]
 
 
 @pytest.mark.parametrize("fold_id, mark, card", SIDE_FOLDOUTS)
@@ -5149,7 +5149,7 @@ def test_the_edit_selects_offer_every_meal_and_every_activity(client, every_kind
     assert meal["options"] == [("breakfast", "Breakfast"), ("lunch", "Lunch"), ("dinner", "Dinner"), ("snack", "Snack")]
     [activity] = [f for f in controls_of(edit_of(client, "cardio_entry", every_kind["cardio_entry"]))
                   if f["name"] == "exercise"]
-    names = [e["name"] for e in services.list_exercises("cardio")["exercises"]]
+    names = [e["name"] for e in services.all_exercises("cardio")["exercises"]]
     assert activity["options"] == [(name, name) for name in names] and len(names) >= 15
 
 

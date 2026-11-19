@@ -250,7 +250,7 @@ def test_every_result_is_plain_json(user):
     goal = services.set_goal(user.id, {"kind": "lift", "exercise": "Back Squat", "target_value": 100,
                                        "target_date": day(user, 56)}, "claude")
     results = [
-        services.whoami(user.id), services.list_exercises(), services.get_progress(user.id),
+        services.whoami(user.id), services.list_exercises(user.id), services.get_progress(user.id),
         services.get_progress(user.id, "Back Squat"), weigh, replace, goal,
         services.log_lifts(user.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 90, "reps": 5}]}, "claude"),
         services.get_entry(user.id, "goal", goal["id"]),
@@ -298,8 +298,9 @@ def hostile_calls(user_id, goal_id, entry):
     new_goal = {"kind": "lift", "exercise": "Deadlift", "target_value": 150, "target_date": LATER,
                 "start_value": 90, "text": "t", "status": "open"}
     for bad in HOSTILE:
-        yield "list_exercises kind", lambda: services.list_exercises(bad, None)
-        yield "list_exercises category", lambda: services.list_exercises(None, bad)
+        yield "list_exercises kind", lambda: services.list_exercises(user_id, bad, None)
+        yield "list_exercises category", lambda: services.list_exercises(user_id, None, bad)
+        yield "list_exercises search", lambda: services.list_exercises(user_id, None, None, bad)
         yield "get_progress exercise", lambda: services.get_progress(user_id, bad)
         yield "update_settings time_zone", lambda: services.update_settings(user_id, {"time_zone": bad}, "claude")
         yield "update_settings field name", lambda: services.update_settings(user_id, {bad: "UTC"}, "claude")
@@ -428,19 +429,22 @@ def test_whoami_for_a_missing_account():
 
 # ---------------------------------------------------------------- the exercise list
 
-def test_list_exercises_and_filters():
-    every = services.list_exercises()["exercises"]
-    assert len(every) == len(LIFTS) + 25  # the exercise list (contract exercise-list.md): its first row
-    assert every[0] == {"name": "Bench Press", "kind": "lift", "category": "push", "met": None, "compendium_code": None}
-    lifts = services.list_exercises(kind="lift")["exercises"]
+def test_list_exercises_and_filters(user):
+    # The exercise list (contract exercise-list.md, R8): the function takes the account; the resource's every row is
+    # all_exercises. Its first row gains equipment, weight and records.
+    every = services.all_exercises()["exercises"]
+    assert len(every) == len(LIFTS) + 25
+    assert every[0] == {"name": "Bench Press", "kind": "lift", "category": "push", "met": None, "compendium_code": None,
+                        "equipment": "barbell", "weight": "bar and plates", "records": "reps"}
+    lifts = services.list_exercises(user.id, kind="lift")["exercises"]
     assert lifts == every[:len(LIFTS)] and all(e["kind"] == "lift" for e in lifts)
-    assert len(services.list_exercises(kind="cardio")["exercises"]) == 25
-    pulls = services.list_exercises(category="pull")["exercises"]
+    assert len(services.list_exercises(user.id, kind="cardio")["exercises"]) == 25
+    pulls = services.list_exercises(user.id, category="pull")["exercises"]
     assert pulls and all(e["category"] == "pull" for e in pulls)
-    assert services.list_exercises(kind="lift", category="carry")["exercises"][0]["name"] == "Farmer's Carry"
-    assert services.list_exercises(category="legs")["error"] == "invalid_field"
-    assert "squat" in services.list_exercises(category="legs")["fix"]
-    assert services.list_exercises(kind="swim")["error"] == "invalid_field"
+    assert services.list_exercises(user.id, kind="lift", category="carry")["exercises"][0]["name"] == "Farmer's Carry"
+    assert services.list_exercises(user.id, category="legs")["error"] == "invalid_field"
+    assert "squat" in services.list_exercises(user.id, category="legs")["fix"]
+    assert services.list_exercises(user.id, kind="swim")["error"] == "invalid_field"
 
 
 # ---------------------------------------------------------------- texts name only functions Claude has
@@ -471,8 +475,10 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
         {"exercise": e, "weight_kg": w, "reps": n} for e, w, n in rows], **data}, "claude")
     weigh = lambda kg, **data: services.log_bodyweight(user.id, {"kg": kg, **data}, "web")  # noqa: E731
     goal = lambda **data: services.set_goal(user.id, data, "claude")  # noqa: E731
-    results = [services.whoami(user.id), services.list_exercises(), services.list_exercises(kind="swim"),
-               services.list_exercises(category="legs"), services.get_progress(user.id),
+    results = [services.whoami(user.id), services.list_exercises(user.id),
+               services.list_exercises(user.id, kind="swim"),
+               services.list_exercises(user.id, category="legs"), services.list_exercises(user.id, search="row"),
+               services.list_exercises(user.id, search="."), services.get_progress(user.id),
                services.get_progress(user.id, "Deadlift"), services.get_progress(user.id, "Bak Squat")]
 
     # Lifts: a first session, new bests, an add to the day's session and its two refusals (gym-logging.md), and

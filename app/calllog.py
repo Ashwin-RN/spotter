@@ -79,6 +79,7 @@ KNOWN_NAMES = frozenset({
     "machine_kcal",
     "meal",
     "measurement_kind", "minutes", "name", "new_session", "no_account", "notes", "query", "request_id", "rows",
+    "search",  # list_exercises' (exercise-list.md R8)
     "serving_label", "sets", "speed_kmh", "speed_mph", "start_value", "status", "target_cardio_minutes_per_week",
     "target_date",
     "target_sessions_per_week", "target_value", "text", "time_zone", "topic", "undo_edit", "value", "weight_unit",

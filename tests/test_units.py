@@ -702,8 +702,9 @@ def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_
     hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tools}
     # inputs.md moved every one after: with its changes taken out, exactly the thirteen differ from before units.
     held = {t["name"]: hashlib.sha256(compact(without_inputs(t)).encode()).hexdigest() for t in tools}
-    # exercise-list.md's deploy 2 moved import_entries' names part too.
-    assert {name for name, sha in BEFORE_UNITS.items() if held[name] != sha} == THIRTEEN | {"import_entries"}
+    # exercise-list.md's deploy 2 moved import_entries' names part and list_exercises (R8) too.
+    assert {name for name, sha in BEFORE_UNITS.items() if held[name] != sha} == THIRTEEN | {"import_entries",
+                                                                                         "list_exercises"}
     assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED
     assert len(mcp_server.INSTRUCTIONS) == 4086  # data-on-request.md: DATA_RULE; exercise-list.md C4c
     who = next(t for t in tools if t["name"] == "whoami")

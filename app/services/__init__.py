@@ -2,7 +2,8 @@
 
 One module per area, so each later stage adds its own:
 
-  account       whoami, update_settings, set_claude_can (the Settings page only), list_exercises,
+  account       whoami, update_settings, set_claude_can (the Settings page only), list_exercises, all_exercises
+                (the exercises resource and the web's forms: every row, whatever the person logged),
                 delete_account (the Settings page only), account_empty (an empty account's Today)
   lifts         log_lifts
   body          log_bodyweight
@@ -37,7 +38,7 @@ Every write locks the user row first, then checks the write limit (common.WRITE_
 """
 
 from app.services.account import (
-    account_empty, delete_account, list_exercises, set_claude_can, update_settings, whoami,
+    account_empty, all_exercises, delete_account, list_exercises, set_claude_can, update_settings, whoami,
 )
 from app.services.body import log_bodyweight
 from app.services.common import (
@@ -61,7 +62,8 @@ from app.services.trends import get_days, get_trends
 
 __all__ = [
     "DUPLICATE_MINUTES", "READ_LIMIT", "WRITE_FUNCTIONS", "WRITE_LIMIT", "WRITE_WINDOW_MINUTES",
-    "account_empty", "delete_account", "delete_entry", "edit_entry", "entry_kinds", "export_data", "find_food",
+    "account_empty", "all_exercises", "delete_account", "delete_entry", "edit_entry", "entry_kinds", "export_data",
+    "find_food",
     "get_cardio", "get_data", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress",
     "get_routines", "get_trends", "import_entries", "list_exercises", "list_saved_foods",
     "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "owner_calls",

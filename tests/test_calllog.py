@@ -110,7 +110,7 @@ LATER = (db.utcnow().date() + timedelta(days=365)).isoformat()  # a goal's date:
 # one exists, succeeds and stores the marker as the person's own text.
 MARKED_CALLS = [
     ("whoami", {}),
-    ("list_exercises", {"kind": MARKER, "category": MARKER}),
+    ("list_exercises", {"kind": MARKER, "category": MARKER, "search": MARKER}),
     ("log_lifts", {"sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}], "date": MARKER, "notes": MARKER}),
     ("log_lifts", {"sets": squat(100), "notes": MARKER}),
     ("log_bodyweight", {"kg": 80, "date": MARKER}),
@@ -497,7 +497,7 @@ def test_a_resource_that_fails_never_shows_or_logs_its_message(http, monkeypatch
     if uri == "spotter://can-and-cant":
         monkeypatch.setattr(mcp_server, "CAN_AND_CANT", _Unreadable())
     else:
-        monkeypatch.setattr(services, "list_exercises", crash if how == "crash" else down)
+        monkeypatch.setattr(services, "all_exercises", crash if how == "crash" else down)  # exercise-list.md R8
     r = rpc(http, "resources/read", {"uri": uri}, token=sign())
     assert r.status_code == 200
     assert "error" in r.json() and r.json()["error"]["message"]

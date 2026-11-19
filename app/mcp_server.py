@@ -814,19 +814,23 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="list_exercises",
         title="List exercises",
         description=(
-            "The exercise names Spotter knows. Every other function takes a name exactly as written here. "
-            "Filter by kind or category, or leave both out for the whole list."
+            "Exercise names, with each lift's equipment and how its weight is logged. Left bare: the person's own, "
+            "the usual lifts and every cardio activity, and how many Spotter knows. search finds the rest. "
+            "log_lifts also takes the person's own words; every other function takes a name as written here."
         ),
         annotations=READ_ONLY,
     )
     async def list_exercises(
-        kind: Annotated[str | None, Field(description="lift or cardio. Leave out for all.")] = None,
+        kind: Annotated[str | None, Field(description="lift or cardio: every exercise of that kind.")] = None,
         category: Annotated[str | None, Field(
             description="For lifts: squat, hinge, push, pull, carry, core or accessory. For cardio: walk, run, "
-                        "cycle, row, swim, machine or other. Leave out for all.")] = None,
+                        "cycle, row, swim, machine or other. Every exercise in it.")] = None,
+        search: Annotated[str | None, Field(
+            description="A word or two, such as row or hip thrust: up to 10 lifts and activities whose name, other "
+                        "names or plain words hold it.")] = None,
     ) -> Annotated[CallToolResult, ExercisesResult]:
         return await wrapper.call("list_exercises", ExercisesResult,
-                                  lambda _account: services.list_exercises(kind, category))
+                                  lambda account_id: services.list_exercises(account_id, kind, category, search))
 
     @server.tool(
         name="log_lifts",
@@ -1568,11 +1572,11 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         EXERCISES_URI,
         name="exercises",
         title="The exercise list",
-        description="Every exercise name Spotter knows, as JSON: the same as list_exercises with no filter.",
+        description="Every exercise Spotter knows, as JSON, with its equipment and how its weight is logged.",
         mime_type="application/json",
     )
     async def exercise_list() -> str:
-        return await _resource(lambda: json.dumps(services.list_exercises(), separators=(",", ":")))
+        return await _resource(lambda: json.dumps(services.all_exercises(), separators=(",", ":")))
 
     registered = {tool.name for tool in server._tool_manager.list_tools()}
     # This check is the guard: the switch alone would let a function without a level through at log_delete.

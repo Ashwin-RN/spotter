@@ -521,7 +521,7 @@ def test_the_arguments_are_typed_parameters(http):
     assert list(schemas["log_cardio"]["properties"]) == [
         "exercise", "minutes", "date", "distance_km", "distance_mi", "incline_pct", "speed_kmh", "speed_mph", "avg_hr",
         "machine_kcal", "notes", "allow_repeat", "key"]
-    assert list(schemas["list_exercises"]["properties"]) == ["kind", "category"]
+    assert list(schemas["list_exercises"]["properties"]) == ["kind", "category", "search"]  # exercise-list.md R8
     assert schemas["whoami"]["properties"] == {}
     one_set = schemas["log_lifts"]["$defs"]["LogSetIn"]  # exercise-list.md R3: log_lifts' own set model
     assert one_set["properties"]["reps"]["anyOf"][0]["type"] == "integer"
@@ -584,7 +584,7 @@ def test_results_are_the_services_own_dicts(http):
     token = sign()
     ok(http, token, "log_lifts", {"sets": squat(100)})
     account = one_user().id
-    assert ok(http, token, "list_exercises") == services.list_exercises()
+    assert ok(http, token, "list_exercises") == services.list_exercises(account)
     assert ok(http, token, "get_progress") == services.get_progress(account)
     assert ok(http, token, "get_progress", {"exercise": "back squat"}) == services.get_progress(account, "back squat")
     who = ok(http, token, "whoami")
@@ -792,7 +792,9 @@ def test_the_two_resources_are_listed_and_read_back(http):
     assert doc["mimeType"] == "text/markdown" and doc["text"] == CAN_AND_CANT.read_text(encoding="utf-8")
     exercises = read_resource(http, token, "spotter://exercises")
     assert exercises["mimeType"] == "application/json"
-    assert json.loads(exercises["text"]) == services.list_exercises() == ok(http, token, "list_exercises")
+    # exercise-list.md R8: the resource is every row; the bare call is the person's own, the usual lifts and cardio.
+    assert json.loads(exercises["text"]) == services.all_exercises()
+    assert ok(http, token, "list_exercises")["count"] == len(services.all_exercises()["exercises"])
 
 
 def test_resource_reads_are_not_in_the_call_log(http):
@@ -881,7 +883,7 @@ def test_mcp_call_needs_the_token_in_the_environment(monkeypatch, capsys):
 # Every optional argument of every function, with a value to send. The required ones go in REQUIRED.
 OPTIONAL_ARGUMENTS = {
     "whoami": {},
-    "list_exercises": {"kind": "lift", "category": "push"},
+    "list_exercises": {"kind": "lift", "category": "push", "search": "press"},
     "log_lifts": {"date": "2026-01-02", "notes": "Notes", "allow_repeat": True, "new_session": True},
     "log_bodyweight": {"kg": 80.5, "lb": 177.5, "date": "2026-01-02", "allow_repeat": True},  # units.md: kg or lb
     "set_goal": {"kind": "lift", "exercise": "Back Squat", "measurement_kind": "waist", "distance_km": 5.5,
@@ -957,7 +959,7 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
     if name in DATA_WRITES:
         return (account, arguments, "claude"), {}
     if name == "list_exercises":
-        return (arguments.get("kind"), arguments.get("category")), {}
+        return (account, arguments.get("kind"), arguments.get("category"), arguments.get("search")), {}
     if name == "get_progress":
         return (account, arguments.get("exercise")), {}
     if name == "find_food":

@@ -193,7 +193,7 @@ def refusals(seen: Seen, user_id: int):
         ("get_cardio unknown", lambda: services.get_cardio(user_id, "treadmil rnu"), ("treadmil rnu",)),
         ("find_food", lambda: services.find_food(user_id, "", limit=30), ()),
         ("find_food limit", lambda: services.find_food(user_id, "dal", limit=30), (30,)),
-        ("list_exercises", lambda: services.list_exercises("dance"), ("dance",)),
+        ("list_exercises", lambda: services.list_exercises(user_id, "dance"), ("dance",)),
         ("by", lambda: services.log_bodyweight(user_id, {"kg": 80}, "robot"), ()),
     ]
     for name, call, entered in bad:

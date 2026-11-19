@@ -41,8 +41,23 @@ account_empty(user_id)
     seven questions (_questions, through _has), so the two always agree: account_empty stops at the first
     found, and whoami asks all seven once (_held), since its setup steps read the same answers.
 
-list_exercises(kind=None, category=None)
-    The names entries must use, filtered by kind (lift, cardio) and category.
+list_exercises(user_id, kind=None, category=None, search=None)
+    The exercise list for the function (contract exercise-list.md, R8 and decision 16). Each row gives its name, kind,
+    category, MET and code, and a lift's equipment (EQUIPMENT_WORDS), how its weight is logged (WEIGHT_WORDS) and
+    what a set records.
+    Bare: the person's own logged lifts and activities (live sets and entries), then the usual lifts (each plain
+    word's default) not already named, then every cardio activity not already named, each once, with count (every
+    row listed) and note. A kind or category alone: every row of it. A search: up to SEARCH_SHOWN rows whose key
+    (rules.name_key) holds the search's key, after the one row the matcher reaches by the text as sent, if any: rows
+    whose name holds it, then those whose aliases do, word starts before mid-word in each, then a plain word's
+    candidates; kind and category still filter, and count is how many matched. No row shows an alias (the
+    contract's note (a)). Every listing is in the list's own order, never by id (note (b)). Retired rows are left
+    out (R2).
+
+all_exercises(kind=None, retired=False)
+    Every row not retired, of a kind or all, in the list's order and the same row shape, whatever the person logged:
+    the exercises resource and the web's forms. retired=True takes retired rows too, for the pages' lift slugs, so a
+    lift that left the list keeps its page.
 
 delete_account(user_id)
     The Settings page's delete, after the web has deleted the sign-in at the provider (decision 11).
@@ -57,17 +72,18 @@ Every write here locks the user row first (common.lock_user), then checks the wr
 exceptions, set_claude_can and delete_account, lock the row and skip the limit.
 """
 
+import re
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select, update
 
 from app import db, exercises as exercise_list, formatting, links, rules, users
 from app.models import (
-    CLAUDE_CAN, EXERCISE_KINDS, IMPORTED, Bodyweight, CallLog, CardioEntry, FoodEntry, Goal, LiftSession, LiftSet,
-    Measurement, Routine, SavedFood, User, entry_models,
+    CLAUDE_CAN, EXERCISE_KINDS, IMPORTED, Bodyweight, CallLog, CardioEntry, Exercise, FoodEntry, Goal, LiftSession,
+    LiftSet, Measurement, Routine, SavedFood, User, entry_models,
 )
 from app.rules import error, quote
-from app.services.common import check_by, check_data, check_write_limit, exercises, lock_user, no_account, truthy
+from app.services.common import check_by, check_data, check_write_limit, lock_user, no_account, truthy
 
 TIME_ZONE_NOTE = ("No time zone is set, so today is the UTC date. Set it now with update_settings: use the "
                   "person's time zone if you know it, otherwise ask once which city they are in. Set it "
@@ -360,18 +376,134 @@ def _categories() -> list[str]:
     return list(dict.fromkeys(exercise_list.CATEGORIES + [row["category"] for row in exercise_list.rows()]))
 
 
-def list_exercises(kind: str | None = None, category: str | None = None) -> dict:
-    """Returns {exercises [{name, kind, category, met, compendium_code}]} or {error, message, fix}.
-    met and compendium_code are the 2024 Adult Compendium's for a cardio activity, null for a lift."""
+# How a lift's weight is logged, in words (ExerciseItem.weight), by its load type; the two assisted lifts' own.
+WEIGHT_WORDS = {"bar_total": "bar and plates", "per_hand": "one hand's weight", "single": "one weight",
+                "bodyweight": "added weight", "band": "none"}
+HELP_WORDS = "help as a minus weight"
+# A lift's equipment in plain words (ExerciseItem.equipment), by the list's own value.
+EQUIPMENT_WORDS = {"barbell": "barbell", "dumbbell": "dumbbell", "kettlebell": "kettlebell", "cable": "cable",
+                   "machine": "machine", "plate_loaded": "plate-loaded machine", "smith": "Smith machine",
+                   "trap_bar": "trap bar", "ez_bar": "EZ bar", "landmine": "landmine", "band": "band",
+                   "bodyweight": "bodyweight", "plate": "plate", "sled": "sled", "medicine_ball": "medicine ball",
+                   "sandbag": "sandbag", "other": "other"}
+SEARCH_SHOWN = 10  # the most rows a search gives; count says how many matched
+BARE_NOTE = ("The person's logged exercises, the usual lifts and every cardio activity, of {count}. Send search with a "
+             "word, such as row, for the other lifts.")
+_ORDER = {m.key: i for i, m in enumerate(exercise_list.MOVEMENTS)}  # the list's own order (note (b))
+
+
+def _starts(text: str) -> tuple[str, ...]:
+    """The text's key from each of its own words on, each word by rules.name_key: "Plate-Loaded Lat Pulldown" gives
+    plateloadedlatpulldown, loadedlatpulldown, latpulldown and pulldown. A search key that begins one of them begins
+    a word of the text."""
+    words = [k for k in (rules.name_key(w) for w in re.split(r"[\s/-]+", text)) if k]
+    return tuple("".join(words[i:]) for i in range(len(words)))
+
+
+# Each row's name key and word starts, its aliases' keys and word starts, and each plain word's key with its
+# candidates' names: what a search reads, worked out once.
+_NAME_KEYS = {m.name: rules.name_key(m.name) for m in exercise_list.MOVEMENTS}
+_NAME_STARTS = {m.name: _starts(m.name) for m in exercise_list.MOVEMENTS}
+_ALIAS_KEYS = {m.key: tuple(rules.name_key(a) for a in m.aliases) for m in exercise_list.MOVEMENTS}
+_ALIAS_STARTS = {m.key: tuple(x for a in m.aliases for x in _starts(a)) for m in exercise_list.MOVEMENTS}
+_WORD_KEYS = tuple((rules.name_key(word), w["candidates"]) for word, w in exercise_list.WORDS.items())
+DEFAULTS = frozenset(w["default"] for w in exercise_list.WORDS.values())  # the usual lifts, one a plain word
+
+
+def _listed(rows: list[Exercise]) -> list[Exercise]:
+    """The rows in the list's order; a row the list no longer holds (retired) after them, by id."""
+    return sorted(rows, key=lambda e: (_ORDER.get(e.key, len(_ORDER)), e.id))
+
+
+def _item(e: Exercise) -> dict:
+    """One row as list_exercises gives it. A lift's equipment, weight words and what a set records come from the
+    list's own row; a cardio row, or a retired lift the list no longer holds, has none of them."""
+    m = exercise_list.BY_KEY.get(e.key)
+    lift = m if m is not None and e.kind == "lift" else None
+    weight = None
+    if lift is not None:
+        weight = HELP_WORDS if lift.key in rules.HELP_LIFTS else WEIGHT_WORDS.get(lift.load_type)
+    return {"name": e.name, "kind": e.kind, "category": e.category, "met": e.met, "compendium_code": e.compendium_code,
+            "equipment": EQUIPMENT_WORDS.get(lift.equipment) if lift else None, "weight": weight,
+            "records": rules.RECORDS.get(lift.measures) if lift else None}
+
+
+def _rows(s, kind: str | None = None, retired: bool = False) -> list[Exercise]:
+    query = select(Exercise)
+    if not retired:
+        query = query.where(Exercise.retired.is_(False))
+    if kind is not None:
+        query = query.where(Exercise.kind == kind)
+    return _listed(list(s.scalars(query)))
+
+
+def all_exercises(kind: str | None = None, retired: bool = False) -> dict:
+    """Returns {exercises [rows as list_exercises gives them]}: every row of a kind, or all, in the list's order.
+    retired: retired rows too (the pages' lift slugs)."""
+    with db.new_session() as s:
+        return {"exercises": [_item(e) for e in _rows(s, kind or None, retired)]}
+
+
+def _search(rows: list[Exercise], search: str, key: str) -> list[Exercise]:
+    """First the one row the matcher reaches by the text as sent (rules.find_exercise, as a name is taken outside
+    log_lifts: a name, an alias, a plural, a "Name (Equipment)" form), if any; a plain word reaches no one row. Then
+    every row whose name's key holds key, then those whose aliases' keys do, then the candidates of each plain word
+    whose key holds it. In the name group and the alias group a row where key begins one of the text's own words
+    comes before one where it begins mid-word, so "run" finds Treadmill Run before Crunch. Each row once; ties in
+    the list's order. No closest-name search."""
+    hit, _, _ = rules.find_exercise(search, [e.name for e in rows])
+    first = [e for e in rows if e.name == hit]
+
+    def word_starts_first(group: list[Exercise], starts) -> list[Exercise]:
+        return sorted(group, key=lambda e: not any(x.startswith(key) for x in starts(e)))  # stable: list order kept
+
+    by_name = word_starts_first([e for e in rows if key in (_NAME_KEYS.get(e.name) or rules.name_key(e.name))],
+                                lambda e: _NAME_STARTS.get(e.name) or _starts(e.name))
+    by_alias = word_starts_first([e for e in rows if any(key in a for a in _ALIAS_KEYS.get(e.key, ()))],
+                                 lambda e: _ALIAS_STARTS.get(e.key, ()))
+    names = {name for word, candidates in _WORD_KEYS if key in word for name in candidates}
+    by_word = [e for e in rows if e.name in names]
+    return list({e.id: e for e in first + by_name + by_alias + by_word}.values())
+
+
+def _logged(s, user_id: int) -> set[int]:
+    """The exercise ids of the person's live lift sets and live cardio entries."""
+    lifts = s.scalars(select(LiftSet.exercise_id).join(LiftSession, LiftSet.session_id == LiftSession.id)
+                      .where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None)).distinct())
+    cardio = s.scalars(select(CardioEntry.exercise_id)
+                       .where(CardioEntry.user_id == user_id, CardioEntry.deleted_at.is_(None)).distinct())
+    return set(lifts) | set(cardio)
+
+
+def list_exercises(user_id: int, kind: str | None = None, category: str | None = None, search=None) -> dict:
+    """Returns {exercises [{name, kind, category, met, compendium_code, equipment, weight, records}], count[, note]}
+    or {error, message, fix}. See the module notes. met and compendium_code are the 2024 Adult Compendium's for a
+    cardio activity, null for a lift; equipment, weight and records are a lift's, null for cardio."""
     if kind not in (None, "") and not (isinstance(kind, str) and kind in EXERCISE_KINDS):
         return error("invalid_field", f"kind '{quote(kind)}' is not one of {', '.join(EXERCISE_KINDS)}.",
-                     f"Use one of: {', '.join(EXERCISE_KINDS)}, or leave it out for all.")
+                     f"Use one of: {', '.join(EXERCISE_KINDS)}, or leave it out.")
     categories = _categories()
     if category not in (None, "") and not (isinstance(category, str) and category in categories):
         return error("invalid_field", f"category '{quote(category)}' is not one of {', '.join(categories)}.",
-                     f"Use one of: {', '.join(categories)}, or leave it out for all.")
+                     f"Use one of: {', '.join(categories)}, or leave it out.")
+    search, err = rules.text(search, "search", rules.NAME_MAX)
+    if err:
+        return err
+    key = rules.name_key(search) if search else ""
+    if search and not key:
+        return error("invalid_field", f"search '{quote(search)}' holds no letter or number.",
+                     "Send a word, such as row, or leave search out.")
     with db.new_session() as s:
-        rows = [{"name": e.name, "kind": e.kind, "category": e.category, "met": e.met,
-                 "compendium_code": e.compendium_code}
-                for e in exercises(s, kind or None) if not category or e.category == category]
-    return {"exercises": rows}
+        if s.get(User, user_id) is None:
+            return no_account()
+        rows = [e for e in _rows(s, kind or None) if not category or e.category == category]
+        if key:
+            found = _search(rows, search, key)
+            return {"exercises": [_item(e) for e in found[:SEARCH_SHOWN]], "count": len(found)}
+        if kind or category:
+            return {"exercises": [_item(e) for e in rows], "count": len(rows)}
+        logged = _logged(s, user_id)
+        tiers = ([e for e in rows if e.id in logged], [e for e in rows if e.kind == "lift" and e.name in DEFAULTS],
+                 [e for e in rows if e.kind == "cardio"])
+        shown = list({e.id: e for tier in tiers for e in tier}.values())
+    return {"exercises": [_item(e) for e in shown], "count": len(rows), "note": BARE_NOTE.format(count=len(rows))}

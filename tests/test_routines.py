@@ -849,9 +849,9 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     # Routines moved delete_entry, restore_entry and whoami; units then moved its thirteen (units.md), of these.
     units = {"whoami", "log_lifts", "log_bodyweight", "log_cardio", "edit_entry", "set_goal", "update_settings",
              "get_progress", "get_goals", "get_log", "delete_entry"}
-    # The exercise list (exercise-list.md, deploy 2) moved import_entries' names part, beside those.
+    # The exercise list (exercise-list.md, deploy 2) moved import_entries' names part and list_exercises (R8).
     assert {n for n in BEFORE if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami",
-                                                            "import_entries"} | units
+                                                            "import_entries", "list_exercises"} | units
     assert hashes["restore_entry"] != BEFORE["restore_entry"] and "restore_entry" not in units
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
     assert everyone == [n for n in names if n not in mcp_server.OWNER_FUNCTIONS] and len(everyone) == web.FUNCTION_COUNT

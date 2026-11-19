@@ -525,3 +525,33 @@ The `exercise_alias` table (for when something writes aliases at runtime). Packs
   the lift needs. So "walking lunges" with a time and no distance gets Sandbag Lunge's "distance_m is missing" rather
   than Walking Lunge's own refusal, and a word holding both a carry and a hold could pick the carry for a time alone
   (no word holds a hold today). Nothing wrong is written.
+
+2026-11-19, C4d:
+
+- (o) The search's order, found at C4d's review. First the one row the matcher reaches by the text as sent
+  (`rules.find_exercise`, as a name is taken outside `log_lifts`): an exact name, an alias, a plural or a
+  "Name (Equipment)" form, so "Squat (Barbell)" gives Back Squat at row 1 and "Dumbbell Row" gives Dumbbell Row
+  before Bent-Over Dumbbell Row. A plain word reaches no one row and keeps R8's order. Then the name group and the
+  alias group, each with the rows where the search begins one of the name's or alias's own words first, then the
+  mid-word matches; ties in list order. The words are the name's own, each by `rules.name_key`, never a place in
+  the joined key. Then a word's candidates. `count` is unchanged. This corrects R8's tie order and the known limit
+  on "Arrow" names: "None on the list today" was false, as run, lat, chin, ab and rdl showed mid-word matches first
+  (Crunch before Treadmill Run, Plate-Loaded Chest Press before Lat Pulldown).
+- (p) `ExerciseItem.equipment` is in plain words: barbell, dumbbell, kettlebell, cable, machine, plate-loaded
+  machine, Smith machine, trap bar, EZ bar, landmine, band, bodyweight, plate, sled, medicine ball, sandbag, other.
+  The list keeps its own values. `kind` and `category` no longer say "Leave out for all": leaving all three out
+  gives the short list.
+- (q) Test files edited outside C4d's row, each for one reason:
+  - `tests/test_calllog.py`: the marker table gains `search`; the resource's failure test patches `all_exercises`,
+    which the resource now reads.
+  - `tests/test_evals.py`, `tests/test_hi_there.py`, `tests/test_web.py`, `tests/test_web_goals.py`: they listed
+    every row of a kind through `list_exercises`, which now takes the account first: they read `all_exercises`.
+  - `tests/test_result_text.py`, `tests/test_write_limit.py`: the call passes the account.
+  - `tests/test_inputs.py`, `tests/test_routines.py`, `tests/test_units.py`: their pins of the published
+    `list_exercises` move.
+- (r) The answer's size, measured on SQLite through the service, as compact JSON in UTF-8 bytes, with the plain
+  equipment words of (p): the bare call on an empty account 11,113 bytes (71 rows), with every row logged 42,896
+  (267 rows); `kind` lift 39,217; the resource 42,734 (before (p): 11,097, 42,656, 38,977 and 42,494). Each answer
+  goes as text and again as structured content.
+- (s) For C4e: a retired lift's page still answers 404. Its slug now resolves (`web.lift_names` reads retired rows),
+  but `get_progress` refuses a retired name, where R2 wants the pages to read it.

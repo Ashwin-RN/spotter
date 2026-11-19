@@ -422,7 +422,7 @@ def test_each_count_and_list_is_what_the_assistant_can_use(client):
     page = client.get("/hi").text
     keeps = card(page, "hi-keeps")
     items = [plain_words(li) for li in re.findall(r"<li>(.*?)</li>", keeps, re.S)]
-    lifts_count, cardio = (len(services.list_exercises(kind)["exercises"]) for kind in ("lift", "cardio"))
+    lifts_count, cardio = (len(services.all_exercises(kind)["exercises"]) for kind in ("lift", "cardio"))
     assert items[0] == f"Lifts. {count(lifts_count)} lifts by name, each session with its sets."
     assert items[1] == f"Cardio. {count(cardio)} activities."
     assert items[2] == (f"Body. Weigh-ins, and {count(len(models.MEASUREMENT_KINDS))} measurements: "

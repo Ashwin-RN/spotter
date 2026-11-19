@@ -1825,8 +1825,8 @@ def serving_words(entry: dict) -> str:
 
 
 async def cardio_names() -> list[str]:
-    """The cardio activities, as list_exercises gives them."""
-    result = await _db(services.list_exercises, "cardio")
+    """The cardio activities, every one, in the list's order."""
+    result = await _db(services.all_exercises, "cardio")
     return [e["name"] for e in result.get("exercises", [])]
 
 
@@ -2659,7 +2659,8 @@ def rate_note(trends: dict) -> str:
 
 
 async def lift_names() -> dict[str, str]:
-    result = await _db(services.list_exercises, "lift")
+    """Every lift's page slug, a retired lift's too (exercise-list.md R8): a lift that left the list keeps its page."""
+    result = await _db(services.all_exercises, "lift", True)
     return {links.slug(e["name"]): e["name"] for e in result.get("exercises", [])}
 
 
@@ -2917,7 +2918,8 @@ def saved_address(saved: str, result: dict) -> str:
 
 
 async def exercise_names(kind: str) -> list[str]:
-    result = await _db(services.list_exercises, kind)
+    """Every name of a kind, as the Goals page's form lists them."""
+    result = await _db(services.all_exercises, kind)
     return [e["name"] for e in result.get("exercises", [])]
 
 

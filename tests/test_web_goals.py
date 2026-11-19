@@ -332,8 +332,8 @@ def test_each_kinds_form_holds_its_fields_in_order_its_empty_choice_and_its_own_
     others = {f for k, fields in FORM_FIELDS.items() if k != kind for _, _, f in fields} - \
         {f for _, _, f in FORM_FIELDS[kind]}
     assert not others & set(form["values"]) and "start_value" not in form["values"]
-    lifts = [(e["name"], e["name"]) for e in services.list_exercises("lift")["exercises"]]
-    cardio = [(e["name"], e["name"]) for e in services.list_exercises("cardio")["exercises"]]
+    lifts = [(e["name"], e["name"]) for e in services.all_exercises("lift")["exercises"]]
+    cardio = [(e["name"], e["name"]) for e in services.all_exercises("cardio")["exercises"]]
     empty = {"lift": ("exercise", [("", "No lift"), *lifts]),
              "cardio_best": ("exercise", [("", "No activity"), *cardio]),
              "measurement": ("measurement_kind", [("", "No measurement"), *MEASURE_CHOICES])}

@@ -1767,7 +1767,7 @@ def test_the_food_routine_and_exercise_list_cases_judge_as_designed(app_settings
     assert judge.judge(routine, [call("get_data")], reply, {})  # no routine read
     assert judge.judge(routine, [call("get_routines")], "Bench and overhead press.", {})
     listed = _cases()["exercise_list"]
-    names = {e["name"] for e in services.list_exercises("lift", "squat")["exercises"]}
+    names = {e["name"] for e in services.all_exercises("lift")["exercises"] if e["category"] == "squat"}
     assert {"Goblet Squat", "Bulgarian Split Squat"} <= names
     assert judge.judge(listed, [call("list_exercises", {"category": "squat"})], ", ".join(sorted(names)), {}) == []
     assert judge.judge(listed, [call("list_exercises")], "Back Squat and Front Squat.", {})

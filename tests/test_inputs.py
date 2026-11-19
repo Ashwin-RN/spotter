@@ -39,10 +39,10 @@ from .test_web import client, only_user, post, seam, sign_in, today_of, web_clie
 # Each function as published at 194e7f0, before this work: the SHA-256 of the tool as compact JSON with sorted keys.
 # log_lifts and get_log: as published after exercise-list.md's deploy 1, where SetOut gained time_s and distance_m. Then
 # its package C4b moved log_lifts (LogSetIn), get_log (SetOut), edit_entry (SetIn), import_entries, save_routine and
-# get_routines (reps 1 to 100, the import's names part).
+# get_routines (reps 1 to 100, the import's names part), and C4d list_exercises (search, count, note).
 BEFORE_INPUTS = {
     "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",
-    "list_exercises": "5c8162608e9e239073cc020cb7278ceace0ae3481a94944e28f8a736216c2e27",
+    "list_exercises": "4cadf49aa82f551f2e856a7fdf90ec4b5c1c757c9a1bea36ede4157be2d83fdc",  # exercise list C4d: search
     "log_lifts": "185cdd612f2f66615221cb35fd37631156298761ad3919fe02aed78633703d85",  # exercise list: SetOut, LogSetIn, exact
     "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",
     "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",
