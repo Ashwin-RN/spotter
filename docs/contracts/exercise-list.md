@@ -718,3 +718,23 @@ the review found passing is a failing run in `tests/test_golden_cases.py`:
   sentence, or a question word opening it before them. A sentence also ends at ";" and an en or em dash.
 - (az) The import claim pattern, on G1's three import cases and the two new ones, also catches logged, added, "Saved
   to your log", "in your log now" and "now in Spotter".
+- (ba) Three judge fixes, found by the release run of 2026-11-20 (38 cases x 3 on claude-opus-5-5, 104 of 114,
+  $18.49; all 10 failures the judge's): a claim of done never counts after a negation in its own sentence ("I haven't
+  logged it yet", "nothing has been saved yet"), on every lift and import claim pattern; the plain-word cases with one
+  lift to take fail only a question about the lift, its equipment, a weight or the hands, so Spotter's own first-day
+  question passes; and the hand-check cases also pass when the person is asked before anything is written, the rows
+  then checked as every set of the lift today at the weight sent. Each failing reply is a passing run in
+  `tests/test_golden_cases.py` (`RELEASE_RIGHT`).
+
+2026-11-20, C4g, three gaps from an outside review, confirmed by a second reviewer, and its finding 5:
+
+- (bb) The hand-check cases' logged branch checks the count and the lift again: today's sets are 0 (asked first) or the
+  number said (1, or 3), every one of the lift as said. `judge_db`'s `count` takes a list of the counts allowed.
+- (bc) The negation guard reads only the claim's own clause: a claim may start at a sentence, after a comma, ";" or ":",
+  or at "but", "so" or "and". "I haven't logged it yet, but I've logged it now.", "No problem, I logged it for you."
+  and "... so I've logged them as a custom lift." fail again; the nine release replies still pass.
+- (bd) `run_once` keeps each turn's reply (`replies`), and the judge reads the first turn's by the case's
+  `first_reply_lacks_pattern`: `pick_lift_answer`'s first turn claims nothing done. `judge_turns` also wants the
+  expect's `inputs_include` on a call that succeeded in the second turn, so `exact` true on a refused call alone fails.
+- (be) A 23rd new case, `goblet_single_weight` ("did goblet squats 3x10 with a 24kg dumbbell"), `core` false: three
+  Goblet Squat sets at 24 kg, never one hand's 12. The cases go to 258, the golden package to 187.

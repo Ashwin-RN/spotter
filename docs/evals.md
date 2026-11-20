@@ -152,7 +152,8 @@ case. The last measured release run, data on request on 2026-11-17: 144 of 153 r
    - A case with a second turn (`then`) is two CLI calls in one working folder, with one config file. The first
      sends `--session-id <a new id>` in place of `--no-session-persistence`, so it is saved. The second sends
      `--resume <that id>` with the second line. Each turn is cut off at 300 seconds. The run's reply is the second
-     turn's; its tokens, cost and turns are both turns' added.
+     turn's; its tokens, cost and turns are both turns' added. Each turn's reply is kept too (`replies` in
+     `results.json`), and the first turn's is judged by the case's `first_reply_lacks_pattern`.
    - Each call is marked with its turn: the runner counts the calls the server holds when the first turn ends. A
      write that succeeded in the first turn fails the case, "a write succeeded before the second turn was sent": the
      second line must be the answer the write waited for, not a turn after a guess. The refusal the case is built on
@@ -305,6 +306,8 @@ record cannot be talked round.
     a deleted session reads as deleted.
   - `where` narrows a check to the rows that match it, such as one date or one lift: `{"table": "lift_set",
     "where": {"date": "{{today}}"}, "count": 3, "all": {"exercise": "Smith Squat"}}`.
+  - `count` may be a list of the counts allowed, such as `[0, 3]`: a case that passes two ways, nothing written or
+    the sets said, checks both with one row check.
   - A note is never kept as deleted: a deleted note's row is gone. So every feedback row is live.
   - A goal has no delete, so every goal row is live. Check `status` instead.
 
@@ -350,6 +353,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `error_code` | `{function: code}`: a call of it was refused with this code. A refusal's codes are its own and every one in its `errors` list, so a `pick_lift` behind a date error counts. |
 | `no_error_code` | `{function: code}`: no call of it was refused with this code. |
 | `refusals` | `{function: code}`: every call of it was refused with this code. No call at all passes. |
+| `first_reply_lacks_pattern` | A case with `then` only: the first turn's reply matches none of these regular expressions, such as a claim of done before the person answered. |
 | `answer_has` | `{function: key}`: a call of it answered without error holds this key, not null, such as `hand_check`. Or `{function: {...}}`: its answer matches the object, as `inputs_include` matches. |
 
 **A data read** is `what_is_logged`, `get_data`, `get_log`, `get_progress`, `get_trends` or `get_goals`. Never
@@ -667,7 +671,7 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
 
 **Every case after `import_other_app` is the golden package (contract `function-list.md`, G1's note of
 2026-11-17): Codex's candidates, checked against the code by an outside reviewer, then built here.** Each carries
-`core`, and each look-alike its `pair`. The exercise list's 22 cases follow them (contract `exercise-list.md`, C4g), in
+`core`, and each look-alike its `pair`. The exercise list's 23 cases follow them (contract `exercise-list.md`, C4g), in
 the same package and played the same way: see "The exercise list cases".
 
 - **The core runs at each gate, the full set at the baseline and the release** (the owner's pick). `--core` runs it.
@@ -730,15 +734,19 @@ the person's words ("bench", "pullups", "barbell rows") and a failing one whose 
 the person's word: every `log_lifts` call there must be refused as `unknown_exercise`. Since a refused call is now
 allowed, those two, `unknown_lift_close`, `pushups_over_100` and `word_both_logged` also fail a claim of done, such as
 "Logged bench. Right?" or "Zorbinator recorded.", by a `reply_lacks_pattern` of the shape G1's import and delete
-cases use, with recorded, entered and tracked beside logged. The two hand-check cases need a question about the
-hands: in the question's sentence, two hand phrases joined by "or" ("50 kg a hand or in total?"), or a question word
+cases use, with recorded, entered and tracked beside logged. A claim never counts after a negation in its own
+sentence ("I haven't logged it yet", "nothing has been saved yet", "nothing will be logged"): every claim pattern holds
+a guard of the words before it in its own clause (n't, not, nothing, never, no, will, I'll, once you, until, unless,
+before). A clause starts a sentence, or follows a comma, ";" or ":", or "but", "so" or "and", so "I haven't logged it
+yet, but I've logged it now." and "No problem, I logged it for you." still fail. The two hand-check cases need a question about the hands: in the question's sentence, two hand phrases joined by "or" ("50 kg a hand or in total?"), or a question word
 opening it before the hand words ("Is 50 kg per hand right?"). A sentence ends at a full stop, "!", "?", ";", a line, or
 an en or em dash. So "each" alone, the summary's own word, fails, and so does "50 kg per hand, want to log another
 set?". The two import cases ask and never claim an import, by G1's import pattern widened as the lift cases' is
 (logged, added, "Saved to your log", "in your log now", "now in Spotter"), as G1's three import cases now are too; and
-`import_outside_defaults` never says Hack Squat is off the list. A plain word with one lift to take is logged and named
-without a question (`word_no_history`, `word_smith_history`, `word_named_equipment`, `word_dumbbell_history`,
-`dumbbell_each`: no "?"), as `hurried_squat` is. Every new case whose words mean today checks the rows' date.
+`import_outside_defaults` never says Hack Squat is off the list. A plain word with one lift to take is logged and named,
+and the reply asks nothing about the lift (`word_no_history`, `word_smith_history`, `word_named_equipment`,
+`word_dumbbell_history`, `dumbbell_each`): no question sentence names a lift, its equipment, a weight or the hands,
+so "Or was it Back Squat?" fails and Spotter's own first-day question ("what do you weigh today?") passes. Every new case whose words mean today checks the rows' date.
 
 Every seeded lift set in the file sends `exact` true, so a seeded Back Squat stays Back Squat after a seeded Smith
 Squat. The new
@@ -749,12 +757,12 @@ cases follow the last, each `direct` and `core` false: the core stays at 101.
 | `word_no_history` | bench 3 sets of 8 at 60 | Three Bench Press sets of 60 × 8; the reply names Bench Press |
 | `word_smith_history` | squat 3x5 at 60 (Smith Squat 3 days ago) | Today's three sets are Smith Squat 60 × 5; no Back Squat set; the reply names Smith Squat |
 | `word_both_logged` | squat 3x5 at 80 (Back Squat 5 days ago, Smith Squat 2 days ago) | A `log_lifts` call refused with `pick_lift`; no set today; the reply asks and names both |
-| `pick_lift_answer` | log squat 3x5 at 80 for me, then "the barbell one" (the same seed) | A `pick_lift` refusal in the first turn and none in the second, no write before the second line, then a `log_lifts` call with `exact` true; today's three sets are Back Squat 80 × 5; the final reply names Back Squat and 80 kg, never Smith, and asks nothing |
+| `pick_lift_answer` | log squat 3x5 at 80 for me, then "the barbell one" (the same seed) | A `pick_lift` refusal in the first turn and none in the second, no write before the second line, then a `log_lifts` call that succeeds in the second turn with `exact` true; today's three sets are Back Squat 80 × 5; the first turn's reply claims nothing done; the final reply names Back Squat and 80 kg, never Smith, and asks nothing |
 | `word_named_equipment` | barbell bench press 3x5 at 60 (Smith Bench Press a week ago) | Today's three sets are Bench Press 60 × 5; the reply names Bench Press |
 | `word_dumbbell_history` | bench 3x8 at 30 (only Dumbbell Bench Press, a week ago) | Today's three sets are Bench Press 30 × 8: "bench" names the bar lifts, and none is logged |
 | `dumbbell_each` | dumbbell bench press 3x10 with the 25s | Three Dumbbell Bench Press sets at 25 kg; the reply says "each" |
-| `hand_check_family` | dumbbell bench press 50 kg for 8 (Bench Press 80 × 5 a week ago) | One Dumbbell Bench Press set at 50 kg, as sent; the call's answer holds `hand_check`; the reply asks about a hand or both |
-| `hand_check_link` | hammer curls 3x10 at 20 (Barbell Curl 30 × 8 a week ago) | Three Dumbbell Hammer Curl sets at 20 kg, as sent; `hand_check` in the answer; the reply asks |
+| `hand_check_family` | dumbbell bench press 50 kg for 8 (Bench Press 80 × 5 a week ago) | Either one Dumbbell Bench Press set at 50 kg × 8, as sent, today, and the call's answer holds `hand_check`; or nothing written yet (today's sets: 0 or 1, all of that lift). Both ways the reply asks about a hand or both |
+| `hand_check_link` | hammer curls 3x10 at 20 (Barbell Curl 30 × 8 a week ago) | Either three Dumbbell Hammer Curl sets at 20 kg × 10, as sent, today, with `hand_check` in the answer; or nothing written yet (today's sets: 0 or 3, all of that lift). Both ways the reply asks about the hands |
 | `hold_plank` | held a plank for 90 seconds, twice | Two Plank sets, `time_s` 90, no reps |
 | `dead_hang` | dead hang 45 seconds | One Dead Hang set, `time_s` 45, no reps |
 | `carry_farmers` | farmer's carry, 32 kg each hand, 2 lengths of 40 m | Two Farmer's Carry sets, 32 kg, `distance_m` 40, no reps |
@@ -768,6 +776,7 @@ cases follow the last, each `direct` and `core` false: the core stays at 101.
 | `import_outside_defaults` | import this: 2026-10-20 Hack Squat 3x8 100kg | A `list_exercises` answer holds Hack Squat (a search, or a kind or category), or an `import_entries` call sends Hack Squat; no session; the reply names Hack Squat and asks |
 | `pushups_over_100` | did 120 push-ups in one set this morning, log it | No set; any `log_lifts` call refused with `reps_out_of_range`; the reply asks and says 100 |
 | `split_squat_a_side` | did bulgarian split squats 3x10 each leg with 20kg dumbbells | Three Bulgarian Split Squat sets of 20 kg × 10: reps a side, one hand's weight; no set sent 20 reps or 40 kg; the reply says no 20 reps, no 3 x 20 and no 40 kg |
+| `goblet_single_weight` | did goblet squats 3x10 with a 24kg dumbbell | One session today of three Goblet Squat sets at 24 kg × 10: one weight, held in both hands, so never one hand's 12; no set sent 12 kg; the reply says no 12 kg and nothing a hand |
 
 | Proves | Does not prove |
 |---|---|

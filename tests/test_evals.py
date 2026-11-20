@@ -45,7 +45,7 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "look_trip_hours", "inc_deload", "look_deload", "save_food_asked", "edit_fixes_minutes",
                   "food_lookup", "routine_read", "exercise_list", "catch_up", "import_other_app"}
 # function-list.md, G1's note of 2026-11-17: the golden package's reviewed cases follow G1's (tests/test_golden_cases.py)
-GOLDEN_PACKAGE = 186  # 164, and exercise-list.md C4g's 22
+GOLDEN_PACKAGE = 187  # 164, and exercise-list.md C4g's 23
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 
@@ -2068,6 +2068,33 @@ def test_the_new_keys_are_checked_when_the_cases_load():
         "db[0] where must be a non-empty object"]
 
 
+def test_a_db_count_may_be_a_list_of_the_counts_allowed():
+    rows = {"lift_set": [{"id": n, "deleted_at": None} for n in range(3)]}
+    assert judge.judge_db([{"table": "lift_set", "count": [0, 3]}], rows) == []
+    assert judge.judge_db([{"table": "lift_set", "count": [0, 3]}], {"lift_set": []}) == []
+    assert judge.judge_db([{"table": "lift_set", "count": [0, 1]}], rows) == ["lift_set: 3 rows, expected 0 or 1"]
+    assert judge.judge_db([{"table": "lift_set", "count": 2}], rows) == ["lift_set: 3 rows, expected 2"]
+
+
+def test_judge_turns_reads_the_first_reply_and_wants_the_inputs_on_a_second_turn_success():
+    two = {"id": "t", "say": "squat", "then": "the barbell one",
+           "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"exact": True}]},
+                      "first_reply_lacks_pattern": ["\\blogged\\b"]}}
+    exact = {"sets": [{"exercise": "Back Squat", "exact": True}]}
+    good = {**call("log_lifts", exact), "turn": 2}
+    assert judge.judge_turns(two, [good], "Which squat was it?") == []
+    assert judge.judge_turns(two, [good], "Logged Back Squat.") == [
+        f"the first turn's reply matches {chr(92) + 'blogged' + chr(92) + 'b'!r}: it says 'Logged'"]
+    assert judge.judge_turns(two, [good]) == ["the first turn's reply was not kept, so it could not be judged"]
+    refused = {**call("log_lifts", exact, is_error=True), "turn": 2}
+    alias = {**call("log_lifts", {"sets": [{"exercise": "barbell squat"}]}), "turn": 2}
+    assert judge.judge_turns(two, [refused, alias], "Which?") == [
+        'no log_lifts call that succeeded in the second turn sent {"sets": [{"exact": true}]}']
+    assert judge.judge_turns(two, [{**good, "turn": 1}], "Which?")  # the first turn's write: not the answer
+    assert judge.case_problems({"id": "a", "say": "x", "expect": {"first_reply_lacks_pattern": "("}}) == [
+        "expect.first_reply_lacks_pattern must be a non-empty list of regular expressions"]
+
+
 def test_db_where_narrows_the_rows_each_check_reads():
     rows = {"lift_set": [{"id": 1, "exercise": "Smith Squat", "date": "2026-11-14", "deleted_at": None},
                          {"id": 2, "exercise": "Back Squat", "date": "2026-11-17", "deleted_at": None},
@@ -2158,7 +2185,7 @@ class TurnRecorder:
 
 
 def _two_turns(server, monkeypatch, outputs: list[str], made: list[list[dict]] | None = None,
-               config: Path | None = None) -> tuple[dict, list]:
+               config: Path | None = None, expect: dict | None = None) -> tuple[dict, list]:
     """run_once of a two-turn case through a fake CLI that prints each of outputs in turn, and makes the calls of
     made[i] in turn i (server.recorder a TurnRecorder then). Like the CLI, its first turn saves the session to
     <config>/projects/<the working folder's name>/<id>.jsonl. config is a fake CLAUDE_CONFIG_DIR, a temporary one when
@@ -2179,7 +2206,7 @@ def _two_turns(server, monkeypatch, outputs: list[str], made: list[list[dict]] |
         return run.subprocess.CompletedProcess(command, 0, stdout=outputs[len(given) - 1], stderr="")
 
     monkeypatch.setattr(run.subprocess, "run", fake_cli)
-    case = {"id": "two", "say": "squat 3x5 at 80", "then": "the barbell one", "expect": {"reply_lacks": ["?"]}}
+    case = {"id": "two", "say": "squat 3x5 at 80", "then": "the barbell one", "expect": expect or {"reply_lacks": ["?"]}}
     with tempfile.TemporaryDirectory() as store, tempfile.TemporaryDirectory() as folder:
         env, _ = child_env({"PATH": "/bin", "CLAUDE_CONFIG_DIR": str(config or store)})
         outcome = run.run_once(server, case, "Asia/Kolkata", "claude", "claude-opus-5-5", env, Path(folder), "two-1",
@@ -2200,6 +2227,20 @@ def test_a_two_turn_run_sends_both_lines_in_one_session_and_judges_the_last_repl
     assert outcome["cost_usd"] == pytest.approx(0.3) and outcome["num_turns"] == 6
     assert outcome["tokens"] == 2 * (10 + 14126 + 105829 + 303)
     assert "session_id" not in outcome and "session_left" not in outcome  # deleted: nothing to name
+    assert outcome["replies"] == ["Back Squat or Smith Squat?", "Logged Back Squat."]
+
+
+def test_a_two_turn_run_judges_its_first_reply_by_the_case_s_first_reply_pattern(app_settings, monkeypatch):
+    usage = {"claude-opus-5-5": {"costUSD": 0.1}}
+    turn = lambda reply: json.dumps({**SAMPLE, "result": reply, "modelUsage": usage})  # noqa: E731
+    expect = {"reply_has": ["Logged"], "first_reply_lacks_pattern": [r"\blogged\b"]}
+    server = _model_server(app_settings)
+    asked, _ = _two_turns(server, monkeypatch, [turn("Which squat?"), turn("Logged Back Squat.")], expect=expect)
+    assert asked["passed"] is True
+    claimed, _ = _two_turns(server, monkeypatch, [turn("Logged Back Squat."), turn("Logged Back Squat.")],
+                            expect=expect)
+    assert claimed["reasons"] == [f"the first turn's reply matches {chr(92) + 'blogged' + chr(92) + 'b'!r}: it says "
+                                  "'Logged'"]
 
 
 def test_a_two_turn_run_deletes_its_own_saved_session_and_nothing_else(app_settings, monkeypatch):

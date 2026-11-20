@@ -517,13 +517,15 @@ def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str
     outcome.update({k: parsed[k] for k in ("tokens", "input_tokens", "cached_tokens", "output_tokens", "cost_usd",
                                            "reply", "models", "num_turns")})
     outcome["permission_denials"] = parsed["permission_denials"]
+    outcome["replies"] = [judge.masked(t["reply"], token) for t in turns]  # each turn's, the last one the reply judged
     reasons = []
     for i, turn in enumerate(turns):
         if turn["is_error"] or turn["subtype"] != "success":
             reasons.append(f"{f'turn {i + 1}: ' if len(turns) > 1 else ''}CLI ended with {turn['subtype']}")
     outcome["other_models"] = other_models(parsed["models"], model)  # the one-model rule: see CHILD_SETS
     reasons += model_reasons(parsed["models"], model)
-    reasons += judge.judge(resolved, calls, parsed["reply"], person_rows(user_id))
+    reasons += judge.judge(resolved, calls, parsed["reply"], person_rows(user_id),
+                           turns[0]["reply"] if len(turns) > 1 else None)
     outcome["reasons"] = [judge.masked(r, token) for r in reasons]
     outcome["reply"] = judge.masked(outcome["reply"], token)
     outcome["passed"] = not outcome["reasons"]

@@ -63,6 +63,9 @@ expect, every key optional, all of them must hold:
   answer_has        {function: key} or {function: {...}}: at least one call of it was answered without error, and
                     its answer holds this key with a value that is not null, such as hand_check; or, for an object,
                     the answer matches it as inputs_include matches arguments.
+  first_reply_lacks_pattern
+                    a case with then only: the first turn's reply must match none of these regular expressions, as
+                    reply_lacks_pattern reads the final reply (a claim of done before the person answered).
 
 calls, the case's tags, on every case (contract function-list.md, "The golden set"):
 
@@ -105,7 +108,8 @@ db, checks on the person's rows after the run:
   {"table": "food_entry", "state": "live", "where": {...}, "count": 1, "all": {...}, "rows": [{...}, ...]}
   state: live (the default: rows not deleted) or deleted (soft-deleted rows only);
   where: only the rows that match it are checked, such as one date or one lift;
-  count: exactly this many such rows; all: every one matches; rows: each matcher matches some row.
+  count: exactly this many such rows, or a list of the counts allowed, such as [0, 3]; all: every one matches; rows:
+  each matcher matches some row.
   A lift_session row carries set_count: how many sets it holds (evals/run.py's person_rows counts them). A
   routine row carries lift_count: how many lifts its lifts JSON holds. A lift_set row is one set of the person's
   (contract exercise-list.md, C4g): exercise (the lift's name), weight_kg, reps, time_s, distance_m, set_number,
@@ -133,7 +137,7 @@ HIDDEN = "[token hidden]"
 EXPECT_KEYS = {"function", "inputs_include", "inputs_exclude", "inputs_forbid", "ok_calls", "no_call",
                "refused", "reply_asks", "reply_has", "reply_has_pattern", "reply_lacks",
                "reply_lacks_pattern", "any_of", "read_any", "quotes_spotter", "quotes_one_of",
-               "error_code", "no_error_code", "refusals", "answer_has"}
+               "error_code", "no_error_code", "refusals", "answer_has", "first_reply_lacks_pattern"}
 CODE_KEYS = ("error_code", "no_error_code", "refusals")  # {function: code}, read from the call's answer
 CASE_KEYS = {"id", "say", "expect", "then", "switch", "seed", "db", "calls", "kind", "core", "pair"}
 TAG_KEYS = ("must", "may", "must_not")
@@ -272,7 +276,7 @@ def _expect_problems(expect: Any, where: str) -> list[str]:
     needs_function = {"inputs_include", "inputs_exclude", "inputs_forbid", "refused"} & set(expect)
     if needs_function and "function" not in expect:
         problems.append(f"{where}: {', '.join(sorted(needs_function))} needs function")
-    for key in ("reply_has_pattern", "reply_lacks_pattern"):
+    for key in ("reply_has_pattern", "reply_lacks_pattern", "first_reply_lacks_pattern"):
         if key in expect:
             problems += _pattern_problems(expect[key], f"{where}.{key}")
     if "read_any" in expect and expect["read_any"] is not True:
@@ -739,8 +743,10 @@ def judge_db(checks: list[dict], rows: dict[str, list[dict]]) -> list[str]:
                 and ("where" not in check or matches(r, check["where"]))]
         if "where" in check:
             table += f" where {json.dumps(check['where'])}"
-        if "count" in check and len(have) != check["count"]:
-            reasons.append(f"{table}: {len(have)} rows, expected {check['count']}")
+        if "count" in check:
+            allowed = check["count"] if isinstance(check["count"], list) else [check["count"]]
+            if len(have) not in allowed:
+                reasons.append(f"{table}: {len(have)} rows, expected {' or '.join(str(n) for n in allowed)}")
         if "all" in check:
             bad = [r for r in have if not matches(r, check["all"])]
             if bad:
@@ -758,18 +764,22 @@ def _rows_text(rows: list[dict]) -> str:
     return "; ".join(json.dumps({k: r[k] for k in keep if k in r}) for r in rows)
 
 
-def judge(case: dict, calls: list[dict], reply: str, rows: dict[str, list[dict]]) -> list[str]:
+def judge(case: dict, calls: list[dict], reply: str, rows: dict[str, list[dict]],
+          first_reply: str | None = None) -> list[str]:
     """The whole verdict for one run of an already-resolved case: [] is a pass. The expect, the calls tags and the
     rows; a reason the expect and the tags give alike is said once."""
     reasons = (judge_calls(case["expect"], calls, reply, case.get("say", ""))
-               + judge_tags(case.get("calls"), calls) + judge_db(case.get("db") or [], rows) + judge_turns(case, calls))
+               + judge_tags(case.get("calls"), calls) + judge_db(case.get("db") or [], rows)
+               + judge_turns(case, calls, first_reply))
     return list(dict.fromkeys(reasons))
 
 
-def judge_turns(case: dict, calls: list[dict]) -> list[str]:
+def judge_turns(case: dict, calls: list[dict], first_reply: str | None = None) -> list[str]:
     """A case with a second turn: no write may succeed before the second line was sent, or the assistant acted on a
     guess and the second line was never its answer; and each code of its expect's error_code is a refusal of the first
-    turn and of no call in the second. A call's turn is its turn key (evals/run.py's run_once sets 1 or 2); a call
+    turn and of no call in the second; the expect's inputs_include is sent by a call of its function that succeeded in
+    the second turn, never only by a refused one; and the first turn's reply (first_reply, evals/run.py keeps each
+    turn's) matches none of first_reply_lacks_pattern. A call's turn is its turn key (run_once sets 1 or 2); a call
     without one counts as the first turn's."""
     if not case.get("then"):
         return []
@@ -783,6 +793,21 @@ def judge_turns(case: dict, calls: list[dict]) -> list[str]:
             reasons.append(f"no {name} call in the first turn was refused with {code}")
         if any(c.get("turn", 1) == 2 for c in mine):
             reasons.append(f"a {name} call in the second turn was refused with {code} again")
+    expect = case.get("expect", {})
+    function = expect.get("function")
+    if function and "inputs_include" in expect and not any(
+            c["name"] == function and c.get("turn", 1) == 2 and not c["is_error"]
+            and matches(c["arguments"], expect["inputs_include"]) for c in calls):
+        reasons.append(f"no {function} call that succeeded in the second turn sent "
+                       f"{json.dumps(expect['inputs_include'])}")
+    if "first_reply_lacks_pattern" in expect:
+        if first_reply is None:
+            reasons.append("the first turn's reply was not kept, so it could not be judged")
+        else:
+            for pattern in expect["first_reply_lacks_pattern"]:
+                found = re.search(pattern, first_reply, re.IGNORECASE)
+                if found:
+                    reasons.append(f"the first turn's reply matches {pattern!r}: it says {found.group(0)!r}")
     return reasons
 
 

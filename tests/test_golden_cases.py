@@ -35,6 +35,9 @@ TODAYS = [date(2026, 11, 16) + timedelta(days=i) for i in range(7)] + [date(2026
 DAY = date(2026, 11, 17)  # a Tuesday: the day every case is played on once
 FAKE = "not sent"  # a call recorded as made, without sending it: a write a failing run adds
 THEN = ("the second turn",)  # in a run's calls: the calls after it were made in the second turn, as run_once marks them
+# A two-turn case's first reply, when a run gives only the final one: the question Spotter's pick_lift asks for. A run
+# that judges the first reply gives both, as (first, final).
+FIRST_ASK = "You have logged Back Squat and Smith Squat. Which was it?"
 W = list(judge.WRITE_FUNCTIONS)
 LAST_G1 = "import_other_app"
 # G1's cases in the core (the coordinator's change, 2026-11-17): its 17 golden cases, its catch-up and import,
@@ -135,9 +138,14 @@ class Player:
     def verdict(self, case: dict, person: Person, calls: list, reply) -> list[str]:
         record = self.play(person, calls)
         self.record = record
+        first = None
+        if isinstance(reply, tuple):  # a two-turn run's (first reply, final reply)
+            first, reply = reply
+        elif case.get("then"):
+            first = FIRST_ASK
         text = reply(person) if callable(reply) else reply
         resolved = judge.resolve(case, person.variables)
-        return judge.judge(resolved, record, text, person_rows(person.user_id))
+        return judge.judge(resolved, record, text, person_rows(person.user_id), first)
 
 
 @pytest.fixture
@@ -1349,6 +1357,11 @@ C4G_RUNS = {
                  ([logs(lift("bulgarian split squats", 40, 10, 3))], "Logged 3 x 10 at 40 kg."),
                  ([logs(lift("bulgarian split squats", 20, 10, 6))], "Logged 6 sets of 10, three a leg."),
                  ([logs(lift("bulgarian split squats", 20, 10, 3))], "Logged 3 x 20 reps, both legs, at 20 kg each.")]},
+    "goblet_single_weight": {  # the review's finding 5: one weight is not one hand's
+        "pass": [([logs(lift("goblet squats", 24, 10, 3))], "Logged Goblet Squat, 3 x 10 at 24 kg.")],
+        "fail": [([logs(lift("goblet squats", 12, 10, 3))], "Logged Goblet Squat, 3 x 10 at 12 kg."),  # halved
+                 ([logs(lift("goblet squats", 24, 10, 3))], "Logged Goblet Squat, 3 x 10 at 24 kg, 12 kg a hand."),
+                 ([logs(lift("goblet squats", 24, 10, 1))], "Logged Goblet Squat, 3 x 10 at 24 kg.")]},
 }
 RUNS.update(C4G_RUNS)
 
@@ -1498,6 +1511,62 @@ for id_, calls, reply in C4G_REVIEW:
     else:
         RUNS[id_]["fail"].append((calls, reply))
 
+# The release run of 2026-11-20 (38 cases x 3 on claude-opus-5-5, 104 of 114): its 10 failures were the judge's. Each
+# reply, on the calls its run made, is a passing run here; the "..." of a quoted reply is filled in plain words.
+RELEASE_RIGHT = [
+    ("unknown_exercise", [("list_exercises", {}), logs(lift("zorbinator", 20, 8, 3))],
+     'I haven\'t logged anything: Spotter doesn\'t know a lift called "zorbinator".'),
+    ("word_both_logged", [SQUAT],
+     'I haven\'t logged it yet, because "squat" matches two of your lifts: Back Squat and Smith Squat. Which one was '
+     'it?'),
+    ("pushups_over_100", [logs(lift("push-ups", 0, 120))],
+     "I haven't logged it yet. Spotter caps a single set at 100 reps, so 120 in one set is refused. Should I log it "
+     "as 100 and 20?"),
+    ("import_outside_defaults", [("list_exercises", {"search": "hack squat"}), ("import_entries", HACK)],
+     "I ran a preview first, so nothing has been saved yet. Hack Squat is on Spotter's list: 1 session, 3 x 8 at "
+     "100 kg on 20 Oct. Should I save it?"),
+    ("word_no_history", [logs(lift("bench", 60, 8, 3))],
+     "Logged Bench Press: 3 x 8 at 60 kg. The first step is a weigh-in: what do you weigh today?"),
+    ("dumbbell_each", [logs(lift("dumbbell bench press", 25, 10, 3))],
+     "Logged Dumbbell Bench Press, 3 x 10 at 25 kg each. Would you like to set up Spotter together, one step at a "
+     "time?"),
+    ("hand_check_family", [],  # asked before logging: nothing written, the person asked once
+     "Quick check before I log it: is 50 kg the weight of each dumbbell, or both together (25 kg in each hand)?"),
+    ("hand_check_family", [], "Was that 50 kg in each hand, or 50 kg for both together (25 kg per dumbbell)?"),
+    ("hand_check_link", [],
+     "Before I log them: is 20 kg the weight of each dumbbell, or both together (10 kg in each hand)?"),
+]
+# The outside review of 2026-11-20, confirmed by a second reviewer: each wrong run it found passing fails here.
+C4G_OUTSIDE = [
+    ("hand_check_link", [logs(lift("hammer curls", 20, 10, 1))], RUNS["hand_check_link"]["pass"][0][1]),  # 1 of 3
+    ("hand_check_link", [logs(lift("hammer curls", 20, 10, 2))], RUNS["hand_check_link"]["pass"][0][1]),  # 2 of 3
+    ("hand_check_link", [logs(lift("dumbbell curls", 20, 10, 3))], RUNS["hand_check_link"]["pass"][0][1]),  # a curl
+    ("hand_check_family", [logs(lift("dumbbell bench press", 50, 8, 2))], RUNS["hand_check_family"]["pass"][0][1]),
+    ("word_both_logged", [SQUAT],
+     "I haven't logged it yet, but I've logged it now. Which one was it, Back Squat or Smith Squat?"),
+    ("unknown_exercise", [("list_exercises", {}), logs(lift("zorbinator", 20, 8, 3))],
+     "No problem, I logged it for you. Anything else?"),
+    ("unknown_lift_close", [logs(lift("cambered bar skull crushers", 30, 10, 3))],
+     "Cambered bar skull crushers aren't on the list, so I've logged them as a custom lift. Is that OK?"),
+    ("pick_lift_answer", [SQUAT, THEN, PICKED],  # the first turn claimed the lift logged, before the person answered
+     ("Logged Back Squat, 3 x 5 at 80 kg.", "Logged Back Squat, 3 x 5 at 80 kg.")),
+    ("pick_lift_answer", [SQUAT, THEN, logs(lift("Back Squat", 80, 5, 3, exact=True), date="not a date"),  # refused
+                          logs(lift("barbell squat", 80, 5, 3))], "Logged Back Squat, 3 x 5 at 80 kg."),
+]
+for id_, calls, reply in C4G_OUTSIDE:
+    (EARLIER[id_][1] if id_ in EARLIER else RUNS[id_]["fail"]).append((calls, reply))
+RUNS["pick_lift_answer"]["pass"].append(([SQUAT, THEN, PICKED], (FIRST_ASK, "Logged Back Squat, 3 x 5 at 80 kg.")))
+
+for id_, calls, reply in RELEASE_RIGHT:
+    (EARLIER[id_][0] if id_ in EARLIER else RUNS[id_]["pass"]).append((calls, reply))
+RUNS["hand_check_family"]["fail"] += [([], "Want me to log that?")]  # no call, and no question about the hands
+RUNS["hand_check_link"]["fail"] += [([], "Got it. Shall I log the curls now?")]
+# The rows alone catch a right log on another day: the sets of the lift must be today's, at the weight sent.
+RUNS["hand_check_family"]["fail"] += [([logs(lift("dumbbell bench press", 50, 8), date="{{yesterday}}")],
+                                       RUNS["hand_check_family"]["pass"][0][1])]
+RUNS["hand_check_link"]["fail"] += [([logs(lift("hammer curls", 20, 10, 3), date="{{yesterday}}")],
+                                     RUNS["hand_check_link"]["pass"][0][1])]
+
 def _writes(calls: list) -> bool:
     return any(c[0] in judge.WRITE_FUNCTIONS and not (len(c) > 2 and c[2] == FAKE) for c in calls)
 
@@ -1512,7 +1581,7 @@ def read_case(case_id: str) -> bool:
 def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     new = new_cases()
     ids = [c["id"] for c in new]
-    assert len(ids) == len(set(ids)) == 186 and set(ids) == set(RUNS)  # 164, and C4g's 22
+    assert len(ids) == len(set(ids)) == 187 and set(ids) == set(RUNS)  # 164, and C4g's 23
     assert all(RUNS[i]["pass"] and RUNS[i]["fail"] for i in ids)
     every = judge.load_cases()
     g1 = every[:len(every) - len(new)]
@@ -1521,7 +1590,7 @@ def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     assert {c["id"] for c in g1 if c.get("kind")} <= G1_CORE
     assert all(isinstance(c["core"], bool) and c["kind"] in judge.KINDS for c in new)
     kinds = Counter(c["kind"] for c in new)
-    assert kinds == {"direct": 138, "incidental": 24, "look_alike": 24}
+    assert kinds == {"direct": 139, "incidental": 24, "look_alike": 24}
     assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 61, "incidental": 8, "look_alike": 8}
     by_id = {c["id"]: c for c in every}
     for c in new:
