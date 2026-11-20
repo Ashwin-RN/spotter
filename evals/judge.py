@@ -229,7 +229,23 @@ def case_problems(case: Any) -> list[str]:
             problems.append(f"db[{i}] state must be live or deleted")
         elif "where" in check and (not isinstance(check["where"], dict) or not check["where"]):
             problems.append(f"db[{i}] where must be a non-empty object")
+        elif "count" in check and not _count_ok(check["count"]):
+            problems.append(f"db[{i}] count must be a whole number, or a non-empty list of whole numbers")
+    if isinstance(case.get("expect"), dict) and not case.get("then") and _has_key(case["expect"],
+                                                                                  "first_reply_lacks_pattern"):
+        problems.append("first_reply_lacks_pattern needs then: a case of one turn has no first reply")
     return problems
+
+
+def _count_ok(count: Any) -> bool:
+    """A db check's count: a whole number 0 or more, or a non-empty list of them (never a bool)."""
+    whole = lambda n: isinstance(n, int) and not isinstance(n, bool) and n >= 0  # noqa: E731
+    return whole(count) or (isinstance(count, list) and bool(count) and all(whole(n) for n in count))
+
+
+def _has_key(expect: dict, key: str) -> bool:
+    """The key in an expect or in any of its any_of options."""
+    return key in expect or any(isinstance(sub, dict) and _has_key(sub, key) for sub in expect.get("any_of") or [])
 
 
 def _placeholders(value: Any) -> set[str]:

@@ -734,11 +734,19 @@ the person's words ("bench", "pullups", "barbell rows") and a failing one whose 
 the person's word: every `log_lifts` call there must be refused as `unknown_exercise`. Since a refused call is now
 allowed, those two, `unknown_lift_close`, `pushups_over_100` and `word_both_logged` also fail a claim of done, such as
 "Logged bench. Right?" or "Zorbinator recorded.", by a `reply_lacks_pattern` of the shape G1's import and delete
-cases use, with recorded, entered and tracked beside logged. A claim never counts after a negation in its own
-sentence ("I haven't logged it yet", "nothing has been saved yet", "nothing will be logged"): every claim pattern holds
-a guard of the words before it in its own clause (n't, not, nothing, never, no, will, I'll, once you, until, unless,
-before). A clause starts a sentence, or follows a comma, ";" or ":", or "but", "so" or "and", so "I haven't logged it
-yet, but I've logged it now." and "No problem, I logged it for you." still fail. The two hand-check cases need a question about the hands: in the question's sentence, two hand phrases joined by "or" ("50 kg a hand or in total?"), or a question word
+cases use, with recorded, entered and tracked beside logged, and "I logged", "I've logged" or "I have logged" with
+any object but "nothing".
+
+**The claim patterns are strict on purpose, and have known false fails.** They read words, not meaning, so a right
+reply that names a claim verb after a negation fails: "I haven't logged it yet, because "squat" matches two of your
+lifts" (`word_both_logged`) and "I haven't logged it yet. Spotter caps a single set at 100 reps" (`pushups_over_100`),
+both from the release run of 20 November 2026. A guard that skipped negations was built and withdrawn the same day:
+a fresh review found it gave the wrong verdict on 64 of 185 lift replies and 27 of 72 import replies, and each fix of
+it opened new holes. A false fail is read by hand; a false pass is not seen. So **a run that fails on nothing but a
+claim pattern is read by hand** before it counts as a miss. The rebuild of the judge replaces these reply-word checks.
+`tests/test_golden_cases.py` holds the two as `KNOWN_STRICT_FAILS`: each must fail, and only on a claim pattern.
+
+The two hand-check cases need a question about the hands: in the question's sentence, two hand phrases joined by "or" ("50 kg a hand or in total?"), or a question word
 opening it before the hand words ("Is 50 kg per hand right?"). A sentence ends at a full stop, "!", "?", ";", a line, or
 an en or em dash. So "each" alone, the summary's own word, fails, and so does "50 kg per hand, want to log another
 set?". The two import cases ask and never claim an import, by G1's import pattern widened as the lift cases' is
@@ -761,8 +769,8 @@ cases follow the last, each `direct` and `core` false: the core stays at 101.
 | `word_named_equipment` | barbell bench press 3x5 at 60 (Smith Bench Press a week ago) | Today's three sets are Bench Press 60 × 5; the reply names Bench Press |
 | `word_dumbbell_history` | bench 3x8 at 30 (only Dumbbell Bench Press, a week ago) | Today's three sets are Bench Press 30 × 8: "bench" names the bar lifts, and none is logged |
 | `dumbbell_each` | dumbbell bench press 3x10 with the 25s | Three Dumbbell Bench Press sets at 25 kg; the reply says "each" |
-| `hand_check_family` | dumbbell bench press 50 kg for 8 (Bench Press 80 × 5 a week ago) | Either one Dumbbell Bench Press set at 50 kg × 8, as sent, today, and the call's answer holds `hand_check`; or nothing written yet (today's sets: 0 or 1, all of that lift). Both ways the reply asks about a hand or both |
-| `hand_check_link` | hammer curls 3x10 at 20 (Barbell Curl 30 × 8 a week ago) | Either three Dumbbell Hammer Curl sets at 20 kg × 10, as sent, today, with `hand_check` in the answer; or nothing written yet (today's sets: 0 or 3, all of that lift). Both ways the reply asks about the hands |
+| `hand_check_family` | dumbbell bench press 50 kg for 8 (Bench Press 80 × 5 a week ago) | Either one Dumbbell Bench Press set at 50 kg × 8, as sent, today, and the call's answer holds `hand_check`; or nothing written yet and no claim of a log (today's sets: 0 or 1, all of that lift). Every set written is that lift or the seed's, and the seed's lift has its one set. Both ways the reply asks about a hand or both |
+| `hand_check_link` | hammer curls 3x10 at 20 (Barbell Curl 30 × 8 a week ago) | Either three Dumbbell Hammer Curl sets at 20 kg × 10, as sent, today, in one call or three, with `hand_check` in an answer; or nothing written yet and no claim of a log (today's sets: 0 or 3, all of that lift). Every set written is that lift or the seed's. Both ways the reply asks about the hands |
 | `hold_plank` | held a plank for 90 seconds, twice | Two Plank sets, `time_s` 90, no reps |
 | `dead_hang` | dead hang 45 seconds | One Dead Hang set, `time_s` 45, no reps |
 | `carry_farmers` | farmer's carry, 32 kg each hand, 2 lengths of 40 m | Two Farmer's Carry sets, 32 kg, `distance_m` 40, no reps |

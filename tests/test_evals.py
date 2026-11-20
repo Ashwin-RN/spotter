@@ -2068,6 +2068,21 @@ def test_the_new_keys_are_checked_when_the_cases_load():
         "db[0] where must be a non-empty object"]
 
 
+def test_a_db_count_and_a_first_reply_pattern_are_checked_when_the_cases_load():
+    base = {"id": "a", "say": "x", "expect": {"reply_asks": True}}
+    for bad in ("3", True, [], [1, "2"], [-1], 1.5, [True]):
+        assert judge.case_problems({**base, "db": [{"table": "lift_set", "count": bad}]}) == [
+            "db[0] count must be a whole number, or a non-empty list of whole numbers"], bad
+    for good in (0, 3, [0, 3]):
+        assert judge.case_problems({**base, "db": [{"table": "lift_set", "count": good}]}) == [], good
+    first = {"reply_asks": True, "first_reply_lacks_pattern": ["x"]}
+    assert judge.case_problems({**base, "expect": first}) == [
+        "first_reply_lacks_pattern needs then: a case of one turn has no first reply"]
+    assert judge.case_problems({**base, "expect": {"any_of": [first]}}) == [
+        "first_reply_lacks_pattern needs then: a case of one turn has no first reply"]
+    assert judge.case_problems({**base, "expect": first, "then": "the barbell one"}) == []
+
+
 def test_a_db_count_may_be_a_list_of_the_counts_allowed():
     rows = {"lift_set": [{"id": n, "deleted_at": None} for n in range(3)]}
     assert judge.judge_db([{"table": "lift_set", "count": [0, 3]}], rows) == []
@@ -2091,7 +2106,7 @@ def test_judge_turns_reads_the_first_reply_and_wants_the_inputs_on_a_second_turn
     assert judge.judge_turns(two, [refused, alias], "Which?") == [
         'no log_lifts call that succeeded in the second turn sent {"sets": [{"exact": true}]}']
     assert judge.judge_turns(two, [{**good, "turn": 1}], "Which?")  # the first turn's write: not the answer
-    assert judge.case_problems({"id": "a", "say": "x", "expect": {"first_reply_lacks_pattern": "("}}) == [
+    assert judge.case_problems({"id": "a", "say": "x", "then": "y", "expect": {"first_reply_lacks_pattern": "("}}) == [
         "expect.first_reply_lacks_pattern must be a non-empty list of regular expressions"]
 
 

@@ -1511,17 +1511,23 @@ for id_, calls, reply in C4G_REVIEW:
     else:
         RUNS[id_]["fail"].append((calls, reply))
 
-# The release run of 2026-11-20 (38 cases x 3 on claude-opus-5-5, 104 of 114): its 10 failures were the judge's. Each
-# reply, on the calls its run made, is a passing run here; the "..." of a quoted reply is filled in plain words.
-RELEASE_RIGHT = [
-    ("unknown_exercise", [("list_exercises", {}), logs(lift("zorbinator", 20, 8, 3))],
-     'I haven\'t logged anything: Spotter doesn\'t know a lift called "zorbinator".'),
+# The release run of 2026-11-20 (38 cases x 3 on claude-opus-5-5, 104 of 114): its 10 failures were the judge's. The
+# replies the judge now passes are passing runs here; the "..." of a quoted reply is filled in plain words.
+#
+# The known strict fails (exercise-list.md, C4g, note bf): right replies a claim pattern fails, since it reads "I
+# haven't logged it yet" as "logged it". The judge stays strict on purpose: a false fail is read by hand, a false
+# pass is not. Each must fail, and only on a claim pattern, so a run that fails on nothing else is read by hand.
+KNOWN_STRICT_FAILS = [
     ("word_both_logged", [SQUAT],
      'I haven\'t logged it yet, because "squat" matches two of your lifts: Back Squat and Smith Squat. Which one was '
      'it?'),
     ("pushups_over_100", [logs(lift("push-ups", 0, 120))],
      "I haven't logged it yet. Spotter caps a single set at 100 reps, so 120 in one set is refused. Should I log it "
      "as 100 and 20?"),
+]
+RELEASE_RIGHT = [
+    ("unknown_exercise", [("list_exercises", {}), logs(lift("zorbinator", 20, 8, 3))],
+     'I haven\'t logged anything: Spotter doesn\'t know a lift called "zorbinator". Which lift is it?'),
     ("import_outside_defaults", [("list_exercises", {"search": "hack squat"}), ("import_entries", HACK)],
      "I ran a preview first, so nothing has been saved yet. Hack Squat is on Spotter's list: 1 session, 3 x 8 at "
      "100 kg on 20 Oct. Should I save it?"),
@@ -1561,6 +1567,27 @@ for id_, calls, reply in RELEASE_RIGHT:
     (EARLIER[id_][0] if id_ in EARLIER else RUNS[id_]["pass"]).append((calls, reply))
 RUNS["hand_check_family"]["fail"] += [([], "Want me to log that?")]  # no call, and no question about the hands
 RUNS["hand_check_link"]["fail"] += [([], "Got it. Shall I log the curls now?")]
+# The Fable review of the joined fixes (2026-11-20): each wrong run it found passing fails here.
+C4G_STRICT = [
+    ("word_both_logged", [SQUAT], "I've logged Back Squat, 3 x 5 at 80 kg. Or was it Smith Squat?"),
+    ("pick_lift_answer", [SQUAT, THEN, PICKED],
+     ("I've logged Back Squat, 3 x 5 at 80 kg. Or was it Smith Squat?", "Logged Back Squat, 3 x 5 at 80 kg.")),
+    ("hand_check_family", [], "Logged 50 kg x 8. Was that a hand or in total?"),  # a claim on the ask-first branch
+    ("hand_check_link", [], "Logged 3 x 10 at 20 kg. Was that a hand or in total?"),
+    ("hand_check_family", [logs(lift("cable chest press", 50, 8), date="{{yesterday}}")],  # another pair, another day
+     RUNS["hand_check_family"]["pass"][0][1]),
+    ("hand_check_link", [logs(lift("dumbbell curls", 20, 10, 3), date="{{yesterday}}")],
+     RUNS["hand_check_link"]["pass"][0][1]),
+    ("hand_check_link", [logs(lift("incline dumbbell curls", 20, 10, 3), date="{{yesterday}}")],
+     RUNS["hand_check_link"]["pass"][0][1]),
+]
+C4G_STRICT.append(("hand_check_family", [logs(lift("dumbbell bench press", 50, 8)),  # and the bar lift on another day
+                                          logs(lift("Bench Press", 80, 5, exact=True), date="{{yesterday}}")],
+                   RUNS["hand_check_family"]["pass"][0][1]))
+for id_, calls, reply in C4G_STRICT:
+    RUNS[id_]["fail"].append((calls, reply))
+# Three calls of one set each are a right run: the rows count the sets, not the calls.
+RUNS["hand_check_link"]["pass"].append(([logs(lift("hammer curls", 20, 10))] * 3, RUNS["hand_check_link"]["pass"][0][1]))
 # The rows alone catch a right log on another day: the sets of the lift must be today's, at the weight sent.
 RUNS["hand_check_family"]["fail"] += [([logs(lift("dumbbell bench press", 50, 8), date="{{yesterday}}")],
                                        RUNS["hand_check_family"]["pass"][0][1])]
@@ -1689,6 +1716,15 @@ def test_every_seeded_lift_set_sends_exact_so_a_seed_is_the_lift_it_names():
         for seed in case.get("seed") or []:
             if seed["service"] == "log_lifts":
                 assert all(s.get("exact") is True for s in seed["data"]["sets"]), case["id"]
+
+
+@pytest.mark.parametrize("case_id, calls, reply", KNOWN_STRICT_FAILS, ids=[x[0] for x in KNOWN_STRICT_FAILS])
+def test_a_known_strict_fail_fails_only_on_a_claim_pattern(case_id, calls, reply, player):
+    """A right reply that says a claim verb after a negation fails, and on nothing but a claim pattern: such a run is
+    read by hand (docs/evals.md, "The exercise list cases"). The rebuild of the judge replaces the reply-word checks."""
+    case = next(c for c in judge.load_cases() if c["id"] == case_id)
+    reasons = player.verdict(case, player.person(case), calls, reply)
+    assert reasons and all(r.startswith("the reply matches") for r in reasons), reasons
 
 
 def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
