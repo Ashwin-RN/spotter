@@ -80,7 +80,7 @@ PUBLISHED = {
     "restore_entry": "1fc5aa945a46c50c8203a702b4821fe42c6d39e35d3db0f27552c2099043c224",  # routines: kind routine; inputs
     "delete_entry": "1ec50c125535b54a79d67d619c802d49ddaf0aef69a88f53ff90ae66168d1282",  # routines: kind routine; units; inputs
     "find_food": "9ae7214dc6c6104ae9ae93325d6ed9b87c5296773febd70d07dd8a388ae56fde",  # inputs
-    "log_food": "84b1fc5683c0ab2b74199eefd4440c17525455025b98cceb5908e1580ade7371",  # inputs
+    "log_food": "2912a583e4fc0435d82e3ea92f0f12db41b1e747956fc41a301b4708b77b1355",  # inputs; 2026-11-20: meal leads with sending
     "save_food": "51fa9c1edce31ca0afd9715af26aaef77dda38aef084160d805b8bfb8f0710d9",  # inputs
     "log_cardio": "235cf20d40f883d11a98e826d5e8292c94f55f503b92ab114abcc9c39b705e13",  # units; inputs; 2026-11-20: exercise's words name both walks
     "get_trends": "76a12552c23e443d455dd77b910788c66030f05c3f4ea5b3df0d46d69845b30f",  # inputs
@@ -91,8 +91,9 @@ PUBLISHED = {
     "owner_calls": "171f8c5c586e68e6885bc0d9014d5a2b7ef4ba4bafa217ee898c8338ffaed810",  # inputs
 }
 # switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE; exercise-list.md C4c: a lift in the person's
-# own words. 2026-11-20: the sleep routing sentence and the shorter Goals sentence
-INSTRUCTIONS_AS_BUILT = "f219d22e3024830760404852eda07cf8f55c45a62b07ec819f70bd6f936e24e9"
+# own words. 2026-11-20: the sleep routing sentence and the shorter Goals sentence; the meal sentence leads with
+# sending the meal the person named
+INSTRUCTIONS_AS_BUILT = "319d008fcba6469fa300fd4821c8223c21d745222afcaa6acedd24eb402fc033"
 
 
 def notes() -> list[Feedback]:

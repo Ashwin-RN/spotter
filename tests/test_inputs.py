@@ -56,7 +56,7 @@ BEFORE_INPUTS = {
     "restore_entry": "ea098328552576986f8c0a410757d424478eb0566b104e2eb76d3de4b24cf8a9",
     "delete_entry": "ed03ec3aad90a1ffa9f8b00175bf5a7c1b7d18c92ce20d7032ee43fbf8fd749f",
     "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",
-    "log_food": "6ffc9850d580f531c6cf3bd6d961b186936aa00b5bf3b9af19198a3a8e7acd56",
+    "log_food": "372bd699ac31aaf096b1fd5231850f2b54d80a1278320fd8fad2eafa709a0f1a",  # 2026-11-20: meal leads with sending
     "save_food": "0a8e5b4526af8bc103af661c711ad6719ab8588579dc64ceb4b6b4ed6cb218cc",
     "log_cardio": "5a4106f698eae37d7b11fe096d19f60e2d405050ada8b23aa7e33b65df8d8794",  # 2026-11-20: exercise's words name both walks
     "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
@@ -136,8 +136,8 @@ def test_the_published_list_differs_only_by_additional_properties_and_the_three_
 
 def test_the_instructions_are_unchanged():
     # data-on-request.md: DATA_RULE joined after; exercise-list.md C4c
-    # 2026-11-20: the sleep routing sentence and the shorter Goals sentence
-    assert len(mcp_server.INSTRUCTIONS) == 4090
+    # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4082
 
 
 # ---------------------------------------------------------------- the person and the calls

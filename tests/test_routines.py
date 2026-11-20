@@ -850,15 +850,17 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     units = {"whoami", "log_lifts", "log_bodyweight", "log_cardio", "edit_entry", "set_goal", "update_settings",
              "get_progress", "get_goals", "get_log", "delete_entry"}
     # The exercise list (exercise-list.md, deploy 2) moved import_entries' names part and list_exercises (R8).
+    # 2026-11-20: log_food's meal words lead with sending the meal the person named.
     assert {n for n in BEFORE if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami",
-                                                            "import_entries", "list_exercises"} | units
+                                                            "import_entries", "list_exercises", "log_food"} | units
     assert hashes["restore_entry"] != BEFORE["restore_entry"] and "restore_entry" not in units
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
     assert everyone == [n for n in names if n not in mcp_server.OWNER_FUNCTIONS] and len(everyone) == web.FUNCTION_COUNT
 
 
-def test_the_instructions_do_not_change_4090_characters():  # data-on-request.md: DATA_RULE; exercise-list.md C4c
-    assert len(mcp_server.INSTRUCTIONS) == 4090  # 2026-11-20: the sleep routing sentence and the shorter Goals sentence
+def test_the_instructions_do_not_change_4082_characters():  # data-on-request.md: DATA_RULE; exercise-list.md C4c
+    # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4082
     assert "routine" not in mcp_server.INSTRUCTIONS
 
 

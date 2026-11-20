@@ -2079,6 +2079,30 @@ def test_the_instructions_send_sleep_steps_resting_heart_rate_and_water_to_log_m
     assert text.count("log_measurement") == 1
 
 
+# 2026-11-20: the meal rule leads with sending the meal the person named, in the instructions, in log_food's meal
+# field and in can-and-cant. With none named, the meal is still left out and the clock picks it.
+MEAL_SENTENCE = "Send the meal the person named for a food; with none named, leave it out. Never ask which meal."
+MEAL_FIELD = ('breakfast, lunch, dinner or snack. Send the meal the person named for this food, such as lunch for '
+              '"had a salad at lunch". With none named, leave it out: Spotter picks it from their clock.')
+MEAL_DOC = ("**The meal.** Claude passes the meal the person named for a food, and never asks. Otherwise Spotter "
+            "picks it from the person's own clock: 04:00 to 11:00 breakfast, 11:00 to 16:00 lunch, 16:00 to 22:00 "
+            "dinner, otherwise snack (22:00 to 04:00, so half past midnight is a snack, not breakfast).")
+
+
+def test_the_meal_rule_leads_with_sending_the_meal_the_person_named(http):
+    from . import text_rules as tr
+    text = mcp_server.INSTRUCTIONS
+    assert mcp_server.FOOD_NAME_RULE + " " + MEAL_SENTENCE + " Cardio: " in text
+    assert "Leave the meal out unless" not in text and text.count("which meal") == 1
+    food = next(t for t in tool_list(http, sign()) if t["name"] == "log_food")
+    assert food["inputSchema"]["$defs"]["FoodEntryIn"]["properties"]["meal"]["description"] == MEAL_FIELD
+    assert "only when the person named" not in json.dumps(food)
+    doc = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
+    assert MEAL_DOC in doc and "passes a meal only when" not in doc
+    for words in (MEAL_SENTENCE, MEAL_FIELD):
+        assert tr.check(words, tr.CLAUDE) == [], words
+
+
 # ---------------------------------------------------------------- stage 6: how Claude replies (T8)
 
 # The contract's paragraph, word for word (stage-6.md, section D). Step 3 adds its plan_line sentence.

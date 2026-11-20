@@ -226,7 +226,7 @@ INSTRUCTIONS = (
     + TRENDS_RULE + " " + GOALS_RULE + " " + DATA_RULE + " "
     + GOALS_MONTH_END + " "
     "Food: " + FOOD_RULE + " " + FOOD_NAME_RULE + " "
-    "Leave the meal out unless the person named it: Spotter picks it from their clock. Never ask which meal. "
+    "Send the meal the person named for a food; with none named, leave it out. Never ask which meal. "
     "Cardio: " + CARDIO_RULE + " "
     "Importing: " + IMPORT_RULE + " "
     "Deleting: " + DELETE_RULE + " "

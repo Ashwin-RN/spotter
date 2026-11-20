@@ -139,7 +139,7 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 - When `find_food` finds no match and the person gave no number, Claude may estimate, and must say so.
 - An estimate stays an estimate until the person states a number. Then Claude edits the entry's `kcal`
   and the tag becomes `you_said`.
-- **The meal.** Claude passes a meal only when the person named one, and never asks. Otherwise Spotter
+- **The meal.** Claude passes the meal the person named for a food, and never asks. Otherwise Spotter
   picks it from the person's own clock: 04:00 to 11:00 breakfast, 11:00 to 16:00 lunch, 16:00 to
   22:00 dinner, otherwise snack (22:00 to 04:00, so half past midnight is a snack, not breakfast).
 - **USDA.** When it is switched on, `find_food` also searches USDA FoodData Central, the United

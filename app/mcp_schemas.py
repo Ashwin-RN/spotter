@@ -204,8 +204,9 @@ class FoodEntryIn(BaseModel):
                     + FOOD_NAME_RULE)
     meal: str | None = Field(
         default=None,
-        description="breakfast, lunch, dinner or snack, only when the person named it. Leave out otherwise: "
-                    "Spotter picks it from their clock.")
+        description='breakfast, lunch, dinner or snack. Send the meal the person named for this food, such as '
+                    'lunch for "had a salad at lunch". With none named, leave it out: Spotter picks it from their '
+                    'clock.')
     kcal: Number | None = Field(
         default=None,
         description="The calories, 0 to 5,000: the person's number, or yours with estimated true. Never with "

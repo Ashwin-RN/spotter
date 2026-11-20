@@ -1231,8 +1231,8 @@ def test_the_page_sending_test_reads_the_note_and_keeps_its_one_exception(http):
     sending = [(where, s) for where, text in texts.items() for s in sentences(text) if sends_to_a_page(s)]
     assert sending == []  # the one exception is the not_allowed fix, read by the test in test_mcp.py
     # switch decision 18, unchanged here (decision 11); DATA_RULE; C4c
-    # 2026-11-20: the sleep routing sentence and the shorter Goals sentence
-    assert len(mcp_server.INSTRUCTIONS) == 4090
+    # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4082
 
 
 def test_the_new_names_are_in_whoami_alone_in_the_published_list(http):

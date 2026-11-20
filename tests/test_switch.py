@@ -566,11 +566,11 @@ def test_the_rule_is_in_the_instructions_and_the_description_and_the_published_w
     assert who["outputSchema"]["properties"]["claude_can"]["description"] == CLAUDE_CAN_WORDS
 
 
-def test_the_instructions_are_4090_characters_under_the_cap_and_still_end_with_the_plan_line_sentence():
+def test_the_instructions_are_4082_characters_under_the_cap_and_still_end_with_the_plan_line_sentence():
     text = mcp_server.INSTRUCTIONS
     # data-on-request.md: DATA_RULE joined; exercise-list.md C4c
-    # 2026-11-20: the sleep routing sentence and the shorter Goals sentence
-    assert len(text) == 4090 < 4096
+    # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
+    assert len(text) == 4082 < 4096
     assert text.endswith("Where a goal carries plan_line, say it as written, and do not also quote latest, "
                          "should_be_today or ahead_by.")
 

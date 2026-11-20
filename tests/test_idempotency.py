@@ -733,8 +733,8 @@ def test_each_write_function_publishes_key_with_the_contract_s_words_and_no_othe
         assert properties["key"] == {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None,
                                      "description": words, "title": "Key"}, tool["name"]
     assert mcp_server.KEY_DESCRIPTION == words and tr.check(words, tr.CLAUDE) == []
-    # But for switch decision 18. 2026-11-20: the sleep routing sentence and the shorter Goals sentence
-    assert len(mcp_server.INSTRUCTIONS) == 4090 and " key" not in mcp_server.INSTRUCTIONS
+    # But for switch decision 18. 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4082 and " key" not in mcp_server.INSTRUCTIONS
 
 
 @pytest.mark.parametrize("name", WRITES)

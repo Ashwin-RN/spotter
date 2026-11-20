@@ -1119,8 +1119,8 @@ def test_both_are_published_with_their_words_arguments_and_the_read_only_hints(h
     assert mcp_server.INSTRUCTIONS.count(mcp_server.DATA_RULE) == 1
     assert mcp_server.GOALS_RULE + " " + mcp_server.DATA_RULE + " " in mcp_server.INSTRUCTIONS
     # exercise-list.md C4c: the sentence on a person's own words
-    # 2026-11-20: the sleep routing sentence and the shorter Goals sentence
-    assert len(mcp_server.INSTRUCTIONS) == 4090 < 4096
+    # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4082 < 4096
     assert mcp_server.INSTRUCTIONS.endswith("do not also quote latest, should_be_today or ahead_by.")
 
 

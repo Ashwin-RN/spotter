@@ -651,12 +651,13 @@ def test_the_history_is_read_once_a_call_for_every_candidate_its_words_name():
 
 # ---------------------------------------------------------------- the model-read text, and through /mcp
 
-def test_the_instructions_say_the_new_sentence_and_are_4090_characters():
+def test_the_instructions_say_the_new_sentence_and_are_4082_characters():
     text = mcp_server.INSTRUCTIONS
     assert ("Log a lift in the person's own words, such as squat or bench: Spotter picks the lift. Use other names as "
             "list_exercises gives them. ") in text
     assert "Use exercise names exactly as list_exercises gives them." not in text
-    assert len(text) == 4090 < 4096  # 2026-11-20: the sleep routing sentence and the shorter Goals sentence
+    # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
+    assert len(text) == 4082 < 4096
     assert text.endswith("and do not also quote latest, should_be_today or ahead_by.")
 
 
