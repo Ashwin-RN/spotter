@@ -1235,3 +1235,37 @@ On the built commit.
 - `capabilities_plain` fails on both trees: the model answers from the instructions without the calls the case wants. On the live code one Sonnet reply said it saw nothing for sleep; on this commit both named sleep.
 - `undo_moved_scale_date` fails on both trees: an edit where an undo is asked.
 - On `gpt-6-luna`, `health_export_preview` and `daily_sleep_goal` fail on both trees by the judge's words: "Say yes and I'll import them" is not read as a question, and its "can't" pattern takes a straight apostrophe where the model writes a curly one.
+
+## Both walks named in log_cardio
+
+On 2026-11-20. No contract: a one-phrase fix of a gap on the live list since the exercise list's second deploy, found by a comparison run on Sonnet. Model-read text.
+
+| Package | Commit | What it did |
+|---|---|---|
+| The fix | `5d1ec03` | `log_cardio`'s `exercise` words name both walks: "such as Outdoor Walk or Treadmill Walk", where they named Treadmill Walk alone |
+
+### Why
+
+Since the instructions take a lift in the person's own words, Sonnet with every function loaded up front often logs a message of several kinds without looking names up in `list_exercises`. It then took "walked home after, about 25 minutes" as Treadmill Walk, the one walk the field named, and said Spotter has no outdoor walk. `rambling_day_log` judges the walk through its `expect`; it had not run since that deploy.
+
+### Checks
+
+The 11 test files the change touches, plain and with `-W error`; two published hashes moved. The whole suite on a clean export of `5d1ec03`: 6,988 passed.
+
+### Eval runs
+
+| Model | Cases | Live code | This commit | Cost |
+|---|---|---|---|---|
+| `claude-sonnet-5-5`, every function loaded up front | `rambling_day_log`, 12 runs | 4 passed; the walk as Treadmill Walk 8 times | 11 passed; the walk right 12 of 12, with no `list_exercises` call | $2.4803 |
+| `claude-sonnet-5-5`, tool search on | `rambling_day_log`, 12 runs | 8 passed; the walk right 12 of 12 | 10 passed; the walk right 12 of 12 | $2.8631 |
+| `claude-sonnet-5-5`, both ways | 9 cardio cases, 2 runs | `cardio_duplicate_said` 0 of 2 | 16 of 18 with tool search on, both misses `cardio_duplicate_said`; 18 of 18 up front | $2.9202 |
+| `gpt-6-luna` | 10 cardio cases, 3 runs | | 24 of 30; `rambling_day_log` 3 of 3 | plan usage |
+| `gpt-6-luna` | `distance_implies_run` and `tennis_not_listed`, 12 runs | 12 and 6 | 10 and 5 | plan usage |
+
+### Known limits
+
+- The bug shows only with every function loaded up front: with Claude Code's default tool search, Sonnet looked the names up and was right before the fix too.
+- `cardio_duplicate_said` fails on both trees by the judge's words: the reply offers to log it again without a question mark.
+- `tennis_not_listed` fails on `gpt-6-luna` on both trees about half the time: it sends "Tennis" to `log_cardio` before `list_exercises`, is refused, and nothing is written.
+- `distance_implies_run`: 2 of 12 runs on `gpt-6-luna` changed a setting unasked; the run itself was logged right.
+- In `rambling_day_log`, a meal the person named is often left out, and Spotter files it by its clock.
