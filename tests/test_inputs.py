@@ -58,7 +58,7 @@ BEFORE_INPUTS = {
     "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",
     "log_food": "6ffc9850d580f531c6cf3bd6d961b186936aa00b5bf3b9af19198a3a8e7acd56",
     "save_food": "0a8e5b4526af8bc103af661c711ad6719ab8588579dc64ceb4b6b4ed6cb218cc",
-    "log_cardio": "da89a42e48c3285acff7665f4b3e7828b184b03090db16f0a1c1f371332407be",
+    "log_cardio": "5a4106f698eae37d7b11fe096d19f60e2d405050ada8b23aa7e33b65df8d8794",  # 2026-11-20: exercise's words name both walks
     "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
     "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",
     "import_entries": "5bfa3ce4279e3aca8619fdcc0dbc987081ca9b27f79fa9a74dd836377bc865c5",  # exercise list

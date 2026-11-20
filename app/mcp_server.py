@@ -1255,7 +1255,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     )
     async def log_cardio(
         exercise: Annotated[str, Field(
-            description="The activity, exactly as list_exercises gives it, such as Treadmill Walk. " + CARDIO_RULE)],
+            description="The activity, exactly as list_exercises gives it, such as Outdoor Walk or Treadmill Walk. "
+                        + CARDIO_RULE)],
         minutes: Annotated[Number, Field(description="How long it lasted, in minutes, 1 to 600.")],
         date: Annotated[str | None, Field(
             description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,

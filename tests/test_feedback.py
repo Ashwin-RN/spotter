@@ -82,7 +82,7 @@ PUBLISHED = {
     "find_food": "9ae7214dc6c6104ae9ae93325d6ed9b87c5296773febd70d07dd8a388ae56fde",  # inputs
     "log_food": "84b1fc5683c0ab2b74199eefd4440c17525455025b98cceb5908e1580ade7371",  # inputs
     "save_food": "51fa9c1edce31ca0afd9715af26aaef77dda38aef084160d805b8bfb8f0710d9",  # inputs
-    "log_cardio": "9e8a9435e365e49a651e6eccd56553f842ced35873ffa3111bfec3aec04cdcf9",  # units; inputs
+    "log_cardio": "235cf20d40f883d11a98e826d5e8292c94f55f503b92ab114abcc9c39b705e13",  # units; inputs; 2026-11-20: exercise's words name both walks
     "get_trends": "76a12552c23e443d455dd77b910788c66030f05c3f4ea5b3df0d46d69845b30f",  # inputs
     "get_goals": "6d71cb0446594ce9d51a5eaa6719394018946cfa273a49d49a4bf559cc13a391",  # units; inputs
     "import_entries": "1d890d48348660778e2105210bd298c8b5613f69c0981af43f9703b990960cec",  # inputs; exercise list: names, reps
