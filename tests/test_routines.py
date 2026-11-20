@@ -857,8 +857,8 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     assert everyone == [n for n in names if n not in mcp_server.OWNER_FUNCTIONS] and len(everyone) == web.FUNCTION_COUNT
 
 
-def test_the_instructions_do_not_change_4086_characters():  # data-on-request.md: DATA_RULE; exercise-list.md C4c
-    assert len(mcp_server.INSTRUCTIONS) == 4086
+def test_the_instructions_do_not_change_4090_characters():  # data-on-request.md: DATA_RULE; exercise-list.md C4c
+    assert len(mcp_server.INSTRUCTIONS) == 4090  # 2026-11-20: the sleep routing sentence and the shorter Goals sentence
     assert "routine" not in mcp_server.INSTRUCTIONS
 
 

@@ -2049,18 +2049,34 @@ def test_the_new_reads_run_at_both_settings(http, monkeypatch, level):  # switch
 # ---------------------------------------------------------------- stage 5: the sentences Claude reads
 
 STAGE_5_WORDS = ("To answer how the person is doing, call get_trends", "whether the person is on track, call get_goals",
-                 "takes the last day of that month as target_date", "worked out from today's date",
+                 "takes that month's last day as target_date", "the next such day after today",
                  "the person's own clicks on Settings", "no function does either", "Never offer to do them",
                  "the count goes in servings or grams, never in the description", "send the food's name")
 
 
+# 2026-11-20: the sleep routing sentence and the shorter Goals sentence. The instructions carry the
+# month-end rule's short form; set_goal's description and its target_date keep MONTH_END_RULE word for word.
+GOALS_SENTENCE = ("Goals: a goal by the end of a month takes that month's last day as target_date, the next such day "
+                  "after today.")
+SLEEP_SENTENCE = "Log sleep, steps, resting heart rate and water with log_measurement."
+
+
 def test_every_stage_5_sentence_is_in_the_instructions():
     text = mcp_server.INSTRUCTIONS
-    for rule in (mcp_server.TRENDS_RULE, mcp_server.GOALS_RULE, mcp_server.MONTH_END_RULE,
-                 mcp_server.SETTINGS_ONLY_RULE, mcp_server.FOOD_NAME_RULE):
+    for rule in (mcp_server.TRENDS_RULE, mcp_server.GOALS_RULE, mcp_server.SETTINGS_ONLY_RULE,
+                 mcp_server.FOOD_NAME_RULE):
         assert rule in text, rule
     for words in STAGE_5_WORDS:
         assert words in text, words
+    assert mcp_server.GOALS_MONTH_END == GOALS_SENTENCE
+    assert mcp_server.DATA_RULE + " " + GOALS_SENTENCE + " Food: " in text  # where the long rule sat
+    assert mcp_server.MONTH_END_RULE not in text and text.count("Goals: ") == 1
+
+
+def test_the_instructions_send_sleep_steps_resting_heart_rate_and_water_to_log_measurement():
+    text = mcp_server.INSTRUCTIONS
+    assert ("list_exercises gives them. " + SLEEP_SENTENCE + " Leave the date out for something done today") in text
+    assert text.count("log_measurement") == 1
 
 
 # ---------------------------------------------------------------- stage 6: how Claude replies (T8)

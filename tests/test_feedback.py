@@ -91,8 +91,8 @@ PUBLISHED = {
     "owner_calls": "171f8c5c586e68e6885bc0d9014d5a2b7ef4ba4bafa217ee898c8338ffaed810",  # inputs
 }
 # switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE; exercise-list.md C4c: a lift in the person's
-# own words
-INSTRUCTIONS_AS_BUILT = "58536677f56a8f7d739eddabc0a704bd5b9133d24361561cfc344f5d88a7e095"
+# own words. 2026-11-20: the sleep routing sentence and the shorter Goals sentence
+INSTRUCTIONS_AS_BUILT = "f219d22e3024830760404852eda07cf8f55c45a62b07ec819f70bd6f936e24e9"
 
 
 def notes() -> list[Feedback]:

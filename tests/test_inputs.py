@@ -135,7 +135,9 @@ def test_the_published_list_differs_only_by_additional_properties_and_the_three_
 
 
 def test_the_instructions_are_unchanged():
-    assert len(mcp_server.INSTRUCTIONS) == 4086  # data-on-request.md: DATA_RULE joined after; exercise-list.md C4c
+    # data-on-request.md: DATA_RULE joined after; exercise-list.md C4c
+    # 2026-11-20: the sleep routing sentence and the shorter Goals sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4090
 
 
 # ---------------------------------------------------------------- the person and the calls

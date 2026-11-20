@@ -186,6 +186,12 @@ MONTH_END_RULE = (
     "the next such day after today, worked out from today's date."
 )
 
+# The instructions' short form of MONTH_END_RULE, with its "Goals: " label (2026-11-20: room for the sentence on
+# log_measurement). set_goal's description and target_date keep MONTH_END_RULE word for word.
+GOALS_MONTH_END = (
+    "Goals: a goal by the end of a month takes that month's last day as target_date, the next such day after today."
+)
+
 # The two acts that stay the person's own. No function does either, so Claude never offers one.
 SETTINGS_ONLY_RULE = (
     "Exporting the person's data and deleting their account are the person's own clicks on Settings: no function "
@@ -210,6 +216,7 @@ INSTRUCTIONS = (
     "to a page for it. "
     "Log a lift in the person's own words, such as squat or bench: Spotter picks the lift. Use other names as "
     "list_exercises gives them. "
+    "Log sleep, steps, resting heart rate and water with log_measurement. "
     "Leave the date out for something done today: today is the person's own date. "
     "Quote Spotter's numbers; never estimate your own, except a food's kcal, as the food rule says. "
     "If a call returns an error, read its fix and retry. "
@@ -217,7 +224,7 @@ INSTRUCTIONS = (
     "confirms it was a separate entry. "
     "To answer what the person did on a day or in a week, use get_log. "
     + TRENDS_RULE + " " + GOALS_RULE + " " + DATA_RULE + " "
-    "Goals: " + MONTH_END_RULE + " "
+    + GOALS_MONTH_END + " "
     "Food: " + FOOD_RULE + " " + FOOD_NAME_RULE + " "
     "Leave the meal out unless the person named it: Spotter picks it from their clock. Never ask which meal. "
     "Cardio: " + CARDIO_RULE + " "
