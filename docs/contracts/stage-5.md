@@ -214,3 +214,5 @@ Each builder breaks its own behaviours before reporting and says how many turned
 4. The evals: every case passes at least 2 of 3 runs, the rate reported as it is.
 
 **Note, 2026-11-18: superseded in part.** Sample data was removed everywhere: `docs/contracts/no-sample.md`. The trends and goals stand.
+
+**Note, 2026-11-20.** The instructions' month-end sentence is shorter: "Goals: a goal by the end of a month takes that month's last day as target_date, the next such day after today." It made room, under 4,096 characters, for "Log sleep, steps, resting heart rate and water with log_measurement." `set_goal`'s description and `target_date` keep `MONTH_END_RULE` word for word. Dropping the sentence whole made `gpt-6-luna` ask which year a goal by the end of a month meant: see the build log.

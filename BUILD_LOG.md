@@ -1190,3 +1190,48 @@ Deploy 1 (`b6a42e8`) live at 06:45 UTC on 2026-11-19 on the owner's word: `/read
 - An import or an edit written after the first bar set stops the per-hand ask, though it runs no check.
 - The closest-name search takes about 16 s for 1,000 unknown names in an import.
 - A downgrade past `0014` then an upgrade would delete every lift logged after deploy 2.
+
+## Sleep, steps, resting heart rate and water in the instructions
+
+On 2026-11-20. No contract: a one-sentence fix of a gap on the live list, found by a comparison run on `gpt-6-luna`. Model-read text: the instructions. A dated note on `docs/contracts/stage-5.md`.
+
+| Package | Commit | What it did |
+|---|---|---|
+| The fix | `3e955d1` | The instructions gain "Log sleep, steps, resting heart rate and water with log_measurement." after the sentence on lift names, and their Goals sentence takes a short form that keeps "the next such day after today": 4,090 characters. `MONTH_END_RULE` stays word for word in `set_goal`'s description and `target_date` |
+
+### Why
+
+On `gpt-6-luna`, "slept 6.25 hours last night. record that for today" was logged 5 times in 12 on the live code. Every miss called only `whoami` and said Spotter has no sleep log.
+
+### What was tried
+
+On `gpt-6-luna`, on scratch copies of the live code, before the build.
+
+| Try | Sleep, of 12 | What else moved |
+|---|---|---|
+| A sentence in `log_measurement`'s description | 3 | Not shipped: the model decides before it reads the description |
+| The sentence in the instructions before the lift sentence, the month-end sentence dropped | 12 | Goals: 3 of 6 runs of `goal_date` and `lb_bench_goal` asked which year, where 6 of 6 set the goal live |
+| The same, with the short Goals sentence | 12, measured after the build | Goals 24 of 24 against 22 of 24 live; "deadlifts ... then bench ..." went in two calls in 4 of 9 runs against 0 of 9 live, the record right each time |
+| The sentence after the lift sentence, with the short Goals sentence: shipped | 12 | Pulse 6 of 6, the two-lift case 5 of 6, `word_named_equipment` 6 of 6 |
+
+### Checks
+
+The 15 test files the change touches, plain and with `-W error`. The whole suite on a clean export of `3e955d1`: 6,988 passed.
+
+### Eval runs
+
+On the built commit.
+
+| Model | Cases | Result | Cost |
+|---|---|---|---|
+| `claude-sonnet-5-5` | the 28 cases it touches, 2 runs | 48 of 52; the two misses miss the same way on the live code | $4.6104, and $0.3066 for the live check |
+| `gpt-6-luna` | the same 28, 3 runs | sleep 3 of 3, pulse 3 of 3, 57 of 78 in all | plan usage |
+| `gpt-6-luna` | six cases with a miss, 6 runs, beside the live code | `goal_date` 6 and 6, `waist_in_inches` 6 and 5, `lb_bench_goal` 5 and 5, `unknown_lift_close` 3 and 3; `undo_waist_then_water` 4 and 6, `read_plain_word` 3 and 6 | plan usage |
+| `gpt-6-luna` | those last two, 12 runs, on four trees at once | live 11 and 9, this commit 10 and 10, the sentence before the lift sentence 10 and 11, the short Goals sentence alone 12 and 7: within 2 of live on each, so the dips were noise | plan usage |
+
+### Known limits
+
+- `lb_bench_goal` on the short Goals sentence: 2 of 15 runs asked which year a June goal meant, against 0 of 15 live.
+- `capabilities_plain` fails on both trees: the model answers from the instructions without the calls the case wants. On the live code one Sonnet reply said it saw nothing for sleep; on this commit both named sleep.
+- `undo_moved_scale_date` fails on both trees: an edit where an undo is asked.
+- On `gpt-6-luna`, `health_export_preview` and `daily_sleep_goal` fail on both trees by the judge's words: "Say yes and I'll import them" is not read as a question, and its "can't" pattern takes a straight apostrophe where the model writes a curly one.
