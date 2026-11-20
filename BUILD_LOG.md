@@ -1269,3 +1269,44 @@ The 11 test files the change touches, plain and with `-W error`; two published h
 - `tennis_not_listed` fails on `gpt-6-luna` on both trees about half the time: it sends "Tennis" to `log_cardio` before `list_exercises`, is refused, and nothing is written.
 - `distance_implies_run`: 2 of 12 runs on `gpt-6-luna` changed a setting unasked; the run itself was logged right.
 - In `rambling_day_log`, a meal the person named is often left out, and Spotter files it by its clock.
+
+## A food's meal: the one the person named is sent
+
+On 2026-11-20. No contract: a reworded rule and three eval checks. Model-read text.
+
+| Package | Commit | What it did |
+|---|---|---|
+| The eval checks | `4d28319` | `rambling_day_log`, `stated_number` and `catch_up` judge the meal in the `log_food` call as well as the stored row. A test plays each with no meal at 12:30 and with lunch at 17:30 |
+| The wording | `0efb1f9` | The instructions say "Send the meal the person named for a food; with none named, leave it out. Never ask which meal." in place of "Leave the meal out unless the person named it: Spotter picks it from their clock. Never ask which meal." (4,082 characters, from 4,090). `log_food`'s meal field and `can-and-cant` lead the same way; with none named the clock still picks it |
+
+### Why
+
+"lunch was a chicken wrap ... the label said 520 kcal" in a long message: Sonnet and Haiku often sent no meal, so Spotter filed the wrap by the clock, as dinner in the evening. Their replies said lunch, so the model knew it; most runs then moved it with `edit_entry`, some left it wrong. The rule led with leaving the meal out, and every drop went that way. The drops grew after the exercise list's second deploy, when the model began logging without looking names up first; why is not shown.
+
+The eval had hidden it: with no meal sent, a run between 11:00 and 16:00 in the account's zone was filed as lunch and passed. The checks now read the call, so the verdict is the same at any hour.
+
+### Checks
+
+The eval checks: `tests/test_evals.py` and `tests/test_golden_cases.py`, 504 passed plain and with `-W error`. The wording: the 11 test files that pin the instructions, their length and the published list, with `test_mcp`, `test_docs`, `test_text_rules`, `test_calllog` and `test_eval_need`, 1,978 passed plain and with `-W error`; `log_food`'s published hash and the instructions' hash moved. The whole suite on a clean export of this entry's commit: see the release.
+
+### Eval runs
+
+Both trees carry the new checks: `4d28319` (the rule as it was) against `0efb1f9` (the new wording), run at about 21:00 in Asia/Kolkata, when a missing meal is filed as dinner. "Sent" is the named meal in the first `log_food` call that went through.
+
+| Model | Cases | Before | After | Cost before, after |
+|---|---|---|---|---|
+| `claude-sonnet-5-5`, tool search on | `rambling_day_log`, 24 runs | 15 passed; lunch sent 15, 8 of the 9 others moved by `edit_entry` | 24 passed; lunch sent 24 | $2.885, $2.7044 |
+| `claude-sonnet-5-5`, every function loaded up front | `rambling_day_log`, 12 runs | 4 passed; lunch sent 4, 5 of the 8 others moved | 12 passed; lunch sent 12 | $1.0467, $1.2151 |
+| `claude-haiku-5-5`, every function loaded up front | `rambling_day_log`, 12 runs | 10 passed; lunch sent 10 | 11 passed; lunch sent 12 | $0.0807, $0.0815 |
+| `gpt-6-luna` | `rambling_day_log`, 12 runs | 9 passed; lunch sent 11 | 12 passed; lunch sent 12 | plan usage |
+| All three | 8 cases that name a meal or none, 3 runs | Sonnet 21 of 24, Haiku 22 of 24, Luna 23 of 24 | Sonnet 21 of 24, Haiku 21 of 24, Luna 24 of 24 | Sonnet $2.0433, $2.0059; Haiku $0.1231, $0.1259 |
+| All three | `separate_food_repeat`, `meal_not_asked`, `old_run_fix_and_snack`, 3 runs | 27 of 27 | Sonnet 9 of 9, Haiku 6 of 9, Luna 7 of 9 | Sonnet $1.1842, $1.1265; Haiku $0.0581, $0.0568 |
+| `gpt-6-luna` | `separate_food_repeat`, 12 runs | 11 passed; no meal sent in any run | 9 passed; a meal sent 3 | plan usage |
+
+In all: $7.4211 before, $7.3161 after.
+
+### Known limits
+
+- "had another Roti just now, yes an extra one after lunch" (`separate_food_repeat`) names no meal, but with the new wording a meal was sent: on `claude-haiku-5-5` 2 of 3 ("snack"), on `gpt-6-luna` 4 of 15 ("lunch" 3, "snack" 1); on Sonnet 0 of 3. Kept: it moves an entry between meals, never a number, and the new wording sends 21 named meals that were left out before, against these 6.
+- `recent_biryani_again` fails on both trees: on Sonnet 0 of 3 each, on Haiku 1 of 3 and 0 of 3. The model reads `get_log`, then neither logs the food nor asks.
+- On `gpt-6-luna` one `stated_number` run before the change sent `meal` beside `entries`; it was refused and the retry left the meal out.
