@@ -1785,7 +1785,8 @@ def test_the_catch_up_case_judges_the_rows_on_each_date(app_settings):
                                  "sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}] * 3}, "claude")
     services.log_food(user_id, {"date": dates["days_ago:2"],
                                 "entries": [{"description": "Chicken biryani", "kcal": 640, "meal": "lunch"}]}, "claude")
-    calls = [call("log_lifts"), call("log_food"), call("log_bodyweight")]
+    calls = [call("log_lifts"), call("log_food", {"entries": [{"description": "Chicken biryani", "kcal": 640,
+                                                               "meal": "Lunch"}]}), call("log_bodyweight")]
     assert judge.judge(case, calls, "Logged.", person_rows(user_id)) == ["bodyweight: 0 rows, expected 1"]
     services.log_bodyweight(user_id, {"kg": 80.2, "date": dates["today"]}, "claude")  # on the wrong date
     assert judge.judge(case, calls, "Logged.", person_rows(user_id))
@@ -1793,7 +1794,7 @@ def test_the_catch_up_case_judges_the_rows_on_each_date(app_settings):
     services.log_lifts(right, {"date": dates["days_ago:3"],
                                "sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}] * 3}, "claude")
     services.log_food(right, {"date": dates["days_ago:2"],
-                              "entries": [{"description": "Chicken biryani", "kcal": 640}]}, "claude")
+                              "entries": [{"description": "Chicken biryani", "kcal": 640, "meal": "lunch"}]}, "claude")
     services.log_bodyweight(right, {"kg": 80.2, "date": dates["yesterday"]}, "claude")
     assert judge.judge(case, calls, "Logged all three.", person_rows(right)) == []
     assert "{{" not in case["say"] and "three days ago" in case["say"]  # relative days: right on any run day

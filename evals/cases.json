@@ -7,10 +7,10 @@
               "must_not": []},
     "expect": {
       "function": "log_food",
-      "inputs_include": {"entries": [{"kcal": 180}]},
+      "inputs_include": {"entries": [{"kcal": 180, "meal": "lunch"}]},
       "inputs_forbid": {"entries.*.estimated": true}
     },
-    "db": [{"table": "food_entry", "count": 1, "all": {"source": "you_said", "kcal": 180}}]
+    "db": [{"table": "food_entry", "count": 1, "all": {"source": "you_said", "kcal": 180, "meal": "lunch"}}]
   },
   {
     "id": "guessed_number",
@@ -1101,10 +1101,12 @@
               "may": ["whoami", "list_exercises", "find_food"],
               "must_not": ["delete_entry", "import_entries"]},
     "expect": {
+      "function": "log_food",
+      "inputs_include": {"entries": [{"kcal": 640, "meal": "lunch"}]},
       "no_call": ["delete_entry", "import_entries"]
     },
     "db": [{"table": "lift_session", "count": 1, "all": {"date": "{{days_ago:3}}", "set_count": 3}},
-          {"table": "food_entry", "count": 1, "all": {"date": "{{days_ago:2}}", "kcal": 640}},
+          {"table": "food_entry", "count": 1, "all": {"date": "{{days_ago:2}}", "kcal": 640, "meal": "lunch"}},
           {"table": "bodyweight", "count": 1, "all": {"date": "{{yesterday}}", "kg": 80.2}}]
   },
   {
@@ -2868,7 +2870,7 @@
     "calls": {"must": ["log_lifts", "log_bodyweight", "log_food", "log_cardio"],
               "may": ["whoami", "list_exercises", "find_food"],
               "must_not": ["set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "save_food", "import_entries", "send_feedback", "save_routine"]},
-    "expect": {"function": "log_bodyweight", "inputs_include": {"kg": 79.8}, "any_of": [{"function": "log_cardio", "inputs_include": {"exercise": "Outdoor Walk", "minutes": 25}, "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 90, "reps": 5}, {"weight_kg": 65, "reps": 8}]}}]}], "no_call": ["log_measurement", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_bodyweight", "inputs_include": {"kg": 79.8}, "any_of": [{"function": "log_cardio", "inputs_include": {"exercise": "Outdoor Walk", "minutes": 25}, "any_of": [{"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 90, "reps": 5}, {"weight_kg": 65, "reps": 8}]}, "any_of": [{"function": "log_food", "inputs_include": {"entries": [{"kcal": 520, "meal": "lunch"}]}}]}]}], "no_call": ["log_measurement", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "bodyweight", "count": 1, "all": {"kg": 79.8, "date": "{{today}}"}}, {"table": "food_entry", "count": 1, "all": {"kcal": 520, "source": "you_said", "meal": "lunch"}}, {"table": "lift_session", "count": 1, "all": {"set_count": 6}}, {"table": "cardio_entry", "count": 1, "all": {"minutes": 25}}, {"table": "lift_set", "where": {"exercise": "Back Squat"}, "count": 3, "all": {"weight_kg": 90, "reps": 5}}, {"table": "lift_set", "where": {"exercise": "Bench Press"}, "count": 3, "all": {"weight_kg": 65, "reps": 8}}]
   },
   {

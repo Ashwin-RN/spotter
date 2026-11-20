@@ -1893,6 +1893,60 @@ def test_the_duplicate_guard_still_holds_minutes_after_the_seed(case_id, player)
         player.on(DAY)
 
 
+# ---------------------------------------------------------------- the meal sent, not the hour (AI5)
+
+LUNCH_HOUR = -300  # 07:00 UTC on DAY: 12:30 in Asia/Kolkata, when a food sent with no meal is filed as lunch
+DINNER_HOUR = 0  # noon UTC: 17:30 in Asia/Kolkata, when it is filed as dinner
+
+
+def _food(kcal: int, meal: str | None = None, **extra) -> tuple:
+    entry = {"description": "Food", "kcal": kcal, **({"meal": meal} if meal else {})}
+    return ("log_food", {"entries": [entry], **extra})
+
+
+def _rambling(meal):
+    return [("log_bodyweight", {"kg": 79.8}), _food(520, meal),
+            logs(lift("back squats", 90, 5, 3), lift("bench", 65, 8, 3)),
+            ("log_cardio", {"exercise": "Outdoor Walk", "minutes": 25})]
+
+
+def _catch_up(meal):
+    return [logs(lift("back squat", 100, 5, 3), date="{{days_ago:3}}"), _food(640, meal, date="{{days_ago:2}}"),
+            ("log_bodyweight", {"kg": 80.2, "date": "{{yesterday}}"})]
+
+
+MEAL_RUNS = {
+    "stated_number": (lambda meal: [_food(180, meal)], 180, "Logged dal, 180 kcal."),
+    "catch_up": (_catch_up, 640, "Logged all three."),
+    "rambling_day_log": (_rambling, 520, "All four logged."),
+}
+
+
+@pytest.mark.parametrize("case_id", list(MEAL_RUNS))
+def test_a_lunch_sent_with_no_meal_fails_even_when_the_clock_files_it_as_lunch(case_id, player):
+    """The person named lunch: the log_food call must say so. At 12:30 the server's clock files the row as lunch, so
+    the rows pass, and the call alone fails the run."""
+    case = next(c for c in judge.load_cases() if c["id"] == case_id)
+    runs, kcal, reply = MEAL_RUNS[case_id]
+    person = player.person(case)
+    player.on(DAY, minutes=LUNCH_HOUR)
+    reasons = player.verdict(case, person, runs(None), reply)
+    assert [r["meal"] for r in person_rows(person.user_id)["food_entry"]] == ["lunch"]
+    assert reasons and all(f'"kcal": {kcal}, "meal": "lunch"' in r for r in reasons), reasons
+
+
+@pytest.mark.parametrize("meal", ["lunch", "Lunch", "LUNCH"])
+@pytest.mark.parametrize("case_id", list(MEAL_RUNS))
+def test_a_lunch_sent_as_lunch_passes_at_a_dinner_hour(case_id, meal, player):
+    """Sent as lunch, in any case, at 17:30 when the clock would file it as dinner: the run passes."""
+    case = next(c for c in judge.load_cases() if c["id"] == case_id)
+    runs, _, reply = MEAL_RUNS[case_id]
+    person = player.person(case)
+    player.on(DAY, minutes=DINNER_HOUR)
+    assert player.verdict(case, person, runs(meal), reply) == [], (case_id, meal)
+    assert [r["meal"] for r in person_rows(person.user_id)["food_entry"]] == ["lunch"]
+
+
 @pytest.mark.parametrize("today", TODAYS, ids=[d.isoformat() for d in TODAYS])
 def test_the_seeded_write_cases_pass_on_nine_todays(today, monkeypatch, app_settings):
     """A write case on four or sixteen weeks: its passing runs name rows by date and weekday, so each runs on every
