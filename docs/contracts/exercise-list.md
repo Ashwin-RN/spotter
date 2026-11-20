@@ -804,3 +804,27 @@ hand and a false pass is not seen):
 - (bt) Four new strict fails of the run, kept as written, join `KNOWN_STRICT_FAILS`: `word_both_logged`,
   `pushups_over_100` and `pick_lift_answer`'s first reply ("I haven't logged it yet"), and `import_outside_defaults`
   ("Once this is saved"). Each fails only on a claim pattern, and is read by hand.
+
+2026-11-20, from the release eval run:
+
+- (bp) `set_goal` takes a plain word for a lift goal, as `log_lifts` does, by the person's live sets over the word's
+  candidates that take a lift goal (`rules.takes_lift_goal`, `rules.goal_lift`): none of those logged, the first in
+  list order, the word's default when it takes one; one logged, that one; two or more, `pick_lift` with those, each
+  `{name, last}`, field `exercise`: "'bench' could be Bench Press (last 2026-11-10) or Smith Bench Press (last
+  2026-11-17).", fix "Ask the person which, then send that name." (no `exact`: `set_goal` takes a name as written).
+  Nothing is written. A word none of whose lifts takes a goal (sled) takes its first, which gets R10's refusal. A
+  name, an alias, a plural and "Name (Equipment)" stay exact, so "bench press" with Smith Bench Press logged is Bench
+  Press. This follows the owner's standing ruling, a plain "squat" is Back Squat unless the person has logged a Smith
+  squat before, and narrows decision 28 and "Matching order" step 5 for a goal; a routine, an edit, an import and
+  cardio still refuse a plain word (R5). The history read is `lifts.last_logged`, one statement, made only when a
+  word is reached. Found by `lb_bench_goal` ("want to bench 225 by the end of june", on lb, Bench Press logged): 3 of
+  3 on live, 0 of 3 on this branch, since "bench" was refused. "bench" names Bench Press and Smith Bench Press only,
+  so a Dumbbell Bench Press set leaves it on Bench Press. An edit by `goal_id` takes no word step: "bench" on a
+  Bench Press goal is refused as `cannot_change_kind`, as before. No function text changed and no hash moved; the
+  new message and fix are text in a result, so an eval run is owed at the release. The Goals page never sends a word
+  (its picker sends a listed name).
+- (bu) `lb_bench_goal` judges the goal saved, not the name sent, after (bp): any `set_goal` input naming the lift, such
+  as "bench", with 225 lb and the June date, and the goal row's lift Bench Press. `person_rows` gives each goal row its
+  lift's name (`exercise`). A passing run sends "bench"; Smith Bench Press, a wrong date, a wrong target and a claim
+  with no goal fail. No run fails on the row's lift alone, since a goal on a lift never logged needs a start value,
+  which the case forbids, so a test plays that check on rows.

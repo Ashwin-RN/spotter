@@ -1619,6 +1619,17 @@ RUN26_RIGHT = [
      "together (25 kg each)?\n\nSpotter records dumbbell lifts by the weight in one "
      "hand, so I need to know which before I log the 8 reps."),
 ]
+# lb_bench_goal is judged by the goal saved, not the name sent (exercise-list.md, C4g, note bu): set_goal takes a plain
+# word by the person's history, so "bench" with only Bench Press logged saves a Bench Press goal.
+LB_GOAL = {"kind": "lift", "target_value": 225, "target_date": "{{next_month_end:6}}"}
+RUNS["lb_bench_goal"]["pass"].append(([("set_goal", {**LB_GOAL, "exercise": "bench"})], "Goal set: Bench Press 225 lb."))
+RUNS["lb_bench_goal"]["fail"] += [
+    ([("set_goal", {**LB_GOAL, "exercise": "Smith Bench Press"})], "Goal set: Bench Press 225 lb."),  # another lift
+    ([("set_goal", {**LB_GOAL, "exercise": "bench", "target_date": "{{next_month_end:7}}"})],
+     "Goal set: Bench Press 225 lb."),  # a wrong date
+    ([("set_goal", {**LB_GOAL, "exercise": "bench", "target_value": 235})], "Goal set: Bench Press 235 lb."),  # target
+    ([], "Goal set: Bench Press 225 lb by the end of June."),  # a claim with no goal
+]
 for id_, calls, reply in RUN26_RIGHT:
     RUNS[id_]["pass"].append((calls, reply))
 # gold_best_deadlift is G1's (its runs are in tests/test_sixteen_weeks.py): the 26-case run's reply is played here.
@@ -1795,6 +1806,16 @@ def test_gold_best_deadlift_takes_a_could_not_find_as_none_logged(player):
     assert player.verdict(case, player.person(case), [who(), WIL],
                           "I couldn't find a deadlift, but your best deadlift is 140 kg.")
     assert player.verdict(case, player.person(case), [who(), WIL], "Your deadlift is coming along well.")
+
+
+def test_lb_bench_goal_judges_the_lift_the_goal_was_saved_on():
+    """No run reaches it alone (a goal on a lift never logged needs a start value, which the case forbids), so the row
+    check is played on rows: a goal saved on Smith Bench Press fails, one on Bench Press passes."""
+    case = judge.resolve(next(c for c in judge.load_cases() if c["id"] == "lb_bench_goal"), dates_on(DAY))
+    goal = {"id": 1, "kind": "lift", "target_value": 102.06, "target_date": next_month_end(DAY, 6).isoformat(),
+            "status": "open", "deleted_at": None}
+    assert judge.judge_db(case["db"], {"goal": [{**goal, "exercise": "Bench Press"}]}) == []
+    assert judge.judge_db(case["db"], {"goal": [{**goal, "exercise": "Smith Bench Press"}]})
 
 
 def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():

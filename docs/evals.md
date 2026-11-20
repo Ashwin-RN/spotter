@@ -310,6 +310,8 @@ record cannot be talked round.
     the sets said, checks both with one row check.
   - A note is never kept as deleted: a deleted note's row is gone. So every feedback row is live.
   - A goal has no delete, so every goal row is live. Check `status` instead.
+  - A goal row carries `exercise`: its lift's name, or none for a goal of no lift. `lb_bench_goal` judges it: any word
+    that names the lift may be sent, such as "bench", and the goal saved must be on Bench Press.
 
 ### Placeholders
 

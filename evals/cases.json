@@ -2709,8 +2709,8 @@
               "may": ["get_data", "get_progress", "whoami", "list_exercises"],
               "must_not": ["log_lifts", "log_bodyweight", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
     "seed": [{"service": "update_settings", "data": {"weight_unit": "lb"}}, {"service": "log_lifts", "data": {"sets": [{"exercise": "Bench Press", "weight_lb": 185, "reps": 5, "exact": true}]}}],
-    "expect": {"function": "set_goal", "ok_calls": {"set_goal": 1}, "inputs_include": {"kind": "lift", "exercise": "Bench Press", "target_value": 225, "target_date": "{{next_month_end:6}}"}, "inputs_forbid": {"target_value": {"$in": [102.06, 102.1, 102]}, "weight_unit": "kg"}, "inputs_exclude": ["start_value"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
-    "db": [{"table": "goal", "count": 1, "all": {"kind": "lift", "target_value": 102.06, "target_date": "{{next_month_end:6}}", "status": "open"}}]
+    "expect": {"function": "set_goal", "ok_calls": {"set_goal": 1}, "inputs_include": {"kind": "lift", "target_value": 225, "target_date": "{{next_month_end:6}}"}, "inputs_forbid": {"target_value": {"$in": [102.06, 102.1, 102]}, "weight_unit": "kg"}, "inputs_exclude": ["start_value"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "goal", "count": 1, "all": {"kind": "lift", "target_value": 102.06, "target_date": "{{next_month_end:6}}", "status": "open", "exercise": "Bench Press"}}]
   },
   {
     "id": "weekly_sessions_target",

@@ -374,7 +374,9 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
     query over all of the person's sessions. A routine row carries lift_count: how many lifts its lifts JSON holds.
     lift_set, which has no user_id of its own, is every set of the person's sessions, one row a set (contract
     exercise-list.md, C4g): its id, session_id, set_number, exercise (the lift's name), weight_kg, reps, time_s and
-    distance_m, with its session's date and deleted_at, so a set of a deleted session reads as deleted."""
+    distance_m, with its session's date and deleted_at, so a set of a deleted session reads as deleted. A goal row
+    carries exercise: its lift's name, or None for a goal of no lift (exercise-list.md, C4g: a goal set from a plain
+    word is judged by the lift it was saved on)."""
     from sqlalchemy import func, select
 
     from app import db
@@ -397,6 +399,9 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
                  .join(sessions, sets.c.session_id == sessions.c.id).join(lifts, sets.c.exercise_id == lifts.c.id)
                  .where(sessions.c.user_id == user_id).order_by(sets.c.id))
         found["lift_set"] = [{k: _plain(v) for k, v in row._mapping.items()} for row in connection.execute(query)]
+        names = dict(connection.execute(select(lifts.c.id, lifts.c.name)).all())
+    for row in found["goal"]:
+        row["exercise"] = names.get(row.get("exercise_id"))
     for row in found["lift_session"]:
         row["set_count"] = counted.get(row["id"], 0)
     for row in found["routine"]:

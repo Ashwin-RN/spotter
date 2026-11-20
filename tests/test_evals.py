@@ -2145,6 +2145,20 @@ def test_person_rows_gives_every_set_of_the_person_s_sessions_with_its_session_s
     assert "lift_set" in judge.DB_TABLES and "exercise" in judge._rows_text([{"exercise": "Plank"}])
 
 
+def test_person_rows_names_each_goal_s_lift(make_user):
+    """exercise-list.md, C4g: a goal set from a plain word is judged by the lift it was saved on."""
+    user = make_user()
+    services.log_lifts(user.id, {"sets": [{"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": True}]},
+                       "claude")
+    lift = services.set_goal(user.id, {"kind": "lift", "exercise": "Bench Press", "target_value": 100,
+                                       "target_date": "2027-06-30"}, "claude")
+    weight = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75, "start_value": 80,
+                                           "target_date": "2027-06-30"}, "claude")
+    assert "error" not in lift and "error" not in weight, (lift, weight)
+    goals = {r["id"]: r["exercise"] for r in person_rows(user.id)["goal"]}
+    assert goals == {lift["id"]: "Bench Press", weight["id"]: None}
+
+
 def test_the_recorder_keeps_every_call_s_answer_as_result_and_a_data_read_s_as_answer_too(provider, make_user,
                                                                                          token_for):
     make_user(subject="user_rec_r", email="r@example.com", name="R", time_zone="Asia/Kolkata")
