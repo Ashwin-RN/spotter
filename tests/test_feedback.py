@@ -69,14 +69,14 @@ DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint":
 PUBLISHED = {
     "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
     "list_exercises": "52f0fb4f9245da8281c13052d8ae35fab385d18a06ca6c9bdf74ce9074373aab",  # exercise list C4d: search; C4f: a side
-    "log_lifts": "fbb56822abc39fc069e68d9f60bd84d66fa4233d79b8c858abda85403ada10d0",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words; C4e: NewBest's kinds; C4f: hand_check, a side
+    "log_lifts": "cce7125486e2e61961d17789ad4423a84a77c524201269d3ff55faca60cae9e9",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words; C4e: NewBest's kinds; C4f: hand_check, a side; 2026-11-20: a pair's weight
     "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
     "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs
-    "get_progress": "70b15225d04a92d823c21775af729b4691173071168c2652142ef2fd2780f278",  # units; inputs; exercise list C4e: Best's kinds
+    "get_progress": "ce39ac5048c32dd5a92b65f7fd319642aeec9b44524c3805fc39e9b1f0f82a00",  # units; inputs; exercise list C4e: Best's kinds; 2026-11-20: Best.text
     "update_settings": "cdd9e2dc2bb0ce2a9e35d4d6cfa0e81e71ffec9bbfcb16a4945d6d858ad8ea64",  # units; inputs
     "get_log": "d5bd1cf80037cdb4817f483fd66d9643c7c8917f32c6b3925ce1c4e541fc3c4c",  # units; inputs; exercise list: SetOut; C4e: NewBest's kinds
     "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
-    "edit_entry": "5274d313b456524076329e34db887b7eb1ed3e579ddc58da761f573f16360d6a",  # units; inputs; exercise list: SetIn; C4f: a side
+    "edit_entry": "c396cecb79e12c8944c7e3416fb8bae9c328c7521761d6520d29f2ed86ab4781",  # units; inputs; exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight
     "restore_entry": "1fc5aa945a46c50c8203a702b4821fe42c6d39e35d3db0f27552c2099043c224",  # routines: kind routine; inputs
     "delete_entry": "1ec50c125535b54a79d67d619c802d49ddaf0aef69a88f53ff90ae66168d1282",  # routines: kind routine; units; inputs
     "find_food": "9ae7214dc6c6104ae9ae93325d6ed9b87c5296773febd70d07dd8a388ae56fde",  # inputs

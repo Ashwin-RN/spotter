@@ -606,6 +606,13 @@ def _identity(s, kind: str, data: dict, errors: list, warnings: list):
                 errors.append(rules.error("invalid_field", f"{hit} records {rules.records(hit)}: a lift goal needs a "
                                           "lift of weight and reps.", "Use a lift from list_exercises with kind lift.",
                                           field="exercise"))
+            elif "weight" not in rules.measures_of(hit) or rules.takes_help(hit):
+                # A band lift stores 0 kg and an assisted lift a minus weight: Epley gives no estimated max at 0 or
+                # below, so such a goal would never move (exercise-list.md, note of 2026-11-20).
+                how = "is logged with help" if rules.takes_help(hit) else "records reps, not weight"
+                errors.append(rules.error("invalid_field", f"{hit} {how}: a lift goal needs a lift of weight and "
+                                          "reps.", "Use a lift from list_exercises with kind lift, logged with a "
+                                          "weight above 0.", field="exercise"))
             else:
                 exercise = by_name[hit]
     elif kind == "cardio_best":

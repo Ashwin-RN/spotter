@@ -20,7 +20,7 @@ from sqlalchemy import select
 from app import db, rules, services, web
 from app.formatting import KG_KM, Units
 from app.mcp_schemas import LogSetIn, SetIn
-from app.models import EntryVersion, Exercise, LiftSession, Routine, User
+from app.models import EntryVersion, Exercise, Goal, LiftSession, Routine, User
 from app.services import common, lifts
 
 from . import text_rules as tr
@@ -405,6 +405,49 @@ def test_a_lift_goal_refuses_a_hold_and_a_carry(uid):
                                                   "start_value": 20, "target_date": "2027-03-31"}, "claude")
 
 
+def test_a_lift_goal_refuses_a_band_lift_and_an_assisted_lift_even_with_a_session_logged(uid):
+    # An outside review (exercise-list.md, note of 2026-11-20): a band stores 0 kg and help a minus weight, so Epley
+    # gives no estimated max and such a goal never moves. It was refused as "no logged ... to start this goal from"
+    # with a session there, or taken with start_value.
+    fix = "Use a lift from list_exercises with kind lift, logged with a weight above 0."
+    logged = {"Band Pull-Apart": {"reps": 15}, "Band-Assisted Pull-Up": {"reps": 8},
+              "Band Lateral Walk": {"reps": 12}, "Assisted Pull-Up": {"weight_kg": -20, "reps": 8},
+              "Assisted Dip": {"weight_kg": -10, "reps": 10}}
+    for name, sent in logged.items():
+        out = services.log_lifts(uid, {"date": DAY, "sets": [{"exercise": name, "exact": True, **sent}]}, "claude")
+        assert "error" not in out, out
+        how = "is logged with help" if name.startswith("Assisted") else "records reps, not weight"
+        for start in ({}, {"start_value": 20}):
+            r = services.set_goal(uid, {"kind": "lift", "exercise": name, "target_value": 100,
+                                        "target_date": "2027-03-31", **start}, "claude")
+            assert (r["error"], r["message"], r["fix"], r["field"]) == (
+                "invalid_field", f"{name} {how}: a lift goal needs a lift of weight and reps.", fix, "exercise"), r
+        clean(r["message"], r["fix"])
+    with db.new_session() as s:
+        assert s.scalars(select(Goal)).all() == []
+
+
+def test_a_pull_up_or_push_up_goal_behaves_as_before(uid, make_user):
+    # Not changed by the note of 2026-11-20. Logged at 0 kg alone there is no estimated max to start from, so the goal
+    # is refused as nothing logged to start from; a start_value, or a set with added weight, starts it.
+    goal = {"kind": "lift", "target_value": 100, "target_date": "2027-03-31"}
+    for name in ("Pull-Up", "Push-Up"):
+        out = services.log_lifts(uid, {"date": DAY, "sets": [{"exercise": name, "exact": True, "weight_kg": 0,
+                                                              "reps": 10}]}, "claude")
+        assert "error" not in out, out
+        r = services.set_goal(uid, {**goal, "exercise": name}, "claude")
+        assert (r["error"], r["message"], r["field"]) == (
+            "missing_field", f"There is no logged {name} to start this goal from.", "start_value"), r
+        started = services.set_goal(uid, {**goal, "exercise": name, "start_value": 20}, "claude")
+        assert "error" not in started, started
+    other = make_user(time_zone="UTC").id
+    weighted = services.log_lifts(other, {"date": DAY, "sets": [
+        {"exercise": "Pull-Up", "exact": True, "weight_kg": 10, "reps": 5}]}, "claude")
+    assert "error" not in weighted, weighted
+    r = services.set_goal(other, {**goal, "exercise": "Pull-Up"}, "claude")
+    assert "error" not in r and r["goal"]["start_value"] == 11.7, r  # Epley of 10 kg x 5, at 1 dp
+
+
 def test_an_import_row_of_a_hold_fails_alone_once_a_lift_and_help_follows_r6(uid):
     plank = {"kind": "lift_session", "date": DAY, "sets": [
         {"exercise": "Plank", "weight": 0, "reps": 60}, {"exercise": "Plank", "weight": 0, "reps": 45},
@@ -488,9 +531,9 @@ def test_log_lifts_takes_its_own_set_model_and_edit_entry_takes_set_in_with_the_
         "A hold's or a carry's time in seconds, 1 to 3,600. On a lift done one side at a time, one side's time.")
     assert props["distance_m"]["description"] == (
         "A carry's or a sled's distance in metres, 1 to 5,000. On a lift done one side at a time, one side's distance.")
-    for field in ("weight_kg", "weight_lb"):
-        assert ("Use 0 for bodyweight work. For dumbbells, kettlebells or two cables, one hand's weight. Help on "
-                "Assisted Pull-Up or Assisted Dip as a minus weight.") in props[field]["description"]
+    for field in ("weight_kg", "weight_lb"):  # a pair's: one weight in both hands (Goblet Squat) is that weight
+        assert ("Use 0 for bodyweight work. For a pair of dumbbells or kettlebells, or two cables, one hand's weight. "
+                "Help on Assisted Pull-Up or Assisted Dip as a minus weight.") in props[field]["description"]
     hold = ok(http, token, "log_lifts", {"date": DAY, "sets": [{"exercise": "Plank", "weight_kg": 0, "time_s": 60}]})
     assert hold["session"]["sets"][0]["time_s"] == 60 and hold["summary"].startswith("Plank 60 s on ")
     wrong = failed(http, token, "log_lifts", {"sets": [{"exercise": "Plank", "weight_kg": 0, "seconds": 60}]})

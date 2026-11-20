@@ -62,9 +62,11 @@ def _max(value: float | None) -> float | None:
     return None if value is None else formatting.rounded(value, "estimated_max")
 
 
-def _one(name: str, history: dict, numbers: list[dict], today: date, exact: bool = False) -> dict:
+def _one(name: str, history: dict, numbers: list[dict], today: date, exact: bool = False, units=None) -> dict:
     """One lift. numbers: goals.rounded_numbers. history's own values are never changed. exact: the estimated
-    maxes, the bests and the trend unrounded, as the lb summary takes them (get_progress' exact)."""
+    maxes, the bests and the trend unrounded, as the lb summary takes them (get_progress' exact). Each best's text is
+    lifts.best_text of the unrounded best in the person's units, the words log_lifts' new best and get_log carry:
+    a hold's weight and a carry's distance are in the text alone (exercise-list.md, note of 2026-11-20)."""
     pts = history["points"].get(name, [])
     trend = metrics.projection(pts, today)
     goals = [g for g in numbers if g["exercise"] == name]
@@ -77,7 +79,9 @@ def _one(name: str, history: dict, numbers: list[dict], today: date, exact: bool
         "estimated_max_over_time": [{"date": d.isoformat(), "estimated_max_kg": most(v)} for d, v in pts],
         "current_estimated_max_kg": most(metrics.recent_best(pts, today)),
         "best_set": history["best_set"].get(name),
-        "bests": [best({k: p[k] for k in ("date", "kind", "value", "previous")})
+        "bests": [{**best({k: p[k] for k in ("date", "kind", "value", "previous")}),
+                   "text": lifts.best_text({k: p[k] for k in ("exercise", "kind", "value", "previous",
+                                                              *lifts.BEST_PLACES) if k in p}, units)}
                   for p in history["bests"].get(name, [])],
         "trend": {"slope_per_week": _slope_per_week(pts, today) if exact else trend["slope_per_week"],
                   "points_used": trend["points_used"]} if trend else None,
@@ -149,7 +153,7 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
     name not on the list, since every matcher leaves retired rows out. No MCP function passes it either.
 
     With exercise: {today, lift {exercise, sessions, last_trained, estimated_max_over_time [{date,
-    estimated_max_kg}], current_estimated_max_kg, best_set, bests [{date, kind, value, previous}], trend
+    estimated_max_kg}], current_estimated_max_kg, best_set, bests [{date, kind, value, previous, text}], trend
     {slope_per_week, points_used} | None, goal, goals}, how, links[, note]}.
     Without: {today, lifts [{exercise, sessions, last_trained, current_estimated_max_kg,
     best_estimated_max_kg, slope_per_week, goal_status}], goals, how, links[, note]}.
@@ -189,7 +193,7 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
         numbers = rounded_numbers(goal_numbers(goals, loaded, today, units=units))
 
         if only is not None:
-            one = _one(only, history, numbers, today, exact)
+            one = _one(only, history, numbers, today, exact, units)
             note = None if one["sessions"] else f"No sets of {only} logged yet."
             out = {"today": today.isoformat(), "lift": one, "how": HOW,
                    "summary": note or _lift_words(only, history, today, units, whole=True, records=records),
@@ -200,7 +204,7 @@ def get_progress(user_id: int, exercise: str | None = None, *, exact: bool = Fal
             numbers = [g for g in numbers if g.get("exercise") in several]
         rows = []
         for name in sorted(n for n in history["logged"] if several is None or n in several):
-            one = _one(name, history, numbers, today, exact)
+            one = _one(name, history, numbers, today, exact, units)
             rows.append({"exercise": name, "sessions": one["sessions"], "last_trained": one["last_trained"],
                          "current_estimated_max_kg": one["current_estimated_max_kg"],
                          "best_estimated_max_kg": (one["best_set"] or {}).get("estimated_max_kg"),
@@ -223,7 +227,8 @@ def _retired(s) -> list[Exercise]:
 def _for_page(out: dict, history: dict, records: dict, units=None) -> dict:
     """The result with the page's extras (get_progress' for_page): best_sets and reps_only, and when any lift of
     another kind than standard is logged, records and best_words: {lift: each of its bests in words for a page, in
-    the order of its bests}, naming where each stands (lifts.best_phrase), which a result's bests do not carry."""
+    the order of its bests}, naming where each stands (lifts.best_phrase), with a no-break space before each unit and no
+    lift name: a result's best text has both the other way."""
     out = {**out, "best_sets": history["best_set"], "reps_only": history["reps_only"]}
     if records:
         out["records"] = records

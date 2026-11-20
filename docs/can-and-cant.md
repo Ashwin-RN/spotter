@@ -6,7 +6,7 @@ from it. It knows nothing else.
 ## What it records today
 
 - **Lift sessions:** the date, optional notes, and the sets: exercise, weight, and reps, or a time, or a
-  distance and time. A dumbbell weight is one hand's. Sets logged for a date go into that date's session, call by
+  distance and time. For a pair of dumbbells, one hand's weight. Sets logged for a date go into that date's session, call by
   call. A second workout that day is a second
   session when the person says so.
 - **Body weight:** one weigh-in a day.

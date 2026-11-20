@@ -40,18 +40,19 @@ from .test_web import client, only_user, post, seam, sign_in, today_of, web_clie
 # log_lifts and get_log: as published after exercise-list.md's deploy 1, where SetOut gained time_s and distance_m. Then
 # its package C4b moved log_lifts (LogSetIn), get_log (SetOut), edit_entry (SetIn), import_entries, save_routine and
 # get_routines (reps 1 to 100, the import's names part), C4d list_exercises (search, count, note), and C4e log_lifts,
-# get_log and get_progress (NewBest's and Best's kinds and units).
+# get_log and get_progress (NewBest's and Best's kinds and units). On 2026-11-20 an outside review moved log_lifts and
+# edit_entry (a pair's weight) and get_progress (Best.text).
 BEFORE_INPUTS = {
     "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",
     "list_exercises": "00569bbb5241240bff4eb3124c0c01d5cf997ba2bb1e8c520911d47af4be5476",  # exercise list C4d: search; C4f: a side
-    "log_lifts": "a159262feef60dcec47898b78c6b6de9a901acecba5d03ff45e833241f02f9b2",  # exercise list: LogSetIn; C4e: NewBest; C4f: hand_check, a side
+    "log_lifts": "25bad23e53f48945c75888f6f706afe840f0253c68dcf1db3d7e3efdaf6f7c11",  # exercise list: LogSetIn; C4e: NewBest; C4f: hand_check, a side; 2026-11-20: a pair's weight
     "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",
     "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",
-    "get_progress": "7a3d6d383d8ccdc796fe25315d55eac7f1f65c7532bb27c0570014eb8c6485dd",  # exercise list C4e: Best
+    "get_progress": "81b1ca6ab08ee7a300aa32893713e73457fc836f649b845bb4260dfdfb17edd5",  # exercise list C4e: Best; 2026-11-20: Best.text
     "update_settings": "1053550decae70f255f0edaf894b730c1da9315e2d989ae1e5e2536eee85c879",
     "get_log": "dcfab8951e9a8aa501e136054150cb05c07477ad2eda6ca87b6dfc5114e059e5",  # exercise list: SetOut; C4e: NewBest
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
-    "edit_entry": "439ebe36878ea588adcf05654e1d0967c69acb057b0e47a4c523c462545ba9e7",  # exercise list: SetIn; C4f: a side
+    "edit_entry": "e72a92fc3615faca270f78217f07c1632e5323bef42a326b4e70533709323620",  # exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight
     "restore_entry": "ea098328552576986f8c0a410757d424478eb0566b104e2eb76d3de4b24cf8a9",
     "delete_entry": "ed03ec3aad90a1ffa9f8b00175bf5a7c1b7d18c92ce20d7032ee43fbf8fd749f",
     "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",

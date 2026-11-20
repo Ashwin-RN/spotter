@@ -232,7 +232,10 @@ def every_read(seen: Seen, user_id: int, widened: bool = False):
     seen.add("get_goals", services.get_goals(user_id, include_closed=True), widened=lines)
     seen.add("get_progress", services.get_progress(user_id), widened=lines)
     for name in ("Back Squat", "Deadlift", "Outdoor Run", "Treadmill Walk"):
-        seen.add(f"get_progress {name}", services.get_progress(user_id, name), widened=lines)
+        read = services.get_progress(user_id, name)
+        # A best's text is log_lifts' words (exercise-list.md, note of 2026-11-20): a widened pair there too.
+        said = frozenset(b["text"] for b in (read.get("lift") or {}).get("bests", [])) if widened else frozenset()
+        seen.add(f"get_progress {name}", read, widened=lines | said)
     seen.add("get_log", services.get_log(user_id, days=14), widened=widened)
     seen.add("get_days", services.get_days(user_id))
     seen.add("get_cardio", services.get_cardio(user_id))

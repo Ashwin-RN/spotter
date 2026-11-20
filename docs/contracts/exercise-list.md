@@ -738,3 +738,26 @@ the review found passing is a failing run in `tests/test_golden_cases.py`:
   expect's `inputs_include` on a call that succeeded in the second turn, so `exact` true on a refused call alone fails.
 - (be) A 23rd new case, `goblet_single_weight` ("did goblet squats 3x10 with a 24kg dumbbell"), `core` false: three
   Goblet Squat sets at 24 kg, never one hand's 12. The cases go to 258, the golden package to 187.
+
+2026-11-20, from an outside review:
+
+- (bf) A lift goal also refuses a band lift and an assisted lift (R10 widened). A band stores 0 kg and help a minus
+  weight, and Epley gives no estimated max at 0 or below, so such a goal never moved; with a session logged it was
+  refused as "There is no logged ... to start this goal from", and with `start_value` it was taken. Now, in R10's
+  form: "Band Pull-Apart records reps, not weight: a lift goal needs a lift of weight and reps." / "Assisted Pull-Up
+  is logged with help: a lift goal needs a lift of weight and reps.", fix "Use a lift from list_exercises with kind
+  lift, logged with a weight above 0." Pull-Up and Push-Up are as before: logged at 0 kg alone, refused as nothing
+  to start from; with `start_value` or a set with added weight, taken. The check runs on a new goal only: an edit by
+  `goal_id` never reads the lift again, so an open goal set before on one of these lifts can still be edited or
+  dropped. How `get_goals` reads such a goal is not checked.
+- (bg) `Best` gains `text`, optional, an added field (one deploy): each best in the words `log_lifts`' `NewBest` and
+  `get_log` give, from the same `lifts.best_text` over the unrounded best, so a hold's weight and a carry's distance
+  reach `get_progress` ("Plank longest hold 45 s at 10 kg, up from 30 s"). This replaces note (u)'s "`NewBest` and
+  `Best` carry no new field". Hash moved: `get_progress`.
+- (bh) The set weight's per-hand sentence was wrong for a lift of one weight in both hands (Goblet Squat, Dumbbell
+  Pullover: load type single). `SetIn` and `LogSetIn`, `weight_kg` and `weight_lb`, now say "For a pair of dumbbells
+  or kettlebells, or two cables, one hand's weight." The table row above keeps the words as first built. Hashes
+  moved: `log_lifts`, `edit_entry`.
+- (bi) `0014`'s down stays a no-op, as "`0014`: the one-off delete" decides. A downgrade past `0014` then an upgrade
+  would delete every lift set logged after deploy 2: done only by hand, on the owner's word, and never run.
+- (bj) `docs/can-and-cant.md:9` said "A dumbbell weight is one hand's.", the same flaw as (bh): it now says "For a pair of dumbbells, one hand's weight." Found by the app fixes' builder; changed in the main chat.

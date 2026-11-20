@@ -120,7 +120,7 @@ FOOD_NAME_RULE = (
 # What a set's weight means, after "Use 0 for bodyweight work." (contract exercise-list.md, Model-read text).
 # A routine's weight takes the help sentence too: save_routine takes R6's weight range for each lift.
 _HELP_WEIGHT = "Help on Assisted Pull-Up or Assisted Dip as a minus weight."
-_SET_WEIGHT_MEANS = "For dumbbells, kettlebells or two cables, one hand's weight. " + _HELP_WEIGHT
+_SET_WEIGHT_MEANS = "For a pair of dumbbells or kettlebells, or two cables, one hand's weight. " + _HELP_WEIGHT
 # A set of a lift done one side at a time holds one side's reps, time or distance (sides each; list_exercises' records says
 # "a side"). Built on the owner's pending pick A (exercise-list.md, note of 2026-11-19, C4f).
 _ONE_SIDE = "On a lift done one side at a time, one side's "
@@ -849,6 +849,8 @@ class Best(BaseModel):
     kind: str = Field(description=BEST_KINDS)
     value: float = Field(description=f"The new best: {BEST_UNITS}.")
     previous: float = Field(description=f"The best before it: {BEST_UNITS}.")
+    text: str | None = Field(default=None, description="The best in words, ready to quote. It names a hold's weight "
+                                                       "and a carry's distance.")
 
 
 class LiftTrend(BaseModel):

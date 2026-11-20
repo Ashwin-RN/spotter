@@ -227,6 +227,7 @@ def test_each_row_of_the_bests_table_through_log_lifts_get_progress_and_get_log(
     read = services.get_progress(uid, lift)
     bests = read["lift"]["bests"]
     assert [(b["date"], b["kind"], b["value"], b["previous"]) for b in bests] == seen
+    assert [b["text"] for b in bests] == texts  # get_progress says each best as log_lifts did (note of 2026-11-20)
     for b in bests:
         Best.model_validate(b)
     in_log = [(day(n + 1), b["kind"], b["value"], b["previous"]) for n, _ in enumerate(sessions)
@@ -236,6 +237,49 @@ def test_each_row_of_the_bests_table_through_log_lifts_get_progress_and_get_log(
                 for s in services.get_log(uid, day(n + 1))["days"][0]["sessions"] for b in s["new_bests"]]
     assert in_words == texts  # get_log, and so the day page, says each best as log_lifts did
     clean(first, *texts, read["summary"], surface=tr.SUMMARY)
+
+
+def test_get_progress_s_best_text_names_a_hold_s_weight_and_a_carry_s_distance_and_a_weight_best_s_is_as_before(
+        uid, make_user):
+    # An outside review (exercise-list.md, note of 2026-11-20): Best kept date, kind, value and previous, so a hold's
+    # weight and a carry's distance, which make the best true, were in log_lifts' words alone.
+    def words(person, lift, on):
+        """Each best's text as log_lifts, get_log and get_progress give it, for the session on that day."""
+        progress = [b["text"] for b in services.get_progress(person, lift)["lift"]["bests"] if b["date"] == on]
+        in_log = [b["text"] for s in services.get_log(person, on)["days"][0]["sessions"] for b in s["new_bests"]]
+        return progress, in_log
+
+    log(uid, day(1), one("Plank", 0, time_s=90))
+    assert log(uid, day(2), one("Plank", 10, time_s=30))["new_bests"] == []  # shorter than every earlier hold
+    logged = log(uid, day(3), one("Plank", 10, time_s=45))
+    said = [b["text"] for b in logged["new_bests"]]
+    assert said == ["Plank longest hold 45 s at 10 kg, up from 30 s"]
+    assert words(uid, "Plank", day(3)) == (said, said)
+    [best] = services.get_progress(uid, "Plank")["lift"]["bests"]
+    assert best == {"date": day(3), "kind": "time", "value": 45, "previous": 30, "text": said[0]}
+    Best.model_validate(best)
+
+    log(uid, day(4), one("Farmer's Carry", 32, time_s=45, distance_m=40))
+    carried = [b["text"] for b in log(uid, day(5), one("Farmer's Carry", 36, time_s=50, distance_m=40))["new_bests"]]
+    assert carried == ["Farmer's Carry heaviest load 36 kg over 40 m, up from 32 kg"]
+    assert words(uid, "Farmer's Carry", day(5)) == (carried, carried)
+
+    # A weight best: its numbers as before, and its text the words log_lifts says, in the person's units.
+    for person, expected in ((uid, ["Bench Press estimated max 116.7 kg, up from 93.3 kg",
+                                    "Bench Press heaviest weight 100 kg, up from 80 kg"]),
+                             (make_user(time_zone="UTC", weight_unit="lb").id,
+                              ["Bench Press estimated max 257.2 lb, up from 205.8 lb",
+                               "Bench Press heaviest weight 220.45 lb, up from 176.35 lb"])):
+        log(person, day(6), one("Bench Press", 80, 5))
+        heavier = log(person, day(7), one("Bench Press", 100, 5), one("Bench Press", 90, 8))
+        assert [b["text"] for b in heavier["new_bests"]] == expected
+        assert words(person, "Bench Press", day(7)) == (expected, expected)
+        read = services.get_progress(person, "Bench Press")["lift"]["bests"]
+        assert [(b["kind"], b["value"], b["previous"]) for b in read] == [("estimated_max", 116.7, 93.3),
+                                                                         ("weight", 100, 80)]
+        unrounded = services.get_progress(person, "Bench Press", exact=True)["lift"]["bests"]  # the pages' read
+        assert [b["text"] for b in unrounded] == expected
+    clean(said[0], *carried, *expected, surface=tr.SUMMARY)
 
 
 def test_an_add_to_the_session_reports_only_a_best_it_did_not_hold_before(uid):

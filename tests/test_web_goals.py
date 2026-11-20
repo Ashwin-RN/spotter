@@ -676,7 +676,8 @@ SERVICE_REFUSALS = {
     ("_measurement_kind", "invalid_field", "measurement_kind"): [("invalid_field", "measurement_kind")],
     ("_measurement_kind", "invalid_kind", "measurement_kind"): [("invalid_kind", "measurement_kind")],
     ("_wrong_kind", "invalid_field", "exercise"): [("invalid_field", "exercise")],
-    # exercise-list.md R10: a hold, a carry or a sled, refused for a lift goal, answered by the same line.
+    # exercise-list.md R10: a hold, a carry or a sled, and since its note of 2026-11-20 a band or an assisted lift,
+    # refused for a lift goal, answered by the same line.
     ("_identity", "invalid_field", "exercise"): [("invalid_field", "exercise")],
     ("_identity", "<match_cardio>", None): [("missing_field", "exercise"), ("unknown_exercise", "exercise")],
     ("_identity", "<dict>", "exercise"): [("missing_field", "exercise")],  # match_cardio's missing_field, renamed
@@ -718,7 +719,8 @@ SERVICE_REFUSAL_COUNTS = {("_kind_error", "invalid_field", "kind"): 2, ("_wrong_
                           ("_identity", "<_at>", "exercise"): 2, ("_no_start", "missing_field", "start_value"): 4,
                           ("_identity", "<_at>", "distance_km"): 2,  # units.md R6: one_of's both, and the range
                           ("_wrong_way", "wrong_direction", "target_value"): 2,
-                          ("set_goal", "invalid_field", "status"): 2}
+                          ("set_goal", "invalid_field", "status"): 2,
+                          ("_identity", "invalid_field", "exercise"): 2}  # R10, and a band or help (2026-11-20)
 # The codes each function of app outside goals.py that set_goal's module calls can build, read from its source.
 OUTSIDE_CODES = {"check_by": {"invalid_by"}, "check_data": {"invalid_field"}, "check_write_limit": {"too_many_writes"},
                  "in_range": {"invalid_field"}, "match_cardio": {"missing_field", "unknown_exercise"},
