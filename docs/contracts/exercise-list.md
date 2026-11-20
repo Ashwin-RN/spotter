@@ -787,3 +787,20 @@ hand and a false pass is not seen):
 - (bo) The Goals page's lift picker offers only the lifts `set_goal` takes (`rules.takes_lift_goal`: weight and
   reps, no help). It offered the holds, carries, sleds, band and assisted lifts too, and a pick answered "Choose a
   lift from the list."
+
+2026-11-20, C4g, from the 26-case run (results kept in the run's temporary folder):
+
+- (bq) `pick_lift_answer`'s three failures were no runner fault: `run_once` judges `replies[0]` as the first reply, as
+  meant. Two first replies said "Back Squat, last logged 2026-11-15", Spotter's own `pick_lift` words, which the claim
+  pattern read as "logged" and a number; one said "I haven't logged it yet", a known strict fail. A claim's number is
+  now never a date (`\d+(?![\d-])`), and a test pins that the first-reply check reads `replies[0]`: a claim there alone
+  fails, a claim in the last reply alone passes.
+- (br) A verb that ends its sentence after "gets", "get", "be" or "being" is no claim, so `hand_check_family`'s "the
+  answer doubles or halves what gets saved." passes; that run's "before I log it" was never the match. The hand phrases
+  gain "both dumbbells", "together" and "for both". Both runs are passing runs.
+- (bs) `gold_best_deadlift`'s negations gain couldn't, could not, find no and found no: "I couldn't find a deadlift in
+  your Spotter log." passes, played in `tests/test_golden_cases.py`, since the case's own runs are in
+  `tests/test_sixteen_weeks.py`.
+- (bt) Four new strict fails of the run, kept as written, join `KNOWN_STRICT_FAILS`: `word_both_logged`,
+  `pushups_over_100` and `pick_lift_answer`'s first reply ("I haven't logged it yet"), and `import_outside_defaults`
+  ("Once this is saved"). Each fails only on a claim pattern, and is read by hand.

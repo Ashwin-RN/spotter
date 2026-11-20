@@ -2254,6 +2254,15 @@ def test_a_two_turn_run_judges_its_first_reply_by_the_case_s_first_reply_pattern
     assert asked["passed"] is True
     claimed, _ = _two_turns(server, monkeypatch, [turn("Logged Back Squat."), turn("Logged Back Squat.")],
                             expect=expect)
+    # The 26-case run's question: the check reads replies[0], never the last reply. A claim in the first turn alone
+    # fails; a claim in the second turn alone, the log the person asked for, passes.
+    first_only, _ = _two_turns(server, monkeypatch, [turn("Logged Back Squat."), turn("Done: Back Squat.")],
+                               expect={"reply_has": ["Back Squat"], **{k: v for k, v in expect.items() if k != "reply_has"}})
+    assert first_only["replies"] == ["Logged Back Squat.", "Done: Back Squat."] and first_only["passed"] is False
+    assert first_only["reasons"] == [f"the first turn's reply matches {chr(92) + 'blogged' + chr(92) + 'b'!r}: it "
+                                     "says 'Logged'"]
+    last_only, _ = _two_turns(server, monkeypatch, [turn("Which squat?"), turn("Logged Back Squat.")], expect=expect)
+    assert last_only["replies"][-1] == "Logged Back Squat." and last_only["passed"] is True
     assert claimed["reasons"] == [f"the first turn's reply matches {chr(92) + 'blogged' + chr(92) + 'b'!r}: it says "
                                   "'Logged'"]
 

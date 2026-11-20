@@ -735,7 +735,9 @@ the person's word: every `log_lifts` call there must be refused as `unknown_exer
 allowed, those two, `unknown_lift_close`, `pushups_over_100` and `word_both_logged` also fail a claim of done, such as
 "Logged bench. Right?" or "Zorbinator recorded.", by a `reply_lacks_pattern` of the shape G1's import and delete
 cases use, with recorded, entered and tracked beside logged, and "I logged", "I've logged" or "I have logged" with
-any object but "nothing".
+any object but "nothing". A number after the verb is no date ("last logged 2026-11-15", Spotter's own `pick_lift`
+words, is no claim), and a verb that ends its sentence after "gets", "get", "be" or "being" is none ("what gets
+saved.").
 
 **The claim patterns are strict on purpose, and have known false fails.** They read words, not meaning, so a right
 reply that names a claim verb after a negation fails: "I haven't logged it yet, because "squat" matches two of your
@@ -744,7 +746,9 @@ both from the release run of 20 November 2026. A guard that skipped negations wa
 a fresh review found it gave the wrong verdict on 64 of 185 lift replies and 27 of 72 import replies, and each fix of
 it opened new holes. A false fail is read by hand; a false pass is not seen. So **a run that fails on nothing but a
 claim pattern is read by hand** before it counts as a miss. The rebuild of the judge replaces these reply-word checks.
-`tests/test_golden_cases.py` holds the two as `KNOWN_STRICT_FAILS`: each must fail, and only on a claim pattern.
+`tests/test_golden_cases.py` holds them as `KNOWN_STRICT_FAILS`: each must fail, and only on a claim pattern. The 26-case
+run of 20 November 2026 added four in new words, kept as written: `word_both_logged`, `pushups_over_100` and
+`pick_lift_answer`'s first reply ("I haven't logged it yet"), and `import_outside_defaults` ("Once this is saved").
 
 The two hand-check cases need a question about the hands: in the question's sentence, two hand phrases joined by "or" ("50 kg a hand or in total?"), or a question word
 opening it before the hand words ("Is 50 kg per hand right?"). A sentence ends at a full stop, "!", "?", ";", a line, or

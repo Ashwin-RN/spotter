@@ -1524,6 +1524,34 @@ KNOWN_STRICT_FAILS = [
     ("pushups_over_100", [logs(lift("push-ups", 0, 120))],
      "I haven't logged it yet. Spotter caps a single set at 100 reps, so 120 in one set is refused. Should I log it "
      "as 100 and 20?"),
+    # The 26-case run of 2026-11-20, kept as written (results.json): the same strict fails, in new words.
+    ("word_both_logged", [who(), SQUAT],
+     "I haven't logged it yet. \"Squat\" could be either of two lifts on your "
+     "account:\nBack Squat, last logged 2026-11-15.\nSmith Squat, last logged "
+     "2026-11-18.\n\nWhich one was it? Once you say, I'll log 3 sets of 5 at 80 kg."),
+    ("pushups_over_100", [who()],
+     "I haven't logged it yet. Spotter takes at most 100 reps per set, so it won't "
+     "accept 120 push-ups as one set.\n\nI can do one of these:\n1. Log two sets that add "
+     "up to 120, for example 100 and 20, with a note saying it was really one set of "
+     "120.\n2. Log one set of 100 with a note saying you actually did 120.\n\nWhich do "
+     "you want? Either way your total for the day comes out the same in option 1. "
+     "Option 2 would undercount it.\n\nNothing else is logged on this account yet. Once "
+     "this is done, I can help you set up the rest of Spotter if you'd like, one "
+     "question at a time.\n\nhttps://spotter.example.app/hi"),
+    ("import_outside_defaults", [who(), ("list_exercises", {"search": "hack squat"}), ("import_entries", HACK)],
+     "I ran a preview first, so nothing has been saved yet:\n\n1 lift session on Tue 20 "
+     "Oct.\nHack Squat: 3 sets of 8 at 100 kg.\nThe weights are in kg.\nNone of it is "
+     "already in Spotter, and nothing was refused.\n\nShould I save it?\n\nYour account "
+     "has nothing logged yet. Once this is saved, we can set up the rest of Spotter "
+     "together if you like, one question at a time.\n\nA short read on setting up: "
+     "https://spotter.example.app/hi"),
+    ("pick_lift_answer", [who(), SQUAT, THEN, PICKED],
+     ("I haven't logged it yet, because \"squat\" could mean either of two lifts in your "
+      "log:\n\n- Back Squat, last logged 2026-11-15\n- Smith Squat, last logged "
+      "2026-11-18\n\nWhich one was it? Once you say, I'll log 3 sets of 5 at 80 kg for "
+      "today.",
+      "I logged Back Squat 3 \u00d7 5 at 80 kg for today, Fri 20 Nov.\nThere are no new "
+      "bests.\n\nDay: https://spotter.example.app/day/2026-11-20")),
 ]
 RELEASE_RIGHT = [
     ("unknown_exercise", [("list_exercises", {}), logs(lift("zorbinator", 20, 8, 3))],
@@ -1565,6 +1593,39 @@ RUNS["pick_lift_answer"]["pass"].append(([SQUAT, THEN, PICKED], (FIRST_ASK, "Log
 
 for id_, calls, reply in RELEASE_RIGHT:
     (EARLIER[id_][0] if id_ in EARLIER else RUNS[id_]["pass"]).append((calls, reply))
+# The 26-case run of 2026-11-20, kept as written: right replies the judge failed, each a passing run now. "last logged
+# 2026-11-15" is a date, not a claim; "what gets saved." is no claim; "both dumbbells together" names the hands; "I
+# couldn't find a deadlift" says none is logged.
+RUN26_RIGHT = [
+    ("pick_lift_answer", [who(), SQUAT, THEN, PICKED],
+     ("I haven't logged anything yet, because \"squat\" matches two lifts in your Spotter "
+      "account:\n\nBack Squat, last logged 2026-11-15.\nSmith Squat, last logged "
+      "2026-11-18.\n\nWhich one should I log your 3x5 at 80 kg as?",
+      "I logged it: Back Squat 3 \u00d7 5 at 80 kg on Fri 20 Nov.\nNo new bests.\n\nDay: "
+      "https://spotter.example.app/day/2026-11-20")),
+    ("pick_lift_answer", [who(), SQUAT, THEN, PICKED],
+     ("I haven't logged anything yet, because \"squat\" matches two lifts in your Spotter "
+      "account.\n\nWhich was it?\nBack Squat: last logged 2026-11-15.\nSmith Squat: last "
+      "logged 2026-11-18.\n\nOnce you tell me, I'll log 3 sets of 5 at 80 kg for today.",
+      "I logged it as Back Squat: 3 sets of 5 at 80 kg, today, Fri 20 Nov.\nSpotter "
+      "shows no new bests from this session.\n\nToday's log: "
+      "https://spotter.example.app/day/2026-11-20")),
+    ("hand_check_family", [who()],
+     "Quick check before I log it: was that 50 kg in each hand, or 50 kg total (25 kg "
+     "per dumbbell)?\n\nSpotter records dumbbell lifts by the weight in one hand, so the "
+     "answer doubles or halves what gets saved."),
+    ("hand_check_family", [who()],
+     "Before I log it: was that 50 kg in each hand, or 50 kg for both dumbbells "
+     "together (25 kg each)?\n\nSpotter records dumbbell lifts by the weight in one "
+     "hand, so I need to know which before I log the 8 reps."),
+]
+for id_, calls, reply in RUN26_RIGHT:
+    RUNS[id_]["pass"].append((calls, reply))
+# gold_best_deadlift is G1's (its runs are in tests/test_sixteen_weeks.py): the 26-case run's reply is played here.
+DEADLIFT_RUN26 = ("I couldn't find a deadlift in your Spotter log.\nThe only lift logged is Back "
+     "Squat: 6 sets over 2 sessions, from Tue 17 Nov to Fri 20 Nov.\nIf you've done "
+     "deadlifts, tell me the weight and reps and I'll log them. Then I can tell you "
+     "your best one.")
 RUNS["hand_check_family"]["fail"] += [([], "Want me to log that?")]  # no call, and no question about the hands
 RUNS["hand_check_link"]["fail"] += [([], "Got it. Shall I log the curls now?")]
 # The Fable review of the joined fixes (2026-11-20): each wrong run it found passing fails here.
@@ -1724,7 +1785,16 @@ def test_a_known_strict_fail_fails_only_on_a_claim_pattern(case_id, calls, reply
     read by hand (docs/evals.md, "The exercise list cases"). The rebuild of the judge replaces the reply-word checks."""
     case = next(c for c in judge.load_cases() if c["id"] == case_id)
     reasons = player.verdict(case, player.person(case), calls, reply)
-    assert reasons and all(r.startswith("the reply matches") for r in reasons), reasons
+    assert reasons and all(r.startswith(("the reply matches", "the first turn's reply matches")) for r in reasons), reasons
+
+
+def test_gold_best_deadlift_takes_a_could_not_find_as_none_logged(player):
+    """The 26-case run of 2026-11-20: "I couldn't find a deadlift" says none is logged. A made-up best still fails."""
+    case = next(c for c in judge.load_cases() if c["id"] == "gold_best_deadlift")
+    assert player.verdict(case, player.person(case), [who(), WIL], DEADLIFT_RUN26) == []
+    assert player.verdict(case, player.person(case), [who(), WIL],
+                          "I couldn't find a deadlift, but your best deadlift is 140 kg.")
+    assert player.verdict(case, player.person(case), [who(), WIL], "Your deadlift is coming along well.")
 
 
 def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
