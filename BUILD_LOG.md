@@ -1147,3 +1147,46 @@ On 2026-11-18. Docs, and the landing's list of assistants. No migration and no m
 | The domain move | The site, its DNS and sign-in are live at `spottermcp.com`. Checked from outside that day: `/health`, `/ready` and `/` 200, `/mcp` 401 with its sign-in details on the new address. The old Railway address still answers, and its 401 points to the same details. What was not checked is in the dated note at the end of `docs/domain-move.md` |
 | The README | The new address, the setup in three steps (add, sign in, the starter prompt), a row for each app whose own docs say it takes a remote MCP server with sign-in, the commands and files for the tools set up that way, a starter prompt that opens with the line `/hi` gives, and a shorter What to say. Each row was read against its vendor's page that day. The landing's list of assistants follows the table |
 | The tests | The commit hook is off for now. Before a push, the tests of the touched files run plain and with `-W error`, then the whole suite once on a clean export of the commit. `CLAUDE.md` says so |
+
+## The exercise list
+
+On 2026-11-19 and 2026-11-20. Contract `docs/contracts/exercise-list.md`. Two migrations, model-read text, and eval code and cases. Built in two deploys.
+
+| Package | Commit | What it did |
+|---|---|---|
+| C4a.1 | `16ec2bc`, `b6a42e8` | Deploy 1, migration `0013`: each exercise gets a stable key and a retired mark, synced by key; a lift set gains `time_s` and `distance_m`, `reps` nullable, and the weight rule widens for help. `SetOut.reps` optional ahead of deploy 2 |
+| C4a.2 | `e96d310` | The list: 267 rows, 242 lifts in 153 families, 25 cardio, 61 plain words, 769 aliases, muscles at 1 and 0.5 |
+| C4b | `9181498` | Sets of reps, a hold's time, or a carry's distance and time, by what each lift records; reps 1 to 100; help -200 to 0 kg; routines, goals and imports refuse lifts of time or distance; migration `0014` deletes every lift set, session, their versions and `log_lifts` keys once |
+| C4c | `69cb6cd` | One matcher: a lift in the person's own words; a plain word takes the usual lift, or the one the person logged that fits the set, and asks when two fit |
+| C4d | `8468451` | `list_exercises` takes the account and a search; equipment in plain words |
+| C4e | `7546c94` | Volume by load type and sides; bests by kind (least help, reps, longest hold at a weight, heaviest load over a distance); `get_data` gains `time_s`, `distance_m`, `family`; a retired lift's page reads |
+| C4f | `12ad791` | The per-hand check: one question when a pair's total is above the bar best; reps, time and distance a side on one-side lifts |
+| C4g | `deb7fe5` | 23 new and 16 changed eval cases; the judge reads written rows and two-turn cases |
+| Notes | `b47edef` | The dated notes owed on six contracts |
+| From an outside review | `1f07a35`, `f1e01b3` | A lift goal refused on band and assisted lifts; `get_progress` bests carry their words; the per-hand words name a pair; the Goals page offers only lifts a goal takes |
+| From the release run | `bbfab68` | `set_goal` takes a plain word by history |
+| Eval fixes | `33a36d5`, `1238c9d`, `0c1d760`, `7ecf58c` | Judge fixes from the reviews and the runs; the claim patterns kept strict |
+
+### The reviews
+
+Each package had a reviewer on a frozen copy and one fix round. Must fixes: C4c (the history step moved to a lift whose numbers meant something else; the owner ruled A on 2026-11-19), C4f (an lb pair at the bar best asked), C4g (a two-turn case passed a guess). Each had a fresh re-check, C4c's by a Fable agent over 5,460 cases, C4f's over 730. An outside review and a Fable second opinion on 2026-11-20 found six more points, all fixed; `0014`'s down stays a no-op as the contract decides.
+
+### Checks
+
+The whole suite on a clean export: 6,604 at `b6a42e8`, 6,956 at `b47edef`, 6,966 at `f1e01b3`, and 6,987 at `7ecf58c`. Postgres 17 in a throwaway container: `0013` on 2026-11-19 (up, down, up over rows by the old code; the down stops); `0014` on 2026-11-20 at `b47edef` ("0014 deleted: 12 lift sets, 6 lift sessions, 2 versions, 4 keys", every other table identical row for row, down and up again a no-op, the new reads on Postgres, the old code over the emptied tables). Docker stopped after each.
+
+### Eval runs
+
+On `claude-opus-5-5`, 3 runs a case. The 38 new and changed cases: 104 of 114, $18.4874; every failure read by hand was a judge fault. 26 cases after the fixes: 62 of 78, $13.1818: `lb_bench_goal` 0 of 3 was a real regression (fixed in `bbfab68`), `same_again_no_context` 0 of 3 fails on the live code too, the rest judge faults or known strict fails. Two cases on the live code: $1.0399. The last three cases (`lb_bench_goal`, `pick_lift_answer`, `hand_check_family`): 9 of 9, $1.8739. In all, $34.583.
+
+### Release
+
+Deploy 1 (`b6a42e8`) live at 06:45 UTC on 2026-11-19 on the owner's word: `/ready` 503 for about 17 s while `0013` ran, then 200; `/health`, `/` 200, `/mcp` 401. Deploy 2: see the commit that merges this entry.
+
+### Known limits
+
+- The claim patterns are strict: a run failing only on a negated claim ("I haven't logged it yet") is read by hand.
+- `same_again_no_context` fails on the live code and on this branch: the model logs another set rather than asking.
+- An import or an edit written after the first bar set stops the per-hand ask, though it runs no check.
+- The closest-name search takes about 16 s for 1,000 unknown names in an import.
+- A downgrade past `0014` then an upgrade would delete every lift logged after deploy 2.
