@@ -2979,7 +2979,8 @@ async def goals_view(request: Request, user: User, kind: str = GOAL_KIND_FIRST, 
                 closed=charted.get("closed") or [], errors=errors or {}, loose=loose or [], typed=typed or {},
                 saved=saved, kinds=GOAL_KINDS, kind=kind,
                 shows_start="start_value" in (errors or {}) or bool((typed or {}).get("start_value")),
-                lift_choices=[(n, n) for n in await exercise_names("lift")] if kind == "lift" else [],
+                lift_choices=[(n, n) for n in await exercise_names("lift") if rules.takes_lift_goal(n)]
+                if kind == "lift" else [],  # only the lifts set_goal takes (exercise-list.md, note (bo))
                 activity_choices=[(n, n) for n in await cardio_names()] if kind == "cardio_best" else [],
                 measurement_choices=[(k, kind_with_unit(k)) for k in GOAL_MEASUREMENTS],
                 goal_quantity=goal_quantity, closed_words=CLOSED_WORDS,

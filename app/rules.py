@@ -655,6 +655,14 @@ def takes_help(name) -> bool:
     return row is not None and row.key in HELP_LIFTS
 
 
+def takes_lift_goal(name) -> bool:
+    """Whether a lift goal (an estimated max) can be set on this lift: it records weight and reps, and its weight is
+    no help. A hold, a carry, a sled, a band lift or an assisted lift gives no estimated max (exercise-list.md R10,
+    note (bf)). The Goals page offers only these lifts."""
+    measures = measures_of(name)
+    return "weight" in measures and "reps" in measures and not takes_help(name)
+
+
 def weight_range(name) -> tuple[float, float]:
     """The weight a set of this lift takes, in kg: -200 to 0 on the two assisted lifts, else 0 to 500 (R6)."""
     return HARD_RULES["help_kg"] if takes_help(name) else HARD_RULES["weight_kg"]

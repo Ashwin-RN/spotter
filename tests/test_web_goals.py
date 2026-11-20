@@ -332,7 +332,12 @@ def test_each_kinds_form_holds_its_fields_in_order_its_empty_choice_and_its_own_
     others = {f for k, fields in FORM_FIELDS.items() if k != kind for _, _, f in fields} - \
         {f for _, _, f in FORM_FIELDS[kind]}
     assert not others & set(form["values"]) and "start_value" not in form["values"]
-    lifts = [(e["name"], e["name"]) for e in services.all_exercises("lift")["exercises"]]
+    # Only the lifts set_goal takes: no hold, carry, sled, band or assisted lift (exercise-list.md, note (bo)).
+    lifts = [(e["name"], e["name"]) for e in services.all_exercises("lift")["exercises"]
+             if rules.takes_lift_goal(e["name"])]
+    names = {n for n, _ in lifts}
+    assert {"Back Squat", "Pull-Up", "Dumbbell Bench Press", "Goblet Squat"} <= names
+    assert not names & {"Plank", "Farmer's Carry", "Sled Push", "Band Pull-Apart", "Assisted Pull-Up", "Assisted Dip"}
     cardio = [(e["name"], e["name"]) for e in services.all_exercises("cardio")["exercises"]]
     empty = {"lift": ("exercise", [("", "No lift"), *lifts]),
              "cardio_best": ("exercise", [("", "No activity"), *cardio]),

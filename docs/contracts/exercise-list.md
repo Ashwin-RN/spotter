@@ -761,3 +761,29 @@ the review found passing is a failing run in `tests/test_golden_cases.py`:
 - (bi) `0014`'s down stays a no-op, as "`0014`: the one-off delete" decides. A downgrade past `0014` then an upgrade
   would delete every lift set logged after deploy 2: done only by hand, on the owner's word, and never run.
 - (bj) `docs/can-and-cant.md:9` said "A dumbbell weight is one hand's.", the same flaw as (bh): it now says "For a pair of dumbbells, one hand's weight." Found by the app fixes' builder; changed in the main chat.
+
+2026-11-20, C4g, a fresh review of the joined fixes (the main chat's pick: strict, since a false fail is read by
+hand and a false pass is not seen):
+
+- (bk) The negation guard of (ba) and (bc) is withdrawn: through the real judge it gave the wrong verdict on 64 of 185
+  lift replies and 27 of 72 import replies, and each fix opened new holes. Every claim pattern is back to its b47edef
+  form, the import's with recorded, entered and tracked in each of its verb lists. Two of the release run's replies are
+  now known strict fails, each failing only on a claim pattern ("I haven't logged it yet ..." in `word_both_logged` and
+  `pushups_over_100`): `KNOWN_STRICT_FAILS` pins them, and a run that fails on nothing but a claim pattern is read by
+  hand. The other two negated replies of the release run (`unknown_exercise`, `import_outside_defaults`) pass the
+  strict patterns as quoted; what failed in their runs was in the words left out of the quotes, not seen here.
+- (bl) "I logged", "I've logged" or "I have logged" with any object but "nothing" is a claim, in the lift and the
+  import patterns: "I've logged Back Squat, 3 x 5 at 80 kg. Or was it Smith Squat?" fails `word_both_logged` and
+  `pick_lift_answer`'s first reply.
+- (bm) The hand-check cases' ask-first option carries the lift claim pattern ("Logged 50 kg x 8. Was that a hand or in
+  total?" with no call fails), and no longer limits `log_lifts` to one successful call: three calls of one set each
+  are a right run, the rows counting the sets. Every set written is the said lift or the seed's, and the seed's lift
+  has only its seed, so another pair on another day (Cable Chest Press, Dumbbell Curl, Incline Dumbbell Curl) fails.
+- (bn) Load checks: `first_reply_lacks_pattern` on a case with no `then`, and a `count` that is not a whole number or
+  a non-empty list of them, stop the load.
+
+2026-11-20, the main chat, from the same review:
+
+- (bo) The Goals page's lift picker offers only the lifts `set_goal` takes (`rules.takes_lift_goal`: weight and
+  reps, no help). It offered the holds, carries, sleds, band and assisted lifts too, and a pick answered "Choose a
+  lift from the list."
