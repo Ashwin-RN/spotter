@@ -5,8 +5,12 @@ set_goal(user_id, data, by)
     (after today, and at most 5 years on: rules.goal_latest, else date_too_far); text is optional, up to 2,000
     characters. Every range is checked on the value as sent, then kept at its step, halves away from zero.
       lift         exercise (a lift name, of a lift that records reps: a hold, a carry or a sled is refused,
-                   contract exercise-list.md R10). target_value: an estimated max in kg, above 0 to LIFT_MAX (the
-                   estimated max of the heaviest weight the rules allow at 10 reps).
+                   contract exercise-list.md R10; a band or an assisted lift too, note (bf)). A plain word, such as
+                   bench, takes the lift the person's live sets point to among its candidates that take a lift
+                   goal (rules.goal_lift, note (bp)): none logged, the first, the default when it takes one; one,
+                   that one; two or more, pick_lift with those, and the person is asked. A name, an alias, a
+                   plural and "Name (Equipment)" are exact. target_value: an estimated max in kg, above 0 to
+                   LIFT_MAX (the estimated max of the heaviest weight the rules allow at 10 reps).
       bodyweight   target_value: kg, 20 to 400.
       measurement  measurement_kind: waist, hips, chest, arm, thigh or resting_hr. target_value in that
                    kind's unit and range (rules.MEASUREMENTS; resting_hr whole). steps, sleep_hours and
@@ -587,9 +591,9 @@ def _wrong_kind(s, name, other: str) -> dict | None:
                        f"{hit}, set kind lift.", field="exercise")
 
 
-def _identity(s, kind: str, data: dict, errors: list, warnings: list):
+def _identity(s, user_id: int, kind: str, data: dict, errors: list, warnings: list):
     """What a new goal is of: (exercise, measurement_kind, distance_km), each checked; the problems go
-    into errors and an ignored field into warnings."""
+    into errors and an ignored field into warnings. user_id's live sets pick a lift for a plain word."""
     exercise = measurement_kind = distance = None
     present = lambda k: data.get(k) not in (None, "")  # noqa: E731
     if kind == "lift":
@@ -598,8 +602,16 @@ def _identity(s, kind: str, data: dict, errors: list, warnings: list):
             errors.append(rules.error("missing_field", "A lift goal needs an exercise.",
                                       "Give the exercise name as list_exercises gives it.", field="exercise"))
         else:
-            hit, _ = rules.match_exercise(data["exercise"], list(by_name))
-            if hit is None:
+            # A name, an alias, a plural or "Name (Equipment)" is exact. A plain word takes the lift the person's
+            # history points to among the candidates a lift goal takes, as log_lifts does (note (bp)).
+            hit, word, candidates = rules.find_exercise(data["exercise"], list(by_name))
+            asked = None  # pick_lift: two or more of the word's lifts that take a goal are logged
+            if word:
+                hit, asked = rules.goal_lift(data["exercise"], candidates,
+                                             lifts.last_logged(s, user_id, list(candidates)))
+            if asked:
+                errors.append(asked)
+            elif hit is None:
                 errors.append(_wrong_kind(s, data["exercise"], "cardio")
                               or _at(rules.unknown_exercise(data["exercise"], list(by_name)), "exercise"))
             elif "reps" not in rules.measures_of(hit):  # a hold, a carry or a sled has no estimated max (R10)
@@ -822,7 +834,7 @@ def set_goal(user_id: int, data: dict | None, by: str) -> dict:
             if kind is None:
                 errors.append(_kind_error(given))
             else:
-                exercise, measurement_kind, distance = _identity(s, kind, data, errors, warnings)
+                exercise, measurement_kind, distance = _identity(s, user.id, kind, data, errors, warnings)
             if status_ok and status not in (None, "open"):
                 errors.append(rules.error("invalid_field", f"A new goal starts open; status '{status}' needs goal_id.",
                                           "Leave status out to set a goal, or give goal_id to close one.",

@@ -391,18 +391,132 @@ def test_an_import_of_a_plain_word_fails_its_row_with_the_candidates(uid):
     assert r["unknown_names"] == [{"name": "Squat", "kind": "lift", "rows": 1, "closest": ["Back Squat", "Smith Squat"]}]
 
 
-def test_set_goal_squat_is_refused_with_both_and_bench_press_is_exact(uid):
-    seed(uid, "Smith Bench Press", 7)
+def test_set_goal_squat_is_refused_with_both_logged_and_bench_press_is_exact(uid):  # note (bp)
+    for name, ago in (("Back Squat", 9), ("Smith Squat", 3), ("Bench Press", 8), ("Smith Bench Press", 7)):
+        seed(uid, name, ago)
     r = services.set_goal(uid, {"kind": "lift", "exercise": "squat", "target_value": 120,
                                 "target_date": day(-60), "start_value": 90}, "claude")
-    refusal = next(e for e in r.get("errors", [r]) if e["error"] == "unknown_exercise")
-    assert refusal["message"] == "'squat' names more than one lift."
-    assert refusal["fix"] == "Ask the person which: Back Squat or Smith Squat."
-    assert refusal["closest"] == ["Back Squat", "Smith Squat"]
+    assert (r["error"], r["message"], r["fix"], r["field"]) == (
+        "pick_lift", f"'squat' could be Back Squat (last {day(9)}) or Smith Squat (last {day(3)}).",
+        "Ask the person which, then send that name.", "exercise")
+    assert r["candidates"] == [{"name": "Back Squat", "last": day(9)}, {"name": "Smith Squat", "last": day(3)}]
     goal = services.set_goal(uid, {"kind": "lift", "exercise": "bench press", "target_value": 100,
                                    "target_date": day(-60), "start_value": 70}, "claude")
     assert "error" not in goal, goal
     assert goal["goal"]["exercise"] == "Bench Press"
+
+
+# ---------------------------------------------------------------- set_goal's plain word (note (bp))
+#
+# A plain word takes the lift the person's live sets point to among the candidates a lift goal takes, as log_lifts
+# does, by the owner's standing ruling (a plain "squat" is Back Squat unless a Smith squat was logged before). Each
+# person here is on lb, as the release eval's lb_bench_goal is.
+
+def lb_uid(make_user) -> int:
+    return make_user(time_zone="UTC", weight_unit="lb").id
+
+
+def lift_goal(uid: int, exercise: str, **more) -> dict:
+    return services.set_goal(uid, {"kind": "lift", "exercise": exercise, "target_value": 225,
+                                   "target_date": "2027-06-30", **more}, "claude")
+
+
+def goals_of(uid: int) -> list[str]:
+    return [g["exercise"] for g in services.get_goals(uid)["goals"]]
+
+
+def test_set_goal_bench_with_bench_press_logged_on_lb_is_bench_press(make_user):  # lb_bench_goal
+    uid = lb_uid(make_user)
+    seed(uid, "Bench Press", 4, weight=80, reps=5)
+    r = lift_goal(uid, "bench")
+    assert "error" not in r, r
+    assert r["goal"]["exercise"] == "Bench Press" and r["progress"]["label"] == "Bench Press 225 lb"
+    assert goals_of(uid) == ["Bench Press"]
+
+
+@pytest.mark.parametrize(("logged", "word", "taken"), [
+    ((), "bench", "Bench Press"),  # none logged: the word's default
+    (("Dumbbell Bench Press",), "bench", "Bench Press"),  # not a candidate of "bench": the default still
+    (("Smith Bench Press",), "bench", "Smith Bench Press"),  # only one logged: that one
+    (("Smith Squat",), "squat", "Smith Squat"),
+    (("Smith Squat",), "squats", "Smith Squat"),  # a word's plural is the word
+    (("Assisted Pull-Up",), "pull-up", "Pull-Up"),  # Pull-Up's own name: exact (the filter: test_goal_lift_...)
+    (("Smith Squat",), "Squat (Barbell)", "Back Squat"),  # "Name (Equipment)" is exact
+    (("Smith Bench Press",), "Bench Press", "Bench Press"),  # a default's own name is exact
+])
+def test_set_goal_takes_a_plain_word_by_the_person_s_history(make_user, logged, word, taken):
+    uid = lb_uid(make_user)
+    for n, name in enumerate(logged):
+        seed(uid, name, 5 + n, weight=-20 if rules.takes_help(name) else 60)
+    r = lift_goal(uid, word, start_value=135)
+    assert "error" not in r, r
+    assert r["goal"]["exercise"] == taken and r["progress"]["label"] == f"{taken} 225 lb"
+    assert goals_of(uid) == [taken]
+
+
+def test_set_goal_bench_with_both_bench_lifts_logged_asks_and_writes_nothing(make_user):
+    uid = lb_uid(make_user)
+    seed(uid, "Bench Press", 10)
+    seed(uid, "Smith Bench Press", 2)
+    seed(uid, "Dumbbell Bench Press", 1)  # not a candidate of "bench"
+    r = lift_goal(uid, "bench", start_value=135)
+    assert (r["error"], r["message"], r["fix"], r["field"]) == (
+        "pick_lift", f"'bench' could be Bench Press (last {day(10)}) or Smith Bench Press (last {day(2)}).",
+        "Ask the person which, then send that name.", "exercise")
+    assert r["candidates"] == [{"name": "Bench Press", "last": day(10)}, {"name": "Smith Bench Press", "last": day(2)}]
+    assert tr.check(r["message"], tr.CLAUDE) == [] and tr.check(r["fix"], tr.CLAUDE) == []
+    assert goals_of(uid) == []
+    answered = lift_goal(uid, "Smith Bench Press", start_value=135)  # the fix's answer: the name, exact
+    assert "error" not in answered and answered["goal"]["exercise"] == "Smith Bench Press"
+
+
+def test_set_goal_pull_ups_with_pull_up_and_assisted_logged_is_pull_up_without_a_question(make_user):
+    # "pull-ups" is Pull-Up's own name by the plural rule, so it is exact; the filter is test_goal_lift_'s.
+    uid = lb_uid(make_user)
+    seed(uid, "Pull-Up", 6, weight=10, reps=8)
+    seed(uid, "Assisted Pull-Up", 2, weight=-20, reps=8)
+    r = lift_goal(uid, "pull-ups", target_value=60)
+    assert "error" not in r, r
+    assert r["goal"]["exercise"] == "Pull-Up"
+
+
+def test_set_goal_a_word_with_no_lift_that_takes_a_goal_gets_r10_s_refusal(make_user):
+    r = lift_goal(lb_uid(make_user), "sled", start_value=135)
+    refusal = next(e for e in r.get("errors", [r]) if e.get("field") == "exercise")
+    assert (refusal["error"], refusal["message"]) == (
+        "invalid_field", "Sled Push records distance and time: a lift goal needs a lift of weight and reps.")
+
+
+def test_goal_lift_runs_over_the_candidates_that_take_a_goal():
+    pull_ups = exercises.WORDS["pull-up"]["candidates"]
+    assert pull_ups == ("Pull-Up", "Assisted Pull-Up", "Band-Assisted Pull-Up")
+    last = {"Assisted Pull-Up": date_of(3), "Band-Assisted Pull-Up": date_of(2)}
+    assert rules.goal_lift("pull-up", pull_ups, last) == ("Pull-Up", None)  # neither takes a goal: none logged
+    assert rules.goal_lift("pull-up", pull_ups, {**last, "Pull-Up": date_of(9)}) == ("Pull-Up", None)
+    assert rules.goal_lift("pull-up", ("Assisted Pull-Up", "Pull-Up"), {}) == ("Pull-Up", None)  # the first that takes
+    sleds = exercises.WORDS["sled"]["candidates"]
+    assert rules.goal_lift("sled", sleds, {"Sled Pull": date_of(1)}) == ("Sled Push", None)  # none takes one
+    bench = exercises.WORDS["bench"]["candidates"]
+    assert rules.goal_lift("bench", bench, {"Smith Bench Press": date_of(1)}) == ("Smith Bench Press", None)
+    name, asked = rules.goal_lift("bench", bench, {"Bench Press": date_of(4), "Smith Bench Press": date_of(1)})
+    assert name is None and asked["error"] == "pick_lift" and asked["field"] == "exercise"
+    assert [c["name"] for c in asked["candidates"]] == ["Bench Press", "Smith Bench Press"]
+
+
+def test_through_mcp_set_goal_takes_a_word_and_its_pick_lift_reaches_the_client(writer):
+    http, token, account = writer
+    ok(http, token, "log_lifts", {"date": day(6), "sets": [{"exercise": "Smith Squat", "weight_kg": 60, "reps": 5,
+                                                            "exact": True}]})
+    taken = ok(http, token, "set_goal", {"kind": "lift", "exercise": "squat", "target_value": 120,
+                                         "target_date": day(-60)})
+    assert taken["goal"]["exercise"] == "Smith Squat"
+    ok(http, token, "log_lifts", {"date": day(2), "sets": [{"exercise": "Back Squat", "weight_kg": 80, "reps": 5,
+                                                            "exact": True}]})
+    asked = failed(http, token, "set_goal", {"kind": "lift", "exercise": "squats", "target_value": 140,
+                                             "target_date": day(-60)})
+    assert (asked["error"], asked["field"], asked["fix"]) == (
+        "pick_lift", "exercise", "Ask the person which, then send that name.")
+    assert asked["candidates"] == [{"name": "Back Squat", "last": day(2)}, {"name": "Smith Squat", "last": day(6)}]
 
 
 def test_save_routine_refuses_a_plain_word_and_takes_a_default_s_own_name_as_written(uid):

@@ -697,6 +697,8 @@ SERVICE_REFUSALS = {
     ("_identity", "<_at>", "distance_mi"): [("invalid_field", "distance_mi")],
     ("_weight_unit", "invalid_unit", "weight_unit"): NOT_FROM_THE_FORM + ": the form's hidden weight_unit is lb alone",
     ("_identity", "<unknown_exercise>", None): [("unknown_exercise", "exercise")],
+    # exercise-list.md note (bp): a plain word with two or more of its lifts logged. The picker sends a listed name.
+    ("_identity", "<goal_lift>", None): NOT_FROM_THE_FORM + ": the lift picker sends a listed name, never a plain word",
     ("_no_start", "missing_field", "start_value"): [("missing_field", "start_value")],
     ("_wrong_way", "wrong_direction", "target_value"): [("wrong_direction", "target_value")],
     ("set_goal", "<check_data>", None): NOT_FROM_THE_FORM + ": the web always sends an object",
@@ -731,7 +733,8 @@ OUTSIDE_CODES = {"check_by": {"invalid_by"}, "check_data": {"invalid_field"}, "c
                  "in_range": {"invalid_field"}, "match_cardio": {"missing_field", "unknown_exercise"},
                  "no_account": {"no_account"}, "not_found": {"not_found"}, "text": {"invalid_field"},
                  "unknown_exercise": {"unknown_exercise"}, "match_kind": {"invalid_kind"},
-                 "one_of": {"invalid_field", "missing_field"}}  # units.md R6: the pair's check
+                 "one_of": {"invalid_field", "missing_field"},  # units.md R6: the pair's check
+                 "goal_lift": {"pick_lift"}}  # exercise-list.md note (bp)
 
 
 def _named(node):

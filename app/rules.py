@@ -30,6 +30,8 @@ The fix says what to send instead, so Claude can correct the call and retry.
         reps_only: the import's refusal of a lift that records no reps (R11). logging: log_lifts' plain words and
         their history step over the candidates that fit the set, pick_lift when two or more of those are logged (R3
         to R5, note (i)).
+  goal_lift(raw, candidates, last) -> (lift | None, pick_lift | None)
+        set_goal's history step for a plain word, over the candidates a lift goal takes (note (bp)).
 
 Units (contract units.md, decision 15). The one table of factors, UNITS, and its helpers, which the import and
 logging both use: converted (a number in lb, mi or in, in the stored unit), inward (a stored range in another
@@ -359,7 +361,8 @@ def _key(name: str) -> str:
 # step over the candidates that fit the set sent (_fits, note (i)): the person's live sets among those pick the lift,
 # or two or more of them logged ask (pick_lift, R4); with none logged, the first that fits. A set with exact true skips the word step (R3). Everywhere else the exact name comes first, then an alias,
 # then a plain word that is not a name: a read takes every candidate the person logged, a write is refused with the
-# candidates (decision 28). A miss is unknown_exercise with up to 3 close names over names and aliases; an alias
+# candidates (decision 28), but for set_goal, which picks from the person's history over the candidates a lift goal
+# takes (goal_lift, note (bp)). A miss is unknown_exercise with up to 3 close names over names and aliases; an alias
 # shows its lift's name, never itself. Only the names passed count, so a retired row, or a lift sent where an
 # activity is wanted, matches nothing by any route.
 
@@ -748,6 +751,30 @@ def _set_numbers(row: dict, n: int, where: str, name) -> tuple[dict, list[dict]]
 
 
 PICK_FIX = "Ask the person which, then send that name with exact true."  # pick_lift's fix (R4)
+GOAL_PICK_FIX = "Ask the person which, then send that name."  # set_goal's pick_lift: a name is exact there
+
+
+def pick_refusal(where: str, raw, logged: list[str], last: dict, fix: str, **extra) -> dict:
+    """pick_lift (R4): the word as sent could be each of these logged lifts, each with its last date. where is the
+    message's opening, such as "Set 2: ", or "" for none."""
+    return error("pick_lift", f"{where}'{quote(raw)}' could be "
+                 f"{either(f'{c} (last {last[c].isoformat()})' for c in logged)}.",
+                 fix, candidates=[{"name": c, "last": last[c].isoformat()} for c in logged], **extra)
+
+
+def goal_lift(raw, candidates: tuple[str, ...], last: dict) -> tuple[str | None, dict | None]:
+    """set_goal's history step for a plain word (exercise-list.md, note (bp)), as log_lifts' over the candidates a lift
+    goal can take (takes_lift_goal): with two or more of them logged, (None, pick_lift with those, field exercise);
+    with one logged, that one; with none logged, the first in list order, the default when it takes a goal; with none
+    that takes a goal at all, the first candidate, which then gets its own refusal (R10). last is
+    {name: date of its latest live session} for the logged candidates."""
+    taking = [c for c in candidates if takes_lift_goal(c)]
+    logged = [c for c in taking if c in last]
+    if len(logged) >= 2:
+        return None, pick_refusal("", raw, logged, last, GOAL_PICK_FIX, field="exercise")
+    if logged:
+        return logged[0], None
+    return (taking[0] if taking else candidates[0]), None
 
 
 def _minus(row: dict) -> bool:
@@ -843,11 +870,7 @@ def check_session(date_value, rows, names: list[str], today: date, pounds: bool 
             if name is None:
                 if word not in asked:
                     asked.add(word)
-                    errors.append(error(
-                        "pick_lift",
-                        f"{where}: '{quote(raw_name)}' could be "
-                        f"{either(f'{c} (last {last[c].isoformat()})' for c in logged)}.",
-                        PICK_FIX, candidates=[{"name": c, "last": last[c].isoformat()} for c in logged]))
+                    errors.append(pick_refusal(f"{where}: ", raw_name, logged, last, PICK_FIX))
                 continue
         elif name is None:
             errors.append(unknown_exercise(raw_name, names, f"{where}: ", logging=logging))
