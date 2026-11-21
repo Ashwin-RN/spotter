@@ -810,7 +810,7 @@ FOOD = Area(
 SAVED_FOODS = Area(
     "saved_foods", "One live saved food. The range counts its use.", ("saved food", "saved foods"), "foods",
     ("saved_food", "food_entry"), load_saved_foods, (
-        Field("id", "The saved food's id, for log_food.", None, None, True, (), False, False, ("saved_food.id",),
+        Field("id", "The saved food's id, to log it by.", None, None, True, (), False, False, ("saved_food.id",),
               _at("id")),
         Field("name", "Its name.", None, None, True, (), False, False, ("saved_food.name",), _at("name")),
         Field("serving_label", "What one serving is.", None, None, True, (), False, False,

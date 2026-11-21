@@ -1147,12 +1147,12 @@ def test_a_cardio_time_goal_takes_the_speeds_log_cardio_takes(person):
     assert (out["message"], out["fix"]) == (
         "target_value 299.9 is outside 300 to 600 minutes for 300 km.",
         "Give target_value as the minutes for the goal's distance, 300 to 600 for 300 km: a speed from 0.1 to 60 km/h, "
-        "as log_cardio takes.")
+        "as a cardio entry takes.")
     out = refused(person, "set_goal", {**goal, "distance_km": 5, "target_value": 1, "start_value": 30})
     assert (out["message"], out["fix"]) == (
         "target_value 1 is outside 5 to 600 minutes for 5 km.",
         "Give target_value as the minutes for the goal's distance, 5 to 600 for 5 km: a speed from 0.1 to 60 km/h, as "
-        "log_cardio takes.")
+        "a cardio entry takes.")
     refused_distance = refused(person, "set_goal", {**goal, "distance_km": 500, "target_value": 1, "start_value": 30})
     assert [e["field"] for e in refused_distance["errors"]] == ["distance_km"]  # the values get 1 to 600 alone
     edit = taken(person, "set_goal", {**goal, "distance_km": 5, "target_value": 25, "start_value": 30})
@@ -1172,7 +1172,7 @@ def test_a_cardio_time_goal_s_words_are_in_the_person_s_units(person):
         distance = formatting.show(5, "km", units=users.units_for(s.get(User, user.id)))
     assert out["message"] == f"target_value 1 is outside 5 to 600 minutes for {distance}." and distance.endswith(" mi")
     # The speeds moved inward at mph's shown step, as log_cardio's own mph refusal says them (cardio.py).
-    assert out["fix"].endswith(f"for {distance}: a speed from 0.1 to 37.2 mph, as log_cardio takes.")
+    assert out["fix"].endswith(f"for {distance}: a speed from 0.1 to 37.2 mph, as a cardio entry takes.")
 
 
 # Decisions 17 and 18: the descriptions (above) and the can-and-cant lines.

@@ -324,11 +324,11 @@ def test_a_routine_refuses_a_hold_a_carry_and_a_sled_and_takes_reps_up_to_100(ui
                   {"exercise": "Farmer's Carry", "sets": 2, "reps": 1}, {"exercise": "Sled Push", "sets": 1, "reps": 1}]
     refused = services.save_routine(uid, {"name": "Hyrox day", "lifts": lifts_sent}, "claude")
     assert refusal(refused) == [
-        ("invalid_field", "Lift 2: Plank records time: a routine holds lifts of sets and reps.", "Log it with log_lifts."),
+        ("invalid_field", "Lift 2: Plank records time: a routine holds lifts of sets and reps.", "Log its sets instead."),
         ("invalid_field", "Lift 3: Farmer's Carry records distance and time: a routine holds lifts of sets and reps.",
-         "Log it with log_lifts."),
+         "Log its sets instead."),
         ("invalid_field", "Lift 4: Sled Push records distance and time: a routine holds lifts of sets and reps.",
-         "Log it with log_lifts.")]
+         "Log its sets instead.")]
     clean(*(e["message"] for e in refused["errors"]))
     saved = services.save_routine(uid, {"name": "Hyrox day", "lifts": lifts_sent[:1]}, "claude")
     assert saved["created"] is True and saved["routine"]["lifts"][0]["reps"] == 100

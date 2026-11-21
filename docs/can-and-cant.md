@@ -36,7 +36,7 @@ fit. Every other function takes names as `list_exercises` gives them.
 - **A new best** beats every earlier set of that lift: a higher estimated max or a heavier weight; on a
   band, more reps; on an assisted lift, less help, then more reps at it. A hold's longer time counts at
   its weight, and a carry's heavier load at its distance. A lift's first session has nothing to beat, so
-  it sets the mark and is never a new best; `log_lifts` says so in its summary.
+  it sets the mark and is never a new best; the summary says so.
 - **Body weight now** is the 7-day average, or the latest weigh-in when the last 7 days have none.
   Goals and calorie estimates use it.
 - **Trends and projections** are a straight line through the last 6 weeks. They need 4 points. They
@@ -173,7 +173,7 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
   set of foods or the same cardio session, logged again within 10 minutes comes back with
   `duplicate` true. Nothing new is written.
   Send `allow_repeat` true only when the person confirms it happened twice. Lifts are the exception:
-  every `log_lifts` call adds its sets to that day's session, so a set said twice is logged twice.
+  every call that logs sets adds them to that day's session, so a set said twice is logged twice.
   `restore_entry` with `undo_edit` takes back the last sets added.
   The same new goal set again within 10 minutes is not set twice: the first comes back with a warning.
 - **Sending a write twice.** Any write takes an optional `key` of your own: 8 to 64 letters, digits,
@@ -357,7 +357,7 @@ Each answer holds with the same time zone set at both runs. The last row is the 
 - `get_routines` gives each lift's weight to log: the heaviest set of its latest session, unless the
   routine was saved on a later day than that session, with a weight of its own. With neither, Claude
   asks.
-- To log one, Claude sends its sets with `log_lifts`, with each change the person names. They go into
+- To log one, Claude logs its sets, with each change the person names. They go into
   that day's session, as any sets do.
 - Saving the same name again replaces the routine. There is no undo of a replace: save it again as it
   was. `delete_entry` takes kind `routine`, in its two calls, and `restore_entry` brings a deleted

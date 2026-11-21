@@ -104,11 +104,13 @@ KEPT = (WriteKey.function, WriteKey.fingerprint, WriteKey.answer, WriteKey.creat
 
 # How each kind is named in messages, and where Claude finds its ids.
 KIND_LABELS = {
-    "lift_session": ("lift session", "the id that log_lifts returned, or one from get_log"),
-    "bodyweight": ("weigh-in", "the id that log_bodyweight returned, or one from get_log"),
-    "measurement": ("measurement", "the id that log_measurement returned, or one from get_log"),
-    "food_entry": ("food entry", "an id that log_food returned, or one from get_log"),
-    "cardio_entry": ("cardio entry", "the id that log_cardio returned, or one from get_log"),
+    # The five log kinds name no function of their own: a chat holds log or the five, and both read this
+    # (log-and-guide.md, row 11).
+    "lift_session": ("lift session", "the id that logging it returned, or one from get_log"),
+    "bodyweight": ("weigh-in", "the id that logging it returned, or one from get_log"),
+    "measurement": ("measurement", "the id that logging it returned, or one from get_log"),
+    "food_entry": ("food entry", "an id that logging it returned, or one from get_log"),
+    "cardio_entry": ("cardio entry", "the id that logging it returned, or one from get_log"),
     "saved_food": ("saved food", "the id that save_food returned, or one from find_food"),
     "routine": ("routine", "the id that save_routine returned, or one from get_routines"),
     "goal": ("goal", "the id that set_goal returned, or a goal_id from get_progress"),

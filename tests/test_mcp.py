@@ -864,10 +864,14 @@ def test_can_and_cant_names_exactly_the_twelve_functions():
     text = CAN_AND_CANT.read_text(encoding="utf-8")
     named = set(re.findall(r"`([a-z_]+)`", text))
     service_functions = {name for name in services.__all__ if callable(getattr(services, name))}
-    # It names no function Claude cannot call (restore_entry, say). A chat opened before log and guide holds the five,
-    # which still answer by name, so its prose may name them until they go (log-and-guide.md, L3 and L6).
-    assert named & service_functions <= set(CALLABLE)
+    # It names no function a new chat cannot call (restore_entry, say): the five are not in a new chat's list.
+    assert named & service_functions <= set(FUNCTIONS)
     assert set(FUNCTIONS) <= named  # and it names every function a new chat lists
+    # One line under the table names the five, as plain words, for a chat opened before log and guide; no other line
+    # names any of them (log-and-guide.md, rows 22 to 25). The line goes at deploy 2 (L6).
+    naming = [line for line in text.splitlines() if any(re.search(rf"\b{name}\b", line) for name in RETIRING)]
+    assert naming == ["A chat opened before the change holds log_lifts, log_bodyweight, log_measurement, log_food and "
+                      "log_cardio in their place: they log the same entries."]
 
 
 def test_can_and_cant_states_the_limit_the_delete_consent_and_that_an_edit_keeps_what_it_replaces():

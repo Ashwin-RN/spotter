@@ -256,7 +256,7 @@ def test_a_deleted_or_missing_entry_is_not_found(user):
     missing = edit(user, "bodyweight", MISSING, kg=70)
     assert missing["error"] == "not_found" and edit(user, "bodyweight", w["id"], kg=70) == missing
     m = services.log_measurement(user.id, {"kind": "waist", "value": 84}, "web")
-    assert "log_measurement" in edit(user, "measurement", MISSING, value=80)["fix"]
+    assert "the id that logging it returned" in edit(user, "measurement", MISSING, value=80)["fix"]
     assert edit(user, "measurement", m["id"], value=80)["changed"] == ["value"]
 
 

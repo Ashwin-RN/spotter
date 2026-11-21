@@ -100,10 +100,10 @@ def test_failures_come_back_together(user):
 
 def test_the_start_comes_from_the_log_or_must_be_given(user):
     none_yet = goal(user, kind="bodyweight", target_value=75, target_date=day(user, 30))
-    assert none_yet["error"] == "missing_field" and "log_bodyweight" in none_yet["fix"]
+    assert none_yet["error"] == "missing_field" and "Log a weigh-in first" in none_yet["fix"]
     assert "start_value" in none_yet["fix"]
     lift = goal(user, kind="lift", exercise="Deadlift", target_value=150, target_date=day(user, 30))
-    assert lift["error"] == "missing_field" and "log_lifts" in lift["fix"]
+    assert lift["error"] == "missing_field" and "Log a session with Deadlift first" in lift["fix"]
     given = goal(user, kind="lift", exercise="Deadlift", target_value=150, start_value=100, target_date=day(user, 30))
     assert given["goal"]["start_value"] == 100 and given["goal"]["direction"] == "up"
     assert goal(user, kind="lift", exercise="Deadlift", target_value=150, start_value=-5,
@@ -480,7 +480,7 @@ def test_a_measurement_goal_needs_its_kind_and_a_start(user):
     wrong = goal(user, kind="measurement", measurement_kind="wrist", target_value=80, target_date=day(user, 30))
     assert wrong["error"] == "invalid_kind" and "waist" in wrong["fix"]
     none_yet = goal(user, kind="measurement", measurement_kind="hips", target_value=95, target_date=day(user, 30))
-    assert none_yet["error"] == "missing_field" and "log_measurement" in none_yet["fix"] and "cm" in none_yet["fix"]
+    assert none_yet["error"] == "missing_field" and "Log one first" in none_yet["fix"] and "cm" in none_yet["fix"]
     given = goal(user, kind="measurement", measurement_kind="hips", target_value=95, start_value=100,
                  target_date=day(user, 30))
     assert given["goal"]["start_value"] == 100 and given["goal"]["direction"] == "down"
@@ -561,7 +561,7 @@ def test_a_cardio_best_goal_refusals(user):
     assert "list_exercises with kind cardio" in a_lift["fix"] and "kind lift" in a_lift["fix"]
     assert goal(user, **{**base, "exercise": "Bak Squat", "target_value": 25})["error"] == "unknown_exercise"
     longer = goal(user, **{**base, "distance_km": 10, "target_value": 55})
-    assert longer["error"] == "missing_field" and "10 km or more" in longer["message"] and "log_cardio" in longer["fix"]
+    assert longer["error"] == "missing_field" and "10 km or more" in longer["message"] and "with its distance" in longer["fix"]
     one_dp = goal(user, **{**base, "target_value": 27.26})
     assert one_dp["goal"]["target_value"] == 27.3
 

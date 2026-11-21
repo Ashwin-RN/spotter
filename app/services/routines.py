@@ -137,7 +137,7 @@ def _lift(raw, n: int, names: list[str]) -> tuple[dict, list[dict]]:
             errors.append(rules.unknown_exercise(sent, names, f"{where}: "))
         elif "reps" not in rules.measures_of(name):
             errors.append(rules.error("invalid_field", f"{where}: {name} records {rules.records(name)}: a routine "
-                                      "holds lifts of sets and reps.", "Log it with log_lifts."))
+                                      "holds lifts of sets and reps.", "Log its sets instead."))
     sets, err = _whole(raw.get("sets"), "sets", where, n, rules.ROUTINE_LIFT_SETS, "invalid_field")
     errors += [err] if err else []
     reps, err = _whole(raw.get("reps"), "reps", where, n, rules.HARD_RULES["reps"], "reps_out_of_range")

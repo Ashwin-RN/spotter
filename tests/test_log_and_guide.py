@@ -11,7 +11,10 @@ app/mcp_schemas.py. Neither function is registered here, so nothing published mo
 Package L1b: log and guide registered after list_exercises, the five hidden from every list and answering by
 name, log in the write tuple and guide among the reads, the call row's notes, and the homepage count. Through
 /mcp: each kind through log and through its function, the same rows and answer; the order of checks; the rows;
-the limits, the key and the switch; and no refusal of log naming one of the five."""
+the limits, the key and the switch; and no refusal of log naming one of the five.
+
+Package L3: the text both lists read names none of the five: not_found's fix for each log kind, set_goal's start
+refusals and its time fix, save_routine's refusal of a lift without reps, and what_is_logged's saved food id."""
 
 import ast
 import hashlib
@@ -1654,3 +1657,54 @@ def test_no_refusal_through_log_names_one_of_the_five(http):
         answer = answer_of(http, token, "log", sent)
         assert "error" in answer, sent
         assert not FIVE_NAMES.search(json.dumps(answer)), (sent, answer)
+
+
+# ---------------------------------------------------------------- L3: the text both lists read names none of the five
+
+def fixes_of(answer: dict) -> list[str]:
+    return [answer["fix"]] if "fix" in answer else [e["fix"] for e in answer.get("errors", [])]
+
+
+def test_the_answers_both_lists_read_name_none_of_the_five(make_user):
+    # Rows 11 and 14 to 17 of the contract's model-read table: a chat holding log and a chat holding the five both
+    # read these at call time, so each names neither.
+    from datetime import timedelta
+
+    from app import users
+    user = make_user()
+    later = (users.today_for(user) + timedelta(days=60)).isoformat()
+    goal = lambda **data: services.set_goal(user.id, {"target_date": later, **data}, "claude")  # noqa: E731
+    answers = {}
+    for kind in ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry"):  # row 11
+        answers[kind] = services.delete_entry(user.id, kind, 987654)
+    answers.update(  # row 14: nothing logged to start from; row 15: a time no speed reaches
+        lift=goal(kind="lift", exercise="Deadlift", target_value=100),
+        bodyweight_goal=goal(kind="bodyweight", target_value=75),
+        measurement_goal=goal(kind="measurement", measurement_kind="waist", target_value=80),
+        cardio_goal=goal(kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=27),
+        time=goal(kind="cardio_best", exercise="Outdoor Run", distance_km=5, target_value=1, start_value=30),
+        routine=services.save_routine(user.id, {"name": "Core", "lifts": [  # row 16
+            {"exercise": "Plank", "sets": 2, "reps": 1}]}, "claude"))
+    for name, answer in answers.items():
+        assert "error" in answer, (name, answer)
+    found = {name: fixes_of(answer) for name, answer in answers.items()}
+    for kind in ("lift_session", "bodyweight", "measurement", "cardio_entry"):
+        assert found[kind] == ["Check the id and the kind: use the id that logging it returned, or one from get_log."]
+    assert found["food_entry"] == ["Check the id and the kind: use an id that logging it returned, or one from get_log."]
+    assert found["lift"] == ["Log a session with Deadlift first, or give start_value: the person's current one-rep "
+                             "max in kg."]
+    assert found["bodyweight_goal"] == ["Log a weigh-in first, or give start_value: today's body weight in kg."]
+    assert found["measurement_goal"] == ["Log one first, or give start_value: the person's waist now, in cm."]
+    assert found["cardio_goal"] == ["Log one first, with its distance, or give start_value: the person's time for "
+                                    "5 km now, in minutes."]
+    assert found["time"][0].endswith(", as a cardio entry takes.")
+    assert found["routine"] == ["Log its sets instead."]
+    # Row 17: what_is_logged's words for a saved food's id, once the person has one.
+    assert "error" not in services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti",
+                                                       "kcal_per_serving": 120}, "claude")
+    logged = services.what_is_logged(user.id)
+    assert "The saved food's id, to log it by." in json.dumps(logged)
+    for answer in (*answers.values(), logged):
+        assert not FIVE_NAMES.search(json.dumps(answer)), answer
+    for text in (t for fixes in found.values() for t in fixes):
+        assert tr.check(text, tr.MESSAGE) == [], text

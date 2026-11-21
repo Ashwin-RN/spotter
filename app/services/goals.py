@@ -266,7 +266,7 @@ def _value(value, field: str, kind: str, measurement_kind: str | None,
     if timed:
         lo, hi = time_limits(distance_km)
         minutes, tail = _time_words(distance_km, units)
-        fix = f"Give {field} as the minutes for the goal's distance, {minutes} {tail}, as log_cardio takes."
+        fix = f"Give {field} as the minutes for the goal's distance, {minutes} {tail}, as a cardio entry takes."
     number, err = in_range(rules.converted(value, formatting.LB) if pounds else value, field, lo, hi, fix,
                            low_open=low_open, places=2 if whole else places)
     if err and pounds:
@@ -695,21 +695,21 @@ def _no_start(g, units=None) -> dict:
     weight = formatting.unit_word("weight", units)
     if g.kind == "lift":
         return rules.error("missing_field", f"There is no logged {g.exercise.name} to start this goal from.",
-                           f"Log a session with {g.exercise.name} first (log_lifts), or give start_value: the "
+                           f"Log a session with {g.exercise.name} first, or give start_value: the "
                            f"person's current one-rep max in {weight}.", field="start_value")
     if g.kind == "bodyweight":
         return rules.error("missing_field", "There is no weigh-in to start this goal from.",
-                           "Log a weigh-in first (log_bodyweight), or give start_value: today's body weight in "
+                           "Log a weigh-in first, or give start_value: today's body weight in "
                            f"{weight}.", field="start_value")
     if g.kind == "measurement":
         name = measurement_name(g.measurement_kind).lower()
         return rules.error("missing_field", f"There is no {name} measurement to start this goal from.",
-                           f"Log one first (log_measurement), or give start_value: the person's {name} now, in "
+                           f"Log one first, or give start_value: the person's {name} now, in "
                            f"{g.unit}.", field="start_value")
     distance = formatting.show(g.distance_km, "km")
     return rules.error("missing_field", f"There is no {g.exercise.name} session of {distance} or more to "
                        "start this goal from.",
-                       f"Log one first (log_cardio with distance_km), or give start_value: the person's time for "
+                       f"Log one first, with its distance, or give start_value: the person's time for "
                        f"{distance} now, in minutes.", field="start_value")
 
 
