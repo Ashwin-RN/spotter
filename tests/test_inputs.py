@@ -44,7 +44,7 @@ from .test_web import client, only_user, post, seam, sign_in, today_of, web_clie
 # edit_entry (a pair's weight) and get_progress (Best.text).
 BEFORE_INPUTS = {
     "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",
-    "list_exercises": "00569bbb5241240bff4eb3124c0c01d5cf997ba2bb1e8c520911d47af4be5476",  # exercise list C4d: search; C4f: a side
+    "list_exercises": "5c4dace8b6b714d2523bc3e7a5f6ebb34b65753d7d4da2abb11f5c2bf12bbfa3",  # exercise list C4d: search; C4f: a side; log and guide: log takes the person's words
     "log_lifts": "25bad23e53f48945c75888f6f706afe840f0253c68dcf1db3d7e3efdaf6f7c11",  # exercise list: LogSetIn; C4e: NewBest; C4f: hand_check, a side; 2026-11-20: a pair's weight
     "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",
     "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",
@@ -52,19 +52,19 @@ BEFORE_INPUTS = {
     "update_settings": "1053550decae70f255f0edaf894b730c1da9315e2d989ae1e5e2536eee85c879",
     "get_log": "dcfab8951e9a8aa501e136054150cb05c07477ad2eda6ca87b6dfc5114e059e5",  # exercise list: SetOut; C4e: NewBest
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
-    "edit_entry": "e72a92fc3615faca270f78217f07c1632e5323bef42a326b4e70533709323620",  # exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight
-    "restore_entry": "ea098328552576986f8c0a410757d424478eb0566b104e2eb76d3de4b24cf8a9",
-    "delete_entry": "ed03ec3aad90a1ffa9f8b00175bf5a7c1b7d18c92ce20d7032ee43fbf8fd749f",
-    "find_food": "cf6cce7ada8d743d741108f84359140a7c0571d85ef43b0964b70cfbdc101189",
-    "log_food": "372bd699ac31aaf096b1fd5231850f2b54d80a1278320fd8fad2eafa709a0f1a",  # 2026-11-20: meal leads with sending
-    "save_food": "0a8e5b4526af8bc103af661c711ad6719ab8588579dc64ceb4b6b4ed6cb218cc",
+    "edit_entry": "86f202eb01e3ff4c39a8e9236234a350f4a02ed20c1cdc1c5b559c5e2ebe2bc5",  # exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words
+    "restore_entry": "7ef4931069bb011e48b55cb21e2c574ea21c2716112a85957b0ad0499220cb67",  # log and guide: kind words, id words
+    "delete_entry": "02798afe3eee1addad25aac4c73de15475ec648830d12f67134cd910b308e7b0",  # log and guide: kind words, id words
+    "find_food": "db1fa82718a2a9e97d81806d21988b8340d2f20ec1c1a30d01eccd0b6e30a586",  # log and guide: ids log takes
+    "log_food": "91bdd6db7aa8421b0dc1fc806d2afea719e7c6c23c08ae259bc6da7ecbccabad",  # 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words
+    "save_food": "599ec355d36b392504083437501412a35693828717381813341ff1b7683ad5fd",  # log and guide: ids log takes
     "log_cardio": "5a4106f698eae37d7b11fe096d19f60e2d405050ada8b23aa7e33b65df8d8794",  # 2026-11-20: exercise's words name both walks
     "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
     "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",
     "import_entries": "5bfa3ce4279e3aca8619fdcc0dbc987081ca9b27f79fa9a74dd836377bc865c5",  # exercise list
     "send_feedback": "63bf4722f94c7863dcafce688f8864224c46cbf30868d971e5347475a0686184",
     "save_routine": "4f6d9d6043be339a956fea50f3d2f32e8fe4a28359dc9113a5bc31072e53cbed",  # exercise list; C4c: help, band
-    "get_routines": "6a11804f8ac54325ba55a61f65dfded200fc3185a3e07f4e16f3975021ed01d7",  # exercise list; C4c: exact true, help
+    "get_routines": "d3e2f09a49ebfbb3467e9d3db06f5acc0be6a7053343b3950e12cd7fb58a374b",  # exercise list; C4c: exact true, help; log and guide: sets sent with log
     "owner_calls": "79ec889297b107ba7f25781a2ace0a058b712960510d994d36788485da57d787",
     "owner_feedback": "242b0d08f0ca2b4bb696ec818f327ede1d2b2b71b6959dba0e687cc9b628a5f7",
     "owner_delete_feedback": "e6d44e98f7ac2ce9945b277c0c592c7bde7ba6060b6628990f3a1bc16764909b",
@@ -138,7 +138,8 @@ def test_the_published_list_differs_only_by_additional_properties_and_the_three_
 def test_the_instructions_are_unchanged():
     # data-on-request.md: DATA_RULE joined after; exercise-list.md C4c
     # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
-    assert len(mcp_server.INSTRUCTIONS) == 4082
+    # log-and-guide.md L2: log's routing sentence in place of the sleep sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4084
 
 
 # ---------------------------------------------------------------- the person and the calls

@@ -1120,7 +1120,8 @@ def test_both_are_published_with_their_words_arguments_and_the_read_only_hints(h
     assert mcp_server.GOALS_RULE + " " + mcp_server.DATA_RULE + " " in mcp_server.INSTRUCTIONS
     # exercise-list.md C4c: the sentence on a person's own words
     # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
-    assert len(mcp_server.INSTRUCTIONS) == 4082 < 4096
+    # log-and-guide.md L2: log's routing sentence in place of the sleep sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4084 < 4096
     assert mcp_server.INSTRUCTIONS.endswith("do not also quote latest, should_be_today or ahead_by.")
 
 

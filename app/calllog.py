@@ -47,6 +47,7 @@ from pathlib import Path
 from sqlalchemy import delete, select, update
 
 from app import db
+from app.log_shape import table_word
 from app.mcp_schemas import (
     FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, LogPartIn, LogSetIn, RoutineLiftIn, SetIn,
 )
@@ -69,7 +70,9 @@ SWEEP_RETRY_MINUTES = 10  # how soon a group whose sweep failed or stopped at th
 CALLERS = ("web", "claude")
 # Spotter's eight tables: the one value tried writes (kind=food_entry), and an import's rows counted by kind.
 TABLES = ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "routine", "goal")
-# The functions whose kind names a table. Any other kind (a goal's, a measurement's) is a name only.
+# The functions whose kind names a table. Any other kind (a goal's, a measurement's) is a name only. Their kind is
+# read as its table word (log_shape.table_word, log-and-guide.md decision 52), as the service reads it: lifts is
+# written kind=lift_session.
 TABLE_KINDS = frozenset({"edit_entry", "delete_entry", "restore_entry"})
 # Every argument name of the MCP functions, and every field of their input models. tried writes no other name.
 KNOWN_NAMES = frozenset({
@@ -276,9 +279,9 @@ def unnote(key: str) -> None:
 def tried(function: str, sent) -> str:
     """What a call sent, as names and counts: the known names sent, sorted. A list is name[n], a list of objects
     name[n]{fields any item sent}, an object name{fields}; one level deep. kind shows its value when it is a table
-    name and the function's kind is one (TABLE_KINDS), and a list of objects with kinds counts them by table
-    (rows.kind{food_entry=2}). Any other name is counted in other[n], never written. Cut at a whole name past
-    TRIED_MAX, ending " +more"."""
+    name and the function's kind is one (TABLE_KINDS), read as its table word, and a list of objects with kinds
+    counts them by table (rows.kind{food_entry=2}). Any other name is counted in other[n], never written. Cut at a
+    whole name past TRIED_MAX, ending " +more"."""
     other: set = set()
 
     def known(item: dict) -> list[str]:
@@ -300,6 +303,8 @@ def tried(function: str, sent) -> str:
         elif isinstance(value, dict):
             parts.append((name, name + "{" + ",".join(known(value)) + "}"))
         else:
+            if name == "kind" and function in TABLE_KINDS:
+                value = table_word(value)
             table = name == "kind" and function in TABLE_KINDS and value in TABLES
             parts.append((name, f"kind={value}" if table else name))
     if other:

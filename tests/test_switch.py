@@ -540,8 +540,9 @@ def test_the_rule_is_in_the_instructions_and_the_description_and_the_published_w
     assert tool["inputSchema"]["properties"]["confirm"]["description"] == CONFIRM_WORDS
     # Ruling round 1: kind and entry_id name a saved food too, and since routines.md a routine. edit_entry keeps the
     # shared words.
-    assert tool["inputSchema"]["properties"]["kind"]["description"] == (
-        "lift_session, bodyweight, measurement, food_entry or cardio_entry. Or saved_food or routine.")
+    assert tool["inputSchema"]["properties"]["kind"]["description"] == (  # and log's five words (log-and-guide.md, 52)
+        "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio. Or saved_food or "
+        "routine.")
     assert tool["inputSchema"]["properties"]["entry_id"]["description"] == mcp_server.RESTORE_ID_DESCRIPTION == (
         mcp_server.ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or find_food, a routine's from "
                                           "save_routine or get_routines.")
@@ -568,11 +569,12 @@ def test_the_rule_is_in_the_instructions_and_the_description_and_the_published_w
     assert who["outputSchema"]["properties"]["claude_can"]["description"] == CLAUDE_CAN_WORDS
 
 
-def test_the_instructions_are_4082_characters_under_the_cap_and_still_end_with_the_plan_line_sentence():
+def test_the_instructions_are_4084_characters_under_the_cap_and_still_end_with_the_plan_line_sentence():
     text = mcp_server.INSTRUCTIONS
     # data-on-request.md: DATA_RULE joined; exercise-list.md C4c
     # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
-    assert len(text) == 4082 < 4096
+    # log-and-guide.md L2: log's routing sentence in place of the sleep sentence
+    assert len(text) == 4084 < 4096
     assert text.endswith("Where a goal carries plan_line, say it as written, and do not also quote latest, "
                          "should_be_today or ahead_by.")
 

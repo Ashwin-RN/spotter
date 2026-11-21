@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
-from app import calllog, db, services
+from app import calllog, db, log_shape, services
 from app.models import CallLog
 
 from .conftest import HEADERS, rpc, sign
@@ -514,3 +514,17 @@ def test_a_resource_that_fails_never_shows_or_logs_its_message(http, monkeypatch
     assert "error" in r.json() and r.json()["error"]["message"]
     assert MARKER not in r.text and MARKER not in logs.text
     assert ("MCP resource crashed" if how == "crash" else "could not use the database") in logs.text
+
+
+def test_tried_writes_the_table_word_for_log_s_kind_words_on_the_three_and_on_no_other_function():
+    # log-and-guide.md, decision 52: the call row keeps the table word, so counts by kind stay comparable.
+    assert log_shape.TABLE_WORDS == {"lifts": "lift_session", "bodyweight": "bodyweight",
+                                     "measurement": "measurement", "food": "food_entry", "cardio": "cardio_entry"}
+    for word, table in log_shape.TABLE_WORDS.items():
+        for function in ("edit_entry", "delete_entry", "restore_entry"):
+            assert calllog.tried(function, {"kind": word, "entry_id": 3}) == f"entry_id kind={table}", function
+            assert calllog.tried(function, {"kind": table, "entry_id": 3}) == f"entry_id kind={table}", function
+    for kind in ("Lifts", "lift", "waist", 5, None):  # not one of the words, as written: a name only, as before
+        assert calllog.tried("delete_entry", {"kind": kind, "entry_id": 3}) == "entry_id kind", kind
+    assert calllog.tried("log", {"kind": "food"}) == "kind"  # log's kind is never written: its notes say it
+    assert calllog.tried("set_goal", {"kind": "lifts"}) == "kind"

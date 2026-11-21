@@ -651,13 +651,14 @@ def test_the_history_is_read_once_a_call_for_every_candidate_its_words_name():
 
 # ---------------------------------------------------------------- the model-read text, and through /mcp
 
-def test_the_instructions_say_the_new_sentence_and_are_4082_characters():
+def test_the_instructions_say_the_new_sentence_and_are_4084_characters():
     text = mcp_server.INSTRUCTIONS
     assert ("Log a lift in the person's own words, such as squat or bench: Spotter picks the lift. Use other names as "
             "list_exercises gives them. ") in text
     assert "Use exercise names exactly as list_exercises gives them." not in text
     # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
-    assert len(text) == 4082 < 4096
+    # log-and-guide.md L2: log's routing sentence in place of the sleep sentence
+    assert len(text) == 4084 < 4096
     assert text.endswith("and do not also quote latest, should_be_today or ahead_by.")
 
 
@@ -682,7 +683,9 @@ def test_through_mcp_a_word_is_logged_pick_lift_reaches_the_client_and_exact_ans
     assert log_lifts["description"].endswith(
         "Send the person's own word for a lift; Spotter picks it and the summary names it. pick_lift means two lifts "
         "fit: ask which.")
-    assert "send its sets with log_lifts, one item a set with exact true, with each change" in routines["description"]
+    # log-and-guide.md row 4: a routine's sets go to log
+    assert ("send its sets with log, kind lifts, one part a set, the lift as movement, with exact true, with each "
+            "change") in routines["description"]
     props = log_lifts["inputSchema"]["$defs"]["LogSetIn"]["properties"]
     assert set(props) == {"exercise", "weight_kg", "weight_lb", "reps", "time_s", "distance_m", "exact"}
     assert tools["edit_entry"]["inputSchema"]["$defs"]["SetIn"]["properties"]["exercise"]["description"] == (

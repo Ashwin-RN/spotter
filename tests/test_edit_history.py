@@ -22,7 +22,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import event, inspect, select, update
 from sqlalchemy.exc import OperationalError
 
-from app import calllog, db, mcp_server, services, web
+from app import calllog, db, log_shape, mcp_server, services, web
 from app.db import make_engine
 from app.mcp_schemas import RestoreEntryResult
 from app.models import (
@@ -436,9 +436,64 @@ def test_an_undo_on_a_deleted_entry_answers_as_an_edit_does_and_restores_nothing
     assert undo(uid, kind, entry)["undone"] is True  # and then the edit can be undone
 
 
+# ---------------------------------------------------------------- log's kind words (log-and-guide.md, decision 52)
+
+# log's five words, each with the table word edit_entry, delete_entry and restore_entry read it as.
+LOG_WORDS = {"lifts": "lift_session", "bodyweight": "bodyweight", "measurement": "measurement", "food": "food_entry",
+             "cardio": "cardio_entry"}
+
+
+def said(result: dict) -> dict:
+    """What an answer says, its ids and stamps aside: two people's same call answers alike in these."""
+    return {k: result.get(k) for k in ("error", "kind", "changed", "summary", "note", "deleted", "dry_run",
+                                       "restored", "undone", "duplicate")}
+
+
+@pytest.mark.parametrize("word", list(LOG_WORDS))
+def test_edit_undo_delete_and_restore_by_log_s_word_answer_as_by_the_table_word(make_user, word):
+    assert log_shape.TABLE_WORDS == LOG_WORDS
+    table = LOG_WORDS[word]
+    one, two = make_user().id, make_user().id  # the same entry for each; one is sent log's word, two the table word
+    first, second = make(table, one), make(table, two)
+    calls = [
+        lambda uid, kind, entry: services.edit_entry(uid, kind, entry, EDITS[table](), "claude"),
+        lambda uid, kind, entry: undo(uid, kind, entry),
+        lambda uid, kind, entry: services.delete_entry(uid, kind, entry, "claude"),  # the preview
+        lambda uid, kind, entry: services.delete_entry(
+            uid, kind, entry, "claude", confirm=services.delete_entry(uid, table, entry, "claude")["confirm"]),
+        lambda uid, kind, entry: services.restore_entry(uid, kind, entry, "claude"),
+    ]
+    for step, made in enumerate(calls):
+        by_word, by_table = made(one, word, first), made(two, table, second)
+        assert "error" not in by_word and by_word["kind"] == table, (step, by_word)
+        assert said(by_word) == said(by_table), step
+    assert services.get_entry(one, table, first)["entry"]["deleted_at"] is None and len(versions(one)) == 2
+
+
+def test_through_mcp_log_s_word_and_the_table_word_reach_the_same_entry_and_the_rows_keep_the_table_word(writer):
+    http, token, account = writer
+    entry = make("lift_session", account)
+    preview = ok(http, token, "delete_entry", {"kind": "lifts", "entry_id": entry})
+    assert (preview["kind"], preview["dry_run"]) == ("lift_session", True)
+    done = ok(http, token, "delete_entry", {"kind": "lift_session", "entry_id": entry, "confirm": preview["confirm"]})
+    assert (done["kind"], done["deleted"]) == ("lift_session", True)
+    assert ok(http, token, "restore_entry", {"kind": "lifts", "entry_id": entry})["restored"] is True
+    assert ok(http, token, "edit_entry", {"kind": "lifts", "entry_id": entry, "notes": "Light"})["changed"] == ["notes"]
+    refused = failed(http, token, "edit_entry", {"kind": "lift", "entry_id": entry, "notes": "Light"})
+    assert refused["error"] == "unknown_kind" and "lifts" not in refused["fix"]  # any other word, as before
+    assert [(r.function, r.outcome, r.tried) for r in rows()[-5:]] == [
+        ("delete_entry", "preview", "entry_id kind=lift_session"),
+        ("delete_entry", "written", "confirm entry_id kind=lift_session"),
+        ("restore_entry", "written", "entry_id kind=lift_session"),
+        ("edit_entry", "written", "entry_id kind=lift_session notes"),
+        ("edit_entry", "refused", "entry_id kind notes")]
+    for text in (mcp_server.KIND_DESCRIPTION, mcp_server.ENTRY_ID_DESCRIPTION):
+        assert tr.check(text, tr.CLAUDE) == [], text
+
+
 def test_an_undo_on_a_goal_or_an_unknown_kind_answers_as_a_plain_restore_does(make_user):
     uid = make_user().id
-    for kind in ("goal", "food", None, 7):
+    for kind in ("goal", "meal", None, 7):  # food is log's word for food_entry now (log-and-guide.md, decision 52)
         assert undo(uid, kind, 1) == services.restore_entry(uid, kind, 1)
         assert undo(uid, kind, 1)["error"] == "unknown_kind"
     assert undo(10 ** 9, "bodyweight", 1) == common.no_account()
@@ -658,10 +713,11 @@ def test_restore_entry_publishes_undo_edit_and_no_allow_repeat_and_the_instructi
                                    mcp_server.ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or "
                                                                      "find_food, a routine's from save_routine or "
                                                                      "get_routines.")}  # routines.md
-    # restore_entry's kind has words of its own: an undo takes a saved food too. The other two keep the shared ones.
+    # restore_entry's kind has words of its own: an undo takes a saved food too. The other two keep the shared ones,
+    # which name log's five kind words beside the table words (log-and-guide.md, decision 52).
     kinds = {t["name"]: t["inputSchema"]["properties"]["kind"]["description"] for t in tool_list(http, sign())
              if "kind" in t["inputSchema"]["properties"] and t["name"].endswith("_entry")}
-    shared = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
+    shared = "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio."
     assert kinds == {"edit_entry": shared, "delete_entry": shared + " Or saved_food or routine.",  # and routines.md
                      "restore_entry": shared + " With undo_edit, saved_food too. Or routine, to bring back a deleted "
                                                "one."}
@@ -679,8 +735,9 @@ def test_restore_entry_publishes_undo_edit_and_no_allow_repeat_and_the_instructi
     results = tool["outputSchema"]["properties"]
     assert "redone" not in results and results["duplicate"]["description"] == (
         "With undo_edit: true when the last edit was already undone, so nothing changed. Say so.")
-    # switch decision 18. 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
-    assert len(mcp_server.INSTRUCTIONS) == 4082 and "undo" not in mcp_server.INSTRUCTIONS
+    # switch decision 18. 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence.
+    # log-and-guide.md L2: log's routing sentence in place of the sleep sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4084 and "undo" not in mcp_server.INSTRUCTIONS
     # No other function's arguments changed: the stale form's field is the web's alone.
     names = {name for t in tool_list(http, sign()) for name in t["inputSchema"]["properties"]}
     assert "undo_edit" in names and not {"updated_at", "drawn_at", "by"} & names

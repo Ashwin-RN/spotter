@@ -227,7 +227,9 @@ INSTRUCTIONS = (
     "to a page for it. "
     "Log a lift in the person's own words, such as squat or bench: Spotter picks the lift. Use other names as "
     "list_exercises gives them. "
-    "Log sleep, steps, resting heart rate and water with log_measurement. "
+    # log-and-guide.md: log's routing sentence, where 48's sentence on log_measurement stood. A new chat's list has
+    # no log_measurement, and the instructions name none of the five.
+    "Record an entry with log. Call guide with its kind before any details. "
     "Leave the date out for something done today: today is the person's own date. "
     "Quote Spotter's numbers; never estimate your own, except a food's kcal, as the food rule says. "
     "If a call returns an error, read its fix and retry. "
@@ -298,14 +300,13 @@ _SENT: ContextVar[dict | None] = ContextVar("spotter_sent_arguments", default=No
 # the arguments as sent (_SENT), so a function declares it and never passes it on.
 
 LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
-KIND_DESCRIPTION = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
+# log's five kind words work too (log-and-guide.md, decision 52): log_shape.TABLE_WORDS maps each to its table word.
+KIND_DESCRIPTION = "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio."
 RESTORE_KIND_DESCRIPTION = (KIND_DESCRIPTION + " With undo_edit, saved_food too. Or routine, to bring back a deleted "
                             "one.")
 # delete_entry takes a saved food (switch, ruling 1) and a routine (routines, decision 11)
 DELETE_KIND_DESCRIPTION = KIND_DESCRIPTION + " Or saved_food or routine."
-ENTRY_ID_DESCRIPTION = ("The entry's id, from log_lifts, log_bodyweight, log_measurement, log_food, log_cardio "
-                        "or get_log, "
-                        "with the kind it came with.")
+ENTRY_ID_DESCRIPTION = "The entry's id, from log or get_log, with the kind it came with."
 RESTORE_ID_DESCRIPTION = (ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or find_food, a routine's "
                           "from save_routine or get_routines.")
 
@@ -957,7 +958,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         description=(
             "Exercise names, with each lift's equipment and how its weight is logged. Left bare: the person's own, "
             "the usual lifts and every cardio activity, and how many Spotter knows. search finds the rest. "
-            "log_lifts also takes the person's own words; every other function takes a name as written here."
+            "log also takes the person's own words for a lift; every other function takes a name as written here."
         ),
         annotations=READ_ONLY,
     )
@@ -1520,8 +1521,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         title="Get routines",
         description=(
             "The person's saved routines, each lift with its sets, its reps and the weight to log. Call it when the "
-            "person names a routine, such as log my push day. To log one, send its sets with log_lifts, one item a "
-            "set with exact true, with each change the person names, and leave the date out for today. Send each "
+            "person names a routine, such as log my push day. To log one, send its sets with log, kind lifts, one "
+            "part a set, the lift as movement, with exact true, with each change the person names, and leave the "
+            "date out for today. Send each "
             "weight_kg as given, in weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and send the answer in "
             "the field of its unit. Say in your reply which sets were logged."
         ),

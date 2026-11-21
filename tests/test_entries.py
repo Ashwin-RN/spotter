@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app import db, services, users
 from app.models import Bodyweight, LiftSession, LiftSet, Measurement, entry_models
 from app.services.common import MAX_ID, entry_id
-from app.services.entries import entry_kinds
+from app.services.entries import EDITABLE, entry_kinds
 
 MISSING = 10 ** 9
 
@@ -93,7 +93,7 @@ def test_a_lift_session_keeps_its_sets_through_delete_and_restore(user):
 
 def test_unknown_kinds_and_goals(user):
     assert services.get_entry(user.id, "food", 1)["error"] == "unknown_kind"
-    assert "lift_session" in services.delete_entry(user.id, "food", 1)["fix"]
+    assert "lift_session" in services.delete_entry(user.id, "meal", 1)["fix"]  # food is log's word for food_entry
     for call in (services.delete_entry, services.restore_entry):
         refused = call(user.id, "goal", 1)
         assert refused["error"] == "unknown_kind" and "set_goal" in refused["fix"]
@@ -456,3 +456,34 @@ def test_a_speed_worked_out_in_an_edit_is_summarised_as_stored(user):
     assert gone["after"]["speed_kmh"] is None and gone["after"]["pace"] is None
     assert "distance_km 3 cleared. speed_kmh 4 cleared with the distance" in gone["summary"]
     assert "worked out" not in gone["summary"] and "none" not in gone["summary"].casefold()
+
+
+# ---------------------------------------------------------------- log's kind words (log-and-guide.md, decision 52)
+
+def test_a_delete_previewed_by_log_s_word_is_confirmed_by_the_table_word_and_the_other_way(user):
+    session = log_session(user)
+    preview = services.delete_entry(user.id, "lifts", session["id"], "claude")
+    assert preview["dry_run"] is True and preview["kind"] == "lift_session"  # the answer echoes the table word
+    assert services.delete_entry(user.id, "lift_session", session["id"], "claude") == preview  # the same code
+    done = services.delete_entry(user.id, "lift_session", session["id"], "claude", confirm=preview["confirm"])
+    assert done["deleted"] is True and done["kind"] == "lift_session"
+    back = services.restore_entry(user.id, "lifts", session["id"])
+    assert back["restored"] is True and back["kind"] == "lift_session"
+    food = services.log_food(user.id, {"entries": [{"description": "dal", "kcal": 300}]}, "claude")["ids"][0]
+    preview = services.delete_entry(user.id, "food_entry", food, "claude")
+    done = services.delete_entry(user.id, "food", food, "claude", confirm=preview["confirm"])
+    assert done["deleted"] is True and done["kind"] == "food_entry"
+    assert services.get_entry(user.id, "food_entry", food)["error"] == "not_found"  # deleted, as by its table word
+
+
+def test_log_s_words_are_taken_exactly_as_written_and_any_other_word_is_refused_as_before(user):
+    made = log_weigh_in(user)
+    every = f"Use one of: {', '.join([*entry_kinds(), 'saved_food', 'routine'])}."
+    for kind in ("lift", "Lifts", "FOOD", " cardio", "weigh-in", "lifts "):
+        for call in (services.delete_entry, services.restore_entry):
+            refused = call(user.id, kind, made["id"])
+            assert refused == {"error": "unknown_kind", "message": f"'{kind}' is not a kind of entry.",
+                               "fix": every}, (call.__name__, kind)
+        refused = services.edit_entry(user.id, kind, made["id"], {"kg": 70}, "claude")
+        assert refused["error"] == "unknown_kind" and refused["fix"] == f"Use one of: {', '.join(EDITABLE)}.", kind
+    assert services.get_entry(user.id, "bodyweight", made["id"])["entry"]["kg"] == 80  # nothing changed

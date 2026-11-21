@@ -70,7 +70,7 @@ DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint":
 # guide are new.
 PUBLISHED = {
     "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
-    "list_exercises": "52f0fb4f9245da8281c13052d8ae35fab385d18a06ca6c9bdf74ce9074373aab",  # exercise list C4d: search; C4f: a side
+    "list_exercises": "f29f1d02ded26e18a95c7fc1b9a35bcc7b5a6956ffce800495a8b14fd6ce05e9",  # exercise list C4d: search; C4f: a side; log and guide: log takes the person's words
     "log": "da37eea52fb1bf2ea0cb48cd49d26fb986b22e3bf6b1b852bac29b0b0c9e8b98",  # log and guide: new
     "guide": "6cd1e0ccb93506850e8e80b09fc5b9d863c49ab0cc4818c4bfa066e10544709f",  # log and guide: new
     "log_lifts": "cce7125486e2e61961d17789ad4423a84a77c524201269d3ff55faca60cae9e9",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words; C4e: NewBest's kinds; C4f: hand_check, a side; 2026-11-20: a pair's weight
@@ -80,24 +80,24 @@ PUBLISHED = {
     "update_settings": "cdd9e2dc2bb0ce2a9e35d4d6cfa0e81e71ffec9bbfcb16a4945d6d858ad8ea64",  # units; inputs
     "get_log": "d5bd1cf80037cdb4817f483fd66d9643c7c8917f32c6b3925ce1c4e541fc3c4c",  # units; inputs; exercise list: SetOut; C4e: NewBest's kinds
     "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
-    "edit_entry": "c396cecb79e12c8944c7e3416fb8bae9c328c7521761d6520d29f2ed86ab4781",  # units; inputs; exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight
-    "restore_entry": "1fc5aa945a46c50c8203a702b4821fe42c6d39e35d3db0f27552c2099043c224",  # routines: kind routine; inputs
-    "delete_entry": "1ec50c125535b54a79d67d619c802d49ddaf0aef69a88f53ff90ae66168d1282",  # routines: kind routine; units; inputs
-    "find_food": "9ae7214dc6c6104ae9ae93325d6ed9b87c5296773febd70d07dd8a388ae56fde",  # inputs
-    "log_food": "2912a583e4fc0435d82e3ea92f0f12db41b1e747956fc41a301b4708b77b1355",  # inputs; 2026-11-20: meal leads with sending
-    "save_food": "51fa9c1edce31ca0afd9715af26aaef77dda38aef084160d805b8bfb8f0710d9",  # inputs
+    "edit_entry": "c67e1bb7ca4810519547a0937c67c3cbf82967bff2da83292df8b5a233459adf",  # units; inputs; exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words
+    "restore_entry": "6b129d5d669ea420a54d4a98bc846235dcd6186c493e1b9d961ab761391048bb",  # routines: kind routine; inputs; log and guide: kind words, id words
+    "delete_entry": "bd1eb2e551d6276b7eda7d6f07aa8af4dfd71e28086cf6ae3df4ab3f206366cd",  # routines: kind routine; units; inputs; log and guide: kind words, id words
+    "find_food": "05d2428a97e73043d51fa2fc25c1f2e8d586c9f6d61c72fa08eb42995dc4f3b7",  # inputs; log and guide: ids log takes
+    "log_food": "3234c49246dc33327f3c049c6ac1c7ce74a01c0e0f61b2a6b9bd45e9fde43a0b",  # inputs; 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words
+    "save_food": "51d2adf4bc3bb5cd00d659317a2fd82a4d429e93f38f8417088ed61debca3c3d",  # inputs; log and guide: ids log takes
     "log_cardio": "235cf20d40f883d11a98e826d5e8292c94f55f503b92ab114abcc9c39b705e13",  # units; inputs; 2026-11-20: exercise's words name both walks
     "get_trends": "76a12552c23e443d455dd77b910788c66030f05c3f4ea5b3df0d46d69845b30f",  # inputs
     "get_goals": "6d71cb0446594ce9d51a5eaa6719394018946cfa273a49d49a4bf559cc13a391",  # units; inputs
     "import_entries": "1d890d48348660778e2105210bd298c8b5613f69c0981af43f9703b990960cec",  # inputs; exercise list: names, reps
     "save_routine": "235aceb04e92e26d0d8f59f1e9e3cfb8d36e91ef77226646f4baeac03b41b1e2",  # routines: new; units; inputs; exercise list: reps, help; C4c: help, band
-    "get_routines": "5617aa03015d24116c3c0628e19da61391c99e3b21513e05ad346dbcd695e7e6",  # routines: new, R18's words; units; inputs; exercise list: reps; the matcher: exact true; C4c: help
+    "get_routines": "5e02ce42a92ca0045b1d8e345018b69f90ce92ff12aab832b11e65faee3c8ff5",  # routines: new, R18's words; units; inputs; exercise list: reps; the matcher: exact true; C4c: help; log and guide: sets sent with log
     "owner_calls": "171f8c5c586e68e6885bc0d9014d5a2b7ef4ba4bafa217ee898c8338ffaed810",  # inputs
 }
 # switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE; exercise-list.md C4c: a lift in the person's
 # own words. 2026-11-20: the sleep routing sentence and the shorter Goals sentence; the meal sentence leads with
-# sending the meal the person named
-INSTRUCTIONS_AS_BUILT = "319d008fcba6469fa300fd4821c8223c21d745222afcaa6acedd24eb402fc033"
+# sending the meal the person named. log-and-guide.md L2: log's routing sentence in place of the sleep sentence
+INSTRUCTIONS_AS_BUILT = "43a37f05b2814c961fac22280a4e73502b5cecf28bcac5cb186d55f3aa1be49c"
 
 
 def notes() -> list[Feedback]:

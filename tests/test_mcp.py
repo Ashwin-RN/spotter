@@ -18,7 +18,7 @@ from mcp.server.mcpserver import MCPServer
 from sqlalchemy import func, select
 from starlette.testclient import TestClient
 
-from app import db, links, mcp_server, services
+from app import db, links, log_shape, mcp_server, services
 from app.config import Settings
 from app.main import create_app
 from app.mcp_schemas import RESULTS
@@ -2120,9 +2120,12 @@ STAGE_5_WORDS = ("To answer how the person is doing, call get_trends", "whether 
 
 # 2026-11-20: the sleep routing sentence and the shorter Goals sentence. The instructions carry the
 # month-end rule's short form; set_goal's description and its target_date keep MONTH_END_RULE word for word.
+# log-and-guide.md L2: log's routing sentence takes the sleep sentence's place, as a new chat lists no
+# log_measurement. log's kind words name sleep, steps, resting heart rate and water instead.
 GOALS_SENTENCE = ("Goals: a goal by the end of a month takes that month's last day as target_date, the next such day "
                   "after today.")
 SLEEP_SENTENCE = "Log sleep, steps, resting heart rate and water with log_measurement."
+ROUTING_SENTENCE = "Record an entry with log. Call guide with its kind before any details."
 
 
 def test_every_stage_5_sentence_is_in_the_instructions():
@@ -2137,10 +2140,26 @@ def test_every_stage_5_sentence_is_in_the_instructions():
     assert mcp_server.MONTH_END_RULE not in text and text.count("Goals: ") == 1
 
 
-def test_the_instructions_send_sleep_steps_resting_heart_rate_and_water_to_log_measurement():
+def test_the_instructions_send_every_entry_to_log_after_the_sentence_on_lift_names_and_name_none_of_the_five():
     text = mcp_server.INSTRUCTIONS
-    assert ("list_exercises gives them. " + SLEEP_SENTENCE + " Leave the date out for something done today") in text
-    assert text.count("log_measurement") == 1
+    lift = "Log a lift in the person's own words, such as squat or bench: Spotter picks the lift."
+    assert (lift + " Use other names as list_exercises gives them. " + ROUTING_SENTENCE
+            + " Leave the date out for something done today") in text
+    # Where the sleep sentence stood: from 544, past the first 512 characters; "Spotter picks the lift." keeps its place.
+    assert text.index(ROUTING_SENTENCE) == 544 and text.index(lift) + len(lift) == 497
+    assert SLEEP_SENTENCE not in text and not [name for name in RETIRING if name in text]
+    assert len(text) == 4084 < 4096 and text.endswith(PLAN_LINE_SENTENCE)
+    assert text.count("Goals: ") == 1 and mcp_server.GOALS_MONTH_END in text and mcp_server.MONTH_END_RULE not in text
+    for word in ("sleep", "steps", "resting heart rate", "water"):  # what the sleep sentence named, now in log's kind
+        assert word in log_shape.LOG_KIND_DESCRIPTION, word
+    from . import text_rules as tr
+    assert tr.check(ROUTING_SENTENCE, tr.CLAUDE) == []
+
+
+def test_no_entry_a_new_chat_lists_names_one_of_the_five(http):
+    # log-and-guide.md L2, rows 2 to 4 and 6 to 8: a new chat lists log and guide, so its text names log, never the five.
+    named = {t["name"]: [f for f in RETIRING if f in json.dumps(t)] for t in tool_list(http, sign())}
+    assert {name: five for name, five in named.items() if five} == {}
 
 
 # 2026-11-20: the meal rule leads with sending the meal the person named, in the instructions, in log_food's meal

@@ -963,7 +963,8 @@ def test_every_new_model_read_text_keeps_the_text_rules():
 
 # ---------------------------------------------------------------- guide
 
-GUIDE_SIZES = {"log": 1894, "lifts": 2884, "bodyweight": 1311, "measurement": 1404, "food": 3639, "cardio": 2864}
+# L2: food's FoodEntryIn words lose "in a log_food call", 3639 to 3626 (row 6).
+GUIDE_SIZES = {"log": 1894, "lifts": 2884, "bodyweight": 1311, "measurement": 1404, "food": 3626, "cardio": 2864}
 
 
 def test_guide_has_an_answer_for_each_topic_and_each_is_a_guide_result():

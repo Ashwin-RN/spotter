@@ -69,10 +69,11 @@ SAVE_DESCRIPTION = (
     "it with get_log and send each lift with its number of sets, its reps and its heaviest weight.")
 GET_DESCRIPTION = (
     "The person's saved routines, each lift with its sets, its reps and the weight to log. Call it when the person "
-    "names a routine, such as log my push day. To log one, send its sets with log_lifts, one item a set with exact "
-    "true, with each change the person names, and leave the date out for today. Send each weight_kg as given, in weight_kg, whatever "
-    "the person's units. Where weight_kg is null, ask the person, and send the answer in the field of its unit. Say "
-    "in your reply which sets were logged.")  # units.md; exercise-list.md R3: exact true
+    "names a routine, such as log my push day. To log one, send its sets with log, kind lifts, one part a set, the "
+    "lift as movement, with exact true, with each change the person names, and leave the date out for today. Send "
+    "each weight_kg as given, in weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and "
+    "send the answer in the field of its unit. Say in your reply which sets were logged.")
+# units.md; exercise-list.md R3: exact true; log-and-guide.md row 4: the sets go to log
 KEY_WORDS = mcp_server.KEY_DESCRIPTION
 LIFT_IN = {"exercise": "The lift, exactly as list_exercises gives it.", "sets": "How many sets of it, 1 to 10.",
            "reps": "Reps in each set, a whole number from 1 to 100.",
@@ -820,15 +821,16 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
 
 def test_the_kind_and_id_words_and_delete_entry_s_first_sentence_are_the_contract_s(http):
     tools = {t["name"]: t for t in tool_list(http, sign())}
-    entry_id = ("The entry's id, from log_lifts, log_bodyweight, log_measurement, log_food, log_cardio or get_log, "
-                "with the kind it came with. A saved food's id comes from save_food or find_food, a routine's from "
-                "save_routine or get_routines.")
+    # log-and-guide.md rows 3 and 52: the id comes from log, and the kind words name log's five too
+    entry_id = ("The entry's id, from log or get_log, with the kind it came with. A saved food's id comes from save_food "
+                "or find_food, a routine's from save_routine or get_routines.")
     deleting, restoring = tools["delete_entry"]["inputSchema"], tools["restore_entry"]["inputSchema"]
     assert deleting["properties"]["kind"]["description"] == (
-        "lift_session, bodyweight, measurement, food_entry or cardio_entry. Or saved_food or routine.")
+        "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio. Or saved_food or "
+        "routine.")
     assert restoring["properties"]["kind"]["description"] == (
-        "lift_session, bodyweight, measurement, food_entry or cardio_entry. With undo_edit, saved_food too. Or "
-        "routine, to bring back a deleted one.")
+        "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio. With undo_edit, "
+        "saved_food too. Or routine, to bring back a deleted one.")
     assert deleting["properties"]["entry_id"]["description"] == restoring["properties"]["entry_id"]["description"] == \
         entry_id
     assert tools["delete_entry"]["description"].startswith(
@@ -854,17 +856,20 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
              "get_progress", "get_goals", "get_log", "delete_entry"}
     # The exercise list (exercise-list.md, deploy 2) moved import_entries' names part and list_exercises (R8).
     # 2026-11-20: log_food's meal words lead with sending the meal the person named.
+    # log-and-guide.md L2 moved find_food and save_food too (rows 7 and 8), beside entries already here.
     assert {n for n in BEFORE if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami",
-                                                            "import_entries", "list_exercises", "log_food"} | units
+                                                            "import_entries", "list_exercises", "log_food", "find_food",
+                                                            "save_food"} | units
     assert hashes["restore_entry"] != BEFORE["restore_entry"] and "restore_entry" not in units
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
     assert everyone == [n for n in registered if n not in mcp_server.OWNER_FUNCTIONS + mcp_server.RETIRING]
     assert len(everyone) == web.FUNCTION_COUNT == 21
 
 
-def test_the_instructions_do_not_change_4082_characters():  # data-on-request.md: DATA_RULE; exercise-list.md C4c
+def test_the_instructions_do_not_change_4084_characters():  # data-on-request.md: DATA_RULE; exercise-list.md C4c
     # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
-    assert len(mcp_server.INSTRUCTIONS) == 4082
+    # log-and-guide.md L2: log's routing sentence in place of the sleep sentence
+    assert len(mcp_server.INSTRUCTIONS) == 4084
     assert "routine" not in mcp_server.INSTRUCTIONS
 
 

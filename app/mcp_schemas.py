@@ -236,7 +236,7 @@ class RoutineLiftIn(BaseModel):
 
 
 class FoodEntryIn(BaseModel):
-    """One food in a log_food call. There is no tag field: Spotter works out who supplied the number."""
+    """One food entry. There is no tag field: Spotter works out who supplied the number."""
 
     model_config = INPUT
 
@@ -970,7 +970,7 @@ class LogFoodResult(BaseModel):
 
 
 class SavedFood(BaseModel):
-    id: int = Field(description="The saved food's id: log_food takes it as saved_food_id.")
+    id: int = Field(description="The saved food's id. Log it as saved_food_id, with servings.")
     name: str = Field(description="The food's name.")
     serving_label: str = Field(description="What one serving is.")
     kcal_per_serving: float = Field(description="Calories in one serving.")
@@ -1006,7 +1006,7 @@ class RecentFood(BaseModel):
 
 
 class UsdaFood(BaseModel):
-    fdc_id: int = Field(description="The USDA id: log_food takes it as usda_fdc_id, with grams.")
+    fdc_id: int = Field(description="The USDA id. Log it as usda_fdc_id, with grams.")
     description: str = Field(description="The USDA's name for it.")
     data_type: str = Field(description="Which USDA data set it comes from.")
     kcal_per_100g: float = Field(description="Calories in 100 g.")

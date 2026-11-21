@@ -65,6 +65,10 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit])
   field's name, as before. A weight in lb or a distance or speed in miles, while the person has not chosen,
   carries units_note. delete_entry's preview and delete carry summary: the entry in one line in the person's units
   for a session, a weigh-in, a cardio entry and a routine, none for the other kinds.
+- Kind words (contract log-and-guide.md, decision 52). edit_entry, delete_entry and restore_entry take log's five
+  kind words as well as the table words: log_shape.table_word maps lifts, food and cardio to lift_session,
+  food_entry and cardio_entry at the door, before the kind check and before confirm_code hashes the kind. So a
+  preview by one word and a confirm by the other match, and every answer echoes the table word.
 """
 
 import hashlib
@@ -74,6 +78,7 @@ from datetime import timezone
 from sqlalchemy import Index, select
 
 from app import db, formatting, links, metrics, rules, users
+from app.log_shape import table_word
 from app.models import (
     CLAUDE_CAN, IMPORTED, Bodyweight, CardioEntry, Exercise, FoodEntry, Goal, LiftSession, Measurement, Routine,
     SavedFood, entry_models,
@@ -211,6 +216,7 @@ def delete_entry(user_id: int, kind: str, entry_id, by: str | None = None, confi
     log while the call waited refuses it. may_delete(claude_can) is None to go on, or the refusal, returned as it is:
     the MCP wrapper passes its own not_allowed. With by claude and none passed, only log_delete goes on; anything else
     raises before anything changes. The web passes no by: the person's own click is never checked."""
+    kind = table_word(kind)
     kinds = _deletable()
     model = _model(kinds, kind)
     if model is None:
@@ -268,6 +274,7 @@ def _with_summary(out: dict, row, user) -> dict:
 
 
 def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo_edit: bool = False) -> dict:
+    kind = table_word(kind)
     kinds = _deletable()
     model = _model(kinds, kind)
     if model is None:
@@ -465,6 +472,7 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
     changed []. A goal is edited with set_goal. drawn_at, from a web form only: the entry's updated_at as
     its page drew it. An entry that changed since is entry_changed.
     """
+    kind = table_word(kind)
     if kind == "goal":
         return error("unknown_kind", "A goal is not edited here.",
                      "Use set_goal with goal_id and the fields to change.")
