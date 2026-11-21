@@ -65,7 +65,7 @@ BEFORE_INPUTS = {
     "send_feedback": "63bf4722f94c7863dcafce688f8864224c46cbf30868d971e5347475a0686184",
     "save_routine": "4f6d9d6043be339a956fea50f3d2f32e8fe4a28359dc9113a5bc31072e53cbed",  # exercise list; C4c: help, band
     "get_routines": "d3e2f09a49ebfbb3467e9d3db06f5acc0be6a7053343b3950e12cd7fb58a374b",  # exercise list; C4c: exact true, help; log and guide: sets sent with log
-    "owner_calls": "79ec889297b107ba7f25781a2ace0a058b712960510d994d36788485da57d787",
+    "owner_calls": "c9ea367aa190315d016fa4d014e783b8947dc436b81984600bebc785211d1cbb",  # log and guide L4: function, caller, all_accounts, a call's account_id
     "owner_feedback": "242b0d08f0ca2b4bb696ec818f327ede1d2b2b71b6959dba0e687cc9b628a5f7",
     "owner_delete_feedback": "e6d44e98f7ac2ce9945b277c0c592c7bde7ba6060b6628990f3a1bc16764909b",
 }
@@ -1200,7 +1200,7 @@ def test_can_and_cant_says_the_input_rules():
 # The owner's questions 1 to 3, as decided.
 STRICT = [("log_lifts", "allow_repeat"), ("log_lifts", "new_session"), ("update_settings", "add_back_exercise_kcal"),
           ("get_goals", "include_closed"), ("restore_entry", "undo_edit"), ("owner_calls", "no_account"),
-          ("owner_calls", "failed_only"), ("log_bodyweight", "allow_repeat"), ("log_measurement", "allow_repeat"),
+          ("owner_calls", "failed_only"), ("owner_calls", "all_accounts"), ("log_bodyweight", "allow_repeat"), ("log_measurement", "allow_repeat"),
           ("log_food", "allow_repeat"), ("log_cardio", "allow_repeat")]
 
 

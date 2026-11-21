@@ -94,6 +94,8 @@ KNOWN_NAMES = frozenset({
     # log's (contract log-and-guide.md): its parts, a part's movement (LogPartIn below), and its details, whose keys are
     # the kinds' own field names, written in braces as get_data's filters are. guide's topic is send_feedback's.
     "parts", "details", "movement",
+    # owner_calls' filters (log-and-guide.md L4).
+    "function", "caller", "all_accounts",
 }) | {name for model in (SetIn, LogSetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn, LogPartIn)
        for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.

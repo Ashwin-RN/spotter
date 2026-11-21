@@ -1619,9 +1619,18 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         failed_only: Annotated[StrictBool, Field(description="true keeps only the calls that were not ok.")] = False,
         limit: Annotated[whole_in(*LIMIT[:2]) | None, Field(
             description="The most lines or calls: 1 to 200. Leave out for 50.")] = None,
+        function: Annotated[str | None, Field(
+            description="Only the calls of this function, its name matched exactly, such as log_lifts.")] = None,
+        caller: Annotated[str | None, Field(
+            description="claude or web: only that caller's calls. web is the pages' own writes.")] = None,
+        all_accounts: Annotated[StrictBool, Field(
+            description="true lists every call in the window, of every account and of none, newest first, each with "
+                        "its account_id. A person, a request or no_account goes before it.")] = False,
     ) -> Annotated[CallToolResult, OwnerCallsResult]:
+        # log-and-guide.md L4: function and caller narrow every mode; all_accounts comes after a person or request.
         sent = _sent(account_id=account_id, email=email, request_id=request_id, no_account=no_account or None,
-                     hours=hours, failed_only=failed_only or None, limit=limit)
+                     hours=hours, failed_only=failed_only or None, limit=limit, function=function, caller=caller,
+                     all_accounts=all_accounts or None)
         return await wrapper.call("owner_calls", OwnerCallsResult, lambda _account: services.owner_calls(sent))
 
     @server.tool(

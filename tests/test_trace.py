@@ -19,14 +19,14 @@ import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import inspect, insert
+from sqlalchemy import inspect, insert, select
 from sqlalchemy.exc import OperationalError
 
 from app import calllog, db, main, mcp_server, rules, services, web
 from app.config import load_settings
 from app.db import make_engine
 from app.main import MAX_BODY_BYTES
-from app.models import Base, Bodyweight, CallLog
+from app.models import Base, Bodyweight, CallLog, User
 from app.services import usda
 
 from . import text_rules as tr
@@ -484,6 +484,10 @@ def test_anyone_but_the_owner_calling_owner_calls_is_not_allowed(make_client, mo
     assert result["isError"] is True and result["structuredContent"] == {
         "error": "not_allowed", "message": "This function is for Spotter's owner.", "fix": "Nothing to retry."}
     assert (last().function, last().step, last().outcome) == ("owner_calls", "permission", "refused")
+    # log-and-guide.md L4: the new filters change nothing for anyone else.
+    wide = tools_call(client, sign_for(subject), "owner_calls",
+                      {"all_accounts": True, "function": "log_lifts", "caller": "claude"})[1]
+    assert wide["structuredContent"] == result["structuredContent"] and last().step == "permission"
 
 
 def test_the_owner_reads_lines_a_person_s_calls_and_one_request(make_client, make_user, monkeypatch):
@@ -575,6 +579,123 @@ def test_calls_with_no_account_have_their_own_line_and_their_own_list(make_clien
     assert last().tried == "hours no_account"
     failed = tools_call(client, owner, "owner_calls", {"failed_only": True})[1]["structuredContent"]["accounts"]
     assert [(line["account_id"], line["failed_calls"]) for line in failed] == [(None, 1)]
+
+
+# ---------------------------------------------------------------- log-and-guide.md L4: owner_calls' filters
+
+def test_the_five_s_rows_with_caller_claude_read_across_two_accounts_and_none_of_the_web_s(web_client, make_user):
+    client = web_client(owner_user_id=OWNER)
+    make_user(subject=OWNER, email="owner@example.com", name="Owner")
+    sign_in(client)  # WEB_SUBJECT, signed in on the pages
+    with db.session_scope() as s:
+        web_person = s.scalar(select(User).where(User.subject == WEB_SUBJECT))
+    asha = make_user(subject="user_01ASHA", email="asha@example.com", name="Asha")
+    assert post(client, f"/day/{today()}/weigh-in", kg="80.5").status_code == 303  # log_bodyweight, from the web
+    tools_call(client, sign_for(WEB_SUBJECT), "log_bodyweight", {"kg": 81})  # the same person, through an assistant
+    tools_call(client, sign_for("user_01ASHA"), "log_bodyweight", {"kg": 60})
+    tools_call(client, sign_for("user_01ASHA"), "log_measurement", {"kind": "waist", "value": 70})
+    owner = sign_for(OWNER)
+
+    def calls(**arguments):
+        r, result = tools_call(client, owner, "owner_calls", {"all_accounts": True, **arguments})
+        assert result["isError"] is False, result
+        return result["structuredContent"]["calls"]
+
+    from_claude = [c for name in RETIRING for c in calls(function=name, caller="claude")]
+    assert sorted((c["account_id"], c["function"]) for c in from_claude) == sorted([
+        (web_person.id, "log_bodyweight"), (asha.id, "log_bodyweight"), (asha.id, "log_measurement")])
+    assert {c["caller"] for c in from_claude} == {"claude"}  # none of the web's
+    [from_web] = [c for name in RETIRING for c in calls(function=name, caller="web")]
+    assert (from_web["account_id"], from_web["function"], from_web["caller"]) == (web_person.id, "log_bodyweight",
+                                                                                 "web")
+    assert len(calls(function="log_bodyweight")) == 3  # both callers, with no caller named
+    assert last().tried == "all_accounts function"
+
+
+def test_owner_calls_function_and_caller_narrow_every_mode_and_all_accounts_says_whose(make_client, make_user):
+    client = make_client(owner_user_id=OWNER)
+    me = make_user(subject=OWNER, email="owner@example.com", name="Owner")
+    asha = make_user(subject="user_01ASHA", email="asha@example.com", name="Asha")
+    ben = make_user(subject="user_01BEN", email="ben@example.com", name="Ben")
+    now = db.utcnow()
+    made = [  # (account, function, caller, hours back, ok)
+        (asha.id, "log_lifts", "claude", 1, True), (asha.id, "log_lifts", "web", 2, True),
+        (asha.id, "log_food", "claude", 3, False), (ben.id, "log_lifts", "claude", 4, True),
+        (ben.id, "whoami", "claude", 5, True), (None, "log_lifts", "claude", 6, True),
+        (asha.id, "log_lifts", None, 7, True),  # older than the trace: no caller
+        (asha.id, "log_lifts", "claude", 30, True)]  # outside the window
+    with db.session_scope() as s:
+        for user_id, function, caller, back, ok in made:
+            s.execute(insert(CallLog).values(function=function, caller=caller, user_id=user_id, ok=ok, ms=1,
+                                             result_bytes=1, started_at=now - timedelta(hours=back),
+                                             request_id=f"r{back:02d}"))
+    owner = sign_for(OWNER)
+
+    def read(**arguments):
+        r, result = tools_call(client, owner, "owner_calls", arguments)
+        assert result["isError"] is False, result
+        return result["structuredContent"]
+
+    def seen(out):
+        return [(c["function"], c["caller"]) for c in out["calls"]]
+
+    # One account: by function, by caller, both.
+    assert seen(read(account_id=asha.id, function="log_lifts")) == [("log_lifts", "claude"), ("log_lifts", "web"),
+                                                                     ("log_lifts", None)]
+    assert seen(read(account_id=asha.id, caller="web")) == [("log_lifts", "web")]
+    assert seen(read(email="ASHA@example.com", function="log_lifts", caller="claude")) == [("log_lifts", "claude")]
+    assert seen(read(account_id=asha.id, function="log_lifts", caller="claude", hours=48)) == [
+        ("log_lifts", "claude"), ("log_lifts", "claude")]
+    assert seen(read(account_id=asha.id, caller="claude", failed_only=True)) == [("log_food", "claude")]
+    assert "account_id" not in read(account_id=asha.id)["calls"][0]  # one account's calls keep their shape
+    # The lines: their counts are of the calls that match, and an account with none has no line.
+    lines = read(function="log_lifts")["accounts"]
+    assert [(line["account_id"], line["calls"]) for line in lines] == [(asha.id, 3), (ben.id, 1), (None, 1)]
+    assert [(line["account_id"], line["calls"]) for line in read(function="log_lifts", caller="web")["accounts"]] == [
+        (asha.id, 1)]
+    failed = read(caller="claude", failed_only=True)["accounts"]
+    assert [(line["account_id"], line["calls"], line["failed_calls"]) for line in failed] == [(asha.id, 2, 1)]
+    # Across accounts: every call in the window, of every account and of none, newest first, each saying whose.
+    every = read(all_accounts=True, function="log_lifts")
+    assert every["accounts"] is None and every["hours"] == 24
+    assert [(c["account_id"], c["caller"], c["request_id"]) for c in every["calls"]] == [
+        (asha.id, "claude", "r01"), (asha.id, "web", "r02"), (ben.id, "claude", "r04"), (None, "claude", "r06"),
+        (asha.id, None, "r07")]
+    assert [(c["account_id"], c["function"]) for c in read(all_accounts=True, caller="claude", function="log_lifts",
+                                                           limit=2)["calls"]] == [(asha.id, "log_lifts"),
+                                                                                  (ben.id, "log_lifts")]
+    mixed = read(all_accounts=True)["calls"]  # the owner's own reads are in it, under the owner's id
+    assert {c["account_id"] for c in mixed} == {asha.id, ben.id, None, me.id}
+    assert [c["started_at"] for c in mixed] == sorted((c["started_at"] for c in mixed), reverse=True)
+    # A person, a request or no_account goes before all_accounts, and function and caller narrow those too.
+    assert read(all_accounts=True, account_id=ben.id) == read(account_id=ben.id)
+    assert seen(read(all_accounts=True, no_account=True)) == [("log_lifts", "claude")]
+    assert seen(read(request_id="r02", all_accounts=True)) == [("log_lifts", "web")]
+    assert read(request_id="r02", caller="claude")["calls"] == []
+    # A name no row holds gives nothing; a blank one is left out.
+    assert read(all_accounts=True, function="log_everything")["calls"] == []
+    assert read(account_id=asha.id, function="nope") == {"hours": 24, "accounts": None, "calls": []}
+    assert read(account_id=asha.id, function="  ") == read(account_id=asha.id)
+
+
+def test_owner_calls_refuses_a_caller_it_does_not_know_and_a_function_name_too_long(make_client, make_user):
+    client = make_client(owner_user_id=OWNER)
+    make_user(subject=OWNER, email="owner@example.com", name="Owner")
+    owner = sign_for(OWNER)
+    longest = CallLog.__table__.c.function.type.length
+    for sent, message, fix in (
+            ({"caller": "Claude"}, "caller 'Claude' is not one of web, claude.",
+             "Use one of: web, claude, or leave caller out."),
+            ({"caller": "assistant", "all_accounts": True}, "caller 'assistant' is not one of web, claude.",
+             "Use one of: web, claude, or leave caller out."),
+            ({"function": "x" * (longest + 1)}, f"function is {longest + 1} characters; the most is {longest}.",
+             f"Shorten function to {longest} characters or fewer.")):
+        result = tools_call(client, owner, "owner_calls", sent)[1]
+        assert result["isError"] is True and result["structuredContent"]["error"] == "invalid_field", sent
+        assert (result["structuredContent"]["message"], result["structuredContent"]["fix"]) == (message, fix)
+        assert last().outcome == "refused"
+    assert tools_call(client, owner, "owner_calls", {"all_accounts": "yes"})[1]["isError"] is True
+    assert tools_call(client, owner, "owner_calls", {"function": "x" * longest})[1]["isError"] is False
 
 
 # ---------------------------------------------------------------- fix round: every crash has its line and its id

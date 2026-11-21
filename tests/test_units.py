@@ -705,8 +705,9 @@ def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_
     # exercise-list.md's deploy 2 moved import_entries' names part and list_exercises (R8) too.
     # 2026-11-20: log_food's meal words lead with sending the meal the person named.
     # log-and-guide.md L2: restore_entry's kind and id words, and find_food's and save_food's ids (rows 3, 7, 8, 52).
+    # log-and-guide.md L4: owner_calls' function, caller and all_accounts, and a call's account_id.
     assert {name for name, sha in BEFORE_UNITS.items() if held[name] != sha} == THIRTEEN | {
-        "import_entries", "list_exercises", "log_food", "restore_entry", "find_food", "save_food"}
+        "import_entries", "list_exercises", "log_food", "restore_entry", "find_food", "save_food", "owner_calls"}
     assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED
     # data-on-request.md: DATA_RULE; exercise-list.md C4c
     # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence

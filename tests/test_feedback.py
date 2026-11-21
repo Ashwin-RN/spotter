@@ -92,7 +92,7 @@ PUBLISHED = {
     "import_entries": "1d890d48348660778e2105210bd298c8b5613f69c0981af43f9703b990960cec",  # inputs; exercise list: names, reps
     "save_routine": "235aceb04e92e26d0d8f59f1e9e3cfb8d36e91ef77226646f4baeac03b41b1e2",  # routines: new; units; inputs; exercise list: reps, help; C4c: help, band
     "get_routines": "5e02ce42a92ca0045b1d8e345018b69f90ce92ff12aab832b11e65faee3c8ff5",  # routines: new, R18's words; units; inputs; exercise list: reps; the matcher: exact true; C4c: help; log and guide: sets sent with log
-    "owner_calls": "171f8c5c586e68e6885bc0d9014d5a2b7ef4ba4bafa217ee898c8338ffaed810",  # inputs
+    "owner_calls": "f0b0b69a5eac257d4d4c83ec83fbee2ec33715c70c7b7b26830bffa02dc2c6a0",  # inputs; log and guide L4: function, caller, all_accounts, a call's account_id
 }
 # switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE; exercise-list.md C4c: a lift in the person's
 # own words. 2026-11-20: the sleep routing sentence and the shorter Goals sentence; the meal sentence leads with
@@ -558,6 +558,61 @@ def test_owner_feedback_is_published_with_its_words_its_ranges_no_delete_and_the
     assert (limit["minimum"], limit["maximum"]) == (1, 50)
     assert list(tool["outputSchema"]["properties"]) == ["total", "how", "notes"]
     assert mcp_server.NEEDS["owner_feedback"] == "read" and "owner_feedback" in mcp_server.READ_FUNCTIONS
+
+
+OWNER_CALLS_NEW = {  # log-and-guide.md L4: owner_calls' three new fields, in the owner's list alone
+    "function": "Only the calls of this function, its name matched exactly, such as log_lifts.",
+    "caller": "claude or web: only that caller's calls. web is the pages' own writes.",
+    "all_accounts": "true lists every call in the window, of every account and of none, newest first, each with its "
+                    "account_id. A person, a request or no_account goes before it."}
+
+
+def test_owner_calls_publishes_its_three_filters_last_and_owner_feedback_s_calls_keep_their_shape(owner_client):
+    tool = owner_tool(owner_client, "owner_calls")
+    props = tool["inputSchema"]["properties"]
+    assert list(props) == ["account_id", "email", "request_id", "no_account", "hours", "failed_only", "limit",
+                           *OWNER_CALLS_NEW]
+    assert {n: props[n]["description"] for n in OWNER_CALLS_NEW} == OWNER_CALLS_NEW
+    assert props["all_accounts"]["type"] == "boolean" and props["all_accounts"]["default"] is False
+    for words in OWNER_CALLS_NEW.values():
+        assert tr.check(words, tr.CLAUDE) == [], words
+    call = tool["outputSchema"]["$defs"]["OwnerAccountCall"]
+    around = owner_tool(owner_client, "owner_feedback")["outputSchema"]["$defs"]["OwnerCall"]
+    assert list(call["properties"]) == [*around["properties"], "account_id"]  # owner_feedback's around is as it was
+    assert call["required"] == around["required"]  # account_id optional: a new result field
+
+
+def test_owner_calls_by_function_by_caller_both_and_across_accounts(make_user):
+    asha, ben = make_user(email="asha@example.com").id, make_user(email="ben@example.com").id
+    now = db.utcnow()
+    with db.session_scope() as s:
+        for back, (user_id, function, caller) in enumerate([
+                (asha, "log_food", "claude"), (asha, "log_food", "web"), (ben, "log_food", "claude"),
+                (ben, "log", "claude"), (None, "log_food", "claude")], start=1):
+            s.add(CallLog(function=function, caller=caller, user_id=user_id, ok=True, ms=1, result_bytes=1,
+                          started_at=now - timedelta(hours=back)))
+
+    def read(**data):
+        out = services.owner_calls(data)
+        assert "error" not in out, out
+        return out
+
+    def seen(out):
+        return [(c.get("account_id", "-"), c["function"], c["caller"]) for c in out["calls"]]
+
+    assert seen(read(account_id=asha, function="log_food")) == [("-", "log_food", "claude"), ("-", "log_food", "web")]
+    assert seen(read(account_id=asha, caller="web")) == [("-", "log_food", "web")]
+    assert seen(read(account_id=ben, function="log_food", caller="claude")) == [("-", "log_food", "claude")]
+    assert seen(read(all_accounts=True, function="log_food", caller="claude")) == [
+        (asha, "log_food", "claude"), (ben, "log_food", "claude"), (None, "log_food", "claude")]
+    assert seen(read(all_accounts=True, caller="web")) == [(asha, "log_food", "web")]
+    assert seen(read(all_accounts=True, limit=2)) == [(asha, "log_food", "claude"), (asha, "log_food", "web")]
+    assert [(a["account_id"], a["calls"]) for a in read(caller="claude")["accounts"]] == [(asha, 1), (ben, 2),
+                                                                                         (None, 1)]
+    assert read(all_accounts=True, function="log_lift")["calls"] == []  # matched exactly: no near name
+    refused = services.owner_calls({"caller": "pages", "function": 5})
+    assert refused["error"] == "invalid_field" and [e["message"] for e in refused["errors"]] == [
+        "function must be text, not 5.", "caller 'pages' is not one of web, claude."]
 
 
 def test_owner_delete_feedback_is_published_with_its_words_its_bounds_and_the_delete_annotation(owner_client):

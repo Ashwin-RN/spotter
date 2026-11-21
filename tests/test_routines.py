@@ -857,9 +857,10 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     # The exercise list (exercise-list.md, deploy 2) moved import_entries' names part and list_exercises (R8).
     # 2026-11-20: log_food's meal words lead with sending the meal the person named.
     # log-and-guide.md L2 moved find_food and save_food too (rows 7 and 8), beside entries already here.
+    # log-and-guide.md L4 moved owner_calls: function, caller, all_accounts, and a call's account_id.
     assert {n for n in BEFORE if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami",
                                                             "import_entries", "list_exercises", "log_food", "find_food",
-                                                            "save_food"} | units
+                                                            "save_food", "owner_calls"} | units
     assert hashes["restore_entry"] != BEFORE["restore_entry"] and "restore_entry" not in units
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
     assert everyone == [n for n in registered if n not in mcp_server.OWNER_FUNCTIONS + mcp_server.RETIRING]

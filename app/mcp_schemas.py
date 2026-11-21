@@ -1623,6 +1623,13 @@ class OwnerCall(BaseModel):
     request_id: str | None = Field(description="The request's id, as its X-Request-Id header gave it.")
 
 
+class OwnerAccountCall(OwnerCall):
+    """owner_calls' call: owner_feedback's around keeps OwnerCall as it was (log-and-guide.md L4)."""
+
+    account_id: int | None = Field(
+        default=None, description="With all_accounts: whose call it is, or null for a call with no account.")
+
+
 class OwnerCallsResult(BaseModel):
     model_config = TOP
 
@@ -1631,7 +1638,7 @@ class OwnerCallsResult(BaseModel):
         description="With no person named: one line per account with a call in the window, and one line with a null "
                     "account_id for the calls that had no account. With an email that is not one account's: every "
                     "account it is. Otherwise null.")
-    calls: list[OwnerCall] | None = Field(
+    calls: list[OwnerAccountCall] | None = Field(
         description="The person's calls in the window, or the request's, newest first. Null when accounts is "
                     "given.")
 
