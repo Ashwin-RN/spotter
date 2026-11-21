@@ -837,3 +837,59 @@ cases follow the last, each `direct` and `core` false: the core stays at 101.
   dated note in `docs/contracts/function-list.md`.
 - **Not the person's own data.** Every run is a throwaway person on a local copy. Nothing here touches
   the live site.
+
+## The same model without Spotter
+
+**`python -m evals.without` asks the same model the same short list of hard questions with Spotter and without it,
+and judges each reply on its numbers** (contract `docs/contracts/without-spotter.md`). The cases are in
+`evals/without_cases.json`. It is not part of `evals.run`, and `python -m evals.need` does not count its files.
+
+```
+python -m evals.without --model claude-sonnet-5-5                  every case and arm, 3 runs a cell
+python -m evals.without --model claude-haiku-5-5 --n 1             run 1 of every cell: the pilot
+python -m evals.without --client codex --model gpt-6-luna --keep
+python -m evals.without --client gemini --gemini-key 2 --case R1 --case R2 --keep
+python -m evals.without --case R6 --arm W --arm N-history
+```
+
+| Arm | What the model gets |
+|---|---|
+| W | Spotter on the local server and the seeded person: the run `evals.run` makes |
+| N-history | No tools. Today's date, then the person's whole history told as dated lines, one a day, oldest first, made from the same seeded rows, then the message |
+| N-memory | No tools. Today's date, a fixed summary of facts and habits (the case's `memory` text), then the message |
+| N-new | No tools. Today's date and the message alone |
+
+- Flags as in `evals.run`: `--client`, `--model` (default `claude-sonnet-5-5`, `gpt-6-luna`, `gemini-4-hydrogen`),
+  `--effort`, `--n` (default 3), `--case` (repeatable), `--gemini-key`, `--gemini-per-minute`, `--keep`,
+  `--time-zone`. And `--arm` (repeatable): `W`, `N-history`, `N-memory`, `N-new`.
+- Run 1 of every cell goes first, then run 2, and so on. Run 1 is the pilot.
+- One message a conversation in every arm. An N prompt goes by stdin to the Claude CLI (`claude -p` with no prompt
+  argument) and to Codex (`codex exec ... -`), since a history is longer than the Windows command line. To Gemini it
+  is the one user message.
+- No tools in an N arm. Claude: `--mcp-config '{"mcpServers": {}}' --strict-mcp-config --tools ""`, the advisor off as
+  in every run, an empty working folder. Codex: the W command without its three `mcp_servers.spotter` lines. Gemini:
+  no `tools` and no system text.
+- Each reply is judged by the case's `reply` rule, the same in every arm (`new_reply` for N-new where a case has
+  one: it says there is no record and claims no figure). R1, R2 and R4 also have a `band`: every figure just before
+  the unit and inside the band must be one the record holds.
+- W is also judged on the server's record, the case's `w`. So W has two columns: the reply right (`reply`), and the
+  reply right with the record (`record`). The `spotter` column counts the runs that quoted one of Spotter's own
+  figures, such as a plan line's 3.3.
+- A run that did not run (a CLI error, a time-out, another model in the run, a Gemini setup fault) is counted under
+  `not run`, never as wrong. A Gemini quota that persists stops the call, as in `evals.run`.
+- A case can count a second outcome apart (`apart`). U2's is "logged another set": in W a `log_lifts` call that
+  succeeded, in N-history a reply that says it logged one. One line under the table gives it.
+- Under the table: each arm's count on the reads (R), the unclear ones (U) and the controls (C), the cost of each
+  arm, and the cells to read by hand.
+- `--keep` writes `results.json`: each run's case, arm, model, run, status, passed, reasons, reply, calls (W),
+  tokens and cost. A list of Gemini calls, one key each, can be merged from their files.
+- The past problem writes are cases of `evals.run`: `rambling_day_log`, `routine_logged`, `tennis_not_listed`.
+
+What it does not prove:
+
+- How a chat app's own memory works. The N-memory text is a stand-in, fixed by a rule.
+- How a chat app differs from these clients. The Claude N arms still carry the Claude CLI's own system prompt, and
+  Codex its own. The Gemini N arm has none.
+- That every right W figure was read. In W the band excuses a figure an answered read gave; in N it does not.
+- How slow Spotter is. A time-out is `not run` in W too, so a W run that Spotter made slow drops out of the count.
+- Anything about writes, or about more than one message.
