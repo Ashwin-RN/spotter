@@ -72,6 +72,7 @@ from mcp.server.auth.routes import build_resource_metadata_url, create_protected
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError
+from mcp.server.mcpserver.utilities.func_metadata import FuncMetadata
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, StrictBool, ValidationError
 from sqlalchemy.exc import InterfaceError, InternalError, OperationalError
@@ -83,12 +84,22 @@ from app import calllog, db, links, rules, services, users
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings, get_settings
 from app.mcp_schemas import (
-    FOOD_NAME_RULE, IMPORT_ROWS, NEAR_CUTOFF, NEAR_MISSES, DeleteEntryResult, EditEntryResult, ExercisesResult,
-    FindFoodResult, FoodEntryIn, GetDataResult, GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult,
-    GetTrendsResult, ImportEntriesResult, ImportRowIn, LogBodyweightResult, LogCardioResult, LogFoodResult,
-    LogLiftsResult, LogMeasurementResult, LogSetIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult,
-    OwnerFeedbackResult, RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult,
-    SetGoalResult, SetIn, UpdateSettingsResult, WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
+    BODYWEIGHT_ALLOW_REPEAT_DESCRIPTION, BODYWEIGHT_DATE_DESCRIPTION, BODYWEIGHT_KG_DESCRIPTION,
+    BODYWEIGHT_LB_DESCRIPTION, CARDIO_ALLOW_REPEAT_DESCRIPTION, CARDIO_AVG_HR_DESCRIPTION, CARDIO_DATE_DESCRIPTION,
+    CARDIO_DISTANCE_KM_DESCRIPTION, CARDIO_DISTANCE_MI_DESCRIPTION, CARDIO_EXERCISE_DESCRIPTION,
+    CARDIO_INCLINE_PCT_DESCRIPTION, CARDIO_MACHINE_KCAL_DESCRIPTION, CARDIO_MINUTES_DESCRIPTION,
+    CARDIO_NOTES_DESCRIPTION, CARDIO_RULE, CARDIO_SPEED_KMH_DESCRIPTION, CARDIO_SPEED_MPH_DESCRIPTION,
+    FOOD_ALLOW_REPEAT_DESCRIPTION, FOOD_DATE_DESCRIPTION, FOOD_ENTRIES_DESCRIPTION, FOOD_NAME_RULE, FOOD_RULE,
+    IMPORT_ROWS, KEY_DESCRIPTION, LIFTS_ALLOW_REPEAT_DESCRIPTION, LIFTS_DATE_DESCRIPTION, LIFTS_NEW_SESSION_DESCRIPTION,
+    LIFTS_NOTES_DESCRIPTION, LIFTS_SETS_DESCRIPTION, LOG_BODYWEIGHT_DESCRIPTION, LOG_CARDIO_DESCRIPTION,
+    LOG_FOOD_DESCRIPTION, LOG_LIFTS_DESCRIPTION, LOG_MEASUREMENT_DESCRIPTION, MEASUREMENT_ALLOW_REPEAT_DESCRIPTION,
+    MEASUREMENT_DATE_DESCRIPTION, MEASUREMENT_KIND_DESCRIPTION, MEASUREMENT_VALUE_DESCRIPTION, NEAR_CUTOFF,
+    NEAR_MISSES, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn, GetDataResult,
+    GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult, ImportEntriesResult,
+    ImportRowIn, Key, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult,
+    LogSetIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult, RestoreEntryResult,
+    RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
+    WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
 )
 from app.models import CLAUDE_CAN, User
 from app.services import common, feedback, food, routines
@@ -97,14 +108,8 @@ from app.services.owner import HOURS, LIMIT
 
 log = logging.getLogger("spotter.mcp")
 
-# The tag rule, in Claude's terms. Spotter derives the tag; this is what Claude sends for each kind of number.
-# Which activity to log when the person's word fits more than one. Log, don't ask: the person corrects it.
-CARDIO_RULE = (
-    "When the person's words fit more than one activity (treadmill, outdoor, bike), log the one their words "
-    "point to: a pace, speed or distance that means more than 7 km/h is a run, otherwise a walk; with nothing "
-    "to go on, the walk, the lower estimate. Say in your reply which one was taken; the person can correct it "
-    "with edit_entry. Never ask first."
-)
+# CARDIO_RULE, FOOD_RULE and KEY_DESCRIPTION live in mcp_schemas, beside the five log functions' own words, and are
+# imported above under the same names.
 
 # Bringing history over from another app's export: only what guards the person's data before the function is chosen.
 # Everything else is in import_entries' own description (IMPORT_DESCRIPTION), which the model reads when it calls it:
@@ -164,13 +169,6 @@ DELETE_RULE = (
     "person and ask, and delete only when they say yes. After a delete, say what was deleted and that restore_entry "
     "brings it back. If the person did not want it deleted, restore it, and say they can turn deleting off on "
     "Settings."
-)
-
-FOOD_RULE = (
-    "A number the person stated goes as kcal, with estimated false. A number you worked out goes as kcal with "
-    "estimated true, always, and you say in your reply that it is an estimate. A saved or USDA food from "
-    "find_food goes by its id with servings or grams, and no kcal: Spotter works out the number. If find_food "
-    "has no match and the person gave no number, you may estimate, and must say so."
 )
 
 # Which read answers which question. get_trends and get_goals carry the same text.
@@ -279,15 +277,8 @@ OWNER_ONLY = {"error": "not_allowed", "message": "This function is for Spotter's
 # The arguments of the call running, as the client sent them (SpotterServer.call_tool): what tried describes.
 _SENT: ContextVar[dict | None] = ContextVar("spotter_sent_arguments", default=None)
 
-# A write's own key: the same argument, with the same words: each write function (common.WRITE_FUNCTIONS) takes
-# key. No pattern and no length in the schema: Spotter's own check answers invalid_key, with its fix. The wrapper
-# reads the key from the arguments as sent (_SENT), so a function declares it and never passes it on.
-KEY_DESCRIPTION = (
-    "Optional. A key of your own for this one write: 8 to 64 letters, digits, - or _. Send the same key when you "
-    "send the same call again: nothing is written twice and the first answer comes back. A new write takes a new "
-    "key."
-)
-Key = Annotated[str | None, Field(description=KEY_DESCRIPTION)]
+# A write's own key (mcp_schemas.Key, KEY_DESCRIPTION): each write function takes key, and the wrapper reads it from
+# the arguments as sent (_SENT), so a function declares it and never passes it on.
 
 LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
 KIND_DESCRIPTION = "lift_session, bodyweight, measurement, food_entry or cardio_entry."
@@ -586,6 +577,30 @@ def misfit(tool, arguments: dict) -> tuple[list, ValidationError | None] | None:
     return (unknown, failure) if unknown or failure is not None else None
 
 
+def read_arguments(model: type[BaseModel], arguments: dict) -> BaseModel:
+    """The arguments as an argument model (mcp_schemas.LOG_ARGUMENTS) reads them, as the library reads a registered
+    function's: a list or an object sent as JSON text is parsed first, by the library's own pre_parse_json, and a key
+    the model does not take is left out, as the library's own model ignores it (misfit_model names it). Raises
+    ValidationError."""
+    parsed = FuncMetadata.model_construct(arg_model=model).pre_parse_json(arguments)
+    taken = {field.alias or name for name, field in model.model_fields.items()}
+    return model.model_validate({key: value for key, value in parsed.items() if key in taken})
+
+
+def misfit_model(model: type[BaseModel], arguments: dict) -> tuple[list, ValidationError | None] | None:
+    """misfit's form for an argument model in place of a registered function: (the unknown top-level keys, the schema
+    failure) of the arguments, or None when they fit. The same answer misfit gives for the function the model is of;
+    schema_refusal takes it with model.model_json_schema(), which equals that function's published input schema."""
+    taken = model.model_json_schema().get("properties", {})
+    unknown = [key for key in arguments if key not in taken]
+    try:
+        read_arguments(model, arguments)
+        failure = None
+    except ValidationError as exc:
+        failure = exc
+    return (unknown, failure) if unknown or failure is not None else None
+
+
 class SpotterServer(MCPServer):
     """MCPServer whose metadata advertises SCOPES while tokens need only REQUIRED_SCOPES.
 
@@ -776,6 +791,57 @@ def not_sent():
     return Field(default_factory=lambda: NOT_SENT)
 
 
+# ---------------------------------------------------------------- the five log functions' steps
+
+# Each turns one of the five's validated arguments into its service's data and calls the service, by Claude. The
+# decorated function's work is its step, and a call that reaches the same service another way takes the same step.
+# The arguments come as keywords, one a field of the kind's argument model (mcp_schemas.LOG_ARGUMENTS), as a model
+# gives them one level deep (dict(model)): a set and a food entry stay models. key is taken and passed to nothing: the
+# wrapper reads it from the arguments as sent. The service is looked up when the step runs.
+
+def log_lifts_step(account: int, *, sets: list[LogSetIn], date: str | None = None, notes: str | None = None,
+                   allow_repeat: bool = False, new_session: bool = False, key: str | None = None) -> dict:
+    """allow_repeat is taken and read by nothing, so it is not passed on: every call adds its sets."""
+    data = _sent(sets=[s.model_dump(exclude_none=True) for s in sets], date=date, notes=notes,
+                 new_session=new_session or None)
+    return services.log_lifts(account, data, "claude")
+
+
+def log_bodyweight_step(account: int, *, kg: float | None = None, lb: float | None = None, date: str | None = None,
+                        allow_repeat: bool = False, key: str | None = None) -> dict:
+    data = _sent(kg=kg, lb=lb, date=date, allow_repeat=allow_repeat or None)
+    return services.log_bodyweight(account, data, "claude")
+
+
+def log_measurement_step(account: int, *, kind: str, value: float, date: str | None = None,
+                         allow_repeat: bool = False, key: str | None = None) -> dict:
+    data = _sent(kind=kind, value=value, date=date, allow_repeat=allow_repeat or None)
+    return services.log_measurement(account, data, "claude")
+
+
+def log_food_step(account: int, *, entries: list[FoodEntryIn], date: str | None = None, allow_repeat: bool = False,
+                  key: str | None = None) -> dict:
+    data = _sent(entries=[x.model_dump(exclude_none=True) for x in entries], date=date,
+                 allow_repeat=allow_repeat or None)
+    return services.log_food(account, data, "claude")
+
+
+def log_cardio_step(account: int, *, exercise: str, minutes: float, date: str | None = None,
+                    distance_km: float | None = None, distance_mi: float | None = None,
+                    incline_pct: float | None = None, speed_kmh: float | None = None, speed_mph: float | None = None,
+                    avg_hr: int | None = None, machine_kcal: int | None = None, notes: str | None = None,
+                    allow_repeat: bool = False, key: str | None = None) -> dict:
+    data = _sent(exercise=exercise, minutes=minutes, date=date, distance_km=distance_km, distance_mi=distance_mi,
+                 incline_pct=incline_pct, speed_kmh=speed_kmh, speed_mph=speed_mph, avg_hr=avg_hr,
+                 machine_kcal=machine_kcal, notes=notes, allow_repeat=allow_repeat or None)
+    return services.log_cardio(account, data, "claude")
+
+
+# Each of the five's step, by the function's name, in the order mcp_schemas.LOG_ARGUMENTS holds their models.
+LOG_STEPS = {"log_lifts": log_lifts_step, "log_bodyweight": log_bodyweight_step,
+             "log_measurement": log_measurement_step, "log_food": log_food_step, "log_cardio": log_cardio_step}
+
+
 def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: UserinfoClient) -> MCPServer:
     """A fresh server per app: the library's session manager can be started only once."""
     server = SpotterServer(
@@ -842,61 +908,35 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     @server.tool(
         name="log_lifts",
         title="Log a lift session",
-        description=(
-            "Records sets of lifting. Sets for a date go into that date's session: the first call starts it, and "
-            "each later call adds its sets to it. So send only the sets not yet logged. Returns the whole session, "
-            "any new bests, and a one-line summary. restore_entry with undo_edit takes back the last sets added. "
-            "Send the person's own word for a lift; Spotter picks it and the summary names it. pick_lift means two "
-            "lifts fit: ask which."
-        ),
+        description=LOG_LIFTS_DESCRIPTION,
         annotations=WRITE,
     )
     async def log_lifts(
-        sets: Annotated[list[LogSetIn], Field(
-            description="The sets to log, in order: 1 to 60. Only sets not yet logged: earlier sets of that date are "
-                        "already in its session. A session holds at most 60 sets.")],
-        date: Annotated[str | None, Field(
-            description="The day it happened, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        notes: Annotated[str | None, Field(
-            description="How it went, in the person's words. Up to 2,000 characters. On a later call for the same "
-                        "date, they are added to the session's notes.")] = None,
-        allow_repeat: Annotated[StrictBool, Field(description="Not needed: every call adds its sets. Ignored.")] = False,
-        new_session: Annotated[StrictBool, Field(
-            description="true starts a new session for that date, even when one is logged. Send it only when the "
-                        "person says this is a separate workout.")] = False,
+        sets: Annotated[list[LogSetIn], Field(description=LIFTS_SETS_DESCRIPTION)],
+        date: Annotated[str | None, Field(description=LIFTS_DATE_DESCRIPTION)] = None,
+        notes: Annotated[str | None, Field(description=LIFTS_NOTES_DESCRIPTION)] = None,
+        allow_repeat: Annotated[StrictBool, Field(description=LIFTS_ALLOW_REPEAT_DESCRIPTION)] = False,
+        new_session: Annotated[StrictBool, Field(description=LIFTS_NEW_SESSION_DESCRIPTION)] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogLiftsResult]:
-        data = _sent(sets=[s.model_dump(exclude_none=True) for s in sets], date=date, notes=notes,
-                     new_session=new_session or None)
-        return await wrapper.call("log_lifts", LogLiftsResult,
-                                  lambda account: services.log_lifts(account, data, "claude"))
+        return await wrapper.call("log_lifts", LogLiftsResult, lambda account: log_lifts_step(
+            account, sets=sets, date=date, notes=notes, allow_repeat=allow_repeat, new_session=new_session, key=key))
 
     @server.tool(
         name="log_bodyweight",
         title="Log body weight",
-        description=(
-            "Records one weigh-in and returns the latest weigh-ins and the trend. One weigh-in a day is kept: "
-            "a different weight on the same day replaces the earlier one, which is kept, not erased. The same "
-            "weight again within 10 minutes is a duplicate: nothing is written."
-        ),
+        description=LOG_BODYWEIGHT_DESCRIPTION,
         annotations=WRITE,
     )
     async def log_bodyweight(
-        kg: Annotated[Number | None, Field(
-            description="Body weight in kg, 20 to 400, when the person said kg, or gave no unit and units.weight is "
-                        "kg. Send kg or lb, never both.")] = None,
-        lb: Annotated[Number | None, Field(
-            description="Body weight in lb, 44.1 to 881.84, when the person said pounds, or gave no unit and "
-                        "units.weight is lb. Send it as said: Spotter converts it. Send kg or lb, never both.")] = None,
-        date: Annotated[str | None, Field(
-            description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        allow_repeat: Annotated[StrictBool, Field(
-            description="true logs it even when it matches a weigh-in from the last 10 minutes.")] = False,
+        kg: Annotated[Number | None, Field(description=BODYWEIGHT_KG_DESCRIPTION)] = None,
+        lb: Annotated[Number | None, Field(description=BODYWEIGHT_LB_DESCRIPTION)] = None,
+        date: Annotated[str | None, Field(description=BODYWEIGHT_DATE_DESCRIPTION)] = None,
+        allow_repeat: Annotated[StrictBool, Field(description=BODYWEIGHT_ALLOW_REPEAT_DESCRIPTION)] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogBodyweightResult]:
-        data = _sent(kg=kg, lb=lb, date=date, allow_repeat=allow_repeat or None)
-        return await wrapper.call("log_bodyweight", LogBodyweightResult,
-                                  lambda account: services.log_bodyweight(account, data, "claude"))
+        return await wrapper.call("log_bodyweight", LogBodyweightResult, lambda account: log_bodyweight_step(
+            account, kg=kg, lb=lb, date=date, allow_repeat=allow_repeat, key=key))
 
     @server.tool(
         name="set_goal",
@@ -1039,29 +1079,18 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     @server.tool(
         name="log_measurement",
         title="Log a measurement",
-        description=(
-            "Records one body measurement: waist, hips, chest, arm or thigh in cm, steps, sleep_hours, "
-            "resting_hr in bpm, or water_ml. One value per kind a day: a different value on the same day "
-            "replaces the earlier one, which is kept, not erased. The same value again within 10 minutes is a "
-            "duplicate: nothing is written."
-        ),
+        description=LOG_MEASUREMENT_DESCRIPTION,
         annotations=WRITE,
     )
     async def log_measurement(
-        kind: Annotated[str, Field(
-            description="waist, hips, chest, arm, thigh, steps, sleep_hours, resting_hr or water_ml.")],
-        value: Annotated[Number, Field(
-            description="The value in the kind's unit: cm for the body sizes, steps, hours of sleep, bpm, ml. "
-                        "Spotter takes no inches.")],
-        date: Annotated[str | None, Field(
-            description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        allow_repeat: Annotated[StrictBool, Field(
-            description="true logs it even when it matches a measurement from the last 10 minutes.")] = False,
+        kind: Annotated[str, Field(description=MEASUREMENT_KIND_DESCRIPTION)],
+        value: Annotated[Number, Field(description=MEASUREMENT_VALUE_DESCRIPTION)],
+        date: Annotated[str | None, Field(description=MEASUREMENT_DATE_DESCRIPTION)] = None,
+        allow_repeat: Annotated[StrictBool, Field(description=MEASUREMENT_ALLOW_REPEAT_DESCRIPTION)] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogMeasurementResult]:
-        data = _sent(kind=kind, value=value, date=date, allow_repeat=allow_repeat or None)
-        return await wrapper.call("log_measurement", LogMeasurementResult,
-                                  lambda account: services.log_measurement(account, data, "claude"))
+        return await wrapper.call("log_measurement", LogMeasurementResult, lambda account: log_measurement_step(
+            account, kind=kind, value=value, date=date, allow_repeat=allow_repeat, key=key))
 
     @server.tool(
         name="edit_entry",
@@ -1197,27 +1226,17 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     @server.tool(
         name="log_food",
         title="Log food",
-        description=(
-            "Records what the person ate, one entry per food, in one call for the whole message. Spotter tags "
-            "each number with who supplied it; you never name the tag. " + FOOD_RULE + " " + FOOD_NAME_RULE + " "
-            "Returns the entries, their tags and the day's total. The same set again within 10 minutes is a "
-            "duplicate: nothing is written."
-        ),
+        description=LOG_FOOD_DESCRIPTION,
         annotations=WRITE,
     )
     async def log_food(
-        entries: Annotated[list[FoodEntryIn], Field(description="Every food in the message, one entry each.")],
-        date: Annotated[str | None, Field(
-            description="The day it was eaten, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        allow_repeat: Annotated[StrictBool, Field(
-            description="true logs it even when it matches food logged in the last 10 minutes. Send it only "
-                        "when the person confirms they ate it again.")] = False,
+        entries: Annotated[list[FoodEntryIn], Field(description=FOOD_ENTRIES_DESCRIPTION)],
+        date: Annotated[str | None, Field(description=FOOD_DATE_DESCRIPTION)] = None,
+        allow_repeat: Annotated[StrictBool, Field(description=FOOD_ALLOW_REPEAT_DESCRIPTION)] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogFoodResult]:
-        data = _sent(entries=[x.model_dump(exclude_none=True) for x in entries], date=date,
-                     allow_repeat=allow_repeat or None)
-        return await wrapper.call("log_food", LogFoodResult,
-                                  lambda account: services.log_food(account, data, "claude"))
+        return await wrapper.call("log_food", LogFoodResult, lambda account: log_food_step(
+            account, entries=entries, date=date, allow_repeat=allow_repeat, key=key))
 
     @server.tool(
         name="save_food",
@@ -1244,48 +1263,28 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     @server.tool(
         name="log_cardio",
         title="Log cardio",
-        description=(
-            "Records one cardio session: the activity, as list_exercises gives it (kind cardio), and minutes, "
-            "with distance and the machine's numbers when the person gave them. Spotter estimates the calories "
-            "from the activity's MET value and the person's current body weight, and shows the machine's "
-            "number beside it. With no weigh-in there is no estimate. The same session again within "
-            "10 minutes is a duplicate: nothing is written."
-        ),
+        description=LOG_CARDIO_DESCRIPTION,
         annotations=WRITE,
     )
     async def log_cardio(
-        exercise: Annotated[str, Field(
-            description="The activity, exactly as list_exercises gives it, such as Outdoor Walk or Treadmill Walk. "
-                        + CARDIO_RULE)],
-        minutes: Annotated[Number, Field(description="How long it lasted, in minutes, 1 to 600.")],
-        date: Annotated[str | None, Field(
-            description="The day, YYYY-MM-DD, at most 2 years back. Leave out for today.")] = None,
-        distance_km: Annotated[Number | None, Field(
-            description="The distance in km, if the person gave it in km, or with no unit and units.distance is km. "
-                        "Send distance_km or distance_mi, never both.")] = None,
-        distance_mi: Annotated[Number | None, Field(
-            description="The distance in miles, if the person gave it in miles, or with no unit and units.distance is "
-                        "mi. Send it as said: Spotter converts it. Send distance_km or distance_mi, never both.")]
-            = None,
-        incline_pct: Annotated[Number | None, Field(description="A treadmill's incline in percent, 0 to 40.")] = None,
-        speed_kmh: Annotated[Number | None, Field(
-            description="The speed in km/h, if the person gave it so. Send speed_kmh or speed_mph, never both.")] = None,
-        speed_mph: Annotated[Number | None, Field(
-            description="The speed in miles an hour, if the person gave it so. Send it as said: Spotter converts it. "
-                        "Send speed_kmh or speed_mph, never both.")] = None,
-        avg_hr: Annotated[Whole | None, Field(description="Average heart rate in bpm, 30 to 240.")] = None,
-        machine_kcal: Annotated[Whole | None, Field(
-            description="The calories the machine or watch showed, as the person read them.")] = None,
-        notes: Annotated[str | None, Field(description="How it went, in the person's words.")] = None,
-        allow_repeat: Annotated[StrictBool, Field(
-            description="true logs it even when it matches a session from the last 10 minutes.")] = False,
+        exercise: Annotated[str, Field(description=CARDIO_EXERCISE_DESCRIPTION)],
+        minutes: Annotated[Number, Field(description=CARDIO_MINUTES_DESCRIPTION)],
+        date: Annotated[str | None, Field(description=CARDIO_DATE_DESCRIPTION)] = None,
+        distance_km: Annotated[Number | None, Field(description=CARDIO_DISTANCE_KM_DESCRIPTION)] = None,
+        distance_mi: Annotated[Number | None, Field(description=CARDIO_DISTANCE_MI_DESCRIPTION)] = None,
+        incline_pct: Annotated[Number | None, Field(description=CARDIO_INCLINE_PCT_DESCRIPTION)] = None,
+        speed_kmh: Annotated[Number | None, Field(description=CARDIO_SPEED_KMH_DESCRIPTION)] = None,
+        speed_mph: Annotated[Number | None, Field(description=CARDIO_SPEED_MPH_DESCRIPTION)] = None,
+        avg_hr: Annotated[Whole | None, Field(description=CARDIO_AVG_HR_DESCRIPTION)] = None,
+        machine_kcal: Annotated[Whole | None, Field(description=CARDIO_MACHINE_KCAL_DESCRIPTION)] = None,
+        notes: Annotated[str | None, Field(description=CARDIO_NOTES_DESCRIPTION)] = None,
+        allow_repeat: Annotated[StrictBool, Field(description=CARDIO_ALLOW_REPEAT_DESCRIPTION)] = False,
         key: Key = None,
     ) -> Annotated[CallToolResult, LogCardioResult]:
-        data = _sent(exercise=exercise, minutes=minutes, date=date, distance_km=distance_km, distance_mi=distance_mi,
-                     incline_pct=incline_pct, speed_kmh=speed_kmh, speed_mph=speed_mph, avg_hr=avg_hr,
-                     machine_kcal=machine_kcal, notes=notes, allow_repeat=allow_repeat or None)
-        return await wrapper.call("log_cardio", LogCardioResult,
-                                  lambda account: services.log_cardio(account, data, "claude"))
+        return await wrapper.call("log_cardio", LogCardioResult, lambda account: log_cardio_step(
+            account, exercise=exercise, minutes=minutes, date=date, distance_km=distance_km, distance_mi=distance_mi,
+            incline_pct=incline_pct, speed_kmh=speed_kmh, speed_mph=speed_mph, avg_hr=avg_hr,
+            machine_kcal=machine_kcal, notes=notes, allow_repeat=allow_repeat, key=key))
 
     @server.tool(
         name="get_trends",

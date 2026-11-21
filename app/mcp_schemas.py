@@ -114,6 +114,34 @@ FOOD_NAME_RULE = (
     "description out, or send the food's name."
 )
 
+# The tag rule, in Claude's terms. Spotter derives the tag; this is what Claude sends for each kind of number.
+# The instructions and log_food's description carry it.
+FOOD_RULE = (
+    "A number the person stated goes as kcal, with estimated false. A number you worked out goes as kcal with "
+    "estimated true, always, and you say in your reply that it is an estimate. A saved or USDA food from "
+    "find_food goes by its id with servings or grams, and no kcal: Spotter works out the number. If find_food "
+    "has no match and the person gave no number, you may estimate, and must say so."
+)
+
+# Which activity to log when the person's word fits more than one. Log, don't ask: the person corrects it.
+# The instructions and log_cardio's exercise carry it.
+CARDIO_RULE = (
+    "When the person's words fit more than one activity (treadmill, outdoor, bike), log the one their words "
+    "point to: a pace, speed or distance that means more than 7 km/h is a run, otherwise a walk; with nothing "
+    "to go on, the walk, the lower estimate. Say in your reply which one was taken; the person can correct it "
+    "with edit_entry. Never ask first."
+)
+
+# A write's own key: the same argument, with the same words: each write function (common.WRITE_FUNCTIONS) takes
+# key. No pattern and no length in the schema: Spotter's own check answers invalid_key, with its fix. The wrapper
+# reads the key from the arguments as sent (mcp_server._SENT), so a function declares it and never passes it on.
+KEY_DESCRIPTION = (
+    "Optional. A key of your own for this one write: 8 to 64 letters, digits, - or _. Send the same key when you "
+    "send the same call again: nothing is written twice and the first answer comes back. A new write takes a new "
+    "key."
+)
+Key = Annotated[str | None, Field(description=KEY_DESCRIPTION)]
+
 
 # ---------------------------------------------------------------- arguments
 
@@ -221,6 +249,160 @@ class FoodEntryIn(BaseModel):
     usda_fdc_id: Whole | None = Field(
         default=None, description="A USDA food's fdc_id from find_food. Send grams with it, and no kcal.")
     grams: Number | None = Field(default=None, description="How many grams of the USDA food, 1 to 5,000.")
+
+
+# ---------------------------------------------------------------- the five log functions
+# Each one's description and its top-level field words, written once: mcp_server's decorated functions publish them,
+# and each one's argument model below carries them. A set's and a food entry's words are LogSetIn's and FoodEntryIn's.
+
+LOG_LIFTS_DESCRIPTION = (
+    "Records sets of lifting. Sets for a date go into that date's session: the first call starts it, and "
+    "each later call adds its sets to it. So send only the sets not yet logged. Returns the whole session, "
+    "any new bests, and a one-line summary. restore_entry with undo_edit takes back the last sets added. "
+    "Send the person's own word for a lift; Spotter picks it and the summary names it. pick_lift means two "
+    "lifts fit: ask which."
+)
+LIFTS_SETS_DESCRIPTION = ("The sets to log, in order: 1 to 60. Only sets not yet logged: earlier sets of that date are "
+                          "already in its session. A session holds at most 60 sets.")
+LIFTS_DATE_DESCRIPTION = "The day it happened, YYYY-MM-DD, at most 2 years back. Leave out for today."
+LIFTS_NOTES_DESCRIPTION = ("How it went, in the person's words. Up to 2,000 characters. On a later call for the same "
+                           "date, they are added to the session's notes.")
+LIFTS_ALLOW_REPEAT_DESCRIPTION = "Not needed: every call adds its sets. Ignored."
+LIFTS_NEW_SESSION_DESCRIPTION = ("true starts a new session for that date, even when one is logged. Send it only when "
+                                 "the person says this is a separate workout.")
+
+LOG_BODYWEIGHT_DESCRIPTION = (
+    "Records one weigh-in and returns the latest weigh-ins and the trend. One weigh-in a day is kept: "
+    "a different weight on the same day replaces the earlier one, which is kept, not erased. The same "
+    "weight again within 10 minutes is a duplicate: nothing is written."
+)
+BODYWEIGHT_KG_DESCRIPTION = ("Body weight in kg, 20 to 400, when the person said kg, or gave no unit and units.weight "
+                             "is kg. Send kg or lb, never both.")
+BODYWEIGHT_LB_DESCRIPTION = ("Body weight in lb, 44.1 to 881.84, when the person said pounds, or gave no unit and "
+                             "units.weight is lb. Send it as said: Spotter converts it. Send kg or lb, never both.")
+BODYWEIGHT_DATE_DESCRIPTION = "The day, YYYY-MM-DD, at most 2 years back. Leave out for today."
+BODYWEIGHT_ALLOW_REPEAT_DESCRIPTION = "true logs it even when it matches a weigh-in from the last 10 minutes."
+
+LOG_MEASUREMENT_DESCRIPTION = (
+    "Records one body measurement: waist, hips, chest, arm or thigh in cm, steps, sleep_hours, "
+    "resting_hr in bpm, or water_ml. One value per kind a day: a different value on the same day "
+    "replaces the earlier one, which is kept, not erased. The same value again within 10 minutes is a "
+    "duplicate: nothing is written."
+)
+MEASUREMENT_KIND_DESCRIPTION = "waist, hips, chest, arm, thigh, steps, sleep_hours, resting_hr or water_ml."
+MEASUREMENT_VALUE_DESCRIPTION = ("The value in the kind's unit: cm for the body sizes, steps, hours of sleep, bpm, ml. "
+                                 "Spotter takes no inches.")
+MEASUREMENT_DATE_DESCRIPTION = "The day, YYYY-MM-DD, at most 2 years back. Leave out for today."
+MEASUREMENT_ALLOW_REPEAT_DESCRIPTION = "true logs it even when it matches a measurement from the last 10 minutes."
+
+LOG_FOOD_DESCRIPTION = (
+    "Records what the person ate, one entry per food, in one call for the whole message. Spotter tags "
+    "each number with who supplied it; you never name the tag. " + FOOD_RULE + " " + FOOD_NAME_RULE + " "
+    "Returns the entries, their tags and the day's total. The same set again within 10 minutes is a "
+    "duplicate: nothing is written."
+)
+FOOD_ENTRIES_DESCRIPTION = "Every food in the message, one entry each."
+FOOD_DATE_DESCRIPTION = "The day it was eaten, YYYY-MM-DD, at most 2 years back. Leave out for today."
+FOOD_ALLOW_REPEAT_DESCRIPTION = ("true logs it even when it matches food logged in the last 10 minutes. Send it only "
+                                 "when the person confirms they ate it again.")
+
+LOG_CARDIO_DESCRIPTION = (
+    "Records one cardio session: the activity, as list_exercises gives it (kind cardio), and minutes, "
+    "with distance and the machine's numbers when the person gave them. Spotter estimates the calories "
+    "from the activity's MET value and the person's current body weight, and shows the machine's "
+    "number beside it. With no weigh-in there is no estimate. The same session again within "
+    "10 minutes is a duplicate: nothing is written."
+)
+CARDIO_EXERCISE_DESCRIPTION = ("The activity, exactly as list_exercises gives it, such as Outdoor Walk or Treadmill "
+                               "Walk. " + CARDIO_RULE)
+CARDIO_MINUTES_DESCRIPTION = "How long it lasted, in minutes, 1 to 600."
+CARDIO_DATE_DESCRIPTION = "The day, YYYY-MM-DD, at most 2 years back. Leave out for today."
+CARDIO_DISTANCE_KM_DESCRIPTION = ("The distance in km, if the person gave it in km, or with no unit and units.distance "
+                                  "is km. Send distance_km or distance_mi, never both.")
+CARDIO_DISTANCE_MI_DESCRIPTION = ("The distance in miles, if the person gave it in miles, or with no unit and "
+                                  "units.distance is mi. Send it as said: Spotter converts it. Send distance_km or "
+                                  "distance_mi, never both.")
+CARDIO_INCLINE_PCT_DESCRIPTION = "A treadmill's incline in percent, 0 to 40."
+CARDIO_SPEED_KMH_DESCRIPTION = "The speed in km/h, if the person gave it so. Send speed_kmh or speed_mph, never both."
+CARDIO_SPEED_MPH_DESCRIPTION = ("The speed in miles an hour, if the person gave it so. Send it as said: Spotter converts "
+                                "it. Send speed_kmh or speed_mph, never both.")
+CARDIO_AVG_HR_DESCRIPTION = "Average heart rate in bpm, 30 to 240."
+CARDIO_MACHINE_KCAL_DESCRIPTION = "The calories the machine or watch showed, as the person read them."
+CARDIO_NOTES_DESCRIPTION = "How it went, in the person's words."
+CARDIO_ALLOW_REPEAT_DESCRIPTION = "true logs it even when it matches a session from the last 10 minutes."
+
+
+# Each of the five's arguments as one model, apart from its registered function, so a call that reaches the same
+# service another way reads them with the same fields, types, ranges and words (mcp_server.misfit_model). Each model's
+# JSON schema equals its function's published input schema: the same title as the library gives the function's own
+# model, the fields in the signature's order, and additionalProperties false, which build_server sets on the function.
+# No docstring: one would be published as the schema's description, which the function's own schema has none of.
+
+def _arguments_of(function: str) -> ConfigDict:
+    return ConfigDict(extra="forbid", title=f"{function}Arguments")
+
+
+class LogLiftsIn(BaseModel):
+    model_config = _arguments_of("log_lifts")
+
+    sets: list[LogSetIn] = Field(description=LIFTS_SETS_DESCRIPTION)
+    date: str | None = Field(default=None, description=LIFTS_DATE_DESCRIPTION)
+    notes: str | None = Field(default=None, description=LIFTS_NOTES_DESCRIPTION)
+    allow_repeat: StrictBool = Field(default=False, description=LIFTS_ALLOW_REPEAT_DESCRIPTION)
+    new_session: StrictBool = Field(default=False, description=LIFTS_NEW_SESSION_DESCRIPTION)
+    key: Key = None
+
+
+class LogBodyweightIn(BaseModel):
+    model_config = _arguments_of("log_bodyweight")
+
+    kg: Number | None = Field(default=None, description=BODYWEIGHT_KG_DESCRIPTION)
+    lb: Number | None = Field(default=None, description=BODYWEIGHT_LB_DESCRIPTION)
+    date: str | None = Field(default=None, description=BODYWEIGHT_DATE_DESCRIPTION)
+    allow_repeat: StrictBool = Field(default=False, description=BODYWEIGHT_ALLOW_REPEAT_DESCRIPTION)
+    key: Key = None
+
+
+class LogMeasurementIn(BaseModel):
+    model_config = _arguments_of("log_measurement")
+
+    kind: str = Field(description=MEASUREMENT_KIND_DESCRIPTION)
+    value: Number = Field(description=MEASUREMENT_VALUE_DESCRIPTION)
+    date: str | None = Field(default=None, description=MEASUREMENT_DATE_DESCRIPTION)
+    allow_repeat: StrictBool = Field(default=False, description=MEASUREMENT_ALLOW_REPEAT_DESCRIPTION)
+    key: Key = None
+
+
+class LogFoodIn(BaseModel):
+    model_config = _arguments_of("log_food")
+
+    entries: list[FoodEntryIn] = Field(description=FOOD_ENTRIES_DESCRIPTION)
+    date: str | None = Field(default=None, description=FOOD_DATE_DESCRIPTION)
+    allow_repeat: StrictBool = Field(default=False, description=FOOD_ALLOW_REPEAT_DESCRIPTION)
+    key: Key = None
+
+
+class LogCardioIn(BaseModel):
+    model_config = _arguments_of("log_cardio")
+
+    exercise: str = Field(description=CARDIO_EXERCISE_DESCRIPTION)
+    minutes: Number = Field(description=CARDIO_MINUTES_DESCRIPTION)
+    date: str | None = Field(default=None, description=CARDIO_DATE_DESCRIPTION)
+    distance_km: Number | None = Field(default=None, description=CARDIO_DISTANCE_KM_DESCRIPTION)
+    distance_mi: Number | None = Field(default=None, description=CARDIO_DISTANCE_MI_DESCRIPTION)
+    incline_pct: Number | None = Field(default=None, description=CARDIO_INCLINE_PCT_DESCRIPTION)
+    speed_kmh: Number | None = Field(default=None, description=CARDIO_SPEED_KMH_DESCRIPTION)
+    speed_mph: Number | None = Field(default=None, description=CARDIO_SPEED_MPH_DESCRIPTION)
+    avg_hr: Whole | None = Field(default=None, description=CARDIO_AVG_HR_DESCRIPTION)
+    machine_kcal: Whole | None = Field(default=None, description=CARDIO_MACHINE_KCAL_DESCRIPTION)
+    notes: str | None = Field(default=None, description=CARDIO_NOTES_DESCRIPTION)
+    allow_repeat: StrictBool = Field(default=False, description=CARDIO_ALLOW_REPEAT_DESCRIPTION)
+    key: Key = None
+
+
+# Each of the five's argument model, by the function's name, in the order they are registered.
+LOG_ARGUMENTS = {"log_lifts": LogLiftsIn, "log_bodyweight": LogBodyweightIn, "log_measurement": LogMeasurementIn,
+                 "log_food": LogFoodIn, "log_cardio": LogCardioIn}
 
 
 # An import's rows are named fields for every kind: no positional lists. A field these models do not name still

@@ -10,9 +10,11 @@ import threading
 import time
 from datetime import date, timedelta
 from typing import Any
+from unittest import mock
 
 import jwt
 import pytest
+from mcp.server.mcpserver import MCPServer
 from sqlalchemy import func, select
 from starlette.testclient import TestClient
 
@@ -297,6 +299,18 @@ def failed(client: TestClient, token: str, name: str, arguments: dict | None = N
 
 def tool_list(client: TestClient, token: str) -> list[dict]:
     return rpc(client, "tools/list", token=token).json()["result"]["tools"]
+
+
+def registered_tools(client: TestClient) -> dict[str, dict]:
+    """Every registered function's entry by name, in order, as tools/list publishes it, a function the list leaves out
+    too: one tools/list of the client's own server, with SpotterServer's filter set aside for it, so the entries are
+    the library's own, read from the server's tool manager (log-and-guide.md, L0)."""
+    async def every(server):
+        return await MCPServer.list_tools(server)
+
+    with mock.patch.object(mcp_server.SpotterServer, "list_tools", every):
+        tools = tool_list(client, sign())
+    return {tool["name"]: tool for tool in tools}
 
 
 def one_user() -> User:
