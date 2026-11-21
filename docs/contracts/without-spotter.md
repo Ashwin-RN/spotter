@@ -98,3 +98,12 @@ text an assistant reads changes: `python -m evals.need main` says no.
   count rather than counting as wrong. The table names each one.
 - Anything about a write: the past problem writes run apart in `evals.run`.
 - Anything past one message: every arm is one message a conversation.
+
+## Note of 2026-11-21, after the pilot
+
+- Decision 12: Codex's own resource listings (`list_mcp_resources`, `list_mcp_resource_templates` on its built-in
+  server `codex`) are no tool used. With no server given they find nothing. An N run whose only tool items are these
+  is judged on its reply, and the listings are kept on the outcome as `codex_listings`. Any other tool, or any other
+  server, is still "not run". Seen in 4 `gpt-6-luna` pilot runs.
+- C2: "a week 8" also takes "8-week", "8 week" and "eight-week". A right reply headed "Sam's 8-week first 10K plan"
+  failed. The pattern is C2's own: `look_10k_friend` has no reply pattern to copy.

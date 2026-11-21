@@ -142,7 +142,7 @@
    "say": "Write an 8-week plan for my friend Sam to run her first 10k. She has never run before.",
    "seed": [{"service": "sixteen_weeks"}],
    "arms": ["W", "N-new"],
-   "reply": {"reply_has_pattern": ["\\bweek\\s*(?:8|eight)\\b"]},
+   "reply": {"reply_has_pattern": ["\\bweek\\s*(?:8|eight)\\b|\\b(?:8|eight)[\\s-]*weeks?\\b"]},
    "w": {"expect": {"no_call": ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]}, "calls": {"must": [], "may": ["whoami"], "must_not": ["what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]}}
   }
  ]

@@ -101,6 +101,8 @@ def test_the_copied_rules_are_the_source_cases_own():
     assert BY_ID["R4"]["w"]["expect"]["inputs_include"] == {"area": "weigh_ins"}
     assert BY_ID["R6"]["w"]["expect"]["quotes_one_of"] == expect("gold_squat_goal")["quotes_one_of"]
     assert BY_ID["R9"]["w"]["db"] == SOURCE["data_empty"]["db"]
+    # A named exception: C2's reply pattern is its own, as look_10k_friend has none, and it takes "8-week" too.
+    assert "reply_has_pattern" not in expect("look_10k_friend") and BY_ID["C2"]["reply"]["reply_has_pattern"]
 
 
 # ---------------------------------------------------------------- what an N arm is told
@@ -382,6 +384,37 @@ def test_a_codex_n_run_has_no_server_and_no_token_and_a_tool_used_is_a_fault(app
     assert good["passed"] is True
     assert (good["input_tokens"], good["cached_tokens"], good["output_tokens"]) == (100, 20, 9)
     assert used["status"] == "fault" and used["fault"] == "codex used a tool with no tools given: command_execution"
+    assert good["codex_listings"] == []
+
+
+def _listing(tool, server="codex"):
+    return {"type": "item.completed", "item": {"type": "mcp_tool_call", "server": server, "tool": tool,
+                                               "arguments": {}, "status": "completed", "result": {"content": []}}}
+
+
+def test_a_codex_n_run_with_only_codex_s_own_resource_listings_is_judged(app_settings, clock):
+    """Codex's built-in listings on server "codex" find nothing with no server given: the run is judged on its
+    reply, and the listings are kept on the outcome. Another tool, or another server, is still a tool used."""
+    events = [{"type": "item.completed", "item": {"type": "agent_message", "text": RIGHT["C2"]}},
+              {"type": "turn.completed", "usage": {"input_tokens": 120, "cached_input_tokens": 20, "output_tokens": 9}}]
+    both = [_listing("list_mcp_resource_templates"), _listing("list_mcp_resources")]
+    runs = [both + events, both + [_listing("read_mcp_resource")] + events,
+            [_listing("list_mcp_resources", server="spotter")] + events]
+    runner = _runner(app_settings, "codex", popen=Popen(*("\n".join(map(json.dumps, r)) for r in runs)))
+    listed, other_tool, other_server = (runner.one(BY_ID["C2"], "N-new", i) for i in (1, 2, 3))
+    assert listed["status"] == "ok" and listed["passed"] is True
+    assert listed["codex_listings"] == ["list_mcp_resource_templates", "list_mcp_resources"]
+    assert other_tool["status"] == "fault"
+    assert other_tool["fault"] == "codex used a tool with no tools given: codex.read_mcp_resource"
+    assert other_server["status"] == "fault"
+    assert other_server["fault"] == "codex used a tool with no tools given: spotter.list_mcp_resources"
+
+
+def test_c2_takes_an_8_week_plan_in_any_spelling_and_still_fails_a_6_week_one():
+    for reply in ("Sam's 8-week first 10K plan", "An 8 week plan", "An eight-week plan", "Week 8: run 10 km."):
+        assert without.reply_reasons(BY_ID["C2"], "N-new", reply) == [], reply
+    for reply in ("Sam's 6-week first 10K plan", "A six week plan. Week 6: race day.", "An 18-week plan"):
+        assert without.reply_reasons(BY_ID["C2"], "N-new", reply), reply
 
 
 def test_a_w_run_gets_the_case_s_own_rules_and_reads_in_two_columns(app_settings, monkeypatch):

@@ -53,6 +53,9 @@ DEFAULT_MODELS = {"claude": "claude-sonnet-5-5", "codex": run.SMALL_GPT, "gemini
 EMPTY_MCP = json.dumps({"mcpServers": {}})
 # Codex items that are no tool: an N run with any other item used a tool it should not have had.
 CODEX_PLAIN_ITEMS = ("agent_message", "reasoning")
+# Codex's own resource listings, on its built-in server "codex": with no MCP server given they find nothing, so an N
+# run whose only tool items are these still ran with no tools. Any other tool, or any other server, is a tool used.
+CODEX_LISTINGS = ("list_mcp_resources", "list_mcp_resource_templates")
 # A W outcome's reasons that mean the run did not run as a run, not that the model was wrong.
 FAULTS = ("CLI: ", "CLI ended with", "turn 1: CLI", "turn 2: CLI", "another model took part",
           "more than one model took part", "the CLI reported no model", "codex: ", "codex did not complete",
@@ -449,7 +452,7 @@ def stop_tree(process) -> None:
 def blank(case: dict, arm: str, client: str, model: str | None, effort: str | None, i: int) -> dict:
     return {**run.blank_outcome(client, model, effort), "case": case["id"], "arm": arm, "run": i, "status": "ok",
             "fault": None, "reply_passed": False, "record_passed": None, "reply_reasons": [], "record_reasons": [],
-            "quoted_spotter": False, "prompt_chars": None, "apart": None}
+            "quoted_spotter": False, "prompt_chars": None, "apart": None, "codex_listings": []}
 
 
 class Runner:
@@ -579,7 +582,10 @@ class Runner:
         outcome["item_types"] = parsed["item_types"]
         if not parsed["completed"] or parsed["errors"]:
             return f"codex did not complete the turn: {json.dumps(parsed['errors'])[:300]}"
-        tools = sorted(set(parsed["item_types"]) - set(CODEX_PLAIN_ITEMS))
+        listings = [i for i in parsed["tool_items"] if i["server"] == "codex" and i["tool"] in CODEX_LISTINGS]
+        outcome["codex_listings"] = [i["tool"] for i in listings]
+        others = sorted({f"{i['server']}.{i['tool']}" for i in parsed["tool_items"] if i not in listings})
+        tools = sorted(set(parsed["item_types"]) - set(CODEX_PLAIN_ITEMS) - {"mcp_tool_call"}) + others
         return f"codex used a tool with no tools given: {', '.join(tools)}" if tools else None
 
     def _gemini(self, prompt: str, outcome: dict) -> str | None:
