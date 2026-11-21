@@ -1310,3 +1310,45 @@ In all: $7.4211 before, $7.3161 after.
 - "had another Roti just now, yes an extra one after lunch" (`separate_food_repeat`) names no meal, but with the new wording a meal was sent: on `claude-haiku-5-5` 2 of 3 ("snack"), on `gpt-6-luna` 4 of 15 ("lunch" 3, "snack" 1); on Sonnet 0 of 3. Kept: it moves an entry between meals, never a number, and the new wording sends 21 named meals that were left out before, against these 6.
 - `recent_biryani_again` fails on both trees: on Sonnet 0 of 3 each, on Haiku 1 of 3 and 0 of 3. The model reads `get_log`, then neither logs the food nor asks.
 - On `gpt-6-luna` one `stated_number` run before the change sent `meal` beside `entries`; it was refused and the retry left the meal out.
+
+## Without Spotter: the same model with Spotter and without it
+
+On 2026-11-21. Contract: `docs/contracts/without-spotter.md`. Eval code and a doc: no app file and no model-read text changed, so `python -m evals.need main` says no.
+
+| Package | Commit | What it did |
+|---|---|---|
+| The runner, the cases, the tests, the doc | `d3d6383` | `python -m evals.without`: 14 cases on the seeded weeks, each run with Spotter (W) and without it: the whole history told in one prompt (N-history), a short fixed memory (N-memory), or nothing (N-new). Judged on the reply's numbers, with a band that fails a made-up figure beside the right one; W also on the record |
+| From the pilot | `0199e10` | A Codex run whose only tool items are its own resource listings on its built-in server is judged, as they find nothing with no server given; C2 takes an 8-week plan written as 8-week, 8 week or eight-week |
+| From a diagnosis | `709dc59` | A Claude run with no Spotter is told it is a plain chat with no tools, no files and no working directory |
+| From the runs | `e976626` | U1's "estimate" check reads only the sentence that names the biryani or 640 |
+
+### Why
+
+To measure what Spotter adds over the same assistant alone, on the questions where it should show, and where it still slips.
+
+### The hang
+
+A Claude run with no Spotter and no data hung to the 300 s time-out, 4 runs in 5 on one cell, alone too. The CLI's debug log showed the stream starting, then nothing after the model's thinking. Claude Code's own prompt tells the model it has a working folder, so with no data and no tools it reached for a file tool that is not there; a run that did answer said it would "check the working directory for a food-tracking file". With the plain-chat line, 6 runs in 6 answered in 5 to 7 s. Claude's N runs made before the line are not counted.
+
+### Checks
+
+The files the build touched, with `test_evals`, `test_switch`, `test_docs`, `test_text_rules` and `test_eval_need`, plain and with `-W error` after each package. The whole suite on a clean export of this entry's commit: see the release.
+
+### Eval runs
+
+3 runs a cell; `claude-sonnet-5-5` and `claude-haiku-5-5` through the Claude CLI with tool search at its default, `gpt-6-luna` through Codex; the seeded sixteen weeks; run 2026-11-21.
+
+| Model | 9 reads: W | N-history | N-memory | N-new says no record | 3 unclear: W, N-history | 2 controls: W, N-new |
+|---|---|---|---|---|---|---|
+| `claude-sonnet-5-5` | 26 of 27 | 22 of 27 | 4 of 27 | 9 of 9 | 4, 4 of 9 | 6, 6 of 6 |
+| `claude-haiku-5-5` | 27 of 27 | 22 of 27 | 3 of 27 | 9 of 9 | 2, 5 of 9 | 6, 6 of 6 |
+| `gpt-6-luna` | 26 of 27 | 16 of 27 | 3 of 27 | 8 of 9 | 5, 4 of 9 | 6, 6 of 6 |
+
+A W read counts only where the record backs it. Every reply is judged with the rules of `e976626`. The past problem writes on `evals.run` (`rambling_day_log`, `routine_logged`, `tennis_not_listed`): Sonnet 9 of 9, Haiku 8 of 9, Luna 8 of 9. A read on Sonnet, median: W $0.087, N-history $0.118. Spend: Sonnet $13.54, Haiku $0.76, Luna plan usage.
+
+### Known limits
+
+- "85 today" (U3): with Spotter every model logged 85 kg as today's weigh-in, replacing the 78.6 there, 9 of 9 runs; told the history, the models mostly asked.
+- U1 on Sonnet with Spotter: the model saw the biryani already logged tonight and added nothing; the case wants a log or a question, so it fails.
+- N-memory is a stand-in written once, not any app's real memory. Codex is not the ChatGPT app.
+- Gemini: the pilot only. Five of nine keys answered 429 on the first request, and the W runs on the rest timed out or were reset; the full run is not done.
