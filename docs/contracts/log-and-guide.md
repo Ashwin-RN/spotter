@@ -151,7 +151,7 @@ The five fields' words in `log`'s schema are written once, in `app/log_shape.py`
 | `minutes` | "A time in minutes, as the person said it." |
 | `distance_m` | "A distance in metres, as the person said it." |
 | `distance_km` | "A distance in km, as the person said it, or with no unit and units.distance is km." |
-| `distance_mi` | "A distance in miles, as the person said it, or with no unit and units.distance is mi. Spotter converts it." |
+| `distance_mi` | "A distance in miles, as the person said it, or with no unit and units.distance is mi." |
 
 After each, the line "Spotter converts it to what the kind keeps." `guide` keeps each kind's own words and ranges, the five's, and adds that one line under its parts. These are model-read text: the text rules, and the release eval with `log_plank_minutes`.
 

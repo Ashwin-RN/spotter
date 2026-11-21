@@ -405,6 +405,48 @@ LOG_ARGUMENTS = {"log_lifts": LogLiftsIn, "log_bodyweight": LogBodyweightIn, "lo
                  "log_food": LogFoodIn, "log_cardio": LogCardioIn}
 
 
+# ---------------------------------------------------------------- log's part (contract log-and-guide.md)
+# One part of a log call: a set of lifts, or the one cardio session. A time and a distance go in the form the person
+# said, and app.log_shape converts each to the kind's own column (decision 51): those five fields' words are written
+# here once, true for every kind, each with CONVERTS_LINE after it. weight_kg, weight_lb, reps and exact are LogSetIn's
+# own words after "Lifts: ", and movement names what both kinds take. They live here, beside LogPartIn, as this module
+# imports nothing of log_shape; log_shape reads them back under the same names.
+
+CONVERTS_LINE = "Spotter converts it to what the kind keeps."
+PART_MOVEMENT_DESCRIPTION = (
+    "The lift in the person's own words, such as squat, or a name from list_exercises. Cardio: the activity exactly "
+    "as list_exercises gives it, such as Outdoor Walk or Treadmill Walk. " + CARDIO_RULE
+)
+PART_TIME_S_DESCRIPTION = ("A time in seconds, as the person said it: a hold, a carry or a cardio session. "
+                           + CONVERTS_LINE)
+PART_MINUTES_DESCRIPTION = "A time in minutes, as the person said it. " + CONVERTS_LINE
+PART_DISTANCE_M_DESCRIPTION = "A distance in metres, as the person said it. " + CONVERTS_LINE
+PART_DISTANCE_KM_DESCRIPTION = ("A distance in km, as the person said it, or with no unit and units.distance is km. "
+                                + CONVERTS_LINE)
+PART_DISTANCE_MI_DESCRIPTION = ("A distance in miles, as the person said it, or with no unit and units.distance is mi. "
+                                + CONVERTS_LINE)
+
+
+def _lifts_words(field: str) -> str:
+    return "Lifts: " + LogSetIn.model_fields[field].description
+
+
+# No docstring: a part is published as log's parts items, which carry no description of their own.
+class LogPartIn(BaseModel):
+    model_config = INPUT
+
+    movement: str | None = Field(default=None, description=PART_MOVEMENT_DESCRIPTION)
+    weight_kg: Number | None = Field(default=None, description=_lifts_words("weight_kg"))
+    weight_lb: Number | None = Field(default=None, description=_lifts_words("weight_lb"))
+    reps: Whole | None = Field(default=None, description=_lifts_words("reps"))
+    time_s: Whole | None = Field(default=None, description=PART_TIME_S_DESCRIPTION)
+    distance_m: Number | None = Field(default=None, description=PART_DISTANCE_M_DESCRIPTION)
+    exact: StrictBool | None = Field(default=None, description=_lifts_words("exact"))
+    minutes: Number | None = Field(default=None, description=PART_MINUTES_DESCRIPTION)
+    distance_km: Number | None = Field(default=None, description=PART_DISTANCE_KM_DESCRIPTION)
+    distance_mi: Number | None = Field(default=None, description=PART_DISTANCE_MI_DESCRIPTION)
+
+
 # An import's rows are named fields for every kind: no positional lists. A field these models do not name still
 # reaches the service (extra allow), which refuses its row in its own words, so a misspelt field such as
 # speed_kmh or kg is never dropped on the way.
@@ -1785,6 +1827,26 @@ class GetDataResult(BaseModel):
         default=None,
         description="Present when nothing is in range, the rows stop at the size limit, or more open goals match than "
                     "ride along.")
+
+
+# ---------------------------------------------------------------- guide (contract log-and-guide.md)
+# guide's answer, as app.guide builds it at import: for a kind, its own description, what its parts take, its details
+# as a schema and the words of its top fields; for topic log, every kind. The nested parts are plain objects.
+
+class GuideResult(BaseModel):
+    model_config = TOP
+
+    topic: str = Field(description="The topic answered: log, or one of the kinds.")
+    how: str = Field(description="How the kind is logged, or with topic log, what log records.")
+    parts: dict | None = Field(
+        default=None, description="For a kind: what its parts take, and the words of each part field.")
+    details: dict | None = Field(
+        default=None, description="For a kind: the fields it takes in details, as a schema with their units and rules.")
+    top: dict | None = Field(
+        default=None, description="For a kind: the words of the fields sent at the top of log, beside kind.")
+    note: str | None = Field(default=None, description="Present for measurement: how its kind word is sent.")
+    kinds: list[dict] | None = Field(
+        default=None, description="For topic log: every kind, its words, what it records, its parts and details.")
 
 
 RESULTS = {
