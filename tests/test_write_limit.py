@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import delete, func, select
 
-from app import db, services
+from app import db, log_shape, mcp_server, services
 from app.models import (
     Bodyweight, CallLog, CardioEntry, Feedback, FoodEntry, Goal, LiftSession, Measurement, SavedFood, User,
 )
@@ -60,6 +60,8 @@ def setup_entry(user):
 
 
 WRITES = {
+    # log (log-and-guide.md): its own work, as the wrapper runs it, routed to the kind's step and its service.
+    "log": lambda u, ids: mcp_server.log_work(log_shape.route({"kind": "bodyweight", "details": {"kg": 78}}), u.id),
     "log_lifts": lambda u, ids: services.log_lifts(
         u.id, {"sets": [{"exercise": "Deadlift", "weight_kg": 100, "reps": 5}]}, "claude"),
     "log_bodyweight": lambda u, ids: services.log_bodyweight(u.id, {"kg": 79}, "claude"),

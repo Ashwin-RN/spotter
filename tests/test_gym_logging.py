@@ -23,7 +23,7 @@ from . import text_rules as tr
 from .conftest import lock_sql, sign
 from .test_calllog import rows
 from .test_idempotency import K, keys, writer  # noqa: F401 - writer is a fixture
-from .test_mcp import call, failed, ok, tool_list
+from .test_mcp import call, failed, ok, registered_tools, tool_list
 
 BENCH = ("Bench Press", 80, 5)
 SETS_FIX = "Send new_session true to start another session that day, or send fewer sets."
@@ -639,7 +639,7 @@ def test_the_reads_count_one_session_for_a_day_said_set_by_set(user):
 # ---------------------------------------------------------------- through MCP (decisions 2, 3, 14, 15)
 
 def test_the_published_description_arguments_and_result_fields_are_the_contract_s_words(http):
-    [tool] = [t for t in tool_list(http, sign()) if t["name"] == "log_lifts"]
+    tool = registered_tools(http)["log_lifts"]  # though no list holds it now (log-and-guide.md)
     assert (tool["title"], tool["description"]) == ("Log a lift session", DESCRIPTION)
     schema = tool["inputSchema"]
     assert list(schema["properties"]) == ["sets", "date", "notes", "allow_repeat", "new_session", "key"]

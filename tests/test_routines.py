@@ -40,7 +40,7 @@ from .test_evals import _lift_case, _lift_server, call as recorded
 from .test_feedback import compact
 from .test_inputs import without_inputs
 from .test_idempotency import K, keys, writer  # noqa: F401 - writer is a fixture
-from .test_mcp import call, failed, ok, set_switch, tool_list
+from .test_mcp import call, failed, ok, registered_tools, set_switch, tool_list
 from .test_page_rules import Seen, built_findings, follow, frame_findings, page_rule_findings, titled_card_findings
 from .test_pages_text import entered_notes, entered_text, names_of, page_findings, step_4_findings
 from .test_trace import OWNER, sign_for
@@ -840,7 +840,10 @@ def test_the_kind_and_id_words_and_delete_entry_s_first_sentence_are_the_contrac
 
 def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_published_list(make_client):
     client = make_client(owner_user_id=OWNER)
-    tools = tool_list(client, sign_for(OWNER))
+    # log-and-guide.md: every registered function, the five that no list holds now among them, less log and guide,
+    # which are new.
+    registered = registered_tools(client)
+    tools = [t for name, t in registered.items() if name not in ("log", "guide")]
     names = [t["name"] for t in tools]
     assert names == [*list(BEFORE)[:20], "save_routine", "get_routines", "what_is_logged", "get_data",
                      *list(BEFORE)[20:]]  # data-on-request.md: its two after get_routines
@@ -855,7 +858,8 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
                                                             "import_entries", "list_exercises", "log_food"} | units
     assert hashes["restore_entry"] != BEFORE["restore_entry"] and "restore_entry" not in units
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
-    assert everyone == [n for n in names if n not in mcp_server.OWNER_FUNCTIONS] and len(everyone) == web.FUNCTION_COUNT
+    assert everyone == [n for n in registered if n not in mcp_server.OWNER_FUNCTIONS + mcp_server.RETIRING]
+    assert len(everyone) == web.FUNCTION_COUNT == 21
 
 
 def test_the_instructions_do_not_change_4082_characters():  # data-on-request.md: DATA_RULE; exercise-list.md C4c

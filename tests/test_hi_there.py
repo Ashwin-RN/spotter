@@ -31,7 +31,7 @@ from evals.run import LocalServer, dates_for, person_rows
 from . import text_rules as tr
 from .conftest import claims, rpc, settings, sign, whoami
 from .test_docs import top_level_pages
-from .test_mcp import model_texts, read_resource, sends_to_a_page, sentences, tool_list
+from .test_mcp import model_texts, read_resource, registered_tools, sends_to_a_page, sentences, tool_list
 from .test_page_rules import FRAME, FRAME_RULES, Seen, page_rule_findings, titled_card_findings, unclosed_findings
 from .test_pages_text import ACCOUNTS, BUILT, NAMED, page_findings, step_4_findings
 from .test_web import NO_BREAK, NO_WEB, SITE, WEB, client, head_tags, only_user, plain_words, seam  # noqa: F401
@@ -342,7 +342,9 @@ def test_the_page_links_to_no_signed_in_page_signed_out_and_names_nothing_it_mus
     # No assistant named, no function named, no privacy page. Two lines say what the assistant may do: the landing's
     # switch line in Your say, and the one estimate the assistant may make. Nothing else does.
     assert not re.search(r"\bclaude\b", page, re.I) and not [a for a in web.ASSISTANTS if a in words]
-    assert not [n for n in mcp_server.NEEDS if n in main]
+    # Whole words, and log and guide are plain words on a page: it says "A fitness log" (log-and-guide.md, N8).
+    assert not [n for n in mcp_server.NEEDS
+                if n not in tr.PLAIN_WORDS and re.search(rf"(?<![\w-]){n}(?![\w-])", main)]
     assert not [h for h in hrefs if "privacy" in h.casefold()] and "privacy" not in words.casefold()
     assert words.count(SWITCH_LINE) == 1 and words.count(ESTIMATE_LINE) == 1
     rest = words.replace(SWITCH_LINE, "").replace(ESTIMATE_LINE, "")
@@ -563,12 +565,12 @@ def test_the_first_days_lines_hold_to_the_code(make_user):
 def test_sets_said_one_by_one_go_into_that_days_session(http):
     """R3, the one test that waits for the join with gym logging: log_lifts' published description holds the gym logging
     contract's words. It fails on this work's own tree and passes at the join."""
-    [tool] = [t for t in tool_list(http, sign()) if t["name"] == "log_lifts"]
+    tool = registered_tools(http)["log_lifts"]  # though no list holds it now (log-and-guide.md)
     assert "each later call adds its sets to it" in tool["description"]
 
 
 def test_what_comes_back_in_part_two_holds_to_the_code(http):
-    tools = {t["name"]: t for t in tool_list(http, sign())}
+    tools = registered_tools(http)  # log_cardio, though no list holds it now
     assert "estimates the calories from the activity's MET value and the person's current body weight" in \
         tools["log_cardio"]["description"]
     lift = inspect.getsource(progress._one)
@@ -680,7 +682,7 @@ def test_what_spotter_keeps_and_does_not_do_holds_to_the_code(http, make_user):
     cannot = doc[doc.index("## What it cannot tell you"):doc.index("## Duplicates")]
     assert CANNOT_LINE in cannot and "It gives no medical advice." in cannot
     assert "weight_kg" in SetIn.model_fields
-    tools = {t["name"]: t for t in tool_list(http, sign())}
+    tools = registered_tools(http)  # log_cardio, though no list holds it now
     assert "distance_km" in tools["log_cardio"]["inputSchema"]["properties"]
     assert "lb x 0.45359237, mi x 1.609344" in " ".join(doc.split())
     columns = set(FoodEntry.__table__.c.keys())
@@ -1127,7 +1129,7 @@ def test_a_live_routine_of_the_persons_own_marks_the_step_done_and_another_perso
 
 
 def test_the_step_names_in_the_fields_description_are_the_steps_on_offer(http):
-    schema = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}["whoami"]
+    schema = registered_tools(http)["whoami"]["outputSchema"]
     field = schema["properties"]["setup"]
     text = field["description"]
     named = text[text.index("ask them: ") + len("ask them: "):text.index(". how:")].split(", ")

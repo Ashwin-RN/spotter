@@ -35,7 +35,9 @@ from .test_calllog import MARKER, rows
 from .test_feedback import PUBLISHED, compact
 from .test_inputs import without_inputs
 from .test_idempotency import K, keys, writer  # noqa: F401 - writer is a fixture
-from .test_mcp import CAN_AND_CANT, call, failed, model_texts, ok, one_user, set_switch, squat, tool_list
+from .test_mcp import (
+    CAN_AND_CANT, call, failed, model_texts, ok, one_user, registered_tools, set_switch, squat, tool_list,
+)
 from .test_trace import OWNER, sign_for
 from .test_web import client, location, only_user, post, seam, sign_in, web_client  # noqa: F401
 from .test_hardening_schema import before_0012
@@ -585,8 +587,8 @@ def test_the_instructions_name_settings_for_three_acts_only():
 
 def test_only_whoami_and_delete_entry_differ_in_the_published_list_and_owner_feedback_does_not(make_client):
     client = make_client(owner_user_id=OWNER)
-    tools = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tool_list(client, sign_for(OWNER))}
-    moved = {name for name, sha in PUBLISHED.items() if tools[name] != sha}
+    tools = {name: hashlib.sha256(compact(t).encode()).hexdigest() for name, t in registered_tools(client).items()}
+    moved = {name for name, sha in PUBLISHED.items() if tools[name] != sha}  # the five read as registered
     assert moved == set()  # PUBLISHED holds the two new hashes: tests/test_feedback.py
     # inputs.md moved every one, owner_feedback too: with its changes taken out, owner_feedback is as before.
     [held] = [t for t in tool_list(client, sign_for(OWNER)) if t["name"] == "owner_feedback"]

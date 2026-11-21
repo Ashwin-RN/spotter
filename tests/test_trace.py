@@ -32,7 +32,7 @@ from app.services import usda
 from . import text_rules as tr
 from .conftest import HEADERS, RESOURCE, TEST_DIR, alembic_config, claims, rpc, sign
 from .test_calllog import MARKED_CALLS, MARKER, rows
-from .test_mcp import FUNCTIONS, set_switch, squat
+from .test_mcp import FUNCTIONS, RETIRING, registered_tools, set_switch, squat
 from .test_usda import KEY, Fake, banana
 from .test_web import client, post, seam, sign_in, web_client  # noqa: F401 - fixtures
 from .test_hardening_schema import before_0012
@@ -226,12 +226,16 @@ def test_a_long_tried_is_cut_at_a_whole_name():
 def test_the_known_names_are_every_name_in_the_published_tool_schemas(make_client):
     client = make_client(owner_user_id=OWNER)
     tools = rpc(client, "tools/list", token=sign_for(OWNER)).json()["result"]["tools"]
+    # log-and-guide.md: the published names, and the five's own registered schemas, which a chat opened before them
+    # still sends.
+    five = [registered_tools(client)[name] for name in RETIRING]
     published = set()
-    for tool in tools:
+    for tool in [*tools, *five]:
         schema = tool["inputSchema"]
         for obj in [schema, *schema.get("$defs", {}).values()]:
             published |= set(obj.get("properties", {}))
     assert len(tools) == len(FUNCTIONS) + len(mcp_server.OWNER_FUNCTIONS) and published == calllog.KNOWN_NAMES
+    assert not {t["name"] for t in tools} & set(RETIRING)
 
 
 # ---------------------------------------------------------------- decisions 7 to 9: outcome, step, frame

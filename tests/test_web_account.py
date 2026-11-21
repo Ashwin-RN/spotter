@@ -1468,6 +1468,7 @@ def test_the_more_card_links_saved_foods_and_carries_a_sign_out_that_signs_out(s
 # to either fails here until both are read again: a function NEEDS gains, moves or loses changes a set, and a
 # reworded line changes its words.
 SWITCH_EVERYTHING = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals",
+                     "log", "guide",  # log-and-guide.md: log at log, guide a read
                      "owner_calls", "owner_feedback", "owner_delete_feedback",  # trace.md 16, feedback.md 8:
                      # the owner's alone, at read
                      "log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "import_entries",

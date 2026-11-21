@@ -252,13 +252,24 @@ def test_spotter_logs_through_its_own_handler_added_once(provider):
 
 # ================================================================ stage 2: the seven functions
 
-FUNCTIONS = ["whoami", "list_exercises", "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings",
-             "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
-             "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries",
-             "send_feedback",  # feedback.md decision 2: the twentieth, after the nineteen
-             "save_routine", "get_routines",  # routines.md R10: after send_feedback
-             "what_is_logged", "get_data"]  # data-on-request.md: after get_routines
-READS = {"whoami", "list_exercises", "get_progress", "get_log", "find_food", "get_trends", "get_goals",
+# The five log functions log and guide take the place of in the list (log-and-guide.md): listed for nobody, and still
+# registered, so a chat that holds them calls them by name.
+RETIRING = ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio"]
+# Every function anyone but the owner can call, in the order registered: the five among them.
+CALLABLE = ["whoami", "list_exercises",
+            "log", "guide",  # log-and-guide.md: right after list_exercises, where log_lifts stood in the list
+            "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings",
+            "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
+            "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries",
+            "send_feedback",  # feedback.md decision 2: the twentieth, after the nineteen
+            "save_routine", "get_routines",  # routines.md R10: after send_feedback
+            "what_is_logged", "get_data"]  # data-on-request.md: after get_routines
+# What everyone's list publishes: every callable function but the five.
+FUNCTIONS = [name for name in CALLABLE if name not in RETIRING]
+# The functions each run one service of their own name: all but log and guide, whose work is the kind's own step and
+# guide's answers (tests/test_log_and_guide.py).
+SERVED = [name for name in CALLABLE if name not in ("log", "guide")]
+READS = {"whoami", "list_exercises", "guide", "get_progress", "get_log", "find_food", "get_trends", "get_goals",
          "get_routines", "what_is_logged", "get_data"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
@@ -331,14 +342,15 @@ def squat(weight: float, reps: int = 5, sets: int = 3) -> list[dict]:
 
 def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     """One of every result shape each function has, through MCP."""
-    seen: dict[str, list[dict]] = {name: [] for name in FUNCTIONS}
+    seen: dict[str, list[dict]] = {name: [] for name in CALLABLE if name != "log"}  # log's are its kinds' own
 
-    def keep(name: str, arguments: dict | None = None, as_token: str = token) -> dict:
+    def keep(name: str, arguments: dict | None = None, as_token: str = token, into: str | None = None) -> dict:
+        """into: the result model's row a log answer is kept under, its kind's function's (log has none)."""
         result = call(client, as_token, name, arguments)
         assert result["isError"] is False, result
         assert [c["type"] for c in result["content"]] == ["text"]
         assert result["content"][0]["text"] == compact(result["structuredContent"])  # the same dict, as JSON
-        seen[name].append(result["structuredContent"])
+        seen[into or name].append(result["structuredContent"])
         return result["structuredContent"]
 
     who = keep("whoami")  # no time zone yet: carries time_zone_note
@@ -452,6 +464,20 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("save_routine", {"name": "Pull day", "lifts": [{"exercise": "Barbell Row", "sets": 3, "reps": 8,
                                                          "weight_lb": 135}]}, as_token=lb_token)
     keep("delete_entry", {"kind": "bodyweight", "entry_id": weighed["id"]}, as_token=lb_token)
+    # log and guide (log-and-guide.md), for a fifth person: each kind through log, its answer held to its kind's
+    # model; guide's topic log, a kind with parts and measurement's note, so every GuideResult field is used.
+    log_token = sign(claims(sub="user_01LOG", email="log@example.com", name="Log"))
+    keep("guide", {"topic": "log"}, as_token=log_token)
+    keep("guide", {"topic": "lifts"}, as_token=log_token)
+    keep("guide", {"kind": "measurement"}, as_token=log_token)
+    keep("log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}]},
+         as_token=log_token, into="log_lifts")
+    keep("log", {"kind": "bodyweight", "details": {"kg": 80}}, as_token=log_token, into="log_bodyweight")
+    keep("log", {"kind": "waist", "details": {"value": 84}}, as_token=log_token, into="log_measurement")
+    keep("log", {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180}]}}, as_token=log_token,
+         into="log_food")
+    keep("log", {"kind": "cardio", "parts": [{"movement": "Outdoor Walk", "minutes": 30}]}, as_token=log_token,
+         into="log_cardio")
     # import_entries, last, so no read above sees its rows: a preview, the real run, the same rows again, and a
     # run whose every row fails (no date passed: from, to and the day link are null or absent).
     keep("import_entries", {"rows": import_rows(today), **IMPORT_UNITS})  # dry_run left out: by_row, a null id
@@ -499,13 +525,18 @@ def test_the_function_list_is_exactly_the_twelve(http):
         for obj in [schema, *schema.get("$defs", {}).values()]:
             for prop, spec in obj.get("properties", {}).items():
                 assert spec.get("description"), f"{tool['name']}.{prop} has no description"
+        if tool["name"] == "log":  # log-and-guide.md N6: no output schema; each answer is held to its kind's model
+            assert "outputSchema" not in tool and "log" not in RESULTS
+            continue
         out = tool["outputSchema"]
         assert out["type"] == "object" and out["properties"] and out["additionalProperties"] is False, tool["name"]
         assert set(out["properties"]) == wire_fields(RESULTS[tool["name"]])
 
 
 def test_every_result_field_is_described(http):
-    for tool in tool_list(http, sign()):
+    for tool in registered_tools(http).values():
+        if tool["name"] == "log":  # no output schema (log-and-guide.md N6)
+            continue
         out = tool["outputSchema"]
         for obj in [out, *out.get("$defs", {}).values()]:
             for prop, spec in obj.get("properties", {}).items():
@@ -513,7 +544,15 @@ def test_every_result_field_is_described(http):
 
 
 def test_the_arguments_are_typed_parameters(http):
-    schemas = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}
+    schemas = {name: t["inputSchema"] for name, t in registered_tools(http).items()}  # the five, though not listed
+    assert list(schemas["log"]["properties"]) == ["kind", "parts", "details", "date", "notes", "allow_repeat", "key"]
+    assert schemas["log"]["required"] == ["kind"]
+    assert list(schemas["log"]["$defs"]["LogPartIn"]["properties"]) == [
+        "movement", "weight_kg", "weight_lb", "reps", "time_s", "distance_m", "exact", "minutes", "distance_km",
+        "distance_mi"]
+    assert schemas["log"]["$defs"]["LogPartIn"]["additionalProperties"] is False
+    assert schemas["log"]["properties"]["details"]["anyOf"][0] == {"additionalProperties": True, "type": "object"}
+    assert list(schemas["guide"]["properties"]) == ["topic", "kind"] and not schemas["guide"].get("required")
     assert list(schemas["log_lifts"]["properties"]) == ["sets", "date", "notes", "allow_repeat", "new_session", "key"]
     assert schemas["log_lifts"]["required"] == ["sets"]
     assert list(schemas["log_bodyweight"]["properties"]) == ["kg", "lb", "date", "allow_repeat", "key"]  # units.md
@@ -825,8 +864,10 @@ def test_can_and_cant_names_exactly_the_twelve_functions():
     text = CAN_AND_CANT.read_text(encoding="utf-8")
     named = set(re.findall(r"`([a-z_]+)`", text))
     service_functions = {name for name in services.__all__ if callable(getattr(services, name))}
-    assert named & service_functions <= set(FUNCTIONS)  # it names no function Claude does not have (restore_entry, say)
-    assert set(FUNCTIONS) <= named  # and it names every function Claude has
+    # It names no function Claude cannot call (restore_entry, say). A chat opened before log and guide holds the five,
+    # which still answer by name, so its prose may name them until they go (log-and-guide.md, L3 and L6).
+    assert named & service_functions <= set(CALLABLE)
+    assert set(FUNCTIONS) <= named  # and it names every function a new chat lists
 
 
 def test_can_and_cant_states_the_limit_the_delete_consent_and_that_an_edit_keeps_what_it_replaces():
@@ -900,6 +941,9 @@ def test_mcp_call_needs_the_token_in_the_environment(monkeypatch, capsys):
 OPTIONAL_ARGUMENTS = {
     "whoami": {},
     "list_exercises": {"kind": "lift", "category": "push", "search": "press"},
+    "log": {"parts": [{"movement": "squat", "weight_kg": 100, "reps": 5}], "details": {"new_session": True},
+            "date": "2026-01-02", "notes": "Notes", "allow_repeat": True},  # log-and-guide.md
+    "guide": {"topic": "food", "kind": "food"},
     "log_lifts": {"date": "2026-01-02", "notes": "Notes", "allow_repeat": True, "new_session": True},
     "log_bodyweight": {"kg": 80.5, "lb": 177.5, "date": "2026-01-02", "allow_repeat": True},  # units.md: kg or lb
     "set_goal": {"kind": "lift", "exercise": "Back Squat", "measurement_kind": "waist", "distance_km": 5.5,
@@ -933,7 +977,8 @@ OPTIONAL_ARGUMENTS = {
                  "group_by": ["week"], "totals": {"kcal": ["sum"]}, "order": "-kcal_sum", "limit": 5,
                  "cursor": "c1.x"},
 }
-REQUIRED = {"log_lifts": {"sets": squat(100)},
+REQUIRED = {"log": {"kind": "lifts"},
+            "log_lifts": {"sets": squat(100)},
             "log_measurement": {"kind": "waist", "value": 84.5},
             "edit_entry": {"kind": "lift_session", "entry_id": 7},
             "restore_entry": {"kind": "measurement", "entry_id": 7},
@@ -959,7 +1004,7 @@ DATA_WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings", "lo
 def spy_on_services(monkeypatch) -> dict[str, tuple]:
     """Replace each service with one that records what it was given and answers with an error."""
     received: dict[str, tuple] = {}
-    for name in FUNCTIONS:
+    for name in SERVED:
         def spy(*args, _name=name, **kwargs):
             received[_name] = (args, kwargs)
             return {"error": "spy", "message": "Recorded.", "fix": "None."}
@@ -1003,7 +1048,9 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
 
 
 def test_the_argument_table_lists_every_optional_argument(http):
-    for tool in tool_list(http, sign()):
+    for tool in registered_tools(http).values():  # the five too: a chat that holds them still calls them
+        if tool["name"] in mcp_server.OWNER_FUNCTIONS:
+            continue
         schema = tool["inputSchema"]
         optional = set(schema["properties"]) - set(schema.get("required", []))
         # Every write function also takes key (idempotency.md decision 10). It is no service's argument, so it is
@@ -1013,7 +1060,7 @@ def test_the_argument_table_lists_every_optional_argument(http):
         assert set(schema.get("required", [])) == set(REQUIRED.get(tool["name"], {})), tool["name"]
 
 
-@pytest.mark.parametrize("name", FUNCTIONS)
+@pytest.mark.parametrize("name", SERVED)
 def test_every_argument_sent_reaches_the_service_and_no_other(http, monkeypatch, name):
     token = sign()
     whoami(http, token)
@@ -1265,7 +1312,7 @@ def model_texts(client: TestClient, token: str) -> dict[str, str]:
     for tool in tool_list(client, token):
         texts[f"{tool['name']} description"] = tool["description"]
         for kind in ("inputSchema", "outputSchema"):
-            schema = tool[kind]
+            schema = tool.get(kind) or {}  # log publishes no output schema (log-and-guide.md N6)
             for owner, obj in [("", schema), *schema.get("$defs", {}).items()]:
                 for prop, spec in obj.get("properties", {}).items():
                     texts[f"{tool['name']} {kind} {owner}.{prop}"] = spec.get("description", "")
@@ -1321,6 +1368,7 @@ def set_switch(account: int, value: str) -> None:
 # The contract's table: what each function needs, written out here, not read from NEEDS.
 CONTRACT_NEEDS = {
     "whoami": "read", "list_exercises": "read", "get_progress": "read", "get_log": "read",
+    "log": "log", "guide": "read",  # log-and-guide.md: log at log, guide a read
     "log_lifts": "log", "log_bodyweight": "log", "set_goal": "log", "update_settings": "log",
     "log_measurement": "log", "edit_entry": "log", "restore_entry": "log", "delete_entry": "log_delete",
     "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
@@ -1337,8 +1385,10 @@ def test_every_registered_function_has_a_level_and_every_level_a_function(http):
     registered = {t["name"] for t in tool_list(http, sign())}
     # OWNER_FUNCTIONS, the owner's three, are the owner's alone, at read, in no one else's list (trace.md 16,
     # feedback.md 8).
-    assert registered == set(mcp_server.NEEDS) - set(mcp_server.OWNER_FUNCTIONS) == set(CONTRACT_NEEDS)
-    assert registered == set(FUNCTIONS)
+    # RETIRING, the five, are in no one's list and still registered at log (log-and-guide.md).
+    assert registered == set(mcp_server.NEEDS) - set(mcp_server.OWNER_FUNCTIONS) - set(RETIRING)
+    assert set(registered_tools(http)) - set(mcp_server.OWNER_FUNCTIONS) == set(CONTRACT_NEEDS) == set(CALLABLE)
+    assert registered == set(FUNCTIONS) and list(mcp_server.RETIRING) == RETIRING
     assert mcp_server.NEEDS == {**CONTRACT_NEEDS, "owner_calls": "read", "owner_feedback": "read",
                                 "owner_delete_feedback": "read"}
 
@@ -1358,7 +1408,7 @@ def test_the_switch_gates_every_function_as_the_contract_says(http, monkeypatch,
     account = one_user().id
     set_switch(account, level)
     received = spy_on_services(monkeypatch)
-    for name in FUNCTIONS:
+    for name in SERVED:  # log and guide by both settings: tests/test_log_and_guide.py
         received.pop(name, None)
         error = failed(http, token, name, REQUIRED.get(name, {}))
         if CONTRACT_NEEDS[name] in ALLOWS[level]:
@@ -1414,7 +1464,7 @@ def test_delete_carries_the_destructive_hint_and_no_other_function_does(http):
 
 
 def test_whoami_explains_the_two_switch_values(http):  # switch decisions 1 and 17: was three
-    schema = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}["whoami"]
+    schema = {t["name"]: t.get("outputSchema") for t in tool_list(http, sign())}["whoami"]
     text = schema["properties"]["claude_can"]["description"]
     for word in ("log_delete (the default)", "log:", "delete_entry"):
         assert word in text
@@ -1664,7 +1714,7 @@ def test_the_instructions_say_log_the_activity_dont_ask_and_never_delete_on_a_gu
 
 
 def test_log_cardio_and_delete_entry_carry_the_same_rules(http):
-    tools = {t["name"]: t for t in tool_list(http, sign())}
+    tools = registered_tools(http)  # log_cardio, though not listed
     exercise = tools["log_cardio"]["inputSchema"]["properties"]["exercise"]["description"]
     for words in CARDIO_WORDS:
         assert words in exercise, words
@@ -1900,13 +1950,13 @@ def test_a_read_refuses_the_old_sample_fields(name, result):
 
 
 def test_the_new_fields_are_published(http):
-    out = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}
+    out = {t["name"]: t.get("outputSchema") for t in tool_list(http, sign())}
     for name in ("get_progress", "get_trends"):
         assert "note" in out[name]["properties"] and "note" not in out[name]["required"], name
     for name in ("get_log", "get_goals"):
         assert "note" not in out[name]["properties"], name
     # Decision 3: no function's input or output schema, nor its description, says a word of sample data.
-    for tool in tool_list(http, sign()):
+    for tool in registered_tools(http).values():
         assert "sample" not in json.dumps(tool).casefold(), tool["name"]
     for name in ("set_goal", "get_goals", "get_progress"):
         assert GOAL_NUMBER_KEYS == set(out[name]["$defs"]["GoalNumbers"]["properties"]), name
@@ -1977,7 +2027,7 @@ def test_goal_numbers_without_the_plan_line_still_validate_and_a_wrong_type_does
 
 
 def test_the_plan_line_fields_are_published_optional_and_described(http):
-    out = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}
+    out = {t["name"]: t.get("outputSchema") for t in tool_list(http, sign())}
     for name in ("set_goal", "get_goals", "get_progress"):
         goal = out[name]["$defs"]["GoalNumbers"]
         assert PLAN_LINE_KEYS <= set(goal["properties"]), name
@@ -2108,7 +2158,7 @@ def test_the_meal_rule_leads_with_sending_the_meal_the_person_named(http):
     text = mcp_server.INSTRUCTIONS
     assert mcp_server.FOOD_NAME_RULE + " " + MEAL_SENTENCE + " Cardio: " in text
     assert "Leave the meal out unless" not in text and text.count("which meal") == 1
-    food = next(t for t in tool_list(http, sign()) if t["name"] == "log_food")
+    food = registered_tools(http)["log_food"]  # though not listed
     assert food["inputSchema"]["$defs"]["FoodEntryIn"]["properties"]["meal"]["description"] == MEAL_FIELD
     assert "only when the person named" not in json.dumps(food)
     doc = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
@@ -2157,7 +2207,7 @@ def test_the_estimate_sentence_leaves_room_for_the_food_rule():
 
 
 def test_the_descriptions_carry_the_same_sentences(http):
-    tools = {t["name"]: t for t in tool_list(http, sign())}
+    tools = registered_tools(http)  # log_food, though not listed
     assert mcp_server.TRENDS_RULE in tools["get_trends"]["description"]
     assert mcp_server.GOALS_RULE in tools["get_goals"]["description"]
     for name in ("get_trends", "get_goals"):
@@ -2199,9 +2249,11 @@ def test_can_and_cant_states_the_goal_kinds_the_trends_and_the_settings_clicks()
         assert words in text, words
     lines = CAN_AND_CANT.read_text(encoding="utf-8").splitlines()
     rows = [m.group(1) for line in lines if (m := re.match(r"\| `([a-z_]+)` \| ", line))]
-    assert [r for r in rows if r in FUNCTIONS] == FUNCTIONS  # the function table: one row each, in order
+    # The function table: one row each, in order; then the claude_can table's setting log, a word log shares.
+    assert [r for r in rows if r in FUNCTIONS] == [*FUNCTIONS, "log"]
     # switch decision 1: two settings, the default first, and no row for read
-    assert [line for line in lines if re.match(r"\| `(read|log|log_delete)`", line)] == [
+    settings = lines[lines.index("`whoami` reports `claude_can`, the person's setting for what Claude may do:"):]
+    assert [line for line in settings if re.match(r"\| `(read|log|log_delete)`", line)] == [
         "| `log_delete` (the default) | Everything, `delete_entry` too. |", "| `log` | Everything except `delete_entry`. |"]
 
 
@@ -2214,7 +2266,7 @@ def test_can_and_cant_lists_every_function_once_in_order_and_counts_none():
     start = next(i for i, line in enumerate(section) if line.startswith("|"))
     table = list(itertools.takewhile(lambda line: line.startswith("|"), section[start:]))
     rows = [re.match(r"\| `([a-z_]+)` \| ", line).group(1) for line in table[2:]]
-    offered = [name for name in mcp_server.NEEDS if name not in mcp_server.OWNER_FUNCTIONS]
+    offered = [name for name in mcp_server.NEEDS if name not in mcp_server.OWNER_FUNCTIONS + mcp_server.RETIRING]
     assert rows == FUNCTIONS and set(rows) == set(offered) and len(rows) == len(offered)
     sentence = " ".join(line for line in section[:start] if line.strip())
     assert sentence.endswith("nothing else:"), sentence
@@ -2377,13 +2429,13 @@ def test_import_entries_publishes_named_fields_and_a_strict_dry_run_with_no_defa
 def test_import_entries_is_annotated_as_the_log_functions_are(http):
     """Ruled after fix round 3: a write, not a setting. It writes up to 200 rows with no undo, a re-run can write again
     in the documented cases, and every real call counts against the write limit."""
-    hints = {t["name"]: t["annotations"] for t in tool_list(http, sign())}
-    assert hints["import_entries"] == WRITE_HINTS == hints["log_food"] == hints["log_lifts"]
+    hints = {name: t["annotations"] for name, t in registered_tools(http).items()}
+    assert hints["import_entries"] == WRITE_HINTS == hints["log_food"] == hints["log_lifts"] == hints["log"]
     assert hints["import_entries"]["idempotentHint"] is False
 
 
 def test_who_logged_it_names_import_wherever_a_result_says(http):
-    outputs = {t["name"]: t["outputSchema"] for t in tool_list(http, sign())}
+    outputs = {name: t["outputSchema"] for name, t in registered_tools(http).items() if "outputSchema" in t}
     said = {(name, owner): spec["description"] for name, out in outputs.items()
             for owner, obj in [("", out), *out.get("$defs", {}).items()]
             for prop, spec in obj.get("properties", {}).items() if prop == "logged_by"}

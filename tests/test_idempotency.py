@@ -24,7 +24,7 @@ from alembic.migration import MigrationContext
 from sqlalchemy import event, inspect, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from app import calllog, db, mcp_server, rules, services, web, web_auth
+from app import calllog, db, log_shape, mcp_server, rules, services, web, web_auth
 from app.db import make_engine
 from app.mcp_schemas import OwnerCall, SetGoalResult
 from app.models import Base, Bodyweight, CallLog, FoodEntry, Goal, LiftSession, UsdaFood, User, WriteKey
@@ -34,8 +34,8 @@ from . import text_rules as tr
 from .conftest import TEST_DIR, alembic_config, claims, sign
 from .test_calllog import MARKER, rows
 from .test_mcp import (
-    OPTIONAL_ARGUMENTS, REQUIRED, call, every_table, failed, ok, service_input, set_switch, spy_on_services, squat,
-    tool_list,
+    OPTIONAL_ARGUMENTS, REQUIRED, call, every_table, failed, ok, registered_tools, service_input, set_switch,
+    spy_on_services, squat, tool_list,
 )
 from .test_pages_text import Rendered, error_page_findings
 from .test_trace import today
@@ -89,6 +89,7 @@ def a_deleted_weigh_in(account: int) -> int:
 # off, so only the key stands between a second send and a second entry. A lift has no guard: new_session makes
 # a second send a second session (gym-logging.md).
 CALLS = {
+    "log": lambda account: {"kind": "bodyweight", "details": {"kg": 80.5}, "allow_repeat": True},  # log-and-guide.md
     "log_lifts": lambda account: {"sets": squat(100), "new_session": True},
     "log_bodyweight": lambda account: {"kg": 80.5, "allow_repeat": True},
     "log_measurement": lambda account: {"kind": "waist", "value": 84.5, "allow_repeat": True},
@@ -433,7 +434,8 @@ def test_already_done_names_the_read_that_shows_what_the_write_did(writer, name)
         "fix": f"Read it back with {read}. Send a new key for a new write."}
     named = re.findall(r"whoami|[a-z]+_[a-z]+", read)  # each a function there is, which a read-only assistant may call
     assert named and all(mcp_server.NEEDS[function] == "read" for function in named)
-    assert sum(common.READ_BACK.get(write, "get_log") == "get_log" for write in READ_BACKED) == 7
+    # log takes the default, get_log, as the five do (log-and-guide.md, model-read row 12): 8, was 7.
+    assert sum(common.READ_BACK.get(write, "get_log") == "get_log" for write in READ_BACKED) == 8
 
 
 @pytest.mark.parametrize("name", sorted(READS))
@@ -723,7 +725,7 @@ def test_each_write_function_publishes_key_with_the_contract_s_words_and_no_othe
     words = ("Optional. A key of your own for this one write: 8 to 64 letters, digits, - or _. Send the same key "
              "when you send the same call again: nothing is written twice and the first answer comes back. A new "
              "write takes a new key.")
-    for tool in tool_list(http, sign()):
+    for tool in registered_tools(http).values():  # the five too, though no list holds them now
         properties = tool["inputSchema"]["properties"]
         if tool["name"] not in WRITES:
             assert "key" not in properties, tool["name"]
@@ -745,6 +747,8 @@ def test_the_key_never_reaches_a_service(http, monkeypatch, name):
     received = spy_on_services(monkeypatch)
     every = {**REQUIRED.get(name, {}), **OPTIONAL_ARGUMENTS[name]}
     assert failed(http, token, name, {**every, "key": K})["error"] == "spy"
+    if name == "log":  # log-and-guide.md: log's work is its kind's step, so its kind's service is reached
+        name, every = "log_lifts", log_shape.route(every).arguments
     assert received[name] == service_input(name, account, every) and keys() == []
 
 

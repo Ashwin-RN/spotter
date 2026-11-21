@@ -1365,6 +1365,32 @@ C4G_RUNS = {
 }
 RUNS.update(C4G_RUNS)
 
+# log-and-guide.md N9: the two cases after C4g's, both core. guide_how_food reads guide and quotes no kcal figure of its
+# own; log_plank_minutes logs a hold said in minutes through log, stored as 120 s. A plank logs as a hold at weight 0,
+# as hold_plank's runs send it.
+PLANK_PART = {"movement": "plank", "weight_kg": 0, "minutes": 2}
+LOG_AND_GUIDE_RUNS = {
+    "guide_how_food": {
+        "pass": [([("guide", {"topic": "food"})],
+                  "Tell me what you ate, and the calories if you know them. If you don't, I can estimate them and say "
+                  "it is an estimate. A saved food or a USDA food goes by its servings or grams."),
+                 ([("guide", {"kind": "food"})], "Say what you ate and when. Spotter keeps the rest.")],
+        "fail": [([("guide", {"topic": "food"})], "Say what you ate: a lunch of dal and rice is about 450 kcal."),
+                 ([("guide", {"topic": "food"})], "A roti is 120 calories, so just name your food."),
+                 ([], "Tell me what you ate and I will log it."),  # guide never read
+                 ([("guide", {"topic": "food"}), fake("log", {"kind": "food"})], "Logged.")]},  # a write nobody asked
+    "log_plank_minutes": {
+        "pass": [([("log", {"kind": "lifts", "parts": [PLANK_PART]})], "Logged Plank: 2 minutes, 120 s."),
+                 ([("guide", {"topic": "lifts"}), ("log", {"kind": "lifts", "parts": [{**PLANK_PART, "minutes": None,
+                                                                                       "time_s": 120}]})],
+                  "Logged a Plank hold of 120 s.")],
+        "fail": [([("log", {"kind": "lifts", "parts": [{**PLANK_PART, "minutes": 1}]})], "Logged Plank: 2 minutes."),
+                 ([("log", {"kind": "lifts", "parts": [PLANK_PART]})], "Logged your hold: 2 minutes."),  # no Plank
+                 ([("log_lifts", {"sets": [{"exercise": "plank", "weight_kg": 0, "time_s": 120}]})],
+                  "Logged Plank: 2 minutes.")]},  # the right row, but not through log: the case's must is log
+}
+RUNS.update(LOG_AND_GUIDE_RUNS)
+
 # The changed lift cases of the package: a run in the person's own words passes, and one whose word reaches another lift
 # fails on the rows, the case's whole reason since the name moved out of inputs_include.
 C4G_WORDS = {
@@ -1680,7 +1706,7 @@ def read_case(case_id: str) -> bool:
 def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     new = new_cases()
     ids = [c["id"] for c in new]
-    assert len(ids) == len(set(ids)) == 187 and set(ids) == set(RUNS)  # 164, and C4g's 23
+    assert len(ids) == len(set(ids)) == 189 and set(ids) == set(RUNS)  # 164, C4g's 23, and log and guide's 2
     assert all(RUNS[i]["pass"] and RUNS[i]["fail"] for i in ids)
     every = judge.load_cases()
     g1 = every[:len(every) - len(new)]
@@ -1689,8 +1715,8 @@ def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     assert {c["id"] for c in g1 if c.get("kind")} <= G1_CORE
     assert all(isinstance(c["core"], bool) and c["kind"] in judge.KINDS for c in new)
     kinds = Counter(c["kind"] for c in new)
-    assert kinds == {"direct": 139, "incidental": 24, "look_alike": 24}
-    assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 61, "incidental": 8, "look_alike": 8}
+    assert kinds == {"direct": 141, "incidental": 24, "look_alike": 24}
+    assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 63, "incidental": 8, "look_alike": 8}
     by_id = {c["id"]: c for c in every}
     for c in new:
         if c["kind"] == "look_alike":
@@ -1820,10 +1846,25 @@ def test_lb_bench_goal_judges_the_lift_the_goal_was_saved_on():
 
 def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
     new = [c["id"] for c in new_cases()]
-    assert new[-len(C4G_RUNS):] == list(C4G_RUNS)
+    assert new[-len(C4G_RUNS) - len(LOG_AND_GUIDE_RUNS):-len(LOG_AND_GUIDE_RUNS)] == list(C4G_RUNS)
     assert all(c["kind"] == "direct" and c["core"] is False for c in new_cases() if c["id"] in C4G_RUNS)
-    assert sum(1 for c in judge.load_cases() if c.get("core") is True) == 101
+    assert sum(1 for c in judge.load_cases() if c.get("core") is True) == 103  # log-and-guide.md's 2 joined it
     assert [c["id"] for c in judge.load_cases() if c.get("then")] == ["pick_lift_answer"]
+
+
+def test_log_and_guide_s_two_cases_follow_c4g_s_and_join_the_core():
+    """log-and-guide.md N9: 260 cases, 103 core. log_plank_minutes takes log_lifts in may, so it judges the same once
+    the judge routes a log call to its kind's function (L5)."""
+    cases = judge.load_cases()
+    assert [c["id"] for c in cases[-len(LOG_AND_GUIDE_RUNS):]] == list(LOG_AND_GUIDE_RUNS)
+    assert all(c["kind"] == "direct" and c["core"] is True for c in cases[-len(LOG_AND_GUIDE_RUNS):])
+    assert len(cases) == 260 and sum(1 for c in cases if c.get("core") is True) == 103
+    by_id = {c["id"]: c for c in cases}
+    food = by_id["guide_how_food"]["calls"]
+    assert food["must"] == ["guide"] and set(W) <= set(food["must_not"])
+    plank = by_id["log_plank_minutes"]["calls"]
+    assert plank["must"] == ["log"] and "log_lifts" in plank["may"] and "log" not in plank["must_not"]
+    assert "guide" not in judge.DATA_READS and "guide" not in judge.WRITE_FUNCTIONS
 
 
 # ---------------------------------------------------------------- the read cases on nine todays

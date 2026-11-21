@@ -36,7 +36,7 @@ from . import text_rules as tr
 from .conftest import TEST_DIR, alembic_config, rpc, sign
 from .test_calllog import MARKER, rows
 from .test_idempotency import K, age, count, keys, writer  # noqa: F401 - writer is a fixture
-from .test_mcp import CAN_AND_CANT, FUNCTIONS, call, failed, ok, set_switch, tool_list
+from .test_mcp import CAN_AND_CANT, FUNCTIONS, RETIRING, call, failed, ok, registered_tools, set_switch, tool_list
 from .test_trace import OWNER, sign_for, tools_call
 from .test_hardening_schema import before_0012
 
@@ -66,9 +66,13 @@ READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": T
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 # What each function published before this work: the SHA-256 of the tool as compact JSON with sorted keys. inputs.md
 # moved every one (additionalProperties false on each, and three descriptions): tests/test_inputs.py diffs the two.
+# log-and-guide.md: the five log functions are in no list now, and each entry is read as registered, unchanged; log and
+# guide are new.
 PUBLISHED = {
     "whoami": "4876f6c21afa302c2df8dc8cd144b46d7944e1bc043e2f6231285b0b7edebbe3",  # first day, and the routine step at the join: setup; units; inputs
     "list_exercises": "52f0fb4f9245da8281c13052d8ae35fab385d18a06ca6c9bdf74ce9074373aab",  # exercise list C4d: search; C4f: a side
+    "log": "da37eea52fb1bf2ea0cb48cd49d26fb986b22e3bf6b1b852bac29b0b0c9e8b98",  # log and guide: new
+    "guide": "6cd1e0ccb93506850e8e80b09fc5b9d863c49ab0cc4818c4bfa066e10544709f",  # log and guide: new
     "log_lifts": "cce7125486e2e61961d17789ad4423a84a77c524201269d3ff55faca60cae9e9",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words; C4e: NewBest's kinds; C4f: hand_check, a side; 2026-11-20: a pair's weight
     "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
     "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs
@@ -262,9 +266,10 @@ def test_send_feedback_is_published_after_the_nineteen_with_its_words_and_a_key(
     tools = tool_list(http, sign())
     # routines.md: save_routine and get_routines follow it, before the owner's three; data-on-request.md: its two
     # after them.
-    assert [t["name"] for t in tools] == [*PUBLISHED][:19] + ["send_feedback", "save_routine", "get_routines",
-                                                              "what_is_logged", "get_data"] == FUNCTIONS
-    tool = tools[19]
+    listed = [name for name in PUBLISHED if name not in RETIRING]  # log-and-guide.md: the five in no list
+    assert [t["name"] for t in tools] == listed[:16] + ["send_feedback", "save_routine", "get_routines",
+                                                        "what_is_logged", "get_data"] == FUNCTIONS
+    tool = tools[16]
     assert (tool["title"], tool["description"]) == ("Send feedback", described(CAP))
     assert tool["annotations"] == {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False,
                                    "openWorldHint": False}
@@ -531,8 +536,10 @@ def test_only_the_owner_s_list_has_the_owner_s_three_in_order_and_a_non_owner_s_
     assert mcp_server.OWNER_FUNCTIONS == ("owner_calls", "owner_feedback", "owner_delete_feedback")
     assert [t["name"] for t in lists["other"][1]] == FUNCTIONS
     assert json.loads(lists["other"][0])["result"]["tools"] == owner[:-3]  # the owner's, less the three
-    hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in owner}
-    assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED  # nothing that was there changed
+    hashes = {name: hashlib.sha256(compact(t).encode()).hexdigest()
+              for name, t in registered_tools(make_client(owner_user_id=OWNER)).items()}
+    assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED  # nothing that was there changed, the five too
+    assert not set(RETIRING) & {t["name"] for t in owner} and set(RETIRING) <= set(PUBLISHED)
     assert web.FUNCTION_COUNT == len(FUNCTIONS)
 
 

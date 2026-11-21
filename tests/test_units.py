@@ -31,7 +31,7 @@ from . import text_rules as tr
 from .conftest import TEST_DIR, alembic_config, sign
 from .test_feedback import PUBLISHED, compact
 from .test_inputs import without_inputs
-from .test_mcp import failed, ok, read_resource, tool_list
+from .test_mcp import failed, ok, read_resource, registered_tools, tool_list
 from .test_trace import OWNER, last, sign_for
 
 TIMES = "×"
@@ -698,7 +698,7 @@ def test_through_mcp_a_lb_person_logs_and_the_trace_writes_the_names_sent(http):
 
 def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_are_4082(make_client):
     client = make_client(owner_user_id=OWNER)
-    tools = tool_list(client, sign_for(OWNER))
+    tools = list(registered_tools(client).values())  # the owner's list and the five, which no list holds now
     hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tools}
     # inputs.md moved every one after: with its changes taken out, exactly the thirteen differ from before units.
     held = {t["name"]: hashlib.sha256(compact(without_inputs(t)).encode()).hexdigest() for t in tools}
@@ -761,7 +761,7 @@ def test_every_new_text_passes_its_surface(lb):
 
 
 def test_the_new_published_words_keep_the_text_rules(http):
-    tools = {t["name"]: t for t in tool_list(http, sign())}
+    tools = registered_tools(http)  # the five, though not listed
     words = [tools["whoami"]["description"], tools["whoami"]["outputSchema"]["properties"]["units"]["description"],
              tools["update_settings"]["description"], tools["get_routines"]["description"]]
     for name, fields in (("log_bodyweight", ("kg", "lb")), ("log_cardio", ("distance_mi", "speed_mph")),

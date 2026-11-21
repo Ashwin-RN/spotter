@@ -15,7 +15,7 @@ from app import calllog, db, services
 from app.models import CallLog
 
 from .conftest import HEADERS, rpc, sign
-from .test_mcp import FUNCTIONS, REQUIRED, call, compact, one_user, squat, tool_list
+from .test_mcp import CALLABLE, REQUIRED, call, compact, one_user, registered_tools, squat, tool_list
 
 MARKER = "zq-marker-5b1e"
 
@@ -96,9 +96,9 @@ def test_an_identity_error_writes_a_row_with_no_user(make_client):
 
 def test_every_function_writes_its_own_row(http):
     token = sign()
-    for name in FUNCTIONS:
+    for name in CALLABLE:  # the five by name too, and log and guide under their own (log-and-guide.md)
         call(http, token, name, REQUIRED.get(name, {}))
-    assert [r.function for r in rows()] == FUNCTIONS
+    assert [r.function for r in rows()] == CALLABLE
 
 
 # ---------------------------------------------------------------- the marker
@@ -111,6 +111,15 @@ LATER = (db.utcnow().date() + timedelta(days=365)).isoformat()  # a goal's date:
 MARKED_CALLS = [
     ("whoami", {}),
     ("list_exercises", {"kind": MARKER, "category": MARKER, "search": MARKER}),
+    # log and guide (log-and-guide.md): a kind that is no kind, a date that is no date, both refused; then the marker
+    # as a lift session's notes and a food's description, kept as the person's own text. guide: no topic.
+    ("log", {"kind": MARKER, "parts": [{"movement": MARKER, "weight_kg": 100, "reps": 5}], "date": MARKER,
+             "notes": MARKER, "details": {"new_session": True}}),
+    ("log", {"kind": "lifts", "parts": [{"movement": MARKER, "weight_kg": 100, "reps": 5}], "date": MARKER,
+             "notes": MARKER}),
+    ("log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}], "notes": MARKER}),
+    ("log", {"kind": "food", "details": {"entries": [{"description": MARKER, "kcal": 100}]}}),
+    ("guide", {"topic": MARKER, "kind": MARKER}),
     ("log_lifts", {"sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}], "date": MARKER, "notes": MARKER}),
     ("log_lifts", {"sets": squat(100), "notes": MARKER}),
     ("log_bodyweight", {"kg": 80, "date": MARKER}),
@@ -153,7 +162,7 @@ MARKED_CALLS = [
     # get_data's text arguments (data-on-request.md): refused, the marker is no area.
     ("get_data", {"area": MARKER, "from_date": MARKER, "to_date": MARKER, "order": MARKER, "cursor": MARKER}),
 ]
-REFUSED = 19  # the marked calls the services refuse. Was 17, before save_routine; 18 before get_data
+REFUSED = 22  # the marked calls the services refuse. Was 17, before save_routine; 18 before get_data; 19 before log
 
 
 def string_fields(schema: dict) -> set[str]:
@@ -182,7 +191,9 @@ def marked_fields(arguments: dict) -> set[str]:
 
 
 def test_the_marker_table_covers_every_string_argument(http):
-    for tool in tool_list(http, sign()):
+    for tool in registered_tools(http).values():  # the five too, which no list holds now
+        if tool["name"] in ("owner_calls", "owner_feedback", "owner_delete_feedback"):
+            continue
         marked = set().union(*(marked_fields(a) for name, a in MARKED_CALLS if name == tool["name"]))
         # A write's key is a string argument too. Its marker is sent in tests/test_idempotency.py, for every write
         # function: sent here, it would refuse the calls after the first one that kept it (key_reused).

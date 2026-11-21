@@ -399,9 +399,15 @@ def function_names() -> tuple[str, ...]:
     return tuple(sorted(NEEDS))
 
 
+# Function names that are plain words too: on a page, "log" and "guide" are the words, not code (log-and-guide.md,
+# N8). They stay code words nowhere else; whoami stays one.
+PLAIN_WORDS = ("log", "guide")
+
+
 @functools.lru_cache(maxsize=1)
 def _function_pattern() -> re.Pattern | None:
-    names = [n for n in function_names() if "_" not in n]  # the rest are snake_case already
+    # snake_case names are code words already; the plain words are not code
+    names = [n for n in function_names() if "_" not in n and n not in PLAIN_WORDS]
     return _word_pattern(names) if names else None
 
 

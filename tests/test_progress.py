@@ -11,7 +11,7 @@ from app import db, services, users
 from app.exercises import LIFTS
 from app.models import Exercise, LiftSession, LiftSet
 from tests.conftest import RESOURCE
-from tests.test_mcp import FUNCTIONS
+from tests.test_mcp import CALLABLE
 
 SITE = RESOURCE.rsplit("/mcp", 1)[0]
 MISSING_ID = 10 ** 9
@@ -449,8 +449,9 @@ def test_list_exercises_and_filters(user):
 
 # ---------------------------------------------------------------- texts name only functions Claude has
 
-# The functions Claude is offered: the planned list in tests/test_mcp.py. OWNER_FUNCTIONS are the owner's alone.
-OFFERED = tuple(FUNCTIONS)
+# The functions Claude can call: the planned list in tests/test_mcp.py, the five log functions among them, which a chat
+# opened before log and guide still holds (log-and-guide.md). OWNER_FUNCTIONS are the owner's alone.
+OFFERED = tuple(CALLABLE)
 # Functions that exist but Claude cannot call: every other public service function (get_entry,
 # set_claude_can, which is the Settings page's alone, entry_kinds, and stage 5's web-only ones:
 # the empty-account read, export, delete account, the Foods page's list).

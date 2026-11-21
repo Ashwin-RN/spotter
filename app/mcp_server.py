@@ -51,6 +51,18 @@ Data on request (contract data-on-request.md): what_is_logged and get_data, read
 counted with every read. Every optional input of get_data takes null as left out (R2), and its filters and totals
 are objects the service checks, so a bad value gets the service's words, not the schema's. Neither description names
 an area or a field; DATA_RULE sits after GOALS_RULE in the instructions.
+
+Log and guide (contract log-and-guide.md). log records one entry of any of the five kinds, and guide says how, by
+topic; both are registered right after list_exercises, so a new chat's list holds them where log_lifts stood. The five
+log functions (RETIRING) leave every account's list, the owner's too, and stay registered, in NEEDS and in
+common.WRITE_FUNCTIONS: a chat that holds them still calls them by name and gets the same answer, its row under its own
+name. A log call first meets misfit on log's own schema, like any call; then log_shape.route, on the arguments as sent,
+gives the kind's function and its arguments in that function's own shape; then Wrapper.call("log", ...), so the
+account, the row, the switch, the write limit and the key come first. Inside the work, kind= and word= are noted, the
+kind's argument model checks the routed arguments (misfit_model) and the kind's own step (LOG_STEPS) runs its
+service. Every refusal names log and each field as sent (log_shape.said_as_sent). log publishes no output schema:
+each answer is still held to its kind's result model here. guide's answer is held to GuideResult, and its row notes
+topic=.
 """
 
 import difflib
@@ -80,7 +92,8 @@ from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.applications import Starlette
 from starlette.routing import Route
 
-from app import calllog, db, links, rules, services, users
+from app import calllog, db, links, log_shape, rules, services, users
+from app import guide as guides
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings, get_settings
 from app.mcp_schemas import (
@@ -95,10 +108,10 @@ from app.mcp_schemas import (
     LOG_FOOD_DESCRIPTION, LOG_LIFTS_DESCRIPTION, LOG_MEASUREMENT_DESCRIPTION, MEASUREMENT_ALLOW_REPEAT_DESCRIPTION,
     MEASUREMENT_DATE_DESCRIPTION, MEASUREMENT_KIND_DESCRIPTION, MEASUREMENT_VALUE_DESCRIPTION, NEAR_CUTOFF,
     NEAR_MISSES, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn, GetDataResult,
-    GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult, ImportEntriesResult,
-    ImportRowIn, Key, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult, LogMeasurementResult,
-    LogSetIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult, RestoreEntryResult,
-    RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
+    GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult, GuideResult,
+    ImportEntriesResult, ImportRowIn, Key, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult,
+    LogMeasurementResult, LogPartIn, LogSetIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult,
+    RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
     WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
 )
 from app.models import CLAUDE_CAN, User
@@ -253,7 +266,8 @@ DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent
 # settings, log and log_delete (models.CLAUDE_CAN): read is a need only, of the functions the read limit counts.
 LEVELS = ("read", "log", "log_delete")
 NEEDS = {
-    "whoami": "read", "list_exercises": "read", "get_progress": "read", "get_log": "read",
+    "whoami": "read", "list_exercises": "read", "log": "log", "guide": "read",
+    "get_progress": "read", "get_log": "read",
     "log_lifts": "log", "log_bodyweight": "log", "set_goal": "log", "update_settings": "log",
     "log_measurement": "log", "edit_entry": "log", "restore_entry": "log",
     "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
@@ -268,6 +282,9 @@ NEEDS = {
 # Listed for the owner alone, and refused to anyone else (is_owner). At read, so the owner's own switch, which is
 # about the owner's own record, gates none of them.
 OWNER_FUNCTIONS = ("owner_calls", "owner_feedback", "owner_delete_feedback")
+# The five log functions log and guide take the place of (log-and-guide.md, decision 50): listed for nobody, the owner
+# too, and still registered, so a chat that holds them calls them by name and gets the same answer as before.
+RETIRING = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio")
 # The read limit counts these together (services.common.check_reads): every function at the read level.
 READ_FUNCTIONS = tuple(name for name, level in NEEDS.items() if level == "read")
 NOT_ALLOWED_MESSAGES = {"log": "This account lets Claude read and log, not delete."}
@@ -392,14 +409,16 @@ class LookupMemo:
 # ---------------------------------------------------------------- a call that does not fit its function
 
 # How an item of a list is named in a refusal, as the services name it: "Set 1", "Entry 2", "Lift 1", "Row 3, set 2".
-ITEM_WORDS = {"sets": "set", "entries": "entry", "lifts": "lift", "rows": "row"}
+ITEM_WORDS = {"sets": "set", "entries": "entry", "lifts": "lift", "rows": "row", "parts": "part"}
 # An unknown key in an item (decision 2): the services' own words, by the list it was sent in. Each is
 # (what the item is, the fix, NEAR_MISSES' row). The import's rows allow any key: its service refuses one.
 # A list whose items are another model in one function is named by (function, list): log_lifts' sets are LogSetIn
-# (exercise-list.md R3), every other function's sets SetIn.
+# (exercise-list.md R3), every other function's sets SetIn. log's parts are LogPartIn (log-and-guide.md); its details
+# are an open object, which route checks by the kind.
 ITEM_FIELDS = {
     "sets": ("a set", f"Use: {', '.join(SetIn.model_fields)}.", "set"),
     ("log_lifts", "sets"): ("a set", f"Use: {', '.join(LogSetIn.model_fields)}.", "set"),
+    ("log", "parts"): ("a part", f"Use: {', '.join(LogPartIn.model_fields)}.", "part"),
     "entries": ("a food entry", f"Use: {', '.join(food.ENTRY_FIELDS)}. source is decided by the server.", "entry"),
     "lifts": ("a lift", f"Use: {routines.LIFT_FIELDS_TEXT}.", "lift"),
 }
@@ -625,8 +644,9 @@ class SpotterServer(MCPServer):
         return app
 
     async def list_tools(self) -> list:
-        """Every function for the owner; for everyone else, all but OWNER_FUNCTIONS, exactly as before them."""
-        tools = await super().list_tools()
+        """Every function but RETIRING for the owner; for everyone else, all but RETIRING and OWNER_FUNCTIONS. A
+        function left out still answers a call by name (call_tool finds it in the tool manager)."""
+        tools = [t for t in await super().list_tools() if t.name not in RETIRING]
         return tools if is_owner(get_access_token()) else [t for t in tools if t.name not in OWNER_FUNCTIONS]
 
     wrapper: "Wrapper | None" = None  # build_server sets it: a schema refusal runs through it
@@ -641,8 +661,12 @@ class SpotterServer(MCPServer):
             found = misfit(tool, arguments) if tool is not None and self.wrapper is not None else None
             if found is not None:
                 unknown, failure = found
-                return await self.wrapper.call(
-                    name, BaseModel, lambda _account: schema_refusal(name, tool.parameters, arguments, unknown, failure))
+
+                def refusal(_account):
+                    misfit_notes(name, arguments)
+                    return schema_refusal(name, tool.parameters, arguments, unknown, failure)
+
+                return await self.wrapper.call(name, BaseModel, refusal)
             return await super().call_tool(name, arguments, context)
         finally:
             _SENT.reset(held)
@@ -842,6 +866,50 @@ LOG_STEPS = {"log_lifts": log_lifts_step, "log_bodyweight": log_bodyweight_step,
              "log_measurement": log_measurement_step, "log_food": log_food_step, "log_cardio": log_cardio_step}
 
 
+# ---------------------------------------------------------------- log and guide (contract log-and-guide.md)
+
+# guide's kind, read as its topic (decision 44). The rest of guide's words are app.guide's.
+GUIDE_KIND_DESCRIPTION = "The same as topic: send one or the other."
+
+
+def log_notes(routed: log_shape.Routed) -> None:
+    """A log call's notes, first on its row: the kind it resolved to, or none, and the word sent as the row may keep
+    it (log_shape.note_word). Never the text sent."""
+    calllog.note("kind", routed.kind or "none")
+    calllog.note("word", routed.word)
+
+
+def misfit_notes(function: str, arguments: dict) -> None:
+    """The notes of a call misfit refused, as the function's own work would note them: a log call's kind and word,
+    read from the arguments as sent; a guide call's topic=none. Any other function notes nothing here."""
+    if function == "log":
+        log_notes(log_shape.route(arguments))
+    elif function == "guide":
+        calllog.note("topic", "none")
+
+
+def log_work(routed: log_shape.Routed, account: int) -> dict:
+    """One log call's work, in the wrapper (the module notes): its notes, then route's refusal, or the kind's own
+    argument model's refusal, or the kind's own step. A refusal names each field as log was sent it."""
+    log_notes(routed)
+    if routed.refusal is not None:
+        return routed.refusal
+    found = misfit_model(routed.model, routed.arguments)
+    if found is not None:
+        refused = schema_refusal(routed.function, routed.model.model_json_schema(), routed.arguments, *found)
+        return log_shape.said_as_sent(refused, routed.kind)
+    out = LOG_STEPS[routed.function](account, **dict(read_arguments(routed.model, routed.arguments)))
+    return log_shape.said_as_sent(out, routed.kind) if "error" in out or "errors" in out else out
+
+
+def guide_work(sent: dict, _account: int) -> dict:
+    """One guide call's work: the topic's answer, or its refusal, and topic= on the row: the topic answered, or
+    none."""
+    answer = guides.answer(sent)
+    calllog.note("topic", "none" if "error" in answer else answer["topic"])
+    return answer
+
+
 def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: UserinfoClient) -> MCPServer:
     """A fresh server per app: the library's session manager can be started only once."""
     server = SpotterServer(
@@ -904,6 +972,39 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     ) -> Annotated[CallToolResult, ExercisesResult]:
         return await wrapper.call("list_exercises", ExercisesResult,
                                   lambda account_id: services.list_exercises(account_id, kind, category, search))
+
+    # log and guide (contract log-and-guide.md), right after list_exercises: where log_lifts stood in the list. log
+    # publishes no output schema (N6): its answer is the kind's own, held to that kind's result model by the wrapper.
+    # Both read the arguments as sent (_SENT), so a null or a list sent as text reaches route and guide as it came.
+    @server.tool(
+        name="log",
+        title="Log an entry",
+        description=log_shape.LOG_DESCRIPTION,
+        annotations=WRITE,
+    )
+    async def log_entry(
+        kind: Annotated[str, Field(description=log_shape.LOG_KIND_DESCRIPTION)],
+        parts: Annotated[list[LogPartIn] | None, Field(description=log_shape.LOG_PARTS_DESCRIPTION)] = None,
+        details: Annotated[dict[str, Any] | None, Field(description=log_shape.LOG_DETAILS_DESCRIPTION)] = None,
+        date: Annotated[str | None, Field(description=log_shape.LOG_DATE_DESCRIPTION)] = None,
+        notes: Annotated[str | None, Field(description=log_shape.LOG_NOTES_DESCRIPTION)] = None,
+        allow_repeat: Annotated[StrictBool, Field(description=log_shape.LOG_REPEAT_DESCRIPTION)] = False,
+        key: Key = None,
+    ) -> CallToolResult:
+        routed = log_shape.route(_SENT.get() or {})
+        return await wrapper.call("log", routed.result or BaseModel, functools.partial(log_work, routed))
+
+    @server.tool(
+        name="guide",
+        title="How to log",
+        description=guides.GUIDE_DESCRIPTION,
+        annotations=READ_ONLY,
+    )
+    async def guide(
+        topic: Annotated[str | None, Field(description=guides.GUIDE_TOPIC_DESCRIPTION)] = None,
+        kind: Annotated[str | None, Field(description=GUIDE_KIND_DESCRIPTION)] = None,
+    ) -> Annotated[CallToolResult, GuideResult]:
+        return await wrapper.call("guide", GuideResult, functools.partial(guide_work, dict(_SENT.get() or {})))
 
     @server.tool(
         name="log_lifts",

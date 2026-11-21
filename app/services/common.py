@@ -117,9 +117,8 @@ KIND_LABELS = {
 # Every write, by the name its call-log rows carry (the MCP name, which the web uses too).
 # Two writes are exempt on purpose, the person's own way out and their own switch: delete_account
 # and set_claude_can. Their call-log rows are written but do not count, and they are never refused.
-WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "save_routine",
-                   "log_cardio",
-                   "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
+WRITE_FUNCTIONS = ("log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "save_routine",
+                   "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
                    "import_entries", "send_feedback")
 WRITE_LIMIT = 120
 WRITE_WINDOW_MINUTES = 10

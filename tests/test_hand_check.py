@@ -23,7 +23,7 @@ from app.services import lifts
 from . import text_rules as tr
 from .conftest import sign
 from .test_exercise_list import LINKS, PER_HAND_NO_LINK, _compared_with
-from .test_mcp import call, ok, one_user, tool_list
+from .test_mcp import call, ok, one_user, registered_tools, tool_list
 
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
 
@@ -410,7 +410,7 @@ def test_pair_note_cuts_at_a_whole_item():
 # ---------------------------------------------------------------- the published field
 
 def test_hand_check_is_published_and_described(http):
-    tool = next(t for t in tool_list(http, sign()) if t["name"] == "log_lifts")
+    tool = registered_tools(http)["log_lifts"]  # though no list holds it now (log-and-guide.md)
     spec = tool["outputSchema"]["properties"]["hand_check"]
     assert spec["description"] == ("Present when a dumbbell, kettlebell or two-cable weight may be both hands' "
                                    "total: ask the person once, as it says. The weight was logged as sent.")
@@ -466,7 +466,7 @@ def test_the_set_fields_say_one_side_s_reps_and_time(http):
             "distance.")
         for field in ("reps", "time_s", "distance_m"):
             clean(model.model_fields[field].description)
-    tools = {t["name"]: t for t in tool_list(http, sign())}
+    tools = registered_tools(http)  # the five too, though no list holds them now
     for name, model in (("log_lifts", "LogSetIn"), ("edit_entry", "SetIn")):
         props = tools[name]["inputSchema"]["$defs"][model]["properties"]
         assert "one side's reps" in props["reps"]["description"] and "one side's time" in props["time_s"]["description"]

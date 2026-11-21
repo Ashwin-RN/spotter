@@ -20,7 +20,7 @@ from app.models import Exercise, LiftSession
 from . import text_rules as tr
 from .test_exercise_list import _said_equipment, norm
 from .test_idempotency import writer  # noqa: F401 - a fixture
-from .test_mcp import failed, ok, tool_list
+from .test_mcp import failed, ok, registered_tools, tool_list
 
 NOW = datetime(2026, 11, 20, 8, 30, tzinfo=timezone.utc)
 TODAY = NOW.date()
@@ -677,7 +677,7 @@ def test_log_set_in_takes_the_person_s_words_and_exact_while_set_in_keeps_an_exa
 
 def test_through_mcp_a_word_is_logged_pick_lift_reaches_the_client_and_exact_answers_it(writer):
     http, token, account = writer
-    tools = {t["name"]: t for t in tool_list(http, token)}
+    tools = registered_tools(http)  # log_lifts, though no list holds it now (log-and-guide.md)
     log_lifts, routines = tools["log_lifts"], tools["get_routines"]
     assert log_lifts["description"].endswith(
         "Send the person's own word for a lift; Spotter picks it and the summary names it. pick_lift means two lifts "

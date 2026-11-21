@@ -47,7 +47,9 @@ from pathlib import Path
 from sqlalchemy import delete, select, update
 
 from app import db
-from app.mcp_schemas import FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, LogSetIn, RoutineLiftIn, SetIn
+from app.mcp_schemas import (
+    FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, LogPartIn, LogSetIn, RoutineLiftIn, SetIn,
+)
 from app.models import CallLog, EntryVersion, Feedback, WriteKey
 
 log = logging.getLogger("spotter.calllog")
@@ -86,7 +88,10 @@ KNOWN_NAMES = frozenset({
     # get_data's (contract data-on-request.md, decision 21). The keys inside filters and totals are field names:
     # the known ones are written in braces, the rest counted in other[n].
     "area", "fields", "filters", "from_date", "to_date", "group_by", "totals", "order", "cursor",
-}) | {name for model in (SetIn, LogSetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn)
+    # log's (contract log-and-guide.md): its parts, a part's movement (LogPartIn below), and its details, whose keys are
+    # the kinds' own field names, written in braces as get_data's filters are. guide's topic is send_feedback's.
+    "parts", "details", "movement",
+}) | {name for model in (SetIn, LogSetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn, LogPartIn)
        for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.
 STEPS = {"no_subject": "account", "signups_closed": "account", "no_account": "account",
@@ -250,6 +255,22 @@ def note(key: str, word: str) -> None:
 def noted(key: str) -> str | None:
     """The word noted under key in the call running, or None."""
     return (_NOTES.get() or {}).get(key)
+
+
+def room(key: str) -> int:
+    """The characters the notes column has left for the word of a note under key, after the other notes the call
+    running holds (finish joins each as key=word, one space between): outside a call, or as its first note, the whole
+    column less 'key='. log's kind= and word= are noted first, so a later note, such as the per-hand check's pair=,
+    sizes itself to what they leave (log-and-guide.md)."""
+    held = " ".join(f"{k}={word}" for k, word in (_NOTES.get() or {}).items() if k != key)
+    return NOTES_MAX - len(held) - (1 if held else 0) - len(key) - 1
+
+
+def unnote(key: str) -> None:
+    """Take the note under key off the call running, to make room for another. No call, or no such note: nothing."""
+    notes = _NOTES.get()
+    if notes is not None:
+        notes.pop(key, None)
 
 
 def tried(function: str, sent) -> str:

@@ -1322,7 +1322,9 @@ def eval_case_count(path: Path = CASES_FILE) -> int | None:
     return len(cases)
 
 
-FUNCTION_COUNT = len(mcp_server.NEEDS) - len(mcp_server.OWNER_FUNCTIONS)  # but OWNER_FUNCTIONS, the owner's alone
+# What a new chat lists: every function but OWNER_FUNCTIONS, the owner's alone, and RETIRING, which no new chat lists
+# (log-and-guide.md, N7).
+FUNCTION_COUNT = len(mcp_server.NEEDS) - len(mcp_server.OWNER_FUNCTIONS) - len(mcp_server.RETIRING)
 EVAL_CASES = eval_case_count()
 
 

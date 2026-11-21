@@ -16,7 +16,7 @@ from app.models import Goal, SavedFood, User
 from app.services.common import row_dict
 
 from .conftest import claims, sign
-from .test_mcp import call, failed, ok, squat, tool_list
+from .test_mcp import call, failed, ok, registered_tools, squat, tool_list
 
 A, B = "user_01ALICE", "user_01BOB"
 MISSING_ID = 2_000_000_000
@@ -95,7 +95,10 @@ def id_arguments(schema: dict) -> set[str]:
 
 
 def test_every_function_that_takes_an_id_is_in_the_table(http):
-    taking_ids = {t["name"]: id_arguments(t["inputSchema"]) for t in tool_list(http, sign())}
+    # The five too, which no list holds now and a chat opened before still calls (log-and-guide.md). log's ids are
+    # inside details, an open object: its food entries reach log_food's own checks, as the table's log_food row does.
+    taking_ids = {name: id_arguments(t["inputSchema"]) for name, t in registered_tools(http).items()
+                  if name not in ("owner_calls", "owner_feedback", "owner_delete_feedback")}
     taking_ids = {name: props for name, props in taking_ids.items() if props}
     expected: dict[str, set[str]] = {}
     for function, argument, _, _ in ID_CALLS:

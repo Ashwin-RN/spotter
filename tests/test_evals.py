@@ -45,7 +45,7 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "look_trip_hours", "inc_deload", "look_deload", "save_food_asked", "edit_fixes_minutes",
                   "food_lookup", "routine_read", "exercise_list", "catch_up", "import_other_app"}
 # function-list.md, G1's note of 2026-11-17: the golden package's reviewed cases follow G1's (tests/test_golden_cases.py)
-GOLDEN_PACKAGE = 187  # 164, and exercise-list.md C4g's 23
+GOLDEN_PACKAGE = 189  # 164, exercise-list.md C4g's 23, and log-and-guide.md's 2
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 
@@ -1309,7 +1309,9 @@ def test_every_function_on_everyone_s_list_is_some_case_s_must():
     musts = {name for c in cases for name in c["calls"]["must"]}
     assert everyone - musts == set()
     core = [c for c in cases if c.get("core") is True]
-    assert len(core) == 101 and everyone - {name for c in core for name in c["calls"]["must"]} == set()
+    # log-and-guide.md N9: guide_how_food and log_plank_minutes join the core, so guide and log are each a must there.
+    # NEEDS still holds the five, which old chats call by name, so it is wider than a new chat's list.
+    assert len(core) == 103 and everyone - {name for c in core for name in c["calls"]["must"]} == set()
     named = {name for c in cases for key in ("must", "may", "must_not") for name in c["calls"][key]}
     assert named <= everyone  # no tag names a function nobody has, or the owner's
     # The two the release run of 2026-11-17 never called each have a case of their own.
@@ -1682,8 +1684,8 @@ def test_main_runs_the_core_alone_the_set_each_gate_runs(monkeypatch, capsys):
     monkeypatch.setattr(run, "run_once", fake_run_once)
     assert run.main(["--core", "--n", "1", "--time-zone", "Asia/Kolkata"]) == 0
     core = [c["id"] for c in judge.load_cases() if c.get("core") is True]
-    assert seen == core and len(core) == 101
-    assert "101 cases x 1 runs" in capsys.readouterr().out
+    assert seen == core and len(core) == 103  # log-and-guide.md N9
+    assert "103 cases x 1 runs" in capsys.readouterr().out
     seen.clear()
     assert run.main(["--core", "--case", "connected_identity", "--case", "stated_number", "--n", "1",
                      "--time-zone", "Asia/Kolkata"]) == 0

@@ -113,9 +113,10 @@ def test_a_changed_tool_description_is_yes_with_its_line_once(read, surface):
 
 
 def test_a_changed_input_or_output_is_named(read, surface):
-    tool(surface, "log_food")["inputSchema"]["description"] = "Changed."
+    # save_food: log_food is in no list now (log-and-guide.md), so the surface holds it no more.
+    tool(surface, "save_food")["inputSchema"]["description"] = "Changed."
     tool(surface, "get_log")["outputSchema"]["description"] = "Changed."
-    assert sorted(need.differences(read[0], surface)) == ["tool get_log: output", "tool log_food: input"]
+    assert sorted(need.differences(read[0], surface)) == ["tool get_log: output", "tool save_food: input"]
 
 
 def test_a_changed_instruction_is_yes(read, surface):

@@ -148,7 +148,7 @@ APART = ("incidental", "look_alike")  # kept out of the pass count, reported apa
 DATA_READS = ("what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals")
 # Spotter's writes, as app/services/common.py's WRITE_FUNCTIONS names them (a test holds the two equal). A case
 # whose must holds one is a logging case: the release bar of the contract's exit check 6.
-WRITE_FUNCTIONS = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "save_routine",
+WRITE_FUNCTIONS = ("log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "save_routine",
                    "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
                    "import_entries", "send_feedback")
 DAYS_AGO = 60  # {{days_ago:N}} for N from 0 to this (evals/run.py's dates_for gives them)

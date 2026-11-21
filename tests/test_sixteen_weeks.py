@@ -35,7 +35,8 @@ SQUAT_LINE = "116.7 kg now against 120 kg on the plan line today: 3.3 kg behind.
 WEIGHT_LINE = "80.9 kg now against 79.3 kg on the plan line today: 1.6 kg behind."
 CASES = ["data_basketball", "data_lifting", "data_calories", "data_squat_goal", "data_back_on_track", "data_lb",
          "data_empty", "data_year_more"]
-W = ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
+# log first, as the no-write cases list it (log-and-guide.md: log joined every write list by script).
+W = ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
      "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
      "save_routine"]
 

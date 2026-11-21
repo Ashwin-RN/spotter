@@ -25,7 +25,7 @@ from app.services import common, lifts
 
 from . import text_rules as tr
 from .test_idempotency import writer  # noqa: F401 - a fixture
-from .test_mcp import failed, ok, tool_list
+from .test_mcp import failed, ok, registered_tools, tool_list
 from .test_web import client, seam, sign_in, web_client  # noqa: F401 - fixtures
 
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
@@ -514,7 +514,7 @@ def test_the_sets_table_gains_time_and_distance_only_when_a_set_holds_them():
 def test_log_lifts_takes_its_own_set_model_and_edit_entry_takes_set_in_with_the_same_fields_for_now(writer):
     """Since C4c (R3) log_lifts' sets also take exact and the person's own words: tests/test_matcher.py."""
     http, token, account = writer
-    tools = {t["name"]: t for t in tool_list(http, token)}
+    tools = registered_tools(http)  # log_lifts, though no list holds it now (log-and-guide.md)
     logged = tools["log_lifts"]["inputSchema"]
     edit = tools["edit_entry"]["inputSchema"]
     assert "LogSetIn" in logged["$defs"] and "SetIn" not in logged["$defs"] and "SetIn" in edit["$defs"]

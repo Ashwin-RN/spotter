@@ -30,7 +30,7 @@ from . import text_rules as tr
 from .conftest import claims, rpc, sign
 from .test_feedback import compact
 from .test_idempotency import FORM, TEMPLATES
-from .test_mcp import set_switch
+from .test_mcp import registered_tools, set_switch
 from .test_trace import OWNER, sign_for
 from .test_web import client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
 
@@ -111,8 +111,9 @@ def without_inputs(tool: dict) -> dict:
 
 
 def owner_tools(make_client) -> list[dict]:
-    r = rpc(make_client(owner_user_id=OWNER), "tools/list", token=sign_for(OWNER))
-    return r.json()["result"]["tools"]
+    """The owner's list and the five log functions, which no list holds now and a chat opened before still calls
+    (log-and-guide.md), in the order registered."""
+    return list(registered_tools(make_client(owner_user_id=OWNER)).values())
 
 
 def test_the_published_list_differs_only_by_additional_properties_and_the_three_descriptions(make_client):
@@ -208,6 +209,10 @@ def bases(user: User, ids: dict) -> dict:
     return {
         "whoami": {},
         "list_exercises": {"kind": "lift", "category": "squat"},
+        # log-and-guide.md: log's lift part, its details, and guide's topic, through misfit and then route.
+        "log": {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}], "date": day(1),
+                "notes": "Easy", "allow_repeat": False},
+        "guide": {"topic": "food"},
         "log_lifts": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}], "date": day(1),
                       "notes": "Easy", "allow_repeat": False, "new_session": False},
         "log_bodyweight": {"kg": 80, "date": day(1), "allow_repeat": False},
@@ -257,7 +262,8 @@ def bases(user: User, ids: dict) -> dict:
 def test_every_base_call_succeeds_and_names_every_function(owner_person, monkeypatch):
     client, token, user = owner_person
     calls = bases(user, seeded(user))
-    assert list(calls) == [*list(BEFORE_INPUTS)[:22], "what_is_logged", "get_data", *list(BEFORE_INPUTS)[22:]]
+    before = list(BEFORE_INPUTS)  # log-and-guide.md: log and guide after list_exercises, as registered
+    assert list(calls) == [*before[:2], "log", "guide", *before[2:22], "what_is_logged", "get_data", *before[22:]]
     for name, arguments in calls.items():
         result = tool_call(client, token, name, arguments)
         assert result["isError"] is False, (name, result)
@@ -432,9 +438,9 @@ def test_the_sweep_through_mcp(owner_person, monkeypatch):
                  "grams": {"usda_fdc_id": 1001, "grams": 100}}
     no_id = {("entries", 0, "servings"): 2, ("entries", 0, "grams"): 100}
     today = users.today_for(user)
-    r = rpc(client, "tools/list", token=token)
-    schemas = {t["name"]: t["inputSchema"] for t in r.json()["result"]["tools"]}
-    assert set(schemas) == set(calls)  # every function, from the code
+    # Every registered function, from the code: log and guide, and the five that no list holds now.
+    schemas = {name: t["inputSchema"] for name, t in registered_tools(client).items()}
+    assert set(schemas) == set(calls)
     # The import's rows are written once first, so a call with one bad row writes nothing: its other rows are there.
     assert tool_call(client, token, "import_entries", calls["import_entries"])["isError"] is False
     clear_call_log()
@@ -722,7 +728,7 @@ def taken(person, function: str, arguments: dict) -> dict:
 
 def fields_taken(person, function: str) -> str:
     client, token, _ = person
-    [tool] = [t for t in rpc(client, "tools/list", token=token).json()["result"]["tools"] if t["name"] == function]
+    tool = registered_tools(client)[function]  # the five too, though no list holds them now
     return ", ".join(tool["inputSchema"]["properties"])
 
 

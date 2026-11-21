@@ -106,6 +106,21 @@ NEAR_MISSES = {
     "lift": dict.fromkeys(("weight", "weight_lbs", "lbs", "lb", "kg", "weight_kgs"), _SET_WEIGHT),
     "log_bodyweight": dict.fromkeys(("weight", "weight_kg", "weight_lb", "lbs"), _BODY_WEIGHT),
     "update_settings": {"length_unit": "Spotter keeps body sizes in cm: there is no length unit to set."},
+    # log's (contract log-and-guide.md): a part's or a kind's own field sent at log's top, in route's own words for
+    # the same mistake; and a part's near misses, as a set's and a cardio session's are.
+    "log": {**dict.fromkeys(("movement", "exercise", "sets", "weight_kg", "weight_lb", "reps", "time_s", "distance_m",
+                             "exact", "minutes", "distance_km", "distance_mi"),
+                            "A part's numbers go in parts, a list of parts."),
+            **dict.fromkeys(("new_session", "incline_pct", "speed_kmh", "speed_mph", "avg_hr", "machine_kcal", "kg",
+                             "lb", "entries", "value"),
+                            "A kind's own fields go in details, as guide gives them.")},
+    "part": {**dict.fromkeys(("weight", "weight_lbs", "lbs", "lb", "kg", "weight_kgs"), _SET_WEIGHT),
+             "exercise": "Send the lift or the activity as movement.",
+             **dict.fromkeys(("time", "duration", "seconds", "secs"),
+                             "Send a time as time_s or minutes, as the person said it."),
+             "distance": "Send a distance as distance_m, distance_km or distance_mi, as the person said it.",
+             **dict.fromkeys(("speed", "incline", "hr", "heart_rate", "calories", "cal", "kcal"),
+                             "A kind's own fields go in details, as guide gives them.")},
 }
 
 # For a saved or USDA food, the count is an amount, never words. The instructions and log_food say the same.
@@ -1852,6 +1867,7 @@ class GuideResult(BaseModel):
 RESULTS = {
     "whoami": WhoamiResult,
     "list_exercises": ExercisesResult,
+    "guide": GuideResult,  # log has no row: it publishes no output schema, and each answer is its kind's own
     "log_lifts": LogLiftsResult,
     "log_bodyweight": LogBodyweightResult,
     "set_goal": SetGoalResult,

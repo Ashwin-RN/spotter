@@ -459,20 +459,17 @@ Claude may call these functions, and nothing else:
 |---|---|
 | `whoami` | Says whose account this is, today's date for them, and what Claude may do. Call it first. |
 | `list_exercises` | The exercise names, and a search. |
-| `log_lifts` | Records sets of lifting, into that day's session. |
-| `log_bodyweight` | Records one weigh-in. |
+| `log` | Records one entry of a kind: lifts, bodyweight, measurement, food or cardio. |
+| `guide` | Says how to log a kind: what its parts take, and its fields with their units and rules. |
 | `set_goal` | Sets a goal of any of the four kinds, or changes or closes one. |
 | `get_progress` | Reads progress back: one lift over time, or every lift. |
 | `update_settings` | Sets the person's time zone, units and targets. |
 | `get_log` | What the person logged, day by day, for 1 to 14 days. |
-| `log_measurement` | Records one measurement. |
 | `edit_entry` | Changes a session, a weigh-in, a measurement, a food entry or a cardio entry in place. |
 | `restore_entry` | Brings back a deleted or replaced entry, or undoes an entry's last edit. |
 | `delete_entry` | Deletes an entry in two calls: a preview, then the delete once the person says yes. |
 | `find_food` | Looks a food up: saved foods and recent entries first, then USDA when it is on. |
-| `log_food` | Records what the person ate, every food in one call. |
 | `save_food` | Saves a food with its serving and calories, or updates one. |
-| `log_cardio` | Records one cardio session, with a calorie estimate. |
 | `get_trends` | How the person is doing: the weight trend and its rate, calories, sessions, cardio, maintenance. |
 | `get_goals` | Whether the person is on track: every open goal, its pace and its projected date. |
 | `import_entries` | Brings history over from another app's export, as dated rows: a preview first, then the rows. |
@@ -481,6 +478,8 @@ Claude may call these functions, and nothing else:
 | `get_routines` | The saved routines, each lift with the weight to log. |
 | `what_is_logged` | What Spotter can hold and what the person has logged, area by area, with the open goals. |
 | `get_data` | One query over the person's entries: an area, its fields, filters, groups and totals, all worked out by Spotter. |
+
+A chat opened before the change holds log_lifts, log_bodyweight, log_measurement, log_food and log_cardio in their place: they log the same entries.
 
 `whoami` reports `claude_can`, the person's setting for what Claude may do:
 

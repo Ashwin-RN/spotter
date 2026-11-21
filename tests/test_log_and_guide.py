@@ -6,7 +6,12 @@ published moves: tests/test_feedback.py's PUBLISHED hashes and INSTRUCTIONS_AS_B
 
 Package L1a: app/log_shape.py (the kinds, their words, route, the conversions of decision 51, said_as_sent, the kind
 map of decision 52, log's words) and app/guide.py (each topic's answer), with LogPartIn and GuideResult in
-app/mcp_schemas.py. Neither function is registered here, so nothing published moves either."""
+app/mcp_schemas.py. Neither function is registered here, so nothing published moves either.
+
+Package L1b: log and guide registered after list_exercises, the five hidden from every list and answering by
+name, log in the write tuple and guide among the reads, the call row's notes, and the homepage count. Through
+/mcp: each kind through log and through its function, the same rows and answer; the order of checks; the rows;
+the limits, the key and the switch; and no refusal of log naming one of the five."""
 
 import ast
 import hashlib
@@ -18,7 +23,7 @@ import sys
 
 import pytest
 
-from app import guide, log_shape, mcp_schemas, mcp_server, models, rules, services
+from app import guide, log_shape, mcp_schemas, mcp_server, models, rules, services, web
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT
 from app.log_shape import KINDS, route, said_as_sent
@@ -28,7 +33,8 @@ from app.mcp_server import LOG_STEPS, misfit, misfit_model, read_arguments, sche
 from . import text_rules as tr
 from .conftest import FakeProvider, claims, settings, sign, whoami
 from .test_feedback import INSTRUCTIONS_AS_BUILT, PUBLISHED, compact
-from .test_mcp import failed, one_user, registered_tools, spy_on_services, tool_list
+from .test_calllog import MARKER, rows
+from .test_mcp import call, failed, one_user, registered_tools, set_switch, spy_on_services, tool_list
 
 FIVE = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio")
 OWNER = "user_01OWNER"
@@ -82,7 +88,8 @@ def test_the_published_hashes_and_the_instructions_are_unmoved(http):
 def test_registered_tools_is_the_owner_s_list_entry_for_entry(make_client):
     client = make_client(owner_user_id=OWNER)
     listed = tool_list(client, sign(claims(sub=OWNER)))
-    assert list(registered_tools(client).values()) == listed
+    # L1b: the owner's list is every registered function but the five, entry for entry.
+    assert [t for t in registered_tools(client).values() if t["name"] not in FIVE] == listed
     assert set(registered_tools(client)) == set(mcp_server.NEEDS)  # every registered function
 
 
@@ -1140,3 +1147,509 @@ def test_the_module_imported_alone_loads_no_server_no_app_and_no_call_log(tmp_pa
     assert done.returncode == 0, done.stderr
     assert json.loads(done.stdout.strip().splitlines()[-1]) == []
     assert not (ROOT / "spotter.db").exists() and not (tmp_path / "spotter.db").exists()
+
+
+# ================================================================ L1b: log and guide as functions, the five hidden
+
+def person(n: int) -> str:
+    """A token for a fresh person of its own."""
+    return sign(claims(sub=f"user_01LOG{n}", email=f"log{n}@example.com", name=f"Log {n}"))
+
+
+def account_of(client, token: str) -> int:
+    return whoami(client, token)["account_id"]
+
+
+def answer_of(client, token: str, name: str, arguments: dict) -> dict:
+    result = call(client, token, name, arguments)
+    assert [c["type"] for c in result["content"]] == ["text"]
+    assert json.loads(result["content"][0]["text"]) == result["structuredContent"]  # the same dict, as JSON
+    assert result["isError"] is ("error" in result["structuredContent"]), result
+    return result["structuredContent"]
+
+
+# Keys whose values differ between two people's same entry: ids, times, links, the account itself, and a duplicate's
+# key, which a saved food's id is part of.
+_OWN = re.compile(r"(^|_)(id|ids|at|links?|user_id|session_id|account_id)$")
+
+
+def plain(value):
+    """An answer or a person's rows with every id, time and link left out, so two people's same entry compare."""
+    if isinstance(value, dict):
+        return {k: plain(v) for k, v in value.items() if not _OWN.search(k) and k != "dedupe_key"}
+    if isinstance(value, list):
+        return [plain(v) for v in value]
+    return value
+
+
+def tables_of(user_id: int) -> dict:
+    from evals.run import person_rows
+    return plain(person_rows(user_id))
+
+
+def days_ago(n: int) -> str:
+    """A date n days before the app's own today (db.utcnow), so no test reads the calendar."""
+    from datetime import timedelta
+    from app import db
+    return (db.utcnow().date() - timedelta(days=n)).isoformat()
+
+
+SAVED = "the seed's id"  # in a call: the id of the person's own seeded entry, filled in for each person
+
+
+def filled(value, seeded_id):
+    if value == SAVED:
+        return seeded_id
+    if isinstance(value, dict):
+        return {k: filled(v, seeded_id) for k, v in value.items()}
+    if isinstance(value, list):
+        return [filled(v, seeded_id) for v in value]
+    return value
+
+
+@pytest.fixture
+def noon(monkeypatch):
+    """The app's clock held at noon UTC on a fixed day, so two people's same entry falls on the same date and meal."""
+    from datetime import datetime, timezone
+    from app import db
+    at = datetime(2026, 11, 17, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(db, "utcnow", lambda: at)
+
+
+def the_same_through_both(client, seed: list, sent: dict, function: str, own: dict, n: int):
+    """The same entry, through log for one person and through the kind's own function for another, each seeded the
+    same: (log's answer, the function's answer), after the two people's rows are found the same."""
+    first, second = person(2 * n), person(2 * n + 1)
+    ids = [account_of(client, t) for t in (first, second)]
+    seeded = {first: None, second: None}
+    for name, arguments in seed:
+        for token in (first, second):
+            seeded[token] = answer_of(client, token, name, arguments).get("id")
+    through_log = answer_of(client, first, "log", filled(sent, seeded[first]))
+    through_own = answer_of(client, second, function, filled(own, seeded[second]))
+    assert tables_of(ids[0]) == tables_of(ids[1]), (sent, own)
+    return through_log, through_own
+
+
+SQUAT_SET = {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}
+BENCH = {"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": True}
+# (what it shows, the seed through the five, a log call, the kind's function, the same call in its own shape)
+BOTH = [
+    ("lifts", [], {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}]},
+     "log_lifts", {"sets": [SQUAT_SET]}),
+    ("bodyweight in kg", [], {"kind": "bodyweight", "details": {"kg": 80.4}}, "log_bodyweight", {"kg": 80.4}),
+    ("bodyweight in lb: units_note", [], {"kind": "weight", "details": {"lb": 177}}, "log_bodyweight", {"lb": 177}),
+    ("a measurement by its own word", [], {"kind": "waist", "details": {"value": 86}}, "log_measurement",
+     {"kind": "waist", "value": 86}),
+    ("sleep", [], {"kind": "sleep", "details": {"value": 7.5}}, "log_measurement",
+     {"kind": "sleep_hours", "value": 7.5}),
+    ("food stated", [], {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180,
+                                                                  "meal": "lunch"}]}},
+     "log_food", {"entries": [{"description": "Dal", "kcal": 180, "meal": "lunch"}]}),
+    ("food estimated, no meal", [], {"kind": "meal", "details": {"entries": [{"description": "2 rotis", "kcal": 240,
+                                                                              "estimated": True}]}},
+     "log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True}]}),
+    ("a saved food", [("save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120})],
+     {"kind": "food", "details": {"entries": [{"saved_food_id": SAVED, "servings": 2}]}},
+     "log_food", {"entries": [{"saved_food_id": SAVED, "servings": 2}]}),
+    ("cardio in km", [], {"kind": "cardio", "parts": [{"movement": "Outdoor Run", "minutes": 30, "distance_km": 5}],
+                          "details": {"avg_hr": 150, "machine_kcal": 300}, "notes": "easy"},
+     "log_cardio", {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5, "avg_hr": 150, "machine_kcal": 300,
+                    "notes": "easy"}),
+    ("cardio in miles", [], {"kind": "run", "parts": [{"movement": "Outdoor Run", "minutes": 27, "distance_mi": 3}],
+                             "details": {"speed_mph": 6.7}},
+     "log_cardio", {"exercise": "Outdoor Run", "minutes": 27, "distance_mi": 3, "speed_mph": 6.7}),
+    ("a treadmill with no speed: the walk", [], {"kind": "treadmill", "parts": [{"movement": "Treadmill Walk",
+                                                                                "minutes": 20}]},
+     "log_cardio", {"exercise": "Treadmill Walk", "minutes": 20}),
+    ("a routine's sets with exact", [], {"kind": "lifts", "parts": [{"movement": "Bench Press", "weight_kg": 80,
+                                                                     "reps": 5, "exact": True}] * 3},
+     "log_lifts", {"sets": [BENCH] * 3}),
+    ("new_session", [("log_lifts", {"sets": [SQUAT_SET]})],
+     {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}],
+      "details": {"new_session": True}}, "log_lifts", {"sets": [SQUAT_SET], "new_session": True}),
+    ("a hold", [], {"kind": "lifts", "parts": [{"movement": "plank", "weight_kg": 0, "time_s": 90}]}, "log_lifts",
+     {"sets": [{"exercise": "plank", "weight_kg": 0, "time_s": 90}]}),
+    ("a hold in minutes, stored as seconds", [], {"kind": "lifts", "parts": [{"movement": "plank", "weight_kg": 0,
+                                                                             "minutes": 2}]},
+     "log_lifts", {"sets": [{"exercise": "plank", "weight_kg": 0, "time_s": 120}]}),
+    ("a carry", [], {"kind": "lifts", "parts": [{"movement": "farmers carry", "weight_kg": 32, "distance_m": 40,
+                                                 "time_s": 30}]},
+     "log_lifts", {"sets": [{"exercise": "farmers carry", "weight_kg": 32, "distance_m": 40, "time_s": 30}]}),
+    ("a carry in km, stored as metres", [], {"kind": "lifts", "parts": [{"movement": "farmers carry", "weight_kg": 32,
+                                                                         "distance_km": 0.04}]},
+     "log_lifts", {"sets": [{"exercise": "farmers carry", "weight_kg": 32, "distance_m": 40}]}),
+    ("a run in metres, stored as km", [], {"kind": "cardio", "parts": [{"movement": "Outdoor Run", "minutes": 30,
+                                                                        "distance_m": 5000}]},
+     "log_cardio", {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5}),
+    ("the per-hand check", [("log_lifts", {"sets": [BENCH]})],
+     {"kind": "lifts", "parts": [{"movement": "Dumbbell Bench Press", "weight_kg": 50, "reps": 8}]},
+     "log_lifts", {"sets": [{"exercise": "Dumbbell Bench Press", "weight_kg": 50, "reps": 8}]}),
+    ("a duplicate", [("log_bodyweight", {"kg": 80})], {"kind": "bodyweight", "details": {"kg": 80}},
+     "log_bodyweight", {"kg": 80}),
+    ("allow_repeat", [("log_food", {"entries": [{"description": "Dal", "kcal": 180}]})],
+     {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180}]}, "allow_repeat": True},
+     "log_food", {"entries": [{"description": "Dal", "kcal": 180}], "allow_repeat": True}),
+    ("a back-dated entry", [], {"kind": "bodyweight", "details": {"kg": 81}, "date": "back"}, "log_bodyweight",
+     {"kg": 81, "date": "back"}),
+]
+
+
+@pytest.mark.parametrize(("n", "seed", "sent", "function", "own"), [(i, *b[1:]) for i, b in enumerate(BOTH)],
+                         ids=[b[0] for b in BOTH])
+def test_a_write_through_log_and_through_its_kind_s_function_gives_the_same_rows_and_answer(http, noon, n, seed,
+                                                                                           sent, function, own):
+    if sent.get("date") == "back":
+        sent, own = {**sent, "date": days_ago(3)}, {**own, "date": days_ago(3)}
+    through_log, through_own = the_same_through_both(http, seed, sent, function, own, n)
+    assert "error" not in through_log and plain(through_log) == plain(through_own)
+    if function == "log_lifts" and sent["parts"][0]["movement"] == "Dumbbell Bench Press":
+        assert "Ask the person once" in through_log["hand_check"]
+    if "lb" in sent.get("details", {}) or "distance_mi" in sent.get("parts", [{}])[0]:
+        assert through_log["units_note"]
+    if sent.get("details") == {"kg": 80} and not sent.get("allow_repeat"):
+        assert through_log["duplicate"] is True
+
+
+# A refusal of the kind's own: the same through log as through the function, but for said_as_sent.
+REFUSED_BOTH = [
+    # A USDA food, with the table off as in every test: its refusal, the same both ways (no lookup reaches the network).
+    ("a USDA food, the table off", {"kind": "food", "details": {"entries": [{"usda_fdc_id": 1234, "grams": 80}]}},
+     "log_food", {"entries": [{"usda_fdc_id": 1234, "grams": 80}]}),
+    ("an unknown lift", {"kind": "lifts", "parts": [{"movement": "Zorbinator Press", "weight_kg": 20, "reps": 8}]},
+     "log_lifts", {"sets": [{"exercise": "Zorbinator Press", "weight_kg": 20, "reps": 8}]}),
+    ("reps out of range", {"kind": "lifts", "parts": [SET, {"movement": "Back Squat", "weight_kg": 100, "reps": 0}]},
+     "log_lifts", {"sets": [SQUAT_SET, {"exercise": "Back Squat", "weight_kg": 100, "reps": 0}]}),
+    ("kg and lb both", {"kind": "bodyweight", "details": {"kg": 80, "lb": 176}}, "log_bodyweight",
+     {"kg": 80, "lb": 176}),
+    ("a weight out of range", {"kind": "bodyweight", "details": {"kg": 900}}, "log_bodyweight", {"kg": 900}),
+    ("no measurement value", {"kind": "measurement", "details": {"kind": "waist"}}, "log_measurement",
+     {"kind": "waist"}),
+    ("a food with kcal and a saved food", {"kind": "food", "details": {"entries": [
+        {"description": "Dal", "kcal": 180}, {"saved_food_id": 99, "servings": 1, "kcal": 5}]}},
+     "log_food", {"entries": [{"description": "Dal", "kcal": 180}, {"saved_food_id": 99, "servings": 1, "kcal": 5}]}),
+    ("an activity that is no activity", {"kind": "cardio", "parts": [{"movement": "Moonwalk", "minutes": 30}]},
+     "log_cardio", {"exercise": "Moonwalk", "minutes": 30}),
+    ("both speeds", {"kind": "cardio", "parts": [{"movement": "Treadmill Run", "minutes": 30}],
+                     "details": {"speed_kmh": 10, "speed_mph": 6}},
+     "log_cardio", {"exercise": "Treadmill Run", "minutes": 30, "speed_kmh": 10, "speed_mph": 6}),
+    ("a date in the future", {"kind": "bodyweight", "details": {"kg": 80}, "date": "2999-01-01"}, "log_bodyweight",
+     {"kg": 80, "date": "2999-01-01"}),
+]
+
+
+@pytest.mark.parametrize(("n", "sent", "function", "own"), [(100 + i, *r[1:]) for i, r in enumerate(REFUSED_BOTH)],
+                         ids=[r[0] for r in REFUSED_BOTH])
+def test_a_refusal_through_log_is_the_function_s_own_said_as_sent(http, noon, n, sent, function, own):
+    through_log, through_own = the_same_through_both(http, [], sent, function, own, n)
+    kind = log_shape.resolve_kind(sent["kind"])[0]
+    assert "error" in through_own and through_log == said_as_sent(through_own, kind)
+    assert not FIVE_NAMES.search(json.dumps(through_log))
+
+
+def test_a_usda_food_through_log_and_through_log_food_gives_the_same_rows_and_answer(make_client, monkeypatch, noon):
+    """The USDA table on, its lookup replaced at the seam the service provides (services.usda.urlopen): no network."""
+    from app.services import usda
+    from .test_usda import KEY as USDA_KEY, Fake, banana
+    client = make_client(usda_api_key=USDA_KEY)
+    fake = Fake(banana(shape="detail"))
+    monkeypatch.setattr(usda, "urlopen", fake)
+    entry = {"usda_fdc_id": 173944, "grams": 100}
+    through_log, through_own = the_same_through_both(client, [], {"kind": "food", "details": {"entries": [entry]}},
+                                                     "log_food", {"entries": [entry]}, 200)
+    assert "error" not in through_log and plain(through_log) == plain(through_own)
+    assert through_log["entries"][0]["source"] == "usda" and len(fake.requests) == 1  # the second read the cache
+
+
+def test_pick_lift_through_log_is_the_matcher_s_question_and_exact_answers_it_on_both_dates(http):
+    token = person(300)
+    smith = {"exercise": "Smith Squat", "weight_kg": 60, "reps": 5, "exact": True}
+    answer_of(http, token, "log_lifts", {"sets": [SQUAT_SET | {"exact": True}], "date": days_ago(3)})
+    answer_of(http, token, "log_lifts", {"sets": [smith]})
+    for date in (None, days_ago(3)):
+        sent = {"kind": "lifts", "parts": [{"movement": "squat", "weight_kg": 80, "reps": 5}],
+                **({"date": date} if date else {})}
+        asked = answer_of(http, token, "log", sent)
+        own = answer_of(http, token, "log_lifts", {"sets": [{"exercise": "squat", "weight_kg": 80, "reps": 5}],
+                                                   **({"date": date} if date else {})})
+        assert asked["error"] == own["error"] == "pick_lift" and asked == said_as_sent(own, "lifts")
+        assert "exact true" in asked["fix"] and not FIVE_NAMES.search(json.dumps(asked))
+        picked = answer_of(http, token, "log", {**sent, "parts": [{"movement": "Back Squat", "weight_kg": 80, "reps": 5,
+                                                                   "exact": True}]})
+        assert "error" not in picked and picked["kind"] == "lift_session"
+
+
+def test_notes_on_a_kind_that_takes_none_a_null_is_dropped_and_text_refused_through_log(http):
+    token = person(301)
+    assert "error" not in answer_of(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}, "notes": None})
+    refused = answer_of(http, token, "log", {"kind": "food", "details": {"entries": [{"description": "Dal",
+                                                                                    "kcal": 1}]}, "notes": "x"})
+    assert (refused["error"], refused["message"]) == ("invalid_field", "food takes no notes.")
+
+
+# ---------------------------------------------------------------- the order of checks
+
+def test_a_field_log_does_not_take_is_refused_by_misfit_as_log_and_its_row_is_log_s(http, capsys):
+    token = person(310)
+    top = answer_of(http, token, "log", {"kind": "bodyweight", "kg": 80})
+    assert top["error"] == "invalid_field" and top["message"] == "'kg' is not a field of log."
+    assert top["fix"] == ("log takes: kind, parts, details, date, notes, allow_repeat, key. A kind's own fields go in "
+                          "details, as guide gives them.")
+    row = rows()[-1]
+    assert (row.function, row.outcome, row.notes, row.tried) == ("log", "refused", "kind=bodyweight word=bodyweight",
+                                                                 "kg kind")
+    # A part's field LogPartIn does not take, and a part's wrong type: misfit, before route, its part as "Part n".
+    part = answer_of(http, token, "log", {"kind": "lifts", "parts": [SET, {"movement": "Back Squat", "weight": 100,
+                                                                          "reps": "five"}]})
+    by_message = {e["message"]: e["fix"] for e in part["errors"]}
+    assert set(by_message) == {"Part 2: 'weight' is not a field of a part.",
+                               "Part 2: reps must be a whole number, not 'five'."}
+    assert by_message["Part 2: 'weight' is not a field of a part."] == (
+        f"Use: {', '.join(mcp_schemas.LogPartIn.model_fields)}. Send the weight in weight_kg or weight_lb, in the "
+        "unit the person said.")
+    typed = "Part 2: reps must be a whole number, not 'five'."
+    assert rows()[-1].notes == "kind=lifts word=lifts"
+    # A part refused by the kind's own model, after route: said as sent, its part as parts[n].
+    said = answer_of(http, token, "log", {"kind": "lifts", "parts": [SET, {"movement": "Back Squat", "weight_kg": 100,
+                                                                          "reps": 500}]})
+    assert "error" in said and "parts[1]" in said["message"] and "Set 2" not in said["message"]
+    with capsys.disabled():
+        print(f"\npart refusal from misfit: {typed} | {by_message[typed]}")
+        print(f"part refusal said as sent: {said['message']} | {said['fix']}")
+    assert not FIVE_NAMES.search(json.dumps([top, part, said]))
+
+
+def test_route_s_refusal_comes_after_the_account_the_row_and_the_switch(http):
+    token = person(311)
+    account = account_of(http, token)
+    set_switch(account, "log")  # log is allowed at log: route's refusal is what comes back
+    answer = answer_of(http, token, "log", {"kind": "yoga"})
+    assert answer["error"] == "invalid_field" and answer["field"] == "kind"
+    assert (rows()[-1].function, rows()[-1].notes) == ("log", "kind=none word=other")
+
+
+# ---------------------------------------------------------------- the five, by name
+
+def test_each_of_the_five_called_by_name_answers_as_before_its_row_under_its_own_name(http):
+    token = person(320)
+    calls = [("log_lifts", {"sets": [SQUAT_SET]}), ("log_bodyweight", {"kg": 80}),
+             ("log_measurement", {"kind": "waist", "value": 86}),
+             ("log_food", {"entries": [{"description": "Dal", "kcal": 180}]}),
+             ("log_cardio", {"exercise": "Outdoor Walk", "minutes": 30})]
+    before = len(rows())
+    for name, arguments in calls:
+        answer = answer_of(http, token, name, arguments)
+        assert "error" not in answer, (name, answer)
+        mcp_schemas.RESULTS[name].model_validate(answer)
+    logged = rows()[before:]
+    assert [(r.function, r.caller, r.outcome) for r in logged] == [(n, "claude", "written") for n, _ in calls]
+    assert all(r.notes is None for r in logged)  # no kind= or word=: only log notes those
+    assert not {t["name"] for t in tool_list(http, token)} & set(FIVE)
+
+
+# ---------------------------------------------------------------- the list
+
+def test_the_list_holds_log_and_guide_where_log_lifts_stood_and_none_of_the_five(make_client):
+    client = make_client(owner_user_id=OWNER)
+    everyone = [t["name"] for t in tool_list(client, sign())]
+    owner = [t["name"] for t in tool_list(client, sign(claims(sub=OWNER)))]
+    assert everyone[:4] == ["whoami", "list_exercises", "log", "guide"] and everyone[4] == "set_goal"
+    assert owner == [*everyone, *mcp_server.OWNER_FUNCTIONS] and not set(FIVE) & set(owner)
+    assert mcp_server.RETIRING == FIVE == log_shape.LOG_FUNCTIONS
+    assert set(FIVE) <= set(registered_tools(client)) and set(FIVE) <= set(mcp_server.NEEDS)
+    assert len(everyone) == 21 == web.FUNCTION_COUNT
+
+
+# log's and guide's published entries, as compact JSON: name, title, description, schemas and annotations.
+SIZES = {"log": 6229, "guide": 2082}
+
+
+def test_log_publishes_no_output_schema_and_guide_its_result_and_each_size_is_pinned(http, capsys):
+    tools = registered_tools(http)
+    log, guide_entry = tools["log"], tools["guide"]
+    assert "outputSchema" not in log and "log" not in mcp_schemas.RESULTS
+    assert set(guide_entry["outputSchema"]["properties"]) == set(mcp_schemas.GuideResult.model_fields)
+    assert mcp_schemas.RESULTS["guide"] is mcp_schemas.GuideResult
+    assert (log["title"], log["description"]) == ("Log an entry", log_shape.LOG_DESCRIPTION)
+    assert (guide_entry["title"], guide_entry["description"]) == ("How to log", guide.GUIDE_DESCRIPTION)
+    assert log["annotations"]["readOnlyHint"] is False and guide_entry["annotations"]["readOnlyHint"] is True
+    words = {k: v["description"] for k, v in log["inputSchema"]["properties"].items()}
+    assert words == {"kind": log_shape.LOG_KIND_DESCRIPTION, "parts": log_shape.LOG_PARTS_DESCRIPTION,
+                     "details": log_shape.LOG_DETAILS_DESCRIPTION, "date": log_shape.LOG_DATE_DESCRIPTION,
+                     "notes": log_shape.LOG_NOTES_DESCRIPTION, "allow_repeat": log_shape.LOG_REPEAT_DESCRIPTION,
+                     "key": mcp_schemas.KEY_DESCRIPTION}
+    assert {k: v["description"] for k, v in guide_entry["inputSchema"]["properties"].items()} == {
+        "topic": guide.GUIDE_TOPIC_DESCRIPTION, "kind": mcp_server.GUIDE_KIND_DESCRIPTION}
+    sizes = {name: len(json.dumps(tools[name], separators=(",", ":"), ensure_ascii=False)) for name in SIZES}
+    bare = {name: len(json.dumps({k: tools[name][k] for k in ("name", "description", "inputSchema")},
+                                 separators=(",", ":"), ensure_ascii=False)) for name in SIZES}
+    with capsys.disabled():
+        print(f"\npublished entries: {sizes}; name, description and input schema: {bare}")
+    assert sizes == SIZES
+
+
+def test_guide_kind_s_words_keep_the_text_rules():
+    assert tr.check(mcp_server.GUIDE_KIND_DESCRIPTION, tr.CLAUDE) == []
+    for row in ("log", "part"):
+        for sentence in mcp_schemas.NEAR_MISSES[row].values():
+            assert tr.check(sentence, tr.CLAUDE) == [], sentence
+
+
+# ---------------------------------------------------------------- guide through /mcp
+
+@pytest.mark.parametrize(("sent", "topic"), [({"topic": "food"}, "food"), ({"kind": "lift_session"}, "lifts"),
+                                             ({"topic": "Log"}, "log"), ({"topic": "sleep", "kind": "sleep"},
+                                                                         "measurement")])
+def test_guide_answers_each_topic_its_row_noting_the_topic(http, sent, topic):
+    token = person(330)
+    answer = answer_of(http, token, "guide", sent)
+    assert answer == guide.ANSWERS[topic]
+    mcp_schemas.GuideResult.model_validate(answer)
+    row = rows()[-1]
+    assert (row.function, row.outcome, row.notes) == ("guide", "read", f"topic={topic}")
+
+
+@pytest.mark.parametrize("sent", [{}, {"topic": "yoga"}, {"topic": "food", "kind": "lifts"}, {"topic": 5},
+                                  {"topic": "food", "level": 2}])
+def test_guide_refuses_and_its_row_notes_topic_none(http, sent):
+    token = person(331)
+    answer = answer_of(http, token, "guide", sent)
+    assert answer["error"] == "invalid_field"
+    assert (rows()[-1].function, rows()[-1].outcome, rows()[-1].notes) == ("guide", "refused", "topic=none")
+
+
+# ---------------------------------------------------------------- the call row
+
+def test_one_row_a_call_named_log_or_guide_its_notes_first_and_no_value_in_any_column(http):
+    token = person(340)
+    account_of(http, token)
+    before = len(rows())
+    answer_of(http, token, "log", {"kind": "Gym", "parts": [SET, SET, {"movement": "Bench Press", "weight_kg": 60,
+                                                                     "reps": 8, "exact": True}],
+                                   "details": {"new_session": True}, "notes": MARKER})
+    answer_of(http, token, "log", {"kind": MARKER, "details": {"kg": 80}})
+    answer_of(http, token, "log", {"kind": "food", "details": {"entries": [{"description": MARKER, "kcal": 100}]}})
+    answer_of(http, token, "guide", {"topic": MARKER})
+    logged = rows()[before:]
+    assert [r.function for r in logged] == ["log", "log", "log", "guide"]
+    assert [r.notes for r in logged] == ["kind=lifts word=gym", "kind=none word=other", "kind=food word=food",
+                                         "topic=none"]
+    assert logged[0].tried == "details{new_session} kind notes parts[3]{exact,movement,reps,weight_kg}"
+    assert logged[2].tried == "details{entries} kind"
+    for row in logged:
+        for column in models.CallLog.__table__.columns:
+            assert MARKER not in str(getattr(row, column.key)), column.name
+
+
+def test_pair_takes_the_room_log_s_notes_leave_and_word_goes_before_pair_is_cut_below_three_items():
+    from app import calllog
+    from app.services import lifts
+    items = [f"{100 + i}:1.25" for i in range(30)]
+    calllog.new_notes()
+    calllog.note("kind", "measurement")  # the longest kind
+    calllog.note("word", "x" * 30)
+    room = calllog.room(lifts.PAIR_NOTE)
+    assert room == calllog.NOTES_MAX - len("kind=measurement word=" + "x" * 30) - 1 - len("pair=")
+    word = lifts.pair_note(items)
+    assert len(word) <= room and len(",".join(items[:len(word.split(",")) + 1])) > room
+    assert calllog.noted("word") is not None  # more than 3 items fit: word= stays
+    calllog.new_notes()
+    calllog.note("kind", "lifts")
+    calllog.note("word", "y" * 100)  # leaves room for under 3 items: word= is dropped first
+    long = [f"{1000 + i}:12.25" for i in range(10)]
+    word = lifts.pair_note(long)
+    assert calllog.noted("word") is None and len(word.split(",")) >= 3
+    calllog.note(lifts.PAIR_NOTE, word)
+    noted = " ".join(f"{k}={w}" for k, w in calllog._NOTES.get().items())
+    assert noted.startswith("kind=lifts pair=") and len(noted) <= calllog.NOTES_MAX
+    calllog._NOTES.set(None)
+    assert calllog.room("pair") == calllog.NOTES_MAX - len("pair=")  # outside a call: the whole column
+
+
+def test_a_log_call_s_pair_note_follows_its_kind_and_word(http):
+    token = person(341)
+    answer_of(http, token, "log_lifts", {"sets": [BENCH]})
+    answer_of(http, token, "log", {"kind": "lifts", "parts": [{"movement": "Dumbbell Bench Press", "weight_kg": 50,
+                                                               "reps": 8}]})
+    notes = rows()[-1].notes
+    assert notes.startswith("kind=lifts word=lifts pair=") and len(notes) <= 128
+
+
+# ---------------------------------------------------------------- the limits, the key and the switch
+
+def test_the_write_limit_counts_log_and_the_read_limit_counts_guide(http):
+    from datetime import timedelta
+    from app import db
+    token = person(350)
+    account = account_of(http, token)
+    started = db.utcnow() - timedelta(minutes=3)
+    with db.session_scope() as s:
+        s.add_all(models.CallLog(user_id=account, function="log", started_at=started, ms=1, ok=True, result_bytes=1)
+                  for _ in range(services.common.WRITE_LIMIT))
+    assert answer_of(http, token, "log_bodyweight", {"kg": 80})["error"] == "too_many_writes"  # log's rows count
+    assert answer_of(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})["error"] == "too_many_writes"
+    other = person(351)
+    account = account_of(http, other)
+    with db.session_scope() as s:
+        s.add_all(models.CallLog(user_id=account, function="guide", started_at=started, ms=1, ok=True, result_bytes=1)
+                  for _ in range(services.common.READS_LIMIT))
+    assert answer_of(http, other, "get_log", {})["error"] == "too_many_reads"  # guide's rows count with every read
+    assert answer_of(http, other, "guide", {"topic": "food"})["error"] == "too_many_reads"
+    assert "guide" in mcp_server.READ_FUNCTIONS and "log" in services.common.WRITE_FUNCTIONS
+    assert "guide" not in services.common.WRITE_FUNCTIONS
+
+
+def test_a_key_on_log_gives_the_first_answer_again_and_crossed_with_log_lifts_is_key_reused(http):
+    token = person(360)
+    account = account_of(http, token)
+    sent = {"kind": "bodyweight", "details": {"kg": 80}, "key": "abcdefgh01"}
+    first = call(http, token, "log", sent)
+    again = call(http, token, "log", sent)
+    assert again["content"][0]["text"] == first["content"][0]["text"] and rows()[-1].outcome == "repeat"
+    lifted = call(http, token, "log_lifts", {"sets": [SQUAT_SET], "key": "crossed001"})
+    assert lifted["isError"] is False
+    crossed = answer_of(http, token, "log", {"kind": "lifts", "parts": [SET], "key": "crossed001"})
+    assert crossed["error"] == "key_reused" and not FIVE_NAMES.search(json.dumps(crossed))
+    from evals.run import person_rows
+    assert len(person_rows(account)["lift_set"]) == 1  # nothing written by the second
+    assert len(person_rows(account)["bodyweight"]) == 1
+
+
+@pytest.mark.parametrize("setting", sorted(models.CLAUDE_CAN))
+def test_both_settings_allow_log_and_guide(http, setting):
+    token = person(370)
+    set_switch(account_of(http, token), setting)
+    assert "error" not in answer_of(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})
+    assert "error" not in answer_of(http, token, "guide", {"topic": "log"})
+
+
+# ---------------------------------------------------------------- no refusal of log names one of the five
+
+EVERY_REFUSAL = [
+    {"kind": "bodyweight", "kg": 80},  # misfit: a field log does not take
+    {"kind": 5},  # misfit: a wrong type
+    {"parts": [SET]},  # misfit: no kind
+    {"kind": "lifts", "parts": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]},  # misfit: a part's field
+    {"kind": "yoga"},  # route: no such kind
+    {"kind": "lifts"},  # route: no parts
+    {"kind": "cardio", "parts": [WALK, WALK]},  # route: two sessions
+    {"kind": "bodyweight", "details": {"weight": 80}},  # route: a details key the kind does not take
+    {"kind": "bodyweight", "details": {"kg": 80}, "parts": [SET]},  # route: parts on a kind that takes none
+    {"kind": "lifts", "parts": [{"movement": "plank", "minutes": 1.005}]},  # route: short of a whole second
+    {"kind": "lifts", "parts": [{"movement": "plank", "minutes": 1, "time_s": 60}]},  # route: two forms
+    {"kind": "lifts", "parts": [SET], "details": {"new_session": "yes"}},  # the kind's model
+    {"kind": "measurement", "details": {"value": 86}},  # the kind's model: no kind
+    {"kind": "food", "details": {"entries": []}},  # the kind's model or service
+    {"kind": "lifts", "parts": [{"movement": "Zorbinator", "weight_kg": 5, "reps": 5}]},  # the service
+    {"kind": "cardio", "parts": [{"movement": "Back Squat", "minutes": 30}]},  # the service: not an activity
+    {"kind": "bodyweight", "details": {"kg": 80}, "key": "x"},  # the key's shape
+    {"kind": "bodyweight", "details": {"kg": 80}, "date": "soon"},  # the service: a date
+]
+
+
+def test_no_refusal_through_log_names_one_of_the_five(http):
+    token = person(380)
+    for sent in EVERY_REFUSAL:
+        answer = answer_of(http, token, "log", sent)
+        assert "error" in answer, sent
+        assert not FIVE_NAMES.search(json.dumps(answer)), (sent, answer)

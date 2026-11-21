@@ -33,7 +33,7 @@ log_lifts(user_id, data, by)
     asking once: no line when an earlier live set of the same lift, logged after the bar lift's first live set above
     0 kg (set ids, the order of logging), doubled, is already above that bar best, since the person was asked then.
     Whenever the bar lift is logged above 0 kg the call log notes the ratio (pair_note): ids and ratios, never a
-    weight.
+    weight, in the room the notes column has left after a log call's own notes.
     New bests are found against every earlier set of each lift: every session that comes before this
     one in the one order (see metrics.on_or_before). For a new session dated today that is every
     session, a later-dated one included; for a back-dated one, the ones on or before its date. An add
@@ -595,16 +595,28 @@ def _ratio(pair: float, bar: float) -> str:
     return str(formatting.shown_number(pair / bar, "rate"))
 
 
-def pair_note(items: list[str]) -> str:
-    """The call log's word for the per-hand ratios: '<exercise id>:<ratio>' joined by commas, cut at a whole item so
-    that 'pair=' and the word fit the notes column (calllog.NOTES_MAX)."""
-    room = calllog.NOTES_MAX - len(PAIR_NOTE) - 1
+PAIR_ITEMS_KEPT = 3  # a log call's word= goes before pair= keeps fewer of its items than this (log-and-guide.md)
+
+
+def _pair_items(items: list[str], room: int) -> str:
     kept: list[str] = []
     for item in items:
         if len(",".join([*kept, item])) > room:
             break
         kept.append(item)
     return ",".join(kept)
+
+
+def pair_note(items: list[str]) -> str:
+    """The call log's word for the per-hand ratios: '<exercise id>:<ratio>' joined by commas, cut at a whole item so
+    that 'pair=' and the word fit the room the notes column has left (calllog.room): the whole column outside a call,
+    or what a log call's kind= and word= leave. When that room would cut it below PAIR_ITEMS_KEPT items (or below all
+    of them, when fewer), the call's word= note is dropped first, and the word sized to the room then left."""
+    word = _pair_items(items, calllog.room(PAIR_NOTE))
+    if len(word.split(",") if word else []) < min(len(items), PAIR_ITEMS_KEPT) and calllog.noted("word") is not None:
+        calllog.unnote("word")
+        word = _pair_items(items, calllog.room(PAIR_NOTE))
+    return word
 
 
 def hand_check(s: Session, user_id: int, sets: list[dict], by_name: dict,
