@@ -193,6 +193,18 @@ def test_the_claude_command_has_no_server_no_tool_and_no_prompt():
     assert "--no-session-persistence" in command and "--allowedTools" not in command
     assert command[-4:] == ["--effort", "medium", "--model", "claude-sonnet-5-5"]
     assert not any("127.0.0.1" in p or "mcp__" in p or "spotter" in p for p in command)
+
+
+def test_the_claude_command_tells_the_model_it_is_a_plain_chat():
+    # With Claude Code's own system prompt and no tools, a run with no data reached for a file tool and hung.
+    command = without.claude_command("claude", "claude-sonnet-5-5", "medium")
+    assert command.count("--append-system-prompt") == 1
+    assert command[command.index("--append-system-prompt") + 1] == without.PLAIN_CHAT
+    assert without.PLAIN_CHAT == ("This is a chat. You have no tools, no files and no working directory: "
+                                  "answer from the conversation alone.")
+    for words in ("no tools", "no files", "no working directory"):
+        assert words in without.PLAIN_CHAT
+    assert without.claude_command("claude", None, None)[-2:] == ["--append-system-prompt", without.PLAIN_CHAT]
     assert run.CHILD_SETS == {"CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"}  # the env the runs get: run.child_env
 
 

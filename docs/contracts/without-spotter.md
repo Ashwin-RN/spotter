@@ -107,3 +107,14 @@ text an assistant reads changes: `python -m evals.need main` says no.
   server, is still "not run". Seen in 4 `gpt-6-luna` pilot runs.
 - C2: "a week 8" also takes "8-week", "8 week" and "eight-week". A right reply headed "Sam's 8-week first 10K plan"
   failed. The pattern is C2's own: `look_10k_friend` has no reply pattern to copy.
+
+## Note of 2026-11-21, the N arms on Claude run as a plain chat
+
+- Cause: Claude Code's own system prompt tells the model it is a coding agent with a working folder. With no data
+  and no tools, an N-memory run reached for a file tool that is not there and hung to the time-out, 4 times in 5.
+- The Claude N command now adds `--append-system-prompt` with one sentence, `PLAIN_CHAT` in `evals/without.py`:
+  "This is a chat. You have no tools, no files and no working directory: answer from the conversation alone."
+  With it the same run answered 6 times in 6.
+- Every Claude N run, in all three N arms, runs under it: the same condition for each. Runs made before it, without
+  the line, are not mixed with runs after it.
+- Codex and Gemini are unchanged. The W arm is unchanged: it runs through `run.run_once`.

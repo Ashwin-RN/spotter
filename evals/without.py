@@ -403,11 +403,17 @@ def prompt_for(arm: str, case: dict, rows: dict[str, list[dict]], names: dict[in
 
 # ---------------------------------------------------------------- the commands and the request of an N arm
 
+PLAIN_CHAT = "This is a chat. You have no tools, no files and no working directory: answer from the conversation alone."
+
+
 def claude_command(claude: str, model: str | None, effort: str | None) -> list[str]:
     """A Claude CLI run with no tools: no MCP server (an empty config, strictly), no built-in tool, the advisor off
-    as run.py turns it off. The prompt goes by stdin: no prompt in the command."""
+    as run.py turns it off. The prompt goes by stdin: no prompt in the command. PLAIN_CHAT is appended to the
+    system prompt: Claude Code's own tells the model it has a working folder, and with no data and no tools a run
+    reached for a file tool that is not there and hung."""
     command = [claude, "-p", "--output-format", "json", "--mcp-config", EMPTY_MCP, "--strict-mcp-config",
-               "--tools", "", "--no-session-persistence", "--settings", run.NO_ADVISOR_SETTINGS]
+               "--tools", "", "--no-session-persistence", "--settings", run.NO_ADVISOR_SETTINGS,
+               "--append-system-prompt", PLAIN_CHAT]
     if effort:
         command += ["--effort", effort]
     if model:

@@ -867,7 +867,9 @@ python -m evals.without --case R6 --arm W --arm N-history
   argument) and to Codex (`codex exec ... -`), since a history is longer than the Windows command line. To Gemini it
   is the one user message.
 - No tools in an N arm. Claude: `--mcp-config '{"mcpServers": {}}' --strict-mcp-config --tools ""`, the advisor off as
-  in every run, an empty working folder. Codex: the W command without its three `mcp_servers.spotter` lines. Gemini:
+  in every run, an empty working folder, and `--append-system-prompt` saying it is a plain chat with no tools, files or
+  working folder (since 2026-11-21: without it a run with no data reached for a file tool and hung; earlier runs are
+  not mixed with later ones). Codex: the W command without its three `mcp_servers.spotter` lines. Gemini:
   no `tools` and no system text.
 - Each reply is judged by the case's `reply` rule, the same in every arm (`new_reply` for N-new where a case has
   one: it says there is no record and claims no figure). R1, R2 and R4 also have a `band`: every figure just before
