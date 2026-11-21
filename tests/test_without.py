@@ -429,6 +429,18 @@ def test_c2_takes_an_8_week_plan_in_any_spelling_and_still_fails_a_6_week_one():
         assert without.reply_reasons(BY_ID["C2"], "N-new", reply), reply
 
 
+def test_u1_fails_an_estimate_only_in_the_biryani_s_own_sentence():
+    """The day's total may name another entry's estimate; the biryani or its 640 beside "estimat..." still fails."""
+    for reply in ("Logged your usual chicken biryani for dinner: 640 kcal, using your previous entry. "
+                  "Today's total is 2,620 kcal, including 150 kcal estimated.",
+                  "Logged chicken biryani at dinner, 640 kcal.\nAn estimate of 150 kcal is in today's total.",
+                  RIGHT["U1"]):
+        assert without.reply_reasons(BY_ID["U1"], "N-history", reply) == [], reply
+    for reply in ("Logged the chicken biryani, an estimated 640 kcal.", "That biryani is about 640, my estimate.",
+                  "Estimated at 640 kcal, as before.", WRONG["U1"]):
+        assert without.reply_reasons(BY_ID["U1"], "N-history", reply), reply
+
+
 def test_a_w_run_gets_the_case_s_own_rules_and_reads_in_two_columns(app_settings, monkeypatch):
     got = []
 

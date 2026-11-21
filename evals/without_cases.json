@@ -105,7 +105,7 @@
    "say": "had the chicken biryani again for dinner tonight, same as usual",
    "seed": [{"service": "sixteen_weeks"}],
    "arms": ["W", "N-history"],
-   "reply": {"reply_has_pattern": ["(?<![\\w.,])640(?!\\d|[.,]\\d)"], "reply_lacks_pattern": ["\\bestimat\\w*"]},
+   "reply": {"reply_has_pattern": ["(?<![\\w.,])640(?!\\d|[.,]\\d)"], "reply_lacks_pattern": ["(?:\\bbiryani\\w*|(?<![\\w.,])640(?!\\d|[.,]\\d))[^.!?\\n]*\\bestimat\\w*|\\bestimat\\w*[^.!?\\n]*(?:\\bbiryani\\w*|(?<![\\w.,])640(?!\\d|[.,]\\d))"]},
    "w": {"expect": {"reply_has_pattern": ["(?<![\\w.,])640(?!\\d|[.,]\\d)"], "any_of": [{"no_call": ["log_food"], "reply_asks": true}, {"function": "log_food", "inputs_include": {"entries": [{"kcal": 640, "meal": "dinner"}]}, "inputs_forbid": {"entries.*.estimated": true}, "ok_calls": {"log_food": 1}}], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]}, "calls": {"must": ["get_data", "get_log", "find_food"], "may": ["log_food", "what_is_logged", "whoami"], "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]}}
   },
   {

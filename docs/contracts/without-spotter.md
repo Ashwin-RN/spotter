@@ -118,3 +118,11 @@ text an assistant reads changes: `python -m evals.need main` says no.
 - Every Claude N run, in all three N arms, runs under it: the same condition for each. Runs made before it, without
   the line, are not mixed with runs after it.
 - Codex and Gemini are unchanged. The W arm is unchanged: it runs through `run.run_once`.
+
+## Note of 2026-11-21, U1's estimate rule
+
+- U1's reply fails "estimat..." only in the same sentence as the biryani or as 640, in either order. A sentence ends
+  at `.`, `!`, `?` or a new line. A right `gpt-6-luna` reply logged 640 kcal from the earlier entry and failed only
+  because the day's total named another entry's estimate: "Today's total is 2,620 kcal, including 150 kcal estimated."
+- The 640 pattern is still `recent_biryani_again`'s own. The lack pattern is now U1's own. The W arm is unchanged: its
+  record check still forbids `estimated: true` in the `log_food` call.
