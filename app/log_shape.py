@@ -13,7 +13,8 @@ A time goes as time_s or minutes and a distance as distance_m, distance_km or di
 minutes and distance_km. A cardio distance_mi goes on as log_cardio takes it, and its service converts it.
 
 said_as_sent says a kind's own refusal in the names log was sent: a set's exercise as movement, "Set 3" as parts[2],
-kg as details.kg, "Entry 2" as details.entries[1], and one of the five functions' names as log.
+kg as details.kg, "Entry 2" as details.entries[1], and one of the five functions' names as log. A range refusal of a
+time or a distance route converted names the field and the value as sent (out_of_range).
 
 It imports only app.mcp_schemas and app.rules from the app: the judge and the call log read it, so it never loads
 app.main, app.mcp_server or app.calllog. It reads the five's argument models and words, never a registered function,
@@ -23,6 +24,7 @@ so it holds once the five are no longer registered.
 import dataclasses
 import difflib
 import json
+import math
 import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
@@ -128,12 +130,20 @@ LOG_FIELDS = ("kind", "parts", "details", *TOP_FIELDS)
 DETAIL_FIELDS = {"lifts": ("new_session",),
                  "cardio": ("incline_pct", "speed_kmh", "speed_mph", "avg_hr", "machine_kcal"),
                  "bodyweight": ("kg", "lb"), "food": ("entries",), "measurement": ("kind", "value")}
+KNOWN_DETAILS = frozenset(f for fields in DETAIL_FIELDS.values() for f in fields)  # any kind's own detail field
 
 # Decision 51's conversions, in exact decimals, by (the form sent, the kind's column): a mile in km is rules' own.
 _MILE_KM = Decimal(repr(rules.OTHER_FIELDS["distance_mi"][1]))
 _CONVERSIONS = {("minutes", "time_s"): lambda n: n * 60, ("distance_km", "distance_m"): lambda n: n * 1000,
                 ("distance_mi", "distance_m"): lambda n: n * _MILE_KM * 1000,
                 ("time_s", "minutes"): lambda n: n / 60, ("distance_m", "distance_km"): lambda n: n / 1000}
+# The same, back: a number in the kind's column in the form sent.
+_BACK = {("minutes", "time_s"): lambda n: n / 60, ("distance_km", "distance_m"): lambda n: n / 1000,
+         ("distance_mi", "distance_m"): lambda n: n / (_MILE_KM * 1000),
+         ("time_s", "minutes"): lambda n: n * 60, ("distance_m", "distance_km"): lambda n: n * 1000}
+# Each form's unit and what it measures, in a refusal's words.
+UNIT_WORDS = {"time_s": ("seconds", "time"), "minutes": ("minutes", "time"), "distance_m": ("metres", "distance"),
+              "distance_km": ("km", "distance"), "distance_mi": ("mi", "distance")}
 
 # ---------------------------------------------------------------- log's words (model-read)
 
@@ -188,12 +198,14 @@ class Routed:
     """One log call, routed. kind is one of KINDS, or None when the word resolved to none. function is the kind's
     function, a key of LOG_ARGUMENTS. arguments are in that function's own shape, or None with a refusal. refusal is
     Spotter's answer for what the shape makes wrong, every problem at once, or None. word is the kind word as the call
-    row may keep it (note_word)."""
+    row may keep it (note_word). converted holds each time or distance route converted, as (the part's place, the
+    field sent, the value sent, the kind's column), so said_as_sent can say a refusal of it as sent."""
     kind: str | None
     function: str | None
     arguments: dict | None
     refusal: dict | None
     word: str
+    converted: tuple = ()
 
     @property
     def model(self):
@@ -315,9 +327,11 @@ def _listed(fields, last: str) -> str:
     return fields[0] if len(fields) == 1 else f"{', '.join(fields[:-1])} {last} {fields[-1]}"
 
 
-def _convert(kind: str, i: int, part: dict, row: dict) -> list[dict]:
+def _convert(kind: str, i: int, part: dict, row: dict, converted: list) -> list[dict]:
     """The forms of decision 51 in one part: two forms of one number refused when either is converted; each form the
-    kind does not keep converted into row, in its own column. Returns the problems."""
+    kind does not keep converted into row, in its own column, and noted in converted as (i, the field sent, the value
+    sent, the column). A converted number too large for any number Spotter reads is refused here, in the kind's own
+    range as said_as_sent says it. Returns the problems."""
     problems = []
     for forms in FORMS:
         sent = [f for f in forms if f in PART_TAKES[kind] and part.get(f) is not None]
@@ -338,12 +352,17 @@ def _convert(kind: str, i: int, part: dict, row: dict) -> list[dict]:
             problems.append(_error("invalid_field", f"{at} must be a number, not {_shown(value)}.",
                                    f"Give {at} as a number.", at))
             continue
-        converted = _CONVERSIONS[(sent, column)](number)
-        if column == "time_s" and converted != converted.to_integral_value():
+        number = _CONVERSIONS[(sent, column)](number)
+        if column == "time_s" and number != number.to_integral_value():
             problems.append(_error("invalid_field", f"{at} {rules.as_sent(value)} is not a whole number of seconds.",
                                    f"Send the time as parts[{i}].time_s, in whole seconds.", at))
             continue
-        row[column] = _plain(converted)
+        if not math.isfinite(float(number)):
+            message, fix = out_of_range(kind, i, sent, value, column)
+            problems.append(_error("invalid_field", message, fix, at))
+            continue
+        row[column] = _plain(number)
+        converted.append((i, sent, value, column))
     return problems
 
 
@@ -362,8 +381,10 @@ def route(arguments: Any) -> Routed:
     """A log call as sent, routed to its kind's function (Routed). Every problem the shape makes is refused at once,
     with the kind when one resolved. A lift part is a set and the one cardio part the session, movement as exercise,
     each time and distance in the kind's own column; details are the kind's own fields; date, notes, allow_repeat and
-    key go on as sent, null included, but for a null notes on a kind that takes none. A measurement's own word as the
-    kind fills in details.kind. Never raises."""
+    key go on as sent, null included, but for a null notes on a kind that takes none. A null on a part field or a
+    detail field the kind does not take there is left out, as a null notes is; any other name is refused, null or
+    not. A measurement's own word as the kind fills in details.kind, a null details.kind included; under kind
+    measurement, details.kind takes the same words. Never raises."""
     arguments = arguments if isinstance(arguments, dict) else {}
     word = arguments.get("kind")
     problems = []
@@ -414,18 +435,28 @@ def route(arguments: Any) -> Routed:
             problems.append(_error("invalid_field", f"cardio takes exactly 1 part, the session: {len(parts)} were "
                                                     "sent.",
                                    f"Send one part: {_words(kind)}. Another session takes its own log call.", "parts"))
-    rows = []
+    rows, converted = [], []
     for i, part in enumerate(parts if kind in PART_MAP and parts else []):
         if not isinstance(part, dict):
             problems.append(_error("invalid_field", f"parts[{i}] must be an object of named fields.",
                                    f"Send each part with its named fields: {_words(kind)}.", f"parts[{i}]"))
             continue
+        # A null on a part field the kind does not take is left out, as the five read a null: log's schema offers
+        # every part field to every part, null included. Any other name stays, null or not.
+        part = {k: v for k, v in part.items() if not (v is None and k in PART_FIELDS and k not in PART_TAKES[kind])}
         found_here = [p for p in (_part_problem(kind, i, key) for key in part) if p]
         problems += found_here
         row = {PART_MAP[kind][key]: value for key, value in part.items() if key in PART_MAP[kind]}
         if not found_here:
-            problems += _convert(kind, i, part, row)
+            problems += _convert(kind, i, part, row, converted)
         rows.append(row)
+    # The same for details: a null on another kind's own field is left out, and so is a null details.kind where the
+    # kind word names the measurement.
+    details = {k: v for k, v in details.items() if not (v is None and k in KNOWN_DETAILS and (
+        k not in DETAIL_FIELDS[kind] or (k == "kind" and measure is not None)))}
+    if kind == "measurement" and measure is None and isinstance(details.get("kind"), str):
+        # details.kind takes a measurement's own word as the kind does: sleep is sleep_hours either way.
+        details["kind"] = MEASURE_WORDS.get(fold(details["kind"]), details["kind"])
     for key in details:
         problem = _detail_problem(kind, key)
         if problem:
@@ -453,7 +484,7 @@ def route(arguments: Any) -> Routed:
         routed = {**rows[0], **details, **top}
     else:
         routed = {**details, **top}
-    return Routed(kind, function, routed, None, note_word(word))
+    return Routed(kind, function, routed, None, note_word(word), tuple(converted))
 
 
 # ---------------------------------------------------------------- a kind's own refusal, as log was sent
@@ -501,9 +532,81 @@ def said(text: str, kind: str) -> str:
     return pattern.sub(lambda m: names[m[0]], text)
 
 
-def said_as_sent(answer: Any, kind: Any) -> Any:
+def _limits(kind: str, column: str) -> tuple[Decimal, Decimal]:
+    """The range the kind's own checks hold its column to: a set's in rules.HARD_RULES, a session's in rules.NUMBERS."""
+    lo, hi = rules.HARD_RULES[column] if kind == "lifts" else rules.NUMBERS[column][:2]
+    return Decimal(repr(lo)), Decimal(repr(hi))
+
+
+def _quantity(kind: str, column: str) -> str:
+    """The formatter's quantity the kind's own refusal says its column's range in: a set's as a count
+    (rules._set_numbers), a session's as rules.bounded says it."""
+    if kind == "lifts":
+        return "count"
+    return "week_minutes" if column == "minutes" else rules.NUMBER_QUANTITIES[column]
+
+
+def out_of_range(kind: str, i: int, sent: str, value: Any, column: str) -> tuple[str, str]:
+    """A time or a distance route converted, outside the range of the kind's column, said as sent: (message, fix),
+    with the field and the value as sent. The range is said in the unit sent when both its ends come to whole numbers
+    in it (a session's 1 to 600 minutes as 60 to 36,000 seconds); else in the column's own unit, named."""
+    lo, hi = _limits(kind, column)
+    back = [_BACK[(sent, column)](bound) for bound in (lo, hi)]
+    whole = all(bound == bound.to_integral_value() for bound in back)
+    unit, what = UNIT_WORDS[sent if whole else column]
+    shown = (rules.span(*back, "count") if whole else rules.span(lo, hi, _quantity(kind, column))) + f" {unit}"
+    at, give = ((f"parts[{i}]: {sent}", f"Give {sent} on parts[{i}]") if kind == "lifts"
+                else (f"parts[{i}].{sent}", f"Give parts[{i}].{sent} as a number"))
+    return (f"{at} {rules.as_sent(value)} is outside {shown}.",
+            f"{give} {'from' if whole else f'for a {what} of'} {shown}.")
+
+
+_RANGE = r"[\d,.]+ to [\d,.]+"
+
+
+def _of_converted(error: dict, kind: str, converted) -> dict:
+    """One refusal, said for a time or a distance route converted when it is the kind's own range refusal of that
+    part's column (rules._set_numbers for a set, rules.bounded for a session, after said); else as it came."""
+    for i, sent, value, column in converted:
+        if kind == "lifts":
+            message = rf"parts\[{i}\]: {column} \S+ is outside {_RANGE}\."
+            fix = rf"Give {column} on parts\[{i}\] from {_RANGE}, in \w+\."
+        else:
+            message = rf"parts\[{i}\]\.{column} \S+ is outside {_RANGE}\."
+            fix = rf"Give parts\[{i}\]\.{column} as a number from {_RANGE}\."
+        if isinstance(error.get("message"), str) and re.fullmatch(message, error["message"]):
+            new_message, new_fix = out_of_range(kind, i, sent, value, column)
+            fits = isinstance(error.get("fix"), str) and re.fullmatch(fix, error["fix"])
+            return {**error, "message": new_message, **({"fix": new_fix} if fits else {})}
+    return error
+
+
+def _as_converted(out: dict, kind: str, converted) -> dict:
+    """A refusal with each range refusal of a converted part said as sent: in errors, and in the joined message and
+    fix at the top."""
+    listed = isinstance(out.get("errors"), list)
+    errors = out["errors"] if listed else [out]
+    swaps, said_errors = [], []
+    for error in errors:
+        new = _of_converted(error, kind, converted) if isinstance(error, dict) else error
+        if new is not error:
+            swaps += [(error[k], new[k]) for k in ("message", "fix") if isinstance(error.get(k), str)]
+        said_errors.append(new)
+    top = dict(out)
+    for k in ("message", "fix"):
+        for old, new in swaps:
+            if isinstance(top.get(k), str):
+                top[k] = top[k].replace(old, new)
+    if listed:
+        top["errors"] = said_errors
+    return top
+
+
+def said_as_sent(answer: Any, kind: Any, converted=()) -> Any:
     """A kind's own refusal with every field named as log was sent: its message, its fix, a field when it has one,
-    and the same inside errors. The code, the numbers and every other word stay. Anything else as it came."""
+    and the same inside errors. The code, the numbers and every other word stay, but for a range refusal of a time or
+    a distance route converted (converted, as Routed keeps it), which names the field and the value as sent and the
+    range as out_of_range says it. Anything else as it came."""
     if not isinstance(answer, dict) or not isinstance(kind, str) or kind not in KIND_FUNCTIONS:
         return answer
 
@@ -514,4 +617,4 @@ def said_as_sent(answer: Any, kind: Any) -> Any:
     out = one(answer)
     if isinstance(out.get("errors"), list):
         out["errors"] = [one(e) if isinstance(e, dict) else e for e in out["errors"]]
-    return out
+    return _as_converted(out, kind, converted) if converted else out

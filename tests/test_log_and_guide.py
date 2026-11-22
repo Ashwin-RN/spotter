@@ -569,6 +569,172 @@ def test_a_form_that_is_no_number_is_refused_not_converted(value):
     assert answer["fix"] == "Give parts[0].minutes as a number."
 
 
+def test_a_converted_number_too_large_for_any_number_is_refused_as_out_of_range():
+    answer = refused({"kind": "lifts", "parts": [{"movement": "Plank", "weight_kg": 0, "minutes": 1e308}]})
+    assert answer["message"] == "parts[0]: minutes 1e+308 is outside 1 to 3,600 seconds."
+    assert answer["fix"] == "Give minutes on parts[0] for a time of 1 to 3,600 seconds."
+    assert answer["field"] == "parts[0].minutes"
+
+
+# ---------------------------------------------------------------- a null read as left out (the fix round, A)
+
+WALK_NULLS = {"movement": "Outdoor Walk", "minutes": 20, "weight_kg": None, "reps": None, "exact": None}
+
+
+@pytest.mark.parametrize(("sent", "own"), [
+    ({"kind": "cardio", "parts": [WALK_NULLS]}, {"exercise": "Outdoor Walk", "minutes": 20}),
+    ({"kind": "cardio", "parts": [{**WALK, "weight_lb": None, "time_s": 1800, "minutes": None}]},
+     {"exercise": "Outdoor Walk", "minutes": 30}),  # a null on a form the kind takes is no second form
+    ({"kind": "sleep", "details": {"kind": None, "value": 7}}, {"kind": "sleep_hours", "value": 7}),
+    ({"kind": "bodyweight", "details": {"kg": 80, "entries": None, "new_session": None, "avg_hr": None}}, {"kg": 80}),
+    ({"kind": "lifts", "parts": [SET], "details": {"kind": None, "value": None, "kg": None}},
+     {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}]}),
+])
+def test_a_null_on_a_known_field_the_kind_does_not_take_there_is_left_out(sent, own):
+    routed = route(sent)
+    assert (routed.refusal, routed.arguments) == (None, own)
+    assert misfit_model(routed.model, routed.arguments) is None
+
+
+@pytest.mark.parametrize(("sent", "message"), [
+    ({"kind": "cardio", "parts": [{**WALK, "foo": None}]}, "parts[0]: 'foo' is not a field of a cardio part."),
+    ({"kind": "cardio", "parts": [{**WALK, "exercise": None}]},
+     "parts[0].exercise: a part names its lift or activity in movement."),
+    ({"kind": "cardio", "parts": [{**WALK, "notes": None}]}, "parts[0].notes: notes goes at the top of log, beside kind."),
+    ({"kind": "bodyweight", "details": {"kg": 80, "weight": None}}, "'details.weight' is not a field bodyweight takes "
+                                                                    "in details."),
+    ({"kind": "cardio", "parts": [WALK], "details": {"minutes": None}}, "details.minutes: minutes goes in a part."),
+])
+def test_an_unknown_name_is_refused_even_when_null(sent, message):
+    assert refused(sent)["message"] == message
+
+
+def test_a_null_on_a_field_the_kind_takes_goes_on_as_today():
+    lifts = route({"kind": "lifts", "parts": [{**SET, "weight_lb": None, "exact": None}]})
+    assert lifts.arguments == {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5, "weight_lb": None,
+                                         "exact": None}]}
+    assert route({"kind": "measurement", "details": {"kind": None, "value": 80}}).arguments == {"kind": None,
+                                                                                                 "value": 80}
+    assert route({"kind": "bodyweight", "details": {"kg": None, "lb": 185}}).arguments == {"kg": None, "lb": 185}
+
+
+def test_the_two_nulls_through_log_write_the_right_entry(http):
+    token = person(400)
+    walk = answer_of(http, token, "log", {"kind": "cardio", "parts": [WALK_NULLS]})
+    assert (walk["kind"], walk["entry"]["exercise"], walk["entry"]["minutes"]) == ("cardio_entry", "Outdoor Walk", 20)
+    sleep = answer_of(http, token, "log", {"kind": "sleep", "details": {"kind": None, "value": 7}})
+    assert (sleep["kind"], sleep["measurement"]["kind"], sleep["measurement"]["value"]) == ("measurement",
+                                                                                            "sleep_hours", 7)
+    as_today = answer_of(http, token, "log", {"kind": "measurement", "details": {"kind": None, "value": 80}})
+    assert as_today["message"] == "details.kind must be text, not null."
+
+
+# ---------------------------------------------------------------- details.kind takes a measurement's word (B)
+
+@pytest.mark.parametrize("word", list(log_shape.MEASURE_WORDS))
+def test_details_kind_under_measurement_takes_each_measurement_word_as_the_kind_does(word):
+    inner = route({"kind": "measurement", "details": {"kind": word, "value": 7}})
+    top = route({"kind": word, "details": {"value": 7}})
+    assert inner.refusal is None and inner.arguments == top.arguments == {"kind": log_shape.MEASURE_WORDS[word],
+                                                                          "value": 7}
+    folded = route({"kind": "measurement", "details": {"kind": word.upper().replace(" ", "_"), "value": 7}})
+    assert folded.arguments == top.arguments
+
+
+@pytest.mark.parametrize("inner", ["sleep", "Sleep", "sleep_hours", "sleep hours"])
+def test_a_measurement_word_and_details_kind_naming_the_same_agree(inner):
+    routed = route({"kind": "sleep", "details": {"kind": inner, "value": 7}})
+    assert (routed.refusal, routed.arguments) == (None, {"kind": "sleep_hours", "value": 7})
+
+
+def test_a_measurement_word_and_another_in_details_kind_still_differ():
+    assert refused({"kind": "sleep", "details": {"kind": "steps", "value": 7}})["message"] == (
+        "kind sleep and details.kind steps differ.")
+
+
+@pytest.mark.parametrize("inner", ["yoga", "", 5, ["sleep"], True])
+def test_details_kind_that_is_no_measurement_goes_on_as_sent(inner):
+    routed = route({"kind": "measurement", "details": {"kind": inner, "value": 7}})
+    assert (routed.refusal, routed.arguments) == (None, {"kind": inner, "value": 7})
+
+
+def test_details_kind_sleep_through_log_writes_sleep_and_yoga_is_refused_as_today(http):
+    token = person(401)
+    sleep = answer_of(http, token, "log", {"kind": "measurement", "details": {"kind": "sleep", "value": 7}})
+    assert (sleep["measurement"]["kind"], sleep["measurement"]["value"]) == ("sleep_hours", 7)
+    yoga = answer_of(http, token, "log", {"kind": "measurement", "details": {"kind": "yoga", "value": 7}})
+    assert (yoga["error"], yoga["message"]) == ("invalid_kind", "'yoga' is not a kind of measurement.")
+
+
+# ---------------------------------------------------------------- a converted number's refusal, as sent (C)
+
+CARRY = {"movement": "Farmer's Carry", "weight_kg": 20}
+RUN = {"movement": "Outdoor Run", "minutes": 30}
+# (the part, the code, the message, the fix): each pair of decision 51, its range said in the unit sent when both its
+# ends are whole in it, else in the kind's own unit, named.
+CONVERTED_REFUSALS = [
+    ("lifts", {"movement": "Plank", "weight_kg": 0, "minutes": 100}, "time_out_of_range",
+     "parts[0]: minutes 100 is outside 1 to 3,600 seconds.", "Give minutes on parts[0] for a time of 1 to 3,600 seconds."),
+    ("lifts", {"movement": "Plank", "weight_kg": 0, "minutes": -1}, "time_out_of_range",
+     "parts[0]: minutes -1 is outside 1 to 3,600 seconds.", "Give minutes on parts[0] for a time of 1 to 3,600 seconds."),
+    ("cardio", {"movement": "Outdoor Run", "time_s": 30}, "invalid_field",
+     "parts[0].time_s 30 is outside 60 to 36,000 seconds.",
+     "Give parts[0].time_s as a number from 60 to 36,000 seconds."),
+    ("cardio", {"movement": "Outdoor Run", "time_s": "40000"}, "invalid_field",
+     "parts[0].time_s 40000 is outside 60 to 36,000 seconds.",
+     "Give parts[0].time_s as a number from 60 to 36,000 seconds."),
+    ("lifts", {**CARRY, "distance_km": 6}, "distance_out_of_range", "parts[0]: distance_km 6 is outside 1 to 5,000 metres.",
+     "Give distance_km on parts[0] for a distance of 1 to 5,000 metres."),
+    ("lifts", {**CARRY, "distance_mi": 4}, "distance_out_of_range", "parts[0]: distance_mi 4 is outside 1 to 5,000 metres.",
+     "Give distance_mi on parts[0] for a distance of 1 to 5,000 metres."),
+    ("cardio", {**RUN, "distance_m": 5}, "invalid_field", "parts[0].distance_m 5 is outside 10 to 300,000 metres.",
+     "Give parts[0].distance_m as a number from 10 to 300,000 metres."),
+    ("cardio", {**RUN, "distance_mi": 9999}, "invalid_field",  # not converted by route: the service's own, as today
+     "parts[0].distance_mi 9999 mi is outside 0.01 to 186.41 mi.", "Give parts[0].distance_mi from 0.01 to 186.41 mi."),
+]
+
+
+@pytest.mark.parametrize(("kind", "part", "code", "message", "fix"), CONVERTED_REFUSALS,
+                         ids=[f"{k}-{'-'.join(p)}" for k, p, *_ in CONVERTED_REFUSALS])
+def test_a_refusal_of_a_converted_time_or_distance_names_the_field_and_value_as_sent(http, kind, part, code, message,
+                                                                                    fix):
+    answer = answer_of(http, person(402), "log", {"kind": kind, "parts": [part]})
+    assert (answer["error"], answer["message"], answer["fix"]) == (code, message, fix), answer
+    assert answer["errors"] == [{"error": code, "message": message, "fix": fix}]
+    for text in (message, fix):
+        assert tr.check(text, tr.MESSAGE) == [], text
+
+
+def test_only_the_parts_that_were_converted_are_said_again_and_the_joined_texts_follow(http):
+    sent = {"kind": "lifts", "parts": [{"movement": "Plank", "weight_kg": 0, "time_s": 4000},
+                                       {"movement": "Plank", "weight_kg": 0, "minutes": 70}, SET]}
+    answer = answer_of(http, person(403), "log", sent)
+    first, second = ("parts[0]: time_s 4000 is outside 1 to 3,600.", "Give time_s on parts[0] from 1 to 3,600, in "
+                                                                       "seconds."), \
+                    ("parts[1]: minutes 70 is outside 1 to 3,600 seconds.",
+                     "Give minutes on parts[1] for a time of 1 to 3,600 seconds.")
+    assert [(e["message"], e["fix"]) for e in answer["errors"]] == [first, second]
+    assert answer["message"] == f"2 problems. {first[0]} {second[0]}"
+    assert answer["fix"] == f"{first[1]} {second[1]}"
+
+
+def test_said_as_sent_says_only_a_converted_part_s_own_range_refusal_again():
+    lift = {"error": "time_out_of_range", "message": "parts[0]: time_s 6000 is outside 1 to 3,600.",
+            "fix": "Give time_s on parts[0] from 1 to 3,600, in seconds."}
+    sent = {**lift, "errors": [lift]}
+    converted = ((0, "minutes", 100, "time_s"),)
+    said = said_as_sent(sent, "lifts", converted)
+    assert said["message"] == said["errors"][0]["message"] == "parts[0]: minutes 100 is outside 1 to 3,600 seconds."
+    assert said_as_sent(sent, "lifts") == sent  # nothing converted: as before
+    assert said_as_sent(sent, "lifts", ((1, "minutes", 100, "time_s"),)) == sent  # another part's
+    other = {"error": "invalid_field", "message": "parts[0]: Plank records time, not reps.", "fix": "Send time_s on "
+                                                                                                      "parts[0]."}
+    assert said_as_sent({**other, "errors": [other]}, "lifts", converted) == {**other, "errors": [other]}
+    run = route({"kind": "cardio", "parts": [{"movement": "Outdoor Run", "time_s": 1800, "distance_m": 5000}]})
+    assert run.converted == ((0, "time_s", 1800, "minutes"), (0, "distance_m", 5000, "distance_km"))
+    assert route({"kind": "cardio", "parts": [WALK]}).converted == ()
+
+
 # ---------------------------------------------------------------- what the shape itself makes wrong
 
 # (the call, the field named, the message, words of the fix).
@@ -1109,7 +1275,7 @@ def test_guide_refuses_two_topics_an_unknown_topic_and_any_other_field():
     assert unknown["fix"] == "Send a kind: lifts, bodyweight, measurement, food or cardio. Or log, for every kind."
     for bad in ({}, {"kind": 3}, {"topic": "food", "kind": None}, {"kind": "food", "sets": 1},
                 {"topic": "food", "kinds": "food"}, None, "food"):
-        assert guide.answer(bad)["message"] == "guide takes one field, topic: a kind, or log.", bad
+        assert guide.answer(bad)["message"] == "guide takes topic or kind, as text: a kind, or log.", bad
 
 
 def test_a_guide_answer_is_a_copy():
@@ -1665,9 +1831,9 @@ def fixes_of(answer: dict) -> list[str]:
     return [answer["fix"]] if "fix" in answer else [e["fix"] for e in answer.get("errors", [])]
 
 
-def test_the_answers_both_lists_read_name_none_of_the_five(make_user):
+def test_the_answers_both_lists_read_name_none_of_the_five(make_user, noon):
     # Rows 11 and 14 to 17 of the contract's model-read table: a chat holding log and a chat holding the five both
-    # read these at call time, so each names neither.
+    # read these at call time, so each names neither. The clock is the file's fixed noon, never the real date.
     from datetime import timedelta
 
     from app import users

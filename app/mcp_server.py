@@ -898,9 +898,9 @@ def log_work(routed: log_shape.Routed, account: int) -> dict:
     found = misfit_model(routed.model, routed.arguments)
     if found is not None:
         refused = schema_refusal(routed.function, routed.model.model_json_schema(), routed.arguments, *found)
-        return log_shape.said_as_sent(refused, routed.kind)
+        return log_shape.said_as_sent(refused, routed.kind, routed.converted)
     out = LOG_STEPS[routed.function](account, **dict(read_arguments(routed.model, routed.arguments)))
-    return log_shape.said_as_sent(out, routed.kind) if "error" in out or "errors" in out else out
+    return log_shape.said_as_sent(out, routed.kind, routed.converted) if "error" in out or "errors" in out else out
 
 
 def guide_work(sent: dict, _account: int) -> dict:

@@ -2091,6 +2091,45 @@ def test_the_five_s_held_runs_judge_alike_when_sent_as_log(case_id, player):
                 assert not {c["name"] for c in player.record} & set(FIVE), player.record  # sent as log alone
 
 
+def guide_before_log(calls: list) -> list:
+    """A run's calls with a guide call on the first log call's kind just before it, as the instructions ask ("Call
+    guide with its kind before any details"); a run with no log call as it is."""
+    for n, item in enumerate(calls):
+        if item != THEN and item[0] == "log":
+            topic = lambda p, f=item[1]: {"topic": (f(p) if callable(f) else f)["kind"]}  # noqa: E731
+            return [*calls[:n], ("guide", topic), *calls[n:]]
+    return calls
+
+
+@pytest.mark.parametrize("case_id", list(REPLAY))
+def test_a_guide_call_before_log_judges_each_held_run_as_without_it(case_id, player):
+    """log-and-guide.md, the fix round: a good run often calls guide before log. Most logging cases name no guide in
+    calls.may, and the judge reads no call it is not told of: each held run sent as log, with a real guide call on
+    its kind first, passes or fails as it does without one, for the same reasons, the list of calls made aside."""
+    import re
+
+    from app import log_shape
+
+    def aside(reasons: list) -> list:  # the calls a reason lists, and each new row's own ids
+        return [re.sub(r'"(\w*id)": \d+', r'"\1": N', re.sub(r"\(calls: [^)]*\)", "(calls)", r)) for r in reasons]
+
+    case = next(c for c in judge.load_cases() if c["id"] == case_id)
+    good, bad = REPLAY[case_id]
+    for want, runs in ((True, good), (False, bad)):
+        for calls, reply in runs:
+            plain = sent_as_log(calls)
+            without = player.verdict(case, player.person(case), plain, reply)
+            with_guide = player.verdict(case, player.person(case), guide_before_log(plain), reply)
+            assert (with_guide == []) is want, (case_id, reply, with_guide)
+            assert aside(with_guide) == aside(without), (case_id, without, with_guide)
+            names = [c["name"] for c in player.record]
+            if "log" in names:
+                (guided,) = [c for c in player.record if c["name"] == "guide"]
+                assert not guided["is_error"] and guided["result"]["topic"] in log_shape.KINDS, guided
+                assert names.index("guide") == names.index("log") - 1, names
+    assert "guide" not in judge.DATA_READS
+
+
 def test_a_refused_log_call_then_a_good_one_judges_as_the_same_pair_through_log_lifts(player):
     """log_plank_minutes and hold_plank: a plank with no weight is refused by the service (its fix names 0 for body
     weight), then sent again right. Through log the pair passes either case; through log_lifts it passes hold_plank

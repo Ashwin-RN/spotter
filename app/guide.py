@@ -115,7 +115,7 @@ def answer(arguments: Any) -> dict:
     unknown = [k for k in arguments if k not in ("topic", "kind")]
     sent = [arguments[k] for k in ("topic", "kind") if k in arguments]
     if unknown or not sent or not all(isinstance(word, str) for word in sent):
-        return _refusal("guide takes one field, topic: a kind, or log.",
+        return _refusal("guide takes topic or kind, as text: a kind, or log.",
                         "Send topic, such as lifts or food, or log for every kind.")
     topic = sent[0]
     if fold(topic) != fold(sent[-1]):
