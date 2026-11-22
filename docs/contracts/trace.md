@@ -66,3 +66,9 @@ From `docs/contracts/hardening.md` (D8, D13). The call log's retention is unchan
 ## Note, 2026-11-20: the exercise list (`docs/contracts/exercise-list.md`)
 
 `notes` also holds `pair`, the per-hand ratios of a `log_lifts` call: a figure worked from two weights, never a weight (exercise-list.md R12).
+
+## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
+
+A `log` row notes `kind=` (the resolved kind, or `none`) and `word=` (Spotter's own open word sent, or `other`), first. `pair` takes the room left. A `guide` row notes `topic=` (the topic answered, or `none`). The free text sent is never written.
+
+`parts`, `details` and `movement` join the known names, with `LogPartIn`'s fields. `owner_calls` takes `function`, `caller` (`claude` or `web`) and `all_accounts`, each for the owner alone, and `function` and `caller` narrow every mode.

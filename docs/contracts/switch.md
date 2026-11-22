@@ -177,3 +177,7 @@ This work starts from a tree that holds the edit-history work as trimmed, the fe
 | The eval run | Feedback's and hi there's runs, if made by then | One run of the whole 26 after this build. If the other two were not run alone, this one covers all three |
 | Cases on an empty account | Hi there's note is in the first `whoami` of an empty account | Both delete cases seed a weigh-in, so neither starts empty |
 | The owner's functions | One commit after this work's base splits the owner's read of notes from the delete: `owner_feedback` only reads, a new `owner_delete_feedback` deletes and carries the destructive hint, and the owner has three functions | Not touched in the build. The test that pins `owner_feedback` as unchanged moves when this work is joined onto that commit |
+
+## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
+
+Both settings allow `log` and `guide`. `log` is at `log` in `NEEDS`, as the five are; `guide` is a read. The five keep their level and answer by name at both settings.

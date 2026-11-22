@@ -73,3 +73,7 @@ Not in this work: the confirm card and its drafts; telling assistants in the ins
 ## Note, 2026-11-17: the sweep runs beside the calls
 
 From `docs/contracts/hardening.md` (D8, D11). The write keys' retention is unchanged: keys older than 24 hours go, at most once an hour, and an older key counts as absent, swept or not. The sweep no longer runs inside the call that finishes: when one is due, it starts on a thread of its own and deletes in batches of 1,000 rows a statement, each its own transaction, at most 50 a table a run. A table that fails or stops at the cap is tried again 10 minutes on. `write_key.created_at` has an index for it (migration `0012`).
+
+## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
+
+`log` takes `key` and claims it under its own name, as every write does: the same `log` call twice gives the first answer. A key sent to one of the five and then to `log` is `key_reused`, and nothing is written by the second.

@@ -287,3 +287,7 @@ Two. The other findings are held by tests: a model never sends `1_0` or a bool o
 | 6 | A missing required argument is `missing_field`, not the pick's `invalid_field` (D11). The same reason, the code a service already gives, would make a wrong-typed weight or reps `not_a_number` or `not_a_whole_number` (`app/rules.py:324`, `:328`); D11 keeps `invalid_field` for those, the code `rules.bounded` and most services give | D11 as written |
 | 7 | A saved food sent with no servings is logged as 1 serving. `FoodEntryIn` says "Send servings with it" | Keep it. The alternative: `missing_field` for servings |
 | 8 | `waist_in_inches` passes a conversion by the assistant. `docs/contracts/units.md:51` calls converting in the assistant a break of "never recalculate" | The case as written, which passes a conversion or a question |
+
+## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
+
+`log`'s refusals name `log`, never one of the five ("'kg' is not a field of log."), and name each field as it was sent, such as `parts[0].movement` or `details.kg`. `ITEM_WORDS` has a word for a part, so a schema refusal names a part's place: "Part 2: reps must be a whole number, not 'five'." A refusal from the kind's own checks says `parts[1]` instead.

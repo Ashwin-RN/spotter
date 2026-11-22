@@ -297,3 +297,7 @@ A form that saves or logs a routine. Marking a session with the routine it came 
 Reps 1 to 100. A routine takes only lifts of sets and reps (exercise-list.md R10): a hold, a carry or a sled is refused, and `get_routines` leaves such a lift out with a line. A band lift takes no weight; a minus weight is help on the two assisted lifts.
 
 A plain word is refused in `save_routine` with its lifts; a lift's own name is taken as written. `get_routines` says to send each lift with `exact` true.
+
+## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
+
+`get_routines`' description names `log`: "To log one, send its sets with log, kind lifts, one part a set, the lift as movement, with exact true, with each change the person names, and leave the date out for today." `save_routine`'s refusal of a lift that records no reps, such as a hold or a carry, has the fix "Log its sets instead.", where it named `log_lifts`.

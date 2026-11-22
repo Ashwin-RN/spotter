@@ -828,3 +828,7 @@ hand and a false pass is not seen):
   lift's name (`exercise`). A passing run sends "bench"; Smith Bench Press, a wrong date, a wrong target and a claim
   with no goal fail. No run fails on the row's lift alone, since a goal on a lift never logged needs a start value,
   which the case forbids, so a test plays that check on rows.
+
+## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
+
+`log_lifts` leaves every list. Its set fields reach a new chat as a lift part of `log`: `movement` in place of `exercise`, then `weight_kg`, `weight_lb`, `reps`, `time_s`, `distance_m` and `exact`. A part also takes a time as `minutes` and a distance as `distance_km` or `distance_mi`, and Spotter converts each to `time_s` or `distance_m`. The matcher, `pick_lift` and the per-hand check are the lift service's, unchanged.

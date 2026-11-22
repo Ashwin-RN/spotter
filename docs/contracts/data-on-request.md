@@ -878,3 +878,7 @@ The volume rule, by load type and sides (`volume_kg` on `lift_sets`, `lift_sessi
 The 41-lift table above stays the record of 2026-11-16. The list in code (`app/exercise_rows.py`) is now the home of every lift's muscles, primary at 1 and secondary at 0.5, and R13 (h) no longer binds: Suitcase Carry has muscles. Every carry and sled is full body.
 
 `lift_sets` gains `time_s` and `distance_m` (default columns) and `family` (a column, a filter and a group). A plain word on `exercise` or `family` takes the lifts of it the person logged.
+
+## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
+
+A saved food's `id` in `what_is_logged` reads "The saved food's id, to log it by.", naming no function, as `log_food` leaves every list for `log`. The table above keeps its words of 2026-11-16.

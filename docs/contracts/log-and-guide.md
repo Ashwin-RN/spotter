@@ -606,3 +606,24 @@ Each a dated note on its contract, not a rewrite.
 ## Not in this work
 
 Change, delete, restore, saves and finds through the log's shape. A race's ordered parts. Rounds. New kinds. The comparison rig's arms after the build.
+
+## Notes from the build, 2026-11-22
+
+Built as L0 to L5 and one fix round after the review. Where the build departed from the text above or added to it, the build is the record:
+
+| Point | The contract | As built |
+|---|---|---|
+| The hi page | L1's tests: "`hi.html` holds no whole-word "log" or "guide" today, by grep" | The template holds none, but the drawn page does, from `app/web.py`'s strings: "A fitness log", "log my push day", "Read and log", "Read, log and delete". `tests/test_hi_there.py` matches whole words and takes `log` and `guide` as plain words (N8) |
+| `tried` | `kind parts[3]{exact,movement,reps,weight_kg} details{new_session}` | Kept in its sorted order: `details{new_session} kind notes parts[3]{exact,movement,reps,weight_kg}` |
+| The without-Spotter cases | `log` in each write list of `evals/without_cases.json` | U1's write lists leave `log_food` out on purpose, so `log` was not added to them |
+| L4's files | `app/services/owner.py`, `app/mcp_server.py` | Also `app/calllog.py` (`function`, `caller` and `all_accounts` in `KNOWN_NAMES`) and `app/mcp_schemas.py` (`OwnerAccountCall`, with an optional `account_id`), and the hash pins in `tests/test_inputs.py`, `tests/test_routines.py` and `tests/test_units.py` |
+| Row 11 | "the id that logging it returned, or one from get_log" | A food entry's fix reads "an id that logging it returned", as a food call returns several ids |
+| Rows 6 to 8 | Part of each string | The full strings: "One food entry. There is no tag field: Spotter works out who supplied the number."; "The saved food's id. Log it as saved_food_id, with servings."; "The USDA id. Log it as usda_fdc_id, with grams." |
+| 52's kind words | Both word sets named | `KIND_DESCRIPTION` reads "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio." |
+| "Spotter picks the lift" | Ends at 497 | Ends at 497 counting its full stop |
+| `distance_mi`'s words | "... or with no unit and units.distance is mi. Spotter converts it." | L1a dropped the doubled "Spotter converts it." from this contract's table (`6602077`), as the line after the table adds it to each field |
+| The logging cases | "What exists": 125 with a write in `must` | 126 with `log_plank_minutes`, as pass 1 of the release eval counts them |
+| The judge | Routes `log` calls | Also reads the kind of `edit_entry`, `delete_entry` and `restore_entry` through `log_shape.table_word`, so either word passes the 8 cases that pin a table word |
+| `--transcripts` | `--verbose` on the CLI, each turn's output kept, masked | Also turns on `--keep`, and kept Claude output is masked for anything shaped like a token |
+| The fix round | Not in the text above | A null on a field the kind does not take is read as left out; `measurement` takes a measurement's own word inside `details`; a refused time or distance that `log` converted names the field and the value as sent. These go beyond what the rig tested: the release eval is their first test on a model |
+| Open point 13 | Two wordings for a part | A schema refusal says "Part 2: reps must be a whole number, not 'five'."; a service refusal says "parts[1]: reps 500 is outside 1 to 100." Both stand |

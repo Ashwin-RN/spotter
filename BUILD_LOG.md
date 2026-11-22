@@ -1352,3 +1352,82 @@ A W read counts only where the record backs it. Every reply is judged with the r
 - U1 on Sonnet with Spotter: the model saw the biryani already logged tonight and added nothing; the case wants a log or a question, so it fails.
 - N-memory is a stand-in written once, not any app's real memory. Codex is not the ChatGPT app.
 - Gemini: the pilot only. Five of nine keys answered 429 on the first request, and the W runs on the rest timed out or were reset; the full run is not done.
+
+## Log and guide: one function to log, one to say how
+
+On 2026-11-21 and 2026-11-22. Contract `docs/contracts/log-and-guide.md`. Model-read text, eval code and cases; no migration. Deploy 1 of two.
+
+### Why
+
+The owner's words: "Yes, for q1": the five log functions become one `log` and a `guide`, as tested. On hiding them: "If you can make it selectively visible, then yes." In the comparison runs of 2026-11-20, 24 write cases at 12 runs, `log` and `guide` were right on the record as often as the five or more: Sonnet 288 and 288 of 288, `gpt-6-luna` 272 and 281, Haiku 288 and 288, at about one call more a run.
+
+### What was built
+
+| Package | Commit | What it did |
+|---|---|---|
+| Contract | `f3d7cf2` | The contract, read against `main` at `3b2441e` |
+| L0 | `c685ca4` | The five's descriptions and field words as named constants, an argument model for each, and each one's step from arguments to its service pulled out. Nothing published moved |
+| L1a | `6602077` | `app/log_shape.py` and `app/guide.py` as plain code: the kinds, the open words, `route`, `said_as_sent`, the time and distance conversions, the kind map, each topic's answer |
+| L1b | `1897439` | `log` and `guide` registered after `list_exercises`; the five leave every list and answer by name; a `log` row notes `kind=` and `word=`; the homepage count is 21; two eval cases |
+| L2 | `e60d301` | The instructions name `log` and `guide` in place of `log_measurement`; the descriptions a new chat reads name none of the five; edit, delete and restore take `log`'s kind words |
+| L3 | `4da0ace` | The refusals, fix lines and `can-and-cant` lines both lists read name none of the five |
+| L4 | `ec4babd` | `owner_calls` takes `function`, `caller` and `all_accounts` |
+| L5 | `430bc7a` | The judge reads a `log` call as its kind's function too; the runner takes `--tool-search` and `--transcripts`; `docs/evals.md` says so |
+| The fix round | `b0838c4` | The review's three should-fix points and two more (below) |
+
+What a chat sees after deploy 1:
+
+| Point | As built |
+|---|---|
+| The list | A new chat lists 21 functions, the owner 24. `log` and `guide` sit where `log_lifts` stood |
+| The five | Registered and answering a chat that holds them. Their published entries are byte for byte as before, but `log_food`'s, which moved by `FoodEntryIn`'s docstring |
+| Output schemas | `log` publishes none; each answer is held to its kind's own result model. `guide` publishes one |
+| The instructions | 4,084 of 4,096 characters. The routing sentence starts at 544 |
+| JSON text | L0 imports `FuncMetadata` from `mcp.server.mcpserver.utilities.func_metadata`, inside the `mcp` library (2.3.0), to read a list or an object sent as JSON text the way the library does |
+| Eval cases | 260, 103 core. Two new: `guide_how_food` and `log_plank_minutes`. `log` added to the no-write lists of 118 cases |
+
+### The review
+
+One review on a frozen copy of `430bc7a`, for L0 to L5. No must fix. 4,627 tests in 41 files passed plain and with `-W error`. 45 refusal paths through `log` were probed: none names one of the five.
+
+Three should-fix points, all taken in the fix round:
+
+| Point | Now |
+|---|---|
+| A null on a field the kind does not take | Read as left out |
+| `measurement` with a measurement's own word inside `details` | Taken |
+| A refused time or distance that `log` converted | The refusal names the field and the value as sent |
+
+Also in the fix round: `guide`'s refusal says it takes topic or kind; a test that read the real date moved to the fixed clock; and a `guide` call put before the `log` call of 60 held runs changed no verdict.
+
+The replay, no model: 320 held runs sent again with each call of the five as a `log` call. One verdict changed: a `log_plank_minutes` run whose only fault was not using `log`. 61 of the 126 logging cases have a held passing run that also passes through `log`.
+
+### Checks
+
+Each package ran the test files it touched, plain and with `-W error`, after its last edit. The whole suite on a clean export of the release commit: see the release.
+
+### Eval runs
+
+Not run yet: owed at the release.
+
+### Known limits
+
+- A chat opened before deploy 1 keeps the five and the old instructions. How long each app keeps a chat's list: not checked.
+- A client that lists again mid-chat would hold the new list with the old instructions, which name `log_measurement`. Whether any app lists again: not checked.
+- A key sent to one of the five and then to `log` is `key_reused`, and a new key could then write twice. It needs one key across two chats.
+- A new chat pays one `guide` call before a kind's first details.
+- The web's rows keep four of the five's names: the pages call the services, not `log`.
+- `log` reads JSON text through a module inside the `mcp` library. A library update may move it.
+- A plank with no weight is refused with a fix naming 0 for bodyweight, as `log_lifts` refuses it.
+- `evals/need.py` reads only the listed functions, so a change to the five's words no longer says a run is owed.
+- `guide_how_food` fails a reply that gives a worked kcal example.
+- A `log` row refused before its work runs (a key replay, `key_reused`, `invalid_key`, `not_allowed`, a limit) carries no `kind=` note.
+- Edit, delete and restore take the kind words exactly as written; `log` folds case and spacing.
+- Cardio's speed refusals quote converted values.
+- `owner_calls`' `limit` tops out at 200 calls and `hours` at 2,160, and `function` takes one name.
+- What a live `claude -p --verbose` prints was not checked before the release run.
+
+### What is left
+
+- The release eval.
+- Deploy 2 (L6): the five's registrations removed, once no row of the five with caller `claude` is in the owner's window, read with `owner_calls` (`all_accounts` true, `caller` claude, `function` each of the five).

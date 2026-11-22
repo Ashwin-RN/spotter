@@ -535,3 +535,11 @@ wrapper (`Wrapper.call`) and `whoami`. Before G2 starts: his pick on the order o
 | 12 | The golden set | About ten real incidental questions from him; his yes on a one-page table of every golden case (question, kind, must call, must not call) before the baseline runs | The cases decide every gate; his questions are what real use looks like |
 
 Scope is frozen as written. A new ask goes to the backlog, not into this contract.
+
+## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
+
+R12: `log_food` and `log_lifts` leave every list, with `log_bodyweight`, `log_measurement` and `log_cardio`, for `log` and `guide`. No function carries `anthropic/alwaysLoad`. It is the fallback, on `log` and `guide`, if the release run dips.
+
+R13: the instructions route every entry to `log` ("Record an entry with log. Call guide with its kind before any details."), from character 544.
+
+G5's "hidden and answering `retired`" is not the shape used for the five: they are hidden from every list and answer as before, with no pointer to `log`. They go in a second deploy, once the call log shows no chat calling them.
