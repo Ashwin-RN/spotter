@@ -1391,6 +1391,36 @@ LOG_AND_GUIDE_RUNS = {
 }
 RUNS.update(LOG_AND_GUIDE_RUNS)
 
+# routines-and-programs.md C5a: the two last time cases follow log and guide's, each direct and out of the core. The
+# seed: Push day saved today (Bench Press 3 x 8 at 60, Overhead Press 3 x 10 at 40) and a session 3 days ago.
+LAST_TIME_SETS = logs(lift("Bench Press", 62.5, 8, 2, exact=True), lift("Bench Press", 60, 6, exact=True),
+                      lift("Overhead Press", 40, 10, 3, exact=True))
+LAST_TIME_TOLD = "Last time, 3 days ago: Bench Press 62.5 kg x 8, 62.5 kg x 8 and 57.5 kg x 7."
+C5A_RUNS = {
+    "routine_same_as_last_time": {
+        "pass": [([("get_routines", {}), LAST_TIME_SETS],
+                  "Logged your push day as last time: Bench Press 62.5 kg x 8, 62.5 kg x 8 and 60 kg x 6, Overhead "
+                  "Press 3 x 10 at 40 kg.")],
+        "fail": [([("get_routines", {}), logs(lift("Bench Press", 60, 8, 3, exact=True),  # the plan, not last time
+                                              lift("Overhead Press", 40, 10, 3, exact=True))],
+                  "Logged your push day: Bench Press 3 x 8 at 60 kg, Overhead Press 3 x 10 at 40 kg."),
+                 ([("get_routines", {}), ("log_lifts", {**LAST_TIME_SETS[1], "new_session": True})],  # apart
+                  "Logged your push day as last time."),
+                 ([("get_routines", {})], "Same as last time: Bench Press 62.5 kg x 8, 62.5 kg x 8, 60 kg x 6."),
+                 ([logs(lift("Bench Press", 60, 8, 2, exact=True), lift("Bench Press", 60, 6, exact=True),  # 62.5 lost
+                        lift("Overhead Press", 40, 10, 3, exact=True))], "Logged your push day as last time."),
+                 ([logs(lift("Bench Press", 62.5, 8, exact=True), lift("Bench Press", 60, 6, exact=True),  # one short,
+                        lift("Overhead Press", 40, 10, 3, exact=True), lift("Bench Press", 100, 1, exact=True))],
+                  "Logged your push day as last time.")]},  # and a stray set in its place
+    "routine_last_time_read": {
+        "pass": [([("get_routines", {})], LAST_TIME_TOLD),
+                 ([("get_log", {"date": "{{days_ago:3}}"})], LAST_TIME_TOLD)],
+        "fail": [([("get_routines", {})], "Your push day: Bench Press 3 x 8 at 60 kg, Overhead Press 3 x 10 at 40 kg."),
+                 ([who()], LAST_TIME_TOLD),  # no read that holds last time
+                 ([("get_routines", {}), fake("log_lifts", {"sets": [BENCH]})], LAST_TIME_TOLD)]},  # a write
+}
+RUNS.update(C5A_RUNS)
+
 # The changed lift cases of the package: a run in the person's own words passes, and one whose word reaches another lift
 # fails on the rows, the case's whole reason since the name moved out of inputs_include.
 C4G_WORDS = {
@@ -1706,7 +1736,8 @@ def read_case(case_id: str) -> bool:
 def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     new = new_cases()
     ids = [c["id"] for c in new]
-    assert len(ids) == len(set(ids)) == 189 and set(ids) == set(RUNS)  # 164, C4g's 23, and log and guide's 2
+    # 164, C4g's 23, log and guide's 2, and C5a's
+    assert len(ids) == len(set(ids)) == 189 + len(C5A_RUNS) and set(ids) == set(RUNS)
     assert all(RUNS[i]["pass"] and RUNS[i]["fail"] for i in ids)
     every = judge.load_cases()
     g1 = every[:len(every) - len(new)]
@@ -1715,7 +1746,7 @@ def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     assert {c["id"] for c in g1 if c.get("kind")} <= G1_CORE
     assert all(isinstance(c["core"], bool) and c["kind"] in judge.KINDS for c in new)
     kinds = Counter(c["kind"] for c in new)
-    assert kinds == {"direct": 141, "incidental": 24, "look_alike": 24}
+    assert kinds == {"direct": 141 + len(C5A_RUNS), "incidental": 24, "look_alike": 24}  # C5a's are direct
     assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 63, "incidental": 8, "look_alike": 8}
     by_id = {c["id"]: c for c in every}
     for c in new:
@@ -1846,8 +1877,12 @@ def test_lb_bench_goal_judges_the_lift_the_goal_was_saved_on():
 
 def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
     new = [c["id"] for c in new_cases()]
-    assert new[-len(C4G_RUNS) - len(LOG_AND_GUIDE_RUNS):-len(LOG_AND_GUIDE_RUNS)] == list(C4G_RUNS)
-    assert all(c["kind"] == "direct" and c["core"] is False for c in new_cases() if c["id"] in C4G_RUNS)
+    # C4g's cases, then log-and-guide.md's two, then routines-and-programs.md C5a's two, which close the file
+    later = len(LOG_AND_GUIDE_RUNS) + len(C5A_RUNS)
+    assert new[-len(C4G_RUNS) - later:-later] == list(C4G_RUNS)
+    assert new[-len(C5A_RUNS):] == list(C5A_RUNS) == ["routine_same_as_last_time", "routine_last_time_read"]
+    assert all(c["kind"] == "direct" and c["core"] is False for c in new_cases()
+               if c["id"] in C4G_RUNS or c["id"] in C5A_RUNS)
     assert sum(1 for c in judge.load_cases() if c.get("core") is True) == 103  # log-and-guide.md's 2 joined it
     assert [c["id"] for c in judge.load_cases() if c.get("then")] == ["pick_lift_answer"]
 
@@ -1856,9 +1891,10 @@ def test_log_and_guide_s_two_cases_follow_c4g_s_and_join_the_core():
     """log-and-guide.md N9: 260 cases, 103 core. log_plank_minutes takes log_lifts in may, so it judges the same once
     the judge routes a log call to its kind's function (L5)."""
     cases = judge.load_cases()
-    assert [c["id"] for c in cases[-len(LOG_AND_GUIDE_RUNS):]] == list(LOG_AND_GUIDE_RUNS)
-    assert all(c["kind"] == "direct" and c["core"] is True for c in cases[-len(LOG_AND_GUIDE_RUNS):])
-    assert len(cases) == 260 and sum(1 for c in cases if c.get("core") is True) == 103
+    ours = cases[-len(LOG_AND_GUIDE_RUNS) - len(C5A_RUNS):-len(C5A_RUNS)]  # routines-and-programs.md C5a's 2 follow
+    assert [c["id"] for c in ours] == list(LOG_AND_GUIDE_RUNS)
+    assert all(c["kind"] == "direct" and c["core"] is True for c in ours)
+    assert len(cases) == 260 + len(C5A_RUNS) and sum(1 for c in cases if c.get("core") is True) == 103
     by_id = {c["id"]: c for c in cases}
     food = by_id["guide_how_food"]["calls"]
     assert food["must"] == ["guide"] and set(W) <= set(food["must_not"])

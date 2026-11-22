@@ -311,7 +311,7 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
   judge reads their `kind` as its table word, so a case that pins `lift_session` passes `lifts` as well.
 - `guide` is no data read: its numbers ("1 to 60") are words on how to log, never figures of the person's.
   `read_any` and `quotes_spotter` never read it.
-- So every case keeps its words: 260 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
+- So every case keeps its words: 262 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
   asks for no write, so a refused `log` call whose kind resolves to none fails those too.
 - `tests/test_golden_cases.py` plays held runs of `stated_number`, `lb_weigh_in`, `waist_in_inches`,
   `hold_plank`, `miles_run`, `pick_lift_answer` and `hand_check_family` again with each call of the five sent as
@@ -872,6 +872,17 @@ guide cases below.
 |---|---|---|---|
 | `guide_how_food` | how do I log food with you? | `guide` called; no write, `log` among them; no food entry; the reply gives no kcal figure of its own: no number before kcal, kcals, cal, cals or calories | Strict on purpose: a reply with a worked example, such as "dal, 180 kcal", fails, and so does a figure quoted from `guide`'s own words. Read such a fail by hand |
 | `log_plank_minutes` | held a plank for 2 minutes | `log` called (`log_lifts` is in its `may`); no other write; the reply names Plank; one Plank set today, `time_s` 120, no reps | A plank sent with no weight is refused by the service, its fix naming 0 for body weight, as `log_lifts` refuses it; a right call after it passes, through `log` as through `log_lifts` in `hold_plank`. The right row logged through `log_lifts` alone fails: the case's `must` is `log` |
+
+### The two last time cases
+
+Since deploy 1 of `routines-and-programs.md`, each lift `get_routines` gives carries `last`: every set of its latest
+session, with its date and its words. These two follow the log and guide cases, each `direct` and `core` false: the
+core stays at 103.
+
+| Case | Says (seed) | Passes when |
+|---|---|---|
+| `routine_same_as_last_time` | Log my push day, same as last time (Push day saved today: Bench Press 3 × 8 at 60, Overhead Press 3 × 10 at 40; a session 3 days ago: Bench Press 62.5 × 8, 62.5 × 8 and 60 × 6, Overhead Press 40 × 10 three times) | One successful `log_lifts`, never `new_session` true. One session today, `set_count` 6. Bench Press sets of 60 × 6: 2 in all, the seed's and today's; of 62.5 × 8: 4 in all, the seed's two and today's two. The planned sets would be 60 × 8 three times: the routine, saved today with a weight, is newer than the session, so its own 60 wins and no 60 × 6 is added |
+| `routine_last_time_read` | What did I do on my push day last time? (Push day saved; a session 3 days ago: Bench Press 62.5 × 8, 62.5 × 8 and 57.5 × 7) | A read answered: `get_routines`, `get_log`, `get_data` or `get_progress`. No write, `log` among them. The reply says 57.5, a figure only last time holds. Judged on the reply's words, so weak until the judge is rebuilt |
 
 ## What the evals prove
 

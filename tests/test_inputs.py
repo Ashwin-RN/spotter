@@ -63,8 +63,8 @@ BEFORE_INPUTS = {
     "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",
     "import_entries": "5bfa3ce4279e3aca8619fdcc0dbc987081ca9b27f79fa9a74dd836377bc865c5",  # exercise list
     "send_feedback": "63bf4722f94c7863dcafce688f8864224c46cbf30868d971e5347475a0686184",
-    "save_routine": "4f6d9d6043be339a956fea50f3d2f32e8fe4a28359dc9113a5bc31072e53cbed",  # exercise list; C4c: help, band
-    "get_routines": "d3e2f09a49ebfbb3467e9d3db06f5acc0be6a7053343b3950e12cd7fb58a374b",  # exercise list; C4c: exact true, help; log and guide: sets sent with log
+    "save_routine": "56fa4fdb82141723f175c6e2ad1885292d3e926c620d173373bfeab58a9c7289",  # exercise list; C4c: help, band; C5a: sets and reps optional
+    "get_routines": "08c8ce58ffb70e3131246f05f5415c284cf863e52aba184b7201cbac2fe50004",  # exercise list; C4c: exact true, help; log and guide: sets sent with log; C5a: last, same as last time
     "owner_calls": "c9ea367aa190315d016fa4d014e783b8947dc436b81984600bebc785211d1cbb",  # log and guide L4: function, caller, all_accounts, a call's account_id
     "owner_feedback": "242b0d08f0ca2b4bb696ec818f327ede1d2b2b71b6959dba0e687cc9b628a5f7",
     "owner_delete_feedback": "e6d44e98f7ac2ce9945b277c0c592c7bde7ba6060b6628990f3a1bc16764909b",

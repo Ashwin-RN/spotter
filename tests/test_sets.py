@@ -370,7 +370,9 @@ def test_a_routine_takes_r6_s_weight_range_so_help_round_trips_and_says_help(uid
     page_user = only_user_of(client)
     services.save_routine(page_user, {"name": "Pull day", "lifts": lifts_sent}, "claude")
     page = client.get("/routines")
-    assert page.status_code == 200 and "Assisted Pull-Up 3 × 8 with 20 kg help" in page.text
+    # routines-and-programs.md C5a: the page's Item and Plan cells
+    assert page.status_code == 200 and ('<td class="lead">Assisted Pull-Up</td><td class="wide-cell" '
+                                        'data-label="Plan">3 × 8 with 20 kg help</td>') in page.text
     assert "-20" not in page.text
 
 

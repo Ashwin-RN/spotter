@@ -262,8 +262,9 @@ def entry_words(row, today, units=None) -> str | None:
         return body.weigh_in_text(row.kg, row.date, today, units)
     if isinstance(row, CardioEntry):
         return cardio.summary(row, today, units)
-    if isinstance(row, Routine):
-        return f"{row.name}: {routines.lift_words(json.loads(row.lifts), units=units)}."
+    if isinstance(row, Routine):  # routines-and-programs.md C5a: with no lift it places, the name alone
+        words = routines.lift_words(json.loads(row.lifts), units=units)
+        return f"{row.name}: {words}." if words else f"{row.name}."
     return None
 
 

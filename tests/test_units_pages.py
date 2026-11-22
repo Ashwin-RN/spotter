@@ -148,7 +148,10 @@ def test_every_page_of_a_lb_and_mi_account_says_lb_and_mi_and_never_kg_or_km(lb_
     for label in ("Body weight 169.75 lb", "Back Squat 264.55 lb", "Outdoor Run 3.11 mi in 27:00"):
         assert label in goals, label
     assert "now, the best 3.11 mi time in 28 days" in goals
-    assert f"Bench Press 3 × 8 at 137.8{nb}lb and Dip 3 × 10" in visible(pages["routines"])
+    # routines-and-programs.md C5a: a card a routine, each lift's Item cell, then its Plan cell
+    assert (f'<td class="lead">Bench Press</td><td class="wide-cell" data-label="Plan">3 × 8 at 137.8{nb}lb</td>'
+            in pages["routines"])
+    assert '<td class="lead">Dip</td><td class="wide-cell" data-label="Plan">3 × 10</td>' in pages["routines"]
     assert "Speed (mph)" in visible(pages["run edit"]) and "Weight (lb)" in visible(pages["weigh-in edit"])
 
 

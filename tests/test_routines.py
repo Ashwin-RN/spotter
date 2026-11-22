@@ -29,7 +29,7 @@ from app.calllog import KNOWN_NAMES, TABLES
 from app.db import make_engine
 from app.mcp_schemas import GetRoutinesResult, RoutineLiftIn, SaveRoutineResult
 from app.models import CallLog, LiftSession, Routine, User, user_tables
-from app.services import common, entries, routines
+from app.services import common, entries, lifts, routines
 from evals import judge
 from evals.run import TABLES as RUN_TABLES, person_rows
 
@@ -72,8 +72,10 @@ GET_DESCRIPTION = (
     "names a routine, such as log my push day. To log one, send its sets with log, kind lifts, one part a set, the "
     "lift as movement, with exact true, with each change the person names, and leave the date out for today. Send "
     "each weight_kg as given, in weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and "
-    "send the answer in the field of its unit. Say in your reply which sets were logged.")
-# units.md; exercise-list.md R3: exact true; log-and-guide.md row 4: the sets go to log
+    "send the answer in the field of its unit. Say in your reply which sets were logged. When the person says same as "
+    "last time, send last's sets as given, each with the lift as movement.")
+# units.md; exercise-list.md R3: exact true; log-and-guide.md row 4: the sets go to log; routines-and-programs.md
+# decision 12, last
 KEY_WORDS = mcp_server.KEY_DESCRIPTION
 LIFT_IN = {"exercise": "The lift, exactly as list_exercises gives it.", "sets": "How many sets of it, 1 to 10.",
            "reps": "Reps in each set, a whole number from 1 to 100.",
@@ -87,6 +89,17 @@ NAME_IN = "The routine's name, as the person says it, such as Push day. 1 to 64 
 LIFTS_IN = "Each lift, in the order done: 1 to 20 lifts, and at most 60 sets in all."
 ID_WORDS = "The routine's id, for delete_entry and restore_entry with kind routine."
 LINKS_WORDS = "The Routines page: the person's routines."
+# routines-and-programs.md: get_routines' lifts[].last, word for word, and the words of its two models, LastSet's in
+# SetOut's own words
+LAST_WORDS = ("What was done last time, with its date: every set of this lift in its latest session, or this "
+              "activity's latest session. Null when never logged.")
+LAST_TIME_WORDS = {"date": "The date of that session, YYYY-MM-DD.",
+                   "sets": "Every set of this lift in that session, in order.",
+                   "words": "What was done, in words, in the person's units, ready to quote."}
+LAST_SET_WORDS = {"weight_kg": "Weight in kg: one hand's for a pair, minus for help, 0 for bodyweight work.",
+                  "reps": "Reps done, or null for a hold or a carry.",
+                  "time_s": "A hold's or a carry's time in seconds, or null.",
+                  "distance_m": "A carry's or a sled's distance in metres, or null."}
 # Every function as published at ec48cdb, the join's base, before this work: the SHA-256 of the tool as compact JSON
 # with sorted keys, read from the published list for the owner (it holds everyone's twenty and the owner's three).
 # Built at 3fe468b, the same but for whoami, which first day moved (setup).
@@ -795,6 +808,8 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
         "id": ID_WORDS, "name": NAME_IN, "lifts": LIFTS_IN,
         "saved_on": "The person's date when the routine was last saved.", "updated_at": "When it last changed, UTC."}
     lift_out = out["$defs"]["SavedRoutineLift"]["properties"]
+    # routines-and-programs.md decision 2: sets and reps optional from deploy 1, so only these two stay required
+    assert out["$defs"]["SavedRoutineLift"]["required"] == ["exercise", "weight_kg"]
     assert {k: v["description"] for k, v in lift_out.items()} == {
         **{k: LIFT_IN[k] for k in ("exercise", "sets", "reps")},
         "weight_kg": ("The weight the person gave, in kg, or null when none was given. 0 for a band lift. Help on "
@@ -816,7 +831,13 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
                       "as it is, never converted. Null when there is neither: ask the person. Help on Assisted "
                       "Pull-Up or Assisted Dip as a minus weight."),  # units.md; exercise-list.md, C4c's fix round
         "weight_from": "Where weight_kg came from: last_session, routine, or null.",
-        "last_date": "The date of this lift's latest session, or null when it was never logged."}
+        "last_date": "The date of this lift's latest session, or null when it was never logged.",
+        "last": LAST_WORDS}  # routines-and-programs.md decision 11
+    assert got["$defs"]["LiftToLog"]["required"] == ["exercise", "weight_kg", "weight_from", "last_date"]
+    assert {k: v["description"] for k, v in got["$defs"]["LastTime"]["properties"].items()} == LAST_TIME_WORDS
+    assert got["$defs"]["LastTime"]["required"] == ["date", "words"]
+    assert {k: v["description"] for k, v in got["$defs"]["LastSet"]["properties"].items()} == LAST_SET_WORDS
+    assert got["$defs"]["LastSet"]["required"] == ["weight_kg"]
 
 
 def test_the_kind_and_id_words_and_delete_entry_s_first_sentence_are_the_contract_s(http):
@@ -947,9 +968,16 @@ def test_account_delete_counts_routines_and_takes_them_and_its_page_says_so(clie
 
 # ---------------------------------------------------------------- the page (decision 13, R15, P6)
 
-def routine_rows(markup: str) -> list[tuple[str, str]]:
-    return [(name, words) for name, words in re.findall(
-        r'<tr><td class="lead">([^<]*)</td><td data-label="Lifts">([^<]*)</td>', markup)]
+def routine_rows(markup: str) -> list[tuple[str, str, str]]:
+    """Each row of every routine card: (Item, Plan, Last time)."""
+    return re.findall(r'<tr><td class="lead">([^<]*)</td><td class="wide-cell" data-label="Plan">([^<]*)</td>'
+                      r'<td class="wide-cell" data-label="Last time">([^<]*)</td></tr>', markup)
+
+
+def routine_cards(markup: str) -> list[str]:
+    """The name of each routine card, in order."""
+    return re.findall(r'<section class="card saved-foods routine" aria-labelledby="routine-\d+-title">\s*'
+                      r'<div class="card-head">\s*<h2 id="routine-\d+-title">([^<]*)</h2>', markup)
 
 
 NB = " "
@@ -961,7 +989,7 @@ def test_signed_out_the_page_and_its_posts_go_to_sign_in(client):
         assert client.post(path).status_code == 403  # no session, so no token: as every post
 
 
-def test_signed_in_the_page_shows_each_routine_with_the_weights_get_routines_gives(client):
+def test_signed_in_the_page_shows_each_routine_with_the_weights_get_routines_gives(client, clock):
     sign_in(client)
     me = only_user().id
     empty = client.get("/routines")
@@ -969,13 +997,21 @@ def test_signed_in_the_page_shows_each_routine_with_the_weights_get_routines_giv
                                          "push day, and ask it to save it.") in empty.text
     assert "<table" not in empty.text
     save(me, lifts=[lift(weight=60), lift("Overhead Press", 3, 10, 40), lift("Dip", 3, 10)])
-    log(me, ("Bench Press", 62.5, 8))
+    log(me, ("Bench Press", 62.5, 8), ("Bench Press", 62.5, 8), ("Bench Press", 57.5, 7), date=day(-6))
+    latest = log(me, ("Bench Press", 62.5, 8))
     page = client.get("/routines").text
-    assert routine_rows(page) == [("Push day", f"Bench Press 3 {X} 8 at 62.5{NB}kg, Overhead Press 3 {X} 10 at "
-                                               f"40{NB}kg and Dip 3 {X} 10")]
+    assert routine_cards(page) == ["Push day"]
+    assert routine_rows(page) == [("Bench Press", f"3 {X} 8 at 62.5{NB}kg", f"Tue 10 Nov: 1 {X} 8 at 62.5 kg"),
+                                  ("Overhead Press", f"3 {X} 10 at 40{NB}kg", "Not logged yet."),
+                                  ("Dip", f"3 {X} 10", "Not logged yet.")]
     assert [x["weight_kg"] for x in read(me)["routines"][0]["lifts"]] == [62.5, 40.0, None]
-    assert ("Each weight is the one your assistant would log today: your latest session's, or the routine's own when "
-            "it was saved on a later day.") in page
+    assert ('<thead><tr><th scope="col">Item</th><th scope="col">Plan</th><th scope="col">Last time</th></tr>'
+            '</thead>') in page
+    assert ('<p class="small saved-foods">Each weight is the one your assistant would log today: your latest '
+            "session's, or the routine's own when it was saved on a later day.</p>") in page.replace("&#39;", "'")
+    services.delete_entry(me, "lift_session", latest["id"])
+    earlier = routine_rows(client.get("/routines").text)[0]  # the routine's own 60 wins over a session before it
+    assert earlier == ("Bench Press", f"3 {X} 8 at 60{NB}kg", f"Wed 4 Nov: 62.5 kg {X} 8, 62.5 kg {X} 8, 57.5 kg {X} 7")
     assert ('Workouts you do often, saved by name. Say "log my push day" and your assistant logs its sets. Routines '
             'are saved by talking to your assistant.') in page.replace("&#34;", '"')
     assert "<title>Routines · Spotter</title>" in page and "<h1>Routines</h1>" in page
@@ -998,13 +1034,13 @@ def test_delete_deletes_at_once_and_lands_on_the_strip_whose_undo_restores(clien
     landed = location(post(client, f"/routines/{made}/delete"))
     assert landed.endswith(f"/routines?deleted=routine:{made}") and table()[0]["deleted_at"] is not None
     page = client.get(landed).text
-    assert "Routine deleted." in page and routine_rows(page) == []
+    assert "Routine deleted." in page and routine_cards(page) == [] and routine_rows(page) == []
     token = re.search(rf'action="/routines/{made}/restore" class="inline">\s*'
                       r'<input type="hidden" name="csrf_token" value="([^"]+)">', page).group(1)
     back = client.post(f"/routines/{made}/restore", data={"csrf_token": token})
     assert location(back).endswith("/routines?restored=routine") and table()[0]["deleted_at"] is None
     restored = client.get(location(back)).text
-    assert '<p class="ok">Routine restored.</p>' in restored and [n for n, _ in routine_rows(restored)] == ["Push day"]
+    assert '<p class="ok">Routine restored.</p>' in restored and routine_cards(restored) == ["Push day"]
     deleted_rows = [(r.function, r.caller, r.tried) for r in rows()[-2:]]
     assert deleted_rows == [("delete_entry", "web", "entry_id kind=routine"),
                             ("restore_entry", "web", "entry_id kind=routine")]
@@ -1089,12 +1125,15 @@ def _some(uid: int) -> None:
     log(uid, ("Bench Press", 62.5, 8))
 
 
-@pytest.mark.parametrize("state", ["none", "some"])
+@pytest.mark.parametrize("state", ["none", "some", "left_out"])
 def test_the_page_and_its_landings_keep_every_rule_foods_keeps(client, clock, state):
+    """Each state: none, two routines with last time, and one whose items C5a's read leaves out with their lines."""
     sign_in(client)
     uid = only_user().id
-    if state == "some":
+    if state != "none":
         _some(uid)
+    if state == "left_out":
+        hold(read(uid)["routines"][0]["id"], ODD)  # Pull day: its lines under its table
     seen = routines_renders(client, uid)
     entered, names, notes = entered_text(uid), names_of(uid), entered_notes(uid)
     assert state == "none" or {"Push day", "Pull day"} <= set(entered)  # a routine's name is the person's own text
@@ -1106,7 +1145,7 @@ def test_the_page_and_its_landings_keep_every_rule_foods_keeps(client, clock, st
         findings += page_findings(s.address, s.markup, entered, uid, route=None)
         findings += step_4_findings(s.address, s.markup, names, notes, message=s.message, entered=entered)
     assert not findings, "\n".join(findings)
-    assert len(seen) == (5 + 3 if state == "some" else 4)
+    assert len(seen) == (4 if state == "none" else 5 + 3)
 
 
 def test_too_many_routines_page_keeps_the_rules_too(client, clock):
@@ -1125,11 +1164,13 @@ def test_too_many_routines_page_keeps_the_rules_too(client, clock):
 
 
 def test_every_new_text_keeps_the_text_rules():
-    for text in (SAVE_DESCRIPTION, GET_DESCRIPTION, NAME_IN, LIFTS_IN, ID_WORDS, LINKS_WORDS, HOW, *LIFT_IN.values()):
+    for text in (SAVE_DESCRIPTION, GET_DESCRIPTION, NAME_IN, LIFTS_IN, ID_WORDS, LINKS_WORDS, HOW, *LIFT_IN.values(),
+                 LAST_WORDS, *LAST_TIME_WORDS.values(), *LAST_SET_WORDS.values()):
         assert tr.check(text, tr.CLAUDE) == [], text
     for text in (NEW_SUMMARY, "No routines saved yet. save_routine saves one.", TOO_MANY["message"], TOO_MANY["fix"]):
         assert tr.check(text, tr.SUMMARY) == [], text
-    for text in (*web.CLAUDE_CAN_LINES.values(), *web.ROUTINE_STRIPS.values(), "Saved routines", "Routines"):
+    for text in (*web.CLAUDE_CAN_LINES.values(), *web.ROUTINE_STRIPS.values(), "Saved routines", "Routines",
+                 web.ROUTINE_NEVER, "Item", "Plan", "Last time"):
         assert tr.check(text, tr.PAGE) == [], text
 
 
@@ -1180,7 +1221,9 @@ def test_every_statement_on_routine_names_the_person_s_id(client, make_user):
     assert read(other.id)["routines"][0]["lifts"][0]["weight_kg"] == 99.0
 
 
-GET_STATEMENTS = 3  # the user, the routines, and the one weights statement (hardening D5: no lifts.history)
+# The user, the routines, and the one statement of weights and last time (hardening D5: no lifts.history). C5's R3
+# planned one more statement for last; it is the same statement, so the weight to log and last are one session.
+GET_STATEMENTS = 3
 
 
 def test_get_routines_runs_a_fixed_number_of_statements_however_many_routines_and_sessions(make_user, clock):
@@ -1372,3 +1415,410 @@ def test_person_rows_gives_each_routine_its_lift_count_and_never_another_person_
     counts = {r["name"]: (r["lift_count"], r["deleted_at"] is None) for r in person_rows(mine.id)["routine"]}
     assert counts == {"Push day": (3, True), "Gone": (1, False)}
     assert [r["lift_count"] for r in person_rows(theirs.id)["routine"]] == [5]
+
+
+# ---------------------------------------------------------------- C5a: last time (routines-and-programs.md D11, R3, R4)
+
+def lifted(person_id: int, n: int = 0) -> list[dict]:
+    """Each lift of the person's nth routine, as get_routines gives it."""
+    return read(person_id)["routines"][n]["lifts"]
+
+
+def kept(weight, reps) -> dict:
+    """One set of last, of reps."""
+    return {"weight_kg": weight, "reps": reps, "time_s": None, "distance_m": None}
+
+
+def agrees(person_id: int) -> None:
+    """Every lift's last is the session weight_from's weight and last_date come from (the exit check): its date is
+    last_date, and a weight from last_session is its heaviest set."""
+    for routine in read(person_id)["routines"]:
+        for x in routine["lifts"]:
+            assert (x["last"] or {}).get("date") == x["last_date"], x
+            if x["weight_from"] == "last_session":
+                assert x["weight_kg"] == max(s["weight_kg"] for s in x["last"]["sets"]), x
+            assert x["last"] is not None or x["weight_from"] != "last_session", x
+
+
+def test_last_is_null_never_logged_and_once_logged_is_every_set_of_the_lift_in_set_order_with_its_words(user):
+    save(user.id, lifts=[*PUSH, lift("Assisted Pull-Up", 3, 8, -20)])
+    assert [x["last"] for x in lifted(user.id)] == [None, None, None, None]
+    log(user.id, ("Bench Press", 62.5, 8), ("Dip", 0, 12), ("Bench Press", 62.5, 8), ("Bench Press", 57.5, 7),
+        ("Assisted Pull-Up", -20, 8), ("Assisted Pull-Up", -20, 8), date=day(-2))
+    bench, press, dip, assisted = lifted(user.id)
+    assert list(bench) == ["exercise", "sets", "reps", "weight_kg", "weight_from", "last_date", "last"]
+    assert bench["last"] == {"date": day(-2), "sets": [kept(62.5, 8), kept(62.5, 8), kept(57.5, 7)],
+                             "words": f"62.5 kg {X} 8, 62.5 kg {X} 8, 57.5 kg {X} 7"}  # R4's own example
+    assert press["last"] is None and (press["weight_from"], press["last_date"]) == (None, None)
+    assert dip["last"] == {"date": day(-2), "sets": [kept(0.0, 12)], "words": f"1 {X} 12"}  # 0 kg: no weight said
+    assert assisted["last"]["words"] == f"2 {X} 8 with 20 kg help"
+    agrees(user.id)
+    GetRoutinesResult.model_validate(read(user.id))
+
+
+def test_twice_on_a_day_last_is_the_one_session_both_added_to_or_the_later_session_by_id(user):
+    save(user.id, lifts=[lift()])
+    log(user.id, ("Bench Press", 60, 8))
+    log(user.id, ("Bench Press", 65, 5))  # the day's session takes it
+    [bench] = lifted(user.id)
+    assert bench["last"]["words"] == f"60 kg {X} 8, 65 kg {X} 5" and bench["weight_kg"] == 65.0
+    log(user.id, ("Bench Press", 50, 10), ("Bench Press", 50, 10), new_session=True)  # a second session, same date
+    [bench] = lifted(user.id)
+    assert bench["last"] == {"date": day(), "sets": [kept(50.0, 10)] * 2, "words": f"2 {X} 10 at 50 kg"}
+    assert (bench["weight_kg"], bench["weight_from"]) == (50.0, "last_session")
+    agrees(user.id)
+
+
+def test_last_skips_a_deleted_session_and_takes_one_dated_after_today_in_the_one_order(user, clock):
+    first = log(user.id, ("Bench Press", 50, 8), date=day(-3))
+    second = log(user.id, ("Bench Press", 55, 8), ("Bench Press", 55, 8), date=day(-1))
+    save(user.id, lifts=[lift()])
+    assert lifted(user.id)[0]["last"]["words"] == f"2 {X} 8 at 55 kg"
+    services.delete_entry(user.id, "lift_session", second["id"])
+    assert lifted(user.id)[0]["last"] == {"date": day(-3), "sets": [kept(50.0, 8)], "words": f"1 {X} 8 at 50 kg"}
+    agrees(user.id)
+    clock.at(2)
+    ahead = log(user.id, ("Bench Press", 90, 8))  # dated two days on, as after a change of time zone
+    clock.at(0)
+    assert lifted(user.id)[0]["last"]["date"] == day(2) and lifted(user.id)[0]["weight_kg"] == 90.0
+    agrees(user.id)
+    for gone in (first, ahead):
+        services.delete_entry(user.id, "lift_session", gone["id"])
+    assert lifted(user.id)[0]["last"] is None and lifted(user.id)[0]["weight_from"] is None
+
+
+def test_every_branch_of_the_newest_wins_rule_agrees_with_last(user, clock):
+    """The routine's weight with no session, a session before saved_on with and without a routine weight, a session
+    on saved_on and after it: last is always the session the weight to log reads, and a routine's own weight still
+    shows the last time."""
+    clock.at(-5)
+    save(user.id, "A", [lift(weight=60), lift("Overhead Press", 3, 10)])
+    assert [(x["weight_from"], x["last"]) for x in lifted(user.id)] == [("routine", None), (None, None)]
+    log(user.id, ("Bench Press", 70, 8), ("Overhead Press", 40, 10), date=day(-6))  # before saved_on
+    bench, press = lifted(user.id)
+    assert (bench["weight_kg"], bench["weight_from"], bench["last"]["date"]) == (60.0, "routine", day(-6))
+    assert (press["weight_kg"], press["weight_from"], press["last"]["date"]) == (40.0, "last_session", day(-6))
+    agrees(user.id)
+    log(user.id, ("Bench Press", 72.5, 8))  # on saved_on
+    assert (lifted(user.id)[0]["weight_kg"], lifted(user.id)[0]["weight_from"]) == (72.5, "last_session")
+    agrees(user.id)
+    clock.at(0)
+    log(user.id, ("Bench Press", 75, 6), ("Bench Press", 70, 8))  # after it
+    assert lifted(user.id)[0]["last"]["words"] == f"75 kg {X} 6, 70 kg {X} 8"
+    agrees(user.id)
+
+
+def test_last_words_are_in_the_person_s_units_and_its_numbers_stay_kg(make_user, clock):
+    person = make_user(weight_unit="lb")
+    save(person.id, lifts=[lift()])
+    log(person.id, ("Bench Press", 62.5, 8), ("Bench Press", 62.5, 8), ("Bench Press", 57.5, 7), date=day(-1))
+    [bench] = lifted(person.id)
+    assert bench["last"]["words"] == f"137.8 lb {X} 8, 137.8 lb {X} 8, 126.75 lb {X} 7"
+    assert [s["weight_kg"] for s in bench["last"]["sets"]] == [62.5, 62.5, 57.5] and bench["weight_kg"] == 62.5
+    assert tr.check(bench["last"]["words"], tr.SUMMARY) == []
+
+
+# ---------------------------------------------------------------- C5a: the read made safe (decision 3, R2)
+
+# What a routine may hold that deploy 1 cannot place: deploy 2's shapes after a rollback, rows from before 0013, and
+# shapes no build writes. The lift of reps carries keys this read does not know, and is placed.
+ODD = [
+    {"exercise": "Rowing Machine", "minutes": 10, "distance_km": None, "incline_pct": None, "speed_kmh": None,
+     "avg_hr": None, "machine_kcal": None},
+    {"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100.0, "log_with": "log_lifts", "time_s": None},
+    {"exercise": "Plank", "sets": 3, "time_s": 60, "weight_kg": None},
+    {"exercise": "Side Plank", "sets": 3, "reps": 30, "weight_kg": None},
+    {"exercise": "Zorb Press", "sets": 3, "reps": 8, "weight_kg": 40.0},  # off the list, as after a rename: placed
+    {"exercise": "Zorb Row", "sets": 3, "weight_kg": 40.0},  # off the list, reps missing: left out
+    {"exercise": "Bench Press", "sets": 3, "weight_kg": 60.0},
+    {"sets": 3, "reps": 8, "weight_kg": 60.0},
+    "Dip 3x10",
+    {"exercise": "Dip", "sets": "3", "reps": 10, "weight_kg": None},
+    {"exercise": "Farmer's Carry", "sets": 2, "distance_m": 40, "time_s": None, "weight_kg": 32.0},
+    {"exercise": "Incline Treadmill Walk", "minutes": 20, "distance_km": None, "incline_pct": 12, "speed_kmh": None,
+     "avg_hr": None, "machine_kcal": None},
+]
+ODD_LINES = [
+    "Rowing Machine is left out: log it as cardio.",
+    "Plank is left out: it records time now. Ask the person how long, and log it with time_s.",
+    "Side Plank is left out: it records time now. Ask the person how long, and log it with time_s.",
+    "Zorb Row is left out.", "Bench Press is left out.", "An item is left out.", "Dip is left out.",
+    "Farmer's Carry is left out: it records distance and time now. Ask the person how far, and log it with distance_m.",
+    "Incline Treadmill Walk is left out: log it as cardio."]
+# The page's own lines: what the assistant is told to do is cut, so no function or field is named (text rules)
+PAGE_LINES = ["Rowing Machine is left out.", "Plank is left out: it records time now.",
+              "Side Plank is left out: it records time now.", "Zorb Row is left out.", "Bench Press is left out.",
+              "An item is left out.", "Dip is left out.", "Farmer's Carry is left out: it records distance and time now.",
+              "Incline Treadmill Walk is left out."]
+
+
+def hold(routine_id: int, items: list) -> None:
+    """The routine's stored items, as a rollback or a row of an older build leaves them."""
+    with db.session_scope() as s:
+        s.get(Routine, routine_id).lifts = json.dumps(items)
+
+
+def test_each_item_the_read_cannot_place_is_left_out_with_its_line_and_unknown_keys_on_a_lift_are_ignored(user):
+    made = save(user.id, "Legs day", [lift("Back Squat", 4, 5, 100)])
+    hold(made["id"], ODD)
+    log(user.id, ("Back Squat", 100, 5), ("Back Squat", 100, 5))
+    found = read(user.id)
+    [routine] = found["routines"]
+    assert routine["lifts"] == [{"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100.0,
+                                 "weight_from": "last_session", "last_date": day(),
+                                 "last": {"date": day(), "sets": [kept(100.0, 5)] * 2, "words": f"2 {X} 5 at 100 kg"}},
+                                {"exercise": "Zorb Press", "sets": 3, "reps": 8, "weight_kg": 40.0,
+                                 "weight_from": "routine", "last_date": None, "last": None}]  # ruling 1
+    assert routine["words"] == f"Back Squat 4 {X} 5 at 100 kg and Zorb Press 3 {X} 8 at 40 kg"
+    assert found["summary"] == "1 routine: Legs day. " + " ".join(ODD_LINES)
+    assert routines.page_read(user.id) == (found, {made["id"]: PAGE_LINES})
+    for line in ODD_LINES:
+        assert tr.check(line, tr.SUMMARY) == [], line
+    for line in PAGE_LINES:
+        assert tr.check(line, tr.PAGE) == [], line
+    with db.new_session() as s:
+        assert json.loads(s.get(Routine, made["id"]).lifts) == ODD  # the routine keeps them
+    # A second routine with the same lines says each once in the summary, and keeps its own on the page.
+    other = save(user.id, "Row day", [lift()])
+    hold(other["id"], ODD[:1])
+    assert read(user.id)["summary"] == "2 routines: Legs day and Row day. " + " ".join(ODD_LINES)
+    assert routines.page_read(user.id)[1][other["id"]] == PAGE_LINES[:1]
+    hold(other["id"], {"not": "a list"})
+    assert read(user.id)["routines"][1]["lifts"] == [] and routines.page_read(user.id)[1][other["id"]] == []
+
+
+def test_a_blank_or_spaces_only_name_is_left_out_as_an_item_with_no_name(user):
+    """The review's N2: a name of no characters, or spaces alone, is no lift."""
+    made = save(user.id, "Blank", [lift()])
+    hold(made["id"], [{"exercise": "", "sets": 3, "reps": 8, "weight_kg": None},
+                      {"exercise": "   ", "sets": 3, "reps": 8, "weight_kg": None}, lift()])
+    found = read(user.id)
+    assert [x["exercise"] for x in found["routines"][0]["lifts"]] == ["Bench Press"]
+    assert found["summary"] == "1 routine: Blank. An item is left out."
+    assert routines.page_read(user.id)[1] == {made["id"]: ["An item is left out."]}
+
+
+def test_a_name_off_the_list_is_placed_as_before_c5a_and_reads_no_session_of_another_name(user):
+    """Ruling 1: a sync's rename leaves the old name in a routine's JSON. It is placed with the routine's own weight,
+    as measures_of reads an off-list name as reps, and a session of the renamed lift sits under its new name."""
+    made = save(user.id, "Old names", [lift()])
+    hold(made["id"], [{"exercise": "Flat Barbell Bench", "sets": 3, "reps": 8, "weight_kg": 60.0}])
+    log(user.id, ("Bench Press", 70, 8))
+    found = read(user.id)
+    assert found["routines"][0]["lifts"] == [{"exercise": "Flat Barbell Bench", "sets": 3, "reps": 8,
+                                              "weight_kg": 60.0, "weight_from": "routine", "last_date": None,
+                                              "last": None}]
+    assert found["routines"][0]["words"] == f"Flat Barbell Bench 3 {X} 8 at 60 kg"
+    assert found["summary"] == "1 routine: Old names." and routines.page_read(user.id)[1] == {made["id"]: []}
+
+
+def test_a_routine_of_only_items_it_cannot_place_reads_with_no_lifts_and_no_weights_statement(user):
+    made = save(user.id, "Cardio", [lift()])
+    hold(made["id"], ODD[:1] + ODD[2:4])
+    found, seen = statements_of(lambda: services.get_routines(user.id))
+    assert found["routines"][0]["lifts"] == [] and found["routines"][0]["words"] == ""
+    assert len(seen) == GET_STATEMENTS - 1 and not [sql for sql, _ in seen if "lift_set" in sql]
+    assert entries.entry_words(table_row(made["id"]), START.date()) == "Cardio."  # ruling 2: the name alone
+    assert services.delete_entry(user.id, "routine", made["id"], "claude")["summary"] == "Cardio."
+
+
+def table_row(routine_id: int) -> Routine:
+    with db.new_session() as s:
+        row = s.get(Routine, routine_id)
+        s.expunge(row)
+        return row
+
+
+def test_a_delete_preview_the_delete_and_a_restore_answer_with_the_routine_as_stored(writer, clock):
+    http, token, account = writer
+    made = save(account, "Legs day", [lift("Back Squat", 4, 5, 100)])
+    hold(made["id"], ODD)
+    stored = services.get_entry(account, "routine", made["id"])["entry"]
+    assert stored["lifts"] == ODD
+    preview = ok(http, token, "delete_entry", {"kind": "routine", "entry_id": made["id"]})
+    assert preview["entry"] == stored and preview["summary"] == (
+        f"Legs day: Back Squat 4 {X} 5 at 100 kg and Zorb Press 3 {X} 8 at 40 kg.")
+    done = ok(http, token, "delete_entry", {"kind": "routine", "entry_id": made["id"], "confirm": preview["confirm"]})
+    assert done["deleted"] is True and done["entry"]["lifts"] == ODD
+    back = ok(http, token, "restore_entry", {"kind": "routine", "entry_id": made["id"]})
+    assert back["restored"] is True and back["entry"]["lifts"] == ODD
+    got = ok(http, token, "get_routines")  # the published model takes the answer
+    assert [x["exercise"] for x in got["routines"][0]["lifts"]] == ["Back Squat", "Zorb Press"]
+    assert got["summary"].endswith("Incline Treadmill Walk is left out: log it as cardio.")
+
+
+def test_the_page_draws_a_routine_it_cannot_place_in_full_with_each_line(client, clock):
+    sign_in(client)
+    me = only_user().id
+    made = save(me, "Legs day", [lift("Back Squat", 4, 5, 100)])
+    hold(made["id"], ODD)
+    r = client.get("/routines")
+    assert r.status_code == 200 and routine_cards(r.text) == ["Legs day"]
+    assert routine_rows(r.text) == [("Back Squat", f"4 {X} 5 at 100{NB}kg", "Not logged yet."),
+                                    ("Zorb Press", f"3 {X} 8 at 40{NB}kg", "Not logged yet.")]
+    page = r.text.replace("&#39;", "'")
+    assert re.findall(r'<p class="small">([^<]*)</p>', page) == PAGE_LINES
+
+
+def test_on_a_lb_account_the_page_says_the_plan_and_last_time_in_lb(client, clock):
+    sign_in(client)
+    me = only_user().id
+    assert "error" not in services.update_settings(me, {"weight_unit": "lb"}, "web")
+    save(me, lifts=[lift(weight=62.5), lift("Dip", 3, 10)])
+    log(me, ("Bench Press", 62.5, 8), ("Bench Press", 57.5, 7), date=day(-1))
+    rows_ = routine_rows(client.get("/routines").text)
+    assert rows_ == [("Bench Press", f"3 {X} 8 at 137.8{NB}lb", f"Mon 9 Nov: 137.8 lb {X} 8, 126.75 lb {X} 7"),
+                     ("Dip", f"3 {X} 10", "Not logged yet.")]
+    assert not re.search(r"kg", " ".join(" ".join(r) for r in rows_))
+
+
+def test_an_unchanged_save_of_a_routine_stored_before_this_build_writes_nothing(user, clock):
+    made = save(user.id, "Push day", [lift(weight=60), lift("Dip", 3, 10)])
+    with db.session_scope() as s:  # byte for byte as 3b2441e stores it
+        s.get(Routine, made["id"]).lifts = ('[{"exercise":"Bench Press","sets":3,"reps":8,"weight_kg":60.0},'
+                                            '{"exercise":"Dip","sets":3,"reps":10,"weight_kg":null}]')
+    before = table()
+    clock.at(2)
+    same, seen = statements_of(lambda: save(user.id, "Push day", [lift(weight=60), lift("Dip", 3, 10)]))
+    assert same["summary"] == "Push day is already saved as given: nothing changed." and table() == before
+    assert not [sql for sql, _ in seen if ON_ROUTINE.search(sql) and not sql.startswith("SELECT")]
+
+
+def test_the_statement_count_holds_with_nothing_logged_with_last_and_with_items_left_out(make_user, clock):
+    bare, full = make_user(), make_user()
+    save(bare.id)
+    for person in (full,):
+        made = save(person.id, "Legs day", [lift("Back Squat", 4, 5, 100)])
+        hold(made["id"], ODD)
+        many(person.id, rules.ROUTINES_MAX - 1)
+        for n in range(10):
+            log(person.id, ("Back Squat", 100 + n, 5), ("Bench Press", 60, 8), date=day(-n))
+    for person in (bare, full):
+        _, seen = statements_of(lambda: services.get_routines(person.id))
+        assert len(seen) == GET_STATEMENTS, person.id
+        _, seen = statements_of(lambda: routines.page_read(person.id))
+        assert len(seen) == GET_STATEMENTS, person.id
+
+
+# ---------------------------------------------------------------- C5a: the size of the answer (R14)
+
+# get_routines' answer as sent, in UTF-8 bytes (mcp_server._json_text, the call log's result_bytes), measured here on
+# 2026-11-21 and pinned: a typical account, and every limit at once.
+TYPICAL_BYTES = 25129
+LIMITS_BYTES = 2295023
+
+
+def answer_bytes(person_id: int) -> int:
+    found = services.get_routines(person_id)
+    GetRoutinesResult.model_validate(found)
+    return mcp_server._json_text(found)[1]
+
+
+def test_the_answer_s_size_typical_and_at_the_limits_is_measured_and_pinned(make_user, clock):
+    """Typical: 6 routines of 8 lifts, 4 sets each, every lift logged once with 4 sets. The limits: 20 routines of
+    64 characters, each of 20 items of 3 sets (60 sets), every item the lift of weight and reps whose name and words
+    run longest in kg (a pair done one side at a time says "each" and "a side" on every set), whose latest session
+    holds 60 sets of it that differ, so no two sets share words."""
+    with db.new_session() as s:
+        names = [e.name for e in common.exercises(s, "lift")
+                 if rules.measures_of(e.name) == ("weight", "reps") and not rules.takes_help(e.name)]
+    typical = make_user()
+    for r in range(6):
+        group = names[r * 8:(r + 1) * 8]
+        save(typical.id, f"Day {r + 1}", [lift(n, 4, 8, 60) for n in group])
+        log(typical.id, *[(n, w, reps) for n in group for w, reps in ((62.5, 8), (62.5, 8), (60, 7), (57.5, 6))],
+            date=day(-r - 1))
+    def length(name: str) -> int:  # what one item's name and words, and its last time's, add to the answer
+        sets_ = [(name, 400 + n * 1.01, 100 - n) for n in range(rules.SESSION_SETS[1])]
+        return (len(lifts.sets_text(sets_)) + 2 * len(name)
+                + len(routines.lift_words([{"exercise": name, "sets": 3, "reps": 100, "weight_kg": 499.99}])))
+    longest = max(names, key=length)
+    assert longest == "Dumbbell Walking Lunge"
+    limits = make_user()
+    items, most = rules.ROUTINE_LIFTS[1], rules.SESSION_SETS[1]
+    for r in range(rules.ROUTINES_MAX):
+        save(limits.id, f"{r:02d}" + "R" * (rules.ROUTINE_NAME_MAX - 2), [lift(longest, most // items, 100, 499.99)] * items)
+    log(limits.id, *[(longest, 400 + n * 1.01, 100 - n) for n in range(most)], date=day(-1))
+    sizes = (answer_bytes(typical.id), answer_bytes(limits.id))
+    print(f"\nget_routines answer: typical {sizes[0]:,} bytes, at the limits {sizes[1]:,} bytes ({longest})")
+    assert len(read(limits.id)["routines"]) == rules.ROUTINES_MAX and len(read(limits.id)["routines"][0]["lifts"]) == items
+    assert len(read(limits.id)["routines"][0]["lifts"][0]["last"]["sets"]) == most
+    assert sizes == (TYPICAL_BYTES, LIMITS_BYTES)
+
+
+# ---------------------------------------------------------------- C5a: the published list and the setup text
+
+# get_routines and save_routine as published at 9950f13, before C5a: tests/test_feedback.py's PUBLISHED then. Built at
+# 3b2441e, C5a was rebased onto 9950f13, where log-and-guide is merged.
+AT_9950F13 = {"save_routine": "235aceb04e92e26d0d8f59f1e9e3cfb8d36e91ef77226646f4baeac03b41b1e2",
+              "get_routines": "5e02ce42a92ca0045b1d8e345018b69f90ce92ff12aab832b11e65faee3c8ff5"}
+
+
+def test_of_the_published_list_only_get_routines_and_save_routine_moved(make_client):
+    """Decision 2: sets and reps optional in two result models, last added, one sentence in get_routines. Every
+    other function's hash in tests/test_feedback.py's PUBLISHED is the one it held at 9950f13. The five log functions
+    are left out of the list, so the hashes are read from the registered tools (log-and-guide.md, L0)."""
+    from .test_feedback import PUBLISHED
+    tools = registered_tools(make_client(owner_user_id=OWNER))
+    hashes = {name: hashlib.sha256(compact(t).encode()).hexdigest() for name, t in tools.items()}
+    assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED
+    assert {name for name in AT_9950F13 if hashes[name] != AT_9950F13[name]} == {"save_routine", "get_routines"}
+    getting = tools["get_routines"]
+    assert getting["outputSchema"]["$defs"]["LiftToLog"]["properties"]["last"]["anyOf"][0] == {
+        "$ref": "#/$defs/LastTime"}
+    test_the_instructions_do_not_change_4084_characters()  # the pin that already holds the setup text
+
+
+# ---------------------------------------------------------------- C5a: the two eval cases
+
+SAME_SEEN = [("Bench Press", 62.5, 8), ("Bench Press", 62.5, 8), ("Bench Press", 60, 6)] + [("Overhead Press", 40, 10)] * 3
+
+
+def test_the_two_last_time_cases_load_last_and_are_usable():
+    cases = judge.load_cases()
+    assert [c["id"] for c in cases[-2:]] == ["routine_same_as_last_time", "routine_last_time_read"]
+    for case in cases[-2:]:
+        assert judge.case_problems(case) == [] and (case["kind"], case["core"]) == ("direct", False)
+        assert [s["service"] for s in case["seed"]] == ["log_lifts", "save_routine"]
+    assert set(cases[-1]["expect"]["no_call"]) == set(common.WRITE_FUNCTIONS)
+
+
+def test_the_same_as_last_time_case_judges_as_designed(app_settings):
+    server = _lift_server(app_settings)
+    case, person = _lift_case(server, "routine_same_as_last_time")
+    [routine] = services.get_routines(person)["routines"]
+    bench = routine["lifts"][0]
+    assert (bench["weight_kg"], bench["weight_from"]) == (60, "routine")  # the routine, saved today, is newer
+    assert bench["last"]["words"] == f"62.5 kg {X} 8, 62.5 kg {X} 8, 60 kg {X} 6"
+    assert judge.judge(case, [_logged(person, SAME_SEEN)], "Logged.", person_rows(person)) == []
+    _, planned = _lift_case(server, "routine_same_as_last_time")  # the planned sets, not last time's
+    plan = [("Bench Press", 60, 8)] * 3 + [("Overhead Press", 40, 10)] * 3
+    assert judge.judge_calls(case["expect"], [_logged(planned, plan)], "Logged.") == []
+    why = judge.judge_db(case["db"], person_rows(planned))
+    assert why and why[0].startswith("lift_set") and "1 rows, expected 2" in why[0]
+    _, apart = _lift_case(server, "routine_same_as_last_time")  # a session of its own
+    assert judge.judge_calls(case["expect"], [_logged(apart, SAME_SEEN, new_session=True)], "Logged.") == [
+        "log_lifts sent new_session = true"]
+    # The review's S1: two wrong runs the 60 x 6 count alone let through, each failed by the 62.5 x 8 count.
+    lighter = [("Bench Press", 60, 8)] * 2 + [("Bench Press", 60, 6)] + [("Overhead Press", 40, 10)] * 3
+    stray = [("Bench Press", 62.5, 8), ("Bench Press", 60, 6)] + [("Overhead Press", 40, 10)] * 3 + [
+        ("Bench Press", 100, 1)]
+    for wrong, found in ((lighter, 2), (stray, 3)):
+        _, person = _lift_case(server, "routine_same_as_last_time")
+        assert judge.judge_calls(case["expect"], [_logged(person, wrong)], "Logged.") == []
+        why = judge.judge_db(case["db"], person_rows(person))
+        assert len(why) == 1 and why[0].startswith("lift_set") and f"{found} rows, expected 4" in why[0], why
+
+
+def test_the_last_time_read_case_judges_as_designed(app_settings):
+    server = _lift_server(app_settings)
+    case, person = _lift_case(server, "routine_last_time_read")
+    read_call = recorded("get_routines", {})
+    told = f"Last time, 3 days ago: Bench Press 62.5 kg {X} 8, 62.5 kg {X} 8, 57.5 kg {X} 7."
+    assert services.get_routines(person)["routines"][0]["lifts"][0]["last"]["words"] in told
+    assert judge.judge(case, [read_call], told, person_rows(person)) == []
+    assert judge.judge(case, [read_call], "Bench Press 3 x 8 at 60 kg.", person_rows(person))  # the plan, not last
+    assert judge.judge(case, [read_call], "Bench was 157.5 kg.", person_rows(person))  # 57.5 inside another number
+    assert judge.judge(case, [], told, person_rows(person))  # no read
+    wrote = [read_call, _logged(person, [("Bench Press", 57.5, 7)])]
+    assert judge.judge(case, wrote, told, person_rows(person))

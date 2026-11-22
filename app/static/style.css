@@ -243,6 +243,8 @@ nav.tabs {
   font-weight: 600;
   letter-spacing: -.01em;
 }
+/* A long name with no space, such as a 64-character routine's, wraps beside its card's action (C5a). */
+.card-head h2 { overflow-wrap: anywhere; }
 .card-head {
   display: flex;
   align-items: baseline;
@@ -896,6 +898,8 @@ tr.group td { border-top-color: var(--line-strong); }
   table.rows td:empty, table.rows td.is-blank { display: none; }
   /* Saved foods: Edit (the second-last cell) starts the row's last line, Delete beside it, both at the line's top. */
   .saved-foods table.rows td:nth-last-child(2) { grid-column: 1; }
+  /* Routines (routines-and-programs.md C5a): a wide cell spans the row there too, over the rule above. */
+  .saved-foods table.rows td.wide-cell { grid-column: 1 / -1; }
   table.rows td a.action { margin: 0; }
 }
 

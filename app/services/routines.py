@@ -24,18 +24,34 @@ save_routine(user_id, data, by)
 
 get_routines(user_id)
     A read: no lock, no write limit. Every live routine by name_key, then id, each lift with weight_kg (always kg),
-    weight_from and last_date, and the routine's words: lift_words of its lifts with the weight to log, in the
+    weight_from, last_date and last, and the routine's words: lift_words of its lifts with the weight to log, in the
     person's units. The weight to log is the heaviest set of the lift's latest live session in the one order
-    (latest_tops, the figures lifts.history's last_top gives), unless the routine holds a weight for it and that
+    (latest_sessions, the figures lifts.history's last_top gives), unless the routine holds a weight for it and that
     session is dated before saved_on, or there is no such session: then the routine's own weight. With neither, null.
-    The weights are one statement, run only when a routine is there (hardening D5), so a read runs a fixed number of
-    statements however many routines and sessions. A lift saved before that now records a time, or a distance and
-    time (Plank, Side Plank, Farmer's Carry, Suitcase Carry), is left out of the lifts to log and of the routine's
-    words, and the summary says so once a lift, with how to log it (exercise-list.md R10). The routine keeps it.
+    last is that same session (routines-and-programs.md decision 11, R4): {date, sets [{weight_kg, reps, time_s,
+    distance_m}] in set order, words}, the words as lifts.sets_text says the lift's sets, without its name, in the
+    person's units; null when the lift was never logged. The weights and last are one statement, run only when a
+    routine names a lift it places (hardening D5), so a read runs a fixed number of statements however many routines
+    and sessions.
+    The read never raises on an item (routines-and-programs.md decision 3, R2). An item is placed (placed) only when
+    its exercise is a lift of reps on the list, or a name the list no longer holds (as before C5a: a rename leaves the
+    old name in the JSON; the main chat's C5a ruling 1), and it holds whole-number sets and reps, and a weight_kg that
+    is a number, null or not there; any other key on it is ignored, so a field a later build adds never breaks this
+    read.
+    Anything else is left out of the lifts to log and of the routine's words, and the summary says so once a line
+    (left_out): a lift saved before that now records a time, or a distance and time, with how to log it
+    (exercise-list.md R10); a cardio row, to log as cardio; any other name or shape, plainly. The routine
+    keeps it.
+
+page_read(user_id)
+    get_routines' own answer, and for the Routines page each routine's left-out lines by its id, in the page's words
+    (left_out with page=True: no function or field named): one read, so the page's weights and last times are the
+    assistant's.
 
 lift_words(lifts, page=False, units=None)
     The lifts in words, for a summary and the Routines page: "Bench Press 3 × 8 at 60 kg and Dip 3 × 10". A weight
-    shows when it is not null, 0 kg included: null means ask, 0 means bodyweight. In the person's units.
+    shows when it is not null, 0 kg included: null means ask, 0 means bodyweight. In the person's units. Only the
+    items get_routines places are said: any other is passed over, so a delete's preview of any routine never raises.
 
 Every statement on routine names the person's id: by user_id and name_key for a save, by user_id for the read and
 the cap (live_count), by common.owned() for an id. The write locks the user row first (common.lock_user), then checks
@@ -44,9 +60,11 @@ the write limit (common.check_write_limit), before any other read or work.
 
 import json
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
+from sqlalchemy.orm import aliased
 
 from app import db, formatting, links, rules, users
+from app.exercises import BY_NAME as LISTED
 from app.models import Exercise, LiftSession, LiftSet, Routine, User
 from app.services import lifts
 from app.services.common import (
@@ -66,12 +84,68 @@ NONE_NOTE = "No routines saved yet. save_routine saves one."
 ASK_FOR = {"time": ("how long", "time_s"), "distance and time": ("how far", "distance_m")}
 
 
-def left_out_line(lift: str) -> str:
+def left_out_line(lift: str, page: bool = False) -> str:
     """get_routines' line for a lift a routine holds that is no longer a lift of sets and reps: 'Plank is left out:
-    it records time now. Ask the person how long, and log it with time_s.'"""
+    it records time now. Ask the person how long, and log it with time_s.' A lift ASK_FOR has no row for: 'Plank is
+    left out.' page=True: the Routines page's line, without what the assistant is told: 'Plank is left out: it
+    records time now.'"""
     what = rules.records(lift)
+    if what not in ASK_FOR:
+        return f"{lift} is left out."
     ask, field = ASK_FOR[what]
+    if page:
+        return f"{lift} is left out: it records {what} now."
     return f"{lift} is left out: it records {what} now. Ask the person {ask}, and log it with {field}."
+
+
+def _whole_number(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def placed(item) -> dict | None:
+    """The item as get_routines places it, {exercise, sets, reps, weight_kg}, or None when it cannot be (R2): a name
+    that is a lift of reps on the list (a band lift too) or no name on the list at all, whole-number sets and reps,
+    and a weight_kg that is a number, null or not there. Any other key is ignored."""
+    if not isinstance(item, dict):
+        return None
+    name = item.get("exercise")
+    if not isinstance(name, str) or not name.strip():  # a blank name is no lift: "An item is left out."
+        return None
+    row = LISTED.get(name)
+    # The main chat's C5a ruling 1 (2026-11-21): a name off the list is placed, as before C5a. A sync's rename gives
+    # the row its new name and leaves the old one in the routine's JSON, and measures_of reads it as reps. Only a
+    # listed cardio row, or a listed lift whose measures are not reps, is left out.
+    if row is not None and (row.kind != "lift" or rules.RECORDS.get(row.measures) != "reps"):
+        return None
+    sets, reps, weight = item.get("sets"), item.get("reps"), item.get("weight_kg")
+    if not (_whole_number(sets) and _whole_number(reps)):
+        return None
+    if weight is not None and (isinstance(weight, bool) or not isinstance(weight, (int, float))):
+        return None
+    return {"exercise": name, "sets": sets, "reps": reps, "weight_kg": weight}
+
+
+def left_out(item, page: bool = False) -> str:
+    """The line for an item get_routines does not place (R2): a hold or carry by left_out_line, a cardio row 'Rowing
+    Machine is left out: log it as cardio.', any other name 'Zorb Press is left out.', and with no name 'An
+    item is left out.' page=True: the Routines page's line, which names no function or field (the page's text
+    rules): 'Rowing Machine is left out.', 'Plank is left out: it records time now.'"""
+    name = item.get("exercise") if isinstance(item, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        return "An item is left out."
+    name = " ".join(name.split())
+    row = LISTED.get(name)
+    if row is not None and row.kind == "cardio":
+        return f"{name} is left out." if page else f"{name} is left out: log it as cardio."
+    if row is not None and row.kind == "lift":
+        return left_out_line(name, page)
+    return f"{name} is left out."
+
+
+def _stored(row: Routine) -> list:
+    """A routine's items as stored: its JSON list, or none when it holds something else."""
+    items = json.loads(row.lifts)
+    return items if isinstance(items, list) else []
 
 
 def too_many() -> dict:
@@ -94,7 +168,7 @@ def lift_words(items: list[dict], page: bool = False, units=None) -> str:
     """'Bench Press 3 × 5 at 60 kg and Assisted Pull-Up 3 × 8 with 20 kg help'. A band lift says no weight: it has
     none (exercise-list.md R6)."""
     parts = []
-    for x in items:
+    for x in filter(None, map(placed, items)):
         words = f"{x['exercise']} {formatting.show(x['sets'], 'count')} × {formatting.show(x['reps'], 'reps')}"
         if rules.measures_of(x["exercise"]) == ("reps",):
             pass
@@ -255,14 +329,15 @@ def save_routine(user_id: int, data: dict | None, by: str) -> dict:
                                False)
 
 
-def latest_tops(s, user_id: int, today, names: set[str]) -> dict[str, dict]:
-    """{lift: {date, weight_kg}} for these lifts (hardening D5): each lift's latest live session in the one order
-    (effective date, then id), its real date and its heaviest set of the lift, as lifts.history's last_top gives them.
-    One statement, at most one row a lift: a window over each lift's sessions, newest first."""
+def latest_sessions(s, user_id: int, today, names: set[str]) -> dict[str, dict]:
+    """{lift: {date, weight_kg, sets}} for these lifts (hardening D5; routines-and-programs.md R3): each lift's latest
+    live session in the one order (effective date, then id), its real date, its heaviest set of the lift, as
+    lifts.history's last_top gives them, and every set of the lift in it in set order, as (weight_kg, reps, time_s,
+    distance_m). One statement: a window over each lift's sessions, newest first, and that session's sets of the
+    lift, so the weight to log and last time are always the same session."""
     effective = case((LiftSession.date > today, today), else_=LiftSession.date)  # metrics.on_or_before
     per_session = (
-        select(Exercise.name.label("lift"), LiftSession.date.label("day"),
-               func.max(LiftSet.weight_kg).label("top"),
+        select(Exercise.name.label("lift"), LiftSession.id.label("session_id"), LiftSession.date.label("day"),
                func.row_number().over(partition_by=Exercise.name,
                                       order_by=(effective.desc(), LiftSession.id.desc())).label("n"))
         .select_from(LiftSet).join(LiftSession, LiftSet.session_id == LiftSession.id)
@@ -270,30 +345,61 @@ def latest_tops(s, user_id: int, today, names: set[str]) -> dict[str, dict]:
         .where(LiftSession.user_id == user_id, LiftSession.deleted_at.is_(None), Exercise.name.in_(names))
         .group_by(Exercise.name, LiftSession.id, LiftSession.date)
         .subquery())
-    found = s.execute(select(per_session.c.lift, per_session.c.day, per_session.c.top).where(per_session.c.n == 1))
-    return {lift: {"date": day, "weight_kg": top} for lift, day, top in found}
+    latest = select(per_session.c.lift, per_session.c.session_id, per_session.c.day).where(
+        per_session.c.n == 1).subquery()
+    done, lift = aliased(LiftSet), aliased(Exercise)
+    found = s.execute(
+        select(latest.c.lift, latest.c.day, done.weight_kg, done.reps, done.time_s, done.distance_m)
+        .select_from(latest).join(done, done.session_id == latest.c.session_id)
+        .join(lift, and_(done.exercise_id == lift.id, lift.name == latest.c.lift))
+        .order_by(latest.c.lift, done.set_number, done.id))
+    out: dict[str, dict] = {}
+    for name, day, weight, reps, time_s, distance_m in found:
+        one = out.setdefault(name, {"date": day, "weight_kg": weight, "sets": []})
+        one["weight_kg"] = max(one["weight_kg"], weight)
+        one["sets"].append((weight, reps, time_s, distance_m))
+    return out
 
 
-def get_routines(user_id: int) -> dict:
-    """Every live routine, each lift with the weight to log. Returns {routines, how, summary[, note], links} or
-    {error, message, fix}. See the module notes."""
+def latest_tops(s, user_id: int, today, names: set[str]) -> dict[str, dict]:
+    """{lift: {date, weight_kg}}: latest_sessions' weights alone, as lifts.history's last_top gives them."""
+    return {name: {"date": x["date"], "weight_kg": x["weight_kg"]}
+            for name, x in latest_sessions(s, user_id, today, names).items()}
+
+
+def last_time(name: str, latest: dict | None, units=None) -> dict | None:
+    """An item's last (R4): {date, sets, words}, the words as lifts.sets_text says the lift's sets, without its name
+    ("62.5 kg × 8, 62.5 kg × 8, 57.5 kg × 7", "3 × 60 s"). None when never logged."""
+    if latest is None:
+        return None
+    words = lifts.sets_text([(name, *x) for x in latest["sets"]], units)
+    return {"date": latest["date"].isoformat(),
+            "sets": [{"weight_kg": w, "reps": r, "time_s": t, "distance_m": d} for w, r, t, d in latest["sets"]],
+            "words": words[len(name) + 1:]}
+
+
+def _read(user_id: int) -> tuple[dict, dict[int, list[str]]]:
+    """get_routines' answer, and each routine's left-out lines for the page by its id, in its order."""
     with db.new_session() as s:
         user = s.get(User, user_id)
         if user is None:
-            return no_account()
+            return no_account(), {}
         rows = list(s.scalars(select(Routine).where(Routine.user_id == user.id, Routine.deleted_at.is_(None))
                               .order_by(Routine.name_key, Routine.id)))
-        named = {x["exercise"] for row in rows for x in json.loads(row.lifts)}
-        last_top = latest_tops(s, user.id, users.today_for(user), named) if named else {}
+        stored = {row.id: _stored(row) for row in rows}
+        named = {x["exercise"] for items in stored.values() for x in filter(None, map(placed, items))}
+        latest = latest_sessions(s, user.id, users.today_for(user), named) if named else {}
         units = users.units_for(user)
-    routines, left_out = [], []
+    routines, lines, left = [], [], {}
     for row in rows:
-        items = []
-        for x in json.loads(row.lifts):
-            if "reps" not in rules.measures_of(x["exercise"]):
-                left_out.append(x["exercise"])
+        items, page_lines = [], []
+        for raw in stored[row.id]:
+            x = placed(raw)
+            if x is None:
+                lines.append(left_out(raw))
+                page_lines.append(left_out(raw, page=True))
                 continue
-            top = last_top.get(x["exercise"])
+            top = latest.get(x["exercise"])
             if top is not None and (x["weight_kg"] is None or top["date"] >= row.saved_on):
                 weight, source = top["weight_kg"], "last_session"
             elif x["weight_kg"] is not None:
@@ -301,14 +407,27 @@ def get_routines(user_id: int) -> dict:
             else:
                 weight, source = None, None
             items.append({**x, "weight_kg": weight, "weight_from": source,
-                          "last_date": top["date"].isoformat() if top else None})
+                          "last_date": top["date"].isoformat() if top else None,
+                          "last": last_time(x["exercise"], top, units)})
         routines.append({"id": row.id, "name": row.name, "saved_on": row.saved_on.isoformat(), "lifts": items,
                          "words": lift_words(items, units=units)})
+        left[row.id] = list(dict.fromkeys(page_lines))
     n = len(routines)
     names = lifts._joined([r["name"] for r in routines])
     out = {"routines": routines, "how": HOW,
            "summary": f"{formatting.show(n, 'count')} routine{'' if n == 1 else 's'}: {names}." if n else NONE_YET}
-    out["summary"] += "".join(f" {left_out_line(lift)}" for lift in dict.fromkeys(left_out))
+    out["summary"] += "".join(f" {line}" for line in dict.fromkeys(lines))
     if not n:
         out["note"] = NONE_NOTE
-    return {**out, "links": {"routines": links.page("routines")}}
+    return {**out, "links": {"routines": links.page("routines")}}, left
+
+
+def get_routines(user_id: int) -> dict:
+    """Every live routine, each lift with the weight to log and last time. Returns {routines, how, summary[, note],
+    links} or {error, message, fix}. See the module notes."""
+    return _read(user_id)[0]
+
+
+def page_read(user_id: int) -> tuple[dict, dict[int, list[str]]]:
+    """For the Routines page: get_routines' answer, and each routine's left-out lines by its id."""
+    return _read(user_id)

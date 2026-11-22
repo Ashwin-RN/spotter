@@ -1710,8 +1710,10 @@ class RoutinesLinks(BaseModel):
 
 class SavedRoutineLift(BaseModel):
     exercise: str = Field(description=ROUTINE_EXERCISE)
-    sets: int = Field(description=ROUTINE_SETS)
-    reps: int = Field(description=ROUTINE_REPS)
+    # Optional from routines-and-programs.md's deploy 1 (decision 2), still filled for every lift: a later item kind
+    # has none, and a chat holding this list must never meet a required field that is missing.
+    sets: int | None = Field(default=None, description=ROUTINE_SETS)
+    reps: int | None = Field(default=None, description=ROUTINE_REPS)
     weight_kg: float | None = Field(description="The weight the person gave, in kg, or null when none was given. 0 "
                                                 "for a band lift. " + _HELP_WEIGHT)
 
@@ -1737,10 +1739,28 @@ class SaveRoutineResult(BaseModel):
     units_note: str | None = Field(default=None, description=UNITS_NOTE)
 
 
+class LastSet(BaseModel):
+    """One set of last time, in SetOut's words."""
+
+    weight_kg: float = Field(description="Weight in kg: one hand's for a pair, minus for help, 0 for bodyweight work.")
+    reps: int | None = Field(default=None, description="Reps done, or null for a hold or a carry.")
+    time_s: int | None = Field(default=None, description="A hold's or a carry's time in seconds, or null.")
+    distance_m: float | None = Field(default=None, description="A carry's or a sled's distance in metres, or null.")
+
+
+class LastTime(BaseModel):
+    """What was done last time (routines-and-programs.md decision 11, R4). sets is optional: a later item kind's
+    last time has none."""
+
+    date: str = Field(description="The date of that session, YYYY-MM-DD.")
+    sets: list[LastSet] | None = Field(default=None, description="Every set of this lift in that session, in order.")
+    words: str = Field(description="What was done, in words, in the person's units, ready to quote.")
+
+
 class LiftToLog(BaseModel):
     exercise: str = Field(description=ROUTINE_EXERCISE)
-    sets: int = Field(description=ROUTINE_SETS)
-    reps: int = Field(description=ROUTINE_REPS)
+    sets: int | None = Field(default=None, description=ROUTINE_SETS)  # optional from deploy 1, as SavedRoutineLift's
+    reps: int | None = Field(default=None, description=ROUTINE_REPS)
     weight_kg: float | None = Field(
         description="The weight to log, in kg: the heaviest set of this lift's latest session, unless the routine "
                     "was saved on a later day than that session, with a weight of its own. Send it in weight_kg as "
@@ -1748,6 +1768,10 @@ class LiftToLog(BaseModel):
     weight_from: str | None = Field(description="Where weight_kg came from: last_session, routine, or null.")
     last_date: str | None = Field(
         description="The date of this lift's latest session, or null when it was never logged.")
+    last: LastTime | None = Field(
+        default=None,
+        description="What was done last time, with its date: every set of this lift in its latest session, or this "
+                    "activity's latest session. Null when never logged.")
 
 
 class RoutineToLog(BaseModel):

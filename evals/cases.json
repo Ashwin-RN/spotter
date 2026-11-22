@@ -3273,5 +3273,29 @@
               "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
     "expect": {"function": "log", "reply_has": ["Plank"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "lift_set", "count": 1, "all": {"exercise": "Plank", "time_s": 120, "reps": null, "date": "{{today}}"}}]
+  },
+  {
+    "id": "routine_same_as_last_time",
+    "kind": "direct",
+    "core": false,
+    "say": "Log my push day, same as last time",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "get_routines", "get_log", "list_exercises"],
+              "must_not": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "log_lifts", "data": {"date": "{{days_ago:3}}", "sets": [{"exercise": "Bench Press", "weight_kg": 62.5, "reps": 8, "exact": true}, {"exercise": "Bench Press", "weight_kg": 62.5, "reps": 8, "exact": true}, {"exercise": "Bench Press", "weight_kg": 60, "reps": 6, "exact": true}, {"exercise": "Overhead Press", "weight_kg": 40, "reps": 10, "exact": true}, {"exercise": "Overhead Press", "weight_kg": 40, "reps": 10, "exact": true}, {"exercise": "Overhead Press", "weight_kg": 40, "reps": 10, "exact": true}]}}, {"as": "push", "service": "save_routine", "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60}, {"exercise": "Overhead Press", "sets": 3, "reps": 10, "weight_kg": 40}]}}],
+    "expect": {"function": "log_lifts", "ok_calls": {"log_lifts": 1}, "inputs_forbid": {"new_session": true}, "no_call": ["log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "log_food", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "where": {"date": "{{today}}"}, "count": 1, "all": {"set_count": 6}}, {"table": "lift_set", "where": {"exercise": "Bench Press", "weight_kg": 60, "reps": 6}, "count": 2}, {"table": "lift_set", "where": {"exercise": "Bench Press", "weight_kg": 62.5, "reps": 8}, "count": 4}]
+  },
+  {
+    "id": "routine_last_time_read",
+    "kind": "direct",
+    "core": false,
+    "say": "What did I do on my push day last time?",
+    "calls": {"must": ["get_routines", "get_log", "get_data", "get_progress"],
+              "may": ["whoami", "what_is_logged"],
+              "must_not": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "log_lifts", "data": {"date": "{{days_ago:3}}", "sets": [{"exercise": "Bench Press", "weight_kg": 62.5, "reps": 8, "exact": true}, {"exercise": "Bench Press", "weight_kg": 62.5, "reps": 8, "exact": true}, {"exercise": "Bench Press", "weight_kg": 57.5, "reps": 7, "exact": true}]}}, {"as": "push", "service": "save_routine", "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60}, {"exercise": "Overhead Press", "sets": 3, "reps": 10, "weight_kg": 40}]}}],
+    "expect": {"reply_has_pattern": ["(?<![\\d.,])57\\.5(?![\\d])"], "no_call": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 1}, {"table": "lift_set", "count": 3}, {"table": "routine", "count": 1}]
   }
 ]

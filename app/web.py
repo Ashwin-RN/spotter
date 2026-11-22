@@ -124,7 +124,7 @@ from app.models import (
 )
 from app.services import account as account_checks, body, common, lifts, measurements, progress as progress_data
 from app.services import goals as goal_rules, trends as trend_rules
-from app.services.routines import lift_words as routine_lift_words
+from app.services.routines import lift_words as routine_lift_words, page_read as routine_page_read
 
 log = logging.getLogger("spotter")
 
@@ -2480,17 +2480,36 @@ def routine_strip(params) -> dict | None:
     return {"words": words, "undo": None} if words else None
 
 
+ROUTINE_NEVER = "Not logged yet."
+
+
+def routine_rows(lifts_: list[dict], today, units) -> list[dict]:
+    """A routine card's rows (routines-and-programs.md, the page): Item, the plan with the weight to log in the
+    person's unit, as get_routines' words say it, and last time with its day ("Wed 11 Nov: 92.5 kg × 5, 92.5 kg ×
+    5"), or "Not logged yet.". Every number is get_routines' own, through app.formatting."""
+    out = []
+    for x in lifts_:
+        plan = routine_lift_words([x], page=True, units=units)[len(x["exercise"]) + 1:]
+        last = x.get("last")
+        when = f"{formatting.day(last['date'], today)}: {last['words']}" if last else ROUTINE_NEVER
+        out.append({"item": x["exercise"], "plan": plan, "last": when})
+    return out
+
+
 async def routines_page(request: Request) -> Response:
-    """GET: the person's routines, each lift with the weight get_routines gives, so the page's weights are the
-    assistant's. No form saves or logs one: Delete in each row, and Undo after it."""
+    """GET: the person's routines, a card each, each item with the plan, the weight to log and last time that
+    get_routines gives, from its own read (routines.page_read), so the page's numbers are the assistant's. An item the
+    read leaves out shows its line under the card's table, in the page's words (no function or field named). No form
+    saves or logs one: Delete on each card, and Undo after it."""
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
-    result = await _db(services.get_routines, user.id)
+    result, left_out = await _db(routine_page_read, user.id)
     units = users.units_for(user)  # the weights in the person's unit, as get_routines' words say them
-    rows = [{"id": r["id"], "name": r["name"], "lifts": routine_lift_words(r["lifts"], page=True, units=units)}
-            for r in result.get("routines", [])]
-    return page(request, "routines.html", routines=rows, strip=routine_strip(request.query_params))
+    today = users.today_for(user)
+    cards = [{"id": r["id"], "name": r["name"], "rows": routine_rows(r["lifts"], today, units),
+              "left_out": left_out.get(r["id"], [])} for r in result.get("routines", [])]
+    return page(request, "routines.html", routines=cards, strip=routine_strip(request.query_params))
 
 
 async def routine_delete_page(request: Request) -> Response:

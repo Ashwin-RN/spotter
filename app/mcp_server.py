@@ -1526,6 +1526,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             "date out for today. Send each "
             "weight_kg as given, in weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and send the answer in "
             "the field of its unit. Say in your reply which sets were logged."
+            " When the person says same as last time, send last's sets as given, each with the lift as movement."
         ),
         annotations=READ_ONLY,
     )

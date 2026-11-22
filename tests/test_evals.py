@@ -45,7 +45,7 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "look_trip_hours", "inc_deload", "look_deload", "save_food_asked", "edit_fixes_minutes",
                   "food_lookup", "routine_read", "exercise_list", "catch_up", "import_other_app"}
 # function-list.md, G1's note of 2026-11-17: the golden package's reviewed cases follow G1's (tests/test_golden_cases.py)
-GOLDEN_PACKAGE = 189  # 164, exercise-list.md C4g's 23, and log-and-guide.md's 2
+GOLDEN_PACKAGE = 191  # 164, exercise-list.md C4g's 23, log-and-guide.md's 2, and routines-and-programs.md C5a's 2
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 
