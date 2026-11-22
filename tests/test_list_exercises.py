@@ -387,8 +387,8 @@ def test_through_mcp_the_function_takes_search_and_answers_as_the_service_does(w
     tool = {t["name"]: t for t in tool_list(http, token)}["list_exercises"]
     assert tool["description"] == (
         "Exercise names, with each lift's equipment and how its weight is logged. Left bare: the person's own, the "
-        "usual lifts and every cardio activity, and how many Spotter knows. search finds the rest. log_lifts also "
-        "takes the person's own words; every other function takes a name as written here.")
+        "usual lifts and every cardio activity, and how many Spotter knows. search finds the rest. log also "
+        "takes the person's own words for a lift; every other function takes a name as written here.")
     props = tool["inputSchema"]["properties"]
     assert list(props) == ["kind", "category", "search"]
     assert props["kind"]["description"] == "lift or cardio: every exercise of that kind."
