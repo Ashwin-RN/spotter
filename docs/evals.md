@@ -20,6 +20,8 @@ python -m evals.need HEAD~1   against any commit or branch
   - whoami's answer for a new account and for the owner: setup, the new account note, the time zone note;
   - every string of 20 characters or more in `app/`, file by file, docstrings left out. This catches
     the notes, fix lines and plan lines that answers carry.
+- The five log functions are on neither list since `log-and-guide.md`'s first deploy, so their schemas are not
+  read. Their words are strings in `app/`, which the string check reads.
 - Pages are not surface: `app/web.py`, `app/templates/` and `app/static/` are left out.
 - The string check is strict on purpose. A changed log message says yes too: one run too many costs
   less than a changed note that goes out untested.
@@ -43,6 +45,8 @@ python -m evals.run --golden --model claude-sonnet-5-5
 python -m evals.run --core --model claude-sonnet-5-5
 python -m evals.run --client codex --model gpt-6-luna
 python -m evals.run --client gemini --golden --n 1
+python -m evals.run --case hold_plank --tool-search off --model claude-sonnet-5-5
+python -m evals.run --case log_plank_minutes --transcripts --model claude-sonnet-5-5
 ```
 
 | Flag | What it does |
@@ -58,6 +62,8 @@ python -m evals.run --client gemini --golden --n 1
 | `--gemini-key N` | Gemini only: which key of `.env.evals`, `GOOGLE_API_KEY_<N>`. Default 1. One key a run, never switched. |
 | `--gemini-per-minute N` | Gemini only: requests a minute at most, each spaced to keep under it. Default 5, the free tier's. 0 is not paced. |
 | `--keep` | Keeps the temporary directory: the database, each run's raw output, `results.json`. |
+| `--tool-search on\|off` | Claude only. `on`, the default, is the CLI's own tool search: the runner takes any `ENABLE_TOOL_SEARCH` the shell holds out of the CLI's environment. `off` sets `ENABLE_TOOL_SEARCH=false`, so every function loads up front, as the comparison rig ran. The mode is printed at the start and under the table. Codex and Gemini print it as not applied. See "Tool search and transcripts". |
+| `--transcripts` | Keeps each run's whole transcript, masked, with everything `--keep` keeps (it sets `--keep`). Claude: `--verbose` on the CLI, so each turn's `out-<case>-<n>.json` holds every message of the turn. Codex: its JSONL stream, `out-<case>-<n>.jsonl`, as `--keep` keeps it. Gemini: the transcript each run already carries, in `results.json`. |
 | `--time-zone Z` | The person's IANA time zone. Default: the machine's. |
 
 ## What it needs
@@ -140,10 +146,13 @@ case. The last measured release run, data on request on 2026-11-17: 144 of 153 r
 4. For Claude, the CLI runs once per conversation:
 
    ```
-   claude -p "<say>" --output-format json --mcp-config <file> --strict-mcp-config
+   claude -p "<say>" --output-format json [--verbose] --mcp-config <file> --strict-mcp-config
           --allowedTools "mcp__spotter__*" --no-session-persistence
           --settings '{"advisorModel": ""}' [--effort E] [--model M]
    ```
+
+   - `--verbose` comes with `--transcripts` only. The JSON output is then a list of the turn's messages, the result
+     last, and the runner reads the result from it. Not checked against a live CLI.
 
    - The MCP config names one server, `http://127.0.0.1:PORT/mcp`, with the token in an
      `Authorization` header. It sits in the temporary directory and is deleted when the run ends.
@@ -211,6 +220,24 @@ the parent held for it.
 
 User-level CLI settings and skills still load, as they would for the person, except the advisor.
 
+### Tool search and transcripts
+
+**Claude Code defers MCP functions and looks each one up before its first use, per its docs**
+(contract `log-and-guide.md`, "Up-front loading"). Every number of the function list comparison was measured with
+every function loaded up front (`ENABLE_TOOL_SEARCH=false`). So the runner sets the mode itself, after
+`child_env`, on the Claude CLI's environment only:
+
+- `--tool-search on`, the default: the variable is taken out, whatever the shell held, so the run is the CLI's own
+  default.
+- `--tool-search off`: `ENABLE_TOOL_SEARCH=false`.
+- The run prints one line for it, at the start and under the table, such as "tool search: on, the CLI's default
+  (ENABLE_TOOL_SEARCH left unset)". Codex and Gemini print "tool search: not applied".
+
+`--transcripts` keeps what a run did, step by step, so a pass can be read for a search step before the first `log`
+and for any call of a hidden name. Every kept text is masked: the run's token, and anything shaped like a token. The
+start line says where the files are, and "Kept:" names the directory at the end. Each transcript holds the throwaway
+person's data in full.
+
 ### The advisor is off, and one model a run
 
 **Since 17 November 2026 every run is the model asked for, alone.** The owner wants reliable results more than a
@@ -259,6 +286,37 @@ lower price, and a run that took a stronger model's help does not show what the 
 
 The record is the server's because `--output-format json` carries no tool calls, and the server's
 record cannot be talked round.
+
+### A log call, routed
+
+**A new chat logs every entry through `log`, and the cases still name the five log functions: the judge reads a
+`log` call as its kind's function too** (contract `log-and-guide.md`, L5). The recorder keeps every call as sent;
+`judge.routed` turns the calls into what the checks read, at the top of `judge_calls`, `judge_tags`, `judge_turns`
+and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed too.
+
+- A `log` call whose kind resolves answers to both names: `log`, and its kind's function (`log_lifts` for kind
+  `lifts`, `log_measurement` for `waist`, and so on). A check naming `log` sees every `log` call, with its arguments
+  as sent. A check naming one of the five sees the five's own calls and the routed `log` calls.
+- A routed call's arguments are the ones `app/log_shape.py`'s `route` gives the kind's function, so every key path
+  reads as the five's own: `details.new_session` as `new_session`, `details.entries[].meal` as `entries.*.meal`, a
+  cardio part's fields at the top, a lift's `minutes` as `time_s`, a cardio part's `distance_m` as `distance_km`.
+- A `log` call whose kind resolves but whose shape `route` refuses counts under the kind's name, as refused. So
+  `must_not`, `no_call`, `refusals` and `error_code` still catch it. A `log` call whose kind resolves to none counts
+  as `log` alone.
+- Every check that reads a call by name reads the routed calls: `function`, the three `inputs_*`, `refused`,
+  `ok_calls`, `no_call`, the four answer checks, the tags' `must` and `must_not`, and the two-turn checks.
+- A reason names a routed call as `log (lifts)`: "log (bodyweight) was called and should not have been",
+  "log_lifts was not called (calls: whoami, log (bodyweight))". A call of the five by name keeps its own words.
+- `edit_entry`, `delete_entry` and `restore_entry` take `log`'s kind words too (the contract's decision 52). The
+  judge reads their `kind` as its table word, so a case that pins `lift_session` passes `lifts` as well.
+- `guide` is no data read: its numbers ("1 to 60") are words on how to log, never figures of the person's.
+  `read_any` and `quotes_spotter` never read it.
+- So every case keeps its words: 260 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
+  asks for no write, so a refused `log` call whose kind resolves to none fails those too.
+- `tests/test_golden_cases.py` plays held runs of `stated_number`, `lb_weigh_in`, `waist_in_inches`,
+  `hold_plank`, `miles_run`, `pick_lift_answer` and `hand_check_family` again with each call of the five sent as
+  `log`: each judges as it does through the five, the answer checks reading a `log` call's own answer. A measurement
+  goes both ways: kind `measurement` with `details.kind`, and the measurement's own word as the kind.
 
 ## The cases
 
@@ -450,7 +508,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | `import_other_app` | Bring my weigh-ins over from The Hacker's Diet Online, with its CSV export | `import_entries` called with `weight_unit` kg, never with `dry_run` false; the reply asks; no weigh-in, live or deleted |
 
 "No write function" is every write, by name, in `no_call`: the names in `WRITE_FUNCTIONS` in
-`app/services/common.py`. A write added later must be added to those lists.
+`app/services/common.py`, `log` first among them. A write added later must be added to those lists.
 
 ### What the six stage 5 cases prove, and what they do not
 
@@ -653,8 +711,10 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
   own (below). The owner's ten questions join them, each with its look-alike.
 - The measured pick-up rate is a ceiling: Spotter is the only MCP server in each run, so no other tool competes
   for the step.
-- **The coverage test** (`tests/test_evals.py`): every function on everyone's list is in at least one case's
-  `must`. The owner's three are left out. It costs nothing and runs no model.
+- **The coverage test** (`tests/test_evals.py`): every function in `NEEDS` (`app/mcp_server.py`) is in at least one
+  case's `must`. The owner's three are left out. It costs nothing and runs no model. Since the first deploy of
+  `log-and-guide.md`, `NEEDS` is wider than a new chat's list: it still holds the five log functions, which a chat
+  opened before calls by name, so each of them, and `log` and `guide`, is some case's `must`.
 - Functions with a case of their own: every write, `whoami`, `get_data`, `list_exercises`, `get_routines`.
   `what_is_logged`, `get_log`, `get_progress`, `get_trends` and `get_goals` are each one of the data reads a
   route-free case takes; `find_food` is one of two for `food_lookup`.
@@ -679,7 +739,8 @@ the same package and played the same way: see "The exercise list cases".
 - **The core runs at each gate, the full set at the baseline and the release** (the owner's pick). `--core` runs it.
   The core is the package's core cases with G1's golden cases and the seven cases G1 added: the reviewed list
   dropped its overlaps in favour of G1's drafts, so without them the core would miss those situations.
-  The coverage test holds for both: every function on everyone's list is the `must` of a case, and of a core case.
+  The coverage test holds for both: every function in `NEEDS` but the owner's is the `must` of a case, and of a core
+  case. `NEEDS` is wider than a new chat's list while the five log functions answer old chats (above).
 - **Kinds.** The reviewer sorted the cases six ways: direct, incidental, look-alike, ambiguous, multi and
   adversarial. The last three load as `direct`: they count in the pass count, as every direct case does.
   - Ambiguous: words that fit more than one entry, kind or unit. Most pass when the reply asks and nothing is written.
@@ -764,7 +825,8 @@ so "Or was it Back Squat?" fails and Spotter's own first-day question ("what do 
 
 Every seeded lift set in the file sends `exact` true, so a seeded Back Squat stays Back Squat after a seeded Smith
 Squat. The new
-cases follow the last, each `direct` and `core` false: the core stays at 101.
+cases follow the last, each `direct` and `core` false, so they are not in the core: it is 103, with the two log and
+guide cases below.
 
 | Case | Says (seed) | Passes when |
 |---|---|---|
@@ -800,6 +862,16 @@ cases follow the last, each `direct` and `core` false: the core stays at 101.
 | `import_exact_smith`: the assistant sends the export's own name. The import takes a name as written (unit tests hold that it lands on Bench Press) | Which lift the preview names: a preview counts sessions and names no lift |
 | `read_plain_word`: a read shows the person both squats, and the reply names both | That `get_progress` took the plain word: any read that shows both passes, and no model-read text says `get_progress` takes one |
 | `word_dumbbell_history`: the design's pick, Bench Press, which the owner is told before the run | That the person meant a barbell |
+
+### The log and guide cases
+
+**Two cases follow the exercise list's, both `direct` and `core`** (contract `log-and-guide.md`, N9). The rest of
+`log` is judged through the five's own cases, by routing (above).
+
+| Case | Says | Passes when | Notes |
+|---|---|---|---|
+| `guide_how_food` | how do I log food with you? | `guide` called; no write, `log` among them; no food entry; the reply gives no kcal figure of its own: no number before kcal, kcals, cal, cals or calories | Strict on purpose: a reply with a worked example, such as "dal, 180 kcal", fails, and so does a figure quoted from `guide`'s own words. Read such a fail by hand |
+| `log_plank_minutes` | held a plank for 2 minutes | `log` called (`log_lifts` is in its `may`); no other write; the reply names Plank; one Plank set today, `time_s` 120, no reps | A plank sent with no weight is refused by the service, its fix naming 0 for body weight, as `log_lifts` refuses it; a right call after it passes, through `log` as through `log_lifts` in `hold_plank`. The right row logged through `log_lifts` alone fails: the case's `must` is `log` |
 
 ## What the evals prove
 

@@ -115,6 +115,17 @@ db, checks on the person's rows after the run:
   (contract exercise-list.md, C4g): exercise (the lift's name), weight_kg, reps, time_s, distance_m, set_number,
   session_id, and its session's date and deleted_at, so a set of a deleted session reads as deleted.
 
+A log call, routed (contract log-and-guide.md, L5): every check that reads a call by name reads routed(calls), the
+step at the top of judge_calls, judge_tags, judge_turns and made_must_call. A log call whose kind resolves answers to
+both names: as log, with its arguments as sent; as its kind's function (log_lifts for kind lifts, and so on), with
+the arguments app/log_shape.py's route gives that function, so a key path reads as the five's own (details.new_session
+as new_session, details.entries as entries, a cardio part's fields at the top, a time or a distance in the kind's own
+column). One whose kind resolves but whose shape route refuses counts under the kind's name as refused, so must_not,
+no_call, refusals and error_code still catch it. One whose kind resolves to none counts as log alone. A reason names a
+routed call as log (lifts). edit_entry, delete_entry and restore_entry take log's kind words too (decision 52): their
+kind is read as its table word (log_shape.table_word), so lifts and lift_session both pass. The recorder keeps every
+call as sent: routing is the judge's alone.
+
 Placeholders, as a whole string: "{{today}}" and "{{yesterday}}" (the person's own dates, YYYY-MM-DD),
 "{{days_ago:N}}" (N from 0 to DAYS_AGO, 60: the day N days before today), and "{{next_month_end:N}}" (N from 1 to
 12: the last day of month N, the next one strictly after today in the person's zone), anywhere in seed, expect and
@@ -144,7 +155,8 @@ TAG_KEYS = ("must", "may", "must_not")
 KINDS = ("direct", "incidental", "look_alike")  # a golden case's kind
 APART = ("incidental", "look_alike")  # kept out of the pass count, reported apart
 # The data reads, the only answers quotes_spotter and read_any read (contract function-list.md, G1). whoami,
-# list_exercises, find_food and get_routines are never among them.
+# list_exercises, find_food and get_routines are never among them, and neither is guide (log-and-guide.md): its
+# numbers ("1 to 60") are words on how to log, never Spotter's figures for the person.
 DATA_READS = ("what_is_logged", "get_data", "get_log", "get_progress", "get_trends", "get_goals")
 # Spotter's writes, as app/services/common.py's WRITE_FUNCTIONS names them (a test holds the two equal). A case
 # whose must holds one is a logging case: the release bar of the contract's exit check 6.
@@ -472,6 +484,95 @@ def values_at(data: Any, path: str) -> list[Any]:
     return found
 
 
+# ---------------------------------------------------------------- log calls, routed (log-and-guide.md, L5)
+
+KIND_WORD_FUNCTIONS = ("edit_entry", "delete_entry", "restore_entry")  # they take log's kind words (decision 52)
+
+
+def routed(calls: list[dict]) -> list[dict]:
+    """The calls as the checks read them (the module notes). A log call whose kind resolves becomes one record under
+    its kind's function, with route's arguments, the arguments as sent kept as sent and its kind as log_kind; refused
+    when route refuses it, whatever the answer was. Every other call is as recorded, but the kind of edit_entry,
+    delete_entry and restore_entry read as its table word. New dicts throughout: the recorder's own are never
+    changed, and calls already routed go on as they are, so the step may run twice. app.log_shape is imported here,
+    as every other app import of this module is lazy."""
+    from app import log_shape
+    out = []
+    for c in calls:
+        if c.get("routed"):
+            out.append(c)
+            continue
+        arguments = c.get("arguments") if isinstance(c.get("arguments"), dict) else {}
+        if c.get("name") == "log":
+            found = log_shape.route(arguments)
+            if found.kind is None:  # no kind resolved: log alone
+                out.append({**c, "routed": True})
+                continue
+            refused = found.refusal is not None
+            out.append({**c, "name": found.function, "via": "log", "log_kind": found.kind, "sent": arguments,
+                        "arguments": _refused_arguments(log_shape, arguments, found.kind) if refused else found.arguments,
+                        "is_error": bool(c.get("is_error")) or refused, "routed": True})
+        elif c.get("name") in KIND_WORD_FUNCTIONS and isinstance(arguments.get("kind"), str):
+            out.append({**c, "arguments": {**arguments, "kind": log_shape.table_word(arguments["kind"])}, "routed": True})
+        else:
+            out.append({**c, "routed": True})
+    return out
+
+
+def _refused_arguments(log_shape, arguments: dict, kind: str) -> dict:
+    """A log call route refused, as its kind's function would have been sent it: route again on the call with every
+    key route does not take there left out; when that is refused too (a part count, a conversion), the shape moved by
+    hand, every key kept and nothing converted. So inputs_* read a refused log call as they read a refused call of the
+    five."""
+    parts = arguments.get("parts") if isinstance(arguments.get("parts"), list) else []
+    details = arguments.get("details") if isinstance(arguments.get("details"), dict) else {}
+    takes = log_shape.PART_TAKES.get(kind, ())
+    clean = {k: v for k, v in arguments.items() if k in log_shape.LOG_FIELDS and k not in ("parts", "details")}
+    if kind not in log_shape.NOTES_KINDS:
+        clean.pop("notes", None)
+    if takes:
+        clean["parts"] = [{k: v for k, v in p.items() if k in takes} for p in parts if isinstance(p, dict)]
+    clean["details"] = {k: v for k, v in details.items() if k in log_shape.DETAIL_FIELDS[kind]}
+    again = log_shape.route(clean)
+    if again.refusal is None:
+        return again.arguments
+    top = {k: v for k, v in arguments.items() if k not in ("kind", "parts", "details")}
+    names = log_shape.PART_MAP.get(kind, {})
+    rows = [{names.get(k, k): v for k, v in p.items()} for p in parts if isinstance(p, dict)]
+    if kind == "lifts":
+        return {"sets": rows, **details, **top}
+    if kind == "cardio":
+        return {**(rows[0] if rows else {}), **details, **top}
+    return {**details, **top}
+
+
+def _is(call: dict, name: str) -> bool:
+    """A routed call answers to its own name, and a routed log call to log too."""
+    return call["name"] == name or (name == "log" and call.get("via") == "log")
+
+
+def _arguments(call: dict, name: str) -> dict:
+    """A routed call's arguments as a check by this name reads them: a log call's as sent when the check names log."""
+    return call["sent"] if name == "log" and call.get("via") == "log" else call["arguments"]
+
+
+def label(call: dict) -> str:
+    """A call as a reason names it: a routed log call as log (lifts)."""
+    return f"log ({call['log_kind']})" if call.get("via") == "log" else str(call["name"])
+
+
+def _named(name: str, mine: list[dict]) -> str:
+    """The name a reason gives the calls a check found by name: the check's own, unless every one was a log call
+    routed to it, then those calls as log (kind)."""
+    if mine and name != "log" and all(c.get("via") == "log" for c in mine):
+        return ", ".join(dict.fromkeys(label(c) for c in mine))
+    return name
+
+
+def _called(calls: list[dict]) -> str:
+    return ", ".join(label(c) for c in calls) or "none"
+
+
 # ---------------------------------------------------------------- judging
 
 def error_codes(call: dict) -> set[str]:
@@ -501,21 +602,22 @@ def _code_reasons(expect: dict, calls: list[dict]) -> list[str]:
     """Why the run fails error_code, no_error_code, refusals and answer_has, or []."""
     reasons = []
     for name, code in (expect.get("error_code") or {}).items():
-        mine = [c for c in calls if c["name"] == name]
+        mine = [c for c in calls if _is(c, name)]
         if not any(code in error_codes(c) for c in mine):
             got = sorted({x for c in mine for x in error_codes(c)})
             reasons.append(f"no {name} call was refused with {code} (calls of it: {len(mine)}; codes: "
                            f"{', '.join(got) or 'none'})")
     for name, code in (expect.get("no_error_code") or {}).items():
-        if any(code in error_codes(c) for c in calls if c["name"] == name):
-            reasons.append(f"a {name} call was refused with {code}")
+        mine = [c for c in calls if _is(c, name) and code in error_codes(c)]
+        if mine:
+            reasons.append(f"a {_named(name, mine)} call was refused with {code}")
     for name, code in (expect.get("refusals") or {}).items():
-        bad = [c for c in calls if c["name"] == name and code not in error_codes(c)]
+        bad = [c for c in calls if _is(c, name) and code not in error_codes(c)]
         if bad:
-            reasons.append(f"{name} was called and not refused with {code} "
+            reasons.append(f"{_named(name, bad)} was called and not refused with {code} "
                            f"(codes: {'; '.join(', '.join(sorted(error_codes(c))) or 'none' for c in bad)})")
     for name, want in (expect.get("answer_has") or {}).items():
-        if not any(c["name"] == name and not c["is_error"] and _holds(c.get("result"), want) for c in calls):
+        if not any(_is(c, name) and not c["is_error"] and _holds(c.get("result"), want) for c in calls):
             reasons.append(f"no {name} answer without error holds {json.dumps(want)}")
     return reasons
 
@@ -524,35 +626,39 @@ def judge_calls(expect: dict, calls: list[dict], reply: str, say: str = "") -> l
     """Why this run fails the expect, or [] when it passes. calls: [{name, arguments, is_error, result}, with answer
     for a data read (evals/recorder.py)]. say: the case's own words, whose figures quotes_spotter leaves out."""
     reasons: list[str] = []
-    called = [c["name"] for c in calls]
+    calls = routed(calls)
     function = expect.get("function")
-    mine = [c for c in calls if c["name"] == function] if function else []
+    mine = [c for c in calls if _is(c, function)] if function else []
+
+    def sent(c: dict) -> dict:
+        return _arguments(c, function)
 
     if function and not mine:
-        reasons.append(f"{function} was not called (calls: {', '.join(called) or 'none'})")
+        reasons.append(f"{function} was not called (calls: {_called(calls)})")
     if function and mine:
-        if "inputs_include" in expect and not any(matches(c["arguments"], expect["inputs_include"]) for c in mine):
+        if "inputs_include" in expect and not any(matches(sent(c), expect["inputs_include"]) for c in mine):
             reasons.append(f"no {function} call sent {json.dumps(expect['inputs_include'])} "
-                           f"(sent: {'; '.join(json.dumps(c['arguments']) for c in mine)})")
+                           f"(sent: {'; '.join(json.dumps(sent(c)) for c in mine)})")
         for path in expect.get("inputs_exclude") or []:
-            bad = [c for c in mine if any(v is not None for v in values_at(c["arguments"], path))]
+            bad = [c for c in mine if any(v is not None for v in values_at(sent(c), path))]
             if bad:
-                reasons.append(f"{function} sent {path}, which should be left out "
-                               f"(sent: {'; '.join(json.dumps(c['arguments']) for c in bad)})")
+                reasons.append(f"{_named(function, bad)} sent {path}, which should be left out "
+                               f"(sent: {'; '.join(json.dumps(sent(c)) for c in bad)})")
         for path, value in (expect.get("inputs_forbid") or {}).items():
-            bad = [c for c in mine if any(matches(v, value) for v in values_at(c["arguments"], path))]
+            bad = [c for c in mine if any(matches(v, value) for v in values_at(sent(c), path))]
             if bad:
-                reasons.append(f"{function} sent {path} = {json.dumps(value)}")
+                reasons.append(f"{_named(function, bad)} sent {path} = {json.dumps(value)}")
         if expect.get("refused") and not all(c["is_error"] for c in mine):
-            reasons.append(f"{function} was called and not refused")
+            reasons.append(f"{_named(function, [c for c in mine if not c['is_error']])} was called and not refused")
     for name, n in (expect.get("ok_calls") or {}).items():
-        ok = sum(1 for c in calls if c["name"] == name and not c["is_error"])
+        ok = sum(1 for c in calls if _is(c, name) and not c["is_error"])
         if ok != n:
-            refused = sum(1 for c in calls if c["name"] == name and c["is_error"])
+            refused = sum(1 for c in calls if _is(c, name) and c["is_error"])
             reasons.append(f"{name} succeeded {ok} times, expected {n}" + (f" ({refused} refused)" if refused else ""))
     for name in expect.get("no_call") or []:
-        if name in called:
-            reasons.append(f"{name} was called and should not have been")
+        found = [c for c in calls if _is(c, name)]
+        if found:
+            reasons.append(f"{_named(name, found)} was called and should not have been")
     reasons += _code_reasons(expect, calls)
     text = reply or ""
     if expect.get("reply_asks") and "?" not in text:
@@ -579,7 +685,7 @@ def judge_calls(expect: dict, calls: list[dict], reply: str, say: str = "") -> l
             if found:
                 reasons.append(f"the reply matches {pattern!r}: it says {found.group(0)!r}")
     if expect.get("read_any") and not any(c["name"] in DATA_READS and not c["is_error"] for c in calls):
-        reasons.append(f"no data read was answered without error (calls: {', '.join(called) or 'none'})")
+        reasons.append(f"no data read was answered without error (calls: {_called(calls)})")
     if "quotes_one_of" in expect:
         problems = _one_of_problems(expect["quotes_one_of"], "quotes_one_of")
         if problems:
@@ -609,20 +715,21 @@ def judge_tags(tags: dict | None, calls: list[dict]) -> list[str]:
     if not tags:
         return []
     reasons = []
-    called = [c["name"] for c in calls]
+    calls = routed(calls)
     must = tags.get("must") or []
     if must:
-        made = [c for c in calls if c["name"] in must]
+        made = [c for c in calls if any(_is(c, name) for name in must)]
         if not any(c.get("answered", True) for c in made):
             if made:
-                reasons.append(f"{', '.join(sorted({c['name'] for c in made}))} was called and never answered")
+                reasons.append(f"{', '.join(sorted({label(c) for c in made}))} was called and never answered")
             elif len(must) == 1:
-                reasons.append(f"{must[0]} was not called (calls: {', '.join(called) or 'none'})")
+                reasons.append(f"{must[0]} was not called (calls: {_called(calls)})")
             else:
-                reasons.append(f"none of {', '.join(must)} was called (calls: {', '.join(called) or 'none'})")
+                reasons.append(f"none of {', '.join(must)} was called (calls: {_called(calls)})")
     for name in tags.get("must_not") or []:
-        if name in called:
-            reasons.append(f"{name} was called and should not have been")
+        found = [c for c in calls if _is(c, name)]
+        if found:
+            reasons.append(f"{_named(name, found)} was called and should not have been")
     return reasons
 
 
@@ -799,21 +906,23 @@ def judge_turns(case: dict, calls: list[dict], first_reply: str | None = None) -
     without one counts as the first turn's."""
     if not case.get("then"):
         return []
-    early = [c["name"] for c in calls if c.get("turn", 1) == 1 and c["name"] in WRITE_FUNCTIONS and not c["is_error"]]
+    calls = routed(calls)
+    early = [label(c) for c in calls if c.get("turn", 1) == 1 and c["name"] in WRITE_FUNCTIONS and not c["is_error"]]
     reasons = [f"a write succeeded before the second turn was sent: {', '.join(early)}"] if early else []
     # The question a two-turn case is built on (its expect's error_code, such as pick_lift) is Spotter's in the first
     # turn, and the second turn answers it: never asked first by the assistant alone, never asked again.
     for name, code in (case.get("expect", {}).get("error_code") or {}).items():
-        mine = [c for c in calls if c["name"] == name and code in error_codes(c)]
+        mine = [c for c in calls if _is(c, name) and code in error_codes(c)]
         if not any(c.get("turn", 1) == 1 for c in mine):
             reasons.append(f"no {name} call in the first turn was refused with {code}")
-        if any(c.get("turn", 1) == 2 for c in mine):
-            reasons.append(f"a {name} call in the second turn was refused with {code} again")
+        again = [c for c in mine if c.get("turn", 1) == 2]
+        if again:
+            reasons.append(f"a {_named(name, again)} call in the second turn was refused with {code} again")
     expect = case.get("expect", {})
     function = expect.get("function")
     if function and "inputs_include" in expect and not any(
-            c["name"] == function and c.get("turn", 1) == 2 and not c["is_error"]
-            and matches(c["arguments"], expect["inputs_include"]) for c in calls):
+            _is(c, function) and c.get("turn", 1) == 2 and not c["is_error"]
+            and matches(_arguments(c, function), expect["inputs_include"]) for c in calls):
         reasons.append(f"no {function} call that succeeded in the second turn sent "
                        f"{json.dumps(expect['inputs_include'])}")
     if "first_reply_lacks_pattern" in expect:
@@ -915,8 +1024,8 @@ def token_split(client: str, usage: dict) -> dict:
 
 def made_must_call(run: dict, tags: dict | None) -> bool:
     """The run called one of the case's must functions and got an answer."""
-    must = set((tags or {}).get("must") or [])
-    return any(c["name"] in must and c.get("answered", True) for c in run.get("calls") or [])
+    must = (tags or {}).get("must") or []
+    return any(any(_is(c, name) for name in must) and c.get("answered", True) for c in routed(run.get("calls") or []))
 
 
 def made_data_read(run: dict) -> bool:

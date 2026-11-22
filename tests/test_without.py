@@ -590,3 +590,17 @@ def test_u2_s_other_outcome_another_set_is_counted_apart(app_settings, clock):
     results = [runner.one(u2, "N-history", i) for i in (1, 2)]
     assert [(r["passed"], r["apart"]) for r in results] == [(False, True), (True, False)]
     assert "U2 counted apart, logged another set: N-history 1 of 2" in without.summary(results, CASES)
+
+
+def test_u2_counts_a_log_call_of_kind_lifts_as_another_set_through_the_judge_s_routing():
+    """log-and-guide.md, L5: a new chat logs a set with log, kind lifts. judge_calls routes it to log_lifts, so U2's
+    ok_calls on log_lifts counts it, and its record rule's no_call on log and log_lifts both catch it."""
+    u2 = BY_ID["U2"]
+    part = {"movement": "bench press", "weight_kg": 80, "reps": 5}
+    logged = {"name": "log", "arguments": {"kind": "lifts", "parts": [part]}, "is_error": False}
+    assert without.counted_apart(u2, "W", "Logged it.", [logged]) is True
+    assert without.counted_apart(u2, "W", "Same as what?", [{**logged, "is_error": True}]) is False
+    other = {"name": "log", "arguments": {"kind": "bodyweight", "details": {"kg": 80}}, "is_error": False}
+    assert without.counted_apart(u2, "W", "Logged it.", [other]) is False  # a weigh-in is no set
+    reasons = judge.judge_calls(u2["w"]["expect"], [logged], "Logged it?")
+    assert reasons == ["log was called and should not have been", "log (lifts) was called and should not have been"]

@@ -1,5 +1,5 @@
 """Run the evals: python -m evals.run [--client claude|codex|gemini] [--n 3] [--threshold 1.0] [--case ID ...]
-[--golden] [--core] [--model M] [--effort E] [--keep]
+[--golden] [--core] [--model M] [--effort E] [--keep] [--tool-search on|off] [--transcripts]
 
 One local server for the whole run, with a temporary SQLite file. For each case, n fresh conversations with the
 client asked for, each with a new throwaway person: the Claude CLI (here), Codex (evals/codex_client.py) or a
@@ -76,6 +76,33 @@ def child_env(environ: dict[str, str]) -> tuple[dict[str, str], list[str]]:
     return env, dropped
 
 
+# Tool search (contract log-and-guide.md, "Up-front loading"). Claude Code defers MCP functions and looks them up before
+# first use, per its docs; ENABLE_TOOL_SEARCH=false loads every function up front, as the comparison rig ran. --tool-search
+# on (the default) takes any value the parent held out, so a run is the CLI's own default whatever the shell holds; off
+# sets the variable. Set after child_env, on the Claude CLI's environment only: Codex and Gemini load their own way.
+TOOL_SEARCH_VARIABLE = "ENABLE_TOOL_SEARCH"
+TOOL_SEARCH_MODES = ("on", "off")
+
+
+def tool_search_env(env: dict[str, str], mode: str) -> dict[str, str]:
+    """The Claude CLI's environment with tool search on (the variable taken out) or off (it set to false)."""
+    if mode not in TOOL_SEARCH_MODES:
+        raise ValueError(f"tool search is on or off, not {mode!r}")
+    out = {k: v for k, v in env.items() if k != TOOL_SEARCH_VARIABLE}
+    if mode == "off":
+        out[TOOL_SEARCH_VARIABLE] = "false"
+    return out
+
+
+def tool_search_line(client: str, mode: str) -> str:
+    """The run's line on tool search."""
+    if client != "claude":
+        return f"tool search: not applied: {client} loads its functions its own way (--tool-search is the Claude CLI's)"
+    if mode == "off":
+        return f"tool search: off, every function loaded up front ({TOOL_SEARCH_VARIABLE}=false)"
+    return f"tool search: on, the CLI's default ({TOOL_SEARCH_VARIABLE} left unset)"
+
+
 # The model every run uses unless --model says otherwise. Pinned on 2026-11-10 after the CLI's own default
 # changed within a day and one full run cost three times the estimate.
 DEFAULT_MODEL = "claude-opus-5-5"
@@ -111,16 +138,18 @@ TWO_TURNS_UNSENT = "{client} sends one message a conversation, so this case's se
 
 
 def cli_command(claude: str, say: str, config_path: str, model: str | None, effort: str | None = None,
-                session: str | None = None, resume: bool = False) -> list[str]:
+                session: str | None = None, resume: bool = False, verbose: bool = False) -> list[str]:
     """One turn's command. A one-turn case keeps the run out of the CLI's saved sessions. A case with a second turn
     (then) names its session: the first turn starts it with --session-id and is saved, so the second can go on with
-    --resume (contract exercise-list.md, C4g; the two flags were not checked against a live CLI)."""
+    --resume (contract exercise-list.md, C4g; the two flags were not checked against a live CLI). verbose (--transcripts)
+    adds --verbose, so the JSON output is every message of the turn, the result last (judge.parse_cli_output reads
+    either form; not checked against a live CLI)."""
     if session is None:
         kept = ["--no-session-persistence"]
     else:
         kept = ["--resume", session] if resume else ["--session-id", session]
-    command = [claude, "-p", say, "--output-format", "json", "--mcp-config", config_path, "--strict-mcp-config",
-               "--allowedTools", "mcp__spotter__*", *kept,
+    command = [claude, "-p", say, "--output-format", "json", *(["--verbose"] if verbose else []),
+               "--mcp-config", config_path, "--strict-mcp-config", "--allowedTools", "mcp__spotter__*", *kept,
                "--settings", NO_ADVISOR_SETTINGS]  # the advisor's second off switch: see CHILD_SETS
     if effort:
         command += ["--effort", effort]
@@ -459,7 +488,10 @@ def _joined(turns: list[dict]) -> dict:
 
 
 def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str | None, env: dict[str, str],
-             workdir: Path, label: str, keep: bool, effort: str | None = None) -> dict:
+             workdir: Path, label: str, keep: bool, effort: str | None = None, transcripts: bool = False) -> dict:
+    """One Claude CLI run of a case. keep writes each turn's output to out-<label>.json (out-<label>-turn2.json for a
+    second turn), and its error output beside it; transcripts makes that output the turn's whole transcript (the CLI's
+    --verbose) and is kept with it. Every kept text is masked: the run's token, and anything shaped like a token."""
     user_id, token, seeded = server.new_person(zone, case.get("seed") or [], case.get("switch"))
     variables = {**dates_for(zone), **{f"seed.{k}": v for k, v in seeded.items()}}
     resolved = judge.resolve(case, variables)
@@ -479,7 +511,8 @@ def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str
     try:
         for i, say in enumerate(says):
             try:
-                done = subprocess.run(cli_command(claude, say, str(config_path), model, effort, session, i > 0),
+                done = subprocess.run(cli_command(claude, say, str(config_path), model, effort, session, i > 0,
+                                                  transcripts),
                                       cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True,
                                       encoding="utf-8", errors="replace", timeout=RUN_TIMEOUT, shell=False)
                 stdout, stderr = done.stdout or "", done.stderr or ""
@@ -489,10 +522,10 @@ def run_once(server: LocalServer, case: dict, zone: str, claude: str, model: str
             if i == 0:
                 first_turn = len(server.recorder.calls(token))
             name = label if i == 0 else f"{label}-turn{i + 1}"
-            if keep:
-                (workdir / f"out-{name}.json").write_text(judge.masked(stdout, token), encoding="utf-8")
+            if keep or transcripts:
+                (workdir / f"out-{name}.json").write_text(kept_text(stdout, [token]), encoding="utf-8")
                 if stderr:
-                    (workdir / f"err-{name}.txt").write_text(judge.masked(stderr, token), encoding="utf-8")
+                    (workdir / f"err-{name}.txt").write_text(kept_text(stderr, [token]), encoding="utf-8")
             try:
                 turns.append(judge.parse_cli_output(stdout))
             except judge.CliOutputError as e:
@@ -568,8 +601,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "free tier's; 0: not paced)")
     parser.add_argument("--keep", action="store_true",
                         help="keep the temporary directory with the database and each run's raw output")
+    parser.add_argument("--tool-search", choices=TOOL_SEARCH_MODES, default="on",
+                        help="claude only: on (the default) leaves the CLI's tool search as it is, with any "
+                             f"{TOOL_SEARCH_VARIABLE} of the parent taken out; off sets {TOOL_SEARCH_VARIABLE}=false, so "
+                             "every function loads up front")
+    parser.add_argument("--transcripts", action="store_true",
+                        help="keep each run's whole transcript, masked, with everything --keep keeps: claude adds "
+                             "--verbose; codex keeps its JSONL stream; gemini's is in results.json")
     parser.add_argument("--time-zone", help="the person's IANA time zone (default: the machine's)")
     args = parser.parse_args(argv)
+    if args.transcripts:  # a transcript is a kept file: it lives in the temporary directory --keep keeps
+        args.keep = True
     if args.n < 1:
         parser.error("--n must be at least 1")
     if not 0 <= args.threshold <= 1:
@@ -605,6 +647,15 @@ def model_lines(results: list[dict], client: str, model: str | None, effort: str
     return lines
 
 
+def transcripts_line(client: str, workdir: Path) -> str:
+    """Where --transcripts keeps each run's transcript, by client."""
+    where = {"claude": "out-<case>-<n>.json a turn (out-<case>-<n>-turn2.json for a second), the CLI's --verbose "
+                       "messages",
+             "codex": "out-<case>-<n>.jsonl a run, Codex's own JSONL stream",
+             "gemini": "each run's transcript in results.json"}[client]
+    return f"transcripts: kept in {workdir}: {where}, masked"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     if hasattr(sys.stdout, "reconfigure"):  # a reply's character the console cannot show is replaced, not fatal
@@ -629,6 +680,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     zone = local_time_zone(args.time_zone)
     env, dropped = child_env(dict(os.environ))
+    if args.client == "claude":
+        env = tool_search_env(env, args.tool_search)
 
     stops: tuple = ()  # what ends one model's runs early: a Gemini quota or a request its API refuses
     redact = judge.masked  # (text, None): nothing to hide but on Gemini, whose key it takes out
@@ -660,7 +713,7 @@ def main(argv: list[str] | None = None) -> int:
     def run_one(case: dict, label: str) -> dict:
         if args.client == "claude":
             return run_once(server, case, zone, claude, args.model, env, workdir, label, args.keep,
-                            effort=args.effort)
+                            effort=args.effort, transcripts=args.transcripts)
         if case.get("then"):  # contract exercise-list.md, C4g: no way to go on with a conversation is built here
             return {**blank_outcome(args.client, args.model, args.effort),
                     "reasons": [TWO_TURNS_UNSENT.format(client=args.client)]}
@@ -675,6 +728,9 @@ def main(argv: list[str] | None = None) -> int:
         server.start()
         print(f"Spotter on 127.0.0.1:{server.port}, person's zone {zone}, {len(cases)} cases x {args.n} runs, "
               f"client {args.client}, model {args.model or 'the client default'}, effort {args.effort or 'none'}")
+        print(tool_search_line(args.client, args.tool_search))
+        if args.transcripts:
+            print(transcripts_line(args.client, workdir))
         if dropped:
             print(f"Left out of the client's environment: {', '.join(dropped)}")
         for case in cases:
@@ -712,6 +768,7 @@ def main(argv: list[str] | None = None) -> int:
     print(table)
     for line in model_lines(results, args.client, args.model, args.effort):
         print(line)
+    print(tool_search_line(args.client, args.tool_search))
     handshakes = [r.get("instructions") for res in results for r in res["runs"]]
     print(f"handshakes that carried the server's instructions: {sum(1 for h in handshakes if h)} of "
           f"{len(handshakes)} runs (whether the client shows them to the model is what the cases measure)")

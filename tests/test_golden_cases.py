@@ -2007,6 +2007,106 @@ def test_the_seeded_write_cases_pass_on_nine_todays(today, monkeypatch, app_sett
         player.close()
 
 
+# ---------------------------------------------------------------- log-and-guide.md, L5: the five's runs sent as log
+
+FIVE = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio")
+LOG_TOP = ("date", "notes", "allow_repeat", "key")
+CARDIO_PART = {"exercise": "movement", "minutes": "minutes", "distance_km": "distance_km", "distance_mi": "distance_mi"}
+
+
+def as_log(name: str, arguments: dict, word: bool = False) -> tuple[str, dict]:
+    """One call of the five as the same call of log, the inverse of log_shape.route: a set as a part with its exercise
+    as movement, the cardio session as the one part, each kind's own fields in details, date, notes, allow_repeat and
+    key at the top. word: a measurement's own word as the kind, in place of measurement with details.kind. Any other
+    call as it is."""
+    if name not in FIVE:
+        return name, arguments
+    rest = dict(arguments)
+    top = {k: rest.pop(k) for k in LOG_TOP if k in rest}
+    if name == "log_lifts":
+        sent = {"kind": "lifts", "parts": [{("movement" if k == "exercise" else k): v for k, v in s.items()}
+                                           for s in rest.pop("sets")]}
+    elif name == "log_cardio":
+        sent = {"kind": "cardio", "parts": [{CARDIO_PART[k]: rest.pop(k) for k in list(rest) if k in CARDIO_PART}]}
+    elif name == "log_measurement" and word:
+        sent = {"kind": rest.pop("kind")}
+    else:
+        sent = {"kind": {"log_bodyweight": "bodyweight", "log_measurement": "measurement", "log_food": "food"}[name]}
+    return "log", {**sent, **({"details": rest} if rest else {}), **top}
+
+
+def sent_as_log(calls: list, word: bool = False) -> list:
+    """A run's calls with each call of the five sent as log."""
+    out = []
+    for item in calls:
+        if item == THEN or item[0] not in FIVE:
+            out.append(item)
+        elif callable(item[1]):
+            out.append(("log", lambda p, f=item[1], name=item[0]: as_log(name, f(p), word)[1], *item[2:]))
+        else:
+            out.append((*as_log(item[0], item[1], word), *item[2:]))
+    return out
+
+
+WAIST = [("log_measurement", {"kind": "waist", "value": 81.28})]  # tests/test_inputs.py:1244-1250
+STATED = MEAL_RUNS["stated_number"]
+MILES = {"exercise": "Outdoor Run", "distance_mi": 3, "minutes": 27}  # tests/test_units.py:828-847
+# The contract's replay set: one case a kind, the two-turn case and an answer_has case, each by its held runs.
+REPLAY = {
+    "stated_number": ([(STATED[0]("lunch"), STATED[2])],
+                      [(STATED[0](None), STATED[2]),  # the meal named, never sent
+                       ([_food(180, "lunch", estimated=True)], STATED[2])]),
+    "lb_weigh_in": ([([("log_bodyweight", {"lb": 185})], "Logged 185 lb.")],
+                    [([("log_bodyweight", {"kg": 83.91})], "Logged 185 lb."),
+                     ([("log_bodyweight", {"lb": 185})], "Logged 185 lb, which is 83.91 kg.")]),
+    "waist_in_inches": ([(WAIST, "Logged your waist as 81.28 cm."),
+                         ([], "Is that 32 inches? Shall I log it as 81.28 cm?")],
+                        [([("log_measurement", {"kind": "waist", "value": 32})], "Logged your waist as 32 cm."),
+                         (WAIST, "Logged your waist.")]),
+    "hold_plank": (RUNS["hold_plank"]["pass"], RUNS["hold_plank"]["fail"]),
+    "miles_run": ([([("log_cardio", MILES)], "Logged 3 mi at 9:00 a mile.")],
+                  [([("log_cardio", {**MILES, "distance_mi": None, "distance_km": 4.83})], "Logged 3 mi at 9:00 a mile."),
+                   ([("log_cardio", MILES)], "Logged 4.83 km at 5:35 a km.")]),
+    "pick_lift_answer": (RUNS["pick_lift_answer"]["pass"], RUNS["pick_lift_answer"]["fail"]),
+    "hand_check_family": (RUNS["hand_check_family"]["pass"], RUNS["hand_check_family"]["fail"]),
+}
+
+
+@pytest.mark.parametrize("case_id", list(REPLAY))
+def test_the_five_s_held_runs_judge_alike_when_sent_as_log(case_id, player):
+    """log-and-guide.md, L5: each held run of a kind's case, sent again with log in place of the five, judges as it
+    does through the five: its must_not, ok_calls, the two-turn checks and the checks on a call's own answer
+    (error_code reads pick_lift, answer_has reads hand_check) read the log calls through the judge's routing. A
+    measurement goes both ways: kind measurement with details.kind, and the measurement's own word as the kind."""
+    case = next(c for c in judge.load_cases() if c["id"] == case_id)
+    good, bad = REPLAY[case_id]
+    ways = [False, True] if case_id == "waist_in_inches" else [False]
+    for want, runs in ((True, good), (False, bad)):
+        for calls, reply in runs:
+            five = player.verdict(case, player.person(case), calls, reply)
+            assert (five == []) is want, (case_id, "five", reply, five)
+            for word in ways:
+                logged = player.verdict(case, player.person(case), sent_as_log(calls, word), reply)
+                assert (logged == []) is want, (case_id, "log", word, reply, logged)
+                assert not {c["name"] for c in player.record} & set(FIVE), player.record  # sent as log alone
+
+
+def test_a_refused_log_call_then_a_good_one_judges_as_the_same_pair_through_log_lifts(player):
+    """log_plank_minutes and hold_plank: a plank with no weight is refused by the service (its fix names 0 for body
+    weight), then sent again right. Through log the pair passes either case; through log_lifts it passes hold_plank
+    and fails log_plank_minutes on its must, log, as that case's own failing run does."""
+    cases = {c["id"]: c for c in judge.load_cases()}
+    for case_id, seconds, n in (("hold_plank", 90, 2), ("log_plank_minutes", 120, 1)):
+        refused, good = [logs([{"exercise": "plank", "time_s": seconds}] * n)], [logs(lift("plank", 0, n=n, time_s=seconds))]
+        through_five = player.verdict(cases[case_id], player.person(cases[case_id]), refused + good, "Logged Plank.")
+        assert [c["is_error"] for c in player.record] == [True, False]
+        through_log = player.verdict(cases[case_id], player.person(cases[case_id]), sent_as_log(refused + good),
+                                     "Logged Plank.")
+        assert [(c["name"], c["is_error"]) for c in player.record] == [("log", True), ("log", False)]
+        assert through_log == [], (case_id, through_log)
+        assert through_five == ([] if case_id == "hold_plank" else ["log was not called (calls: log_lifts, log_lifts)"])
+
+
 @pytest.mark.parametrize("today", TODAYS, ids=[d.isoformat() for d in TODAYS])
 def test_every_read_case_passes_on_nine_todays(today, monkeypatch, app_settings):
     """Every figure a read case's expect names is the seed's own on each today: its passing runs pass on each."""

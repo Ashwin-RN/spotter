@@ -1197,7 +1197,7 @@ def test_main_gives_every_run_the_advisor_off_and_prints_the_count(monkeypatch, 
          "models": ["claude-opus-5-5", "claude-fable-5-2"]},
         {"passed": True, "reasons": [], "other_models": [], "models": ["claude-opus-5-5"]}])
 
-    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None, transcripts=False):
         envs.append(env)
         return {"tokens": 0, "cost_usd": 0.0, "reply": "Done?", "calls": [], "seconds": 1.0, "instructions": True,
                 **next(outcomes)}
@@ -1654,7 +1654,7 @@ def test_main_runs_the_golden_set_alone_and_carries_each_case_s_kind_and_tags(mo
     monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
     seen = []
 
-    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None, transcripts=False):
         seen.append((case["id"], model, effort))
         return {"passed": True, "reasons": [], "reply": "", "calls": [], "seconds": 1.0, "models": [model],
                 "other_models": [], "tokens": 0, "cost_usd": 0.0}
@@ -1676,7 +1676,7 @@ def test_main_runs_the_core_alone_the_set_each_gate_runs(monkeypatch, capsys):
     monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
     seen = []
 
-    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None, transcripts=False):
         seen.append(case["id"])
         return {"passed": True, "reasons": [], "reply": "", "calls": [], "seconds": 1.0, "models": [model],
                 "other_models": [], "tokens": 0, "cost_usd": 0.0}
@@ -1932,7 +1932,7 @@ def test_one_run_s_error_never_loses_the_others_and_the_kept_results_are_written
     monkeypatch.setattr(run.judge, "load_cases", lambda: [{"id": "one", "say": "x", "expect": {"reply_asks": True}}])
     made = []
 
-    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None, transcripts=False):
         made.append(label)
         if len(made) == 3:
             raise RuntimeError("the CLI crashed")
@@ -1981,7 +1981,7 @@ def test_a_raised_run_s_text_is_masked_for_the_token_as_every_kept_text_is(monke
     monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
     monkeypatch.setattr(run.judge, "load_cases", lambda: [{"id": "one", "say": "x", "expect": {"reply_asks": True}}])
 
-    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None, transcripts=False):
         server.issued.append("signed-token-of-this-person")
         raise RuntimeError("boom Bearer eyJSECRET.abc.def, and signed-token-of-this-person")
 
@@ -2448,9 +2448,288 @@ def test_the_summary_names_each_session_a_two_turn_run_could_not_delete(monkeypa
         {"id": "one", "say": "bench", "expect": {"reply_asks": True}}])
     runs = iter([{"session_id": "s-1"}, {}])
 
-    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None):
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None, transcripts=False):
         return {"passed": True, "reasons": [], "calls": [], "seconds": 1.0, "reply": "?", "models": [], **next(runs)}
 
     monkeypatch.setattr(run, "run_once", fake_run_once)
     run.main(["--n", "1", "--time-zone", "Asia/Kolkata"])
     assert "sessions of two-turn runs the Claude CLI still keeps, a delete failed: s-1\n" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- log-and-guide.md, L5: a log call, routed
+
+PLANK = {"movement": "plank", "weight_kg": 0, "time_s": 90}
+LIFTS = call("log", {"kind": "lifts", "parts": [PLANK, PLANK], "details": {"new_session": True}})
+WEIGH = call("log", {"kind": "bodyweight", "details": {"kg": 80.4}})
+STRAY = {**call("log", {"kind": "lifts", "parts": [{**PLANK, "speed": 3}]}, is_error=True),
+         "result": {"error": "invalid_field", "message": "parts[0]: 'speed' is not a field of a lifts part."}}
+NO_KIND = {**call("log", {"kind": "zorbinating", "details": {"kg": 80}}, is_error=True),
+           "result": {"error": "invalid_field", "message": "'zorbinating' is not a kind Spotter logs."}}
+
+
+def test_a_routed_log_call_answers_to_log_and_to_its_kind_s_function():
+    for name in ("log", "log_lifts"):
+        assert judge.judge_calls({"function": name}, [LIFTS], "") == []
+        assert judge.judge_tags({"must": [name], "may": [], "must_not": []}, [LIFTS]) == []
+        assert judge.judge_calls({"ok_calls": {name: 1}}, [LIFTS], "") == []
+        assert judge.made_must_call({"calls": [LIFTS]}, {"must": [name]})
+    assert judge.judge_calls({"no_call": ["log_bodyweight", "log_cardio"]}, [LIFTS], "") == []
+    direct = call("log_lifts", {"sets": [{"exercise": "plank", "weight_kg": 0, "time_s": 90}]})
+    assert judge.judge_calls({"function": "log"}, [direct], "") == ["log was not called (calls: log_lifts)"]
+    assert judge.judge_calls({"ok_calls": {"log": 1, "log_lifts": 2}}, [direct, LIFTS], "") == []
+
+
+def test_a_log_call_whose_shape_route_refuses_counts_under_its_kind_s_name_as_refused():
+    for name in ("log", "log_lifts"):
+        assert judge.judge_calls({"no_call": [name]}, [STRAY], "")
+        assert judge.judge_tags({"must": [], "may": [], "must_not": [name]}, [STRAY])
+        assert judge.judge_calls({"refusals": {name: "invalid_field"}}, [STRAY], "") == []
+        assert judge.judge_calls({"error_code": {name: "invalid_field"}}, [STRAY], "") == []
+        assert judge.judge_calls({"function": name, "refused": True}, [STRAY], "") == []
+    assert judge.judge_calls({"ok_calls": {"log_lifts": 0}}, [STRAY], "") == []
+    # refused whatever the answer said: route refuses it, so the kind's own call would have been refused too
+    assert judge.routed([{**STRAY, "is_error": False}])[0]["is_error"] is True
+    # its arguments as the kind's function would have been sent them, the key route refused left out
+    assert judge.routed([STRAY])[0]["arguments"] == {"sets": [{"exercise": "plank", "weight_kg": 0, "time_s": 90}]}
+    assert judge.judge_calls({"function": "log_lifts", "inputs_forbid": {"sets.*.time_s": 90}}, [STRAY], "")
+
+
+def test_a_log_call_whose_kind_resolves_to_none_counts_as_log_alone():
+    assert judge.judge_calls({"no_call": list(judge.WRITE_FUNCTIONS[1:])}, [NO_KIND], "") == []
+    assert judge.judge_calls({"no_call": ["log"]}, [NO_KIND], "") == ["log was called and should not have been"]
+    assert judge.judge_calls({"refusals": {"log": "invalid_field"}}, [NO_KIND], "") == []
+    assert judge.routed([NO_KIND])[0]["name"] == "log" and "via" not in judge.routed([NO_KIND])[0]
+
+
+@pytest.mark.parametrize("sent, function, expect", [
+    ({"kind": "lifts", "parts": [PLANK], "details": {"new_session": True}}, "log_lifts",
+     {"inputs_include": {"new_session": True, "sets": [{"exercise": "plank", "time_s": 90}]}}),
+    ({"kind": "lifts", "parts": [{"movement": "plank", "weight_kg": 0, "minutes": 2}]}, "log_lifts",
+     {"inputs_include": {"sets": [{"time_s": 120}]}, "inputs_exclude": ["sets.*.minutes"]}),
+    ({"kind": "lifts", "parts": [{"movement": "farmer's carry", "weight_kg": 32, "distance_km": 0.04}]}, "log_lifts",
+     {"inputs_include": {"sets": [{"distance_m": 40}]}}),
+    ({"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180, "meal": "lunch"}]}}, "log_food",
+     {"inputs_include": {"entries": [{"kcal": 180, "meal": "lunch"}]}, "inputs_exclude": ["entries.*.estimated"]}),
+    ({"kind": "cardio", "parts": [{"movement": "Outdoor Run", "distance_mi": 3, "minutes": 27}],
+      "details": {"avg_hr": 150, "machine_kcal": 300}}, "log_cardio",
+     {"inputs_include": {"exercise": "Outdoor Run", "distance_mi": 3, "minutes": 27, "avg_hr": 150,
+                         "machine_kcal": 300}, "inputs_exclude": ["distance_km"]}),
+    ({"kind": "cardio", "parts": [{"movement": "Outdoor Run", "distance_m": 5000, "time_s": 1800}]}, "log_cardio",
+     {"inputs_include": {"distance_km": 5, "minutes": 30}}),
+    ({"kind": "waist", "details": {"value": 81.28}}, "log_measurement",
+     {"inputs_include": {"kind": "waist", "value": 81.28}}),
+    ({"kind": "measurement", "details": {"kind": "sleep_hours", "value": 7}}, "log_measurement",
+     {"inputs_include": {"kind": "sleep_hours", "value": 7}}),
+    ({"kind": "bodyweight", "details": {"lb": 185}, "date": "2026-11-16"}, "log_bodyweight",
+     {"inputs_include": {"lb": 185, "date": "2026-11-16"}, "inputs_exclude": ["kg"]}),
+])
+def test_every_key_path_is_read_as_the_kind_s_own(sent, function, expect):
+    """details' fields at the top, a cardio part at the top, each time and distance in the kind's own column."""
+    assert judge.judge_calls({"function": function, **expect}, [call("log", sent)], "") == []
+    assert judge.judge_calls({"function": "log", "inputs_include": {"kind": sent["kind"]}}, [call("log", sent)], "") == []
+    first = next(iter(expect["inputs_include"]))
+    wrong = {"inputs_include": {**expect["inputs_include"], first: "never sent"}}
+    assert judge.judge_calls({"function": function, **wrong}, [call("log", sent)], "")
+
+
+def test_a_reason_names_a_routed_call_as_log_and_its_kind():
+    assert judge.judge_calls({"no_call": ["log_bodyweight"]}, [WEIGH], "") == [
+        "log (bodyweight) was called and should not have been"]
+    assert judge.judge_calls({"function": "log_lifts"}, [call("whoami"), WEIGH], "") == [
+        "log_lifts was not called (calls: whoami, log (bodyweight))"]
+    assert judge.judge_tags({"must": ["log_food"], "may": [], "must_not": ["log_bodyweight"]}, [WEIGH]) == [
+        "log_food was not called (calls: log (bodyweight))", "log (bodyweight) was called and should not have been"]
+    assert judge.judge_calls({"function": "log_bodyweight", "inputs_forbid": {"kg": 80.4}}, [WEIGH], "") == [
+        "log (bodyweight) sent kg = 80.4"]
+    # one reason from no_call and must_not alike, said once
+    case = {"id": "x", "say": "x", "expect": {"no_call": ["log_bodyweight"]},
+            "calls": {"must": [], "may": [], "must_not": ["log_bodyweight"]}}
+    assert judge.judge(case, [WEIGH], "", {}) == ["log (bodyweight) was called and should not have been"]
+    # a call of the five by name keeps its own words
+    assert judge.judge_calls({"no_call": ["log_bodyweight"]}, [call("log_bodyweight", {"kg": 80})], "") == [
+        "log_bodyweight was called and should not have been"]
+
+
+@pytest.mark.parametrize("function", judge.KIND_WORD_FUNCTIONS)
+@pytest.mark.parametrize("word, table", [("lifts", "lift_session"), ("food", "food_entry"),
+                                         ("cardio", "cardio_entry"), ("bodyweight", "bodyweight"),
+                                         ("measurement", "measurement")])
+def test_edit_delete_and_restore_take_log_s_kind_words_as_their_table_words(function, word, table):
+    """log-and-guide.md decision 52: a case that pins the table word passes either word, as the service takes both."""
+    expect = {"function": function, "inputs_include": {"kind": table, "entry_id": 3}}
+    assert judge.judge_calls(expect, [call(function, {"kind": word, "entry_id": 3})], "") == []
+    assert judge.judge_calls(expect, [call(function, {"kind": table, "entry_id": 3})], "") == []
+    assert judge.judge_calls(expect, [call(function, {"kind": "goal", "entry_id": 3})], "")
+    assert judge.judge_calls({"function": "log_lifts", "inputs_include": {"kind": "lift_session"}},
+                             [call("log_lifts", {"kind": "lifts"})], "")  # only the three read the word
+
+
+def test_routing_runs_in_the_two_turn_checks_and_a_reason_there_names_the_call():
+    case = {"then": "the barbell one", "expect": {"function": "log_lifts", "error_code": {"log_lifts": "pick_lift"},
+                                                  "inputs_include": {"sets": [{"exact": True}]}}}
+    pick = {**call("log", {"kind": "lifts", "parts": [{"movement": "squat", "weight_kg": 80, "reps": 5}]},
+                   is_error=True), "result": {"error": "pick_lift"}, "turn": 1}
+    picked = {**call("log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 80, "reps": 5,
+                                                         "exact": True}]}), "turn": 2}
+    assert judge.judge_turns(case, [pick, picked]) == []
+    early = {**picked, "turn": 1}
+    assert judge.judge_turns(case, [pick, early, {**pick, "turn": 2}]) == [
+        "a write succeeded before the second turn was sent: log (lifts)",
+        "a log (lifts) call in the second turn was refused with pick_lift again",
+        'no log_lifts call that succeeded in the second turn sent {"sets": [{"exact": true}]}']
+
+
+def test_routing_changes_no_recorded_call_and_may_run_twice():
+    calls = [dict(LIFTS), dict(STRAY), call("delete_entry", {"kind": "lifts", "entry_id": 1})]
+    before = json.dumps(calls, sort_keys=True)
+    once = judge.routed(calls)
+    assert judge.routed(once) == once and json.dumps(calls, sort_keys=True) == before
+    assert [judge.label(c) for c in once] == ["log (lifts)", "log (lifts)", "delete_entry"]
+    assert once[0]["sent"] == LIFTS["arguments"] and once[2]["arguments"]["kind"] == "lift_session"
+    # judge_calls routes, then each any_of option reads the routed calls again: the same verdict
+    assert judge.judge_calls({"any_of": [{"function": "log_food"}, {"function": "log_lifts"}]}, calls, "") == []
+
+
+def test_guide_is_no_data_read_so_its_numbers_never_count_as_spotter_s():
+    assert "guide" not in judge.DATA_READS and "guide" not in judge.WRITE_FUNCTIONS
+    guide = {**call("guide", {"topic": "lifts"}), "answered": True, "result": {"topic": "lifts", "how": "1 to 60"},
+             "answer": {"topic": "lifts", "parts": "one part a set, 1 to 60, at 82.5 kg"}}
+    assert judge.judge_calls({"read_any": True}, [guide], "") == [
+        "no data read was answered without error (calls: guide)"]
+    assert judge.quoted_figures("Up to 60 sets, 82.5 kg.", [guide]) == []
+
+
+def test_the_judge_imports_log_shape_only_when_it_routes():
+    import subprocess
+    import sys
+    root = Path(__file__).resolve().parent.parent
+    code = ("import sys; from evals import judge; before = sorted(m for m in sys.modules if m.startswith('app')); "
+            "judge.routed([{'name': 'log', 'arguments': {'kind': 'lifts'}, 'is_error': True}]); "
+            "print(before, 'app.log_shape' in sys.modules, 'app.mcp_server' in sys.modules)")
+    done = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "DATABASE_URL": "sqlite://"})
+    assert done.stdout.split() == ["[]", "True", "False"], done.stderr
+
+
+# ---------------------------------------------------------------- log-and-guide.md, L5: the runner's two flags
+
+def test_tool_search_on_takes_the_parent_s_value_out_and_off_sets_it_false():
+    from evals import run
+    parent = {"PATH": "/bin", "ENABLE_TOOL_SEARCH": "true", "CLAUDE_CODE_SSE_PORT": "1"}
+    env, dropped = child_env(parent)
+    assert env["ENABLE_TOOL_SEARCH"] == "true" and dropped == ["CLAUDE_CODE_SSE_PORT"]  # child_env passes it on
+    assert run.tool_search_env(env, "on") == {"PATH": "/bin", "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"}
+    assert run.tool_search_env(env, "off") == {"PATH": "/bin", "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1",
+                                               "ENABLE_TOOL_SEARCH": "false"}
+    assert env["ENABLE_TOOL_SEARCH"] == "true"  # a new dict: child_env's own is left as it was
+    with pytest.raises(ValueError):
+        run.tool_search_env(env, "maybe")
+    assert run.parse_args([]).tool_search == "on" and run.parse_args(["--tool-search", "off"]).tool_search == "off"
+    with pytest.raises(SystemExit):
+        run.parse_args(["--tool-search", "auto"])
+
+
+@pytest.mark.parametrize("mode, held", [("on", None), ("off", "false")])
+def test_main_gives_each_claude_run_the_tool_search_mode_and_prints_it(mode, held, monkeypatch, capsys):
+    from evals import run
+    monkeypatch.setenv("ENABLE_TOOL_SEARCH", "true")
+    monkeypatch.setattr(run.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(run.judge, "load_cases", lambda: [{"id": "one", "say": "x", "expect": {"reply_asks": True}}])
+    envs = []
+
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None, transcripts=False):
+        envs.append((env.get("ENABLE_TOOL_SEARCH"), env["CLAUDE_CODE_DISABLE_ADVISOR_TOOL"], keep, transcripts))
+        return {"passed": True, "reasons": [], "calls": [], "seconds": 1.0, "reply": "?", "models": []}
+
+    monkeypatch.setattr(run, "run_once", fake_run_once)
+    assert run.main(["--n", "1", "--time-zone", "Asia/Kolkata", "--tool-search", mode]) == 0
+    assert envs == [(held, "1", False, False)]
+    out = capsys.readouterr().out
+    assert out.count(run.tool_search_line("claude", mode)) == 2  # at the start and under the table
+    assert ("ENABLE_TOOL_SEARCH=false" in out) is (mode == "off")
+
+
+@pytest.mark.parametrize("client", ["codex", "gemini"])
+def test_codex_and_gemini_print_tool_search_as_not_applied(client, monkeypatch, capsys):
+    from evals import codex_client, gemini_client, run
+    monkeypatch.setenv("ENABLE_TOOL_SEARCH", "true")
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(run.judge, "load_cases", lambda: [{"id": "one", "say": "x", "expect": {"reply_asks": True}}])
+    envs = []
+    done = {"passed": True, "reasons": [], "calls": [], "seconds": 1.0, "reply": "?", "models": []}
+    monkeypatch.setattr(codex_client, "find_codex", lambda: "codex")
+    monkeypatch.setattr(codex_client, "run_once_codex", lambda server, case, zone, codex, model, effort, env, *a:
+                        envs.append(env.get("ENABLE_TOOL_SEARCH")) or done)
+    monkeypatch.setattr(gemini_client, "load_key", lambda n: "key")
+    monkeypatch.setattr(gemini_client, "GeminiAPI", lambda key, per_minute: type("A", (), {"redact": str})())
+    monkeypatch.setattr(gemini_client, "GeminiHost", lambda api, model, effort: object())
+    monkeypatch.setattr(gemini_client, "run_once_gemini", lambda server, case, zone, host: done)
+    assert run.main(["--client", client, "--n", "1", "--time-zone", "Asia/Kolkata", "--tool-search", "off"]) == 0
+    assert envs == (["true"] if client == "codex" else [])  # Codex's environment is left as the parent's
+    out = capsys.readouterr().out
+    assert f"tool search: not applied: {client} loads its functions its own way" in out
+
+
+def test_transcripts_add_verbose_before_the_effort_and_model_and_keep_the_directory():
+    from evals import run
+    command = cli_command("claude", "x", "c.json", "claude-sonnet-5-5", "medium", verbose=True)
+    assert command.count("--verbose") == 1 and command[-4:] == ["--effort", "medium", "--model", "claude-sonnet-5-5"]
+    assert "--verbose" not in cli_command("claude", "x", "c.json", "claude-sonnet-5-5", "medium")
+    assert run.parse_args(["--transcripts"]).keep is True and run.parse_args([]).keep is False
+    assert run.parse_args(["--transcripts"]).transcripts is True
+
+
+def test_a_transcript_is_kept_for_each_turn_masked(app_settings, monkeypatch):
+    """--transcripts: the CLI's --verbose output, kept in the run's folder with the token and anything shaped like one
+    masked. A fake CLI prints the messages; no CLI runs."""
+    from evals import run
+    server = _model_server(app_settings)
+    given = []
+    other = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl"
+
+    def fake_cli(command, **kwargs):
+        given.append(command)
+        config = json.loads(Path(command[command.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
+        token = config["mcpServers"]["spotter"]["headers"]["Authorization"].split()[1]
+        messages = [{"type": "system", "subtype": "init", "tools": ["mcp__spotter__log"], "note": f"{token} {other}"},
+                    {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "ToolSearch"}]}},
+                    {**SAMPLE, "result": "Logged 80 kg.", "modelUsage": {"claude-opus-5-5": {"costUSD": 0.1}}}]
+        return run.subprocess.CompletedProcess(command, 0, stdout=json.dumps(messages), stderr=f"warn {token}")
+
+    monkeypatch.setattr(run.subprocess, "run", fake_cli)
+    case = {"id": "one", "say": "Weighed 80 kg", "expect": {"reply_has": ["Logged"]}}
+    env, _ = child_env({"PATH": "/bin"})
+    with tempfile.TemporaryDirectory() as folder:
+        outcome = run.run_once(server, case, "Asia/Kolkata", "claude", "claude-opus-5-5", env, Path(folder), "one-1",
+                               False, transcripts=True)
+        kept = (Path(folder) / "out-one-1.json").read_text(encoding="utf-8")
+        err = (Path(folder) / "err-one-1.txt").read_text(encoding="utf-8")
+    assert "--verbose" in given[0] and outcome["passed"] is True and outcome["reply"] == "Logged 80 kg."
+    assert [m["type"] for m in json.loads(kept)] == ["system", "assistant", "result"]  # the whole transcript
+    assert "eyJ" not in kept + err and kept.count(judge.HIDDEN) == 2 and err == f"warn {judge.HIDDEN}"
+
+
+def test_main_with_transcripts_keeps_the_runs_and_says_where(monkeypatch, capsys):
+    from evals import run
+    monkeypatch.setattr(run.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(run.LocalServer, "start", lambda self: None)
+    monkeypatch.setattr(run.LocalServer, "stop", lambda self: None)
+    monkeypatch.setattr(run.judge, "load_cases", lambda: [{"id": "one", "say": "x", "expect": {"reply_asks": True}}])
+    seen = []
+
+    def fake_run_once(server, case, zone, claude, model, env, workdir, label, keep, effort=None, transcripts=False):
+        seen.append((keep, transcripts, workdir))
+        return {"passed": True, "reasons": [], "calls": [], "seconds": 1.0, "reply": "?", "models": []}
+
+    monkeypatch.setattr(run, "run_once", fake_run_once)
+    assert run.main(["--n", "1", "--time-zone", "Asia/Kolkata", "--transcripts"]) == 0
+    [(keep, transcripts, workdir)] = seen
+    try:
+        assert keep is True and transcripts is True and (workdir / "results.json").is_file()
+        out = capsys.readouterr().out
+        assert f"transcripts: kept in {workdir}: out-<case>-<n>.json a turn" in out and f"Kept: {workdir}" in out
+    finally:
+        run.shutil.rmtree(workdir, ignore_errors=True)
