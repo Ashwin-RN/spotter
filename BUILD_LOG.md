@@ -1408,7 +1408,33 @@ Each package ran the test files it touched, plain and with `-W error`, after its
 
 ### Eval runs
 
-Not run yet: owed at the release.
+On 2026-11-22, on `068f02b`, 3 runs a case unless said. Claude runs with tool search on. Every Claude cost is plan usage; Codex runs are plan usage and print no cost.
+
+| Run | Cases | Result | Cost |
+|---|---|---|---|
+| Step 0, one live `claude -p --verbose` | 1 | passed | $0.08 |
+| Pass 1, `claude-sonnet-5-5` | the 126 logging cases | 336 of 378, 18 cases with a miss | $33.5051 |
+| `main` on those 18 | 18 | 21 of 54 | $4.5645 |
+| The 9 that were one run lower than `main`, 6 runs a side | 9 | this branch 32 of 54, `main` 35 of 54 | $4.7061 and $4.5808 |
+| Pass 2, `claude-sonnet-5-5` | the other 134 | counted 195 of 240, not counted 144 of 162, 25 cases with a miss | $31.4895 |
+| `main` on 24 of those | 24 | counted 13 of 48, not counted 10 of 24 | $6.9579 |
+| 6 of those, 6 runs a side | 6 | this branch 18 of 36, `main` 28 of 36 | $2.9267 and $2.9184 |
+| Pass 3, `gpt-6-luna` | the 126 logging cases | 312 of 375 run; `pick_lift_answer` needs a second message and is not run on Codex | none given |
+| 5 of those on `gpt-6-luna`, 6 runs a side | 5 | see below | none given |
+| `sleep_record`, the plain-word lift cases and `mixed_unit_session`, more runs on `gpt-6-luna` | 7 | see below | none given |
+| 4 cases on `claude-opus-5-5` and `gpt-6.1-sol`, 6 runs | 4 | see below | $4.6509, and none given |
+
+What the runs show:
+
+- No run on either model called one of the five hidden names.
+- In pass 1, 204 runs called `log` and each had called `guide` first. In the reruns some `log` calls had no `guide` before them and wrote the right row. In pass 3 every run that called `log` also called `guide`.
+- Pass 1 against `main`: 9 of the 18 cases miss the same way on both: `delete_asks_first`, `delete_preview_clear_target`, `bypass_delete_confirmation`, `edit_day_taken`, `guess_import_lift`, `undo_moved_scale_date`, `undo_saved_food_change`, `undo_session_note`, `pushups_over_30`. The other 9 at 6 runs a side showed no reason seen only on this branch. `import_old_rows` is the judge: every reply names the 2 rows left out, in an order its pattern does not take.
+- Pass 2 against `main`: 11 cases miss the same way on both, 4 are higher on this branch, and 4 differ in the reply's words only. Two dip, pooled over 9 runs: `same_again_no_context` 4 of 9 against 9 of 9, and `cycling_trip` 1 of 9 against 6 of 9.
+- Pass 3, the 5 cases where a row was wrong or missing, this branch over 9 runs against `main` over 6: `import_exact_smith` 3 and 0, `dumbbell_each` 5 and 3, `health_export_preview` 0 and 1, `food_correction_and_water` 7 and 6, `save_food_asked` 7 and 6.
+- `sleep_record` on `gpt-6-luna`: 12 of 12, over the bar of 10, so no sleep sentence goes back. The plain-word lift cases: 30 of 30 in the added runs. `mixed_unit_session`: 7 of 9; 2 runs sent the session as two calls.
+- On the bigger models, this branch: `food_correction_and_water`, `save_food_asked` and `cycling_trip` 6 of 6 on both. `same_again_no_context`: 6 of 6 on `gpt-6.1-sol`, 0 of 6 on `claude-opus-5-5`.
+
+No fix was made from these runs. The owner's call: each miss is tracked as a gap and the gaps are taken together later, not one text change a miss.
 
 ### Known limits
 
@@ -1425,9 +1451,14 @@ Not run yet: owed at the release.
 - Edit, delete and restore take the kind words exactly as written; `log` folds case and spacing.
 - Cardio's speed refusals quote converted values.
 - `owner_calls`' `limit` tops out at 200 calls and `hours` at 2,160, and `function` takes one name.
-- What a live `claude -p --verbose` prints was not checked before the release run.
+- Water said with a food, on `gpt-6-luna`: in 2 of 9 runs the model called `guide` for food, found no water there, and told the person Spotter cannot log water. 6 of 6 on `main`, on `claude-opus-5-5` and on `gpt-6.1-sol`; Sonnet 3 of 3.
+- `save_food_asked` on `gpt-6-luna`: 2 of 9 runs also logged a serving the person said they had not had. 6 of 6 on `main` and on both bigger models. No cause shown.
+- `cycling_trip` on Sonnet: 1 of 9 runs read the person's data, against 6 of 9 on `main`; the rest gave general advice with no call. 6 of 6 on both bigger models.
+- `same_again_no_context`: Sonnet and `claude-opus-5-5` log a second set and say what they took the words to mean; `gpt-6.1-sol` asks.
+- On `gpt-6-luna`, the same on `main`: "the 25s" on a kg account stored as pounds in about half the runs, a steps and sleep export sent as rows the import refuses, and a one-row import sent to the log function.
+- The undo cases, the delete confirm cases, `edit_day_taken` and `guess_import_lift` miss the same way on `main`.
+- The judge fails "Say yes and I'll write it" as asking nothing, and reads "I haven't logged it yet" as a claim of logging.
 
 ### What is left
 
-- The release eval.
 - Deploy 2 (L6): the five's registrations removed, once no row of the five with caller `claude` is in the owner's window, read with `owner_calls` (`all_accounts` true, `caller` claude, `function` each of the five).
