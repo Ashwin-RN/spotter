@@ -1465,3 +1465,56 @@ No fix was made from these runs. The owner's call: each miss is tracked as a gap
 ### What is left
 
 - Deploy 2 (L6): the five's registrations removed, once no row of the five with caller `claude` is in the owner's window, read with `owner_calls` (`all_accounts` true, `caller` claude, `function` each of the five).
+
+## C5a: last time's numbers in a routine, the Routines page, a read that never raises
+
+On 2026-11-21 and 2026-11-22. Contract `docs/contracts/routines-and-programs.md`, package C5a. Model-read text, code, a page and two eval cases; no migration. Deploy 1 of C5's two.
+
+### Why
+
+The owner's brief: "People want cardio and timed items in a routine, last time's numbers with their date when they read it at the gym, and programs that run over several weeks." C5a is the read side: last time's numbers, the page, and a read made safe before deploy 2 saves cardio and timed items.
+
+### What was built
+
+| Package | Commit | What it did |
+|---|---|---|
+| Contract | `44968b1` | The contract with the owner's picks of 2026-11-21 and the dated notes of 2026-11-21 and 2026-11-22 |
+| C5a | `eeac002` | Each lift in `get_routines` carries `last`: that lift's sets in its latest live session, with the date and the words, from the same statement as the weight to log. `sets` and `reps` are optional in `SavedRoutineLift` and `LiftToLog`. An item the read cannot place (a cardio row, a hold or carry, a bad shape) is left out with a line, and any key it does not know is ignored; a name no longer on the list is placed as before. The Routines page shows Item, Plan and Last time. One sentence in `get_routines`' description, its own line: "When the person says same as last time, send last's sets as given, each with the lift as movement." Two eval cases |
+
+Built on `3b2441e`, then rebased onto `9950f13` after log-and-guide merged. The app files merged clean; the one change the rebase made to C5a's code is the last clause of that sentence. The two eval cases keep `log_lifts` in `must`, as log-and-guide's cases do: the judge routes a `log` call to its kind's function.
+
+### Review
+
+One reviewer on a frozen copy found no must fix and two should fix: `routine_same_as_last_time` passed a run that logged the plan's weight with last time's reps (it now also counts 4 Bench Press sets of 62.5 × 8), and on a phone the Plan cell took half the row. Three nits: a long name with no space did not wrap, a blank item name was placed, and the size test's worst case was not the largest. All five were fixed in the one fix round. Two stylesheet rules are new: `.card-head h2 { overflow-wrap: anywhere; }` and, under 720 px, `.saved-foods table.rows td.wide-cell { grid-column: 1 / -1; }`.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| The touched test files and their neighbours, after the rebase | 30 files, 4,775 passed plain and 4,775 with `-W error` |
+| Postgres 17 (`postgres:17-alpine`, local) | The same seed on Postgres and on SQLite gives the same `get_routines` answer and the same `latest_sessions` rows: two sessions on one date, a lift twice in one session, a session dated after today, a lift never logged. No migration, so no up and down |
+| `get_routines`' size, 6 routines of 8 lifts with 4 sets each | 8,137 bytes at `3b2441e`, 25,129 with C5a. At every limit, on the lift with the longest words: 2,295,023. No cap: the owner sets one from these figures, if one is wanted |
+| The setup text | 4,084 characters, unchanged |
+| The page | Not seen in a browser by the build or the review |
+
+### The eval run
+
+Before the merge, on `claude-sonnet-5-5`, 3 runs a case: C5a's two cases and `same_again_no_context`, which the new sentence could make worse. $0.7390.
+
+| Case | Passed |
+|---|---|
+| `routine_same_as_last_time` | 3 of 3 |
+| `routine_last_time_read` | 3 of 3 |
+| `same_again_no_context` | 1 of 3 |
+
+`same_again_no_context` failed the known way: a second set logged rather than a question asked. No run of it called `get_routines`; with tool search on, whether a run read the new sentence is not known. On Sonnet it was 4 of 9 on log-and-guide's branch and 9 of 9 before it (that entry's pass 2). 1 of 3 cannot tell better from worse.
+
+### Known limits
+
+- `get_routines`' answer at every limit is about 2.3 MB; a typical one is about 25 KB.
+- A cardio row or a timed item saved by deploy 2 and read by this code is left out with a line, not shown.
+- "Last time" is each lift's own latest session, so two routines that hold one lift show the same last time.
+
+### What is left
+
+C5b (cardio and timed items in a routine, `log_with` as the kind word) is deploy 2, at least a day after this one; C5c (programs, migration `0016`) waits for C3 too. The release eval run is at deploy 2.
