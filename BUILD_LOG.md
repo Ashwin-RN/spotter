@@ -1426,12 +1426,14 @@ On 2026-11-22, on `068f02b`, 3 runs a case unless said. Claude runs with tool se
 
 What the runs show:
 
-- No run on either model called one of the five hidden names.
+- No run on this branch, on any of the four models, called one of the five hidden names.
 - In pass 1, 204 runs called `log` and each had called `guide` first. In the reruns some `log` calls had no `guide` before them and wrote the right row. In pass 3 every run that called `log` also called `guide`.
 - Pass 1 against `main`: 9 of the 18 cases miss the same way on both: `delete_asks_first`, `delete_preview_clear_target`, `bypass_delete_confirmation`, `edit_day_taken`, `guess_import_lift`, `undo_moved_scale_date`, `undo_saved_food_change`, `undo_session_note`, `pushups_over_30`. The other 9 at 6 runs a side showed no reason seen only on this branch. `import_old_rows` is the judge: every reply names the 2 rows left out, in an order its pattern does not take.
 - Pass 2 against `main`: 11 cases miss the same way on both, 4 are higher on this branch, and 4 differ in the reply's words only. Two dip, pooled over 9 runs: `same_again_no_context` 4 of 9 against 9 of 9, and `cycling_trip` 1 of 9 against 6 of 9.
-- Pass 3, the 5 cases where a row was wrong or missing, this branch over 9 runs against `main` over 6: `import_exact_smith` 3 and 0, `dumbbell_each` 5 and 3, `health_export_preview` 0 and 1, `food_correction_and_water` 7 and 6, `save_food_asked` 7 and 6.
-- `sleep_record` on `gpt-6-luna`: 12 of 12, over the bar of 10, so no sleep sentence goes back. The plain-word lift cases: 30 of 30 in the added runs. `mixed_unit_session`: 7 of 9; 2 runs sent the session as two calls.
+- Pass 3, the 5 cases where a row was wrong or missing, this branch over 9 runs against `main` over 6: `import_exact_smith` 2 and 0, `dumbbell_each` 5 and 3, `health_export_preview` 0 and 1, `food_correction_and_water` 7 and 6, `save_food_asked` 7 and 6.
+- `health_export_preview` is this branch's own miss on `gpt-6-luna`. In 9 of 9 runs the model sent the import rows with `log`'s kind words, `steps` and `sleep`, the import refused them, and the reply said Spotter cannot import steps or sleep. On `main` 6 of 6 runs sent the rows the import takes and showed the preview; 5 of them failed only on the judge's reading of "Say yes". Sonnet on this branch: 3 of 3.
+- `import_exact_smith`: a one-row import went to the log function with no preview in 3 of 9 runs on this branch and 3 of 6 on `main`. The other failed runs showed the preview and failed on the judge's reading of the reply.
+- `sleep_record` on `gpt-6-luna`: 12 of 12, over the bar of 10, so no sleep sentence goes back. The plain-word lift cases: 30 of 30 in the added runs. `mixed_unit_session`: 7 of 9; 2 runs sent the session as two calls, and no row check failed in them. `main` was not run beside it.
 - On the bigger models, this branch: `food_correction_and_water`, `save_food_asked` and `cycling_trip` 6 of 6 on both. `same_again_no_context`: 6 of 6 on `gpt-6.1-sol`, 0 of 6 on `claude-opus-5-5`.
 
 No fix was made from these runs. The owner's call: each miss is tracked as a gap and the gaps are taken together later, not one text change a miss.
@@ -1455,7 +1457,8 @@ No fix was made from these runs. The owner's call: each miss is tracked as a gap
 - `save_food_asked` on `gpt-6-luna`: 2 of 9 runs also logged a serving the person said they had not had. 6 of 6 on `main` and on both bigger models. No cause shown.
 - `cycling_trip` on Sonnet: 1 of 9 runs read the person's data, against 6 of 9 on `main`; the rest gave general advice with no call. 6 of 6 on both bigger models.
 - `same_again_no_context`: Sonnet and `claude-opus-5-5` log a second set and say what they took the words to mean; `gpt-6.1-sol` asks.
-- On `gpt-6-luna`, the same on `main`: "the 25s" on a kg account stored as pounds in about half the runs, a steps and sleep export sent as rows the import refuses, and a one-row import sent to the log function.
+- A steps and sleep export on `gpt-6-luna`: 9 of 9 runs sent the import rows with `log`'s kind words, were refused, and told the person Spotter cannot import them. Nothing is written. `main` 6 of 6 sent the right rows; Sonnet on this branch 3 of 3.
+- On `gpt-6-luna`, the same on `main`: "the 25s" on a kg account stored as pounds in about half the runs, and a one-row import sent to the log function with no preview in about a third to a half.
 - The undo cases, the delete confirm cases, `edit_day_taken` and `guess_import_lift` miss the same way on `main`.
 - The judge fails "Say yes and I'll write it" as asking nothing, and reads "I haven't logged it yet" as a claim of logging.
 
