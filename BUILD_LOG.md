@@ -1518,3 +1518,49 @@ Before the merge, on `claude-sonnet-5-5`, 3 runs a case: C5a's two cases and `sa
 ### What is left
 
 C5b (cardio and timed items in a routine, `log_with` as the kind word) is deploy 2, at least a day after this one; C5c (programs, migration `0016`) waits for C3 too. The release eval run is at deploy 2.
+
+## C5b: cardio, holds and carries in a routine
+
+On 2026-11-22 and 2026-11-23. Contract `docs/contracts/routines-and-programs.md`, package C5b, redrawn in `log`'s words after C5a went live. Model-read text, code, a page and four eval cases; no migration. Deploy 2 of C5's two.
+
+### What was built
+
+| Package | Commit | What it did |
+|---|---|---|
+| Contract | `35ff5ff` | C5b redrawn against `fcba0e8`, where `log` and `guide` stand |
+| C5b | `3da0c81` | A routine holds lifts, holds, carries and cardio, in the order done. A save takes the forms `log` takes (a hold's time in seconds or minutes, a distance in metres, km or miles, a cardio time in minutes or seconds) through one entry in `app/log_shape.py`, and stores each as `log` stores it. A lift of reps is stored as before. Refusals read "Lift n: ...". `get_routines` gives each item its plan, `log_with` (`lifts` or `cardio`) and last time for every kind. A plan's heart rate and machine calories are kept and said in the item's words and on the page, never as fields to log |
+
+The review on a frozen copy found no must fix. Its should-fix points, all done in the one fix round: an eval case that failed a run sending seconds and passed a made-up heart rate; last time's km, speed and weight carry "as it is, never converted"; a refusal's wording; the cardio size run at its true largest; a stale template comment. A fourth case, `routine_resave_keeps_plan`, measures what the hiding of a plan's heart rate costs on a resave.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| The touched test files and their neighbours | 23 files, 3,833 passed plain and 3,833 with `-W error` |
+| Postgres 17 (`postgres:17-alpine`, local) | The same seed on Postgres and SQLite gives the same `get_routines` answer: a cardio entry twice on one date (the later wins), a plan heart rate kept out of the fields, a walk saved in seconds, a run in miles, a plank in minutes, a carry in km |
+| The rollback | `fcba0e8`'s code over rows of every kind written by C5b: `get_routines`, the page, the delete preview, delete and restore, none raising |
+| Name matching | 1,646 names: none `fcba0e8` took resolves differently |
+| `get_routines`' size | Typical 30,937 bytes (25,129 with C5a alone); at every limit 2,343,423. Statements: 3, or 4 when a cardio item is placed. No cap |
+| The setup text | 4,084 characters, unchanged |
+
+### The eval run
+
+The 19 cases that use the routine functions, 3 runs each, on `3da0c81`.
+
+| Model | Counted | Logging cases | Cost |
+|---|---|---|---|
+| `claude-sonnet-5-5` | 53 of 54 | 42 of 42 | $5.0223 |
+| `gpt-6-luna` | 42 of 54 | 34 of 42 | plan usage, none given |
+
+On Sonnet the four C5b cases passed 3 of 3 each; the one miss was a reply that explained rather than asked (`old_routine_unclear`). On `gpt-6-luna` no run stored a wrong number. Its misses: the model asked for the exercises or gave advice instead of reading the saved routine (`routine_logged`, `routine_items_logged`, `routine_null_weight_asks`, `hotel_routine`), a resave that dropped a plan's heart rate and calories (`routine_resave_keeps_plan`, 2 of 3), "incline treadmill walk" saved as Treadmill Walk at 12% incline once, and reply wording. The same five older cases on `fcba0e8`, on `gpt-6-luna`, 3 runs: `routine_logged` 2, `delete_unused_routine` 1, `routine_null_weight_asks` 0, `hotel_routine` 0, `old_routine_unclear` 3; so C5b's text moved none of them. Each miss is a tracked gap; no text was changed for it.
+
+### Known limits
+
+- A resave built from `get_routines`' fields drops a plan's heart rate and machine calories, which are in the words only.
+- Two identical cardio items in one routine: the second `log` call answers `duplicate: true` and writes nothing, as any repeat within 10 minutes.
+- `routine_items_saved` does not check the order the items are saved in; the unit tests do.
+- An item's own `distance_m` field does not say "as it is, never converted"; last time's does.
+
+### What is left
+
+C5c, programs over weeks and migration `0016`, waits for C3's merge.
