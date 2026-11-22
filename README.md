@@ -134,6 +134,7 @@ Use Spotter's numbers, not your own. If a number is an estimate, say so.
 | "How am I doing?" | Your weight trend, calories a day, lift sessions and cardio minutes against your targets, and your maintenance calories once enough is logged |
 | "Am I on track?" | Each open goal's needed pace, its pace so far and the date it is reached at that pace |
 | "Save my push day: bench 3 sets of 8 at 60, dips 3 by 10" | The routine is kept by name. "Log my push day" then logs its sets |
+| "Save my legs day: 10 minutes on the rower, squats 4 by 5, a 60 second plank 3 times" | Holds, carries and cardio go in a routine too, in the order done. Each item shows last time's numbers with their date |
 | "Bring my weigh-ins over from my old app", with its export | A preview first, which writes nothing: what would go in, what is already there, what was refused. The assistant is told to write only when you say yes |
 | "Tell Spotter's maker the progress chart is confusing" | The note is kept for the person who runs Spotter. No reply comes back through Spotter |
 

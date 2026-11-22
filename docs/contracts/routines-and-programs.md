@@ -410,3 +410,18 @@ Read again at the pickup, against the code as log-and-guide leaves it; no new te
 | The files | The C5b row's, less `tests/test_export.py` (the README line is pinned in `tests/test_routines.py`), plus `app/log_shape.py`, `tests/test_log_and_guide.py`, `tests/test_inputs.py`, `tests/test_evals.py`, `tests/test_golden_cases.py`, `tests/test_hardening.py` (the statement count), `tests/test_matcher.py` (a description substring). `app/log_shape.py` joins the C3 overlap table: C3 does not list it |
 | Counts | No function, write or core case is added. The case counts move by three, derived where the files already derive them. The setup text stays 4,084 |
 | Before deploy 2 | A Postgres run of the cardio statement, by his okay, as C5a's. The release eval at deploy 2 (his pick 15): C5b's three cases and the 13 routine cases that rerun, on Sonnet, then the routine cases on `gpt-6-luna` |
+
+**2026-11-22, C5b as built.** The builder's departures, each ruled by the main chat to stand:
+
+| Row | As built |
+|---|---|
+| Near names on a miss | By the item's fields: lift fields give the lifts' near names, cardio fields cardio's first, a bare name both. A name that reaches no row is checked as cardio or a lift by its fields |
+| `get_routines`' description | Also carries decision 7's clause, "with a heart rate or the machine's calories only when the person gives them today", and says "what was logged" for "which sets were logged" |
+| A worked-out speed | `cardio.with_speed` refuses a routine's cardio numbers that `log` would refuse (decision 5) |
+| Texts the rows did not give | "Lift n: X is a lift: it takes sets and reps, not avg_hr." with "Leave avg_hr out on lift n."; the plan's words ", heart rate 140 bpm, the machine said 120 kcal"; "at 0 kg" on a hold, as on a lift of reps; the both-units fix as `rules.both_sent` words it |
+| A conversion refusal | Comes back alone for its item, as `route` does |
+| Stored forms | A cardio time in seconds is kept as minutes at 1 dp, as `log_cardio` keeps it (61 s is 1.0) |
+| The input schema | `RoutineLiftIn` requires only `exercise`; the time and distance fields carry the `PART_*` words |
+| The page | `page_read` also returns each item's plan words |
+| C3's overlap | `app/log_shape.py` joins "Files C3 also touches" |
+| `routine_resave_keeps_plan` | A fourth case measures whether a resave keeps a plan's heart rate and machine calories, which `get_routines`' fields do not carry; a miss goes to the owner's gaps list, no text fix |

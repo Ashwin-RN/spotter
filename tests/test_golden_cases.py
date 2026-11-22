@@ -1421,6 +1421,67 @@ C5A_RUNS = {
 }
 RUNS.update(C5A_RUNS)
 
+# routines-and-programs.md C5b (the note of 2026-11-22): the three cardio and timed item cases follow C5a's, each direct
+# and out of the core. The seed of the two logging cases: Legs day, Rowing Machine 10 min with a heart rate of 140 and
+# 120 machine kcal, Back Squat 4 x 5 at 100, Plank 3 x 60 s at 0 kg. Each wrong run is the one its case exists to
+# catch: tests/test_routine_items.py holds the reason each fails for.
+LEGS_SAID = [{"exercise": "Rowing Machine", "minutes": 10}, {"exercise": "Back Squat", "sets": 4, "reps": 5},
+             {"exercise": "Plank", "sets": 3, "time_s": 60},
+             {"exercise": "Incline Treadmill Walk", "minutes": 20, "incline_pct": 12}]
+LEGS_PARTS = ([{"movement": "Back Squat", "weight_kg": 100, "reps": 5, "exact": True}] * 4
+              + [{"movement": "Plank", "weight_kg": 0, "time_s": 60, "exact": True}] * 3)
+LEGS_LIFTED = ("log", {"kind": "lifts", "parts": LEGS_PARTS})
+LEGS_SETS = logs(lift("Back Squat", 100, 5, 4, exact=True), lift("Plank", 0, None, 3, time_s=60, exact=True))
+ROWED = ("log", {"kind": "cardio", "parts": [{"movement": "Rowing Machine", "minutes": 10}]})
+ROWED_TOLD = ("log", {"kind": "cardio", "parts": [{"movement": "Rowing Machine", "minutes": 15}],
+                      "details": {"avg_hr": 145, "machine_kcal": 180}})
+LEGS_TOLD = "Logged your legs day: Back Squat 4 x 5 at 100 kg, Plank 3 x 60 s and 10 minutes on the rowing machine."
+C5B_RUNS = {
+    "routine_items_saved": {
+        "pass": [([("save_routine", {"name": "Legs day", "lifts": LEGS_SAID})], "Saved your legs day."),
+                 ([("save_routine", {"name": "Legs day", "lifts": [*LEGS_SAID[:2], {"exercise": "Plank", "sets": 3,
+                                                                                  "minutes": 1}, LEGS_SAID[3]]})],
+                  "Saved your legs day."),
+                 ([("save_routine", {"name": "Legs day", "lifts": [{"exercise": "Rowing Machine", "time_s": 600},
+                                                                   *LEGS_SAID[1:]]})], "Saved your legs day.")],
+        "fail": [([("save_routine", {"name": "Legs day", "lifts": [*LEGS_SAID[:2], {"exercise": "Plank", "sets": 3,
+                                                                                  "reps": 60}, LEGS_SAID[3]]})],
+                  "Saved your legs day."),  # a hold sent with reps: refused, nothing saved
+                 ([("save_routine", {"name": "Legs day", "lifts": [LEGS_SAID[0], {**LEGS_SAID[1], "weight_kg": 100},
+                                                                   *LEGS_SAID[2:]]})], "Saved your legs day."),
+                 ([("save_routine", {"name": "Legs day", "lifts": LEGS_SAID}), ROWED], "Saved and logged it."),
+                 ([("save_routine", {"name": "Legs day", "lifts": [*LEGS_SAID[:3], {**LEGS_SAID[3], "avg_hr": 120}]})],
+                  "Saved your legs day.")]},  # a heart rate the person never gave
+    "routine_items_logged": {
+        "pass": [([("get_routines", {}), LEGS_LIFTED, ROWED], LEGS_TOLD),
+                 ([("get_routines", {}), LEGS_SETS, ("log_cardio", {"exercise": "Rowing Machine", "minutes": 10})],
+                  LEGS_TOLD)],
+        "fail": [([("get_routines", {}), LEGS_LIFTED,  # the plan's heart rate and calories, logged as today's
+                   ("log", {"kind": "cardio", "parts": [{"movement": "Rowing Machine", "minutes": 10}],
+                            "details": {"avg_hr": 140, "machine_kcal": 120}})], LEGS_TOLD),
+                 ([("get_routines", {}), LEGS_LIFTED], LEGS_TOLD),  # one log call where two are needed
+                 ([("get_routines", {}), ("log", {"kind": "lifts", "parts": LEGS_PARTS[:4] + [  # a hold with reps
+                     {"movement": "Plank", "weight_kg": 0, "reps": 60, "exact": True}] * 3}), ROWED], LEGS_TOLD)]},
+    "routine_cardio_changed": {
+        "pass": [([("get_routines", {}), LEGS_LIFTED, ROWED_TOLD], LEGS_TOLD)],
+        "fail": [([("get_routines", {}), LEGS_LIFTED,  # minutes 10, the plan's, when 15 was said
+                   ("log", {"kind": "cardio", "parts": [{"movement": "Rowing Machine", "minutes": 10}],
+                            "details": {"avg_hr": 145, "machine_kcal": 180}})], LEGS_TOLD),
+                 ([("get_routines", {}), LEGS_LIFTED,  # the heart rate and calories said, lost
+                   ("log", {"kind": "cardio", "parts": [{"movement": "Rowing Machine", "minutes": 15}]})], LEGS_TOLD),
+                 ([("get_routines", {}), ROWED_TOLD], LEGS_TOLD)]},  # one log call where two are needed
+}
+# routine_resave_keeps_plan (the fix round): a plan's heart rate and calories are no field of a get_routines item, so
+# a resave keeps them only when the model reads them from the words. It measures that cost; no text is changed for it.
+RESAVED = [{"exercise": "Rowing Machine", "minutes": 10, "avg_hr": 140, "machine_kcal": 120},
+           {"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100}, {"exercise": "Dip", "sets": 3, "reps": 10}]
+C5B_RUNS["routine_resave_keeps_plan"] = {
+    "pass": [([("get_routines", {}), ("save_routine", {"name": "Legs day", "lifts": RESAVED})],
+              "Added Dip 3 x 10 to your legs day.")],
+    "fail": [([("get_routines", {}), ("save_routine", {"name": "Legs day", "lifts": [
+        {"exercise": "Rowing Machine", "minutes": 10}, *RESAVED[1:]]})], "Added Dip 3 x 10 to your legs day.")]}
+RUNS.update(C5B_RUNS)
+
 # The changed lift cases of the package: a run in the person's own words passes, and one whose word reaches another lift
 # fails on the rows, the case's whole reason since the name moved out of inputs_include.
 C4G_WORDS = {
@@ -1736,8 +1797,8 @@ def read_case(case_id: str) -> bool:
 def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     new = new_cases()
     ids = [c["id"] for c in new]
-    # 164, C4g's 23, log and guide's 2, and C5a's
-    assert len(ids) == len(set(ids)) == 189 + len(C5A_RUNS) and set(ids) == set(RUNS)
+    # 164, C4g's 23, log and guide's 2, C5a's and C5b's
+    assert len(ids) == len(set(ids)) == 189 + len(C5A_RUNS) + len(C5B_RUNS) and set(ids) == set(RUNS)
     assert all(RUNS[i]["pass"] and RUNS[i]["fail"] for i in ids)
     every = judge.load_cases()
     g1 = every[:len(every) - len(new)]
@@ -1746,7 +1807,7 @@ def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     assert {c["id"] for c in g1 if c.get("kind")} <= G1_CORE
     assert all(isinstance(c["core"], bool) and c["kind"] in judge.KINDS for c in new)
     kinds = Counter(c["kind"] for c in new)
-    assert kinds == {"direct": 141 + len(C5A_RUNS), "incidental": 24, "look_alike": 24}  # C5a's are direct
+    assert kinds == {"direct": 141 + len(C5A_RUNS) + len(C5B_RUNS), "incidental": 24, "look_alike": 24}  # C5's
     assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 63, "incidental": 8, "look_alike": 8}
     by_id = {c["id"]: c for c in every}
     for c in new:
@@ -1877,12 +1938,16 @@ def test_lb_bench_goal_judges_the_lift_the_goal_was_saved_on():
 
 def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
     new = [c["id"] for c in new_cases()]
-    # C4g's cases, then log-and-guide.md's two, then routines-and-programs.md C5a's two, which close the file
-    later = len(LOG_AND_GUIDE_RUNS) + len(C5A_RUNS)
+    # C4g's cases, then log-and-guide.md's two, then routines-and-programs.md C5a's two, then C5b's four, which
+    # close the file
+    later = len(LOG_AND_GUIDE_RUNS) + len(C5A_RUNS) + len(C5B_RUNS)
     assert new[-len(C4G_RUNS) - later:-later] == list(C4G_RUNS)
-    assert new[-len(C5A_RUNS):] == list(C5A_RUNS) == ["routine_same_as_last_time", "routine_last_time_read"]
+    assert new[-len(C5A_RUNS) - len(C5B_RUNS):-len(C5B_RUNS)] == list(C5A_RUNS) == ["routine_same_as_last_time",
+                                                                                   "routine_last_time_read"]
+    assert new[-len(C5B_RUNS):] == list(C5B_RUNS) == ["routine_items_saved", "routine_items_logged",
+                                                      "routine_cardio_changed", "routine_resave_keeps_plan"]
     assert all(c["kind"] == "direct" and c["core"] is False for c in new_cases()
-               if c["id"] in C4G_RUNS or c["id"] in C5A_RUNS)
+               if c["id"] in C4G_RUNS or c["id"] in C5A_RUNS or c["id"] in C5B_RUNS)
     assert sum(1 for c in judge.load_cases() if c.get("core") is True) == 103  # log-and-guide.md's 2 joined it
     assert [c["id"] for c in judge.load_cases() if c.get("then")] == ["pick_lift_answer"]
 
@@ -1891,10 +1956,11 @@ def test_log_and_guide_s_two_cases_follow_c4g_s_and_join_the_core():
     """log-and-guide.md N9: 260 cases, 103 core. log_plank_minutes takes log_lifts in may, so it judges the same once
     the judge routes a log call to its kind's function (L5)."""
     cases = judge.load_cases()
-    ours = cases[-len(LOG_AND_GUIDE_RUNS) - len(C5A_RUNS):-len(C5A_RUNS)]  # routines-and-programs.md C5a's 2 follow
+    after = len(C5A_RUNS) + len(C5B_RUNS)  # routines-and-programs.md C5a's 2 and C5b's 3 follow
+    ours = cases[-len(LOG_AND_GUIDE_RUNS) - after:-after]
     assert [c["id"] for c in ours] == list(LOG_AND_GUIDE_RUNS)
     assert all(c["kind"] == "direct" and c["core"] is True for c in ours)
-    assert len(cases) == 260 + len(C5A_RUNS) and sum(1 for c in cases if c.get("core") is True) == 103
+    assert len(cases) == 260 + after and sum(1 for c in cases if c.get("core") is True) == 103
     by_id = {c["id"]: c for c in cases}
     food = by_id["guide_how_food"]["calls"]
     assert food["must"] == ["guide"] and set(W) <= set(food["must_not"])

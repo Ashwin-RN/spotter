@@ -1864,7 +1864,7 @@ def test_the_answers_both_lists_read_name_none_of_the_five(make_user, noon):
     assert found["cardio_goal"] == ["Log one first, with its distance, or give start_value: the person's time for "
                                     "5 km now, in minutes."]
     assert found["time"][0].endswith(", as a cardio entry takes.")
-    assert found["routine"] == ["Log its sets instead."]
+    assert found["routine"] == ["Send time_s on lift 1."]  # routines-and-programs.md C5b: log's own refusal
     # Row 17: what_is_logged's words for a saved food's id, once the person has one.
     assert "error" not in services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti",
                                                        "kcal_per_serving": 120}, "claude")

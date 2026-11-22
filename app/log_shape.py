@@ -16,6 +16,11 @@ said_as_sent says a kind's own refusal in the names log was sent: a set's exerci
 kg as details.kg, "Entry 2" as details.entries[1], and one of the five functions' names as log. A range refusal of a
 time or a distance route converted names the field and the value as sent (out_of_range).
 
+convert_item is the same forms for an item another function holds in a kind's numbers, such as a routine's lift or
+cardio item (routines-and-programs.md, the note of 2026-11-22): the place passed in names the item in each refusal,
+such as "Lift 2", so the whole-second rule, the two-forms refusal and the as-sent wording of a converted number's
+range refusal are log's own. A place is a part's index for log, or such a name; log's own texts never change.
+
 It imports only app.mcp_schemas and app.rules from the app: the judge and the call log read it, so it never loads
 app.main, app.mcp_server or app.calllog. It reads the five's argument models and words, never a registered function,
 so it holds once the five are no longer registered.
@@ -28,7 +33,7 @@ import math
 import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Callable
 
 from app import rules
 from app.mcp_schemas import (
@@ -198,7 +203,7 @@ class Routed:
     """One log call, routed. kind is one of KINDS, or None when the word resolved to none. function is the kind's
     function, a key of LOG_ARGUMENTS. arguments are in that function's own shape, or None with a refusal. refusal is
     Spotter's answer for what the shape makes wrong, every problem at once, or None. word is the kind word as the call
-    row may keep it (note_word). converted holds each time or distance route converted, as (the part's place, the
+    row may keep it (note_word). converted holds each time or distance route converted, as (the part's index, the
     field sent, the value sent, the kind's column), so said_as_sent can say a refusal of it as sent."""
     kind: str | None
     function: str | None
@@ -327,19 +332,33 @@ def _listed(fields, last: str) -> str:
     return fields[0] if len(fields) == 1 else f"{', '.join(fields[:-1])} {last} {fields[-1]}"
 
 
-def _convert(kind: str, i: int, part: dict, row: dict, converted: list) -> list[dict]:
+def _named(place: Any) -> bool:
+    """Whether a place is an item's name, such as "Lift 2" (convert_item), rather than a log part's index."""
+    return isinstance(place, str)
+
+
+def _at_error(place: Any, code: str, message: str, fix: str, field: str) -> dict:
+    """A refusal at a place: a log part's names its field, as every refusal of log's shape does; an item's has none,
+    as the refusals of the function that holds it have none."""
+    return rules.error(code, message, fix) if _named(place) else _error(code, message, fix, field)
+
+
+def _convert(kind: str, i: Any, part: dict, row: dict, converted: list) -> list[dict]:
     """The forms of decision 51 in one part: two forms of one number refused when either is converted; each form the
     kind does not keep converted into row, in its own column, and noted in converted as (i, the field sent, the value
     sent, the column). A converted number too large for any number Spotter reads is refused here, in the kind's own
-    range as said_as_sent says it. Returns the problems."""
+    range as said_as_sent says it. i is the part's index, or an item's place (convert_item), which each refusal names
+    instead: "Lift 2: minutes 0.505 is not a whole number of seconds." Returns the problems."""
     problems = []
+    named = _named(i)
+    head = i if named else f"parts[{i}]"
     for forms in FORMS:
         sent = [f for f in forms if f in PART_TAKES[kind] and part.get(f) is not None]
         if len(sent) > 1 and any(f in CONVERTED[kind] for f in sent):
             what = "time" if forms[0] == "time_s" else "distance"
-            problems.append(_error("invalid_field", f"parts[{i}] has {_listed(sent, 'and')}: send one.",
-                                   f"Send the {what} once, in the field of the unit the person said: "
-                                   f"{_listed((f for f in forms if f in PART_TAKES[kind]), 'or')}.", f"parts[{i}]"))
+            problems.append(_at_error(i, "invalid_field", f"{head} has {_listed(sent, 'and')}: send one.",
+                                      f"Send the {what} once, in the field of the unit the person said: "
+                                      f"{_listed((f for f in forms if f in PART_TAKES[kind]), 'or')}.", head))
     if problems:
         return problems
     for sent, column in CONVERTED[kind].items():
@@ -347,19 +366,22 @@ def _convert(kind: str, i: int, part: dict, row: dict, converted: list) -> list[
         if value is None:
             continue
         at = f"parts[{i}].{sent}"
+        said_at, give_at = (f"{i}: {sent}", f"{sent} on {i.lower()}") if named else (at, at)
         number = _number(value)
         if number is None:
-            problems.append(_error("invalid_field", f"{at} must be a number, not {_shown(value)}.",
-                                   f"Give {at} as a number.", at))
+            problems.append(_at_error(i, "invalid_field", f"{said_at} must be a number, not {_shown(value)}.",
+                                      f"Give {give_at} as a number.", at))
             continue
         number = _CONVERSIONS[(sent, column)](number)
         if column == "time_s" and number != number.to_integral_value():
-            problems.append(_error("invalid_field", f"{at} {rules.as_sent(value)} is not a whole number of seconds.",
-                                   f"Send the time as parts[{i}].time_s, in whole seconds.", at))
+            again = f"time_s on {i.lower()}" if named else f"parts[{i}].time_s"
+            problems.append(_at_error(i, "invalid_field",
+                                      f"{said_at} {rules.as_sent(value)} is not a whole number of seconds.",
+                                      f"Send the time as {again}, in whole seconds.", at))
             continue
         if not math.isfinite(float(number)):
             message, fix = out_of_range(kind, i, sent, value, column)
-            problems.append(_error("invalid_field", message, fix, at))
+            problems.append(_at_error(i, "invalid_field", message, fix, at))
             continue
         row[column] = _plain(number)
         converted.append((i, sent, value, column))
@@ -546,19 +568,26 @@ def _quantity(kind: str, column: str) -> str:
     return "week_minutes" if column == "minutes" else rules.NUMBER_QUANTITIES[column]
 
 
-def out_of_range(kind: str, i: int, sent: str, value: Any, column: str) -> tuple[str, str]:
+def out_of_range(kind: str, i: Any, sent: str, value: Any, column: str) -> tuple[str, str]:
     """A time or a distance route converted, outside the range of the kind's column, said as sent: (message, fix),
     with the field and the value as sent. The range is said in the unit sent when both its ends come to whole numbers
-    in it (a session's 1 to 600 minutes as 60 to 36,000 seconds); else in the column's own unit, named."""
+    in it (a session's 1 to 600 minutes as 60 to 36,000 seconds); else in the column's own unit, named. i is the
+    part's index, or an item's place (convert_item): "Lift 2: minutes 70 is outside 1 to 3,600 seconds.", with the
+    place in the fix where the kind's own check puts it given a place: after the field for a set, as
+    rules._set_numbers does, and after the range for a session, as rules.bounded does."""
     lo, hi = _limits(kind, column)
     back = [_BACK[(sent, column)](bound) for bound in (lo, hi)]
     whole = all(bound == bound.to_integral_value() for bound in back)
     unit, what = UNIT_WORDS[sent if whole else column]
     shown = (rules.span(*back, "count") if whole else rules.span(lo, hi, _quantity(kind, column))) + f" {unit}"
+    span = f"{'from' if whole else f'for a {what} of'} {shown}"
+    if _named(i):
+        fix = (f"Give {sent} on {i.lower()} {span}." if kind == "lifts"
+               else f"Give {sent} as a number {span} on {i.lower()}.")
+        return f"{i}: {sent} {rules.as_sent(value)} is outside {shown}.", fix
     at, give = ((f"parts[{i}]: {sent}", f"Give {sent} on parts[{i}]") if kind == "lifts"
                 else (f"parts[{i}].{sent}", f"Give parts[{i}].{sent} as a number"))
-    return (f"{at} {rules.as_sent(value)} is outside {shown}.",
-            f"{give} {'from' if whole else f'for a {what} of'} {shown}.")
+    return (f"{at} {rules.as_sent(value)} is outside {shown}.", f"{give} {span}.")
 
 
 _RANGE = r"[\d,.]+ to [\d,.]+"
@@ -566,9 +595,17 @@ _RANGE = r"[\d,.]+ to [\d,.]+"
 
 def _of_converted(error: dict, kind: str, converted) -> dict:
     """One refusal, said for a time or a distance route converted when it is the kind's own range refusal of that
-    part's column (rules._set_numbers for a set, rules.bounded for a session, after said); else as it came."""
+    part's column (rules._set_numbers for a set, rules.bounded for a session, after said); else as it came. At an
+    item's place (convert_item), the kind's own refusal as worded there: "Lift 2: time_s 4200 is outside 1 to 3,600."
+    with "Give time_s on lift 2 from 1 to 3,600, in seconds.", or "Lift 3: minutes 700 is outside 1 to 600." with
+    "Give minutes as a number from 1 to 600 on lift 3."."""
     for i, sent, value, column in converted:
-        if kind == "lifts":
+        if _named(i):
+            place, on = re.escape(i), re.escape(i.lower())
+            message = rf"{place}: {column} \S+ is outside {_RANGE}\."
+            fix = (rf"Give {column} on {on} from {_RANGE}, in \w+\." if kind == "lifts"
+                   else rf"Give {column} as a number from {_RANGE} on {on}\.")
+        elif kind == "lifts":
             message = rf"parts\[{i}\]: {column} \S+ is outside {_RANGE}\."
             fix = rf"Give {column} on parts\[{i}\] from {_RANGE}, in \w+\."
         else:
@@ -618,3 +655,25 @@ def said_as_sent(answer: Any, kind: Any, converted=()) -> Any:
     if isinstance(out.get("errors"), list):
         out["errors"] = [one(e) if isinstance(e, dict) else e for e in out["errors"]]
     return _as_converted(out, kind, converted) if converted else out
+
+
+# ---------------------------------------------------------------- an item of another function, in log's forms
+
+def convert_item(kind: str, item: Any, place: str, check: Callable[[dict], tuple[Any, list]]) -> tuple[Any, list]:
+    """One item another function holds in a kind's numbers, such as a routine's lift or cardio item
+    (routines-and-programs.md, the note of 2026-11-22), in log's forms of a time and a distance (decision 51). kind is
+    lifts or cardio; place names the item in every refusal, such as "Lift 2". As route does for a part: two forms of
+    one number refused when either is converted, then each form the kind does not keep converted into its column,
+    whole seconds for a lift's time (_convert). A refusal there comes back alone, as route's does, and check is not
+    run. Else check(row) -> (values, errors) is the kind's own checks over the item, each time and distance in the
+    kind's column and every other key as sent, its errors already worded at the place; each of them that is the
+    range refusal of a converted number is said as sent (_of_converted). Returns (check's values, or None, and every
+    refusal). Never raises on what was sent."""
+    item = item if isinstance(item, dict) else {}
+    row = {k: v for k, v in item.items() if k not in CONVERTED[kind]}
+    converted: list = []
+    problems = _convert(kind, place, item, row, converted)
+    if problems:
+        return None, problems
+    values, errors = check(row)
+    return values, [_of_converted(e, kind, converted) if isinstance(e, dict) else e for e in errors]

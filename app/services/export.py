@@ -4,7 +4,8 @@ export_data(user_id)
     A read. One CSV per table the person owns, plus account.csv and README.txt:
       account.csv, lift_sessions.csv, lift_sets.csv, bodyweight.csv, measurements.csv, goals.csv,
       saved_foods.csv, routines.csv, food_entries.csv, cardio_entries.csv, entry_versions.csv, feedback.csv
-    - routines.csv: each routine the person saved (contract routines.md), its lifts as the JSON stored.
+    - routines.csv: each routine the person saved (contracts routines.md and routines-and-programs.md), its
+      items as the JSON stored: a lift's, a hold's, a carry's or a cardio item's shape.
     - entry_versions.csv: what an entry held before each edit or undo still kept (contract
       edit-history.md): its kind, the entry's id, when, who, why, and the values as JSON (_before): as stored,
       without LEFT_OUT, and with names as the other files give them. A set is {exercise, set_number,
@@ -86,9 +87,11 @@ Everything Spotter holds for this account, one CSV file per kind of record.
   measurements.csv    each measurement, in its unit
   goals.csv           each goal, open or closed
   saved_foods.csv     each saved food
-  routines.csv        each routine: lifts holds its lifts as JSON, each with exercise, sets, reps
-                      and weight_kg (null when none was given). saved_on is the date it was last
-                      saved
+  routines.csv        each routine: lifts holds its items as JSON, in the order done. A lift has
+                      exercise, sets, reps and weight_kg (null when none was given); a hold has
+                      time_s, a carry or a sled distance_m and time_s, in place of reps; a cardio
+                      item has exercise, minutes, distance_km, incline_pct, speed_kmh, avg_hr and
+                      machine_kcal. saved_on is the date it was last saved
   food_entries.csv    each food entry; source says who supplied the number: you_said (the person),
                       saved_food (worked out from a saved food), usda (the USDA table) or
                       claude_estimate (Claude's estimate)

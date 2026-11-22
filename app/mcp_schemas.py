@@ -210,29 +210,15 @@ class LogSetIn(SetIn):
                                   "get_routines: it is taken as written.")
 
 
-# A routine's lift (contract routines.md). The result models below take these words for the same fields.
-ROUTINE_EXERCISE = "The lift, exactly as list_exercises gives it."
+# A routine's item (contracts routines.md and routines-and-programs.md). The result models below take the exercise's
+# and the results' sets and reps words; RoutineLiftIn, after log's part words, which it imports, takes its own.
+ROUTINE_EXERCISE = "The lift or the cardio activity, exactly as list_exercises gives it."
 ROUTINE_SETS = "How many sets of it, 1 to 10."
 ROUTINE_REPS = "Reps in each set, a whole number from 1 to 100."
-
-
-class RoutineLiftIn(BaseModel):
-    """One lift of a routine: its number of sets, its reps, and a weight only when the person gave one."""
-
-    model_config = INPUT
-
-    exercise: str = Field(description=ROUTINE_EXERCISE)
-    sets: Whole = Field(description=ROUTINE_SETS)
-    reps: Whole = Field(description=ROUTINE_REPS)
-    weight_kg: Number | None = Field(
-        default=None,
-        description="The weight in kg, 0 to 500, only when the person gave one. " + _HELP_WEIGHT + " Leave it out "
-                    "otherwise: get_routines then gives the weight of the lift's latest session. Send weight_kg or "
-                    "weight_lb, never both.")
-    weight_lb: Number | None = Field(
-        default=None,
-        description="The weight in lb, 0 to 1,102.31, only when the person gave one in pounds, or with no unit and "
-                    "units.weight is lb. " + _HELP_WEIGHT + " Leave it out otherwise.")
+ROUTINE_SETS_IN = "How many sets of a lift, hold or carry, 1 to 10. Leave out for cardio."
+ROUTINE_REPS_IN = "Reps in each set, a whole number from 1 to 100. Leave out for a hold, a carry or cardio."
+ROUTINE_LIFTS = ("Each item, in the order done: lifts, holds, carries and cardio. 1 to 20 items, and at most 60 sets "
+                 "in all.")
 
 
 class FoodEntryIn(BaseModel):
@@ -460,6 +446,39 @@ class LogPartIn(BaseModel):
     minutes: Number | None = Field(default=None, description=PART_MINUTES_DESCRIPTION)
     distance_km: Number | None = Field(default=None, description=PART_DISTANCE_KM_DESCRIPTION)
     distance_mi: Number | None = Field(default=None, description=PART_DISTANCE_MI_DESCRIPTION)
+
+
+# A routine's item (routines-and-programs.md, the note of 2026-11-22): a lift, a hold, a carry or a cardio activity.
+# A time and a distance in the forms log takes, with log's part words (PART_*), each kept in the kind's one form by
+# the service; a cardio activity's own numbers with log_cardio's words (CARDIO_*). Each imported, never copied. Only
+# exercise is needed by every kind: the service asks each kind for its own.
+class RoutineLiftIn(BaseModel):
+    """One item of a routine: a lift, a hold, a carry or a cardio activity, with only the numbers the person gave."""
+
+    model_config = INPUT
+
+    exercise: str = Field(description=ROUTINE_EXERCISE)
+    sets: Whole | None = Field(default=None, description=ROUTINE_SETS_IN)
+    reps: Whole | None = Field(default=None, description=ROUTINE_REPS_IN)
+    weight_kg: Number | None = Field(
+        default=None,
+        description="The weight in kg of a lift, a hold or a carry, 0 to 500, only when the person gave one. "
+                    + _HELP_WEIGHT + " Leave it out otherwise: get_routines then gives the weight of the lift's latest "
+                    "session. Send weight_kg or weight_lb, never both.")
+    weight_lb: Number | None = Field(
+        default=None,
+        description="The weight in lb of a lift, a hold or a carry, 0 to 1,102.31, only when the person gave one in "
+                    "pounds, or with no unit and units.weight is lb. " + _HELP_WEIGHT + " Leave it out otherwise.")
+    time_s: Whole | None = Field(default=None, description=PART_TIME_S_DESCRIPTION)
+    minutes: Number | None = Field(default=None, description=PART_MINUTES_DESCRIPTION)
+    distance_m: Number | None = Field(default=None, description=PART_DISTANCE_M_DESCRIPTION)
+    distance_km: Number | None = Field(default=None, description=PART_DISTANCE_KM_DESCRIPTION)
+    distance_mi: Number | None = Field(default=None, description=PART_DISTANCE_MI_DESCRIPTION)
+    incline_pct: Number | None = Field(default=None, description=CARDIO_INCLINE_PCT_DESCRIPTION)
+    speed_kmh: Number | None = Field(default=None, description=CARDIO_SPEED_KMH_DESCRIPTION)
+    speed_mph: Number | None = Field(default=None, description=CARDIO_SPEED_MPH_DESCRIPTION)
+    avg_hr: Whole | None = Field(default=None, description=CARDIO_AVG_HR_DESCRIPTION)
+    machine_kcal: Whole | None = Field(default=None, description=CARDIO_MACHINE_KCAL_DESCRIPTION)
 
 
 # An import's rows are named fields for every kind: no positional lists. A field these models do not name still
@@ -1699,9 +1718,22 @@ class OwnerDeleteFeedbackResult(BaseModel):
 
 ROUTINE_ID = "The routine's id, for delete_entry and restore_entry with kind routine."
 ROUTINE_NAME = "The routine's name, as the person says it, such as Push day. 1 to 64 characters."
-ROUTINE_LIFTS = "Each lift, in the order done: 1 to 20 lifts, and at most 60 sets in all."
 ROUTINE_SAVED_ON = "The person's date when the routine was last saved."
 LINKS_LAST = "Pages to offer the person. Put links last in a reply."
+
+
+# A routine item's numbers (routines-and-programs.md R7), null where the kind has none: the save's and the read's.
+# A number in kg, metres, km or km/h that a model may send back to log carries as_it_is: an item's and last time's.
+def as_it_is(field: str) -> str:
+    return f"Send it in {field} as it is, never converted."
+
+
+ROUTINE_TIME_S = "A hold's or a carry's time in each set, in seconds, or null."
+ROUTINE_DISTANCE_M = "A carry's or a sled's distance in each set, in metres, or null."
+ROUTINE_MINUTES = "A cardio item's minutes, or null."
+ROUTINE_DISTANCE_KM = "A cardio item's distance in km, or null. " + as_it_is("distance_km")
+ROUTINE_INCLINE_PCT = "A cardio item's incline in percent, or null."
+ROUTINE_SPEED_KMH = "A cardio item's speed in km/h, or null. " + as_it_is("speed_kmh")
 
 
 class RoutinesLinks(BaseModel):
@@ -1716,6 +1748,19 @@ class SavedRoutineLift(BaseModel):
     reps: int | None = Field(default=None, description=ROUTINE_REPS)
     weight_kg: float | None = Field(description="The weight the person gave, in kg, or null when none was given. 0 "
                                                 "for a band lift. " + _HELP_WEIGHT)
+    # routines-and-programs.md C5b: a hold's, a carry's and a cardio item's numbers as stored, each optional, so no
+    # required field is added. A cardio plan's heart rate and machine calories are here, the routine as saved, and
+    # never a field of get_routines' items (LiftToLog).
+    time_s: int | None = Field(default=None, description=ROUTINE_TIME_S)
+    distance_m: float | None = Field(default=None, description=ROUTINE_DISTANCE_M)
+    minutes: float | None = Field(default=None, description=ROUTINE_MINUTES)
+    distance_km: float | None = Field(default=None, description=ROUTINE_DISTANCE_KM)
+    incline_pct: float | None = Field(default=None, description=ROUTINE_INCLINE_PCT)
+    speed_kmh: float | None = Field(default=None, description=ROUTINE_SPEED_KMH)
+    avg_hr: int | None = Field(default=None, description="A cardio item's heart rate in bpm, as the person gave it, "
+                                                         "or null.")
+    machine_kcal: int | None = Field(default=None, description="A cardio item's calories the machine or watch showed, "
+                                                               "as the person gave them, or null.")
 
 
 class SavedRoutine(BaseModel):
@@ -1742,18 +1787,28 @@ class SaveRoutineResult(BaseModel):
 class LastSet(BaseModel):
     """One set of last time, in SetOut's words."""
 
-    weight_kg: float = Field(description="Weight in kg: one hand's for a pair, minus for help, 0 for bodyweight work.")
+    # C5b's fix round (N3): the numbers a model may send back for same as last time, in the item fields' words
+    weight_kg: float = Field(description="Weight in kg: one hand's for a pair, minus for help, 0 for bodyweight work. "
+                                         + as_it_is("weight_kg"))
     reps: int | None = Field(default=None, description="Reps done, or null for a hold or a carry.")
     time_s: int | None = Field(default=None, description="A hold's or a carry's time in seconds, or null.")
-    distance_m: float | None = Field(default=None, description="A carry's or a sled's distance in metres, or null.")
+    distance_m: float | None = Field(default=None, description="A carry's or a sled's distance in metres, or null. "
+                                                               + as_it_is("distance_m"))
 
 
 class LastTime(BaseModel):
-    """What was done last time (routines-and-programs.md decision 11, R4). sets is optional: a later item kind's
-    last time has none."""
+    """What was done last time (routines-and-programs.md decision 11, R4). A lift's has its sets; a cardio item's its
+    minutes, distance, incline and speed, and never its heart rate or the machine's calories, which are in its words
+    only (the note of 2026-11-22)."""
 
     date: str = Field(description="The date of that session, YYYY-MM-DD.")
     sets: list[LastSet] | None = Field(default=None, description="Every set of this lift in that session, in order.")
+    minutes: float | None = Field(default=None, description="A cardio session's minutes.")
+    distance_km: float | None = Field(default=None, description="A cardio session's distance in km, or null. "
+                                                                + as_it_is("distance_km"))
+    incline_pct: float | None = Field(default=None, description="A cardio session's incline in percent, or null.")
+    speed_kmh: float | None = Field(default=None, description="A cardio session's speed in km/h, or null. "
+                                                              + as_it_is("speed_kmh"))
     words: str = Field(description="What was done, in words, in the person's units, ready to quote.")
 
 
@@ -1763,8 +1818,8 @@ class LiftToLog(BaseModel):
     reps: int | None = Field(default=None, description=ROUTINE_REPS)
     weight_kg: float | None = Field(
         description="The weight to log, in kg: the heaviest set of this lift's latest session, unless the routine "
-                    "was saved on a later day than that session, with a weight of its own. Send it in weight_kg as "
-                    "it is, never converted. Null when there is neither: ask the person. " + _HELP_WEIGHT)
+                    "was saved on a later day than that session, with a weight of its own. " + as_it_is("weight_kg")
+                    + " Null when there is neither: ask the person. " + _HELP_WEIGHT)
     weight_from: str | None = Field(description="Where weight_kg came from: last_session, routine, or null.")
     last_date: str | None = Field(
         description="The date of this lift's latest session, or null when it was never logged.")
@@ -1772,6 +1827,15 @@ class LiftToLog(BaseModel):
         default=None,
         description="What was done last time, with its date: every set of this lift in its latest session, or this "
                     "activity's latest session. Null when never logged.")
+    # routines-and-programs.md C5b (R7, the note of 2026-11-22): each optional, null where the kind has none. Never
+    # avg_hr or machine_kcal: a plan's are said in the routine's words, so no field offers them as numbers to log.
+    time_s: int | None = Field(default=None, description=ROUTINE_TIME_S)
+    distance_m: float | None = Field(default=None, description=ROUTINE_DISTANCE_M)
+    minutes: float | None = Field(default=None, description=ROUTINE_MINUTES)
+    distance_km: float | None = Field(default=None, description=ROUTINE_DISTANCE_KM)
+    incline_pct: float | None = Field(default=None, description=ROUTINE_INCLINE_PCT)
+    speed_kmh: float | None = Field(default=None, description=ROUTINE_SPEED_KMH)
+    log_with: str | None = Field(default=None, description="The kind to send with log for this item: lifts or cardio.")
 
 
 class RoutineToLog(BaseModel):
@@ -1781,8 +1845,8 @@ class RoutineToLog(BaseModel):
     lifts: list[LiftToLog] = Field(description=ROUTINE_LIFTS)
     words: str | None = Field(
         default=None,
-        description="The routine's lifts in words, each with the weight to log, in the person's units, ready to "
-                    "quote.")
+        description="The routine's items in words, each lift with the weight to log, in the person's units, ready "
+                    "to quote.")
 
 
 class GetRoutinesResult(BaseModel):

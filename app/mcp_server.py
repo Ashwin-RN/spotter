@@ -111,7 +111,7 @@ from app.mcp_schemas import (
     GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult, GuideResult,
     ImportEntriesResult, ImportRowIn, Key, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult,
     LogMeasurementResult, LogPartIn, LogSetIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult,
-    RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
+    ROUTINE_LIFTS, RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
     WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
 )
 from app.models import CLAUDE_CAN, User
@@ -1497,19 +1497,19 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="save_routine",
         title="Save a routine",
         description=(
-            "Saves a workout the person does often under its name, such as Push day: each lift with its number of "
-            "sets and its reps, and a weight only when the person gave one. Send only what the person said: never add "
-            "a lift, a set or a weight of your own. Saving the same name again replaces the routine. To save a "
-            "session already logged, read it with get_log and send each lift with its number of sets, its reps and "
-            "its heaviest weight."
+            "Saves a workout the person does often under its name, such as Push day, in the order done: each lift with "
+            "its sets and its reps, a hold's time or a carry's distance, and each cardio activity with its minutes. A "
+            "weight, distance, incline, speed, heart rate or machine calories only when the person gave one. Send only "
+            "what the person said: never add an item, a set or a number of your own. Saving the same name again "
+            "replaces the routine. To save a session already logged, read it with get_log and send each lift with its "
+            "number of sets, its reps, time or distance, and its heaviest weight."
         ),
         annotations=SETTING,
     )
     async def save_routine(
         name: Annotated[str, Field(
             description="The routine's name, as the person says it, such as Push day. 1 to 64 characters.")],
-        lifts: Annotated[list[RoutineLiftIn], Field(
-            description="Each lift, in the order done: 1 to 20 lifts, and at most 60 sets in all.")],
+        lifts: Annotated[list[RoutineLiftIn], Field(description=ROUTINE_LIFTS)],
         key: Key = None,
     ) -> Annotated[CallToolResult, SaveRoutineResult]:
         data = _sent(name=name, lifts=[x.model_dump(exclude_none=True) for x in lifts])
@@ -1520,13 +1520,16 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="get_routines",
         title="Get routines",
         description=(
-            "The person's saved routines, each lift with its sets, its reps and the weight to log. Call it when the "
-            "person names a routine, such as log my push day. To log one, send its sets with log, kind lifts, one "
-            "part a set, the lift as movement, with exact true, with each change the person names, and leave the "
-            "date out for today. Send each "
+            "The person's saved routines, each item with its plan, the weight to log for a lift and last time. Call "
+            "it when the person names a routine, such as log my push day. To log one, send the sets of its lifts, "
+            "holds and carries with log, kind lifts, one part a set, the lift as movement, with exact true, with each "
+            "change the person names, and leave the date out for today. Send each cardio item with log, kind cardio, "
+            "as its log_with says, with a heart rate or the machine's calories only when the person gives them today. "
+            "Send each "
             "weight_kg as given, in weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and send the answer in "
-            "the field of its unit. Say in your reply which sets were logged."
-            " When the person says same as last time, send last's sets as given, each with the lift as movement."
+            "the field of its unit. Say in your reply what was logged."
+            " When the person says same as last time, send last's sets as given, each with the lift as movement, and"
+            " for cardio last's minutes, distance, incline and speed."
         ),
         annotations=READ_ONLY,
     )

@@ -31,8 +31,9 @@ and Settings.
                                    (POST, save_food); delete and Undo POST to /foods/{id}/delete and /restore,
                                    and so does the Undo of a food's edit, as an entry's does
     /foods/{id}/edit               one saved food's serving, kcal and grams (GET, POST)
-    /routines                      the routines as a table, each lift with the weight get_routines gives, and no
-                                   form; delete and Undo POST to /routines/{id}/delete and /restore
+    /routines                      the routines as a table, each item with its plan, the weight get_routines
+                                   gives and last time, and no form; delete and Undo POST to /routines/{id}/delete
+                                   and /restore
     /settings                      seven cards: the account, the time zone (POST), the units (POST, with its card
                                    field), the targets (POST to /settings/targets), the switch for what Claude may
                                    do (POST to /settings/claude-can), the person's data (export, delete), and
@@ -124,7 +125,7 @@ from app.models import (
 )
 from app.services import account as account_checks, body, common, lifts, measurements, progress as progress_data
 from app.services import goals as goal_rules, trends as trend_rules
-from app.services.routines import lift_words as routine_lift_words, page_read as routine_page_read
+from app.services.routines import page_read as routine_page_read
 
 log = logging.getLogger("spotter")
 
@@ -2483,13 +2484,14 @@ def routine_strip(params) -> dict | None:
 ROUTINE_NEVER = "Not logged yet."
 
 
-def routine_rows(lifts_: list[dict], today, units) -> list[dict]:
+def routine_rows(lifts_: list[dict], plans: list[str], today) -> list[dict]:
     """A routine card's rows (routines-and-programs.md, the page): Item, the plan with the weight to log in the
-    person's unit, as get_routines' words say it, and last time with its day ("Wed 11 Nov: 92.5 kg × 5, 92.5 kg ×
-    5"), or "Not logged yet.". Every number is get_routines' own, through app.formatting."""
+    person's unit, as get_routines' words say it (routines.page_read's plans, one an item: "4 × 5 at 92.5 kg", "3 ×
+    60 s", "10 min, heart rate 140 bpm"), and last time with its day ("Wed 11 Nov: 92.5 kg × 5, 92.5 kg × 5", "Wed 11
+    Nov: 10 min, 2.2 km, pace 4:33 per km"), or "Not logged yet.". Every number is get_routines' own, through
+    app.formatting."""
     out = []
-    for x in lifts_:
-        plan = routine_lift_words([x], page=True, units=units)[len(x["exercise"]) + 1:]
+    for x, plan in zip(lifts_, plans):
         last = x.get("last")
         when = f"{formatting.day(last['date'], today)}: {last['words']}" if last else ROUTINE_NEVER
         out.append({"item": x["exercise"], "plan": plan, "last": when})
@@ -2504,10 +2506,9 @@ async def routines_page(request: Request) -> Response:
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
-    result, left_out = await _db(routine_page_read, user.id)
-    units = users.units_for(user)  # the weights in the person's unit, as get_routines' words say them
+    result, left_out, plans = await _db(routine_page_read, user.id)  # the plans in the person's units
     today = users.today_for(user)
-    cards = [{"id": r["id"], "name": r["name"], "rows": routine_rows(r["lifts"], today, units),
+    cards = [{"id": r["id"], "name": r["name"], "rows": routine_rows(r["lifts"], plans.get(r["id"], []), today),
               "left_out": left_out.get(r["id"], [])} for r in result.get("routines", [])]
     return page(request, "routines.html", routines=cards, strip=routine_strip(request.query_params))
 

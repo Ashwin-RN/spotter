@@ -5,8 +5,10 @@
 {# Routines (contracts routines.md and routines-and-programs.md, the page): the page head with its two grey lines,
    one strip after a write, then a card a routine, read at the gym. Foods' frame and row table, with no form: a
    routine is saved and logged by talking to the assistant. Each card is named by its h2, the routine's name, with
-   Delete beside it. Its table is Item (td.lead), Plan (the sets and reps with the weight get_routines gives) and
-   Last time (the day, then the sets as get_routines' last words say them, or "Not logged yet."), from
+   Delete beside it. Its table is Item (td.lead), Plan (the item's plan by its kind: a lift's sets and reps, a
+   hold's time, a carry's distance, each with the weight get_routines gives, or cardio's minutes, distance,
+   incline, speed, heart rate and machine calories, from routines.page_read's plans) and Last time (the day,
+   then the sets or the session as get_routines' last words say them, or "Not logged yet."), from
    web.routine_rows, every number through app.formatting. An item get_routines leaves out shows its line under the
    table. Under the cards, how each weight is chosen. No routines: a dashed card. #}
 <div class="page-head">

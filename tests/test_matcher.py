@@ -683,9 +683,9 @@ def test_through_mcp_a_word_is_logged_pick_lift_reaches_the_client_and_exact_ans
     assert log_lifts["description"].endswith(
         "Send the person's own word for a lift; Spotter picks it and the summary names it. pick_lift means two lifts "
         "fit: ask which.")
-    # log-and-guide.md row 4: a routine's sets go to log
-    assert ("send its sets with log, kind lifts, one part a set, the lift as movement, with exact true, with each "
-            "change") in routines["description"]
+    # log-and-guide.md row 4: a routine's sets go to log; routines-and-programs.md C5b: its holds' and carries' too
+    assert ("send the sets of its lifts, holds and carries with log, kind lifts, one part a set, the lift as movement, "
+            "with exact true, with each change") in routines["description"]
     props = log_lifts["inputSchema"]["$defs"]["LogSetIn"]["properties"]
     assert set(props) == {"exercise", "weight_kg", "weight_lb", "reps", "time_s", "distance_m", "exact"}
     assert tools["edit_entry"]["inputSchema"]["$defs"]["SetIn"]["properties"]["exercise"]["description"] == (

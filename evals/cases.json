@@ -3297,5 +3297,52 @@
     "seed": [{"service": "log_lifts", "data": {"date": "{{days_ago:3}}", "sets": [{"exercise": "Bench Press", "weight_kg": 62.5, "reps": 8, "exact": true}, {"exercise": "Bench Press", "weight_kg": 62.5, "reps": 8, "exact": true}, {"exercise": "Bench Press", "weight_kg": 57.5, "reps": 7, "exact": true}]}}, {"as": "push", "service": "save_routine", "data": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60}, {"exercise": "Overhead Press", "sets": 3, "reps": 10, "weight_kg": 40}]}}],
     "expect": {"reply_has_pattern": ["(?<![\\d.,])57\\.5(?![\\d])"], "no_call": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "lift_session", "count": 1}, {"table": "lift_set", "count": 3}, {"table": "routine", "count": 1}]
+  },
+  {
+    "id": "routine_items_saved",
+    "kind": "direct",
+    "core": false,
+    "say": "Save my legs day: 10 minutes on the rowing machine to warm up, back squat 4 sets of 5, plank 3 times 60 seconds, then 20 minutes incline treadmill walk at 12 percent",
+    "calls": {"must": ["save_routine"],
+              "may": ["whoami", "list_exercises", "get_routines", "guide"],
+              "must_not": ["log", "log_lifts", "log_cardio", "log_bodyweight", "log_measurement", "log_food", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback"]},
+    "expect": {"function": "save_routine", "ok_calls": {"save_routine": 1}, "inputs_include": {"lifts": [{"$in": [{"exercise": "Rowing Machine", "minutes": 10}, {"exercise": "Rowing Machine", "time_s": 600}]}, {"exercise": "Back Squat", "sets": 4, "reps": 5}, {"$in": [{"exercise": "Plank", "sets": 3, "time_s": 60}, {"exercise": "Plank", "sets": 3, "minutes": 1}]}, {"$in": [{"exercise": "Incline Treadmill Walk", "minutes": 20, "incline_pct": 12}, {"exercise": "Incline Treadmill Walk", "time_s": 1200, "incline_pct": 12}]}]}, "inputs_exclude": ["lifts.*.weight_kg", "lifts.*.weight_lb", "lifts.*.avg_hr", "lifts.*.machine_kcal", "lifts.*.speed_kmh"], "no_call": ["log", "log_lifts", "log_cardio", "log_bodyweight", "log_measurement", "log_food", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback"]},
+    "db": [{"table": "routine", "count": 1, "all": {"lift_count": 4}}, {"table": "lift_session", "count": 0}, {"table": "cardio_entry", "count": 0}]
+  },
+  {
+    "id": "routine_items_logged",
+    "kind": "direct",
+    "core": false,
+    "say": "Log my legs day",
+    "calls": {"must": ["log_lifts", "log_cardio"],
+              "may": ["whoami", "get_routines", "list_exercises", "guide", "get_log"],
+              "must_not": ["log_bodyweight", "log_measurement", "log_food", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "legs", "service": "save_routine", "data": {"name": "Legs day", "lifts": [{"exercise": "Rowing Machine", "minutes": 10, "avg_hr": 140, "machine_kcal": 120}, {"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100}, {"exercise": "Plank", "sets": 3, "time_s": 60, "weight_kg": 0}]}}],
+    "expect": {"function": "log_cardio", "ok_calls": {"log_lifts": 1, "log_cardio": 1}, "inputs_include": {"exercise": "Rowing Machine", "minutes": 10}, "inputs_forbid": {"avg_hr": 140, "machine_kcal": 120}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "where": {"date": "{{today}}"}, "count": 1, "all": {"set_count": 7}}, {"table": "lift_set", "where": {"exercise": "Back Squat"}, "count": 4, "all": {"weight_kg": 100, "reps": 5, "date": "{{today}}"}}, {"table": "lift_set", "where": {"exercise": "Plank"}, "count": 3, "all": {"weight_kg": 0, "time_s": 60, "reps": null, "date": "{{today}}"}}, {"table": "cardio_entry", "count": 1, "all": {"minutes": 10, "avg_hr": null, "machine_kcal": null, "date": "{{today}}"}}]
+  },
+  {
+    "id": "routine_cardio_changed",
+    "kind": "direct",
+    "core": false,
+    "say": "Log my legs day, but I rowed for 15 minutes today, the rower said 180 calories and my heart rate was 145",
+    "calls": {"must": ["log_lifts", "log_cardio"],
+              "may": ["whoami", "get_routines", "list_exercises", "guide", "get_log"],
+              "must_not": ["log_bodyweight", "log_measurement", "log_food", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "legs", "service": "save_routine", "data": {"name": "Legs day", "lifts": [{"exercise": "Rowing Machine", "minutes": 10, "avg_hr": 140, "machine_kcal": 120}, {"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100}, {"exercise": "Plank", "sets": 3, "time_s": 60, "weight_kg": 0}]}}],
+    "expect": {"function": "log_cardio", "ok_calls": {"log_lifts": 1, "log_cardio": 1}, "inputs_include": {"exercise": "Rowing Machine", "minutes": 15, "avg_hr": 145, "machine_kcal": 180}, "inputs_forbid": {"minutes": 10}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "where": {"date": "{{today}}"}, "count": 1, "all": {"set_count": 7}}, {"table": "lift_set", "where": {"exercise": "Back Squat"}, "count": 4, "all": {"weight_kg": 100, "reps": 5, "date": "{{today}}"}}, {"table": "lift_set", "where": {"exercise": "Plank"}, "count": 3, "all": {"weight_kg": 0, "time_s": 60, "reps": null, "date": "{{today}}"}}, {"table": "cardio_entry", "count": 1, "all": {"minutes": 15, "avg_hr": 145, "machine_kcal": 180, "date": "{{today}}"}}]
+  },
+  {
+    "id": "routine_resave_keeps_plan",
+    "kind": "direct",
+    "core": false,
+    "say": "Add dips, 3 sets of 10, to my legs day",
+    "calls": {"must": ["save_routine"],
+              "may": ["whoami", "get_routines", "list_exercises", "guide"],
+              "must_not": ["log", "log_lifts", "log_cardio", "log_bodyweight", "log_measurement", "log_food", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback"]},
+    "seed": [{"as": "legs", "service": "save_routine", "data": {"name": "Legs day", "lifts": [{"exercise": "Rowing Machine", "minutes": 10, "avg_hr": 140, "machine_kcal": 120}, {"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100}]}}],
+    "expect": {"function": "save_routine", "ok_calls": {"save_routine": 1}, "inputs_include": {"lifts": [{"exercise": "Rowing Machine", "avg_hr": 140, "machine_kcal": 120}, {"exercise": "Dip", "sets": 3, "reps": 10}]}, "no_call": ["log", "log_lifts", "log_cardio", "log_bodyweight", "log_measurement", "log_food", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback"]},
+    "db": [{"table": "routine", "count": 1}, {"table": "lift_session", "count": 0}, {"table": "cardio_entry", "count": 0}]
   }
 ]

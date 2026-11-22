@@ -311,7 +311,7 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
   judge reads their `kind` as its table word, so a case that pins `lift_session` passes `lifts` as well.
 - `guide` is no data read: its numbers ("1 to 60") are words on how to log, never figures of the person's.
   `read_any` and `quotes_spotter` never read it.
-- So every case keeps its words: 262 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
+- So every case keeps its words: 266 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
   asks for no write, so a refused `log` call whose kind resolves to none fails those too.
 - `tests/test_golden_cases.py` plays held runs of `stated_number`, `lb_weigh_in`, `waist_in_inches`,
   `hold_plank`, `miles_run`, `pick_lift_answer` and `hand_check_family` again with each call of the five sent as
@@ -883,6 +883,23 @@ core stays at 103.
 |---|---|---|
 | `routine_same_as_last_time` | Log my push day, same as last time (Push day saved today: Bench Press 3 × 8 at 60, Overhead Press 3 × 10 at 40; a session 3 days ago: Bench Press 62.5 × 8, 62.5 × 8 and 60 × 6, Overhead Press 40 × 10 three times) | One successful `log_lifts`, never `new_session` true. One session today, `set_count` 6. Bench Press sets of 60 × 6: 2 in all, the seed's and today's; of 62.5 × 8: 4 in all, the seed's two and today's two. The planned sets would be 60 × 8 three times: the routine, saved today with a weight, is newer than the session, so its own 60 wins and no 60 × 6 is added |
 | `routine_last_time_read` | What did I do on my push day last time? (Push day saved; a session 3 days ago: Bench Press 62.5 × 8, 62.5 × 8 and 57.5 × 7) | A read answered: `get_routines`, `get_log`, `get_data` or `get_progress`. No write, `log` among them. The reply says 57.5, a figure only last time holds. Judged on the reply's words, so weak until the judge is rebuilt |
+
+### The four cardio and timed item cases
+
+Since deploy 2 of `routines-and-programs.md` (C5b), a routine holds holds, carries and cardio beside its lifts, and
+each item's `log_with` names the kind `log` takes for it: `lifts` or `cardio`. These four follow the last time cases,
+each `direct` and `core` false: the core stays at 103. The two logging cases keep the five's names in `must` and
+`ok_calls` (his ruling of 2026-11-22): the judge routes a `log` call to its kind's function. A cardio item is judged on
+`log_cardio`'s inputs, as a database check cannot name the activity; the lifts and the hold by their `lift_set` rows.
+Their seed: Legs day, Rowing Machine 10 minutes with a heart rate of 140 and 120 machine kcal, Back Squat 4 × 5 at 100,
+Plank 3 × 60 s at 0 kg.
+
+| Case | Says (seed) | Passes when |
+|---|---|---|
+| `routine_items_saved` | Save my legs day: 10 minutes on the rowing machine to warm up, back squat 4 sets of 5, plank 3 times 60 seconds, then 20 minutes incline treadmill walk at 12 percent (none) | One successful `save_routine`: Rowing Machine `minutes` 10 or `time_s` 600; Back Squat 4 × 5; Plank 3 sets, `time_s` 60 or `minutes` 1; Incline Treadmill Walk `minutes` 20 or `time_s` 1200, `incline_pct` 12; no weight, heart rate, machine kcal or speed sent. No log call. One routine, `lift_count` 4, and no session or cardio entry |
+| `routine_items_logged` | Log my legs day (the seed) | One successful `log_lifts` and one `log_cardio`; `log_cardio` sent Rowing Machine, `minutes` 10, and never the plan's `avg_hr` 140 or `machine_kcal` 120. Today's session `set_count` 7: 4 Back Squat 100 × 5, 3 Plank `time_s` 60 at 0 kg. One cardio entry today, `minutes` 10, no heart rate, no machine kcal |
+| `routine_cardio_changed` | Log my legs day, but I rowed for 15 minutes today, the rower said 180 calories and my heart rate was 145 (the seed) | As above, but `log_cardio` sent `minutes` 15, never 10, with `avg_hr` 145 and `machine_kcal` 180; the cardio entry `minutes` 15, `machine_kcal` 180, `avg_hr` 145 |
+| `routine_resave_keeps_plan` | Add dips, 3 sets of 10, to my legs day (Legs day: Rowing Machine 10 minutes with a heart rate of 140 and 120 machine kcal, Back Squat 4 × 5 at 100) | One successful `save_routine` whose Rowing Machine item carries `avg_hr` 140 and `machine_kcal` 120, with Dip 3 × 10. No log call. It measures a known cost: an item of `get_routines` carries no heart rate or machine kcal field, only its words. A miss goes to the gaps list, and no text is changed for it |
 
 ## What the evals prove
 

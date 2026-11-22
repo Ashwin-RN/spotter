@@ -14,8 +14,9 @@ from it. It knows nothing else.
   steps, sleep_hours in hours, resting_hr in bpm, and water_ml in ml. One value per kind a day.
 - **Food:** what was eaten, its calories, its meal, and a tag saying who supplied the number.
 - **Saved foods:** foods the person eats often, with a serving and its calories.
-- **Routines:** workouts the person does often, saved by name: each lift with its sets and reps, and a
-  weight when the person gave one.
+- **Routines:** workouts the person does often, saved by name, in the order done: each lift with its sets
+  and reps, a hold's time, a carry's distance, and cardio with its minutes. A weight, distance, incline,
+  speed, heart rate or machine calories when the person gave one.
 - **Cardio:** the activity, minutes, and distance, incline, speed, heart rate and the machine's
   calories when given.
 - **Goals:** a target to reach by a date, of four kinds (below).
@@ -351,14 +352,22 @@ Each answer holds with the same time zone set at both runs. The last row is the 
 
 ## Routines
 
-- A routine is saved by name with `save_routine`: each lift with its number of sets and its reps, and a
-  weight only when the person gave one. Up to 20 routines, each of 1 to 20 lifts and at most 60 sets,
-  so a logged routine fits one session.
-- `get_routines` gives each lift's weight to log: the heaviest set of its latest session, unless the
-  routine was saved on a later day than that session, with a weight of its own. With neither, Claude
-  asks.
-- To log one, Claude logs its sets, with each change the person names. They go into
-  that day's session, as any sets do.
+- A routine is saved by name with `save_routine`, in the order done. It holds four kinds of item: a lift
+  with its sets and reps, a hold with its sets and time, a carry or a sled with its sets and distance,
+  and a cardio activity with its minutes. A weight, distance, incline, speed, heart rate or machine
+  calories only when the person gave one. Up to 20 routines, each of 1 to 20 items and at most 60 sets,
+  so a logged routine fits one session. A cardio item counts as an item, not a set.
+- A time goes in seconds or minutes and a distance in metres, km or miles, as the person said it, and
+  Spotter keeps each in one unit. Each item is checked as its log is.
+- `get_routines` gives each lift's, hold's and carry's weight to log: the heaviest set of its latest
+  session, unless the routine was saved on a later day than that session, with a weight of its own.
+  With neither, Claude asks.
+- Each item carries last time: every set of the lift in its latest session, or the activity's latest
+  session, with its date. "Same as last time" logs those numbers.
+- Each item's `log_with` names the kind it is logged with: `lifts` for the lifts, holds and carries,
+  `cardio` for each cardio item. Claude logs them with `log`, with each change the person names. The sets
+  go into that day's session, as any sets do. A heart rate or the machine's calories in a plan are said
+  in its words and never logged unless the person gives them that day.
 - Saving the same name again replaces the routine. There is no undo of a replace: save it again as it
   was. `delete_entry` takes kind `routine`, in its two calls, and `restore_entry` brings a deleted
   routine back.
@@ -474,8 +483,8 @@ Claude may call these functions, and nothing else:
 | `get_goals` | Whether the person is on track: every open goal, its pace and its projected date. |
 | `import_entries` | Brings history over from another app's export, as dated rows: a preview first, then the rows. |
 | `send_feedback` | Sends a note to Spotter's maker, when the person asks or says yes to the offer. |
-| `save_routine` | Saves a workout by name, with its lifts, sets and reps. |
-| `get_routines` | The saved routines, each lift with the weight to log. |
+| `save_routine` | Saves a workout by name: its lifts, holds, carries and cardio, in the order done. |
+| `get_routines` | The saved routines, each item with its plan, the weight to log and last time. |
 | `what_is_logged` | What Spotter can hold and what the person has logged, area by area, with the open goals. |
 | `get_data` | One query over the person's entries: an area, its fields, filters, groups and totals, all worked out by Spotter. |
 

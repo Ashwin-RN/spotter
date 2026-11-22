@@ -90,8 +90,8 @@ PUBLISHED = {
     "get_trends": "76a12552c23e443d455dd77b910788c66030f05c3f4ea5b3df0d46d69845b30f",  # inputs
     "get_goals": "6d71cb0446594ce9d51a5eaa6719394018946cfa273a49d49a4bf559cc13a391",  # units; inputs
     "import_entries": "1d890d48348660778e2105210bd298c8b5613f69c0981af43f9703b990960cec",  # inputs; exercise list: names, reps
-    "save_routine": "0d14e9b467773fb5b993f6ecb6db7c8e5fec2fb71c717b05f33b7744a026ce86",  # routines: new; units; inputs; exercise list: reps, help; C4c: help, band; C5a: sets and reps optional
-    "get_routines": "29e36354e3e306aa3ae72f839ede1a79c6d2ffb553039080731119b5db20cf28",  # routines: new, R18's words; units; inputs; exercise list: reps; the matcher: exact true; C4c: help; log and guide: sets sent with log; C5a: last, same as last time, sets and reps optional
+    "save_routine": "2e8a53847d39cf06243d016e94c7753f3b367a361505ce4f07cd58f83d30ff80",  # routines: new; units; inputs; exercise list: reps, help; C4c: help, band; C5a: sets and reps optional; C5b: holds, carries and cardio
+    "get_routines": "74706c8ce888df83097100def3fe0bea991ac739ab205faf093210934260ce41",  # routines: new, R18's words; units; inputs; exercise list: reps; the matcher: exact true; C4c: help; log and guide: sets sent with log; C5a: last, same as last time, sets and reps optional; C5b: log_with, the kinds' plans, cardio's last, last's numbers as they are
     "owner_calls": "f0b0b69a5eac257d4d4c83ec83fbee2ec33715c70c7b7b26830bffa02dc2c6a0",  # inputs; log and guide L4: function, caller, all_accounts, a call's account_id
 }
 # switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE; exercise-list.md C4c: a lift in the person's

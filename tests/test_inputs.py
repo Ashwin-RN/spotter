@@ -63,8 +63,8 @@ BEFORE_INPUTS = {
     "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",
     "import_entries": "5bfa3ce4279e3aca8619fdcc0dbc987081ca9b27f79fa9a74dd836377bc865c5",  # exercise list
     "send_feedback": "63bf4722f94c7863dcafce688f8864224c46cbf30868d971e5347475a0686184",
-    "save_routine": "56fa4fdb82141723f175c6e2ad1885292d3e926c620d173373bfeab58a9c7289",  # exercise list; C4c: help, band; C5a: sets and reps optional
-    "get_routines": "08c8ce58ffb70e3131246f05f5415c284cf863e52aba184b7201cbac2fe50004",  # exercise list; C4c: exact true, help; log and guide: sets sent with log; C5a: last, same as last time
+    "save_routine": "4d81200fa0c288b0ee8a5a1c8bffcb38ec8016359e8ad31043541d5ef7b981a6",  # exercise list; C4c: help, band; C5a: sets and reps optional; C5b: holds, carries and cardio
+    "get_routines": "d7dd893333de70dc78d22a1c943887f06954659fb338f38c529ce40c8a9017a3",  # exercise list; C4c: exact true, help; log and guide: sets sent with log; C5a: last, same as last time; C5b: log_with, the kinds' plans, cardio's last, last's numbers as they are
     "owner_calls": "c9ea367aa190315d016fa4d014e783b8947dc436b81984600bebc785211d1cbb",  # log and guide L4: function, caller, all_accounts, a call's account_id
     "owner_feedback": "242b0d08f0ca2b4bb696ec818f327ede1d2b2b71b6959dba0e687cc9b628a5f7",
     "owner_delete_feedback": "e6d44e98f7ac2ce9945b277c0c592c7bde7ba6060b6628990f3a1bc16764909b",
@@ -771,7 +771,8 @@ ITEM_CALLS = {  # an item's list: the call around it, the item, its place's word
     "set": ("log_lifts", "sets", {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}, "Set 1", "a set",
             "Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m, exact."),  # exercise-list.md R6, R3
     "lift": ("save_routine", "lifts", {"exercise": "Bench Press", "sets": 3, "reps": 8}, "Lift 1", "a lift",
-             "Use: exercise, sets, reps, weight_kg or weight_lb."),
+             "Use: exercise, sets, reps, weight_kg or weight_lb, time_s or minutes, distance_m, distance_km or "
+             "distance_mi, incline_pct, speed_kmh or speed_mph, avg_hr, machine_kcal."),  # routines-and-programs.md C5b
     "entry": ("log_food", "entries", {"description": "Dal", "kcal": 180}, "Entry 1", "a food entry",
               "Use: description, meal, kcal, estimated, saved_food_id, servings, usda_fdc_id, grams. source is decided "
               "by the server."),
@@ -980,7 +981,8 @@ SCHEMA_ROWS = [
     ("log_lifts", {"sets": "not a list"}, "invalid_field", "sets must be a list, not 'not a list'.",
      "Send sets as a list."),
     ("save_routine", {"name": "Push day", "lifts": ["x"]}, "invalid_field", "Lift 1: it must be an object of named fields.",
-     "Send each item with its named fields: exercise, sets, reps, weight_kg, weight_lb."),
+     "Send each item with its named fields: exercise, sets, reps, weight_kg, weight_lb, time_s, minutes, distance_m, "
+     "distance_km, distance_mi, incline_pct, speed_kmh, speed_mph, avg_hr, machine_kcal."),  # C5b: every kind's
     ("owner_calls", {"hours": 0}, "invalid_field", "hours 0 is outside 1 to 2,160.", "Give hours from 1 to 2,160."),
     ("owner_delete_feedback", {"ids": []}, "invalid_field", "ids holds 0 items: it takes 1 to 100.",
      "Send 1 to 100 items in ids."),

@@ -319,16 +319,17 @@ def test_a_four_item_version_from_before_0013_is_put_back_with_no_time_and_no_di
 
 # ---------------------------------------------------------------- R10 and R11: routines, goals and imports take reps
 
-def test_a_routine_refuses_a_hold_a_carry_and_a_sled_and_takes_reps_up_to_100(uid):
+def test_a_routine_refuses_a_hold_a_carry_and_a_sled_sent_with_reps_and_takes_reps_up_to_100(uid):
+    """routines-and-programs.md C5b: a routine holds a hold, a carry and a sled, each with what it records, so one sent
+    with reps is refused as log refuses a set of it (the note of 2026-11-22); "a routine holds lifts of sets and reps"
+    is gone. tests/test_routine_items.py holds each kind saved."""
     lifts_sent = [{"exercise": "Bench Press", "sets": 3, "reps": 100}, {"exercise": "Plank", "sets": 2, "reps": 1},
                   {"exercise": "Farmer's Carry", "sets": 2, "reps": 1}, {"exercise": "Sled Push", "sets": 1, "reps": 1}]
     refused = services.save_routine(uid, {"name": "Hyrox day", "lifts": lifts_sent}, "claude")
     assert refusal(refused) == [
-        ("invalid_field", "Lift 2: Plank records time: a routine holds lifts of sets and reps.", "Log its sets instead."),
-        ("invalid_field", "Lift 3: Farmer's Carry records distance and time: a routine holds lifts of sets and reps.",
-         "Log its sets instead."),
-        ("invalid_field", "Lift 4: Sled Push records distance and time: a routine holds lifts of sets and reps.",
-         "Log its sets instead.")]
+        ("invalid_field", "Lift 2: Plank records time, not reps.", "Send time_s on lift 2."),
+        ("invalid_field", "Lift 3: Farmer's Carry records distance and time, not reps.", "Send distance_m on lift 3."),
+        ("invalid_field", "Lift 4: Sled Push records distance and time, not reps.", "Send distance_m on lift 4.")]
     clean(*(e["message"] for e in refused["errors"]))
     saved = services.save_routine(uid, {"name": "Hyrox day", "lifts": lifts_sent[:1]}, "claude")
     assert saved["created"] is True and saved["routine"]["lifts"][0]["reps"] == 100

@@ -24,7 +24,7 @@ from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import event, inspect, select, update
 
-from app import db, links, mcp_server, rules, services, web
+from app import db, links, mcp_schemas, mcp_server, rules, services, web
 from app.calllog import KNOWN_NAMES, TABLES
 from app.db import make_engine
 from app.mcp_schemas import GetRoutinesResult, RoutineLiftIn, SaveRoutineResult
@@ -62,31 +62,54 @@ PREVIEW_NOTE = ("Nothing was deleted. Show the person this entry and ask. Send t
                 "only when they say yes.")
 MISMATCH_NOTE = ("That confirm does not match this entry as it stands, so nothing was deleted. Show the person the "
                  "entry and ask again.")
+# routines-and-programs.md C5b: the save_routine table's text, word for word
 SAVE_DESCRIPTION = (
-    "Saves a workout the person does often under its name, such as Push day: each lift with its number of sets and "
-    "its reps, and a weight only when the person gave one. Send only what the person said: never add a lift, a set or "
-    "a weight of your own. Saving the same name again replaces the routine. To save a session already logged, read "
-    "it with get_log and send each lift with its number of sets, its reps and its heaviest weight.")
+    "Saves a workout the person does often under its name, such as Push day, in the order done: each lift with its "
+    "sets and its reps, a hold's time or a carry's distance, and each cardio activity with its minutes. A weight, "
+    "distance, incline, speed, heart rate or machine calories only when the person gave one. Send only what the "
+    "person said: never add an item, a set or a number of your own. Saving the same name again replaces the routine. "
+    "To save a session already logged, read it with get_log and send each lift with its number of sets, its reps, "
+    "time or distance, and its heaviest weight.")
 GET_DESCRIPTION = (
-    "The person's saved routines, each lift with its sets, its reps and the weight to log. Call it when the person "
-    "names a routine, such as log my push day. To log one, send its sets with log, kind lifts, one part a set, the "
-    "lift as movement, with exact true, with each change the person names, and leave the date out for today. Send "
-    "each weight_kg as given, in weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and "
-    "send the answer in the field of its unit. Say in your reply which sets were logged. When the person says same as "
-    "last time, send last's sets as given, each with the lift as movement.")
+    "The person's saved routines, each item with its plan, the weight to log for a lift and last time. Call it when "
+    "the person names a routine, such as log my push day. To log one, send the sets of its lifts, holds and carries "
+    "with log, kind lifts, one part a set, the lift as movement, with exact true, with each change the person names, "
+    "and leave the date out for today. Send each cardio item with log, kind cardio, as its log_with says, with a heart "
+    "rate or the machine's calories only when the person gives them today. Send each weight_kg as given, in "
+    "weight_kg, whatever the person's units. Where weight_kg is null, ask the person, and send the answer in the field "
+    "of its unit. Say in your reply what was logged. When the person says same as last time, send last's sets as "
+    "given, each with the lift as movement, and for cardio last's minutes, distance, incline and speed.")
 # units.md; exercise-list.md R3: exact true; log-and-guide.md row 4: the sets go to log; routines-and-programs.md
-# decision 12, last
+# decision 12, last; C5b, the note of 2026-11-22: holds, carries and cardio in log's words, a plan's heart rate and
+# machine calories never logged as today's
 KEY_WORDS = mcp_server.KEY_DESCRIPTION
-LIFT_IN = {"exercise": "The lift, exactly as list_exercises gives it.", "sets": "How many sets of it, 1 to 10.",
-           "reps": "Reps in each set, a whole number from 1 to 100.",
-           "weight_kg": ("The weight in kg, 0 to 500, only when the person gave one. Help on Assisted Pull-Up or "
-                         "Assisted Dip as a minus weight. Leave it out otherwise: get_routines then gives the weight "
-                         "of the lift's latest session. Send weight_kg or weight_lb, never both."),
-           "weight_lb": ("The weight in lb, 0 to 1,102.31, only when the person gave one in pounds, or with no unit "
-                         "and units.weight is lb. Help on Assisted Pull-Up or Assisted Dip as a minus weight. Leave "
-                         "it out otherwise.")}  # units.md R10; exercise-list.md: help, as R6 takes it
+# C5b: a time and a distance in log's part words, a cardio number in log_cardio's, each the constant itself
+LIFT_IN = {"exercise": "The lift or the cardio activity, exactly as list_exercises gives it.",
+           "sets": "How many sets of a lift, hold or carry, 1 to 10. Leave out for cardio.",
+           "reps": "Reps in each set, a whole number from 1 to 100. Leave out for a hold, a carry or cardio.",
+           "weight_kg": ("The weight in kg of a lift, a hold or a carry, 0 to 500, only when the person gave one. Help "
+                         "on Assisted Pull-Up or Assisted Dip as a minus weight. Leave it out otherwise: get_routines "
+                         "then gives the weight of the lift's latest session. Send weight_kg or weight_lb, never "
+                         "both."),
+           "weight_lb": ("The weight in lb of a lift, a hold or a carry, 0 to 1,102.31, only when the person gave one "
+                         "in pounds, or with no unit and units.weight is lb. Help on Assisted Pull-Up or Assisted Dip "
+                         "as a minus weight. Leave it out otherwise."),  # units.md R10; exercise-list.md: help, R6
+           "time_s": mcp_schemas.PART_TIME_S_DESCRIPTION, "minutes": mcp_schemas.PART_MINUTES_DESCRIPTION,
+           "distance_m": mcp_schemas.PART_DISTANCE_M_DESCRIPTION,
+           "distance_km": mcp_schemas.PART_DISTANCE_KM_DESCRIPTION,
+           "distance_mi": mcp_schemas.PART_DISTANCE_MI_DESCRIPTION,
+           "incline_pct": mcp_schemas.CARDIO_INCLINE_PCT_DESCRIPTION,
+           "speed_kmh": mcp_schemas.CARDIO_SPEED_KMH_DESCRIPTION, "speed_mph": mcp_schemas.CARDIO_SPEED_MPH_DESCRIPTION,
+           "avg_hr": mcp_schemas.CARDIO_AVG_HR_DESCRIPTION, "machine_kcal": mcp_schemas.CARDIO_MACHINE_KCAL_DESCRIPTION}
+ITEM_NUMBERS = {"time_s": "A hold's or a carry's time in each set, in seconds, or null.",
+                "distance_m": "A carry's or a sled's distance in each set, in metres, or null.",
+                "minutes": "A cardio item's minutes, or null.",
+                "distance_km": "A cardio item's distance in km, or null. Send it in distance_km as it is, never converted.",
+                "incline_pct": "A cardio item's incline in percent, or null.",
+                "speed_kmh": "A cardio item's speed in km/h, or null. Send it in speed_kmh as it is, never converted."}
 NAME_IN = "The routine's name, as the person says it, such as Push day. 1 to 64 characters."
-LIFTS_IN = "Each lift, in the order done: 1 to 20 lifts, and at most 60 sets in all."
+LIFTS_IN = ("Each item, in the order done: lifts, holds, carries and cardio. 1 to 20 items, and at most 60 sets in "
+            "all.")
 ID_WORDS = "The routine's id, for delete_entry and restore_entry with kind routine."
 LINKS_WORDS = "The Routines page: the person's routines."
 # routines-and-programs.md: get_routines' lifts[].last, word for word, and the words of its two models, LastSet's in
@@ -95,11 +118,20 @@ LAST_WORDS = ("What was done last time, with its date: every set of this lift in
               "activity's latest session. Null when never logged.")
 LAST_TIME_WORDS = {"date": "The date of that session, YYYY-MM-DD.",
                    "sets": "Every set of this lift in that session, in order.",
-                   "words": "What was done, in words, in the person's units, ready to quote."}
-LAST_SET_WORDS = {"weight_kg": "Weight in kg: one hand's for a pair, minus for help, 0 for bodyweight work.",
+                   "minutes": "A cardio session's minutes.",
+                   "distance_km": ("A cardio session's distance in km, or null. Send it in distance_km as "
+                                   "it is, never converted."),
+                   "incline_pct": "A cardio session's incline in percent, or null.",
+                   "speed_kmh": ("A cardio session's speed in km/h, or null. Send it in speed_kmh as it "
+                                 "is, never converted."),
+                   "words": "What was done, in words, in the person's units, ready to quote."}  # C5b: cardio's
+# C5b's fix round (N3): last's numbers a model may send back carry the item fields' "as it is, never converted"
+LAST_SET_WORDS = {"weight_kg": ("Weight in kg: one hand's for a pair, minus for help, 0 for bodyweight work. Send it "
+                                "in weight_kg as it is, never converted."),
                   "reps": "Reps done, or null for a hold or a carry.",
                   "time_s": "A hold's or a carry's time in seconds, or null.",
-                  "distance_m": "A carry's or a sled's distance in metres, or null."}
+                  "distance_m": ("A carry's or a sled's distance in metres, or null. Send it in distance_m as it is, "
+                                 "never converted.")}
 # Every function as published at ec48cdb, the join's base, before this work: the SHA-256 of the tool as compact JSON
 # with sorted keys, read from the published list for the owner (it holds everyone's twenty and the owner's three).
 # Built at 3fe468b, the same but for whoami, which first day moved (setup).
@@ -496,7 +528,9 @@ REFUSALS = {
                  one("A routine holds 1 to 20 lifts, not 23.", "Send 1 to 20 lifts.")),
     "a field a lift does not have": ({"name": "Push day", "lifts": [GOOD, {**GOOD, "x": 1}]},
                                      one("Lift 2: 'x' is not a field of a lift.",
-                                         "Use: exercise, sets, reps, weight_kg or weight_lb.")),  # units.md R10
+                                         "Use: exercise, sets, reps, weight_kg or weight_lb, time_s or minutes, "
+                                         "distance_m, distance_km or distance_mi, incline_pct, speed_kmh or speed_mph, "
+                                         "avg_hr, machine_kcal.")),  # units.md R10; C5b: every kind's fields
     "no exercise": ({"name": "Push day", "lifts": [GOOD, {"sets": 3, "reps": 8}]},
                     one("Lift 2: exercise is missing.", "Give an exercise name on lift 2.", "missing_field")),
     "a name not on the list": ({"name": "Push day", "lifts": [GOOD, lift("Zorbinator")]},
@@ -787,7 +821,7 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
     assert schema["properties"]["key"]["description"] == KEY_WORDS
     item = schema["$defs"]["RoutineLiftIn"]
     assert {k: v["description"] for k, v in item["properties"].items()} == LIFT_IN
-    assert item["required"] == ["exercise", "sets", "reps"]
+    assert item["required"] == ["exercise"]  # C5b: each kind asks for its own in the service
     assert getting["inputSchema"]["properties"] == {}
     assert saving["annotations"] == {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True,
                                      "openWorldHint": False}  # SETTING, as save_food
@@ -811,9 +845,13 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
     # routines-and-programs.md decision 2: sets and reps optional from deploy 1, so only these two stay required
     assert out["$defs"]["SavedRoutineLift"]["required"] == ["exercise", "weight_kg"]
     assert {k: v["description"] for k, v in lift_out.items()} == {
-        **{k: LIFT_IN[k] for k in ("exercise", "sets", "reps")},
+        "exercise": LIFT_IN["exercise"], "sets": "How many sets of it, 1 to 10.",
+        "reps": "Reps in each set, a whole number from 1 to 100.",
         "weight_kg": ("The weight the person gave, in kg, or null when none was given. 0 for a band lift. Help on "
-                      "Assisted Pull-Up or Assisted Dip as a minus weight.")}  # exercise-list.md, C4c's fix round
+                      "Assisted Pull-Up or Assisted Dip as a minus weight."),  # exercise-list.md, C4c's fix round
+        **ITEM_NUMBERS,  # C5b: the routine as saved holds a cardio plan's heart rate and machine calories
+        "avg_hr": "A cardio item's heart rate in bpm, as the person gave it, or null.",
+        "machine_kcal": "A cardio item's calories the machine or watch showed, as the person gave them, or null."}
     assert out["$defs"]["RoutinesLinks"]["properties"]["routines"]["description"] == LINKS_WORDS
     got = getting["outputSchema"]
     assert {k: v["description"] for k, v in got["properties"].items()} == {
@@ -822,18 +860,23 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
         "links": "Pages to offer the person. Put links last in a reply."}
     assert {k: v["description"] for k, v in got["$defs"]["RoutineToLog"]["properties"].items()} == {
         "id": ID_WORDS, "name": NAME_IN, "saved_on": "The person's date when the routine was last saved.",
-        "lifts": LIFTS_IN, "words": ("The routine's lifts in words, each with the weight to log, in the person's units, "
-                                     "ready to quote.")}  # units.md decision 11
+        "lifts": LIFTS_IN, "words": ("The routine's items in words, each lift with the weight to log, in the person's "
+                                     "units, ready to quote.")}  # units.md decision 11
     assert {k: v["description"] for k, v in got["$defs"]["LiftToLog"]["properties"].items()} == {
-        **{k: LIFT_IN[k] for k in ("exercise", "sets", "reps")},
+        "exercise": LIFT_IN["exercise"], "sets": "How many sets of it, 1 to 10.",
+        "reps": "Reps in each set, a whole number from 1 to 100.",
         "weight_kg": ("The weight to log, in kg: the heaviest set of this lift's latest session, unless the routine "
                       "was saved on a later day than that session, with a weight of its own. Send it in weight_kg "
                       "as it is, never converted. Null when there is neither: ask the person. Help on Assisted "
                       "Pull-Up or Assisted Dip as a minus weight."),  # units.md; exercise-list.md, C4c's fix round
         "weight_from": "Where weight_kg came from: last_session, routine, or null.",
         "last_date": "The date of this lift's latest session, or null when it was never logged.",
-        "last": LAST_WORDS}  # routines-and-programs.md decision 11
+        "last": LAST_WORDS,  # routines-and-programs.md decision 11
+        **ITEM_NUMBERS, "log_with": "The kind to send with log for this item: lifts or cardio."}  # C5b: R7
     assert got["$defs"]["LiftToLog"]["required"] == ["exercise", "weight_kg", "weight_from", "last_date"]
+    # The note of 2026-11-22: a plan's heart rate and machine calories are never a field of an item or of last time
+    for model in ("LiftToLog", "LastTime"):
+        assert not {"avg_hr", "machine_kcal"} & set(got["$defs"][model]["properties"]), model
     assert {k: v["description"] for k, v in got["$defs"]["LastTime"]["properties"].items()} == LAST_TIME_WORDS
     assert got["$defs"]["LastTime"]["required"] == ["date", "words"]
     assert {k: v["description"] for k, v in got["$defs"]["LastSet"]["properties"].items()} == LAST_SET_WORDS
@@ -944,9 +987,11 @@ def test_the_export_holds_routines_csv_after_saved_foods_csv_with_the_json_as_st
     assert [r["lifts"] for r in parsed] == [stored[kept["id"]]["lifts"], stored[gone["id"]]["lifts"]]
     assert parsed[0]["deleted_at"] == "" and parsed[1]["deleted_at"] == START.isoformat()
     readme = out["files"]["README.txt"]
-    assert ("  routines.csv        each routine: lifts holds its lifts as JSON, each with exercise, sets, reps\n"
-            "                      and weight_kg (null when none was given). saved_on is the date it was last\n"
-            "                      saved\n") in readme
+    assert ("  routines.csv        each routine: lifts holds its items as JSON, in the order done. A lift has\n"
+            "                      exercise, sets, reps and weight_kg (null when none was given); a hold has\n"
+            "                      time_s, a carry or a sled distance_m and time_s, in place of reps; a cardio\n"
+            "                      item has exercise, minutes, distance_km, incline_pct, speed_kmh, avg_hr and\n"
+            "                      machine_kcal. saved_on is the date it was last saved\n") in readme  # C5b: four kinds
     assert readme.index("saved_foods.csv") < readme.index("routines.csv") < readme.index("food_entries.csv")
 
 
@@ -1446,7 +1491,7 @@ def test_last_is_null_never_logged_and_once_logged_is_every_set_of_the_lift_in_s
     log(user.id, ("Bench Press", 62.5, 8), ("Dip", 0, 12), ("Bench Press", 62.5, 8), ("Bench Press", 57.5, 7),
         ("Assisted Pull-Up", -20, 8), ("Assisted Pull-Up", -20, 8), date=day(-2))
     bench, press, dip, assisted = lifted(user.id)
-    assert list(bench) == ["exercise", "sets", "reps", "weight_kg", "weight_from", "last_date", "last"]
+    assert list(bench) == list(routines.ITEM_KEYS)  # C5b: every plan field, and log_with (R7)
     assert bench["last"] == {"date": day(-2), "sets": [kept(62.5, 8), kept(62.5, 8), kept(57.5, 7)],
                              "words": f"62.5 kg {X} 8, 62.5 kg {X} 8, 57.5 kg {X} 7"}  # R4's own example
     assert press["last"] is None and (press["weight_from"], press["last_date"]) == (None, None)
@@ -1520,14 +1565,14 @@ def test_last_words_are_in_the_person_s_units_and_its_numbers_stay_kg(make_user,
 
 # ---------------------------------------------------------------- C5a: the read made safe (decision 3, R2)
 
-# What a routine may hold that deploy 1 cannot place: deploy 2's shapes after a rollback, rows from before 0013, and
-# shapes no build writes. The lift of reps carries keys this read does not know, and is placed.
+# What a routine may hold: C5b's shapes, now placed (a cardio item, a hold, a carry), rows from before 0013, and shapes
+# no build writes. The lift of reps carries keys this read does not know, and is placed.
 ODD = [
     {"exercise": "Rowing Machine", "minutes": 10, "distance_km": None, "incline_pct": None, "speed_kmh": None,
      "avg_hr": None, "machine_kcal": None},
-    {"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100.0, "log_with": "log_lifts", "time_s": None},
+    {"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100.0, "log_with": "lifts", "time_s": None},
     {"exercise": "Plank", "sets": 3, "time_s": 60, "weight_kg": None},
-    {"exercise": "Side Plank", "sets": 3, "reps": 30, "weight_kg": None},
+    {"exercise": "Side Plank", "sets": 3, "reps": 30, "weight_kg": None},  # before 0013: never read as seconds
     {"exercise": "Zorb Press", "sets": 3, "reps": 8, "weight_kg": 40.0},  # off the list, as after a rename: placed
     {"exercise": "Zorb Row", "sets": 3, "weight_kg": 40.0},  # off the list, reps missing: left out
     {"exercise": "Bench Press", "sets": 3, "weight_kg": 60.0},
@@ -1537,19 +1582,37 @@ ODD = [
     {"exercise": "Farmer's Carry", "sets": 2, "distance_m": 40, "time_s": None, "weight_kg": 32.0},
     {"exercise": "Incline Treadmill Walk", "minutes": 20, "distance_km": None, "incline_pct": 12, "speed_kmh": None,
      "avg_hr": None, "machine_kcal": None},
+    # C5b: shapes of the new kinds no build writes, each left out
+    {"exercise": "Outdoor Run", "minutes": "30", "distance_km": None},
+    {"exercise": "Sled Push", "sets": 2, "time_s": 40, "weight_kg": None},
+    {"exercise": "Treadmill Walk", "minutes": 20, "incline_pct": True},
+    {"exercise": "Dead Hang", "sets": 2, "time_s": 30.5, "weight_kg": None},
 ]
 ODD_LINES = [
-    "Rowing Machine is left out: log it as cardio.",
-    "Plank is left out: it records time now. Ask the person how long, and log it with time_s.",
     "Side Plank is left out: it records time now. Ask the person how long, and log it with time_s.",
     "Zorb Row is left out.", "Bench Press is left out.", "An item is left out.", "Dip is left out.",
-    "Farmer's Carry is left out: it records distance and time now. Ask the person how far, and log it with distance_m.",
-    "Incline Treadmill Walk is left out: log it as cardio."]
+    "Outdoor Run is left out: log it as cardio.",
+    "Sled Push is left out: it records distance and time now. Ask the person how far, and log it with distance_m.",
+    "Treadmill Walk is left out: log it as cardio.",
+    "Dead Hang is left out: it records time now. Ask the person how long, and log it with time_s."]
 # The page's own lines: what the assistant is told to do is cut, so no function or field is named (text rules)
-PAGE_LINES = ["Rowing Machine is left out.", "Plank is left out: it records time now.",
-              "Side Plank is left out: it records time now.", "Zorb Row is left out.", "Bench Press is left out.",
-              "An item is left out.", "Dip is left out.", "Farmer's Carry is left out: it records distance and time now.",
-              "Incline Treadmill Walk is left out."]
+PAGE_LINES = ["Side Plank is left out: it records time now.", "Zorb Row is left out.", "Bench Press is left out.",
+              "An item is left out.", "Dip is left out.", "Outdoor Run is left out.",
+              "Sled Push is left out: it records distance and time now.", "Treadmill Walk is left out.",
+              "Dead Hang is left out: it records time now."]
+# C5b's items as get_routines gives them: every plan field, null where the kind has none (R7)
+PLAN_NULLS = {"sets": None, "reps": None, "time_s": None, "distance_m": None, "minutes": None, "distance_km": None,
+              "incline_pct": None, "speed_kmh": None}
+
+
+def given(**x) -> dict:
+    """An item as get_routines gives it: a lift's, unless log_with says cardio, every plan field null but those
+    named."""
+    lift_ = x.get("log_with", "lifts") == "lifts"
+    out = {**PLAN_NULLS, "log_with": "lifts", "weight_kg": None, "weight_from": None, "last_date": None, "last": None,
+           **x}
+    assert lift_ or (out["weight_kg"], out["weight_from"], out["last_date"]) == (None, None, None)
+    return {k: out[k] for k in routines.ITEM_KEYS}
 
 
 def hold(routine_id: int, items: list) -> None:
@@ -1558,20 +1621,33 @@ def hold(routine_id: int, items: list) -> None:
         s.get(Routine, routine_id).lifts = json.dumps(items)
 
 
+ODD_PLACED = [
+    given(exercise="Rowing Machine", log_with="cardio", minutes=10),
+    given(exercise="Back Squat", sets=4, reps=5, weight_kg=100.0, weight_from="last_session", last_date=START.date()
+          .isoformat(), last={"date": START.date().isoformat(), "sets": [{"weight_kg": 100.0, "reps": 5, "time_s": None,
+                                                                           "distance_m": None}] * 2,
+                              "words": f"2 {X} 5 at 100 kg"}),
+    given(exercise="Plank", sets=3, time_s=60),
+    given(exercise="Zorb Press", sets=3, reps=8, weight_kg=40.0, weight_from="routine"),  # ruling 1
+    given(exercise="Farmer's Carry", sets=2, distance_m=40, weight_kg=32.0, weight_from="routine"),
+    given(exercise="Incline Treadmill Walk", log_with="cardio", minutes=20, incline_pct=12),
+]
+ODD_WORDS = (f"Rowing Machine 10 min, Back Squat 4 {X} 5 at 100 kg, Plank 3 {X} 60 s, Zorb Press 3 {X} 8 at 40 kg, "
+             f"Farmer's Carry 2 {X} 40 m at 32 kg each and Incline Treadmill Walk 20 min at 12% incline")
+
+
 def test_each_item_the_read_cannot_place_is_left_out_with_its_line_and_unknown_keys_on_a_lift_are_ignored(user):
     made = save(user.id, "Legs day", [lift("Back Squat", 4, 5, 100)])
     hold(made["id"], ODD)
     log(user.id, ("Back Squat", 100, 5), ("Back Squat", 100, 5))
     found = read(user.id)
     [routine] = found["routines"]
-    assert routine["lifts"] == [{"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100.0,
-                                 "weight_from": "last_session", "last_date": day(),
-                                 "last": {"date": day(), "sets": [kept(100.0, 5)] * 2, "words": f"2 {X} 5 at 100 kg"}},
-                                {"exercise": "Zorb Press", "sets": 3, "reps": 8, "weight_kg": 40.0,
-                                 "weight_from": "routine", "last_date": None, "last": None}]  # ruling 1
-    assert routine["words"] == f"Back Squat 4 {X} 5 at 100 kg and Zorb Press 3 {X} 8 at 40 kg"
+    assert routine["lifts"] == ODD_PLACED
+    assert routine["words"] == ODD_WORDS
     assert found["summary"] == "1 routine: Legs day. " + " ".join(ODD_LINES)
-    assert routines.page_read(user.id) == (found, {made["id"]: PAGE_LINES})
+    plans = [f"10{NB}min", f"4 {X} 5 at 100{NB}kg", f"3 {X} 60{NB}s", f"3 {X} 8 at 40{NB}kg",
+             f"2 {X} 40{NB}m at 32{NB}kg each", f"20{NB}min at 12% incline"]
+    assert routines.page_read(user.id) == (found, {made["id"]: PAGE_LINES}, {made["id"]: plans})
     for line in ODD_LINES:
         assert tr.check(line, tr.SUMMARY) == [], line
     for line in PAGE_LINES:
@@ -1580,7 +1656,7 @@ def test_each_item_the_read_cannot_place_is_left_out_with_its_line_and_unknown_k
         assert json.loads(s.get(Routine, made["id"]).lifts) == ODD  # the routine keeps them
     # A second routine with the same lines says each once in the summary, and keeps its own on the page.
     other = save(user.id, "Row day", [lift()])
-    hold(other["id"], ODD[:1])
+    hold(other["id"], ODD[3:4])
     assert read(user.id)["summary"] == "2 routines: Legs day and Row day. " + " ".join(ODD_LINES)
     assert routines.page_read(user.id)[1][other["id"]] == PAGE_LINES[:1]
     hold(other["id"], {"not": "a list"})
@@ -1605,19 +1681,19 @@ def test_a_name_off_the_list_is_placed_as_before_c5a_and_reads_no_session_of_ano
     hold(made["id"], [{"exercise": "Flat Barbell Bench", "sets": 3, "reps": 8, "weight_kg": 60.0}])
     log(user.id, ("Bench Press", 70, 8))
     found = read(user.id)
-    assert found["routines"][0]["lifts"] == [{"exercise": "Flat Barbell Bench", "sets": 3, "reps": 8,
-                                              "weight_kg": 60.0, "weight_from": "routine", "last_date": None,
-                                              "last": None}]
+    assert found["routines"][0]["lifts"] == [given(exercise="Flat Barbell Bench", sets=3, reps=8, weight_kg=60.0,
+                                                   weight_from="routine")]
     assert found["routines"][0]["words"] == f"Flat Barbell Bench 3 {X} 8 at 60 kg"
     assert found["summary"] == "1 routine: Old names." and routines.page_read(user.id)[1] == {made["id"]: []}
 
 
 def test_a_routine_of_only_items_it_cannot_place_reads_with_no_lifts_and_no_weights_statement(user):
     made = save(user.id, "Cardio", [lift()])
-    hold(made["id"], ODD[:1] + ODD[2:4])
+    hold(made["id"], ODD[3:4] + ODD[12:])
     found, seen = statements_of(lambda: services.get_routines(user.id))
     assert found["routines"][0]["lifts"] == [] and found["routines"][0]["words"] == ""
-    assert len(seen) == GET_STATEMENTS - 1 and not [sql for sql, _ in seen if "lift_set" in sql]
+    assert len(seen) == GET_STATEMENTS - 1
+    assert not [sql for sql, _ in seen if "lift_set" in sql or "cardio_entry" in sql]
     assert entries.entry_words(table_row(made["id"]), START.date()) == "Cardio."  # ruling 2: the name alone
     assert services.delete_entry(user.id, "routine", made["id"], "claude")["summary"] == "Cardio."
 
@@ -1636,15 +1712,15 @@ def test_a_delete_preview_the_delete_and_a_restore_answer_with_the_routine_as_st
     stored = services.get_entry(account, "routine", made["id"])["entry"]
     assert stored["lifts"] == ODD
     preview = ok(http, token, "delete_entry", {"kind": "routine", "entry_id": made["id"]})
-    assert preview["entry"] == stored and preview["summary"] == (
-        f"Legs day: Back Squat 4 {X} 5 at 100 kg and Zorb Press 3 {X} 8 at 40 kg.")
+    assert preview["entry"] == stored and preview["summary"] == f"Legs day: {ODD_WORDS}."
     done = ok(http, token, "delete_entry", {"kind": "routine", "entry_id": made["id"], "confirm": preview["confirm"]})
     assert done["deleted"] is True and done["entry"]["lifts"] == ODD
     back = ok(http, token, "restore_entry", {"kind": "routine", "entry_id": made["id"]})
     assert back["restored"] is True and back["entry"]["lifts"] == ODD
     got = ok(http, token, "get_routines")  # the published model takes the answer
-    assert [x["exercise"] for x in got["routines"][0]["lifts"]] == ["Back Squat", "Zorb Press"]
-    assert got["summary"].endswith("Incline Treadmill Walk is left out: log it as cardio.")
+    assert [x["exercise"] for x in got["routines"][0]["lifts"]] == [x["exercise"] for x in ODD_PLACED]
+    assert got["summary"].endswith("Dead Hang is left out: it records time now. Ask the person how long, and log it "
+                                   "with time_s.")
 
 
 def test_the_page_draws_a_routine_it_cannot_place_in_full_with_each_line(client, clock):
@@ -1654,8 +1730,11 @@ def test_the_page_draws_a_routine_it_cannot_place_in_full_with_each_line(client,
     hold(made["id"], ODD)
     r = client.get("/routines")
     assert r.status_code == 200 and routine_cards(r.text) == ["Legs day"]
-    assert routine_rows(r.text) == [("Back Squat", f"4 {X} 5 at 100{NB}kg", "Not logged yet."),
-                                    ("Zorb Press", f"3 {X} 8 at 40{NB}kg", "Not logged yet.")]
+    assert routine_rows(r.text.replace("&#39;", "'")) == [
+        ("Rowing Machine", f"10{NB}min", "Not logged yet."), ("Back Squat", f"4 {X} 5 at 100{NB}kg", "Not logged yet."),
+        ("Plank", f"3 {X} 60{NB}s", "Not logged yet."), ("Zorb Press", f"3 {X} 8 at 40{NB}kg", "Not logged yet."),
+        ("Farmer's Carry", f"2 {X} 40{NB}m at 32{NB}kg each", "Not logged yet."),
+        ("Incline Treadmill Walk", f"20{NB}min at 12% incline", "Not logged yet.")]
     page = r.text.replace("&#39;", "'")
     assert re.findall(r'<p class="small">([^<]*)</p>', page) == PAGE_LINES
 
@@ -1669,7 +1748,7 @@ def test_on_a_lb_account_the_page_says_the_plan_and_last_time_in_lb(client, cloc
     rows_ = routine_rows(client.get("/routines").text)
     assert rows_ == [("Bench Press", f"3 {X} 8 at 137.8{NB}lb", f"Mon 9 Nov: 137.8 lb {X} 8, 126.75 lb {X} 7"),
                      ("Dip", f"3 {X} 10", "Not logged yet.")]
-    assert not re.search(r"kg", " ".join(" ".join(r) for r in rows_))
+    assert not re.search(r"kg", " ".join(" ".join(r) for r in rows_))
 
 
 def test_an_unchanged_save_of_a_routine_stored_before_this_build_writes_nothing(user, clock):
@@ -1685,27 +1764,36 @@ def test_an_unchanged_save_of_a_routine_stored_before_this_build_writes_nothing(
 
 
 def test_the_statement_count_holds_with_nothing_logged_with_last_and_with_items_left_out(make_user, clock):
-    bare, full = make_user(), make_user()
+    """No cardio item placed: three statements (the user, the routines, the weights and last). One placed: a fourth,
+    cardio's last (the note of 2026-11-22), however many routines, items and entries."""
+    bare, full, lifting = make_user(), make_user(), make_user()
     save(bare.id)
-    for person in (full,):
-        made = save(person.id, "Legs day", [lift("Back Squat", 4, 5, 100)])
-        hold(made["id"], ODD)
-        many(person.id, rules.ROUTINES_MAX - 1)
+    made = save(full.id, "Legs day", [lift("Back Squat", 4, 5, 100)])
+    hold(made["id"], ODD)
+    many(full.id, rules.ROUTINES_MAX - 1)
+    made = save(lifting.id, "Legs day", [lift("Back Squat", 4, 5, 100)])
+    hold(made["id"], [x for x in ODD if not (isinstance(x, dict) and "minutes" in x)])  # no cardio placed
+    many(lifting.id, rules.ROUTINES_MAX - 1)
+    for person in (full, lifting):
         for n in range(10):
             log(person.id, ("Back Squat", 100 + n, 5), ("Bench Press", 60, 8), date=day(-n))
-    for person in (bare, full):
+            assert "error" not in services.log_cardio(person.id, {"exercise": "Rowing Machine", "minutes": 10 + n,
+                                                                  "date": day(-n)}, "claude")
+    for person, count in ((bare, GET_STATEMENTS), (lifting, GET_STATEMENTS), (full, GET_STATEMENTS + 1)):
         _, seen = statements_of(lambda: services.get_routines(person.id))
-        assert len(seen) == GET_STATEMENTS, person.id
+        assert len(seen) == count, person.id
+        assert len([sql for sql, _ in seen if "cardio_entry" in sql]) == count - GET_STATEMENTS
         _, seen = statements_of(lambda: routines.page_read(person.id))
-        assert len(seen) == GET_STATEMENTS, person.id
+        assert len(seen) == count, person.id
 
 
 # ---------------------------------------------------------------- C5a: the size of the answer (R14)
 
 # get_routines' answer as sent, in UTF-8 bytes (mcp_server._json_text, the call log's result_bytes), measured here on
-# 2026-11-21 and pinned: a typical account, and every limit at once.
-TYPICAL_BYTES = 25129
-LIMITS_BYTES = 2295023
+# 2026-11-21 and pinned: a typical account, and every limit at once. Measured again with C5b's fields on 2026-11-22
+# (time_s to speed_kmh, null where the kind has none, and log_with on every item): 25,129 and 2,295,023 before.
+TYPICAL_BYTES = 30937
+LIMITS_BYTES = 2343423
 
 
 def answer_bytes(person_id: int) -> int:
@@ -1775,7 +1863,7 @@ SAME_SEEN = [("Bench Press", 62.5, 8), ("Bench Press", 62.5, 8), ("Bench Press",
 
 
 def test_the_two_last_time_cases_load_last_and_are_usable():
-    cases = judge.load_cases()
+    cases = judge.load_cases()[:-4]  # C5b's four follow (tests/test_routine_items.py)
     assert [c["id"] for c in cases[-2:]] == ["routine_same_as_last_time", "routine_last_time_read"]
     for case in cases[-2:]:
         assert judge.case_problems(case) == [] and (case["kind"], case["core"]) == ("direct", False)
