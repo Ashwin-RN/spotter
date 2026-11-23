@@ -111,7 +111,9 @@ def test_the_moved_texts_live_in_mcp_schemas_and_read_back_under_their_names():
     for name in ("CARDIO_RULE", "FOOD_RULE", "KEY_DESCRIPTION", "Key"):
         assert f"\n{name} = " not in source, name  # defined once, in mcp_schemas
     assert S.CARDIO_RULE in S.CARDIO_EXERCISE_DESCRIPTION
-    assert f" {S.FOOD_RULE} {S.FOOD_NAME_RULE} " in S.LOG_FOOD_DESCRIPTION
+    # macros-and-asking.md: the macros' sentence after FOOD_RULE, in log_food's description alone (model-read text 2).
+    assert f" {S.FOOD_RULE} {S.LOG_FOOD_MACROS} {S.FOOD_NAME_RULE} " in S.LOG_FOOD_DESCRIPTION
+    assert S.LOG_FOOD_MACROS not in mcp_server.INSTRUCTIONS
 
 
 def test_mcp_schemas_imports_only_app_rules_from_the_app():
@@ -949,6 +951,15 @@ SERVICE_REFUSALS = [
     ({"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180}, {"description": "Rice"}]}},
      "details.entries[1]: kcal is missing.",
      "Give kcal as a number from 0 to 5,000 on details.entries[1]: it is kept as a whole number."),
+    # macros-and-asking.md: the portion refusal names its entry as sent (note of 2026-11-22, point 1).
+    ({"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180},
+                                              {"description": "Rice", "kcal": 200, "estimated": True}]}},
+     "details.entries[1]: portion is missing for an estimate.",
+     "Ask the person once how much they had, then send it as portion in details.entries[1], in their words. Nothing "
+     "was logged."),
+    ({"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180, "protein_g": 2000}]}},
+     "details.entries[0]: protein_g 2000 is outside 0 to 1,250.",
+     "Give protein_g as a number from 0 to 1,250 on details.entries[0]."),
 ]
 
 
@@ -1006,8 +1017,8 @@ SCHEMA_REFUSALS = [
      "Send details.entries as a list."),
     ({"kind": "food", "details": {"entries": [{"description": "Dal", "calories": 180}]}},
      "details.entries[0]: 'calories' is not a field of a food entry.",
-     "Use: description, meal, kcal, estimated, saved_food_id, servings, usda_fdc_id, grams. source is decided by the "
-     "server. " + mcp_schemas.NEAR_MISSES["entry"]["calories"]),
+     "Use: description, meal, kcal, estimated, portion, protein_g, carbs_g, fat_g, macros_estimated, saved_food_id, "
+     "servings, usda_fdc_id, grams. source is decided by the server. " + mcp_schemas.NEAR_MISSES["entry"]["calories"]),
     ({"kind": "lifts", "parts": [{**SET, "weight_kg": True}]}, "parts[0]: weight_kg must be a number, not true.",
      "Give weight_kg on parts[0] as a number."),
 ]
@@ -1132,8 +1143,9 @@ def test_every_new_model_read_text_keeps_the_text_rules():
 
 # ---------------------------------------------------------------- guide
 
-# L2: food's FoodEntryIn words lose "in a log_food call", 3639 to 3626 (row 6).
-GUIDE_SIZES = {"log": 1894, "lifts": 2884, "bodyweight": 1311, "measurement": 1404, "food": 3626, "cardio": 2864}
+# L2: food's FoodEntryIn words lose "in a log_food call", 3639 to 3626 (row 6). macros-and-asking.md: food's description
+# gains the macros' sentence and FoodEntryIn its five fields, 3626 to 4885, as printed on the built server.
+GUIDE_SIZES = {"log": 1894, "lifts": 2884, "bodyweight": 1311, "measurement": 1404, "food": 4885, "cardio": 2864}
 
 
 def test_guide_has_an_answer_for_each_topic_and_each_is_a_guide_result():
@@ -1416,9 +1428,18 @@ BOTH = [
     ("food stated", [], {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180,
                                                                   "meal": "lunch"}]}},
      "log_food", {"entries": [{"description": "Dal", "kcal": 180, "meal": "lunch"}]}),
+    # macros-and-asking.md: an estimate carries its portion.
     ("food estimated, no meal", [], {"kind": "meal", "details": {"entries": [{"description": "2 rotis", "kcal": 240,
-                                                                              "estimated": True}]}},
-     "log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True}]}),
+                                                                              "estimated": True, "portion": "2"}]}},
+     "log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True, "portion": "2"}]}),
+    ("food with its macros", [], {"kind": "food", "details": {"entries": [
+        {"description": "Chicken wrap", "kcal": 520, "protein_g": 32, "carbs_g": 48, "fat_g": 18,
+         "macros_estimated": False}, {"description": "Dal", "kcal": 180, "estimated": True, "portion": "a bowl",
+                                      "protein_g": 9}]}},
+     "log_food", {"entries": [{"description": "Chicken wrap", "kcal": 520, "protein_g": 32, "carbs_g": 48, "fat_g": 18,
+                               "macros_estimated": False},
+                              {"description": "Dal", "kcal": 180, "estimated": True, "portion": "a bowl",
+                               "protein_g": 9}]}),
     ("a saved food", [("save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120})],
      {"kind": "food", "details": {"entries": [{"saved_food_id": SAVED, "servings": 2}]}},
      "log_food", {"entries": [{"saved_food_id": SAVED, "servings": 2}]}),
@@ -1505,6 +1526,14 @@ REFUSED_BOTH = [
      "log_cardio", {"exercise": "Treadmill Run", "minutes": 30, "speed_kmh": 10, "speed_mph": 6}),
     ("a date in the future", {"kind": "bodyweight", "details": {"kg": 80}, "date": "2999-01-01"}, "log_bodyweight",
      {"kg": 80, "date": "2999-01-01"}),
+    # macros-and-asking.md: an estimate with no portion, "Entry 2" through log_food and details.entries[1] through log.
+    ("an estimate with no portion", {"kind": "food", "details": {"entries": [
+        {"description": "Dal", "kcal": 180}, {"description": "Rice", "kcal": 200, "estimated": True}]}},
+     "log_food", {"entries": [{"description": "Dal", "kcal": 180},
+                              {"description": "Rice", "kcal": 200, "estimated": True}]}),
+    ("a macro sent with a saved food", {"kind": "food", "details": {"entries": [
+        {"saved_food_id": 99, "servings": 1, "protein_g": 5}]}},
+     "log_food", {"entries": [{"saved_food_id": 99, "servings": 1, "protein_g": 5}]}),
 ]
 
 

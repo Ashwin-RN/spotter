@@ -90,10 +90,13 @@ pair, on a look_alike case only: the id of the incidental case it is paired with
 seed, rows created for the person before the run, through Spotter's own services, in order:
 
   {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "log_lifts" | "log_cardio" |
-   "set_goal" | "import_entries" | "save_routine" | "update_settings", "data": {...}}
+   "set_goal" | "import_entries" | "save_routine" | "update_settings" | "log_food", "data": {...}}
                                     import_entries returns no one id: no "as".
                                     update_settings (contract units.md R20) sets the person's own settings, such
                                     as weight_unit lb; it returns no id either: no "as".
+                                    log_food (contract macros-and-asking.md) logs a day's food, macros and all, as
+                                    the web logs it; it returns ids, not one id: no "as". An estimate seeded needs
+                                    its portion, as any estimate does.
   {"service": "four_weeks"}         a seed that takes no data: four weeks of everything, three goals
                                     (evals/four_weeks.py). No "as": it returns no one id.
   {"service": "sixteen_weeks"}      the same kind: a year of weigh-ins, sixteen weeks of lifts, food, cardio
@@ -111,7 +114,9 @@ db, checks on the person's rows after the run:
   count: exactly this many such rows, or a list of the counts allowed, such as [0, 3]; all: every one matches; rows:
   each matcher matches some row.
   A lift_session row carries set_count: how many sets it holds (evals/run.py's person_rows counts them). A
-  routine row carries lift_count: how many lifts its lifts JSON holds. A lift_set row is one set of the person's
+  routine row carries lift_count: how many lifts its lifts JSON holds. A saved_food row carries item_count: how many
+  foods its items JSON holds, 0 for a plain food (contract macros-and-asking.md: a saved meal is a saved food with
+  items). A food_entry row holds protein_g, carbs_g, fat_g, macros_estimated and portion, each null when not logged. A lift_set row is one set of the person's
   (contract exercise-list.md, C4g): exercise (the lift's name), weight_kg, reps, time_s, distance_m, set_number,
   session_id, and its session's date and deleted_at, so a set of a deleted session reads as deleted.
 
@@ -167,8 +172,9 @@ DAYS_AGO = 60  # {{days_ago:N}} for N from 0 to this (evals/run.py's dates_for g
 DB_KEYS = {"table", "state", "where", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
 SWITCHES = ("log", "log_delete")
+# update_settings: units.md R20. log_food: macros-and-asking.md, a day's food with its macros, seeded as the web logs it.
 SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "log_lifts", "log_cardio", "set_goal",
-                 "import_entries", "edit_entry", "save_routine", "update_settings"}  # update_settings: units.md R20
+                 "import_entries", "edit_entry", "save_routine", "update_settings", "log_food"}
 EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
 NO_DATA_SERVICES = {"four_weeks", "sixteen_weeks"}  # called as seed_service(name)(user_id): see seed_service
 DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "lift_set",
@@ -881,8 +887,11 @@ def judge_db(checks: list[dict], rows: dict[str, list[dict]]) -> list[str]:
 
 
 def _rows_text(rows: list[dict]) -> str:
+    # A food entry's macros and portion, and a saved food's serving numbers and items (macros-and-asking.md).
     keep = ("date", "kind", "value", "kg", "meal", "description", "kcal", "source", "estimated", "saved_food_id",
-            "servings", "minutes", "exercise_id", "estimated_kcal", "id", "status", "target_value", "target_date",
+            "servings", "protein_g", "carbs_g", "fat_g", "macros_estimated", "portion", "name", "serving_label",
+            "kcal_per_serving", "protein_g_per_serving", "carbs_g_per_serving", "fat_g_per_serving", "item_count",
+            "items", "minutes", "exercise_id", "estimated_kcal", "id", "status", "target_value", "target_date",
             "set_count", "lift_count", "exercise", "weight_kg", "reps", "time_s", "distance_m", "session_id")
     return "; ".join(json.dumps({k: r[k] for k in keep if k in r}) for r in rows)
 

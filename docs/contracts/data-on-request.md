@@ -882,3 +882,11 @@ The 41-lift table above stays the record of 2026-11-16. The list in code (`app/e
 ## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
 
 A saved food's `id` in `what_is_logged` reads "The saved food's id, to log it by.", naming no function, as `log_food` leaves every list for `log`. The table above keeps its words of 2026-11-16.
+
+## Note, 2026-11-22: C3 (macros-and-asking.md)
+
+The settings, `targets` in `what_is_logged` and in each `get_data` answer, gain the three daily goals in grams beside `calorie_target_kcal`: `protein_target_g`, `carbs_target_g` and `fat_target_g`, each null when not set (that contract's decision 2 A).
+
+The `food` area gains `protein_g`, `carbs_g` and `fat_g` (grams, null when not logged, never 0 g; their totals skip the nulls), `macros_estimated` (true when the grams are an estimate, null with none) and `portion` (how much was eaten, in the person's words, or null). The `saved_foods` area gains `protein_g_per_serving`, `carbs_g_per_serving` and `fat_g_per_serving`. So a week's protein is Spotter's sum (its decision 17); `get_trends` carries no macro yet.
+
+Measured on the built server, compact JSON characters of the published entry: `get_data` 7,495 of its 7,500 cap, `what_is_logged` 5,131 (`tests/test_data.py`, `test_each_new_entry_is_at_most_7500_characters`). `Targets` keeps its new words short for that cap.

@@ -35,7 +35,7 @@ from .test_web import client, seam, sign_in, web_client  # noqa: F401 - fixtures
 
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
 HARDENING = "0012"  # the revision this file's migration tests run to
-HEAD = "0014"  # the code's head, which /ready reads (exercise-list.md: 0014, the one-off delete)
+HEAD = "0015"  # the code's head, which /ready reads (macros-and-asking.md: 0015, the macros)
 
 # ---------------------------------------------------------------- the rules of D12, as the contract lists them
 
@@ -96,13 +96,19 @@ NUMBER_RULES_AT_HEAD = tuple(("lift_set", "weight_kg", -1000, True, 1000, False)
     ("lift_set", "time_s", 1, True, 100_000, True),
     ("lift_set", "distance_m", 0, False, 100_000, False),
 )
-CHECKS_AT_HEAD = sorted({*CHECKS, "ck_lift_set_time_s", "ck_lift_set_distance_m", "ck_lift_set_measure"})
+# Migration 0015 (macros-and-asking.md) adds nine number rules: three on food_entry, three on saved_food, three on user.
+CHECKS_IN_0015 = {"ck_food_entry_protein_g", "ck_food_entry_carbs_g", "ck_food_entry_fat_g",
+                  "ck_saved_food_protein_g_per_serving", "ck_saved_food_carbs_g_per_serving",
+                  "ck_saved_food_fat_g_per_serving", "ck_user_protein_target_g", "ck_user_carbs_target_g",
+                  "ck_user_fat_target_g"}
+CHECKS_AT_HEAD = sorted({*CHECKS, "ck_lift_set_time_s", "ck_lift_set_distance_m", "ck_lift_set_measure",
+                         *CHECKS_IN_0015})
 
 
 def test_the_lists_are_the_contract_s():
     assert len(NUMBER_RULES) == 24 and len(LIST_RULES) == 12 and len(CHECKS) == 39
     assert sorted({t for t, *_ in NUMBER_RULES} | {t for t, *_ in LIST_RULES}) == sorted(REBUILT)
-    assert len(NUMBER_RULES_AT_HEAD) == 26 and len(CHECKS_AT_HEAD) == 42
+    assert len(NUMBER_RULES_AT_HEAD) == 26 and len(CHECKS_AT_HEAD) == 51
 
 
 def _checks(connection) -> dict[str, set[str]]:
@@ -389,20 +395,29 @@ def _write_at_0011(address: str, monkeypatch) -> dict:
     """Rows of every kind, written by the services into the database at this address, for two people, which is left
     at 0011. The models are the code head's (0013 added columns no older table has), so the services write at the
     head and the database is taken down to 0011 after. The two saved foods whose 130-character keys stop 0012's
-    downgrade are saved at 0011 itself, through the service, which reads no table 0012 or 0013 changed."""
+    downgrade are written at 0011 itself, as save_food writes a new food: the service reads user and saved_food,
+    which 0015 changed, so the row goes in by the table, with only the columns 0011 has."""
     cfg = alembic_config(address)
     command.upgrade(cfg, HEAD)
     people = write_everything(address, monkeypatch)
     command.downgrade(cfg, "0011")
-    config.use_settings(settings(database_url=address))
+    engine = make_engine(address)
     try:
         for uid in people:
-            assert "error" not in services.save_food(uid, {"name": "ß" * 65, "serving_label": "1 bowl",
-                                                           "kcal_per_serving": 90}, "web")
+            _save_food_at_0011(engine, uid, "ß" * 65, "1 bowl", 90)
     finally:
-        db.dispose()
-        config.use_settings(settings())
+        engine.dispose()
     return {"people": people}
+
+
+def _save_food_at_0011(engine: Engine, uid: int, name: str, serving_label: str, kcal_per_serving: float) -> None:
+    """The row save_food writes for a new food, by the table: its key as save_food folds it, both times now."""
+    now = db.utcnow()
+    foods = Base.metadata.tables["saved_food"]
+    with engine.begin() as c:
+        c.execute(foods.insert().values(user_id=uid, name=name, name_key=" ".join(name.split()).casefold(),
+                                        serving_label=serving_label, kcal_per_serving=kcal_per_serving,
+                                        grams_per_serving=None, created_at=now, updated_at=now, deleted_at=None))
 
 
 def write_everything(address: str, monkeypatch) -> list[int]:
@@ -455,7 +470,7 @@ def _everything(uid: int) -> None:
     roti = ok(services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
                                        "grams_per_serving": 40}, "web"))["id"]
     ok(services.log_food(uid, {"entries": [{"saved_food_id": roti, "servings": 2},
-                                           {"description": "dal", "kcal": 180, "estimated": True},
+                                           {"description": "dal", "kcal": 180, "estimated": True, "portion": "1"},
                                            {"usda_fdc_id": 173944, "grams": 120}]}, "claude"))
     ok(services.log_cardio(uid, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5, "avg_hr": 150}, "web"))
     ok(services.log_cardio(uid, {"exercise": "Treadmill Walk", "minutes": 20, "speed_kmh": 6, "incline_pct": 5,
@@ -879,11 +894,30 @@ UQ_EXERCISE_KEY = "uq_exercise_key"
 
 
 def before_0013(diffs: list) -> list:
-    """compare_metadata's list at a revision before 0013, less 0013's own entries."""
+    """compare_metadata's list at a revision before 0013, less 0013's own entries and 0015's (before_0015)."""
     def is_0013(d) -> bool:
         if isinstance(d, list):  # a column's changes come nested: here only reps made nullable
             return all(x[0] == "modify_nullable" and (x[2], x[3]) == ("lift_set", "reps") for x in d)
         if d[0] == "add_column":
             return (d[2], d[3].name) in NEW_COLUMNS_IN_0013
         return d[0] == "add_constraint" and d[1].name == UQ_EXERCISE_KEY
-    return [d for d in diffs if not is_0013(d)]
+    return [d for d in before_0015(diffs) if not is_0013(d)]
+
+
+# What compare_metadata shows at a revision before 0015 that 0015 adds (macros-and-asking.md): sixteen columns. The
+# rules are not in the models.
+NEW_COLUMNS_IN_0015 = {
+    ("food_entry", "protein_g"), ("food_entry", "carbs_g"), ("food_entry", "fat_g"),
+    ("food_entry", "macros_estimated"), ("food_entry", "portion"),
+    ("saved_food", "protein_g_per_serving"), ("saved_food", "carbs_g_per_serving"),
+    ("saved_food", "fat_g_per_serving"), ("saved_food", "items"),
+    ("usda_food", "protein_g_per_100g"), ("usda_food", "carbs_g_per_100g"), ("usda_food", "fat_g_per_100g"),
+    ("usda_food", "macros_read"),
+    ("user", "protein_target_g"), ("user", "carbs_target_g"), ("user", "fat_target_g"),
+}
+
+
+def before_0015(diffs: list) -> list:
+    """compare_metadata's list at a revision before 0015, less 0015's own entries: its add_column lines only."""
+    return [d for d in diffs
+            if isinstance(d, list) or not (d[0] == "add_column" and (d[2], d[3].name) in NEW_COLUMNS_IN_0015)]

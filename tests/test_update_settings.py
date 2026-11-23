@@ -1,7 +1,7 @@
 """update_settings: the time zone, set by Claude in the first conversation, and the switch it can never touch."""
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import event
@@ -11,6 +11,7 @@ from app.models import Bodyweight, User
 from app.metrics import bodyweight_now, epley
 from app.services import account, body
 from app.services.progress import bodyweight_chart
+from tests import text_rules as tr
 from tests.conftest import lock_sql
 
 KEYS = {"time_zone", "today", "changed", "summary", "links"}
@@ -343,6 +344,9 @@ def test_the_switch_locks_the_user_row_first(user):
 
 @pytest.mark.parametrize("field,good,low,high", [
     ("calorie_target_kcal", 2200, 799, 10_001),
+    ("protein_target_g", 150, 0, 2_501),  # macros-and-asking.md, decision 3: 1 to 2,500 g, 1 to 1,111 g of fat
+    ("carbs_target_g", 250, 0, 2_501),
+    ("fat_target_g", 70, 0, 1_112),
     ("target_sessions_per_week", 4, -1, 15),
     ("target_cardio_minutes_per_week", 150, -1, 3_001),
 ])
@@ -377,5 +381,94 @@ def test_the_summary_names_every_change_and_the_switch_is_still_refused(user):
     assert set(r) == KEYS
     both = services.update_settings(user.id, {"calorie_target_kcal": 2100, "claude_can": "log_delete"}, "claude")
     assert both["error"] == "not_allowed" and stored(user.id).calorie_target_kcal == 2000
-    assert services.whoami(user.id)["targets"] == {"calorie_target_kcal": 2000, "target_sessions_per_week": 3,
+    assert services.whoami(user.id)["targets"] == {"calorie_target_kcal": 2000, "protein_target_g": None,
+                                                   "carbs_target_g": None, "fat_target_g": None,
+                                                   "target_sessions_per_week": 3,
                                                    "target_cardio_minutes_per_week": None}
+
+
+# ---------------------------------------------------------------- the daily goals in grams (macros-and-asking.md, P3)
+
+GOALS = ("protein_target_g", "carbs_target_g", "fat_target_g")
+
+
+@pytest.mark.parametrize("field,lowest,highest", [("protein_target_g", 1, 2_500), ("carbs_target_g", 1, 2_500),
+                                                  ("fat_target_g", 1, 1_111)])
+def test_each_daily_goal_takes_its_ends_and_refuses_past_them_in_grams(user, field, lowest, highest):
+    for good in (lowest, highest):
+        assert services.update_settings(user.id, {field: good}, "claude")["changed"] == [field]
+        assert getattr(stored(user.id), field) == good
+    for bad in (lowest - 1, highest + 1, -5):
+        r = services.update_settings(user.id, {field: bad}, "claude")
+        assert r["error"] == "invalid_field" and r["message"] == f"{field} {bad} is outside 1 to {highest:,}."
+        assert r["fix"] == f"Give {field} as a whole number from 1 to {highest:,}."
+    whole = services.update_settings(user.id, {field: 150.5}, "claude")
+    assert whole["message"] == f"{field} must be a whole number, not 150.5."
+    assert getattr(stored(user.id), field) == highest
+
+
+def test_the_summary_names_each_goal_set_and_cleared_and_whoami_and_get_data_carry_them(user):
+    r = services.update_settings(user.id, {"protein_target_g": 150, "carbs_target_g": 2_500, "fat_target_g": 70},
+                                 "claude")
+    assert r["changed"] == list(GOALS) and set(r) == KEYS
+    assert r["summary"].startswith("Protein goal set to 150 g a day. Carbs goal set to 2,500 g a day. "
+                                   "Fat goal set to 70 g a day. Today is ")
+    targets = {"calorie_target_kcal": None, "protein_target_g": 150, "carbs_target_g": 2_500, "fat_target_g": 70,
+               "target_sessions_per_week": None, "target_cardio_minutes_per_week": None}
+    assert services.whoami(user.id)["targets"] == targets
+    assert services.what_is_logged(user.id)["targets"] == targets
+    assert services.get_data(user.id, {"area": "food"})["targets"] == targets
+    cleared = services.update_settings(user.id, {"protein_target_g": None, "fat_target_g": ""}, "web")
+    assert cleared["changed"] == ["protein_target_g", "fat_target_g"]
+    assert cleared["summary"].startswith("Protein goal cleared. Fat goal cleared. Today is ")
+    row = stored(user.id)
+    assert (row.protein_target_g, row.carbs_target_g, row.fat_target_g) == (None, 2_500, None)
+    again = services.update_settings(user.id, {"carbs_target_g": "2500"}, "web")  # a form's text, already set
+    assert again["changed"] == [] and "Nothing changed" in again["summary"]
+    for summary in (r["summary"], cleared["summary"]):
+        assert tr.check(summary, tr.SUMMARY) == [], summary
+
+
+def test_an_unknown_field_and_nothing_given_name_the_three_goals(user):
+    names = ("calorie_target_kcal, protein_target_g, carbs_target_g, fat_target_g, target_sessions_per_week")
+    assert names in services.update_settings(user.id, {"protein_g": 150}, "claude")["fix"]
+    assert names in services.update_settings(user.id, {}, "claude")["fix"]
+
+
+@pytest.mark.parametrize("kind", ["protein", "carbs", "fat", "calories"])
+def test_set_goal_refuses_a_daily_macro_as_a_kind_and_names_update_settings(user, kind):
+    on = (users.today_for(stored(user.id)) + timedelta(days=30)).isoformat()
+    r = services.set_goal(user.id, {"kind": kind, "target_value": 150, "target_date": on}, "claude")
+    assert (r["error"], r["field"]) == ("invalid_field", "kind")
+    assert r["message"] == f"kind '{kind}' is not a goal: a weekly or daily amount is a setting."
+    assert r["fix"] == ("Use one of: lift, bodyweight, measurement, cardio_best. A weekly sessions, weekly cardio "
+                        "minutes, daily calorie, protein, carbs or fat target is set with update_settings.")
+    assert tr.check(r["message"], tr.CLAUDE) == [] and tr.check(r["fix"], tr.CLAUDE) == []
+
+
+def test_update_settings_words_name_the_daily_grams_and_keep_the_text_rules(http):
+    from tests.test_mcp import registered_tools
+    tool = registered_tools(http)["update_settings"]
+    assert "The targets: daily calories, daily grams of protein, carbs and fat, sessions a week" in tool["description"]
+    props = tool["inputSchema"]["properties"]
+    assert [props[f]["description"] for f in GOALS] == [
+        "The daily protein goal in grams, 1 to 2,500. null clears it.",
+        "The daily carbs goal in grams, 1 to 2,500. null clears it.",
+        "The daily fat goal in grams, 1 to 1,111. null clears it."]
+    for text in (tool["description"], *(props[f]["description"] for f in GOALS)):
+        assert tr.check(text, tr.CLAUDE) == [], text
+
+
+def test_through_the_function_a_goal_sent_null_is_cleared_and_one_left_out_is_kept(http):
+    from tests.conftest import sign, whoami as who
+    from tests.test_mcp import ok
+    token = sign()
+    who(http, token)
+    set_ = ok(http, token, "update_settings", {"protein_target_g": 150, "carbs_target_g": 200, "fat_target_g": 60})
+    assert set_["changed"] == list(GOALS)
+    cleared = ok(http, token, "update_settings", {"protein_target_g": None})
+    assert cleared["changed"] == ["protein_target_g"] and cleared["summary"].startswith("Protein goal cleared.")
+    assert who(http, token)["targets"] == {"calorie_target_kcal": None, "protein_target_g": None,
+                                               "carbs_target_g": 200, "fat_target_g": 60,
+                                               "target_sessions_per_week": None,
+                                               "target_cardio_minutes_per_week": None}

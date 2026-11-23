@@ -24,7 +24,8 @@ def weigh(user, days_ago, kg):
 
 def eat(user, days_ago, kcal, estimated=False, description="dal"):
     r = services.log_food(user.id, {"date": day(user, -days_ago), "entries": [
-        {"description": description, "kcal": kcal, "estimated": estimated}]}, "web")
+        {"description": description, "kcal": kcal, "estimated": estimated,
+         **({"portion": "1"} if estimated else {})}]}, "web")  # an estimate needs its portion (macros-and-asking.md)
     assert "error" not in r, r
     return r["ids"][0]
 

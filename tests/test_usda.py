@@ -93,7 +93,8 @@ def test_a_search_hit_is_parsed_cached_and_sent_with_the_key_in_a_header(keyed, 
     found, err = usda.search("  Banana ")
     assert err is None and [x["fdc_id"] for x in found] == [173944, 2]   # branded and energyless left out
     assert found[0] == {"fdc_id": 173944, "description": "Bananas, raw", "data_type": "SR Legacy",
-                        "kcal_per_100g": 89.0}
+                        "kcal_per_100g": 89.0, "protein_g_per_100g": 1.1, "carbs_g_per_100g": None,
+                        "fat_g_per_100g": None}
     [(request, timeout)] = f.requests
     assert timeout == 5 and request.get_method() == "POST" and request.full_url == usda.BASE + "/foods/search"
     assert "?" not in request.full_url and request.get_header("Content-type") == "application/json"

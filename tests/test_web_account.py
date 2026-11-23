@@ -180,7 +180,7 @@ def test_a_deleted_saved_food_still_names_its_entries(signed):
 def test_a_food_with_no_saved_food_is_its_description(signed):
     fed = stock_food(only_user())
     dal = lunch_of(signed, fed["today"])[1]
-    assert (dal["name"], dal["figures"], dal["note"]) == ("Dal", "180\u00a0kcal", None)
+    assert (dal["name"], dal["figures"], dal["note"]) == ("Dal", "180\u00a0kcal, 1", None)  # its portion, "1"
 
 
 # ---------------------------------------------------------------- Foods reads list_saved_foods
@@ -1409,6 +1409,8 @@ def test_the_targets_card_holds_its_three_fields_the_add_back_row_and_save(signe
     assert [(f.find_all("label")[0].text(), f.find_all("input")[0].attrs.get("name"),
              f.find_all("input")[0].attrs.get("value"), f.find_all("input")[0].attrs.get("inputmode")) for f in fields] \
         == [("Calories a day (kcal)", "calorie_target_kcal", "2200", "numeric"),
+            ("Protein a day (g)", "protein_target_g", None, "numeric"),
+            ("Carbs a day (g)", "carbs_target_g", None, "numeric"), ("Fat a day (g)", "fat_target_g", None, "numeric"),
             ("Lift sessions a week", "target_sessions_per_week", "0", "numeric"),
             ("Cardio a week (min)", "target_cardio_minutes_per_week", None, "numeric")]
     [row] = card.find_all("label", "choice")

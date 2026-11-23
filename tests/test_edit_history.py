@@ -292,7 +292,7 @@ def test_an_edit_that_changes_nothing_or_is_refused_keeps_no_version(make_user):
 
 def test_a_confirmed_estimate_is_an_edit_and_keeps_a_version(make_user):
     uid = make_user().id
-    estimate = {"description": "Dal", "kcal": 180, "estimated": True}
+    estimate = {"description": "Dal", "kcal": 180, "estimated": True, "portion": "a bowl"}
     dal = services.log_food(uid, {"entries": [estimate]}, "claude")["ids"][0]
     first = stored("food_entry", dal)
     assert services.edit_entry(uid, "food_entry", dal, {"kcal": 180}, "web")["changed"] == ["kcal"]  # the same number
@@ -1261,8 +1261,10 @@ def test_the_export_has_a_file_of_the_versions_with_the_values_as_json_and_no_hi
     # The row itself holds what was stored: the ids.
     assert json.loads(versions()[0].before)["sets"] == [[*x, None, None] for x in was["sets"]]  # six items (R15)
     assert json.loads(versions()[3].before)["exercise_id"] == ran["exercise_id"]
+    # macros-and-asking.md: a saved food's macros a serving and a meal's items, null on a plain food with none.
     assert values[1] == {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120, "grams_per_serving": 40,
-                         "updated_at": first["saved_food"]["updated_at"].isoformat()}
+                         "protein_g_per_serving": None, "carbs_g_per_serving": None, "fat_g_per_serving": None,
+                         "items": None, "updated_at": first["saved_food"]["updated_at"].isoformat()}
     assert values[2]["name"] == "roti" and values[2]["kcal_per_serving"] == 250
     assert json.loads(versions()[0].before)["dedupe_key"] == was["dedupe_key"]  # kept in the row, left out of the file
     readme = " ".join(exported["files"]["README.txt"].split())
@@ -1409,7 +1411,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0014"  # exercise list
+    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0015"  # macros
 
 
 def test_every_kind_s_table_name_fits_the_version_s_kind_column():

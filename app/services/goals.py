@@ -20,7 +20,8 @@ set_goal(user_id, data, by)
                    for that distance, 1 to 600, 1 dp, at a speed log_cardio takes (time_limits: 0.1 to
                    60 km/h), start_value too. A session counts when its distance is at or over
                    the goal's; its time for the goal distance is its pace x the goal distance.
-    A weekly sessions or cardio minutes target is a setting (update_settings), not a goal.
+    A weekly sessions or cardio minutes target is a setting (update_settings), not a goal, as is a daily calorie,
+    protein, carbs or fat target.
 
     Units (contract units.md R12). weight_unit (kg or lb, case forgiven; left out, the person's own) is the unit
     of target_value and start_value for a lift or body weight goal: a lb value is kept in kg at 2 dp, and its
@@ -113,7 +114,8 @@ from app.services.common import (
 
 KIND = "goal"
 KINDS_NOW = ("lift", "bodyweight", "measurement", "cardio_best")
-SETTINGS_KINDS = ("sessions", "cardio_weekly", "calories")  # weekly or daily amounts: settings, not goals
+# Weekly or daily amounts: settings, not goals. protein, carbs and fat: the daily goals in grams (macros-and-asking.md).
+SETTINGS_KINDS = ("sessions", "cardio_weekly", "calories", "protein", "carbs", "fat")
 GOAL_MEASUREMENTS = ("waist", "hips", "chest", "arm", "thigh", "resting_hr")
 DAILY_AMOUNTS = ("steps", "sleep_hours", "water_ml")
 # The highest estimated max the rules allow: the heaviest weight at the most reps Epley counts.
@@ -554,8 +556,8 @@ def _kind_error(given) -> dict:
         return rules.error("missing_field", "kind is missing.", fix, field="kind")
     if isinstance(given, str) and given in SETTINGS_KINDS:
         return rules.error("invalid_field", f"kind '{given}' is not a goal: a weekly or daily amount is a setting.",
-                           f"{fix} A weekly sessions, weekly cardio minutes or daily calorie target is set with "
-                           "update_settings.", field="kind")
+                           f"{fix} A weekly sessions, weekly cardio minutes, daily calorie, protein, carbs or fat "
+                           "target is set with update_settings.", field="kind")
     return rules.error("invalid_field", f"kind '{rules.quote(given)}' is not a kind of goal.", fix, field="kind")
 
 

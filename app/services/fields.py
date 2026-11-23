@@ -359,11 +359,14 @@ def load_food(s: Session, user: User, start, end) -> list[Row]:
     def read():
         return [{"date": d, "id": i, "meal": meal, "description": text, "kcal": kcal, "source": source,
                  "estimated": estimated, "saved_food_id": saved, "servings": servings, "grams": grams,
-                 "usda_fdc_id": fdc, "saved_name": saved_name, "usda_name": usda_name}
-                for i, d, meal, text, kcal, source, estimated, saved, servings, grams, fdc, saved_name, usda_name
+                 "usda_fdc_id": fdc, "saved_name": saved_name, "usda_name": usda_name, "protein_g": protein,
+                 "carbs_g": carbs, "fat_g": fat, "macros_estimated": marked, "portion": portion}
+                for (i, d, meal, text, kcal, source, estimated, saved, servings, grams, fdc, saved_name, usda_name,
+                     protein, carbs, fat, marked, portion)
                 in s.execute(
                     select(e.id, e.date, e.meal, e.description, e.kcal, e.source, e.estimated, e.saved_food_id,
-                           e.servings, e.grams, e.usda_fdc_id, SavedFood.name, UsdaFood.description)
+                           e.servings, e.grams, e.usda_fdc_id, SavedFood.name, UsdaFood.description, e.protein_g,
+                           e.carbs_g, e.fat_g, e.macros_estimated, e.portion)
                     .outerjoin(SavedFood, and_(SavedFood.id == e.saved_food_id, SavedFood.user_id == e.user_id))
                     .outerjoin(UsdaFood, UsdaFood.fdc_id == e.usda_fdc_id)
                     .where(e.user_id == user.id, e.deleted_at.is_(None), *_range(e.date, start, end, today))
@@ -387,8 +390,9 @@ def load_saved_foods(s: Session, user: User, start, end) -> list[Row]:
             .group_by(e.saved_food_id))}
         return [{"date": f.created_at.astimezone(zone).date(), "id": f.id, "name": f.name,
                  "serving_label": f.serving_label, "kcal_per_serving": f.kcal_per_serving,
-                 "grams_per_serving": f.grams_per_serving, "times_logged": used.get(f.id, (0, None))[0],
-                 "last_logged": used.get(f.id, (0, None))[1]}
+                 "grams_per_serving": f.grams_per_serving, "protein_g_per_serving": f.protein_g_per_serving,
+                 "carbs_g_per_serving": f.carbs_g_per_serving, "fat_g_per_serving": f.fat_g_per_serving,
+                 "times_logged": used.get(f.id, (0, None))[0], "last_logged": used.get(f.id, (0, None))[1]}
                 for f in s.scalars(select(SavedFood).where(SavedFood.user_id == user.id,
                                                             SavedFood.deleted_at.is_(None)).order_by(SavedFood.id))]
     return _kept(s, ("saved_foods", start, end), read)
@@ -803,6 +807,18 @@ FOOD = Area(
               ("food_entry.grams",), _at("grams")),
         Field("usda_fdc_id", "The USDA food's id, or null.", None, None, True, (), False, False,
               ("food_entry.usda_fdc_id",), _at("usda_fdc_id")),
+        # macros-and-asking.md decision 17: a macro's totals are Spotter's sums over the entries that hold it.
+        Field("protein_g", "Protein in grams, or null: not logged, never 0 g. Its totals skip the nulls.", "grams", "g",
+              True, T, False, False, ("food_entry.protein_g",), _at("protein_g")),
+        Field("carbs_g", "Carbs in grams, or null: not logged, never 0 g. Its totals skip the nulls.", "grams", "g",
+              True, T, False, False, ("food_entry.carbs_g",), _at("carbs_g")),
+        Field("fat_g", "Fat in grams, or null: not logged, never 0 g. Its totals skip the nulls.", "grams", "g", True,
+              T, False, False, ("food_entry.fat_g",), _at("fat_g")),
+        Field("macros_estimated", "true when the grams are an estimate, null with none.", None, None, True, (), True,
+              False, ("food_entry.macros_estimated",), _at("macros_estimated"),
+              match=true_or_false("macros_estimated")),
+        Field("portion", "How much was eaten, in the person's words, or null.", None, None, True, (), False, False,
+              ("food_entry.portion",), _at("portion")),
         Field("entries", "One for each entry: count it.", "count", None, False, ("per_day", "share"), False, False, (),
               _one, total_quantity={"per_day": "count_avg"}),
     ))
@@ -819,6 +835,12 @@ SAVED_FOODS = Area(
               False, False, ("saved_food.kcal_per_serving",), _at("kcal_per_serving")),
         Field("grams_per_serving", "Grams in one serving, or null.", "grams", "g", True, (), False, False,
               ("saved_food.grams_per_serving",), _at("grams_per_serving")),
+        Field("protein_g_per_serving", "Protein in grams in one serving, or null.", "grams", "g", True,
+              ("avg", "max", "min"), False, False, ("saved_food.protein_g_per_serving",), _at("protein_g_per_serving")),
+        Field("carbs_g_per_serving", "Carbs in grams in one serving, or null.", "grams", "g", True,
+              ("avg", "max", "min"), False, False, ("saved_food.carbs_g_per_serving",), _at("carbs_g_per_serving")),
+        Field("fat_g_per_serving", "Fat in grams in one serving, or null.", "grams", "g", True, ("avg", "max", "min"),
+              False, False, ("saved_food.fat_g_per_serving",), _at("fat_g_per_serving")),
         Field("times_logged", "Live entries of it in the range.", "count", None, False, ("sum", "max"), False, False,
               (), _at("times_logged"), total_quantity=AVG),
         Field("last_logged", "The day of its latest live entry, or null.", None, None, False, (), False, False, (),
@@ -860,9 +882,11 @@ _ENTRY = ("user_id", "dedupe_key", "logged_by", "created_at", "updated_at", "del
 INTERNAL_COLUMNS: dict[str, tuple[str, ...]] = {
     "lift_session": _ENTRY, "bodyweight": _ENTRY, "measurement": _ENTRY, "food_entry": _ENTRY, "cardio_entry": _ENTRY,
     "lift_set": ("id",),
-    "saved_food": ("user_id", "name_key", "created_at", "updated_at", "deleted_at"),
+    # A saved meal's items: find_food and the Foods page show them (macros-and-asking.md).
+    "saved_food": ("user_id", "name_key", "created_at", "updated_at", "deleted_at", "items"),
     "exercise": ("id", "key", "kind", "met", "compendium_code", "retired"),
-    "usda_food": ("fdc_id", "data_type", "kcal_per_100g", "fetched_at"),
+    "usda_food": ("fdc_id", "data_type", "kcal_per_100g", "fetched_at", "protein_g_per_100g", "carbs_g_per_100g",
+                  "fat_g_per_100g", "macros_read"),
 }
 OTHER_TABLES: dict[str, str] = {
     "user": "The settings: whoami gives them.",

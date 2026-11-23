@@ -286,7 +286,7 @@ def meal_of(user, **entry):
 
 
 def test_editing_a_food_entrys_kcal_makes_it_the_persons_number(user):
-    guess = meal_of(user, description="dal", kcal=180, estimated=True)
+    guess = meal_of(user, description="dal", kcal=180, estimated=True, portion="a bowl")
     r = edit(user, "food_entry", guess["ids"][0], kcal=150)
     assert r["changed"] == ["kcal"] and r["after"]["kcal"] == 150
     assert (r["before"]["source"], r["after"]["source"], r["after"]["estimated"]) == ("claude_estimate", "you_said", False)
@@ -301,7 +301,7 @@ def test_editing_a_food_entrys_kcal_makes_it_the_persons_number(user):
 
 
 def test_editing_a_food_entrys_description_or_meal_keeps_its_tag(user):
-    guess = meal_of(user, description="dal", kcal=180, estimated=True, meal="lunch")
+    guess = meal_of(user, description="dal", kcal=180, estimated=True, meal="lunch", portion="a bowl")
     r = edit(user, "food_entry", guess["ids"][0], description="dal tadka", meal=" Dinner ")
     assert r["changed"] == ["meal", "description"] and r["after"]["source"] == "claude_estimate"
     assert r["after"]["meal"] == "dinner" and "note" not in r

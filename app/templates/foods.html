@@ -8,8 +8,10 @@
    row table (table.rows), which stacks below 720 px: the Food cell (td.lead) holds the name and
    spans the row, each figure is a td.num that shows its data-label above it. Grams sit in their own column after
    Times logged, a food with none leaving its cell empty (not shown when stacked), and with no grams on any food the
-   column is not drawn. Edit and Delete each sit in a cell of their own, with no label. No saved foods: a dashed
-   card, and the fold-out open. #}
+   column is not drawn. Protein, carbs and fat a serving follow the same way: a column each, drawn when any food holds
+   one, a cell empty when its food has none, never 0 g (contract macros-and-asking.md). A saved meal lists its foods
+   under its name, and its Edit cell is empty: a meal is changed through the assistant. Edit and Delete each sit in a
+   cell of their own, with no label. No saved foods: a dashed card, and the fold-out open. #}
 <div class="page-head">
   <h1>Foods</h1>
   <p class="lede">Foods you save are logged by name and amount: Spotter works out the kcal. Saving one by talking to your assistant works too.</p>
@@ -27,10 +29,10 @@
   <h2 id="saved-foods-title">Saved foods</h2>
   <div class="table-wrap">
     <table class="rows" aria-labelledby="saved-foods-title">
-      <thead><tr><th scope="col">Food</th><th scope="col">Serving</th><th scope="col" class="num">kcal</th><th scope="col" class="num">Times logged</th>{% if weighed %}<th scope="col" class="num">Grams (g)</th>{% endif %}<th scope="col"><span class="sr">Edit</span></th><th scope="col"><span class="sr">Delete</span></th></tr></thead>
+      <thead><tr><th scope="col">Food</th><th scope="col">Serving</th><th scope="col" class="num">kcal</th><th scope="col" class="num">Times logged</th>{% if weighed %}<th scope="col" class="num">Grams (g)</th>{% endif %}{% for column, label in macro_columns %}<th scope="col" class="num">{{ label }}</th>{% endfor %}<th scope="col"><span class="sr">Edit</span></th><th scope="col"><span class="sr">Delete</span></th></tr></thead>
       <tbody>
         {% for f in foods %}
-        <tr><td class="lead">{{ f.name }}</td><td data-label="Serving">{{ f.serving_label }}</td><td class="num" data-label="kcal">{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td><td class="num" data-label="Times logged">{{ f.times_logged|show("count") }}</td>{% if weighed %}<td class="num" data-label="Grams (g)">{% if f.grams_per_serving is not none %}{{ f.grams_per_serving|show("grams", unit=False) }}{% endif %}</td>{% endif %}<td><a class="action" href="/foods/{{ f.id }}/edit">Edit</a></td><td><form method="post" action="/foods/{{ f.id }}/delete" class="inline">
+        <tr><td class="lead">{{ f.name }}{% if is_meal(f) %}<ul class="meal-foods" aria-label="Foods in {{ f.name }}">{% for item in f["items"] %}<li>{{ meal_item_words(item) }}</li>{% endfor %}</ul>{% endif %}</td><td data-label="Serving">{{ f.serving_label }}</td><td class="num" data-label="kcal">{{ f.kcal_per_serving|show("kcal_per_serving", unit=False) }}</td><td class="num" data-label="Times logged">{{ f.times_logged|show("count") }}</td>{% if weighed %}<td class="num" data-label="Grams (g)">{% if f.grams_per_serving is not none %}{{ f.grams_per_serving|show("grams", unit=False) }}{% endif %}</td>{% endif %}{% for column, label in macro_columns %}<td class="num" data-label="{{ label }}">{% if f[column] is not none %}{{ f[column]|show("grams", unit=False) }}{% endif %}</td>{% endfor %}<td>{% if not is_meal(f) %}<a class="action" href="/foods/{{ f.id }}/edit">Edit</a>{% endif %}</td><td><form method="post" action="/foods/{{ f.id }}/delete" class="inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button class="link">Delete</button>
           <input type="hidden" name="key" value="{{ form_key() }}">

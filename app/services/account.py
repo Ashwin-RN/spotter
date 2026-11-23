@@ -14,11 +14,12 @@ whoami(user_id, offered=())
     nothing records that the note was given or a step skipped.
 
 update_settings(user_id, data, by)
-    Change the person's own settings (SETTABLE): time_zone; calorie_target_kcal (800 to 10,000),
-    target_sessions_per_week (0 to 14) and target_cardio_minutes_per_week (0 to 3,000), whole numbers,
-    null to clear; add_back_exercise_kcal, true or false; weight_unit (kg or lb) and distance_unit (km or mi),
-    case and outer spaces forgiven, which change how texts show numbers and no stored number (contract
-    units.md). Saving either unit, kg and km too, ends units_note. The summary names each change.
+    Change the person's own settings (SETTABLE): time_zone; calorie_target_kcal (800 to 10,000), the daily goals
+    protein_target_g and carbs_target_g (1 to 2,500 g) and fat_target_g (1 to 1,111 g) (contract
+    macros-and-asking.md, decision 2 A), target_sessions_per_week (0 to 14) and target_cardio_minutes_per_week
+    (0 to 3,000), whole numbers, null to clear; add_back_exercise_kcal, true or false; weight_unit (kg or lb) and
+    distance_unit (km or mi), case and outer spaces forgiven, which change how texts show numbers and no stored
+    number (contract units.md). Saving either unit, kg and km too, ends units_note. The summary names each change.
     claude_can, what Claude may do, is never set here, whoever
     calls: only the person changes it, on the Settings page, through set_claude_can.
 
@@ -103,6 +104,8 @@ TIME_ZONE_MAX = 64  # the column's length
 TIME_ZONE_FIX = ("Use an IANA name such as Asia/Kolkata, worked out from the city the person is in. An "
                  "abbreviation or an offset is not enough, because it does not say when the clocks change.")
 NEVER_SETTABLE = {"claude_can": "what Claude may do"}
+# The daily goals in grams beside calorie_target_kcal (macros-and-asking.md, decision 2 A), and each one's word.
+MACRO_TARGETS = {"protein_target_g": "Protein", "carbs_target_g": "Carbs", "fat_target_g": "Fat"}
 
 
 def setup_steps(offered=()) -> tuple[str, ...]:
@@ -126,6 +129,7 @@ def whoami(user_id: int, offered=()) -> dict:
             "today": users.today_for(user).isoformat(),
             "targets": {
                 "calorie_target_kcal": user.calorie_target_kcal,
+                **{field: getattr(user, field) for field in MACRO_TARGETS},
                 "target_sessions_per_week": user.target_sessions_per_week,
                 "target_cardio_minutes_per_week": user.target_cardio_minutes_per_week,
             },
@@ -244,10 +248,17 @@ def _unit(field: str):
     return check
 
 
+def _goal_said(word: str):
+    """A daily goal's change in words: "Protein goal set to 150 g a day", or "Protein goal cleared"."""
+    return lambda v: (f"{word} goal set to {formatting.show(v, 'grams')} a day" if v is not None
+                      else f"{word} goal cleared")
+
+
 # What update_settings can set: field -> its check, which returns (stored value, error).
 SETTABLE = {
     "time_zone": _time_zone,
     "calorie_target_kcal": _target("calorie_target_kcal"),
+    **{field: _target(field) for field in MACRO_TARGETS},
     "target_sessions_per_week": _target("target_sessions_per_week"),
     "target_cardio_minutes_per_week": _target("target_cardio_minutes_per_week"),
     "add_back_exercise_kcal": _switch,
@@ -258,6 +269,7 @@ SAID = {
     "time_zone": lambda v: f"Time zone set to {v}",
     "calorie_target_kcal": lambda v: (f"Calorie target set to {formatting.show(v, 'kcal')} a day" if v is not None
                                       else "Calorie target cleared"),
+    **{field: _goal_said(word) for field, word in MACRO_TARGETS.items()},
     "target_sessions_per_week": lambda v: (f"Weekly sessions target set to {formatting.show(v, 'count')}"
                                            if v is not None else "Weekly sessions target cleared"),
     "target_cardio_minutes_per_week": lambda v: (

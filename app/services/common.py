@@ -485,6 +485,10 @@ def row_dict(row, hidden=HIDDEN_COLUMNS) -> dict:
 
 VERSIONS_KEPT = 10  # the newest versions kept for one entry
 NOT_KEPT = ("id", "user_id", "created_at", "deleted_at")  # the columns a version leaves out
+# The columns 0015 added (contract macros-and-asking.md). A version kept before it holds none of them: put back, each
+# is null, as the entry had none then.
+ADDED_IN_0015 = {"food_entry": ("protein_g", "carbs_g", "fat_g", "macros_estimated", "portion"),
+                 "saved_food": ("protein_g_per_serving", "carbs_g_per_serving", "fat_g_per_serving", "items")}
 
 
 def version_of(row) -> dict:
@@ -546,7 +550,8 @@ def put_back(s: Session, row, values: dict) -> None:
     """The row takes a version's values back (read_version): every column the version holds, and a lift session
     its sets, which are left as they are when the version's are the row's own. A version's set of four items, from
     before time and distance, reads as six (version_sets). updated_at is now. Never deleted_at: a version does not
-    hold it."""
+    hold it. A 0015 column a version does not hold (ADDED_IN_0015: one kept before it) is put back as null."""
+    values = {**dict.fromkeys(ADDED_IN_0015.get(row.__tablename__, ())), **values}
     for column in row.__table__.columns:
         if column.name in values and column.name != "updated_at":
             setattr(row, column.key, values[column.name])

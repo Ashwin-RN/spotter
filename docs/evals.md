@@ -311,7 +311,7 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
   judge reads their `kind` as its table word, so a case that pins `lift_session` passes `lifts` as well.
 - `guide` is no data read: its numbers ("1 to 60") are words on how to log, never figures of the person's.
   `read_any` and `quotes_spotter` never read it.
-- So every case keeps its words: 266 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
+- So every case keeps its words: 277 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
   asks for no write, so a refused `log` call whose kind resolves to none fails those too.
 - `tests/test_golden_cases.py` plays held runs of `stated_number`, `lb_weigh_in`, `waist_in_inches`,
   `hold_plank`, `miles_run`, `pick_lift_answer` and `hand_check_family` again with each call of the five sent as
@@ -346,7 +346,10 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
   anything else, `read` among them, stops the load.
 - `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
   `log_measurement`, `log_lifts`, `log_cardio`, `set_goal`, `import_entries`, `save_routine`, `update_settings`,
-  each with `data`, and `four_weeks` and `sixteen_weeks`, which take no data.
+  `log_food`, each with `data`, and `four_weeks` and `sixteen_weeks`, which take no data.
+  - `log_food` logs a day's food as the web logs it, macros and all. It returns ids, not one id, so it has no
+    `as`. A seeded estimate needs its `portion`, as any estimate does. A saved meal is a `save_food` seed with
+    `items`, each naming a food seeded before it.
   - `update_settings` sets the person's settings, such as `weight_unit` lb, called as the web calls it. It
     returns no id, so it has no `as`.
   - `four_weeks` (`evals/four_weeks.py`) is four weeks of everything and three goals in one call, on an empty account. It has no `as`.
@@ -359,6 +362,9 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
   - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`,
     `lift_set`, `goal`, `feedback`, `routine`.
   - A `lift_session` row carries `set_count`: how many sets it holds.
+  - A `saved_food` row carries `item_count`: how many foods its `items` hold, 0 for a plain food. A `food_entry`
+    row holds `protein_g`, `carbs_g`, `fat_g`, `macros_estimated` and `portion`, each null when not logged, so
+    `{"where": {"protein_g": null}, "count": 0}` says every entry holds protein.
   - A `lift_set` row is one set of the person's: `exercise` (the lift's name as Spotter wrote it), `weight_kg`,
     `reps`, `time_s`, `distance_m`, `set_number`, `session_id`, and its session's `date` and `deleted_at`. A set of
     a deleted session reads as deleted.
@@ -440,7 +446,7 @@ The vocabulary of `expect` is in `evals/judge.py`'s notes. In short:
 | Case | Says | Passes when |
 |---|---|---|
 | `stated_number` | Lunch: dal, 180 kcal | `log_food` with kcal 180, never `estimated: true`; the row is `you_said` |
-| `guessed_number` | Lunch: two rotis and dal | `log_food` with `estimated: true` on every entry; every row `claude_estimate` |
+| `guessed_number` | Lunch: two rotis and dal | Since macros-and-asking.md: no `log` or `log_food` call succeeds, and no other write is called; a food log refused for its portion may come first; the reply asks and says dal; no food entry |
 | `saved_food` | Two rotis (roti saved: 120 kcal) | `log_food` by the saved food's id, servings 2, no kcal; one row, `saved_food`, 240 |
 | `meal_not_asked` | Had a banana, 90 kcal | `log_food` with no meal; the reply does not ask which meal |
 | `yesterday` | Weighed 70 kg yesterday | `log_bodyweight` dated yesterday in the person's zone |
@@ -857,7 +863,7 @@ guide cases below.
 | Proves | Does not prove |
 |---|---|
 | The assistant sends the person's word, or a name, and the lift Spotter writes is the one the case wants, by the rows | Which word was sent: the rows are judged, not the call's name |
-| A question Spotter asks (`pick_lift`, `hand_check`, a reps refusal) reaches the reply | That it asks once over a longer conversation: `pick_lift_answer` has two turns, every other case one |
+| A question Spotter asks (`pick_lift`, `hand_check`, a reps refusal) reaches the reply | That it asks once over a longer conversation: `pick_lift_answer` has two turns, every other case of these one |
 | `pick_lift_answer`: Spotter asks in the first turn and nothing is written there; the answer is sent with `exact` true in the second, which Spotter does not ask again, and logs Back Squat | That the second turn made no other refused call: only the case's own `pick_lift` is read by turn. On Codex and Gemini it fails unrun |
 | `import_exact_smith`: the assistant sends the export's own name. The import takes a name as written (unit tests hold that it lands on Bench Press) | Which lift the preview names: a preview counts sessions and names no lift |
 | `read_plain_word`: a read shows the person both squats, and the reply names both | That `get_progress` took the plain word: any read that shows both passes, and no model-read text says `get_progress` takes one |
@@ -900,6 +906,43 @@ Plank 3 × 60 s at 0 kg.
 | `routine_items_logged` | Log my legs day (the seed) | One successful `log_lifts` and one `log_cardio`; `log_cardio` sent Rowing Machine, `minutes` 10, and never the plan's `avg_hr` 140 or `machine_kcal` 120. Today's session `set_count` 7: 4 Back Squat 100 × 5, 3 Plank `time_s` 60 at 0 kg. One cardio entry today, `minutes` 10, no heart rate, no machine kcal |
 | `routine_cardio_changed` | Log my legs day, but I rowed for 15 minutes today, the rower said 180 calories and my heart rate was 145 (the seed) | As above, but `log_cardio` sent `minutes` 15, never 10, with `avg_hr` 145 and `machine_kcal` 180; the cardio entry `minutes` 15, `machine_kcal` 180, `avg_hr` 145 |
 | `routine_resave_keeps_plan` | Add dips, 3 sets of 10, to my legs day (Legs day: Rowing Machine 10 minutes with a heart rate of 140 and 120 machine kcal, Back Squat 4 × 5 at 100) | One successful `save_routine` whose Rowing Machine item carries `avg_hr` 140 and `machine_kcal` 120, with Dip 3 × 10. No log call. It measures a known cost: an item of `get_routines` carries no heart rate or machine kcal field, only its words. A miss goes to the gaps list, and no text is changed for it |
+
+### The macros and asking cases
+
+**Eleven cases follow the four cardio and timed item cases, each `direct` and `core` false: the core stays at
+103, and the file holds 277** (contract `macros-and-asking.md`). They keep the five's names, so a `log` call is judged as its kind's
+function. Each is judged on the record: the rows, the calls that succeeded and the calls made. An ask is no write and
+a question, never the reply's words alone. The read cases list every write in `must_not` and `no_call`, `log`
+among them. The two ask cases, `portion_asked` and `guessed_number`, keep `log` and `log_food` in `may` with
+`ok_calls` 0 for each (the owner's pick of 2026-11-23, "Refused try passes"): a food log that Spotter refuses for its
+missing portion, then the question, passes, and every other write stays in both lists.
+The seeds: a saved Roti (1 roti, 120 kcal, 3 g protein) and Dal (1 bowl, 180 kcal, 9 g protein), the meal Usual lunch
+of 2 rotis and a bowl of dal (420 kcal, 15 g protein), a 150 g protein goal, and today's Chicken salad (450 kcal, 35 g
+protein), Protein shake (180 kcal, 24 g) and Biscuits (150 kcal, no macros).
+
+| Case | Says (seed) | Passes when |
+|---|---|---|
+| `macros_stated` | lunch was a chicken wrap, the label says 520 kcal, 32 g protein, 48 g carbs and 18 g fat | `log_food` sends 520, 32, 48 and 18 with lunch, never `estimated` or `macros_estimated` true. One entry: `you_said`, the four figures, `macros_estimated` false |
+| `macros_estimated` | had 2 boiled eggs for breakfast | `log_food` sends `estimated` true with breakfast, never `macros_estimated` false. One entry: `claude_estimate`, `macros_estimated` true, protein, carbs, fat and a portion each held. The reply says estimate |
+| `macros_saved_food` | had 2 rotis with dinner (Roti) | `log_food` by the Roti's id, servings 2, no kcal and no macro sent. One entry: `saved_food`, 240 kcal, protein 6, carbs and fat null, `macros_estimated` false |
+| `macro_goal_set` | set my protein goal to 150 g a day | One successful `update_settings` with `protein_target_g` 150, its answer naming it changed; no `set_goal`, no goal row |
+| `protein_left_today` | how much protein do I have left today? (the goal, the salad and the shake) | A data read answered; no write; the reply quotes 91, `left_g`, which only `get_log` gives |
+| `protein_not_logged` | how much protein have I had today? (the salad and the biscuits) | A data read answered; no write; the reply quotes 35, says so far, and says no 0 g |
+| `portion_asked` | had some rice for lunch | No `log` or `log_food` call succeeds, and no other write is called; a food log refused for its portion may come first; the reply asks, names the rice and an amount word (how much, bowl, plate and the like); no food entry |
+| `portion_asked_then` | I had some rice at lunch, then "a big bowl" | No write succeeds in the first turn; a `log_food` that succeeds in the second sends `estimated` true with lunch. One entry: `claude_estimate`, lunch, `portion` a big bowl or big bowl, with or without 1, one or of rice |
+| `portion_given` | had a big bowl of dal for lunch (a weigh-in the day before, so `whoami` offers no setup, as in `setup_stays_quiet`) | `log_food` sends `estimated` true with lunch; the reply asks nothing. One entry: `claude_estimate`, lunch, `portion` a big bowl as above, or of dal |
+| `save_meal` | save my usual lunch as a meal: 2 rotis and a bowl of dal (Roti and Dal) | One successful `save_food`; no log. Three saved foods, one of them with 2 items, 420 kcal and 15 g protein a serving; no food entry |
+| `log_saved_meal` | had my usual lunch (Roti, Dal and Usual lunch) | `log_food` by the meal's id, no kcal. One entry: `saved_food`, the meal, servings 1, 420 kcal, protein 15 |
+
+| Proves | Does not prove |
+|---|---|
+| The record holds the macros as the person gave them, each marked, and an estimate holds its portion | That an estimate's figures are near the truth: the case reads that they are held and marked, not their size |
+| An ask writes nothing: no food log succeeds before the question, in one turn or two. A food log refused for its portion may come first in both, so the twins judge alike | That the refused try was refused for the portion: `ok_calls` counts successes only, so a food log refused for any other reason passes too |
+| A portion held is the person's words, by a short list of spellings | A spelling off the list, such as "1 large bowl": the judge matches whole words, so such a run fails and is read by hand |
+| `protein_left_today`: the figure quoted is Spotter's `left_g` | Which read gave it: only `get_log` holds 91 today |
+| `protein_not_logged` and `portion_asked`: the reply's words | Their words beyond so far, 0 g and the amount words: weak until the judge is rebuilt |
+
+No case sends a photo: the runner sends no image.
 
 ## What the evals prove
 

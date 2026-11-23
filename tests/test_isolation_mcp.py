@@ -34,6 +34,7 @@ ID_CALLS = [
     *[("delete_entry", "entry_id", kind, {"kind": kind}) for kind in ENTRY_KINDS],
     *[("restore_entry", "entry_id", kind, {"kind": kind}) for kind in ENTRY_KINDS],
     ("log_food", "saved_food_id", "saved_food", {}),  # inside an entry: see food_call below
+    ("save_food", "saved_food_id", "saved_food", {}),  # inside a meal's item (macros-and-asking.md): see meal_call
 ]
 
 
@@ -111,6 +112,13 @@ def food_call(argument: str, theirs_id: int) -> dict:
     return {"entries": [{"description": "A's roti", argument: theirs_id, "servings": 1}]}
 
 
+def meal_call(argument: str, theirs_id: int) -> dict:
+    """save_food carries the id inside a meal's item. The second item is A's own number, so the id is all that can be
+    refused."""
+    return {"name": "A's lunch", "items": [{argument: theirs_id, "servings": 1},
+                                           {"description": "A's dal", "kcal": 200}]}
+
+
 def test_a_sees_none_of_bs_data(http, bob):
     t = token(A)
     who = ok(http, t, "whoami")
@@ -147,17 +155,20 @@ def test_bs_id_gets_a_the_same_not_found_as_a_missing_id(http, bob, function, ar
     ids = [bob[kind]] + ([bob["deleted_measurement"]] if function == "restore_entry" and kind == "measurement" else [])
     for theirs_id in ids:
         before = snapshot(bob["account"], kind, theirs_id)
-        if function == "log_food":
-            theirs = failed(http, t, function, food_call(argument, theirs_id))
-            missing = failed(http, t, function, food_call(argument, MISSING_ID))
+        if function in ("log_food", "save_food"):
+            nested = food_call if function == "log_food" else meal_call
+            theirs = failed(http, t, function, nested(argument, theirs_id))
+            missing = failed(http, t, function, nested(argument, MISSING_ID))
         else:
             theirs = failed(http, t, function, {argument: theirs_id, **others})
             missing = failed(http, t, function, {argument: MISSING_ID, **others})
         assert theirs["error"] == "not_found", (function, kind, theirs)
         assert theirs == missing  # word for word: nothing says the id exists
-        told = re.sub(r"Entry \d+: ", "", theirs["message"] + theirs["fix"])  # an entry's place, not an id
+        told = re.sub(r"(?:Entry|Item) \d+: ", "", theirs["message"] + theirs["fix"])  # an entry's place, not an id
         assert not re.search(r"\b" + str(theirs_id) + r"\b", told)
         assert snapshot(bob["account"], kind, theirs_id) == before
+    if function == "save_food":  # nothing of A's was saved either
+        assert ok(http, t, "find_food", {"query": "A's lunch"})["saved"] == []
 
 
 @pytest.mark.parametrize("kind", ENTRY_KINDS)

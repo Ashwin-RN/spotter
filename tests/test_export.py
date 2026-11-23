@@ -46,7 +46,8 @@ def one_of_everything(user_id: int) -> dict:
         {"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60}]}, "claude")["id"]  # one in routines.csv
     ids["food"] = services.log_food(user_id, {"entries": [{"saved_food_id": ids["roti"], "servings": 2},
                                                           {"description": "dal, with \"ghee\"", "kcal": 180,
-                                                           "estimated": True}]}, "claude")["ids"]
+                                                           "estimated": True, "portion": "a bowl"}]},
+                                    "claude")["ids"]
     services.log_cardio(user_id, {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5}, "web")
     services.log_measurement(user_id, {"kind": "waist", "value": 84.5, "date": "2026-11-03"}, "web")
     services.set_goal(user_id, {"kind": "measurement", "measurement_kind": "waist", "target_value": 80,
@@ -55,7 +56,8 @@ def one_of_everything(user_id: int) -> dict:
 
 
 def test_every_table_and_every_file(make_user):
-    user = make_user(email="asha@example.com", name="Asha", time_zone="Asia/Kolkata", calorie_target_kcal=2200)
+    user = make_user(email="asha@example.com", name="Asha", time_zone="Asia/Kolkata", calorie_target_kcal=2200,
+                     protein_target_g=150)  # macros-and-asking.md P3: the daily goals after the calorie target
     ids = one_of_everything(user.id)
     r = services.export_data(user.id)
     assert list(r["files"]) == FILES and list(r["rows"]) == FILES[:-1]
@@ -66,7 +68,8 @@ def test_every_table_and_every_file(make_user):
     account = table(r["files"]["account.csv"])
     assert account == [{"account_id": str(user.id), "email": "asha@example.com", "name": "Asha",
                         "time_zone": "Asia/Kolkata", "weight_unit": "", "distance_unit": "",  # units.md R19
-                        "calorie_target_kcal": "2200", "target_sessions_per_week": "",
+                        "calorie_target_kcal": "2200", "protein_target_g": "150", "carbs_target_g": "",
+                        "fat_target_g": "", "target_sessions_per_week": "",
                         "target_cardio_minutes_per_week": "", "add_back_exercise_kcal": "false", "claude_can": "log_delete",
                         "created_at": account[0]["created_at"]}]
     sets = table(r["files"]["lift_sets.csv"])
@@ -177,7 +180,7 @@ def test_no_account():
 
 # ---------------------------------------------------------------- T6: the files a spreadsheet opens
 
-UNIT_PARTS = {"kg", "kcal", "km", "kmh", "pct", "bpm", "minutes", "grams"}
+UNIT_PARTS = {"kg", "kcal", "km", "kmh", "pct", "bpm", "minutes", "grams", "g"}  # g: the daily goals (P3)
 # Number columns with no unit to name: ids, counts, and a value whose unit is in its row's unit column.
 UNITLESS = {"id", "account_id", "session_id", "entry_id", "saved_food_id", "usda_fdc_id", "set_number", "reps", "servings",
             "target_sessions_per_week", "value", "start_value", "target_value"}
@@ -211,7 +214,8 @@ def test_every_csv_is_utf8_with_a_byte_order_mark_and_readme_is_plain(make_user)
 
 
 def test_headers_are_snake_case_with_a_unit_on_every_fixed_unit_number(make_user):
-    user = make_user(calorie_target_kcal=2200, target_sessions_per_week=3, target_cardio_minutes_per_week=150)
+    user = make_user(calorie_target_kcal=2200, target_sessions_per_week=3, target_cardio_minutes_per_week=150,
+                     protein_target_g=150, carbs_target_g=250, fat_target_g=70)
     one_of_everything(user.id)
     hostile(user.id)
     four_weeks(make_user().id)   # another person's: no bearing on this export
@@ -230,7 +234,8 @@ def test_headers_are_snake_case_with_a_unit_on_every_fixed_unit_number(make_user
             checked.add(column)
             assert column in UNITLESS or set(column.split("_")) & UNIT_PARTS, (name, column)
     assert {"weight_kg", "kg", "kcal", "grams_per_serving", "minutes", "distance_km", "speed_kmh", "avg_hr_bpm",
-            "estimated_kcal", "estimate_weight_kg", "calorie_target_kcal", "target_cardio_minutes_per_week"} <= checked
+            "estimated_kcal", "estimate_weight_kg", "calorie_target_kcal", "target_cardio_minutes_per_week",
+            "protein_target_g", "carbs_target_g", "fat_target_g"} <= checked
     assert "avg_hr" not in table(files["cardio_entries.csv"])[0]
 
 

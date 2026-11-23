@@ -586,8 +586,9 @@ C5B_CASES = ["routine_items_saved", "routine_items_logged", "routine_cardio_chan
 def test_the_four_cases_follow_c5a_s_and_are_usable():
     cases = judge.load_cases()
     ids = [c["id"] for c in cases]
-    assert ids[-6:] == ["routine_same_as_last_time", "routine_last_time_read", *C5B_CASES]
-    for case in cases[-len(C5B_CASES):]:
+    at = ids.index("routine_same_as_last_time")  # C5a's two, then these four; macros-and-asking.md's 11 follow
+    assert ids[at:at + 6] == ["routine_same_as_last_time", "routine_last_time_read", *C5B_CASES]
+    for case in cases[at + 2:at + 6]:
         assert judge.case_problems(case) == [] and (case["kind"], case["core"]) == ("direct", False), case["id"]
     by_id = {c["id"]: c for c in cases}
     for case_id in C5B_CASES[1:3]:

@@ -36,15 +36,18 @@ def stored(user_id):
 # ---------------------------------------------------------------- the tag is the server's
 
 def test_a_stated_number_is_you_said_and_a_guess_is_claude_estimate(user):
-    r = eat(user, {"description": "dal", "kcal": 180}, {"description": "rice", "kcal": 200, "estimated": True})
+    r = eat(user, {"description": "dal", "kcal": 180},
+            {"description": "rice", "kcal": 200, "estimated": True, "portion": "a bowl"})
     assert [e["source"] for e in r["entries"]] == ["you_said", "claude_estimate"]
     assert [e["estimated"] for e in r["entries"]] == [False, True]
     assert r["kind"] == "food_entry" and r["ids"] == [e["id"] for e in r["entries"]] and r["duplicate"] is False
     assert set(r) == {"kind", "ids", "duplicate", "entries", "day", "summary", "links", "note"}
     assert set(r["entries"][0]) == {"id", "date", "meal", "description", "kcal", "source", "estimated",
-                                    "saved_food_id", "servings", "usda_fdc_id", "grams"}
+                                    "saved_food_id", "servings", "usda_fdc_id", "grams", "protein_g", "carbs_g",
+                                    "fat_g", "macros_estimated", "portion"}
     assert r["note"].startswith("1 entry is Claude's estimate:")
-    two = eat(user, {"description": "a", "kcal": 1, "estimated": True}, {"description": "b", "kcal": 2, "estimated": True})
+    two = eat(user, {"description": "a", "kcal": 1, "estimated": True, "portion": "1"},
+              {"description": "b", "kcal": 2, "estimated": True, "portion": "1"})
     assert two["note"].startswith("2 entries are Claude's estimates: the person can confirm or correct them")
 
 
@@ -84,7 +87,7 @@ def test_every_combination_of_number_and_id(user):
         for estimated in (None, False, True):
             for sid in (None, saved["id"]):
                 for fdc in (None, 999):
-                    entry = {"description": "x"}
+                    entry = {"description": "x", "portion": "1"}  # an estimate needs one; any entry takes it
                     for key, value in (("kcal", kcal), ("estimated", estimated), ("saved_food_id", sid),
                                        ("usda_fdc_id", fdc)):
                         if value is not None:
@@ -181,7 +184,8 @@ def test_a_set_older_than_ten_minutes_is_logged_again(user):
 
 def test_the_day_total_target_remaining_and_estimated_share(make_user):
     person = make_user(calorie_target_kcal=2000)
-    r = eat(person, {"description": "dal", "kcal": 300}, {"description": "rice", "kcal": 100, "estimated": True})
+    r = eat(person, {"description": "dal", "kcal": 300},
+            {"description": "rice", "kcal": 100, "estimated": True, "portion": "a bowl"})
     assert r["day"] == {"total_kcal": 400, "estimated_kcal": 100, "estimated_share_pct": 25, "target_kcal": 2000,
                         "remaining_kcal": 1600, "net_kcal": None}
     assert "1,600 kcal left of the 2,000 kcal target" in r["summary"]
@@ -207,7 +211,8 @@ def test_net_appears_only_with_add_back_on(make_user):
 
 def test_log_food_and_get_log_use_the_same_numbers(make_user):
     person = make_user(calorie_target_kcal=1800)
-    r = eat(person, {"description": "dal", "kcal": 300, "estimated": True}, {"description": "rice", "kcal": 100})
+    r = eat(person, {"description": "dal", "kcal": 300, "estimated": True, "portion": "a bowl"},
+            {"description": "rice", "kcal": 100})
     day = services.get_log(person.id)["days"][0]["food"]
     assert {k: day[k] for k in r["day"]} == r["day"]
     assert [e["id"] for e in day["meals"][r["entries"][0]["meal"]]] == r["ids"]
@@ -256,7 +261,7 @@ def test_find_food_saved_by_times_logged_then_name_and_recent_by_frequency(user)
     eat(user, {"saved_food_id": b["id"]})
     for kcal in (200, 210):
         eat(user, {"description": "Rice with dal", "kcal": kcal}, allow_repeat=True)
-    eat(user, {"description": "fried rice", "kcal": 400, "estimated": True})
+    eat(user, {"description": "fried rice", "kcal": 400, "estimated": True, "portion": "a plate"})
     r = services.find_food(user.id, "RICE")
     assert [f["name"] for f in r["saved"]] == ["Rice bowl", "Brown rice", "Rice cake"]
     assert r["saved"][0]["times_logged"] == 2 and r["saved"][2]["times_logged"] == 0
@@ -383,7 +388,8 @@ def test_list_saved_foods_agrees_with_find_food(user):
     assert [f["name"] for f in listed["foods"]] == ["dal bowl", "Roti", "Oats"]   # live by name, then deleted
     by_name = {f["name"]: f for f in listed["foods"]}
     assert by_name["Roti"] == {"id": r["id"], "name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
-                               "grams_per_serving": None, "times_logged": 2,
+                               "grams_per_serving": None, "protein_g_per_serving": None, "carbs_g_per_serving": None,
+                               "fat_g_per_serving": None, "items": None, "times_logged": 2,
                                "last_logged": users.today_for(user).isoformat(),
                                "deleted_at": None}
     assert by_name["dal bowl"]["times_logged"] == 0 and by_name["dal bowl"]["last_logged"] is None
@@ -401,8 +407,9 @@ def test_list_saved_foods_on_the_four_weeks(user):
     four_weeks(user.id)
     foods = services.list_saved_foods(user.id)["foods"]
     assert len(foods) == 4 and all(f["times_logged"] > 0 for f in foods)
-    assert all(set(f) == {"id", "name", "serving_label", "kcal_per_serving", "grams_per_serving", "times_logged",
-                          "last_logged", "deleted_at"} for f in foods)
+    assert all(set(f) == {"id", "name", "serving_label", "kcal_per_serving", "grams_per_serving",
+                          "protein_g_per_serving", "carbs_g_per_serving", "fat_g_per_serving", "items",
+                          "times_logged", "last_logged", "deleted_at"} for f in foods)
 
 
 # ---------------------------------------------------------------- stage 5: the read throttle (decision 13)

@@ -131,8 +131,9 @@
    glance block goes between the Today card and col-main, on today's page only. #}
 <div class="col-main">
 {# The Food card: the day's entries by meal, the totals under them, then the Add food fold-out. An entry's
-   name, its kcal with how much was eaten, and a differing description each take a line. Its source tag has
-   its own slot, apart from every figure. #}
+   name, its kcal with how much was eaten and its portion in the person's words, its macros, and a differing
+   description each take a line. A macro not logged says so, never 0 g (web.macro_line). Its source tag has
+   its own slot, apart from every figure. Confirm shows on an estimate of the kcal or of the macros. #}
 <section class="card" aria-labelledby="food-title">
   <div class="card-head">
     <h2 id="food-title">Food</h2>
@@ -148,15 +149,17 @@
       {% for f in entries %}
       {% set served = serving_words(f) %}
       {% set note = food_note(f) %}
+      {% set macros = macro_line(f, day_holds_macros) %}
       <li class="entry-line">
         {# Whitespace between the lines, so text read without the stylesheet keeps the name apart from its kcal. #}
         <div class="entry-main">
           <span class="entry-name">{{ food_name(f) }}</span>
-          <span class="entry-figures">{{ f.kcal|show("kcal") }}{% if served %}, {{ served }}{% endif %}</span>
+          <span class="entry-figures">{{ f.kcal|show("kcal") }}{% if served %}, {{ served }}{% endif %}{% if f.portion %}, {{ f.portion }}{% endif %}</span>
+          {% if macros %}<span class="entry-macros">{{ macros }}</span>{% endif %}
           {% if note %}<span class="entry-note">{{ note }}</span>{% endif %}
         </div>
         <span class="entry-tags"><span class="tag tag-{{ f.source }}">{{ source_words.get(f.source, f.source) }}</span></span>
-        {{ parts.entry_actions("food_entry", f.id, csrf_token, confirm=f.source == "claude_estimate") }}
+        {{ parts.entry_actions("food_entry", f.id, csrf_token, confirm=confirmable(f)) }}
       </li>
       {% endfor %}
     </ul>
@@ -175,6 +178,9 @@
     <dt>Target</dt><dd>{{ food.target_kcal|show("kcal") }}</dd>
     <dt>Left</dt><dd>{{ food.remaining_kcal|show("kcal_left") }}</dd>
     {% endif %}
+    {% for term, value in macro_rows %}
+    <dt>{{ term }}</dt><dd>{{ value }}</dd>
+    {% endfor %}
     {% if food.net_kcal is not none %}
     <dt>Net (food minus cardio)</dt><dd>{{ food.net_kcal|show("net_kcal") }}</dd>
     {% endif %}
@@ -189,13 +195,20 @@
   {% call parts.foldout("add-food", "Add food", errors or "food" in adding) %}
   <form method="post" action="/day/{{ on.isoformat() }}/food#add-food">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    {% for field, text in errors.items() if field not in ("description", "kcal", "meal") %}
+    {% for field, text in errors.items() if field not in ("description", "kcal", "meal", "portion", "protein_g", "carbs_g", "fat_g") %}
     <div class="error"><p>{{ text }}</p></div>
     {% endfor %}
     {{ parts.field("food-description", "description", "Food", errors.get("description"), kept.get("description"), required=true, maxlength=200) }}
     <div class="field-row">
       {{ parts.field("food-kcal", "kcal", "Calories (kcal)", errors.get("kcal"), kept.get("kcal"), inputmode="numeric", required=true) }}
       {{ parts.field("food-meal", "meal", "Meal", errors.get("meal"), kept.get("meal"), choices=meal_choices, empty="By the clock") }}
+    </div>
+    {{ parts.field("food-portion", "portion", "How much you had", errors.get("portion"), kept.get("portion"), maxlength=portion_limit, hint="Optional, such as a big bowl") }}
+    {# Protein, carbs and fat in grams, each optional: what is typed here is the person's own number. #}
+    <div class="field-row">
+      {{ parts.field("food-protein_g", "protein_g", "Protein (g)", errors.get("protein_g"), kept.get("protein_g"), inputmode="decimal") }}
+      {{ parts.field("food-carbs_g", "carbs_g", "Carbs (g)", errors.get("carbs_g"), kept.get("carbs_g"), inputmode="decimal") }}
+      {{ parts.field("food-fat_g", "fat_g", "Fat (g)", errors.get("fat_g"), kept.get("fat_g"), inputmode="decimal") }}
     </div>
     <div class="form-actions"><button class="primary">Save food</button></div>
     <input type="hidden" name="key" value="{{ form_key() }}">

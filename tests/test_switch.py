@@ -236,7 +236,7 @@ def test_every_other_write_that_changes_an_entry_moves_its_code(make_user):
     assert services.restore_entry(account, "bodyweight", weigh_in)["replaced"][0]["id"] == live_one  # set aside
     with db.session_scope() as s:
         assert entries.confirm_code(account, "bodyweight", s.get(models.Bodyweight, live_one)) != before
-    estimate = services.log_food(account, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True}]},
+    estimate = services.log_food(account, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True, "portion": "1"}]},
                                  "claude")["ids"][0]
     older("food_entry", estimate)
     before = code_of(account, "food_entry", estimate)
@@ -510,7 +510,7 @@ def test_0009_turns_every_account_to_log_delete_moves_no_updated_at_and_comes_do
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0014"  # exercise list
+    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0015"  # macros
 
 
 def test_0009_s_statement_is_built_so_postgres_gets_user_quoted(monkeypatch):

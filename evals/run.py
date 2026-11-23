@@ -400,7 +400,8 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
     """The person's rows, deleted ones too (judge_db tells them apart by deleted_at), in every table a
     case can check, from the running settings' database. Dates and times come back as ISO strings. A
     lift_session row also carries set_count: how many lift_set rows it holds (0 for none), from one counted
-    query over all of the person's sessions. A routine row carries lift_count: how many lifts its lifts JSON holds.
+    query over all of the person's sessions. A routine row carries lift_count: how many lifts its lifts JSON holds,
+    and a saved_food row item_count: how many foods its items JSON holds, 0 for a plain food (macros-and-asking.md).
     lift_set, which has no user_id of its own, is every set of the person's sessions, one row a set (contract
     exercise-list.md, C4g): its id, session_id, set_number, exercise (the lift's name), weight_kg, reps, time_s and
     distance_m, with its session's date and deleted_at, so a set of a deleted session reads as deleted. A goal row
@@ -435,6 +436,8 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
         row["set_count"] = counted.get(row["id"], 0)
     for row in found["routine"]:
         row["lift_count"] = len(json.loads(row["lifts"]))
+    for row in found["saved_food"]:
+        row["item_count"] = len(json.loads(row["items"])) if row.get("items") else 0
     return found
 
 

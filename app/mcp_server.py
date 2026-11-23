@@ -110,8 +110,8 @@ from app.mcp_schemas import (
     NEAR_MISSES, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn, GetDataResult,
     GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult, GuideResult,
     ImportEntriesResult, ImportRowIn, Key, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult,
-    LogMeasurementResult, LogPartIn, LogSetIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult, OwnerFeedbackResult,
-    ROUTINE_LIFTS, RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
+    LogMeasurementResult, LogPartIn, LogSetIn, MealItemIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult,
+    OwnerFeedbackResult, ROUTINE_LIFTS, RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
     WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
 )
 from app.models import CLAUDE_CAN, User
@@ -410,7 +410,7 @@ class LookupMemo:
 # ---------------------------------------------------------------- a call that does not fit its function
 
 # How an item of a list is named in a refusal, as the services name it: "Set 1", "Entry 2", "Lift 1", "Row 3, set 2".
-ITEM_WORDS = {"sets": "set", "entries": "entry", "lifts": "lift", "rows": "row", "parts": "part"}
+ITEM_WORDS = {"sets": "set", "entries": "entry", "lifts": "lift", "rows": "row", "parts": "part", "items": "item"}
 # An unknown key in an item (decision 2): the services' own words, by the list it was sent in. Each is
 # (what the item is, the fix, NEAR_MISSES' row). The import's rows allow any key: its service refuses one.
 # A list whose items are another model in one function is named by (function, list): log_lifts' sets are LogSetIn
@@ -422,6 +422,7 @@ ITEM_FIELDS = {
     ("log", "parts"): ("a part", f"Use: {', '.join(LogPartIn.model_fields)}.", "part"),
     "entries": ("a food entry", f"Use: {', '.join(food.ENTRY_FIELDS)}. source is decided by the server.", "entry"),
     "lifts": ("a lift", f"Use: {routines.LIFT_FIELDS_TEXT}.", "lift"),
+    "items": ("a meal's item", f"Use: {', '.join(food.ITEM_FIELDS)}.", "item"),  # save_food's (macros-and-asking.md)
 }
 # What each published type takes, in a refusal's words: (message, fix).
 TYPE_WORDS = {
@@ -1121,10 +1122,10 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         description=(
             "Sets the person's time zone, units and targets. The time zone decides what today is for them: give an "
             "IANA name such as Asia/Kolkata or Europe/London, worked out from the city they are in; an "
-            "abbreviation (IST) or an offset (+05:30) is refused. The targets: daily calories, sessions a week, "
-            "cardio minutes a week, and whether cardio calories are added back to the day's food. Send only what "
-            "the person asked to change; a target sent as null is cleared. It cannot change what Claude may do: "
-            "only the person can."
+            "abbreviation (IST) or an offset (+05:30) is refused. The targets: daily calories, daily grams of "
+            "protein, carbs and fat, sessions a week, cardio minutes a week, and whether cardio calories are added "
+            "back to the day's food. Send only what the person asked to change; a target sent as null is cleared. "
+            "It cannot change what Claude may do: only the person can."
         ),
         annotations=SETTING,
     )
@@ -1134,6 +1135,12 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
                         "Not an abbreviation or an offset.")] = None,
         calorie_target_kcal: Annotated[Whole | None, Field(
             description="The daily calorie target, 800 to 10,000. null clears it.")] = not_sent(),
+        protein_target_g: Annotated[Whole | None, Field(
+            description="The daily protein goal in grams, 1 to 2,500. null clears it.")] = not_sent(),
+        carbs_target_g: Annotated[Whole | None, Field(
+            description="The daily carbs goal in grams, 1 to 2,500. null clears it.")] = not_sent(),
+        fat_target_g: Annotated[Whole | None, Field(
+            description="The daily fat goal in grams, 1 to 1,111. null clears it.")] = not_sent(),
         target_sessions_per_week: Annotated[Whole | None, Field(
             description="Training sessions a week the person aims for, 0 to 14. null clears it.")] = not_sent(),
         target_cardio_minutes_per_week: Annotated[Whole | None, Field(
@@ -1151,7 +1158,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
     ) -> Annotated[CallToolResult, UpdateSettingsResult]:
         # A target sent as null is passed on, so the service clears it; one left out is not passed at all.
         data = {**_sent(time_zone=time_zone, weight_unit=weight_unit, distance_unit=distance_unit),
-                **_nullable(calorie_target_kcal=calorie_target_kcal, target_sessions_per_week=target_sessions_per_week,
+                **_nullable(calorie_target_kcal=calorie_target_kcal, protein_target_g=protein_target_g,
+                            carbs_target_g=carbs_target_g, fat_target_g=fat_target_g,
+                            target_sessions_per_week=target_sessions_per_week,
                             target_cardio_minutes_per_week=target_cardio_minutes_per_week,
                             add_back_exercise_kcal=add_back_exercise_kcal)}
         return await wrapper.call("update_settings", UpdateSettingsResult,
@@ -1200,7 +1209,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         description=(
             "Changes one of the person's entries in place, keeping its id. A lift session: its date, notes or "
             "whole set list. A weigh-in: its weight or date. A measurement: its value or date. A food entry: its "
-            "date, meal, description or kcal; a kcal makes it the person's own number, tagged you_said. A cardio "
+            "date, meal, description, kcal, macros or portion; a kcal makes it the person's own number, tagged "
+            "you_said, and macros sent become their own grams. A cardio "
             "entry: its date, activity, minutes, distance, incline, speed, heart rate, machine calories or notes; "
             "its estimate is worked out again. Send only what changes. Returns the entry before and after. "
             "Moving a weigh-in or measurement onto a day that already has one is refused, never silently replaced."
@@ -1225,6 +1235,18 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         description: Annotated[str | None, Field(description="A food entry's new description.")] = None,
         kcal: Annotated[Number | None, Field(
             description="A food entry's calories, as the person stated them. It becomes their own number.")] = None,
+        protein_g: Annotated[Number | None, Field(
+            description="A food entry's protein in grams, as the person stated them. They become their own numbers. "
+                        "null clears it.")] = not_sent(),
+        carbs_g: Annotated[Number | None, Field(
+            description="A food entry's carbs in grams, as the person stated them. They become their own numbers. "
+                        "null clears it.")] = not_sent(),
+        fat_g: Annotated[Number | None, Field(
+            description="A food entry's fat in grams, as the person stated them. They become their own numbers. "
+                        "null clears it.")] = not_sent(),
+        portion: Annotated[str | None, Field(
+            description="A food entry's portion, how much was eaten, in the person's words. null clears it.")]
+            = not_sent(),
         exercise: Annotated[str | None, Field(
             description="A cardio entry's activity, as list_exercises gives it.")] = None,
         minutes: Annotated[Number | None, Field(description="A cardio entry's minutes, 1 to 600.")] = None,
@@ -1252,7 +1274,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
                            kg=kg, lb=lb, value=value, meal=meal, description=description, kcal=kcal, exercise=exercise,
                            minutes=minutes),
                    **_nullable(notes=notes, distance_km=distance_km, distance_mi=distance_mi, incline_pct=incline_pct,
-                               speed_kmh=speed_kmh, speed_mph=speed_mph, avg_hr=avg_hr, machine_kcal=machine_kcal)}
+                               speed_kmh=speed_kmh, speed_mph=speed_mph, avg_hr=avg_hr, machine_kcal=machine_kcal,
+                               protein_g=protein_g, carbs_g=carbs_g, fat_g=fat_g, portion=portion)}
         return await wrapper.call("edit_entry", EditEntryResult,
                                   lambda account: services.edit_entry(account, kind, entry_id, changes, "claude"))
 
@@ -1345,20 +1368,35 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         title="Save a food",
         description=(
             "Saves a food the person eats often, with its serving and calories per serving, so it can be logged "
-            "later by id and an amount. Saving the same name again updates it."
+            "later by id and an amount. Saving the same name again updates it. With items, it saves a meal of "
+            "several foods: Spotter adds up the meal's numbers, and it is logged by its id as one food."
         ),
         annotations=SETTING,
     )
     async def save_food(
         name: Annotated[str, Field(description="The food's name, as the person says it, such as Roti.")],
-        serving_label: Annotated[str, Field(description="What one serving is, such as 1 roti or 1 bowl.")],
-        kcal_per_serving: Annotated[Number, Field(
-            description="Calories in one serving, as the person gave them, 0 to 5,000.")],
+        serving_label: Annotated[str | None, Field(
+            description="What one serving is, such as 1 roti or 1 bowl. Needed but for a meal, which is 1 meal when "
+                        "left out.")] = None,
+        kcal_per_serving: Annotated[Number | None, Field(
+            description="Calories in one serving, as the person gave them, 0 to 5,000. Needed but with items.")] = None,
         grams_per_serving: Annotated[Number | None, Field(description="Grams in one serving, if known.")] = None,
+        protein_g_per_serving: Annotated[Number | None, Field(
+            description="Protein in grams in one serving, as the person gave it, 0 to 1,250. Not with items.")] = None,
+        carbs_g_per_serving: Annotated[Number | None, Field(
+            description="Carbs in grams in one serving, as the person gave them, 0 to 1,250. Not with items.")] = None,
+        fat_g_per_serving: Annotated[Number | None, Field(
+            description="Fat in grams in one serving, as the person gave it, 0 to 555. Not with items.")] = None,
+        items: Annotated[list[MealItemIn] | None, Field(
+            description="A meal's foods, 2 to 30: a saved food by saved_food_id with servings, a USDA food by "
+                        "usda_fdc_id with grams, or the person's own description and kcal, with any macros they gave. "
+                        "No estimate.")] = None,
         key: Key = None,
     ) -> Annotated[CallToolResult, SaveFoodResult]:
         data = _sent(name=name, serving_label=serving_label, kcal_per_serving=kcal_per_serving,
-                     grams_per_serving=grams_per_serving)
+                     grams_per_serving=grams_per_serving, protein_g_per_serving=protein_g_per_serving,
+                     carbs_g_per_serving=carbs_g_per_serving, fat_g_per_serving=fat_g_per_serving,
+                     items=None if items is None else [x.model_dump(exclude_none=True) for x in items])
         return await wrapper.call("save_food", SaveFoodResult,
                                   lambda account: services.save_food(account, data, "claude"))
 

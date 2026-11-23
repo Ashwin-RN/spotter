@@ -365,10 +365,15 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("get_progress", {"exercise": "Back Squat"})  # nothing logged: note
     keep("log_cardio", {"exercise": "Treadmill Walk", "minutes": 30})  # no weigh-in yet: no estimate, a note
     keep("find_food", {"query": "dal"})  # nothing saved or logged; USDA off: usda null and a note
-    estimate = keep("log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True},
-                                             {"description": "Dal", "kcal": 180, "estimated": True}]})  # note
-    keep("log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True},
-                                  {"description": "Dal", "kcal": 180, "estimated": True}]})  # duplicate
+    estimate = keep("log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True, "portion": "2"},
+                                             {"description": "Dal", "kcal": 180, "estimated": True,
+                                              "portion": "a bowl"}]})  # note
+    keep("log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True, "portion": "2"},
+                                  {"description": "Dal", "kcal": 180, "estimated": True,
+                                   "portion": "a bowl"}]})  # duplicate
+    # macros-and-asking.md: an entry with its macros, so the day's macros block is filled, and one without
+    keep("log_food", {"entries": [{"description": "Chicken wrap", "kcal": 520, "protein_g": 32, "carbs_g": 48,
+                                   "fat_g": 18, "macros_estimated": False}, {"description": "Tea", "kcal": 40}]})
     for days_ago, weight in ((21, 100), (14, 102.5), (7, 105)):
         keep("log_lifts", {"sets": squat(weight), "date": (today - timedelta(days=days_ago)).isoformat()})
     sets = squat(110) + [{"exercise": "Bench Press", "weight_kg": 60, "reps": 8}]
@@ -406,6 +411,8 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("restore_entry", {"kind": "measurement", "entry_id": first["id"]})  # swaps: replaced and note
     roti = keep("save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120})  # created
     keep("save_food", {"name": "roti", "serving_label": "1 roti", "kcal_per_serving": 110, "grams_per_serving": 40})
+    keep("save_food", {"name": "Usual lunch", "items": [{"saved_food_id": roti["id"], "servings": 2},
+                                                        {"description": "Dal", "kcal": 180, "protein_g": 9}]})  # a meal
     keep("find_food", {"query": "roti"})  # a saved hit and a recent entry
     keep("update_settings", {"calorie_target_kcal": 2200, "target_cardio_minutes_per_week": 150,
                              "add_back_exercise_kcal": True})  # a target: remaining and net are numbers
@@ -565,14 +572,18 @@ def test_the_arguments_are_typed_parameters(http):
     assert schemas["get_goals"]["properties"]["include_closed"]["type"] == "boolean"
     assert list(schemas["get_progress"]["properties"]) == ["exercise"]
     assert list(schemas["update_settings"]["properties"]) == [
-        "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
-        "add_back_exercise_kcal", "weight_unit", "distance_unit", "key"]
+        "time_zone", "calorie_target_kcal", "protein_target_g", "carbs_target_g", "fat_target_g",
+        "target_sessions_per_week", "target_cardio_minutes_per_week",
+        "add_back_exercise_kcal", "weight_unit", "distance_unit", "key"]  # macros-and-asking.md P3: the daily goals
     assert list(schemas["find_food"]["properties"]) == ["query", "limit"]
     assert list(schemas["log_food"]["properties"]) == ["entries", "date", "allow_repeat", "key"]
     assert list(schemas["log_food"]["$defs"]["FoodEntryIn"]["properties"]) == [
-        "description", "meal", "kcal", "estimated", "saved_food_id", "servings", "usda_fdc_id", "grams"]
+        "description", "meal", "kcal", "estimated", "portion", "protein_g", "carbs_g", "fat_g", "macros_estimated",
+        "saved_food_id", "servings", "usda_fdc_id", "grams"]  # macros-and-asking.md: the five after estimated
     assert list(schemas["save_food"]["properties"]) == ["name", "serving_label", "kcal_per_serving", "grams_per_serving",
-                                                        "key"]
+                                                        "protein_g_per_serving", "carbs_g_per_serving",
+                                                        "fat_g_per_serving", "items", "key"]
+    assert schemas["save_food"]["required"] == ["name"]  # serving_label and kcal_per_serving: a relaxation only
     assert list(schemas["log_cardio"]["properties"]) == [
         "exercise", "minutes", "date", "distance_km", "distance_mi", "incline_pct", "speed_kmh", "speed_mph", "avg_hr",
         "machine_kcal", "notes", "allow_repeat", "key"]
@@ -955,6 +966,7 @@ OPTIONAL_ARGUMENTS = {
                  "start_value": 100.5, "weight_unit": "lb", "goal_id": 7, "status": "open"},
     "get_progress": {"exercise": "Back Squat"},
     "update_settings": {"time_zone": "Asia/Kolkata", "calorie_target_kcal": 2200, "target_sessions_per_week": 4,
+                        "protein_target_g": 150, "carbs_target_g": 250, "fat_target_g": 70,  # macros-and-asking.md
                         "target_cardio_minutes_per_week": 150, "add_back_exercise_kcal": True, "weight_unit": "lb",
                         "distance_unit": "mi"},
     "get_log": {"date": "2026-01-02", "days": 7},
@@ -962,12 +974,15 @@ OPTIONAL_ARGUMENTS = {
     "edit_entry": {"date": "2026-01-02", "notes": "Notes", "sets": squat(105), "kg": 80.5, "lb": 177.5, "value": 84.5,
                    "meal": "lunch", "description": "Dal", "kcal": 150.0, "exercise": "Treadmill Walk", "minutes": 30.0,
                    "distance_km": 3.5, "distance_mi": 2.2, "incline_pct": 2.0, "speed_kmh": 7.0, "speed_mph": 4.3,
-                   "avg_hr": 130, "machine_kcal": 210},
+                   "avg_hr": 130, "machine_kcal": 210, "protein_g": 30.5, "carbs_g": 40.5, "fat_g": 10.5,
+                   "portion": "a bowl"},  # macros-and-asking.md
     "restore_entry": {"undo_edit": True},
     "delete_entry": {"confirm": "0123456789ab"},  # switch decision 7: the second call's code
     "find_food": {"limit": 5},
     "log_food": {"date": "2026-01-02", "allow_repeat": True},
-    "save_food": {"grams_per_serving": 40.0},
+    "save_food": {"serving_label": "1 roti", "kcal_per_serving": 120.0, "grams_per_serving": 40.0,
+                  "protein_g_per_serving": 3.5, "carbs_g_per_serving": 18.5, "fat_g_per_serving": 0.5,
+                  "items": [{"description": "Dal", "kcal": 180.0}, {"saved_food_id": 7, "servings": 2.0}]},
     "log_cardio": {"date": "2026-01-02", "distance_km": 3.5, "distance_mi": 2.2, "incline_pct": 2.0, "speed_kmh": 7.0,
                    "speed_mph": 4.3, "avg_hr": 130, "machine_kcal": 210, "notes": "Easy", "allow_repeat": True},
     "get_trends": {},
@@ -989,7 +1004,7 @@ REQUIRED = {"log": {"kind": "lifts"},
             "delete_entry": {"kind": "bodyweight", "entry_id": 7},
             "find_food": {"query": "banana"},
             "log_food": {"entries": [{"description": "Dal", "kcal": 180.0}]},
-            "save_food": {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120.0},
+            "save_food": {"name": "Roti"},  # macros-and-asking.md: serving_label and kcal_per_serving optional
             "log_cardio": {"exercise": "Treadmill Walk", "minutes": 30.0},
             "import_entries": {"rows": [{"kind": "bodyweight", "date": "2026-01-02", "weight": 180.5},
                                         {"kind": "lift_session", "date": "2026-01-03", "notes": "Old app",
@@ -1265,7 +1280,8 @@ def test_the_permission_switch_cannot_be_set_through_update_settings(http, monke
     schema = {t["name"]: t["inputSchema"] for t in tool_list(http, sign())}["update_settings"]
     assert "claude_can" not in schema["properties"] and set(schema["properties"]) == {
         "time_zone", "calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week",
-        "add_back_exercise_kcal", "weight_unit", "distance_unit", "key"}  # units.md decision 3
+        "add_back_exercise_kcal", "weight_unit", "distance_unit", "key",  # units.md decision 3
+        "protein_target_g", "carbs_target_g", "fat_target_g"}  # macros-and-asking.md P3
     assert not any("claude_can" in t["inputSchema"].get("properties", {}) for t in tool_list(http, sign()))
     # And in practice: an extra claude_can is refused before the service (inputs.md D1: was dropped); the stored
     # switch is unchanged.
@@ -1561,7 +1577,8 @@ def test_a_stated_number_is_you_said_and_a_worked_out_one_is_claude_estimate(htt
     token = sign()
     stated = ok(http, token, "log_food", {"entries": [{"description": "Dal", "kcal": 180}]})
     assert food_tags(stated) == [("you_said", 180, False)] and "note" not in stated
-    guessed = ok(http, token, "log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True}]})
+    guessed = ok(http, token, "log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True,
+                                                        "portion": "2"}]})
     assert food_tags(guessed) == [("claude_estimate", 240, True)]
     assert "estimate" in guessed["note"] and guessed["day"]["estimated_kcal"] == 240
 
@@ -1614,6 +1631,24 @@ def test_can_and_cant_states_the_tags_the_cardio_formula_and_the_food_tables():
         assert words in text, words
 
 
+PHOTO_LINE = ("Spotter never receives a photo. The assistant reads a photo of a meal and sends its foods as words and "
+              "numbers, as estimates with their portions.")
+
+
+def test_can_and_cant_and_the_readme_state_the_macros_the_portion_the_meal_and_the_photo_line():
+    """macros-and-asking.md: food's macros and their mark, the portion asked before an estimate, the saved meal, the three
+    daily goals as settings, and the photo line word for word in both."""
+    text = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
+    readme = " ".join((CAN_AND_CANT.parent.parent / "README.md").read_text(encoding="utf-8").split())
+    assert PHOTO_LINE in text and PHOTO_LINE in readme
+    for words in ("`protein_g`, `carbs_g` and `fat_g`", "never 0 g", "`macros_estimated`",
+                  "left out, they count as Claude's estimate", "An estimate needs `portion`",
+                  "the fix says to ask the person once", "`save_food` with `items` saves a meal of 2 to 30 foods",
+                  "never an estimate", "logged by its id with servings, as one saved food", "`protein_target_g`",
+                  "`carbs_target_g`", "`fat_target_g`", "set with `update_settings`", "`entries_without`"):
+        assert words in text, words
+
+
 def test_a_cardio_estimate_names_the_compendium(http):
     token = sign()
     ok(http, token, "log_bodyweight", {"kg": 80})
@@ -1632,7 +1667,8 @@ def test_the_real_results_include_the_null_cases_and_the_filled_ones(http):
     assert any(r["estimate"] is not None and r["pace"] is not None for r in seen["log_cardio"])
     assert any(r["usda"] is None and r["usda_note"] for r in seen["find_food"])  # no USDA key in the tests
     assert any(r["saved"] for r in seen["find_food"])
-    assert [r["created"] for r in seen["save_food"]] == [True, False]
+    assert [r["created"] for r in seen["save_food"]] == [True, False, True]  # the third a meal
+    assert any(r["food"]["items"] for r in seen["save_food"]) and any(r["day"].get("macros") for r in seen["log_food"])
     assert any("cardio" in r for r in seen["get_progress"])
     trends = seen["get_trends"]
     for block in ("bodyweight", "calories", "maintenance"):

@@ -920,7 +920,7 @@ def test_the_page_after_every_write_is_calm(client):
     write("an edit", f"/entries/bodyweight/{weigh_in}/edit", kg="79", date=today)
     assert write("an unchanged edit", f"/entries/bodyweight/{weigh_in}/edit", kg="79", date=today) \
         .endswith("?saved=unchanged")
-    estimate = services.log_food(user.id, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True}]},
+    estimate = services.log_food(user.id, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True, "portion": "1"}]},
                                  "claude")["ids"][0]
     write("confirm", f"/entries/food_entry/{estimate}/confirm")
     assert write("confirm a number already yours", f"/entries/food_entry/{estimate}/confirm") \
@@ -1057,7 +1057,7 @@ def test_the_card_rules_catch_each_break_on_the_real_card(client):
     """Each rule, on the real Food card: a fold-out sent open with no mark and no error, one with an error sent
     closed, an error tied to nothing, a number input with no inputmode, and an estimate tag in brackets."""
     sign_in(client)
-    services.log_food(only_user().id, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True}]}, "claude")
+    services.log_food(only_user().id, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True, "portion": "1"}]}, "claude")
     today = today_of(only_user()).isoformat()
     day = f"/day/{today}"
     page = client.get(day).text
@@ -1624,7 +1624,7 @@ def test_each_lift_page_keeps_the_card_rule_and_every_built_rule(client, account
         cards = lift_cards(s)
         assert cards in (LIFT_CARDS, LIFT_NOTHING), (address, cards)
         kinds.add(cards == LIFT_CARDS)
-    assert kinds == ({False} if account == "empty" else {True})
+    assert kinds == ({False} if account in ("empty", "macros") else {True})  # neither logs a lift
     assert not findings, "\n".join(findings)
 
 
@@ -2262,3 +2262,106 @@ def test_the_landing_picture_is_the_body_weight_goals_card_on_the_fixed_day(clie
     assert shown[3 + len(charted):] == rows
     assert f"{rows[1]} now against {rows[3]} on the plan line today:".replace(tr.NBSP, " ") in goal["plan_line"]
     assert [t for t in charted if re.fullmatch(r"\w{3} \d{1,2} \w{3}(?: \d{4})?", t)] == [by]
+
+
+# ---------------------------------------------------------------- the food pages at 320 and 375 px (macros P4)
+# Contract macros-and-asking.md, P4's exit check, with no browser: the worst-case sample (test_pages_text's macros
+# account) rendered, and the stylesheet read as tests/test_css.py reads it. A word too long for the narrowest card
+# must sit in an element a rule lets break (overflow-wrap: anywhere); a figure a rule keeps on one line must fit.
+# CHAR_EM is an assumed upper bound on the system font's digit and letter width, in em: not measured in a browser.
+PHONE_WIDTHS = (320, 375)
+CHAR_EM = 0.62
+
+
+def _compound(part: str) -> tuple[str, set[str]]:
+    """A simple selector's tag and classes: "td.lead" is ("td", {"lead"}); pseudo-classes and attributes are left
+    out, so the match is looser than a browser's, never stricter."""
+    part = re.split(r"[:\[]", part, maxsplit=1)[0]
+    tag, *classes = part.split(".")
+    return tag, set(classes)
+
+
+def _matches(node: Node, selector: str) -> bool:
+    """Whether the element matches a descendant selector ("table.rows td.lead"), each part read by _compound."""
+    parts = [_compound(p) for p in selector.replace(">", " ").split()]
+    if not parts:
+        return False
+
+    def fits(n, part):
+        tag, classes = part
+        return (not tag or tag == "*" or n.tag == tag) and classes <= set(n.classes)
+    if not fits(node, parts[-1]):
+        return False
+    rest = parts[:-1]
+    for up in node.ancestors():
+        if rest and fits(up, rest[-1]):
+            rest.pop()
+    return not rest
+
+
+def _set_on(css, node: Node, prop: str, value: str, contexts) -> bool:
+    """Whether a rule in one of these contexts sets prop to value on the element itself."""
+    return any(r.get(prop) == value and any(_matches(node, s) for s in r.selectors)
+               for r in css.rules if r.context in contexts)
+
+
+def _font_px(css, node: Node, contexts) -> float:
+    """The element's font size: the last px size a matching rule or an ancestor's sets, else 16."""
+    for n in (node, *node.ancestors()):
+        sizes = [r.get("font-size") for r in css.rules if r.context in contexts and r.get("font-size")
+                 and r.get("font-size").endswith("px") and any(_matches(n, s) for s in r.selectors)]
+        if sizes:
+            return float(sizes[-1][:-2])
+    return 16.0
+
+
+def test_the_food_pages_fit_320_and_375_px_with_the_worst_case_sample(client):
+    from .test_css import CSS_PATH, STACKED, Sheet  # noqa: PLC0415
+    from .test_pages_text import LONGEST, macros_account  # noqa: PLC0415
+
+    sign_in(client)
+    uid = only_user().id
+    macros_account(uid)
+    today = today_of(only_user()).isoformat()
+    css = Sheet(CSS_PATH.read_text(encoding="utf-8"))
+    root = {d.split(":")[0].strip(): d.split(":")[1].strip() for r in css.find(":root") for d in
+            [f"{p}: {v}" for p, v, _ in r.decls]}
+    gutter, pad = float(root["--gutter"][:-2]), float(root["--pad"][:-2])
+    entry = services.get_log(uid, today, 1)["days"][0]["food"]["meals"]["lunch"][0]
+    plain = next(f for f in services.list_saved_foods(uid)["foods"] if f["name"] == LONGEST["name"])
+    pages = {address: client.get(address) for address in
+             (f"/day/{today}?add=food", "/foods", f"/entries/food_entry/{entry['id']}/edit",
+              f"/foods/{plain['id']}/edit", "/settings")}
+    assert all(r.status_code == 200 for r in pages.values()), {a: r.status_code for a, r in pages.items()}
+    # The sample reaches every limit it was built to: the longest portion and description on the day, the meal's 30
+    # foods on Foods, each macro at its cap.
+    assert LONGEST["portion"] in pages[f"/day/{today}?add=food"].text
+    assert pages["/foods"].text.count('<li>' + LONGEST["description"][:-2]) == web.rules.MEAL_ITEMS[1]
+    phone = ((), (STACKED,))
+    checked = 0
+    for width in PHONE_WIDTHS:
+        card = width - 2 * gutter - 2 * pad  # a card's inside at this width
+        for address, r in pages.items():
+            dom = parse(r.text)
+            # The parts this package draws: on the day page the Food card (div.col-main), elsewhere all of main. The
+            # Today card and the glance above it are not this package's parts.
+            [scope] = dom.find_all("div", "col-main") if address.startswith("/day/") else dom.find_all("main")
+            for node in scope.iter():
+                if node.tag in ("script", "style", "option", "select", "head", "title"):
+                    continue
+                own = "".join(c for c in node.children if isinstance(c, str))
+                size = _font_px(css, node, phone)
+                for word in own.split():
+                    if len(word) * size * CHAR_EM <= card:
+                        continue
+                    checked += 1
+                    assert any(_set_on(css, n, "overflow-wrap", "anywhere", phone)
+                               for n in (node, *node.ancestors())), (width, address, node.tag, node.classes, word[:20])
+                # A figure kept on one line: the day's totals, an entry's tag, a stacked table's number.
+                if own.strip() and any(_set_on(css, n, "white-space", "nowrap", phone)
+                                       for n in (node, *node.ancestors())):
+                    room = (card - 16) / 2 if node.inside("table", "rows") else card
+                    text = tr.squash(node.text())
+                    checked += 1
+                    assert len(text) * size * CHAR_EM <= room, (width, address, node.tag, node.classes, text)
+    assert checked > 50  # the walk read the long words and the kept lines, not nothing

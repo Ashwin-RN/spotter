@@ -1,7 +1,9 @@
-"""USDA FoodData Central: a food's energy per 100 g, looked up by name or by id, and cached.
+"""USDA FoodData Central: a food's energy, protein, carbs and fat per 100 g, looked up by name or by id, and cached.
 
-search(query) -> (results [{fdc_id, description, data_type, kcal_per_100g}], None) or (None, error)
-food(fdc_id)  -> ({fdc_id, description, data_type, kcal_per_100g}, None) or (None, error)
+search(query) -> (results [{fdc_id, description, data_type, kcal_per_100g, protein_g_per_100g, carbs_g_per_100g,
+                  fat_g_per_100g}], None) or (None, error)
+food(fdc_id)  -> ({fdc_id, description, data_type, kcal_per_100g, protein_g_per_100g, carbs_g_per_100g,
+                  fat_g_per_100g}, None) or (None, error)
 
 - Off without USDA_API_KEY (config.usda_api_key): every call is usda_off.
 - The search is a POST to /foods/search, its query, data types and page size in a JSON body and the
@@ -17,9 +19,13 @@ food(fdc_id)  -> ({fdc_id, description, data_type, kcal_per_100g}, None) or (Non
   at the first that fails.
 - Data types: Foundation, SR Legacy and Survey (FNDDS). Energy: nutrient 1008 (Energy, kcal), by its
   id or by its number, 208; a food with no kcal value is left out of a search and is an error by id.
+- The macros (contract macros-and-asking.md, decision 12), each in g, by id or by number: protein 1003 or 203, fat
+  1004 or 204, carbohydrate by difference 1005 or 205, kept at 1 dp. A food with energy but no value for one keeps
+  null for it: never a fallback to another nutrient.
 - Two shared caches, which hold no user id: usda_search (the normalised query -> the fdc ids it found)
-  and usda_food (one row per food). A cached answer is used while it is younger than CACHE_DAYS;
-  an older one is fetched again.
+  and usda_food (one row per food). A cached answer is used while it is younger than CACHE_DAYS and its
+  macros were read (macros_read, set by every store since 0015); an older one, or one cached before 0015, is
+  fetched again.
 - Every failure is usda_unavailable, with a fix pointing at a saved food or the person's own number. Its
   reason is the last try's, one word of REASONS, from the HTTP status or the kind of failure: it goes to
   the call's row (calllog.note, usda=reason) and picks the message (MESSAGES, else "USDA did not
@@ -54,6 +60,10 @@ TIMEOUT_SECONDS = 5
 CACHE_DAYS = 30
 DATA_TYPES = ("Foundation", "SR Legacy", "Survey (FNDDS)")
 ENERGY_ID, ENERGY_NUMBER = 1008, "208"
+# Each macro's column a 100 g, by (nutrient id, nutrient number), unit g.
+MACRO_NUTRIENTS = {"protein_g_per_100g": (1003, "203"), "fat_g_per_100g": (1004, "204"),
+                   "carbs_g_per_100g": (1005, "205")}
+MACRO_COLUMNS = ("protein_g_per_100g", "carbs_g_per_100g", "fat_g_per_100g")
 PAGE_SIZE = 25
 QUERY_MAX = 128   # usda_search.query_key
 DESCRIPTION_MAX = 255
@@ -138,8 +148,9 @@ def _lookup(send, check):
     return (reply, None) if reason is None else (None, reason)
 
 
-def _energy(nutrients) -> float | None:
-    """kcal per 100 g from a food's nutrient list, in either of the two shapes FoodData Central uses."""
+def _nutrient(nutrients, nutrient_id: int, nutrient_number: str, unit_name: str, places: int) -> float | None:
+    """One nutrient's amount per 100 g from a food's nutrient list, in either of the two shapes FoodData Central uses:
+    found by its id or its number, in unit_name. None when the list holds no such value."""
     if not isinstance(nutrients, list):
         return None
     for n in nutrients:
@@ -150,9 +161,14 @@ def _energy(nutrients) -> float | None:
         number = str(inner.get("number", inner.get("nutrientNumber", "")))
         unit = str(inner.get("unitName", "")).casefold()
         value = n.get("amount", n.get("value"))
-        if (nid == ENERGY_ID or number == ENERGY_NUMBER) and unit == "kcal" and isinstance(value, (int, float)):
-            return round(float(value), 2)
+        if (nid == nutrient_id or number == nutrient_number) and unit == unit_name and isinstance(value, (int, float)):
+            return round(float(value), places)
     return None
+
+
+def _energy(nutrients) -> float | None:
+    """kcal per 100 g from a food's nutrient list."""
+    return _nutrient(nutrients, ENERGY_ID, ENERGY_NUMBER, "kcal", 2)
 
 
 def _parsed(item) -> dict | None:
@@ -163,12 +179,17 @@ def _parsed(item) -> dict | None:
     kcal = _energy(item.get("foodNutrients"))
     if not isinstance(fdc_id, int) or isinstance(fdc_id, bool) or data_type not in DATA_TYPES or kcal is None:
         return None
+    macros = {column: _nutrient(item.get("foodNutrients"), nid, number, "g", 1)
+              for column, (nid, number) in MACRO_NUTRIENTS.items()}
     return {"fdc_id": fdc_id, "description": str(item.get("description") or "")[:DESCRIPTION_MAX],
-            "data_type": data_type, "kcal_per_100g": kcal}
+            "data_type": data_type, "kcal_per_100g": kcal, **{column: macros[column] for column in MACRO_COLUMNS}}
 
 
-def _fresh(fetched_at) -> bool:
-    return fetched_at is not None and fetched_at >= db.utcnow() - timedelta(days=CACHE_DAYS)
+def _fresh(row: UsdaFood | UsdaSearch) -> bool:
+    """A cached row young enough to use; a food's also needs its macros read (a row from before 0015 has not)."""
+    if isinstance(row, UsdaFood) and not row.macros_read:
+        return False
+    return row.fetched_at is not None and row.fetched_at >= db.utcnow() - timedelta(days=CACHE_DAYS)
 
 
 def _upsert(s, model, key: str, values: dict) -> None:
@@ -186,7 +207,7 @@ def _cache(found: list[dict], query_key: str | None = None) -> None:
     try:
         with db.session_scope() as s:
             for f in found:
-                _upsert(s, UsdaFood, "fdc_id", {**f, "fetched_at": now})
+                _upsert(s, UsdaFood, "fdc_id", {**f, "fetched_at": now, "macros_read": True})
             if query_key is not None:
                 _upsert(s, UsdaSearch, "query_key", {"query_key": query_key, "fetched_at": now,
                                                      "fdc_ids": json.dumps([f["fdc_id"] for f in found])})
@@ -196,7 +217,7 @@ def _cache(found: list[dict], query_key: str | None = None) -> None:
 
 def _as_dict(row: UsdaFood) -> dict:
     return {"fdc_id": row.fdc_id, "description": row.description, "data_type": row.data_type,
-            "kcal_per_100g": row.kcal_per_100g}
+            "kcal_per_100g": row.kcal_per_100g, **{column: getattr(row, column) for column in MACRO_COLUMNS}}
 
 
 def search(query: str) -> tuple[list[dict] | None, dict | None]:
@@ -206,13 +227,13 @@ def search(query: str) -> tuple[list[dict] | None, dict | None]:
     query_key = normalise(query)
     with db.session_scope() as s:
         cached = s.get(UsdaSearch, query_key)
-        if cached is not None and _fresh(cached.fetched_at):
+        if cached is not None and _fresh(cached):
             try:
                 ids = [int(i) for i in json.loads(cached.fdc_ids)]
             except (ValueError, TypeError):
                 ids = None
             rows = {r.fdc_id: r for r in s.scalars(select(UsdaFood).where(UsdaFood.fdc_id.in_(ids or [])))}
-            if ids is not None and all(i in rows for i in ids):
+            if ids is not None and all(i in rows and rows[i].macros_read for i in ids):
                 return [_as_dict(rows[i]) for i in ids], None
     reply, reason = _lookup(
         lambda: _post("/foods/search", {"query": query_key, "dataType": list(DATA_TYPES), "pageSize": PAGE_SIZE}, key),
@@ -230,7 +251,7 @@ def food(fdc_id: int) -> tuple[dict | None, dict | None]:
         return None, off()
     with db.new_session() as s:
         row = s.get(UsdaFood, fdc_id)
-        if row is not None and _fresh(row.fetched_at):
+        if row is not None and _fresh(row):
             return _as_dict(row), None
 
     def check(reply) -> str | None:

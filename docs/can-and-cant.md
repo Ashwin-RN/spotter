@@ -12,16 +12,19 @@ from it. It knows nothing else.
 - **Body weight:** one weigh-in a day.
 - **Measurements:** nine kinds, each with its own unit: waist, hips, chest, arm and thigh in cm,
   steps, sleep_hours in hours, resting_hr in bpm, and water_ml in ml. One value per kind a day.
-- **Food:** what was eaten, its calories, its meal, and a tag saying who supplied the number.
-- **Saved foods:** foods the person eats often, with a serving and its calories.
+- **Food:** what was eaten, its calories, its protein, carbs and fat in grams when given, how much was
+  eaten, its meal, and a tag saying who supplied the number.
+- **Saved foods:** foods the person eats often, with a serving, its calories and its macros. A saved meal
+  is a saved food made of several foods.
 - **Routines:** workouts the person does often, saved by name, in the order done: each lift with its sets
   and reps, a hold's time, a carry's distance, and cardio with its minutes. A weight, distance, incline,
   speed, heart rate or machine calories when the person gave one.
 - **Cardio:** the activity, minutes, and distance, incline, speed, heart rate and the machine's
   calories when given.
 - **Goals:** a target to reach by a date, of four kinds (below).
-- **Targets:** calories a day, lift sessions a week and cardio minutes a week. A weekly amount is a
-  target set with `update_settings`, not a goal: it has no start and no date.
+- **Targets:** calories a day, protein, carbs and fat in grams a day, lift sessions a week and cardio
+  minutes a week. A daily or weekly amount is a target set with `update_settings`, not a goal: it has no
+  start and no date.
 
 Exercise and cardio activity names come from one shared list. A lift can be logged in the person's own
 words: Spotter takes the usual lift, or the one the person has logged that fits the set, and asks when two
@@ -140,17 +143,36 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 - When `find_food` finds no match and the person gave no number, Claude may estimate, and must say so.
 - An estimate stays an estimate until the person states a number. Then Claude edits the entry's `kcal`
   and the tag becomes `you_said`.
+- **The portion first.** An estimate needs `portion`: how much was eaten, in the person's words, such as
+  a big bowl or 2. Sent without it, nothing is written and the fix says to ask the person once. A stated
+  number, a saved food and a USDA food need none.
+- **Macros.** `protein_g`, `carbs_g` and `fat_g` are grams for what was eaten. Each is null when not
+  logged, never 0 g. `macros_estimated` says who supplied them: false only when the person stated them,
+  such as from a label; left out, they count as Claude's estimate. A saved or USDA food takes none:
+  Spotter works them out from the food, and a macro the food has no figure for stays null. An edit of a
+  macro makes the grams the person's own; an edit of `kcal` leaves them as they are.
+- **A saved meal.** `save_food` with `items` saves a meal of 2 to 30 foods: saved foods by id and
+  servings, USDA foods by id and grams, or the person's own numbers, never an estimate. Spotter adds up
+  the meal's calories and macros; a macro is null when any of its foods lacks it. The meal is logged by
+  its id with servings, as one saved food.
+- **Photos.** Spotter never receives a photo. The assistant reads a photo of a meal and sends its foods as
+  words and numbers, as estimates with their portions.
 - **The meal.** Claude passes the meal the person named for a food, and never asks. Otherwise Spotter
   picks it from the person's own clock: 04:00 to 11:00 breakfast, 11:00 to 16:00 lunch, 16:00 to
   22:00 dinner, otherwise snack (22:00 to 04:00, so half past midnight is a snack, not breakfast).
 - **USDA.** When it is switched on, `find_food` also searches USDA FoodData Central, the United
-  States' food composition data, with calories per 100 g. It covers foods as eaten in the US best.
+  States' food composition data, with calories, protein, carbs and fat per 100 g. It covers foods as eaten in the US best.
   When it is off or does not answer, `find_food` says so.
 - **No Indian food table values are shipped.** The Indian tables (IFCT 2017 and INDB) are not openly
   licensed, so their numbers cannot be included. Saved foods and the person's own numbers cover them.
 - **The day's totals** show how much of the day's calories are estimates, and the target and what
   remains when a target is set. `net_kcal`, food minus cardio calories, appears only when the person
   has turned adding cardio calories back on; otherwise it is null.
+- **The day's macros** appear when an entry of the day holds one or a daily goal is set: each macro's
+  grams, its goal and what is left, and `entries_without`, the entries with none of it. While
+  `entries_without` is above 0, the grams are so far.
+- **Daily goals** for protein, carbs and fat are settings, `protein_target_g`, `carbs_target_g` and
+  `fat_target_g`, set with `update_settings`, and null clears one. `set_goal` takes none of them.
 
 ## Cardio: the calorie estimate
 
@@ -187,7 +209,7 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
   value of the same measurement kind. The first is kept, not erased, and `restore_entry` brings it back.
 - **Edits.** `edit_entry` changes an entry in place and keeps its id: a session's date, notes or whole
   set list, a weigh-in's weight or date, a measurement's value or date, a food entry's date, meal,
-  description or kcal, a cardio entry's fields. Bests are worked out again from the whole history; a
+  description, kcal, macros or portion, a cardio entry's fields. Bests are worked out again from the whole history; a
   cardio estimate is worked out again; a food entry given a kcal becomes `you_said`. Moving a weigh-in or a measurement onto a day that already has one is refused, never
   silently replaced. An edit keeps the values from before it: `restore_entry` with `undo_edit`
   brings them back. The newest 10 are kept per entry, for 90 days. It undoes the last edit, once:
@@ -478,7 +500,7 @@ Claude may call these functions, and nothing else:
 | `restore_entry` | Brings back a deleted or replaced entry, or undoes an entry's last edit. |
 | `delete_entry` | Deletes an entry in two calls: a preview, then the delete once the person says yes. |
 | `find_food` | Looks a food up: saved foods and recent entries first, then USDA when it is on. |
-| `save_food` | Saves a food with its serving and calories, or updates one. |
+| `save_food` | Saves a food with its serving and calories, or a meal of several foods, or updates one. |
 | `get_trends` | How the person is doing: the weight trend and its rate, calories, sessions, cardio, maintenance. |
 | `get_goals` | Whether the person is on track: every open goal, its pace and its projected date. |
 | `import_entries` | Brings history over from another app's export, as dated rows: a preview first, then the rows. |

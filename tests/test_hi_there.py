@@ -100,7 +100,8 @@ KEEPS = (f"Lifts. {count(len(exercises.LIFTS))} lifts by name, each session with
          f"Goals. {count(len(SET_GOAL_KINDS))} kinds: {listed(words for _, words in web.GOAL_KINDS)}.")
 SAY = ("Am I on track for my goals?", "Each goal against its plan line, and the date it is reached at this pace.",
        "How am I doing?", "Your weight trend, calories a day, lift sessions, cardio and maintenance.",
-       "Lunch was two rotis and dal.", "Logs the meal. Each number is tagged: you said, saved food, USDA or estimate.")
+       "Lunch was two rotis and dal.",
+       "Asks how much dal, then logs the meal. Each number is tagged: you said, saved food, USDA or estimate.")
 EVERYDAY = (f"Back squat, 3 sets of 5 at 60{NO_BREAK}kg", f"I weighed 72.5{NO_BREAK}kg this morning",
             f"30{NO_BREAK}minutes on the treadmill")
 # Part 1, item by item: the setup steps each stands for, and its words as the page reads them.
@@ -135,8 +136,8 @@ SAY_PART = (
     "I hit my squat goal.", "The goal is closed as reached.",
     "{feedback}")
 FEEDBACK = "Tell the maker Send feedback: the weight chart confuses me. It reaches the person who runs Spotter."
-ESTIMATE_LINE = ("Your assistant is told to quote them. The one number it may estimate is a food's calories, and it must "
-                 "say so.")
+ESTIMATE_LINE = ("Your assistant is told to quote them. The numbers it may estimate are a food's calories, protein, carbs "
+                 "and fat, and it must say so.")  # macros-and-asking.md: a macro may be an estimate too
 M = metrics
 WORKS_PART = (
     "What Spotter works out", "Spotter works out every number in code, from what you logged.", ESTIMATE_LINE,
@@ -173,13 +174,14 @@ WORKS_PART = (
     "It is an estimate, and it never changes your target.")
 ROUTINES = "Routines. Your fixed workouts by name, each with its lifts and usual sets."
 KEEPS_PART = (
-    "What Spotter keeps", *KEEPS, "Targets. Calories a day, lift sessions a week and cardio minutes a week.",
+    "What Spotter keeps", *KEEPS,
+    "Targets. Calories, protein, carbs and fat a day, lift sessions a week and cardio minutes a week.",
     "{routines}", "What it does not do",
     "It gives no medical advice, and knows nothing of injury, pain, form or recovery.",
     # units.md, the hi page's line: a person picks kg or lb and km or miles.
     "It takes no stones, and no inches for a body size. Weights are kg or lb and distances km or miles: say which you "
     "use.",
-    "It counts calories, not protein, carbs or fat.",
+    "It counts calories, protein, carbs and fat, and no other nutrient such as fibre or salt.",  # macros-and-asking.md
     f"It knows lifts by its own list of {count(len(exercises.LIFTS))} names. A plain word such as squat takes the "
     "usual lift, or the one you have logged. A name Spotter does not know is refused, never guessed.",
     "It sends no reminders and no email, and does not sync with a phone or a watch.")
@@ -463,7 +465,8 @@ PARENT_SAY_FIRST = [
     'is reached at this pace.</span></li>',
     '    <li><q>How am I doing?</q> <span class="does">Your weight trend, calories a day, lift sessions, cardio and '
     'maintenance.</span></li>',
-    '    <li><q>Lunch was two rotis and dal.</q> <span class="does">Logs the meal. Each number is tagged: you said, '
+    '    <li><q>Lunch was two rotis and dal.</q> <span class="does">Asks how much dal, then logs the meal. Each '
+    'number is tagged: you said, '
     'saved food, USDA or estimate.</span></li>',
     '  </ul>',
     '  <p class="list-label">Everyday logging</p>',
@@ -677,7 +680,8 @@ def test_cardio_with_no_weigh_in_has_no_estimate(make_user):
 # ---------------------------------------------------------------- the page: part 4's typed facts
 
 def test_what_spotter_keeps_and_does_not_do_holds_to_the_code(http, make_user):
-    assert web.TARGET_FIELDS == ("calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week")
+    assert web.TARGET_FIELDS == ("calorie_target_kcal", "protein_target_g", "carbs_target_g", "fat_target_g",
+                                 "target_sessions_per_week", "target_cardio_minutes_per_week")
     doc = mcp_server.CAN_AND_CANT.read_text(encoding="utf-8")
     cannot = doc[doc.index("## What it cannot tell you"):doc.index("## Duplicates")]
     assert CANNOT_LINE in cannot and "It gives no medical advice." in cannot
@@ -686,7 +690,9 @@ def test_what_spotter_keeps_and_does_not_do_holds_to_the_code(http, make_user):
     assert "distance_km" in tools["log_cardio"]["inputSchema"]["properties"]
     assert "lb x 0.45359237, mi x 1.609344" in " ".join(doc.split())
     columns = set(FoodEntry.__table__.c.keys())
-    assert "kcal" in columns and not [c for c in columns if re.search(r"protein|carb|fat", c)]
+    # macros-and-asking.md: a food entry holds kcal, protein, carbs and fat since 0015, and no other nutrient, as the
+    # page's line says.
+    assert {c for c in columns if c == "kcal" or c.endswith("_g")} == {"kcal", "protein_g", "carbs_g", "fat_g"}
     refused = services.log_lifts(make_user().id, {"sets": [{"exercise": "Zorbinator Press", "weight_kg": 20,
                                                              "reps": 8}]}, "claude")
     assert refused["error"] == "unknown_exercise"
@@ -985,6 +991,27 @@ def test_a_result_with_setup_fails_the_old_schema_on_setup_alone_and_one_with_on
     done = whoami(http, token)
     assert "setup" not in done and "new_account_note" not in done
     OldWhoami.model_validate({k: v for k, v in done.items() if k != "units"})
+
+
+def test_whoami_s_targets_carry_the_three_daily_goals_set_and_cleared(http):
+    """macros-and-asking.md P3 (decision 2 A): the daily goals in grams sit in targets beside the calorie target, as
+    update_settings sets them, null while not set. No setup step asks for them."""
+    token = sign()
+    first = whoami(http, token)
+    assert first["targets"] == {"calorie_target_kcal": None, "protein_target_g": None, "carbs_target_g": None,
+                                "fat_target_g": None, "target_sessions_per_week": None,
+                                "target_cardio_minutes_per_week": None}
+    services.update_settings(first["account_id"], {"protein_target_g": 150, "fat_target_g": 70}, "claude")
+    after = whoami(http, token)
+    assert (after["targets"]["protein_target_g"], after["targets"]["carbs_target_g"],
+            after["targets"]["fat_target_g"]) == (150, None, 70)
+    assert after["setup"]["missing"] == first["setup"]["missing"]  # no step for a macro goal
+    schema = registered_tools(http)["whoami"]["outputSchema"]["$defs"]["Targets"]["properties"]
+    assert list(schema) == ["calorie_target_kcal", "protein_target_g", "carbs_target_g", "fat_target_g",
+                            "target_sessions_per_week", "target_cardio_minutes_per_week"]
+    for field, word in (("protein_target_g", "protein"), ("carbs_target_g", "carbs"), ("fat_target_g", "fat")):
+        text = schema[field]["description"]
+        assert text == f"{word.capitalize()} goal, grams a day, or null." and tr.check(text, tr.CLAUDE) == []
 
 
 # ---------------------------------------------------------------- whoami: setup

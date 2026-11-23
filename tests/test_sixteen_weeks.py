@@ -255,7 +255,7 @@ def test_each_row_carries_its_kinds_own_duplicate_key(make_user, clock):
     meals = {
         "breakfast": [{"saved_food_id": ids["Oats bowl"], "servings": 1}, {"description": "Tea with milk", "kcal": 80}],
         "lunch": [{"saved_food_id": ids["Roti"], "servings": 2}, {"saved_food_id": ids["Dal bowl"], "servings": 1},
-                  {"description": "Mixed vegetable sabzi", "kcal": 150, "estimated": True}],
+                  {"description": "Mixed vegetable sabzi", "kcal": 150, "estimated": True, "portion": "1"}],
         "dinner": [{"description": "Chicken biryani", "kcal": 640}, {"saved_food_id": ids["Dal bowl"], "servings": 1}],
         "snack": [{"description": "Coke 500 ml", "kcal": 210}],
     }
@@ -263,7 +263,7 @@ def test_each_row_carries_its_kinds_own_duplicate_key(make_user, clock):
         out = services.log_food(user_id, {"date": day, "entries": [{**e, "meal": meal} for e in entries]}, "web")
         assert out["duplicate"] is True, meal
     old_dinner = [{"saved_food_id": ids["Rice bowl"], "servings": 1}, {"saved_food_id": ids["Dal bowl"], "servings": 1},
-                  {"description": "Chicken curry", "kcal": 350, "estimated": True}]
+                  {"description": "Chicken curry", "kcal": 350, "estimated": True, "portion": "1"}]
     out = services.log_food(user_id, {"date": (today - timedelta(days=30)).isoformat(),
                                       "entries": [{**e, "meal": "dinner"} for e in old_dinner]}, "web")
     assert out["duplicate"] is True

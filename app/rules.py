@@ -104,6 +104,15 @@ NUMBERS = {
     "grams": (1, 5_000, 2),
     "kcal_per_serving": (0, 5_000, 2),
     "grams_per_serving": (1, 5_000, 2),
+    # A food's protein, carbs and fat in grams (contract macros-and-asking.md, decision 3): caps from the kcal caps, at
+    # 4 kcal a gram of protein or carbs and 9 of fat, rounded down (5,000 / 4 and 5,000 / 9). Named as caps, revisited
+    # from the call log. A saved food's grams a serving take the same caps, as its kcal_per_serving takes kcal's.
+    "protein_g": (0, 1_250, 1),
+    "carbs_g": (0, 1_250, 1),
+    "fat_g": (0, 555, 1),
+    "protein_g_per_serving": (0, 1_250, 1),
+    "carbs_g_per_serving": (0, 1_250, 1),
+    "fat_g_per_serving": (0, 555, 1),
     "minutes": (1, 600, 1),
     "distance_km": (0.01, 300, 2),
     "incline_pct": (0, 40, 2),
@@ -111,10 +120,19 @@ NUMBERS = {
     "avg_hr": (30, 240, "whole"),
     "machine_kcal": (1, 5_000, "whole"),
     "calorie_target_kcal": (800, 10_000, "whole"),
+    # The daily goals in grams (macros-and-asking.md, decision 3): caps from the 10,000 kcal target cap at 4 kcal a
+    # gram of protein or carbs and 9 of fat, rounded down. Named as caps, revisited from the call log.
+    "protein_target_g": (1, 2_500, "whole"),
+    "carbs_target_g": (1, 2_500, "whole"),
+    "fat_target_g": (1, 1_111, "whole"),
     "target_sessions_per_week": (0, 14, "whole"),
     "target_cardio_minutes_per_week": (0, 3_000, "whole"),
 }
-TEXT_LIMITS = {"description": 200, "serving_label": 64, "name": 128}
+# portion: 1 to 64 characters, serving_label's own limit for the same kind of words (macros-and-asking.md).
+TEXT_LIMITS = {"description": 200, "serving_label": 64, "name": 128, "portion": 64}
+MACROS = ("protein_g", "carbs_g", "fat_g")  # a food entry's three, in grams; null is "not logged", never 0 g
+# A saved meal's items: 2 because a meal is several foods, 30 as log_food's own entries a call. Caps, named as caps.
+MEAL_ITEMS = (2, 30)
 MEALS = ("breakfast", "lunch", "dinner", "snack")
 OLDEST_DAYS = 2 * 365 + 1  # entries go back two years at most, either side of a leap day
 GOAL_YEARS = 5             # a goal's target date is at most this many years after today (goal_latest)
@@ -135,6 +153,8 @@ NUMBER_QUANTITIES = {
     "grams_per_serving": "grams", "minutes": "session_time", "distance_km": "km", "incline_pct": "incline",
     "speed_kmh": "speed", "avg_hr": "bpm", "machine_kcal": "kcal", "calorie_target_kcal": "kcal",
     "target_sessions_per_week": "count", "target_cardio_minutes_per_week": "week_minutes",
+    **dict.fromkeys(("protein_g", "carbs_g", "fat_g", "protein_g_per_serving", "carbs_g_per_serving",
+                     "fat_g_per_serving", "protein_target_g", "carbs_target_g", "fat_target_g"), "grams"),
 }
 
 
@@ -598,6 +618,23 @@ def required_text(value, field: str, where: str = "", limit: int | None = None) 
     if not visible(kept):  # nothing, or only invisible characters such as a zero-width space (owner's question 3)
         return None, error("missing_field", f"{at}{field} is missing.", f"Give {field}, 1 to {most} characters.")
     return kept, None
+
+
+def portion_missing(where: str) -> dict:
+    """An estimate sent with no portion (macros-and-asking.md, decision 6): nothing is written, and the fix asks the
+    person once. where names the entry, such as "Entry 2"."""
+    return error("missing_field", f"{where}: portion is missing for an estimate.",
+                 f"Ask the person once how much they had, then send it as portion in {where.lower()}, in their words. "
+                 "Nothing was logged.")
+
+
+def meal_item_refused(where: str, why: str) -> dict:
+    """An item a saved meal does not take: a meal inside a meal, or an estimate (macros-and-asking.md, decision 10)."""
+    if why == "meal":
+        return error("invalid_field", f"{where} is a saved meal itself.",
+                     "Send that meal's foods as items instead.")
+    return error("invalid_field", f"{where}: estimated was sent.",
+                 "A meal takes the person's own numbers only: log an estimate as a food entry of its own.")
 
 
 def match_meal(name, where: str = "") -> tuple[str | None, dict | None]:

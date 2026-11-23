@@ -41,7 +41,7 @@ from html.parser import HTMLParser
 import pytest
 from sqlalchemy import select
 
-from app import db, formatting, services, web
+from app import db, formatting, rules, services, web
 from app.models import Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, Routine, SavedFood, User
 
 from . import text_rules as tr
@@ -141,7 +141,10 @@ def foods_zeros(user_id: int, address: str, tag: str, column: str | None = None)
     zero = lambda value, quantity: formatting.show(value, quantity, unit=False) == "0"  # noqa: E731
     live = [f for f in services.list_saved_foods(user_id)["foods"] if f.get("deleted_at") is None]
     held = {"kcal": sum(zero(f["kcal_per_serving"], "kcal_per_serving") for f in live),
-            "Times logged": sum(zero(f["times_logged"], "count") for f in live)}
+            "Times logged": sum(zero(f["times_logged"], "count") for f in live),
+            # macros-and-asking.md: a macro a serving of 0 g is a true zero; one not logged is a blank cell, never 0.
+            **{label: sum(f[field] is not None and zero(f[field], "grams") for f in live)
+               for field, label in MACRO_ZERO_COLUMNS.items()}}
     return sum(held.values()) if column is None else held[column]
 
 
@@ -154,6 +157,9 @@ TRUE_ZEROS = {
     ("/foods", "td", "saved-foods", "kcal"): lambda user_id, address: foods_zeros(user_id, address, "td", "kcal"),
     ("/foods", "td", "saved-foods", "Times logged"): lambda user_id, address: foods_zeros(user_id, address, "td",
                                                                                          "Times logged"),
+    **{("/foods", "td", "saved-foods", label): (lambda user_id, address, label=label: foods_zeros(user_id, address,
+                                                                                                 "td", label))
+       for label in ("Protein (g)", "Carbs (g)", "Fat (g)")},
     ("/day/{date}", "p", "glance"): lambda user_id, address: glance_zeros(user_id, address, "p"),
     ("/day/{date}", "td", "glance"): lambda user_id, address: glance_zeros(user_id, address, "td"),
     ("/day/{date}", "text", "glance"): lambda user_id, address: glance_zeros(user_id, address, "text"),
@@ -265,6 +271,9 @@ def cardio_cells(markup: str) -> dict[int, list[str]] | None:
 
 # The Saved foods columns whose cells may hold a true zero, by their headers.
 FOODS_ZERO_COLUMNS = ("kcal", "Times logged")
+# The macro columns a true 0 g a serving may sit in (macros-and-asking.md): (the food's field, the column's label).
+MACRO_ZERO_COLUMNS = {"protein_g_per_serving": "Protein (g)", "carbs_g_per_serving": "Carbs (g)",
+                      "fat_g_per_serving": "Fat (g)"}
 SAVED_FOODS_CARD = '<section class="card saved-foods"'
 
 
@@ -279,7 +288,8 @@ def foods_cells(markup: str) -> dict[int, list[str]] | None:
 
     def named(row):
         yield from ((cell, cell[1]["data-label"]) for n, cell in enumerate(row)
-                    if cell[1].get("data-label") in FOODS_ZERO_COLUMNS and n < len(headers)
+                    if cell[1].get("data-label") in (*FOODS_ZERO_COLUMNS, *MACRO_ZERO_COLUMNS.values())
+                    and n < len(headers)
                     and headers[n] == cell[1]["data-label"])
     return _zero_cells(markup, SAVED_FOODS_CARD, named)
 
@@ -390,7 +400,7 @@ def edge_account(user_id: int) -> None:
     _ok(services.log_food(user_id, {"entries": [
         {"description": "Biryani", "kcal": 1250, "meal": "lunch"},
         {"saved_food_id": paneer["id"], "servings": 1.5, "meal": "dinner"},
-        {"description": "Lassi", "kcal": 300, "estimated": True, "meal": "snack"}]}, "claude"))
+        {"description": "Lassi", "kcal": 300, "estimated": True, "portion": "1", "meal": "snack"}]}, "claude"))
     goals = (
         {"kind": "cardio_best", "exercise": "Outdoor Run", "distance_km": 5, "target_value": 27,
          "target_date": ago(-60)},
@@ -425,8 +435,39 @@ def edge_and_far_days(user_id: int) -> None:
     far_days(user_id)
 
 
+# The worst case for the food pages (contract macros-and-asking.md, P4): every macro at its cap and at 0, a macro not
+# logged, a portion and a name at their longest with no space to break at, a saved meal of 30 foods, and the three
+# daily goals at their edges, one of them far over. Each limit is the service's own (rules.NUMBERS, TEXT_LIMITS).
+LONGEST = {k: "W" * n for k, n in rules.TEXT_LIMITS.items()}
+
+
+def macros_account(user_id: int) -> None:
+    """The food pages' worst case: the three goals at 2,500, 1 and 1,111 g; a saved food at every cap, one at 0 g, a
+    meal of 30 foods with the longest names; and today a capped estimate with the longest portion, the meal, a 0 g
+    entry and one with no macro."""
+    top = {m: rules.NUMBERS[m][1] for m in rules.MACROS}  # 1,250, 1,250 and 555 g
+    _ok(services.update_settings(user_id, {"time_zone": "Asia/Kolkata", "calorie_target_kcal": 800,
+                                           "protein_target_g": 2500, "carbs_target_g": 1, "fat_target_g": 1111}, "web"))
+    _ok(services.save_food(user_id, {"name": LONGEST["name"], "serving_label": LONGEST["serving_label"],
+                                     "kcal_per_serving": 5000, "grams_per_serving": 5000,
+                                     **{f"{m}_per_serving": v for m, v in top.items()}}, "web"))
+    _ok(services.save_food(user_id, {"name": "Black coffee", "serving_label": "1 cup", "kcal_per_serving": 2,
+                                     **{f"{m}_per_serving": 0 for m in rules.MACROS}}, "web"))
+    items = [{"description": LONGEST["description"][:-2] + f"{n:02d}", "kcal": 166, "protein_g": 41.6,
+              "carbs_g": 41.6, "fat_g": 18.5} for n in range(rules.MEAL_ITEMS[1])]
+    meal = _ok(services.save_food(user_id, {"name": "Usual thali", "items": items}, "claude"))
+    _ok(services.log_food(user_id, {"entries": [
+        {"description": LONGEST["description"], "kcal": 5000, "estimated": True, "portion": LONGEST["portion"],
+         **top, "meal": "lunch"},
+        {"saved_food_id": meal["id"], "servings": 1, "meal": "dinner"},
+        {"description": "Water", "kcal": 0, **dict.fromkeys(rules.MACROS, 0), "macros_estimated": False,
+         "meal": "snack"},
+        {"description": "Tea", "kcal": 40, "meal": "breakfast"}]}, "claude"))
+
+
 # The sweeps' accounts. tests/test_consistency.py takes edge_account alone.
-ACCOUNTS = {"empty": empty_account, "four weeks": four_week_account, "edge": edge_and_far_days}
+ACCOUNTS = {"empty": empty_account, "four weeks": four_week_account, "edge": edge_and_far_days,
+            "macros": macros_account}
 
 
 # ---------------------------------------------------------------- the addresses
@@ -459,6 +500,7 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
         entries += [f"/entries/{kind}/{i}/edit" for i in _ids(model, user_id)]
     lifts = {row["exercise"] for row in services.get_progress(user_id)["lifts"]} | {"Back Squat"}
     foods = _ids(SavedFood, user_id)
+    meals = {f["id"] for f in services.list_saved_foods(user_id)["foods"] if f.get("items")}
     # The undo line for every kind, for one of its entries (or any id: the line names the kind, not the entry).
     undo = [f"/day/{today.isoformat()}?deleted={kind}:{next(iter(_ids(model, user_id)), 1)}"
             for kind, model in ENTRY_MODELS]
@@ -485,7 +527,9 @@ def get_paths(user_id: int) -> dict[str, list[str]]:
         # Foods: each strip it has words for, the mark that only makes it calm, and the old mark it no longer reads.
         "/foods": ["/foods", "/foods?saved=saved_food", "/foods?restored=saved_food", "/foods?saved=unchanged",
                    "/foods?saved=1"] + [f"/foods?deleted=saved_food:{i}" for i in foods[:1]],
-        "/foods/{food_id}/edit": [f"/foods/{i}/edit" for i in foods],
+        # A saved meal has no edit page (macros-and-asking.md): it is changed through the assistant, and Foods links
+        # to none. tests/test_web.py holds the message its address answers with.
+        "/foods/{food_id}/edit": [f"/foods/{i}/edit" for i in foods if i not in meals],
         # Routines (contract routines.md): each strip it has words for, and a mark it does not read.
         "/routines": ["/routines", "/routines?restored=routine", "/routines?restored=1"] +
                      [f"/routines?deleted=routine:{i}" for i in _ids(Routine, user_id)[:1]],

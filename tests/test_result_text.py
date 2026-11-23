@@ -286,7 +286,7 @@ def test_a_four_week_account(make_user):
     seen.add("log_bodyweight", services.log_bodyweight(user.id, {"kg": 78.6}, "claude"))
     seen.add("log_measurement", services.log_measurement(user.id, {"kind": "waist", "value": 86.25}, "claude"))
     seen.add("log_food", services.log_food(user.id, {"entries": [
-        {"saved_food_id": roti, "servings": 3}, {"description": "Paneer tikka", "kcal": 420, "estimated": True}]},
+        {"saved_food_id": roti, "servings": 3}, {"description": "Paneer tikka", "kcal": 420, "estimated": True, "portion": "1"}]},
         "claude"), "Paneer tikka", *names)
     seen.add("log_cardio", services.log_cardio(user.id, {"exercise": "Treadmill Walk", "minutes": 42.5,
                                                          "date": ago(1)}, "claude"))
@@ -331,7 +331,7 @@ def test_an_edge_case_account(make_user):
     assert "+0" not in trends["summary"]
     # A day over its target and over 1,000 kcal.
     day = seen.add("log_food", services.log_food(user.id, {"entries": [
-        {"description": "Biryani", "kcal": 1450}, {"description": "Kulfi", "kcal": 980, "estimated": True}]},
+        {"description": "Biryani", "kcal": 1450}, {"description": "Kulfi", "kcal": 980, "estimated": True, "portion": "1"}]},
         "claude"), "Biryani", "Kulfi")
     assert day["day"]["remaining_kcal"] == -430 and "430 kcal over" in day["summary"] and "2,430" in day["summary"]
     # Every measurement kind, each logged twice on one day so the second replaces the first.
@@ -442,7 +442,7 @@ def test_the_other_paths(make_user):
     say("replace same print", services.log_measurement(user.id, {"kind": "waist", "value": 84.26}, "claude"))
     say("edit activity", services.edit_entry(user.id, "cardio_entry", walk, {"exercise": "Hiking",
                                                                              "machine_kcal": 1500}, "web"))
-    guess = services.log_food(user.id, {"entries": [{"description": "poha", "kcal": 250, "estimated": True}]},
+    guess = services.log_food(user.id, {"entries": [{"description": "poha", "kcal": 250, "estimated": True, "portion": "1"}]},
                               "claude")["ids"][0]
     say("edit confirmed", services.edit_entry(user.id, "food_entry", guess, {"kcal": 250}, "web"))
     say("edit description", services.edit_entry(user.id, "food_entry", guess, {"description": "poha (2 cups)"},

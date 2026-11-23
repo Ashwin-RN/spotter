@@ -5,7 +5,8 @@ Package C4b adds 0014, the one-off delete (R9): every lift set, session, lift_se
 for both people, and every other row stays; its line of counts; its offline SQL; its down, which changes nothing.
 
 The up, down and up tests build their own SQLite files. The services write only at the head: the models are the
-head's, so a database is taken down after the writes to stand at 0012.
+head's, so a database is taken down after the writes to stand at 0013 or 0012. At 0013 and 0014 the models still
+differ from the tables by what 0015 adds (before_0015).
 """
 
 import importlib.util
@@ -25,7 +26,8 @@ from app.services import common, lifts
 
 from .conftest import alembic_config, settings
 from .test_hardening_schema import (
-    NOW, UQ_SET_NUMBER, _agree, _key_check, _master, _plain, _sqlite_at, _version, before_0013, write_everything,
+    HEAD, NOW, UQ_SET_NUMBER, _agree, _key_check, _master, _plain, _sqlite_at, _version, before_0013, before_0015,
+    write_everything,
 )
 
 UP, DOWN = "0013", "0012"
@@ -77,8 +79,9 @@ def _exec(engine: Engine, sql: str, *params) -> None:
 def test_0013_up_down_and_up_over_rows_of_every_kind_for_two_people_keeps_every_row(monkeypatch):
     address = _sqlite_at("exercise-list.db")
     cfg = alembic_config(address)
-    command.upgrade(cfg, UP)
+    command.upgrade(cfg, HEAD)
     people = write_everything(address, monkeypatch)
+    command.downgrade(cfg, UP)
     engine = make_engine(address)
     try:
         at_head, master_head = _named(engine), _master(engine)
@@ -99,7 +102,7 @@ def test_0013_up_down_and_up_over_rows_of_every_kind_for_two_people_keeps_every_
             command.upgrade(cfg, UP)
             assert _version(engine) == UP
             assert _named(engine) == at_head  # the keys come back the same, nothing retired
-            assert _key_check(engine) == [] and _agree(engine) == []
+            assert _key_check(engine) == [] and before_0015(_agree(engine)) == []
             assert _master(engine) == master_head  # the rebuilt tables come back word for word
             command.downgrade(cfg, DOWN)
             assert _named(engine) == at_0012 and _key_check(engine) == []
@@ -543,9 +546,10 @@ def _delete_migration():
 def _at_0013_with_lifts_of_every_kind(address: str, monkeypatch) -> list[int]:
     """At 0013, rows of every kind for two people (write_everything: sessions with an edit and an undo, so lift_session
     versions), and besides, a soft-deleted session of the first person's, a log_lifts key of each and a version of
-    another kind. Returns the two ids."""
-    command.upgrade(alembic_config(address), DELETE_DOWN)
+    another kind. Returns the two ids. The services write at the head, and the database is taken down to 0013 after."""
+    command.upgrade(alembic_config(address), HEAD)
     people = write_everything(address, monkeypatch)
+    command.downgrade(alembic_config(address), DELETE_DOWN)
     engine = make_engine(address)
     try:
         with engine.begin() as c:
@@ -594,7 +598,7 @@ def test_0014_deletes_every_lift_set_session_version_and_log_lifts_key_for_both_
                 "feedback", "call_log", "exercise", "user"} <= kept
         assert {t: after[t] for t in kept} == {t: before[t] for t in kept}  # every other row, as it was
         assert any(r["kind"] == "lift" for r in after["goal"])  # a lift goal stays, with no set to read
-        assert _key_check(engine) == [] and _agree(engine) == []
+        assert _key_check(engine) == [] and before_0015(_agree(engine)) == []
         # Its down changes nothing and brings nothing back; up again deletes nothing more and says so.
         command.downgrade(alembic_config(address), DELETE_DOWN)
         assert _version(engine) == DELETE_DOWN and _named(engine) == after
@@ -610,7 +614,7 @@ def test_0014_deletes_every_lift_set_session_version_and_log_lifts_key_for_both_
 def test_after_0014_the_services_read_and_write_as_on_an_empty_account(monkeypatch):
     address = _sqlite_at("cleared-then-logged.db")
     people = _at_0013_with_lifts_of_every_kind(address, monkeypatch)
-    command.upgrade(alembic_config(address), DELETE_UP)
+    command.upgrade(alembic_config(address), HEAD)  # past 0014 to the head, where the services read and write
     config.use_settings(settings(database_url=address))
     try:
         for uid in people:

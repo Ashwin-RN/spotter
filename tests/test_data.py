@@ -228,8 +228,8 @@ def test_the_tie_test_every_table_and_every_column_is_read_or_named():
     copy = MetaData()
     for t in Base.metadata.sorted_tables:
         t.to_metadata(copy)
-    Table("food_entry", copy, Column("protein_g", Integer), extend_existing=True)
-    assert untied(copy) == ["column food_entry.protein_g"]
+    Table("food_entry", copy, Column("zz_new_column", Integer), extend_existing=True)  # protein_g is read since 0015
+    assert untied(copy) == ["column food_entry.zz_new_column"]
     assert "lift_set" not in {"lift_set"} - {t for a in AREAS.values() for t in a.tables}  # read, though
     # models.user_tables() misses it: it has no user_id
 
@@ -441,7 +441,8 @@ def test_each_area_s_rows_carry_their_stored_and_derived_cells(person):
     assert food[ids["saved_entry"]] == {"date": ago(1).isoformat(), "id": ids["saved_entry"], "meal": "lunch",
                                         "description": "2 rotis", "food": "Roti", "kcal": 240, "source": "saved_food",
                                         "estimated": False, "saved_food_id": ids["roti"], "servings": 2,
-                                        "grams": None, "usda_fdc_id": None}
+                                        "grams": None, "usda_fdc_id": None, "protein_g": None, "carbs_g": None,
+                                        "fat_g": None, "macros_estimated": None, "portion": None}
     assert food[ids["usda_entry"]]["food"] == "Rice, white, cooked" and food[ids["usda_entry"]]["grams"] == 150
     assert food[ids["plain"]]["food"] == "Chicken  Biryani" and food[ids["plain_again"]]["kcal"] == 600
     assert food[ids["plain_again"]]["estimated"] is True
@@ -451,6 +452,8 @@ def test_each_area_s_rows_carry_their_stored_and_derived_cells(person):
     assert [r["food"] for r in by_food] == ["chicken biryani", "Roti", "Rice, white, cooked"]
     assert table(data(person, area="saved_foods")) == [{"id": ids["roti"], "name": "Roti", "serving_label": "1 roti",
                                                         "kcal_per_serving": 120, "grams_per_serving": None,
+                                                        "protein_g_per_serving": None, "carbs_g_per_serving": None,
+                                                        "fat_g_per_serving": None,
                                                         "times_logged": 1, "last_logged": ago(1).isoformat()}]
     days = table(data(person, area="days", from_date=ago(3).isoformat()))
     assert days == [
@@ -993,8 +996,9 @@ def test_both_answers_carry_whoami_s_targets_and_no_other_setting(person, target
     for area in AREAS:
         answer = data(person, area=area)
         assert answer["targets"] == who and not walk_keys(answer) & settings, area
-    assert who == ({"calorie_target_kcal": None, "target_sessions_per_week": None,
-                    "target_cardio_minutes_per_week": None} | targets)
+    assert who == ({"calorie_target_kcal": None, "protein_target_g": None, "carbs_target_g": None,
+                    "fat_target_g": None,  # macros-and-asking.md P3: the daily goals in grams
+                    "target_sessions_per_week": None, "target_cardio_minutes_per_week": None} | targets)
 
 
 # ---------------------------------------------------------------- one person never sees another's rows

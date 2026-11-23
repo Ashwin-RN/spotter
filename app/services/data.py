@@ -108,8 +108,10 @@ def _compact(value) -> str:
 
 
 def _targets(user: User) -> dict:
-    """The daily and weekly amounts, as whoami gives them (R5)."""
-    return {"calorie_target_kcal": user.calorie_target_kcal, "target_sessions_per_week": user.target_sessions_per_week,
+    """The daily and weekly amounts, as whoami gives them (R5), the daily goals in grams too (macros-and-asking.md)."""
+    return {"calorie_target_kcal": user.calorie_target_kcal, "protein_target_g": user.protein_target_g,
+            "carbs_target_g": user.carbs_target_g, "fat_target_g": user.fat_target_g,
+            "target_sessions_per_week": user.target_sessions_per_week,
             "target_cardio_minutes_per_week": user.target_cardio_minutes_per_week}
 
 

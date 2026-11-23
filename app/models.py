@@ -6,7 +6,10 @@ changes data only: every account's claude_can becomes log_delete. 0010 adds the 
 the person's units (user.weight_unit and user.distance_unit). 0012 (contract hardening.md) widens saved_food.name_key, adds
 the sweep's three created_at indexes, one set number per session and lift, a food entry's saved food tied to its owner,
 a 64-bit call-log id on Postgres, and the database's own rules. 0013 (contract exercise-list.md) gives each exercise a
-stable key and a retired mark, and a set its time_s and distance_m, with reps now nullable.
+stable key and a retired mark, and a set its time_s and distance_m, with reps now nullable. 0015 (contract
+macros-and-asking.md) adds protein, carbs and fat in grams to a food entry, a saved food and the USDA cache, a food
+entry's macros_estimated mark and portion, a saved meal's items, the cache's macros_read mark, and the person's three
+daily amounts in grams.
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -19,8 +22,8 @@ stable key and a retired mark, and a set its time_s and distance_m, with reps no
   topics, an exercise's kind and category.
 - Since 0012 the database also holds a sign rule and a wide ceiling on every number a person's row holds, and three
   goal shape rules. The rules' text lives only in migrations/versions/0012_hardening.py and, for the rules 0013 changes
-  and adds on lift_set, in migrations/versions/0013_exercise_list.py: the models declare none, and compare_metadata
-  does not read them.
+  and adds on lift_set, in migrations/versions/0013_exercise_list.py, and for 0015's new numbers in
+  migrations/versions/0015_macros.py: the models declare none, and compare_metadata does not read them.
 
 The migration in migrations/versions/ builds these tables. A test checks the two agree.
 """
@@ -145,6 +148,10 @@ class User(Base):
     # and km. Every stored number stays in kg and km whatever these say (contract units.md).
     weight_unit: Mapped[str | None] = mapped_column(String(2), nullable=True)
     distance_unit: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    # The daily amounts in grams beside calorie_target_kcal (0015); null = no goal set.
+    protein_target_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    carbs_target_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fat_target_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Exercise(Base):
@@ -370,6 +377,11 @@ class SavedFood(Base):
     serving_label: Mapped[str] = mapped_column(String(64))
     kcal_per_serving: Mapped[float] = mapped_column(Float)
     grams_per_serving: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Grams a serving (0015); null = not logged, never 0 g. A meal's is null when any of its items lacks it.
+    protein_g_per_serving: Mapped[float | None] = mapped_column(Float, nullable=True)
+    carbs_g_per_serving: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fat_g_per_serving: Mapped[float | None] = mapped_column(Float, nullable=True)
+    items: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON for a meal; null for a plain food (0015)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, onupdate=_now)
     deleted_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
@@ -422,6 +434,13 @@ class FoodEntry(EntryColumns, Base):
     servings: Mapped[float | None] = mapped_column(Float, nullable=True)
     usda_fdc_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     grams: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Grams for what was eaten (0015); null = not logged, never 0 g.
+    protein_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    carbs_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fat_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # True: the macros are the assistant's estimate; false: the person's own. Null when no macro is held (0015).
+    macros_estimated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    portion: Mapped[str | None] = mapped_column(String(64), nullable=True)  # how much was eaten, the person's words
     dedupe_key: Mapped[str] = mapped_column(String(64))
 
     # Two keys lead to saved_food: the relationship goes by saved_food_id alone, on saved_food.id.
@@ -463,6 +482,12 @@ class UsdaFood(Base):
     data_type: Mapped[str] = mapped_column(String(32))
     kcal_per_100g: Mapped[float] = mapped_column(Float)
     fetched_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+    # Grams a 100 g (0015); null = the food data gives none.
+    protein_g_per_100g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    carbs_g_per_100g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fat_g_per_100g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # False on a row cached before 0015: stale, fetched again, as one older than 30 days is.
+    macros_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 class UsdaSearch(Base):

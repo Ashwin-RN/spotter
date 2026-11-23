@@ -128,7 +128,9 @@ Use Spotter's numbers, not your own. If a number is an estimate, say so.
 | You say | What happens |
 |---|---|
 | "Back squat, 3 sets of 5 at 80 kg" | The session is logged, with any new bests |
-| "Lunch: two rotis and dal" | The whole meal is logged at once, each number tagged with who supplied it |
+| "Lunch: two rotis and dal" | The assistant asks how much dal, then logs the whole meal at once, each number tagged with who supplied it |
+| "Lunch was a chicken wrap: 520 kcal, 32 g protein, 48 g carbs, 18 g fat" | Protein, carbs and fat are kept beside the calories, each marked as yours or the assistant's estimate, and each day shows them against the daily goals you set |
+| "Save my usual lunch: 2 rotis and a bowl of dal" | The meal is kept as one saved food. "Had my usual lunch" then logs it |
 | "Weighed 79.4 this morning" | One weigh-in a day, with the latest weigh-ins and the trend |
 | "30 minutes on the treadmill" | A calorie estimate from your body weight, kept beside the machine's number when you give one |
 | "How am I doing?" | Your weight trend, calories a day, lift sessions and cardio minutes against your targets, and your maintenance calories once enough is logged |
@@ -137,6 +139,8 @@ Use Spotter's numbers, not your own. If a number is an estimate, say so.
 | "Save my legs day: 10 minutes on the rower, squats 4 by 5, a 60 second plank 3 times" | Holds, carries and cardio go in a routine too, in the order done. Each item shows last time's numbers with their date |
 | "Bring my weigh-ins over from my old app", with its export | A preview first, which writes nothing: what would go in, what is already there, what was refused. The assistant is told to write only when you say yes |
 | "Tell Spotter's maker the progress chart is confusing" | The note is kept for the person who runs Spotter. No reply comes back through Spotter |
+
+Spotter never receives a photo. The assistant reads a photo of a meal and sends its foods as words and numbers, as estimates with their portions.
 
 ## Under the hood
 

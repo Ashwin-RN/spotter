@@ -148,7 +148,7 @@ def test_each_row_carries_its_kinds_own_duplicate_key(user):
     assert breakfast["duplicate"] is True
     lunch = services.log_food(user.id, {"date": day, "entries": [
         {"saved_food_id": roti, "servings": 2, "meal": "lunch"}, {"saved_food_id": dal, "servings": 1, "meal": "lunch"},
-        {"description": "Mixed vegetable sabzi", "kcal": sabzi, "estimated": True, "meal": "lunch"}]}, "web")
+        {"description": "Mixed vegetable sabzi", "kcal": sabzi, "estimated": True, "portion": "1", "meal": "lunch"}]}, "web")
     assert lunch["duplicate"] is True
     monday = "2026-11-09"   # a B session: Deadlift 1x5, Overhead Press 3x5, Pull-Up 3x6
     with db.new_session() as s:

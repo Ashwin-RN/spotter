@@ -406,8 +406,9 @@ def test_whoami_returns_the_account_and_asks_for_a_time_zone(user):
     assert "update_settings" in note
     rest = note.replace("update_settings", "").casefold()
     assert "page" not in rest and "settings" not in rest and "/" not in rest, note
-    assert r["targets"] == {"calorie_target_kcal": None, "target_sessions_per_week": None,
-                            "target_cardio_minutes_per_week": None}
+    assert r["targets"] == {"calorie_target_kcal": None, "protein_target_g": None, "carbs_target_g": None,
+                            "fat_target_g": None,  # macros-and-asking.md P3
+                            "target_sessions_per_week": None, "target_cardio_minutes_per_week": None}
     assert r["claude_can"] == "log_delete"  # switch decision 2: a new account's
     assert r["links"] == {"settings": f"{SITE}/settings", "home": f"{SITE}/", "hi_there": f"{SITE}/hi"}
 
@@ -542,7 +543,7 @@ def test_texts_from_the_offered_functions_name_no_other_function(user):
     # Stage 4: food and cardio, through their main paths and their refusals.
     roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
     meal = {"entries": [{"saved_food_id": roti["id"], "servings": 2}, {"description": "dal", "kcal": 180,
-                                                                         "estimated": True}]}
+                                                                         "estimated": True, "portion": "1"}]}
     eaten = services.log_food(user.id, meal, "claude")
     results += [roti, services.save_food(user.id, {"name": "roti", "serving_label": "1", "kcal_per_serving": 110},
                                          "claude"),

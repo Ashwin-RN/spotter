@@ -45,7 +45,9 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "look_trip_hours", "inc_deload", "look_deload", "save_food_asked", "edit_fixes_minutes",
                   "food_lookup", "routine_read", "exercise_list", "catch_up", "import_other_app"}
 # function-list.md, G1's note of 2026-11-17: the golden package's reviewed cases follow G1's (tests/test_golden_cases.py)
-GOLDEN_PACKAGE = 195  # 164, exercise-list.md C4g's 23, log-and-guide.md's 2, routines-and-programs.md C5a's 2 and C5b's 4
+# 164, exercise-list.md C4g's 23, log-and-guide.md's 2, routines-and-programs.md C5a's 2 and C5b's 4, and
+# macros-and-asking.md's 11
+GOLDEN_PACKAGE = 206
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 
@@ -1007,6 +1009,23 @@ def test_person_rows_gives_each_session_its_own_set_count_and_never_another_pers
     assert counts == {three: (3, True), one: (1, True), gone: (2, False), empty_id: (0, True)}
     assert [r["set_count"] for r in person_rows(theirs.id)["lift_session"]] == [7]
     assert "set_count" in judge._rows_text([{"set_count": 6}])
+
+
+def test_a_saved_food_row_counts_its_items_and_a_reason_shows_the_food_columns(make_user):
+    """macros-and-asking.md: a saved meal's row carries item_count, 0 for a plain food, and a failed row check shows a
+    food entry's macros and portion and a saved food's serving numbers and items."""
+    user = make_user()
+    roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "web")
+    dal = services.save_food(user.id, {"name": "Dal", "serving_label": "1 bowl", "kcal_per_serving": 180}, "web")
+    meal = services.save_food(user.id, {"name": "Usual lunch", "items": [{"saved_food_id": roti["id"], "servings": 2},
+                                                                         {"saved_food_id": dal["id"]}]}, "web")
+    counts = {r["id"]: r["item_count"] for r in person_rows(user.id)["saved_food"]}
+    assert counts == {roti["id"]: 0, dal["id"]: 0, meal["id"]: 2}
+    columns = ("protein_g", "carbs_g", "fat_g", "macros_estimated", "portion", "name", "serving_label",
+               "kcal_per_serving", "protein_g_per_serving", "carbs_g_per_serving", "fat_g_per_serving", "item_count",
+               "items")
+    shown = json.loads(judge._rows_text([{c: 1 for c in columns}]))
+    assert set(columns) <= set(shown), set(columns) - set(shown)
 
 
 # ---------------------------------------------------------------- the CLI's output

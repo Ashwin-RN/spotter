@@ -627,3 +627,12 @@ Built as L0 to L5 and one fix round after the review. Where the build departed f
 | `--transcripts` | `--verbose` on the CLI, each turn's output kept, masked | Also turns on `--keep`, and kept Claude output is masked for anything shaped like a token |
 | The fix round | Not in the text above | A null on a field the kind does not take is read as left out; `measurement` takes a measurement's own word inside `details`; a refused time or distance that `log` converted names the field and the value as sent. These go beyond what the rig tested: the release eval is their first test on a model |
 | Open point 13 | Two wordings for a part | A schema refusal says "Part 2: reps must be a whole number, not 'five'."; a service refusal says "parts[1]: reps 500 is outside 1 to 100." Both stand |
+
+## Note, 2026-11-22: C3 (macros-and-asking.md)
+
+| Point | As built |
+|---|---|
+| `log`'s food kind | `details.entries` is `FoodEntryIn` as it stands, so `portion`, `protein_g`, `carbs_g`, `fat_g` and `macros_estimated` reach `services.log_food` through `log_food_step`, as from `log_food` |
+| The portion refusal through `log` | Said as sent: "details.entries[1]: portion is missing for an estimate.", its fix "Ask the person once how much they had, then send it as portion in details.entries[1], in their words. Nothing was logged." Through `log_food` it reads "Entry 2". `tests/test_log_and_guide.py` holds both in its "said as sent" lists |
+| `guide`'s food topic | `LOG_FOOD_DESCRIPTION` gains "Send protein_g, carbs_g and fat_g when the person gave them or you can work them out; an estimate needs its portion.", and the topic carries the new fields' words: `GUIDE_SIZES["food"]` from 3,626 to 4,885. Topic `log` reads only the description's first sentence and stays 1,894 |
+| The cases | C3's eleven keep the five's names, and the judge routes a `log` call to its kind's function. Each that asks for no write lists `log` in `must_not` and `no_call` |

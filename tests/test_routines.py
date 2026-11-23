@@ -1347,7 +1347,7 @@ def test_0010_builds_the_table_on_sqlite_and_comes_down_leaving_no_other_change(
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0014"  # exercise list
+    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0015"  # macros
 
 
 def test_the_model_is_no_entry_table_and_its_columns_are_in_the_contract_s_order():
@@ -1863,12 +1863,14 @@ SAME_SEEN = [("Bench Press", 62.5, 8), ("Bench Press", 62.5, 8), ("Bench Press",
 
 
 def test_the_two_last_time_cases_load_last_and_are_usable():
-    cases = judge.load_cases()[:-4]  # C5b's four follow (tests/test_routine_items.py)
-    assert [c["id"] for c in cases[-2:]] == ["routine_same_as_last_time", "routine_last_time_read"]
-    for case in cases[-2:]:
+    cases = judge.load_cases()
+    ids = [c["id"] for c in cases]
+    at = ids.index("log_plank_minutes") + 1  # C5a's two follow log-and-guide's last; C5b's four and C3's eleven follow
+    assert ids[at:at + 2] == ["routine_same_as_last_time", "routine_last_time_read"]
+    for case in cases[at:at + 2]:
         assert judge.case_problems(case) == [] and (case["kind"], case["core"]) == ("direct", False)
         assert [s["service"] for s in case["seed"]] == ["log_lifts", "save_routine"]
-    assert set(cases[-1]["expect"]["no_call"]) == set(common.WRITE_FUNCTIONS)
+    assert set(cases[at + 1]["expect"]["no_call"]) == set(common.WRITE_FUNCTIONS)
 
 
 def test_the_same_as_last_time_case_judges_as_designed(app_settings):

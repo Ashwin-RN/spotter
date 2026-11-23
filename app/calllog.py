@@ -49,7 +49,7 @@ from sqlalchemy import delete, select, update
 from app import db
 from app.log_shape import table_word
 from app.mcp_schemas import (
-    FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, LogPartIn, LogSetIn, RoutineLiftIn, SetIn,
+    FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, LogPartIn, LogSetIn, MealItemIn, RoutineLiftIn, SetIn,
 )
 from app.models import CallLog, EntryVersion, Feedback, WriteKey
 
@@ -96,7 +96,13 @@ KNOWN_NAMES = frozenset({
     "parts", "details", "movement",
     # owner_calls' filters (log-and-guide.md L4).
     "function", "caller", "all_accounts",
-}) | {name for model in (SetIn, LogSetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn, LogPartIn)
+    # save_food's macros a serving and a meal's items (macros-and-asking.md). A food entry's macros and portion, which
+    # edit_entry takes too, are FoodEntryIn's; an item's fields are MealItemIn's, below.
+    "protein_g_per_serving", "carbs_g_per_serving", "fat_g_per_serving", "items",
+    # update_settings' three daily goals in grams (macros-and-asking.md, P3).
+    "protein_target_g", "carbs_target_g", "fat_target_g",
+}) | {name for model in (SetIn, LogSetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn, LogPartIn,
+                         MealItemIn)
        for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.
 STEPS = {"no_subject": "account", "signups_closed": "account", "no_account": "account",

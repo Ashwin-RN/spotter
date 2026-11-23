@@ -15,16 +15,11 @@
   {
     "id": "guessed_number",
     "say": "Lunch: two rotis and dal",
-    "calls": {"must": ["log_food"],
-              "may": ["whoami", "find_food"],
-              "must_not": []},
-    "expect": {
-      "function": "log_food",
-      "inputs_include": {"entries": [{"estimated": true}]},
-      "inputs_forbid": {"entries.*.estimated": false}
-    },
-    "db": [{"table": "food_entry", "all": {"source": "claude_estimate", "estimated": true},
-            "rows": [{"source": "claude_estimate"}]}]
+    "calls": {"must": [],
+              "may": ["whoami", "find_food", "guide", "log", "log_food"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"reply_asks": true, "reply_has_pattern": ["\\bdal\\b"], "ok_calls": {"log": 0, "log_food": 0}, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 0}]
   },
   {
     "id": "saved_food",
@@ -3344,5 +3339,133 @@
     "seed": [{"as": "legs", "service": "save_routine", "data": {"name": "Legs day", "lifts": [{"exercise": "Rowing Machine", "minutes": 10, "avg_hr": 140, "machine_kcal": 120}, {"exercise": "Back Squat", "sets": 4, "reps": 5, "weight_kg": 100}]}}],
     "expect": {"function": "save_routine", "ok_calls": {"save_routine": 1}, "inputs_include": {"lifts": [{"exercise": "Rowing Machine", "avg_hr": 140, "machine_kcal": 120}, {"exercise": "Dip", "sets": 3, "reps": 10}]}, "no_call": ["log", "log_lifts", "log_cardio", "log_bodyweight", "log_measurement", "log_food", "save_food", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback"]},
     "db": [{"table": "routine", "count": 1}, {"table": "lift_session", "count": 0}, {"table": "cardio_entry", "count": 0}]
+  },
+  {
+    "id": "macros_stated",
+    "kind": "direct",
+    "core": false,
+    "say": "lunch was a chicken wrap, the label says 520 kcal, 32 g protein, 48 g carbs and 18 g fat",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food", "guide"],
+              "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_food", "inputs_include": {"entries": [{"kcal": 520, "protein_g": 32, "carbs_g": 48, "fat_g": 18, "meal": "lunch"}]}, "inputs_forbid": {"entries.*.estimated": true, "entries.*.macros_estimated": true}, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 1, "all": {"source": "you_said", "kcal": 520, "protein_g": 32, "carbs_g": 48, "fat_g": 18, "macros_estimated": false, "meal": "lunch"}}]
+  },
+  {
+    "id": "macros_estimated",
+    "kind": "direct",
+    "core": false,
+    "say": "had 2 boiled eggs for breakfast",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food", "guide"],
+              "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_food", "inputs_include": {"entries": [{"estimated": true, "meal": "breakfast"}]}, "inputs_forbid": {"entries.*.macros_estimated": false}, "reply_has_pattern": ["\\bestimat"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 1, "all": {"source": "claude_estimate", "estimated": true, "macros_estimated": true, "meal": "breakfast"}}, {"table": "food_entry", "where": {"protein_g": null}, "count": 0}, {"table": "food_entry", "where": {"carbs_g": null}, "count": 0}, {"table": "food_entry", "where": {"fat_g": null}, "count": 0}, {"table": "food_entry", "where": {"portion": null}, "count": 0}]
+  },
+  {
+    "id": "macros_saved_food",
+    "kind": "direct",
+    "core": false,
+    "say": "had 2 rotis with dinner",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food", "what_is_logged", "get_data", "guide"],
+              "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "roti", "service": "save_food", "data": {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120, "protein_g_per_serving": 3}}],
+    "expect": {"function": "log_food", "inputs_include": {"entries": [{"saved_food_id": "{{seed.roti}}", "servings": 2}]}, "inputs_exclude": ["entries.*.kcal", "entries.*.protein_g", "entries.*.carbs_g", "entries.*.fat_g"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 1, "all": {"source": "saved_food", "saved_food_id": "{{seed.roti}}", "servings": 2, "kcal": 240, "protein_g": 6, "carbs_g": null, "fat_g": null, "macros_estimated": false}}]
+  },
+  {
+    "id": "macro_goal_set",
+    "kind": "direct",
+    "core": false,
+    "say": "set my protein goal to 150 g a day",
+    "calls": {"must": ["update_settings"],
+              "may": ["whoami", "get_goals", "guide"],
+              "must_not": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "update_settings", "inputs_include": {"protein_target_g": 150}, "ok_calls": {"update_settings": 1}, "answer_has": {"update_settings": {"changed": ["protein_target_g"]}}, "no_call": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "goal", "count": 0}]
+  },
+  {
+    "id": "protein_left_today",
+    "kind": "direct",
+    "core": false,
+    "say": "how much protein do I have left today?",
+    "calls": {"must": ["get_log", "get_data", "what_is_logged"],
+              "may": ["whoami", "get_goals", "get_trends", "find_food", "guide"],
+              "must_not": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "update_settings", "data": {"protein_target_g": 150}}, {"service": "log_food", "data": {"entries": [{"description": "Chicken salad", "kcal": 450, "protein_g": 35, "macros_estimated": false, "meal": "lunch"}, {"description": "Protein shake", "kcal": 180, "protein_g": 24, "macros_estimated": false, "meal": "snack"}]}}],
+    "expect": {"read_any": true, "quotes_one_of": ["91"], "no_call": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 2}]
+  },
+  {
+    "id": "protein_not_logged",
+    "kind": "direct",
+    "core": false,
+    "say": "how much protein have I had today?",
+    "calls": {"must": ["get_log", "get_data", "what_is_logged"],
+              "may": ["whoami", "get_goals", "get_trends", "find_food", "guide"],
+              "must_not": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"service": "log_food", "data": {"entries": [{"description": "Chicken salad", "kcal": 450, "protein_g": 35, "macros_estimated": false, "meal": "lunch"}, {"description": "Biscuits", "kcal": 150, "meal": "snack"}]}}],
+    "expect": {"read_any": true, "quotes_one_of": ["35"], "reply_has_pattern": ["\\bso far\\b"], "reply_lacks_pattern": ["(?<![\\d.,])0 ?(?:g|grams?)\\b"], "no_call": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 2}]
+  },
+  {
+    "id": "portion_asked",
+    "kind": "direct",
+    "core": false,
+    "say": "had some rice for lunch",
+    "calls": {"must": [],
+              "may": ["whoami", "find_food", "guide", "log", "log_food"],
+              "must_not": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"reply_asks": true, "reply_has_pattern": ["\\brice\\b", "\\bhow (?:much|many|big)\\b|\\bportions?\\b|\\bservings?\\b|\\bbowls?\\b|\\bcups?\\b|\\bplates?\\b|\\bgrams?\\b"], "ok_calls": {"log": 0, "log_food": 0}, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 0}]
+  },
+  {
+    "id": "portion_asked_then",
+    "kind": "direct",
+    "core": false,
+    "say": "I had some rice at lunch",
+    "then": "a big bowl",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food", "guide"],
+              "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "expect": {"function": "log_food", "inputs_include": {"entries": [{"estimated": true, "meal": "lunch"}]}, "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 1, "all": {"source": "claude_estimate", "estimated": true, "meal": "lunch", "portion": {"$in": ["a big bowl", "big bowl", "1 big bowl", "one big bowl", "a big bowl of rice", "big bowl of rice"]}}}]
+  },
+  {
+    "id": "portion_given",
+    "kind": "direct",
+    "core": false,
+    "say": "had a big bowl of dal for lunch",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food", "guide"],
+              "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}}],
+    "expect": {"function": "log_food", "inputs_include": {"entries": [{"estimated": true, "meal": "lunch"}]}, "reply_lacks": ["?"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 1, "all": {"source": "claude_estimate", "estimated": true, "meal": "lunch", "portion": {"$in": ["a big bowl", "big bowl", "1 big bowl", "one big bowl", "a big bowl of dal", "big bowl of dal"]}}}]
+  },
+  {
+    "id": "save_meal",
+    "kind": "direct",
+    "core": false,
+    "say": "save my usual lunch as a meal: 2 rotis and a bowl of dal",
+    "calls": {"must": ["save_food"],
+              "may": ["whoami", "find_food", "get_data", "guide"],
+              "must_not": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "roti", "service": "save_food", "data": {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120, "protein_g_per_serving": 3}}, {"as": "dal", "service": "save_food", "data": {"name": "Dal", "serving_label": "1 bowl", "kcal_per_serving": 180, "protein_g_per_serving": 9}}],
+    "expect": {"function": "save_food", "ok_calls": {"save_food": 1}, "no_call": ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "saved_food", "count": 3}, {"table": "saved_food", "where": {"item_count": 2}, "count": 1, "all": {"kcal_per_serving": 420, "protein_g_per_serving": 15}}, {"table": "food_entry", "count": 0}]
+  },
+  {
+    "id": "log_saved_meal",
+    "kind": "direct",
+    "core": false,
+    "say": "had my usual lunch",
+    "calls": {"must": ["log_food"],
+              "may": ["whoami", "find_food", "what_is_logged", "get_data", "guide"],
+              "must_not": ["log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "edit_entry", "restore_entry", "delete_entry", "save_food", "log_cardio", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "roti", "service": "save_food", "data": {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120, "protein_g_per_serving": 3}}, {"as": "dal", "service": "save_food", "data": {"name": "Dal", "serving_label": "1 bowl", "kcal_per_serving": 180, "protein_g_per_serving": 9}}, {"as": "meal", "service": "save_food", "data": {"name": "Usual lunch", "items": [{"saved_food_id": "{{seed.roti}}", "servings": 2}, {"saved_food_id": "{{seed.dal}}", "servings": 1}]}}],
+    "expect": {"function": "log_food", "inputs_include": {"entries": [{"saved_food_id": "{{seed.meal}}"}]}, "inputs_exclude": ["entries.*.kcal"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "food_entry", "count": 1, "all": {"source": "saved_food", "saved_food_id": "{{seed.meal}}", "servings": 1, "kcal": 420, "protein_g": 15}}]
   }
 ]

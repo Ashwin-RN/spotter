@@ -248,7 +248,9 @@ EDIT_FIELDS = {
     "bodyweight": ("kg", "date"),
     "measurement": ("value", "date"),
     "lift_session": ("date", "notes"),
-    "food_entry": ("description", "kcal", "meal", "date"),
+    # The macros and the portion (contract macros-and-asking.md, decision 16): an edit of a macro goes through
+    # edit_entry, so its mark becomes the person's.
+    "food_entry": ("description", "kcal", "meal", "date", "portion", "protein_g", "carbs_g", "fat_g"),
     "cardio_entry": ("exercise", "minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr", "machine_kcal",
                      "notes", "date"),
 }
@@ -259,12 +261,20 @@ ENTRY_WORDS = {"bodyweight": "Weigh-in", "measurement": "Measurement", "lift_ses
 KIND_NAMES = {kind: words.lower() for kind, words in ENTRY_WORDS.items()}
 NUMBER_FIELDS = {"kg", "value", "kcal", "minutes", "distance_km", "incline_pct", "speed_kmh", "avg_hr",
                  "machine_kcal", "kcal_per_serving", "grams_per_serving", "calorie_target_kcal",
-                 "target_sessions_per_week", "target_cardio_minutes_per_week"}
+                 "target_sessions_per_week", "target_cardio_minutes_per_week", *rules.MACROS, "protein_target_g",
+                 "carbs_target_g", "fat_target_g"}
 DATE_ERRORS = {"invalid_date", "date_in_future", "date_too_old", "day_taken"}
 # The quantity of each number an edit form offers, for formatting.field: the decimals the store keeps.
 FIELD_QUANTITIES = {"kg": "weigh_in", "kcal": "kcal", "minutes": "session_time", "distance_km": "km",
                     "incline_pct": "incline", "speed_kmh": "speed", "avg_hr": "bpm", "machine_kcal": "kcal",
-                    "kcal_per_serving": "kcal_per_serving", "grams_per_serving": "grams"}
+                    "kcal_per_serving": "kcal_per_serving", "grams_per_serving": "grams",
+                    **dict.fromkeys(rules.MACROS, "grams")}
+# The fields a form gained with the macros (contract macros-and-asking.md). A post that does not carry one, from a page
+# drawn before it, leaves it as stored: only a field a form drew and sent back empty clears it.
+NEWER_FIELDS = frozenset({*rules.MACROS, "portion", "protein_target_g", "carbs_target_g", "fat_target_g"})
+# A food entry's macros on its page, each (its field, its word), in this order; Spotter's macros key for the day.
+MACRO_WORDS = (("protein_g", "Protein"), ("carbs_g", "Carbs"), ("fat_g", "Fat"))
+DAY_MACRO_KEYS = {"protein_g": "protein", "carbs_g": "carbs", "fat_g": "fat"}
 
 MEALS = ("breakfast", "lunch", "dinner", "snack")
 MEAL_CHOICES = tuple((meal, meal.capitalize()) for meal in MEALS)  # the Food fold-out's Meal choices
@@ -272,8 +282,11 @@ MEAL_CHOICES = tuple((meal, meal.capitalize()) for meal in MEALS)  # the Food fo
 SOURCE_WORDS = {"you_said": "you said", "saved_food": "saved food", "usda": "USDA", "claude_estimate": "estimate"}
 ATTRIBUTION = ("Calorie estimates use MET values from the 2024 Adult Compendium of Physical Activities "
                "(CC BY-NC-ND 4.0).")
-TARGET_FIELDS = ("calorie_target_kcal", "target_sessions_per_week", "target_cardio_minutes_per_week")
+# The daily goals in grams sit beside the calorie target (contract macros-and-asking.md, decision 2 A).
+TARGET_FIELDS = ("calorie_target_kcal", "protein_target_g", "carbs_target_g", "fat_target_g",
+                 "target_sessions_per_week", "target_cardio_minutes_per_week")
 TARGET_QUANTITIES = {"calorie_target_kcal": "kcal", "target_sessions_per_week": "count",
+                     **dict.fromkeys(("protein_target_g", "carbs_target_g", "fat_target_g"), "grams"),
                      "target_cardio_minutes_per_week": "week_minutes"}
 FOOD_FIELDS = ("name", "serving_label", "kcal_per_serving", "grams_per_serving")
 
@@ -282,6 +295,11 @@ FIELD_HELP = {
     ("food_entry", "description"): "Give a description, up to 200 characters.",
     ("food_entry", "kcal"): "That kcal was not saved: give a number from 0 to 5,000. It is kept as a whole number.",
     ("food_entry", "meal"): "Choose breakfast, lunch, dinner or snack.",
+    ("food_entry", "portion"): f"Say how much you had in up to {rules.TEXT_LIMITS['portion']} characters, or leave it "
+                               "empty.",
+    **{("food_entry", m): (f"Give the {word.lower()} in grams as a plain number, from "
+                           f"{rules.span(*rules.NUMBERS[m][:2], 'grams')}, or leave it empty.")
+       for m, word in MACRO_WORDS},
     ("cardio_entry", "exercise"): "Choose an activity from the list.",
     ("cardio_entry", "minutes"): "Give the minutes, from 1 to 600.",
     ("cardio_entry", "distance_km"): "Give the distance in km, from 0.01 to 300, or leave it empty.",
@@ -371,6 +389,9 @@ def _target_span(field: str) -> str:
 TARGET_ERROR_WORDS = {
     ("invalid_field", "calorie_target_kcal"): ("Give the calories as a whole number with no comma, from "
                                                f"{_target_span('calorie_target_kcal')} kcal, or leave it empty."),
+    **{("invalid_field", f"{m}_target_g"): (f"Give the {m} as a whole number of grams with no comma, from "
+                                            f"{_target_span(f'{m}_target_g')} g, or leave it empty.")
+       for m in ("protein", "carbs", "fat")},
     ("invalid_field", "target_sessions_per_week"): ("Give lift sessions a week as a whole number from "
                                                     f"{_target_span('target_sessions_per_week')}, or leave it empty."),
     ("invalid_field", "target_cardio_minutes_per_week"): ("Give cardio minutes a week as a plain whole number, such "
@@ -1269,7 +1290,7 @@ LANDING_PICTURE = {"src": "/static/landing-goals.svg", "width": 340, "height": 3
 SAY_FIRST = ((LANDING_EXCHANGE["question"], "Each goal against its plan line, and the date it is reached at this pace."),
              ("How am I doing?", "Your weight trend, calories a day, lift sessions, cardio and maintenance."),
              ("Lunch was two rotis and dal.",
-              "Logs the meal. Each number is tagged: you said, saved food, USDA or estimate."))
+              "Asks how much dal, then logs the meal. Each number is tagged: you said, saved food, USDA or estimate."))
 SAY_EVERYDAY = ("Back squat, 3 sets of 5 at 60\u00a0kg", "I weighed 72.5\u00a0kg this morning",
                 "30\u00a0minutes on the treadmill")
 # The landing's Your data lines, which the hi there page's Your say draws too: (the bold words, the sentence). The
@@ -1699,6 +1720,9 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
                 food_name=food_name, food_note=food_note, serving_words=serving_words,
                 has_estimate=any(e.get("source") == "claude_estimate"
                                  for meal in ((food or {}).get("meals") or {}).values() for e in meal),
+                # The macros (contract macros-and-asking.md): each entry's line, the day's rows, and Confirm.
+                macro_line=macro_line, day_holds_macros=holds_macros(food), macro_rows=macro_rows(food),
+                confirmable=confirmable, portion_limit=rules.TEXT_LIMITS["portion"],
                 meal_choices=MEAL_CHOICES, typed=typed or {}, adding=request.query_params.getlist("add"),
                 # The Today card's state: a new account (today's page, account_empty), or the day's
                 # food, by whether any meal holds an entry (a day can total 0 kcal with food logged).
@@ -1825,6 +1849,52 @@ def serving_words(entry: dict) -> str:
     if entry.get("source") == "usda" and entry.get("grams"):
         return formatting.show(entry["grams"], "grams", page=True)
     return ""
+
+
+def grams(value) -> str:
+    """Grams as a page shows them: no needless decimals, a no-break space before the g. A real 0 is 0 g."""
+    return formatting.show(value, "grams", page=True)
+
+
+def holds_macros(food: dict | None) -> bool:
+    """Whether any entry of the day holds a macro: Spotter's day's g, not a sum worked out here."""
+    macros = (food or {}).get("macros") or {}
+    return any((macros.get(key) or {}).get("g") is not None for key in DAY_MACRO_KEYS.values())
+
+
+def macro_line(entry: dict, day_holds: bool) -> str | None:
+    """An entry's protein, carbs and fat for its own line (contract macros-and-asking.md, decision 16): each held one
+    in grams, each other "not logged", never 0 g; "Estimate: " first while the grams are the assistant's. An entry
+    with none says so only on a day where another entry holds one; else there is no line, as before the macros."""
+    if all(entry.get(m) is None for m, _ in MACRO_WORDS):
+        return "Protein, carbs and fat not logged" if day_holds else None
+    parts = [f"{word.lower()} {grams(entry[m])}" if entry.get(m) is not None else f"{word.lower()} not logged"
+             for m, word in MACRO_WORDS]
+    text = ", ".join(parts)
+    if entry.get("macros_estimated") is True:
+        return f"Estimate: {text}"
+    return text[:1].upper() + text[1:]
+
+
+def macro_rows(food: dict | None) -> list[tuple[str, str]]:
+    """The day's macro rows under the kcal totals, from Spotter's own day (FoodDay.macros): each macro's grams, with
+    "so far" while an entry has none of it, or "Not logged" when no entry holds it; and with a daily goal set, what is
+    left of it, or how far over. No rows when the day has no macros block: a day with no macro shows as before."""
+    macros = (food or {}).get("macros")
+    if not macros:
+        return []
+    rows = []
+    for field, word in MACRO_WORDS:
+        held = macros.get(DAY_MACRO_KEYS[field]) or {}
+        g = held.get("g")
+        if g is None:
+            rows.append((word, "Not logged"))
+        else:
+            rows.append((word, grams(g) + (" so far" if held.get("entries_without") else "")))
+        if held.get("target_g") is not None and held.get("left_g") is not None:
+            left, goal = held["left_g"], grams(held["target_g"])
+            rows.append((f"{word} left", f"{grams(left)} of {goal}" if left >= 0 else f"{grams(-left)} over {goal}"))
+    return rows
 
 
 async def cardio_names() -> list[str]:
@@ -2006,8 +2076,7 @@ async def log_on_day(request: Request, kind: str) -> Response:
         measured = str(form.get("kind") or "") if kind == "measurement" else None
         errors = field_errors(kind, result, measured, units)
         # What was typed stays in the Food fold-out, which the error sends open.
-        typed = {kind: {k: str(form.get(k) or "") for k in ("description", "kcal", "meal")}} \
-            if kind == "food_entry" else None
+        typed = {kind: {k: str(form.get(k) or "") for k in FOOD_FORM_FIELDS}} if kind == "food_entry" else None
         # And in the cardio, weigh-in and measurement fold-outs, the same way.
         if kind in TYPED_FIELDS:
             drawn = [form_field(k, units) for k in TYPED_FIELDS[kind]]
@@ -2025,13 +2094,22 @@ async def log_weigh_in(request: Request) -> Response:
     return await log_on_day(request, "bodyweight")
 
 
+# The Add food fold-out's fields, kept as typed after its error.
+FOOD_FORM_FIELDS = ("description", "kcal", "meal", "portion", *rules.MACROS)
+
+
 def food_from_form(form) -> dict:
     """One food entry from the day page's form. No meal unless one was chosen: the server picks the slot
-    from the person's clock (decision 3). No tag and no `estimated`: the server tags it you_said."""
+    from the person's clock (decision 3). No tag and no `estimated`: the server tags it you_said. The portion and
+    each macro only when typed (contract macros-and-asking.md): grams the person typed on their own page are their
+    own, so with any macro the mark goes as false."""
     entry = {"description": str(form.get("description") or ""), "kcal": str(form.get("kcal") or "")}
-    meal = str(form.get("meal") or "")
-    if meal:
-        entry["meal"] = meal
+    for field in ("meal", "portion", *rules.MACROS):
+        value = str(form.get(field) or "")
+        if value.strip():
+            entry[field] = value
+    if any(m in entry for m in rules.MACROS):
+        entry["macros_estimated"] = False
     return entry
 
 
@@ -2114,7 +2192,7 @@ async def edit_page(request: Request) -> Response:
                 meal_choices=MEAL_CHOICES,
                 activity_choices=[(name, name) for name in activities],
                 source_words=SOURCE_WORDS, estimate_kcal=estimate["kcal"] if estimate else None,
-                shows_estimate=estimate is not None)
+                shows_estimate=estimate is not None, portion_limit=rules.TEXT_LIMITS["portion"])
 
 
 # The fields a page draws as a textarea: the edit pages' notes, the Goals form's text. A browser sends a textarea's
@@ -2152,6 +2230,12 @@ def edit_values(kind: str, entry: dict, units=None) -> dict:
     return out
 
 
+def posted_fields(fields, form) -> tuple[str, ...]:
+    """The fields a post is read for: each of NEWER_FIELDS only when the form carries it, so a page drawn before the
+    macros, or a post that leaves one out, never clears a stored one. Every other field as before."""
+    return tuple(f for f in fields if f not in NEWER_FIELDS or f in form)
+
+
 def changed_fields(fields, current: dict, form) -> dict:
     """Only the fields the person changed, as they typed them: the service checks and stores them. An
     optional number left empty where none is stored is no change; emptied where one is stored, it is
@@ -2184,7 +2268,7 @@ def edit_changes(kind: str, entry: dict, form, units=None) -> dict:
     pair are both sent as posted, and the service refuses them: neither is dropped."""
     filled = edit_values(kind, entry, formatting.Units("lb", "mi"))  # each field keyed by its name in lb or mi
     changes = {}
-    for field in EDIT_FIELDS[kind]:
+    for field in posted_fields(EDIT_FIELDS[kind], form):
         names = posted_names(field, form, units)
         if len(names) > 1:
             changes.update({name: str(form.get(name) or "") for name in names})
@@ -2195,10 +2279,26 @@ def edit_changes(kind: str, entry: dict, form, units=None) -> dict:
     return changes
 
 
+def confirmable(entry: dict) -> bool:
+    """Whether a food entry offers Confirm: its kcal is an estimate, or its macros are (macros-and-asking.md,
+    decision 4: a label's kcal with the assistant's protein)."""
+    return entry.get("source") == "claude_estimate" or entry.get("macros_estimated") is True
+
+
+def confirmed_changes(entry: dict) -> dict:
+    """What Confirm sends edit_entry: the kcal, only when it is an estimate (a kcal edit of a saved or USDA food's
+    entry would clear its link), and each macro the entry holds, at its own value, so the mark becomes false: the
+    person confirmed the line they saw."""
+    changes = {"kcal": entry["kcal"]} if entry.get("source") == "claude_estimate" else {}
+    if entry.get("macros_estimated") is True:
+        changes.update({m: entry[m] for m in rules.MACROS if entry.get(m) is not None})
+    return changes
+
+
 async def confirm_page(request: Request) -> Response:
     """POST: the person confirms Claude's estimate for a food entry. "Yes, that's right" is the same
     number, stated (decision 1): the entry's own kcal goes to edit_entry explicitly, and the service
-    makes it you_said. Back to the day."""
+    makes it you_said. Estimated macros go the same way, and their mark becomes false. Back to the day."""
     user = await current_user(request)
     if user is None:
         return redirect(links.page("sign_in"))
@@ -2207,10 +2307,10 @@ async def confirm_page(request: Request) -> Response:
     if failed(found):
         return not_found_page(request)
     entry = found["entry"]
-    if entry.get("source") != "claude_estimate":  # nothing to confirm: already the person's or the app's number
+    if not confirmable(entry):  # nothing to confirm: already the person's or the app's numbers
         return redirect(marked(links.page("day", date=entry["date"]), *UNCHANGED))
     result = await write(user, "edit_entry", services.edit_entry, user.id, "food_entry", entry_id,
-                         {"kcal": entry["kcal"]}, "web")
+                         confirmed_changes(entry), "web")
     if "too_many_writes" in codes(result):
         return too_many(request, result)
     if "not_found" in codes(result):
@@ -2276,6 +2376,12 @@ FOOD_STRIPS = {("saved", SAVED_FOOD): f"{SAVED_FOOD_WORDS} saved.",
 FOOD_ERROR_GENERAL = "That food was not saved. Check each field and try again."
 # The fields the edit page draws: the name stays, since it is how save_food finds the food.
 FOOD_EDIT_FIELDS = FOOD_FIELDS[1:]
+# A saved food's macros a serving (contract macros-and-asking.md). The page's forms draw none of them: a save from
+# the page sends the stored ones back, since save_food clears one a plain save leaves out.
+PER_SERVING = tuple(f"{m}_per_serving" for m in rules.MACROS)
+# A saved meal (one with items) is changed through the assistant only: save_food with no items makes it a plain
+# food, and a meal's numbers are the sums of its foods. The page offers it no edit and refuses a save of its name.
+MEAL_NAME_TAKEN = "That name is a saved meal. Give another name, or change the meal through your assistant."
 
 
 def food_form(form) -> dict:
@@ -2283,6 +2389,29 @@ def food_form(form) -> dict:
     if not data["grams_per_serving"].strip():
         del data["grams_per_serving"]
     return data
+
+
+def kept_macros(food: dict | None) -> dict:
+    """The stored macros a serving of the food a save from Foods updates, sent back as they are: no form draws them,
+    and save_food clears one a plain save leaves out."""
+    return {f: food[f] for f in PER_SERVING if (food or {}).get(f) is not None}
+
+
+def is_meal(food: dict | None) -> bool:
+    """A saved meal: a saved food with items."""
+    return bool((food or {}).get("items"))
+
+
+def meal_item_words(item: dict) -> str:
+    """One food of a saved meal on Foods: its name, its kcal in the meal, then how much, as an entry's line says it:
+    a saved food's servings, a USDA food's grams."""
+    words = f"{item.get('description') or ''}, {formatting.show(item.get('kcal'), 'kcal', page=True)}"
+    if item.get("servings") is not None:
+        amount = formatting.show(item["servings"], "servings")
+        words += f", {amount}{NBSP}{'serving' if amount == '1' else 'servings'}"
+    elif item.get("grams") is not None:
+        words += f", {formatting.show(item['grams'], 'grams', page=True)}"
+    return words
 
 
 def food_key(name: object) -> str:
@@ -2353,7 +2482,10 @@ async def foods_view(request: Request, user: User, errors: dict | None = None, l
     the top (loose), what was typed kept, and the fold-out open. The strip only on a page after a write."""
     saved = await live_foods(user)
     return page(request, "foods.html", status_code=status_code, foods=saved, errors=errors or {}, loose=loose or [],
-                typed=typed or {}, limits=rules.TEXT_LIMITS,
+                typed=typed or {}, limits=rules.TEXT_LIMITS, is_meal=is_meal, meal_item_words=meal_item_words,
+                # A macro's column only when a food holds it, as the Grams column is drawn.
+                macro_columns=[(f"{m}_per_serving", f"{word} (g)") for m, word in MACRO_WORDS
+                               if any(f.get(f"{m}_per_serving") is not None for f in saved)],
                 strip=food_strip(request.query_params) if status_code == 200 else None)
 
 
@@ -2368,9 +2500,12 @@ async def foods_page(request: Request) -> Response:
     if request.method == "GET":
         return await foods_view(request, user)
     form = await request.form()
-    data = food_form(form)
     live = await live_foods(user)
-    known = next((f for f in live if food_key(f["name"]) == food_key(data["name"])), None)
+    known = next((f for f in live if food_key(f["name"]) == food_key(str(form.get("name") or ""))), None)
+    if is_meal(known):  # a meal's name: never saved over from here, so its foods are kept
+        return await foods_view(request, user, errors={"name": MEAL_NAME_TAKEN},
+                                typed={f: str(form.get(f) or "") for f in FOOD_FIELDS}, status_code=400)
+    data = {**food_form(form), **kept_macros(known)}
     if known is not None and not changed_fields(FOOD_FIELDS, known, form):
         return redirect(marked(links.page("foods"), *UNCHANGED) + POST_LANDS)
     result = await write(user, "save_food", services.save_food, user.id, data, "web")
@@ -2405,14 +2540,18 @@ async def food_edit_page(request: Request) -> Response:
     food = next((f for f in await live_foods(user) if str(f["id"]) == food_id), None)
     if food is None or not (posted or drawn_at):
         return not_found_page(request)
+    if is_meal(food):  # its numbers are its foods' sums: changed through the assistant, never saved plain here
+        return message(request, "Changed through your assistant", "A saved meal's numbers come from its foods, so it "
+                       "is not edited here.", "Ask your assistant to change the meal, or go back to Foods.",
+                       status_code=409 if posted else 200)
     errors, loose, status, values = {}, [], 200, food_values(food)
     if posted:
         form = await request.form()
         drawn_at = str(form.get("updated_at") or "")  # as the page that sent this form drew it
         if not changed_fields(FOOD_EDIT_FIELDS, food, form):
             return redirect(marked(links.page("foods"), *UNCHANGED))
-        saved = await write(user, "save_food", services.save_food, user.id, {**food_form(form), "name": food["name"]},
-                            "web", drawn_at)
+        saved = await write(user, "save_food", services.save_food, user.id,
+                            {**food_form(form), **kept_macros(food), "name": food["name"]}, "web", drawn_at)
         if "too_many_writes" in codes(saved):
             return too_many(request, saved)
         if "entry_changed" in codes(saved):
@@ -2552,7 +2691,7 @@ async def routine_restore_page(request: Request) -> Response:
 
 def targets_from_form(form, user: User) -> dict:
     """The targets and the add-back switch, only those that differ from what is stored."""
-    data = changed_fields(TARGET_FIELDS, {f: getattr(user, f) for f in TARGET_FIELDS}, form)
+    data = changed_fields(posted_fields(TARGET_FIELDS, form), {f: getattr(user, f) for f in TARGET_FIELDS}, form)
     add_back = form.get("add_back_exercise_kcal") == "on"
     if add_back != bool(user.add_back_exercise_kcal):
         data["add_back_exercise_kcal"] = add_back

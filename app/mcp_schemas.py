@@ -106,6 +106,8 @@ NEAR_MISSES = {
     "lift": dict.fromkeys(("weight", "weight_lbs", "lbs", "lb", "kg", "weight_kgs"), _SET_WEIGHT),
     "log_bodyweight": dict.fromkeys(("weight", "weight_kg", "weight_lb", "lbs"), _BODY_WEIGHT),
     "update_settings": {"length_unit": "Spotter keeps body sizes in cm: there is no length unit to set."},
+    # save_food's items (macros-and-asking.md, decision 10): a meal holds no estimate.
+    "item": {"estimated": "A meal takes the person's own numbers only: log an estimate as a food entry of its own."},
     # log's (contract log-and-guide.md): a part's or a kind's own field sent at log's top, in route's own words for
     # the same mistake; and a part's near misses, as a set's and a cardio session's are.
     "log": {**dict.fromkeys(("movement", "exercise", "sets", "weight_kg", "weight_lb", "reps", "time_s", "distance_m",
@@ -244,12 +246,54 @@ class FoodEntryIn(BaseModel):
         default=None,
         description="true when you worked the kcal out yourself, always. Leave out or false when the person "
                     "stated it.")
+    portion: str | None = Field(
+        default=None,
+        description="How much was eaten, in the person's words, such as a big bowl or 2. Needed with estimated true: "
+                    "if the person did not say, ask once, and send nothing until they answer.")
+    protein_g: Number | None = Field(
+        default=None,
+        description="Protein in grams for what was eaten: the person's number, or yours. Never with saved_food_id or "
+                    "usda_fdc_id.")
+    carbs_g: Number | None = Field(
+        default=None,
+        description="Carbs in grams for what was eaten: the person's number, or yours. Never with saved_food_id or "
+                    "usda_fdc_id.")
+    fat_g: Number | None = Field(
+        default=None,
+        description="Fat in grams for what was eaten: the person's number, or yours. Never with saved_food_id or "
+                    "usda_fdc_id.")
+    macros_estimated: StrictBool | None = Field(
+        default=None,
+        description="false only when the person stated these grams, such as from a label. Left out, they count as "
+                    "your estimate.")
     saved_food_id: Whole | None = Field(
         default=None, description="A saved food's id from find_food. Send servings with it, and no kcal.")
     servings: Number | None = Field(default=None, description="How many servings of the saved food, 0.1 to 50.")
     usda_fdc_id: Whole | None = Field(
         default=None, description="A USDA food's fdc_id from find_food. Send grams with it, and no kcal.")
     grams: Number | None = Field(default=None, description="How many grams of the USDA food, 1 to 5,000.")
+
+
+# save_food's items: a saved meal's foods (contract macros-and-asking.md, decision 8). Each is a saved food, a USDA
+# food or the person's own number: never an estimate (decision 10). The field words are FoodEntryIn's where they mean
+# the same.
+class MealItemIn(BaseModel):
+    """One food of a saved meal."""
+
+    model_config = INPUT
+
+    saved_food_id: Whole | None = Field(
+        default=None, description="A saved food's id from find_food, not a meal's. Send servings with it.")
+    servings: Number | None = Field(default=None, description="How many servings of the saved food, 0.1 to 50.")
+    usda_fdc_id: Whole | None = Field(
+        default=None, description="A USDA food's fdc_id from find_food. Send grams with it.")
+    grams: Number | None = Field(default=None, description="How many grams of the USDA food, 1 to 5,000.")
+    description: str | None = Field(
+        default=None, description="The food, in the person's words, when it is sent with kcal: no id.")
+    kcal: Number | None = Field(default=None, description="The person's own calories for it, 0 to 5,000.")
+    protein_g: Number | None = Field(default=None, description="The person's own protein in grams for it.")
+    carbs_g: Number | None = Field(default=None, description="The person's own carbs in grams for it.")
+    fat_g: Number | None = Field(default=None, description="The person's own fat in grams for it.")
 
 
 # ---------------------------------------------------------------- the five log functions
@@ -296,9 +340,14 @@ MEASUREMENT_VALUE_DESCRIPTION = ("The value in the kind's unit: cm for the body 
 MEASUREMENT_DATE_DESCRIPTION = "The day, YYYY-MM-DD, at most 2 years back. Leave out for today."
 MEASUREMENT_ALLOW_REPEAT_DESCRIPTION = "true logs it even when it matches a measurement from the last 10 minutes."
 
+# log_food's macros and portion (macros-and-asking.md, model-read text 2), after FOOD_RULE: in log_food's description
+# alone, so guide's food topic carries it and the instructions, which carry FOOD_RULE, do not.
+LOG_FOOD_MACROS = ("Send protein_g, carbs_g and fat_g when the person gave them or you can work them out; an estimate "
+                   "needs its portion.")
 LOG_FOOD_DESCRIPTION = (
     "Records what the person ate, one entry per food, in one call for the whole message. Spotter tags "
-    "each number with who supplied it; you never name the tag. " + FOOD_RULE + " " + FOOD_NAME_RULE + " "
+    "each number with who supplied it; you never name the tag. " + FOOD_RULE + " " + LOG_FOOD_MACROS + " "
+    + FOOD_NAME_RULE + " "
     "Returns the entries, their tags and the day's total. The same set again within 10 minutes is a "
     "duplicate: nothing is written."
 )
@@ -661,6 +710,10 @@ class GoalNumbers(BaseModel):
 
 class Targets(BaseModel):
     calorie_target_kcal: int | None = Field(description="Daily calorie target, or null when not set.")
+    # macros-and-asking.md P3. Short words: get_data's entry is held to 7,500 characters (data-on-request.md).
+    protein_target_g: int | None = Field(default=None, description="Protein goal, grams a day, or null.")
+    carbs_target_g: int | None = Field(default=None, description="Carbs goal, grams a day, or null.")
+    fat_target_g: int | None = Field(default=None, description="Fat goal, grams a day, or null.")
     target_sessions_per_week: int | None = Field(description="Training sessions a week, or null when not set.")
     target_cardio_minutes_per_week: int | None = Field(description="Cardio minutes a week, or null when not set.")
 
@@ -946,6 +999,14 @@ class FoodEntryOut(BaseModel):
     servings: float | None = Field(description="Servings of the saved food, or null.")
     usda_fdc_id: int | None = Field(description="The USDA food it came from, or null.")
     grams: float | None = Field(description="Grams of the USDA food, or null.")
+    # macros-and-asking.md: each new field defaults to null, so a client holding the old list still validates.
+    protein_g: float | None = Field(default=None, description="Protein in grams, or null: not logged, never 0 g.")
+    carbs_g: float | None = Field(default=None, description="Carbs in grams, or null: not logged, never 0 g.")
+    fat_g: float | None = Field(default=None, description="Fat in grams, or null: not logged, never 0 g.")
+    macros_estimated: bool | None = Field(
+        default=None, description="True when the grams are your estimate, false when the person's or Spotter's own, "
+                                  "null with no grams.")
+    portion: str | None = Field(default=None, description="How much was eaten, in the person's words, or null.")
 
 
 class LogFoodEntry(FoodEntryOut):
@@ -957,6 +1018,20 @@ class LogFoodEntry(FoodEntryOut):
     serving_label: str | None = Field(description="What one serving of the saved food is; else null.")
 
 
+class MacroDay(BaseModel):
+    g: float | None = Field(description="Grams on the day, over the entries that hold it, or null when none does.")
+    target_g: float | None = Field(default=None, description="The daily goal in grams, or null when none is set.")
+    left_g: float | None = Field(
+        default=None, description="The goal minus g, with g as 0 while null; below 0 when over. Null without a goal.")
+    entries_without: int = Field(description="The day's entries with no grams of it: g is so far while above 0.")
+
+
+class DayMacros(BaseModel):
+    protein: MacroDay = Field(description="Protein.")
+    carbs: MacroDay = Field(description="Carbs.")
+    fat: MacroDay = Field(description="Fat.")
+
+
 class FoodDay(BaseModel):
     total_kcal: float = Field(description="Everything eaten on the day, in kcal.")
     estimated_kcal: float = Field(description="How much of the total is your estimates, in kcal.")
@@ -965,6 +1040,9 @@ class FoodDay(BaseModel):
     remaining_kcal: float | None = Field(description="Target minus total, or null without a target.")
     net_kcal: float | None = Field(
         description="Food minus cardio calories, or null unless the person has turned adding them back on.")
+    macros: DayMacros | None = Field(
+        default=None, description="Protein, carbs and fat on the day, present when an entry holds any or a daily "
+                                  "goal is set. Quote g with so far while entries_without is above 0.")
 
 
 class FoodLinks(BaseModel):
@@ -988,12 +1066,30 @@ class LogFoodResult(BaseModel):
         default=None, description="Present when an entry is your estimate, or on a duplicate: what to tell the person.")
 
 
+class MealItemOut(BaseModel):
+    description: str = Field(description="The food.")
+    kcal: float = Field(description="Its calories in the meal.")
+    protein_g: float | None = Field(default=None, description="Its protein in grams, or null.")
+    carbs_g: float | None = Field(default=None, description="Its carbs in grams, or null.")
+    fat_g: float | None = Field(default=None, description="Its fat in grams, or null.")
+    source: str = Field(description="Where its numbers came from: you_said, saved_food or usda.")
+    saved_food_id: int | None = Field(default=None, description="The saved food it is, or null.")
+    servings: float | None = Field(default=None, description="Servings of that saved food, or null.")
+    usda_fdc_id: int | None = Field(default=None, description="The USDA food it is, or null.")
+    grams: float | None = Field(default=None, description="Grams of that USDA food, or null.")
+
+
 class SavedFood(BaseModel):
-    id: int = Field(description="The saved food's id. Log it as saved_food_id, with servings.")
+    id: int = Field(description="The saved food's id. Log it as saved_food_id, with servings: a meal too.")
     name: str = Field(description="The food's name.")
     serving_label: str = Field(description="What one serving is.")
     kcal_per_serving: float = Field(description="Calories in one serving.")
     grams_per_serving: float | None = Field(description="Grams in one serving, or null.")
+    protein_g_per_serving: float | None = Field(default=None, description="Protein in grams in one serving, or null.")
+    carbs_g_per_serving: float | None = Field(default=None, description="Carbs in grams in one serving, or null.")
+    fat_g_per_serving: float | None = Field(default=None, description="Fat in grams in one serving, or null.")
+    items: list[MealItemOut] | None = Field(
+        default=None, description="A saved meal's foods, each with its numbers in the meal; null for a plain food.")
 
 
 class SavedFoodLinks(BaseModel):
@@ -1029,6 +1125,9 @@ class UsdaFood(BaseModel):
     description: str = Field(description="The USDA's name for it.")
     data_type: str = Field(description="Which USDA data set it comes from.")
     kcal_per_100g: float = Field(description="Calories in 100 g.")
+    protein_g_per_100g: float | None = Field(default=None, description="Protein in grams in 100 g, or null.")
+    carbs_g_per_100g: float | None = Field(default=None, description="Carbs in grams in 100 g, or null.")
+    fat_g_per_100g: float | None = Field(default=None, description="Fat in grams in 100 g, or null.")
 
 
 class FindFoodResult(BaseModel):

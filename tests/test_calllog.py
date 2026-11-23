@@ -139,14 +139,18 @@ MARKED_CALLS = [
     ("log_measurement", {"kind": MARKER, "value": 84, "date": MARKER}),
     ("edit_entry", {"kind": MARKER, "entry_id": 1, "date": MARKER, "notes": MARKER,
                     "sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}], "meal": MARKER,
-                    "description": MARKER, "exercise": MARKER}),
+                    "description": MARKER, "exercise": MARKER, "portion": MARKER}),
     ("restore_entry", {"kind": MARKER, "entry_id": 1}),
     # Refused at the service, an unknown kind: a new account may delete (switch decision 2), and confirm is marked too.
     ("delete_entry", {"kind": MARKER, "entry_id": 1, "confirm": MARKER}),
     ("find_food", {"query": MARKER}),  # a read: it answers, with nothing found
-    ("log_food", {"entries": [{"description": MARKER, "meal": MARKER, "kcal": 100}], "date": MARKER}),
+    ("log_food", {"entries": [{"description": MARKER, "meal": MARKER, "kcal": 100, "portion": MARKER}],
+                  "date": MARKER}),
     ("log_food", {"entries": [{"description": MARKER, "kcal": 100}]}),  # succeeds: the marker is the person's text
     ("save_food", {"name": MARKER, "serving_label": MARKER, "kcal_per_serving": 100}),  # succeeds
+    # A saved meal's items (macros-and-asking.md): an item's own description, marked. It succeeds.
+    ("save_food", {"name": "Usual lunch", "items": [{"description": MARKER, "kcal": 100},
+                                                     {"description": "Dal", "kcal": 180}]}),
     ("log_cardio", {"exercise": MARKER, "minutes": 30, "date": MARKER, "notes": MARKER}),
     ("get_trends", {}),  # no string arguments: in the table so their rows are checked too
     ("get_goals", {"include_closed": True}),

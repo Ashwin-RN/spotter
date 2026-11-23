@@ -10,7 +10,9 @@ get_log(user_id, date=None, days=1)
     measurements, its food (by meal, with the day's numbers from food.day_numbers, the same helper
     log_food uses) and its cardio (each entry with its activity, pace, estimate and machine number).
     A food entry logged from a saved food also carries saved_food_name and serving_label (null
-    otherwise), so a page can show it as the name, the servings and the serving (decision 14).
+    otherwise), so a page can show it as the name, the servings and the serving (decision 14). Each entry carries
+    its protein_g, carbs_g, fat_g, macros_estimated and portion, null when not logged, and a day whose entries hold a
+    macro carries food.macros, from the same helper (contract macros-and-asking.md).
     A session's new bests come from lifts.history, the one computation that also
     feeds get_progress, so the two never disagree; an estimated max and the one it beat are rounded
     together (lifts.rounded_best), as get_progress rounds them.

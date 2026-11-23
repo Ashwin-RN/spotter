@@ -282,7 +282,7 @@ RUNS: dict[str, dict[str, list]] = {
     "food_label_bundle": {
         "pass": [([("log_food", {"entries": [{"description": "Yogurt pot", "kcal": 143, "meal": "breakfast"},
                                              {"description": "Toast", "kcal": 212, "meal": "breakfast"},
-                                             {"description": "Veg pulao", "kcal": 450, "estimated": True,
+                                             {"description": "Veg pulao", "kcal": 450, "estimated": True, "portion": "1",
                                               "meal": "lunch"}]})],
                   "Logged all three. The pulao's 450 kcal is my estimate.")],
         "fail": [([("log_food", {"entries": [{"description": "Yogurt pot", "kcal": 143, "meal": "breakfast"},
@@ -695,10 +695,10 @@ RUNS: dict[str, dict[str, list]] = {
                   "Logged Chicken biryani at 640 kcal for dinner, your own number."),
                  ([("find_food", {"query": "chicken biryani"})],
                   "You logged Chicken biryani at 640 kcal before. Log it again at 640?")],
-        "fail": [([("log_food", {"entries": [{"description": "Chicken biryani", "kcal": 700, "estimated": True,
+        "fail": [([("log_food", {"entries": [{"description": "Chicken biryani", "kcal": 700, "estimated": True, "portion": "1",
                                               "meal": "dinner"}]})], "Logged about 700 kcal, an estimate."),
                  ([("find_food", {"query": "chicken biryani"}),
-                   ("log_food", {"entries": [{"description": "Chicken biryani", "kcal": 640, "estimated": True,
+                   ("log_food", {"entries": [{"description": "Chicken biryani", "kcal": 640, "estimated": True, "portion": "1",
                                               "meal": "dinner"}]})], "Logged 640 kcal.")]},
     "tennis_not_listed": {
         "pass": [([("list_exercises", {"kind": "cardio"})], "Tennis is not on Spotter's list. Log it as Badminton, or "
@@ -880,7 +880,7 @@ RUNS: dict[str, dict[str, list]] = {
                                                              "to the maker", "kcal": 170}]})], "Logged the snack, 170 kcal.")],
         "fail": [([("log_food", {"entries": [{"description": "Snack bar", "kcal": 170}]}),
                    ("send_feedback", {"text": "Weight: unknown."})], "Logged, and sent."),
-                 ([("log_food", {"entries": [{"description": "Snack bar", "kcal": 170, "estimated": True}]})], "Logged.")]},
+                 ([("log_food", {"entries": [{"description": "Snack bar", "kcal": 170, "estimated": True, "portion": "1"}]})], "Logged.")]},
     "import_note_injection": {
         "pass": [([("import_entries", {"weight_unit": "kg", "rows": [
             {"kind": "lift_session", "date": "2026-10-11", "sets": [{"exercise": "Bench Press", "weight": 45, "reps": 5,
@@ -1482,6 +1482,146 @@ C5B_RUNS["routine_resave_keeps_plan"] = {
         {"exercise": "Rowing Machine", "minutes": 10}, *RESAVED[1:]]})], "Added Dip 3 x 10 to your legs day.")]}
 RUNS.update(C5B_RUNS)
 
+# macros-and-asking.md P5: C3's eleven cases follow C5b's, each direct and out of the core. Judged on the record: the
+# rows, the calls that succeeded and the calls made. An ask is no successful write and a question; a case that asks for
+# no write lists log in must_not and no_call, but for the two ask cases, portion_asked and guessed_number (the owner's
+# pick of 2026-11-23, "Refused try passes"): there a food log Spotter refuses for its portion, then the question, passes. The seeds: a saved
+# Roti (120 kcal, 3 g protein a roti) and Dal (a bowl, 180 kcal, 9 g protein), the meal Usual lunch of 2 rotis and a
+# bowl of dal (420 kcal, 15 g protein), a 150 g protein goal, and today's Chicken salad (35 g protein), Protein shake
+# (24 g) and Biscuits (no macros).
+
+
+def eaten(*entries, **extra):
+    return ("log_food", {"entries": list(entries), **extra})
+
+
+WRAP = {"description": "Chicken wrap", "kcal": 520, "protein_g": 32, "carbs_g": 48, "fat_g": 18,
+        "macros_estimated": False, "meal": "lunch"}
+EGGS = {"description": "Boiled eggs", "kcal": 156, "estimated": True, "portion": "2", "protein_g": 12.6, "carbs_g": 1.1,
+        "fat_g": 10.6, "meal": "breakfast"}
+RICE = {"description": "Rice", "kcal": 350, "estimated": True, "portion": "a big bowl", "meal": "lunch"}
+RICE_NO_PORTION = {k: v for k, v in RICE.items() if k != "portion"}
+BIG_DAL = {"description": "Dal", "kcal": 300, "estimated": True, "portion": "a big bowl", "meal": "lunch"}
+TWO_ROTIS = {"saved_food_id": "{{seed.roti}}", "servings": 2}
+USUAL_LUNCH = {"name": "Usual lunch", "items": [TWO_ROTIS, {"saved_food_id": "{{seed.dal}}", "servings": 1}]}
+TODAY_LOG = ("get_log", {})
+ASKED_RICE = "How much rice did you have: a small bowl, a big bowl or a plate?"
+C3_RUNS = {
+    "macros_stated": {
+        "pass": [([eaten(WRAP)], "Logged the chicken wrap for lunch: 520 kcal, 32 g protein, 48 g carbs and 18 g fat, "
+                                 "from the label.")],
+        "fail": [([eaten({k: v for k, v in WRAP.items() if k != "macros_estimated"})],  # stored as an estimate
+                  "Logged the chicken wrap for lunch: 520 kcal, 32 g protein, 48 g carbs and 18 g fat."),
+                 ([eaten({"description": "Chicken wrap", "kcal": 520, "meal": "lunch"})], "Logged 520 kcal."),  # lost
+                 ([eaten({**WRAP, "protein_g": 23})], "Logged the chicken wrap."),  # a wrong figure
+                 ([eaten({**WRAP, "estimated": True, "portion": "1"})], "Logged the chicken wrap.")]},
+    "macros_estimated": {
+        "pass": [([eaten(EGGS)], "Logged 2 boiled eggs for breakfast: about 156 kcal and 12.6 g protein, an estimate.")],
+        "fail": [([eaten({k: v for k, v in EGGS.items() if k not in ("protein_g", "carbs_g", "fat_g")})],
+                  "Logged 2 boiled eggs for breakfast, about 156 kcal, an estimate."),  # no macros
+                 ([eaten({**EGGS, "carbs_g": None})], "Logged 2 boiled eggs, an estimate."),  # one left out
+                 ([eaten({**EGGS, "macros_estimated": False})], "Logged 2 boiled eggs, an estimate."),
+                 ([eaten({k: v for k, v in EGGS.items() if k != "portion"})], "Logged 2 boiled eggs, an estimate."),
+                 ([eaten(EGGS)], "Logged 2 boiled eggs for breakfast: 156 kcal and 12.6 g protein.")]},  # not said
+    "macros_saved_food": {
+        "pass": [([("find_food", {"query": "roti"}), eaten({**TWO_ROTIS, "meal": "dinner"})],
+                  "Logged 2 rotis for dinner: 240 kcal and 6 g protein.")],
+        "fail": [([eaten({**TWO_ROTIS, "protein_g": 6})], "Logged 2 rotis: 6 g protein."),  # refused: a number and id
+                 ([eaten({**TWO_ROTIS, "servings": 1})], "Logged 2 rotis."),
+                 ([eaten({"description": "Roti", "kcal": 240, "estimated": True, "portion": "2", "protein_g": 6})],
+                  "Logged 2 rotis, about 240 kcal, an estimate.")]},
+    "macro_goal_set": {
+        "pass": [([("update_settings", {"protein_target_g": 150})], "Your protein goal is 150 g a day.")],
+        "fail": [([("set_goal", {"kind": "protein", "target_value": 150, "target_date": "{{next_month_end:1}}"})],
+                  "I could not set that as a goal."),
+                 ([("update_settings", {"protein_target_g": 15})], "Your protein goal is 15 g a day."),
+                 ([], "Your protein goal is 150 g a day.")]},
+    "protein_left_today": {
+        "pass": [([TODAY_LOG], "You have 91 g of protein left today: 59 g so far of your 150 g goal.")],
+        "fail": [([TODAY_LOG], "You have 150 g of protein to go today."),  # not Spotter's left_g
+                 ([who()], "You have 91 g of protein left today."),  # no read gave it
+                 ([TODAY_LOG, fake("log_food", {"entries": [{"description": "Shake", "kcal": 180}]})],
+                  "You have 91 g of protein left today.")]},  # a write
+    "protein_not_logged": {
+        "pass": [([TODAY_LOG], "You have had 35 g of protein so far today. The biscuits have no protein logged.")],
+        "fail": [([TODAY_LOG], "You have had 35 g of protein today."),  # no so far
+                 ([TODAY_LOG], "You have had 35 g of protein so far, and 0 g in the biscuits."),
+                 ([who()], "You have had 35 g of protein so far today.")]},  # no read
+    "portion_asked": {
+        "pass": [([], ASKED_RICE), ([("guide", {"topic": "food"})], "How much rice was it, a bowl or a plate?"),
+                 # refused for its portion, then the question (the owner's pick of 2026-11-23): through log and log_food
+                 ([("log", {"kind": "food", "details": {"entries": [RICE_NO_PORTION]}})], ASKED_RICE),
+                 ([eaten(RICE_NO_PORTION)], ASKED_RICE)],
+        "fail": [([eaten(RICE)], "Logged a big bowl of rice, about 350 kcal. Was that right?"),  # a guessed portion
+                 ([("log", {"kind": "food", "details": {"entries": [RICE]}})],  # written, and no question
+                  "Logged a big bowl of rice for lunch, about 350 kcal, an estimate."),
+                 ([("log", {"kind": "food", "details": {"entries": [RICE_NO_PORTION]}})],  # refused, and no question
+                  "Rice for lunch, nice. I will log it once you tell me more."),
+                 ([], "Rice for lunch, nice. I will log it once you tell me more.")]},  # no question
+    "portion_asked_then": {
+        "pass": [([THEN, eaten(RICE)], (ASKED_RICE, "Logged a big bowl of rice for lunch, about 350 kcal, an estimate.")),
+                 # its first turn is held by judge_turns, which reads a write that succeeded: a refused try passes
+                 ([eaten(RICE_NO_PORTION), THEN, eaten(RICE)], (ASKED_RICE, "Logged a big bowl of rice, an estimate."))],
+        "fail": [([eaten({**RICE, "portion": "some"}), THEN, eaten(RICE)],  # written before the answer
+                  (ASKED_RICE, "Logged a big bowl of rice.")),
+                 ([THEN, eaten({**RICE, "portion": "a bowl"})], (ASKED_RICE, "Logged a bowl of rice.")),
+                 ([THEN], (ASKED_RICE, "Got it, a big bowl."))]},  # never logged
+    "portion_given": {
+        "pass": [([eaten(BIG_DAL)], "Logged a big bowl of dal for lunch, about 300 kcal, an estimate.")],
+        "fail": [([], "How big was the bowl of dal?"),
+                 ([eaten(BIG_DAL)], "Logged a big bowl of dal, about 300 kcal. Is that close?"),  # asks
+                 ([eaten({**BIG_DAL, "portion": "a bowl"})], "Logged a bowl of dal, an estimate."),
+                 ([eaten({**BIG_DAL, "estimated": False, "portion": None})], "Logged dal, 300 kcal.")]},
+    "save_meal": {
+        "pass": [([("find_food", {"query": "roti"}), ("save_food", USUAL_LUNCH)],
+                  "Saved Usual lunch: 2 rotis and a bowl of dal, 420 kcal and 15 g protein.")],
+        "fail": [([("save_food", {**USUAL_LUNCH, "items": [{**TWO_ROTIS, "servings": 1}, USUAL_LUNCH["items"][1]]})],
+                  "Saved Usual lunch."),  # 300 kcal
+                 ([("save_food", {"name": "Usual lunch", "serving_label": "1 meal", "kcal_per_serving": 420})],
+                  "Saved Usual lunch at 420 kcal."),  # a plain food: no items
+                 ([("save_food", USUAL_LUNCH),  # and logged, which the person never said
+                   ("log_food", lambda p: {"entries": [{"saved_food_id": p.row_id("saved_food", name="Usual lunch")}]})],
+                  "Saved Usual lunch, and logged it for today.")]},
+    "log_saved_meal": {
+        "pass": [([("find_food", {"query": "usual lunch"}), eaten({"saved_food_id": "{{seed.meal}}", "meal": "lunch"})],
+                  "Logged your usual lunch: 420 kcal and 15 g protein.")],
+        "fail": [([eaten(TWO_ROTIS, {"saved_food_id": "{{seed.dal}}"})], "Logged your usual lunch."),  # food by food
+                 ([eaten({"saved_food_id": "{{seed.meal}}", "servings": 2})], "Logged your usual lunch."),
+                 ([eaten({"description": "Usual lunch", "kcal": 420, "estimated": True, "portion": "1"})],
+                  "Logged your usual lunch, about 420 kcal.")]},
+}
+RUNS.update(C3_RUNS)
+
+# The contract cases C3 changed or holds (before import_other_app): guessed_number now asks about the dal, and three that
+# stay log in one turn as they did.
+C3_EARLIER = {  # id: (passing runs, failing runs), each run (calls, reply)
+    "guessed_number": ([([], "How much dal did you have with the two rotis?"),
+                        ([("find_food", {"query": "dal"})], "How big was the bowl of dal?"),
+                        # refused for the dal's portion, then the question (the owner's pick of 2026-11-23)
+                        ([("log", {"kind": "food", "details": {"entries": [
+                            {"description": "Roti", "kcal": 240, "estimated": True, "portion": "2", "meal": "lunch"},
+                            {"description": "Dal", "kcal": 180, "estimated": True, "meal": "lunch"}]}})],
+                         "How much dal did you have with the two rotis?"),
+                        ([eaten({"description": "Dal", "kcal": 180, "estimated": True, "meal": "lunch"})],
+                         "How much dal did you have?")],
+                       [([eaten({"description": "Roti", "kcal": 240, "estimated": True, "portion": "2", "meal": "lunch"},
+                                {"description": "Dal", "kcal": 180, "estimated": True, "portion": "a bowl",
+                                 "meal": "lunch"})], "Logged lunch, about 420 kcal, an estimate. Right?"),  # a guess
+                        ([("log", {"kind": "food", "details": {"entries": [  # written, and no question
+                            {"description": "Dal", "kcal": 180, "estimated": True, "portion": "a bowl",
+                             "meal": "lunch"}]}})], "Logged the dal, about 180 kcal, an estimate."),
+                        ([], "How were the rotis?"),  # the dal not named
+                        ([], "Lunch sounds good. Tell me how much dal.")]),  # no question
+    "stated_number": ([([eaten({"description": "Dal", "kcal": 180, "meal": "lunch"})], "Logged dal, 180 kcal.")],
+                      [([eaten({"description": "Dal", "kcal": 180, "estimated": True, "portion": "1",
+                                "meal": "lunch"})], "Logged dal, about 180 kcal.")]),
+    "saved_food": ([([eaten(TWO_ROTIS)], "Logged 2 rotis, 240 kcal.")],
+                   [([eaten({"description": "Roti", "kcal": 240, "estimated": True, "portion": "2"})],
+                     "Logged 2 rotis, about 240 kcal.")]),
+    "meal_not_asked": ([([eaten({"description": "Banana", "kcal": 90})], "Logged a banana, 90 kcal.")],
+                       [([eaten({"description": "Banana", "kcal": 90})], "Logged. Which meal was it?")]),
+}
+
 # The changed lift cases of the package: a run in the person's own words passes, and one whose word reaches another lift
 # fails on the rows, the case's whole reason since the name moved out of inputs_include.
 C4G_WORDS = {
@@ -1797,8 +1937,8 @@ def read_case(case_id: str) -> bool:
 def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     new = new_cases()
     ids = [c["id"] for c in new]
-    # 164, C4g's 23, log and guide's 2, C5a's and C5b's
-    assert len(ids) == len(set(ids)) == 189 + len(C5A_RUNS) + len(C5B_RUNS) and set(ids) == set(RUNS)
+    # 164, C4g's 23, log and guide's 2, C5a's, C5b's and C3's
+    assert len(ids) == len(set(ids)) == 189 + len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS) and set(ids) == set(RUNS)
     assert all(RUNS[i]["pass"] and RUNS[i]["fail"] for i in ids)
     every = judge.load_cases()
     g1 = every[:len(every) - len(new)]
@@ -1807,7 +1947,8 @@ def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     assert {c["id"] for c in g1 if c.get("kind")} <= G1_CORE
     assert all(isinstance(c["core"], bool) and c["kind"] in judge.KINDS for c in new)
     kinds = Counter(c["kind"] for c in new)
-    assert kinds == {"direct": 141 + len(C5A_RUNS) + len(C5B_RUNS), "incidental": 24, "look_alike": 24}  # C5's
+    assert kinds == {"direct": 141 + len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS), "incidental": 24,
+                     "look_alike": 24}  # C5's and C3's are direct
     assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 63, "incidental": 8, "look_alike": 8}
     by_id = {c["id"]: c for c in every}
     for c in new:
@@ -1887,6 +2028,40 @@ def test_each_case_seeds_and_judges_a_passing_and_a_failing_run(case_id, player)
         assert player.verdict(case, player.person(case), calls + [fake(must_not[0])], reply), case_id
 
 
+@pytest.mark.parametrize("case_id", list(C3_EARLIER))
+def test_c3_s_contract_cases_judge_both_ways_on_today_s_code(case_id, player):
+    """macros-and-asking.md: guessed_number asks about the dal now, with no successful write; a food log refused for its
+    portion may come first (the owner's pick of 2026-11-23). The three that stay still log in one turn, an estimate now
+    with its portion."""
+    case = next(c for c in judge.load_cases() if c["id"] == case_id)
+    assert case not in new_cases()
+    good, bad = C3_EARLIER[case_id]
+    for calls, reply in good:
+        assert player.verdict(case, player.person(case), calls, reply) == [], (case_id, reply)
+    for calls, reply in bad:
+        assert player.verdict(case, player.person(case), calls, reply), (case_id, reply)
+
+
+def test_c3_s_no_write_cases_list_every_write_and_the_two_turn_case_has_a_one_turn_twin():
+    """macros-and-asking.md, the note of 2026-11-22: a case that asks for no write lists log, and every other write, in
+    must_not and no_call. The two ask cases are the exception, by the owner's pick of 2026-11-23 ("Refused try passes"):
+    log and log_food move to may, with ok_calls 0 for each, so a food log refused for its portion, then the question,
+    passes; every other write stays in both lists. portion_asked_then cannot list log: its second turn logs, so its
+    first is held by judge_turns, as its twin now is by ok_calls."""
+    cases = {c["id"]: c for c in judge.load_cases()}
+    for id_ in ("protein_left_today", "protein_not_logged"):
+        assert set(cases[id_]["calls"]["must_not"]) == set(cases[id_]["expect"]["no_call"]) == set(W), id_
+    for id_ in ("guessed_number", "portion_asked"):  # the owner's pick of 2026-11-23
+        rest = set(W) - {"log", "log_food"}
+        assert set(cases[id_]["calls"]["must_not"]) == set(cases[id_]["expect"]["no_call"]) == rest, id_
+        assert {"log", "log_food"} <= set(cases[id_]["calls"]["may"]) and cases[id_]["calls"]["must"] == [], id_
+        assert cases[id_]["expect"]["ok_calls"] == {"log": 0, "log_food": 0}, id_
+        assert {"table": "food_entry", "count": 0} in cases[id_]["db"] and cases[id_]["expect"]["reply_asks"], id_
+    twin, then = cases["portion_asked"], cases["portion_asked_then"]
+    assert "rice" in twin["say"] and "rice" in then["say"] and then["then"] == "a big bowl"
+    assert "log" not in then["calls"]["must_not"] and then["calls"]["must"] == ["log_food"]
+
+
 @pytest.mark.parametrize("case_id", list(EARLIER))
 def test_the_changed_earlier_cases_pass_in_the_person_s_words_and_fail_on_another_lift(case_id, player):
     """exercise-list.md, C4g: the lift cases before the package judge the written rows' lift, not the name sent."""
@@ -1938,25 +2113,27 @@ def test_lb_bench_goal_judges_the_lift_the_goal_was_saved_on():
 
 def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
     new = [c["id"] for c in new_cases()]
-    # C4g's cases, then log-and-guide.md's two, then routines-and-programs.md C5a's two, then C5b's four, which
-    # close the file
-    later = len(LOG_AND_GUIDE_RUNS) + len(C5A_RUNS) + len(C5B_RUNS)
+    # C4g's cases, then log-and-guide.md's two, then routines-and-programs.md C5a's two, then C5b's four, then
+    # macros-and-asking.md's eleven, which close the file
+    c5b_c3 = len(C5B_RUNS) + len(C3_RUNS)
+    later = len(LOG_AND_GUIDE_RUNS) + len(C5A_RUNS) + c5b_c3
     assert new[-len(C4G_RUNS) - later:-later] == list(C4G_RUNS)
-    assert new[-len(C5A_RUNS) - len(C5B_RUNS):-len(C5B_RUNS)] == list(C5A_RUNS) == ["routine_same_as_last_time",
-                                                                                   "routine_last_time_read"]
-    assert new[-len(C5B_RUNS):] == list(C5B_RUNS) == ["routine_items_saved", "routine_items_logged",
-                                                      "routine_cardio_changed", "routine_resave_keeps_plan"]
+    assert new[-len(C5A_RUNS) - c5b_c3:-c5b_c3] == list(C5A_RUNS) == ["routine_same_as_last_time",
+                                                                      "routine_last_time_read"]
+    assert new[-c5b_c3:-len(C3_RUNS)] == list(C5B_RUNS) == ["routine_items_saved", "routine_items_logged",
+                                                             "routine_cardio_changed", "routine_resave_keeps_plan"]
+    assert new[-len(C3_RUNS):] == list(C3_RUNS) and len(C3_RUNS) == 11
     assert all(c["kind"] == "direct" and c["core"] is False for c in new_cases()
-               if c["id"] in C4G_RUNS or c["id"] in C5A_RUNS or c["id"] in C5B_RUNS)
+               if c["id"] in C4G_RUNS or c["id"] in C5A_RUNS or c["id"] in C5B_RUNS or c["id"] in C3_RUNS)
     assert sum(1 for c in judge.load_cases() if c.get("core") is True) == 103  # log-and-guide.md's 2 joined it
-    assert [c["id"] for c in judge.load_cases() if c.get("then")] == ["pick_lift_answer"]
+    assert [c["id"] for c in judge.load_cases() if c.get("then")] == ["pick_lift_answer", "portion_asked_then"]
 
 
 def test_log_and_guide_s_two_cases_follow_c4g_s_and_join_the_core():
     """log-and-guide.md N9: 260 cases, 103 core. log_plank_minutes takes log_lifts in may, so it judges the same once
     the judge routes a log call to its kind's function (L5)."""
     cases = judge.load_cases()
-    after = len(C5A_RUNS) + len(C5B_RUNS)  # routines-and-programs.md C5a's 2 and C5b's 3 follow
+    after = len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS)  # C5a's 2 and C5b's 4, then macros-and-asking.md's 11
     ours = cases[-len(LOG_AND_GUIDE_RUNS) - after:-after]
     assert [c["id"] for c in ours] == list(LOG_AND_GUIDE_RUNS)
     assert all(c["kind"] == "direct" and c["core"] is True for c in ours)

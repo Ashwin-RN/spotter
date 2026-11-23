@@ -649,6 +649,7 @@ ul.entries { display: block; }
 .entry-main { grid-column: 1; grid-row: span 2; min-width: 0; padding-top: 2px; }
 .entry-name { display: block; font-size: 16px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
 .entry-figures { display: block; margin-top: 2px; color: var(--text-2); font-size: 14px; overflow-wrap: anywhere; }
+.entry-macros { display: block; margin-top: 2px; color: var(--text-2); font-size: 14px; overflow-wrap: anywhere; }
 .entry-note { display: block; margin-top: 4px; color: var(--text-2); font-size: 14px; overflow-wrap: anywhere; }
 .entry-note b { color: var(--text-3); font-weight: 500; }
 .entry-tags { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; padding-top: 3px; }
@@ -872,6 +873,8 @@ td.name, th.name { font-weight: 500; }
 td a { text-underline-offset: 3px; }
 table.rows td a { display: inline-flex; align-items: center; min-height: 44px; margin: -12px 0; }
 table.rows td.lead, table.rows td[data-label] { overflow-wrap: anywhere; }
+/* A saved meal's foods, under its name in the Food cell: one a line, in the entry lines' grey. */
+ul.meal-foods { flex-basis: 100%; margin-top: 4px; color: var(--text-2); font-size: 14px; font-weight: 400; }
 table.trends td:first-child { color: var(--text-2); }
 table.trends td.num { font-weight: 600; }
 tr.group td { border-top-color: var(--line-strong); }

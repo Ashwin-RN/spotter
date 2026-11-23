@@ -280,3 +280,51 @@ The real figure is reported after.
 ## Not in this work
 
 Macros through `import_entries`. L-FOODSRC. B7. CONFIRM. Macros in `get_trends` and a chart over time (C9). Image input in the eval runner (ROUTE). The look of the pages (C12).
+
+## Note, 2026-11-21: log-and-guide merges first
+
+The owner's word, after the build began: `docs/contracts/log-and-guide.md` merges to `main` before C3. P1 stands as built, since log-and-guide adds no migration, so `0015` follows `0014`. P2 to P5 are built only after log-and-guide is on `main` and this branch is rebased onto it. Each builder reads that contract's "What exists" against the commit it starts from. Where this note and the sections above disagree, this note wins.
+
+| # | Point | What changes here |
+|---|---|---|
+| 1 | `log_food`'s description is a named constant after log-and-guide, and `guide` food is built from it and `FoodEntryIn` | P2 adds model-read text 2's sentence to that constant, so `log_food` and `guide` food both carry it |
+| 2 | The `atwater=` note | Written by the food service, not keyed on the name `log_food`, so a call through `log` with kind food notes it too. Sized by the room left that log-and-guide's `calllog` gives, as `pair_note` is, after `kind=` and `word=` |
+| 3 | `SavedFood.id`'s words become "Log it as saved_food_id, with servings." | The meal words go onto that sentence: "Log it as saved_food_id, with servings: a meal too." |
+| 4 | Decision 13 named one place wrongly. "logging food still never asks" is in `import_entries`' description (`IMPORT_DESCRIPTION`, `app/mcp_server.py:152` on `3b2441e`), not in the instructions. The instructions are 4,084 after log-and-guide | On a measured miss, "except a food's kcal," becomes "except for food," in the instructions: 4,084 to 4,079. "logging food still never asks." becomes "logging food never asks which meal." in `import_entries`' description: 5 more there. The instructions' pins move by 5; `import_entries`' published size and hash move too. Model-read text row 10's "4,077" reads 4,079 |
+| 5 | A chat opened before C3 holds `log_food` with no `portion` | P2 adds a test that sends an estimate with no `portion` to `log_food`, refused with the fix, then the same call with `portion`, logged. "A chat opened before the deploy" stands: whether the client passes a field its list lacks is checked at the live check |
+| 6 | Through `log`, a food refusal names its entry as sent: `details.entries[1]`, not "Entry 2" | The portion refusal and the meal refusals take the entry's place by the same `where` the other food checks take, so `said_as_sent` rewrites them. P2 tests both: "Entry 2" through `log_food` and `details.entries[1]` through `log` |
+| 7 | The published hashes and sizes | Recomputed after the rebase, on log-and-guide's numbers. The core is 103 before C3's cases. The case counts in "Eval cases" and "The run and its cost" are read again from `evals/cases.json` after the rebase |
+
+## Note, 2026-11-22: rebased onto log-and-guide as built
+
+`c3-macros` is rebased onto `main` at `9950f13`, where log-and-guide is live. P1 was set aside as a patch, the contract commit rebased, and P1 put back with no conflict. On that tree P1's 11 test files pass but for `tests/test_edit_history.py`'s export of versions, which is P2's. Read on `9950f13`: 21 functions listed, 24 for the owner, 260 cases, 103 core, the last case `log_plank_minutes`, the instructions 4,084 characters pinned in 10 test files (`tests/test_mcp.py` is the tenth). This note wins over the sections above and over the note of 2026-11-21 where they differ.
+
+| # | Point | What C3 does |
+|---|---|---|
+| 1 | `tests/test_log_and_guide.py:1419` ("food estimated, no meal") is a row that runs through both `log` and `log_food` with no error | P2 gives it a `portion`, and adds the portion refusal to that file's "said as sent" lists (`:907`, `:1485`). Through `log` it reads "details.entries[1]: portion is missing for an estimate.", its fix "... send it as portion in details.entries[1] ..." |
+| 2 | Cases | P5 appends after `log_plank_minutes`: 271 cases, the package 200. Each new case gets its `RUNS` in `tests/test_golden_cases.py`, which joins P5's files. Each case that asks for no write, `guessed_number` among them, lists `log` in `must_not` and `no_call`. Cases keep the old function names: the judge routes a `log` call to its kind's function. P6's four come after C5's join |
+| 3 | Published hashes of `log_food`, `save_food`, `find_food`, `edit_entry` (P2) and `update_settings` (P3) | Recomputed on the built server, never merged by hand. A pin of a hidden function goes through `registered_tools` |
+| 4 | The food sentence (model-read text row 2) | Goes in `LOG_FOOD_DESCRIPTION`, `app/mcp_schemas.py:313`. `guide` food reads it, so `GUIDE_SIZES["food"]` (3,626, `tests/test_log_and_guide.py:1136`) moves. Topic `log` reads only the description's first sentence, so its size should not move: printed on the built server |
+| 5 | How arguments reach `services.log_food` | Any change goes in `log_food_step`, `app/mcp_server.py:847`, never in the decorated `log_food`, or `log` misses it |
+| 6 | `atwater=` | Sized by `calllog.room("atwater")` (`app/calllog.py:265`), after `kind=` and `word=`, as `pair_note` is |
+| 7 | Hand merges likely | `KNOWN_NAMES` in `app/calllog.py`; the `save_food` row in `docs/can-and-cant.md`; `app/services/fields.py` near `:813` |
+| 8 | Stale figures above | "The run and its cost": the core is 103, so a reword run is about 137 cases, not about 135; its cost scales the same way, read again before the run. "What exists": the length is pinned in 10 files, not 9. The estimate sites are 52 lines, the 6 new ones in `tests/test_log_and_guide.py` |
+| 9 | Notes and the log | C3's notes on `docs/contracts/data-on-request.md` and `docs/contracts/log-and-guide.md` go after log-and-guide's own notes there; C3's `BUILD_LOG.md` entry at the tail |
+
+No merge, deploy or eval run without the owner's word.
+
+## Note, 2026-11-22: rebased onto C5a
+
+`main` moved to `fcba0e8`, where C5a (routines-and-programs.md, deploy 1) is live on top of log-and-guide. `c3-macros` is rebased onto it the same way: P1 to P4 set aside as a patch, the contract commit rebased, the patch put back with no conflict. C5a's diffs to the files both touch were read first: its changes in `app/mcp_schemas.py`, `app/mcp_server.py`, `app/services/entries.py` and `app/web.py` are routine lines apart from C3's food lines. On the merged tree the published hashes in `tests/test_feedback.py` and `tests/test_inputs.py` pass as computed by the server. Read on `fcba0e8`: 262 cases, 103 core, the last three `log_plank_minutes`, `routine_same_as_last_time` and `routine_last_time_read`; `tests/test_golden_cases.py` pins the package as 189 + `len(C5A_RUNS)` and the cases as 260 + `len(C5A_RUNS)`. This note wins over the notes above where they differ.
+
+| # | Point | What C3 does |
+|---|---|---|
+| 1 | Cases (replaces point 2 of the note of 2026-11-22 on the counts) | P5's 11 go after `routine_last_time_read`: 273 cases, 103 core, the package 202. Their `RUNS` sit in a block of their own beside `C5A_RUNS`, which stays as it is. The rest of that point stands: each case that asks for no write lists `log` in `must_not` and `no_call`, and cases keep the old function names |
+| 2 | The instructions | 4,084 characters, pinned in 10 test files. On a measured miss, decision 13's reword takes them to 4,079 |
+| 3 | `GUIDE_SIZES["food"]` | 3,626 on `fcba0e8`, 4,885 with P2's food sentence; `log` 1,894 is unchanged |
+| 4 | The page line on estimates | `app/templates/hi.html` said "The one number it may estimate is a food's calories". It now names the macros too, and `tests/test_hi_there.py` pins the new line |
+| 5 | The log | C3's `BUILD_LOG.md` entry goes after C5a's, now at the tail |
+
+Still to come on `main`: C5b, then C5c after C3's merge and its migration `0015`; the five old log functions are removed last. One more rebase is expected if C5b merges first.
+
+No merge, deploy or eval run without the owner's word.

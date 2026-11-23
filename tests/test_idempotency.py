@@ -1095,7 +1095,7 @@ def drawn_key(page: str, action: str, holding: str = "") -> str:
 
 
 def an_estimate(user: int) -> int:
-    entry = {"description": "Dal", "kcal": 300, "estimated": True}
+    entry = {"description": "Dal", "kcal": 300, "estimated": True, "portion": "1"}
     return services.log_food(user, {"entries": [entry]}, "claude")["ids"][0]
 
 

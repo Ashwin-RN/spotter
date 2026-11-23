@@ -43,21 +43,21 @@ from .test_web import client, only_user, post, seam, sign_in, today_of, web_clie
 # get_log and get_progress (NewBest's and Best's kinds and units). On 2026-11-20 an outside review moved log_lifts and
 # edit_entry (a pair's weight) and get_progress (Best.text).
 BEFORE_INPUTS = {
-    "whoami": "f9df11008be2cd1b403484a17383cdd7786f09fc04a0b78047b1aaf9bf7e894b",
+    "whoami": "b38038e10238cf4ced8d65aebd4ebbfbd35ccabb604c254f75c00595ff94426a",  # C3: the daily goals in targets
     "list_exercises": "5c4dace8b6b714d2523bc3e7a5f6ebb34b65753d7d4da2abb11f5c2bf12bbfa3",  # exercise list C4d: search; C4f: a side; log and guide: log takes the person's words
     "log_lifts": "25bad23e53f48945c75888f6f706afe840f0253c68dcf1db3d7e3efdaf6f7c11",  # exercise list: LogSetIn; C4e: NewBest; C4f: hand_check, a side; 2026-11-20: a pair's weight
     "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",
     "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",
     "get_progress": "81b1ca6ab08ee7a300aa32893713e73457fc836f649b845bb4260dfdfb17edd5",  # exercise list C4e: Best; 2026-11-20: Best.text
-    "update_settings": "1053550decae70f255f0edaf894b730c1da9315e2d989ae1e5e2536eee85c879",
-    "get_log": "dcfab8951e9a8aa501e136054150cb05c07477ad2eda6ca87b6dfc5114e059e5",  # exercise list: SetOut; C4e: NewBest
+    "update_settings": "b0de26c1baebb38324461efd63dcd1d4de7bad9771f4bbbfc1b2f82852de97ea",  # C3: the daily goals
+    "get_log": "0a7487c06e022de4836e876a3fd7b8c534d4c838345e9c5beb88b3936a0c9ba7",  # exercise list: SetOut; C4e: NewBest; C3: a food entry's macros and portion, the day's macros, its goals
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
-    "edit_entry": "86f202eb01e3ff4c39a8e9236234a350f4a02ed20c1cdc1c5b559c5e2ebe2bc5",  # exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words
+    "edit_entry": "cd950b5b63a74e18193d8fac41467a241768b67c9bdc7d33dd51e5e68a5b1c4a",  # exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words; C3: macros and portion
     "restore_entry": "7ef4931069bb011e48b55cb21e2c574ea21c2716112a85957b0ad0499220cb67",  # log and guide: kind words, id words
     "delete_entry": "02798afe3eee1addad25aac4c73de15475ec648830d12f67134cd910b308e7b0",  # log and guide: kind words, id words
-    "find_food": "db1fa82718a2a9e97d81806d21988b8340d2f20ec1c1a30d01eccd0b6e30a586",  # log and guide: ids log takes
-    "log_food": "91bdd6db7aa8421b0dc1fc806d2afea719e7c6c23c08ae259bc6da7ecbccabad",  # 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words
-    "save_food": "599ec355d36b392504083437501412a35693828717381813341ff1b7683ad5fd",  # log and guide: ids log takes
+    "find_food": "604b2d990283e23b972257805fd8f662f738d6bb7d30e823a0ca8b77b67da6d8",  # log and guide: ids log takes; C3: macros a serving, a meal's items, USDA's a 100 g
+    "log_food": "e344fdb6652c3e7d9bd9068d83cdfeff1e7f7cfb984a8e192832e805b67a850f",  # 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words; C3: macros, portion, the food sentence, the day's macros, its goals
+    "save_food": "a28c70524a287f0997af2fd255ddc2cde6c868b40393073d218208e58159ac0a",  # log and guide: ids log takes; C3: macros a serving, items
     "log_cardio": "5a4106f698eae37d7b11fe096d19f60e2d405050ada8b23aa7e33b65df8d8794",  # 2026-11-20: exercise's words name both walks
     "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
     "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",
@@ -88,7 +88,8 @@ DESCRIPTIONS = {
         "The value in the kind's unit: cm for the body sizes, steps, hours of sleep, bpm, ml. Spotter takes no inches."),
 }
 FORBIDDING = ("SetIn", "FoodEntryIn", "RoutineLiftIn",  # the three argument objects of decision 1
-              "LogSetIn")  # and log_lifts' own set model since exercise-list.md R3
+              "LogSetIn",  # and log_lifts' own set model since exercise-list.md R3
+              "MealItemIn")  # and save_food's meal items since macros-and-asking.md
 
 
 def sha(tool: dict) -> str:
@@ -589,7 +590,8 @@ def form_seeds(uid: int, today: date) -> dict:
     entries = {
         "bodyweight": services.log_bodyweight(uid, {"kg": 80, "date": on}, "claude")["id"],
         "measurement": services.log_measurement(uid, {"kind": "waist", "value": 84, "date": on}, "claude")["id"],
-        "food_entry": services.log_food(uid, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True}],
+        "food_entry": services.log_food(uid, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True,
+                                                           "portion": "a bowl"}],
                                               "date": on}, "claude")["ids"][0],
         "cardio_entry": services.log_cardio(uid, {"exercise": "Treadmill Walk", "minutes": 60, "distance_km": 5,
                                                   "date": on}, "claude")["id"],
@@ -774,8 +776,8 @@ ITEM_CALLS = {  # an item's list: the call around it, the item, its place's word
              "Use: exercise, sets, reps, weight_kg or weight_lb, time_s or minutes, distance_m, distance_km or "
              "distance_mi, incline_pct, speed_kmh or speed_mph, avg_hr, machine_kcal."),  # routines-and-programs.md C5b
     "entry": ("log_food", "entries", {"description": "Dal", "kcal": 180}, "Entry 1", "a food entry",
-              "Use: description, meal, kcal, estimated, saved_food_id, servings, usda_fdc_id, grams. source is decided "
-              "by the server."),
+              "Use: description, meal, kcal, estimated, portion, protein_g, carbs_g, fat_g, macros_estimated, "
+              "saved_food_id, servings, usda_fdc_id, grams. source is decided by the server."),  # macros-and-asking.md
 }
 
 

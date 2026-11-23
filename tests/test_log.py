@@ -134,7 +134,7 @@ def test_each_day_has_its_food_by_meal_and_its_cardio(make_user):
     services.log_bodyweight(person.id, {"kg": 80}, "web")
     eaten = services.log_food(person.id, {"entries": [
         {"description": "oats", "kcal": 300, "meal": "breakfast"},
-        {"description": "dal", "kcal": 200, "meal": "lunch", "estimated": True},
+        {"description": "dal", "kcal": 200, "meal": "lunch", "estimated": True, "portion": "a bowl"},
         {"description": "rice", "kcal": 250, "meal": "lunch"}], "date": day(person, -1)}, "claude")
     walk = services.log_cardio(person.id, {"exercise": "Outdoor Walk", "minutes": 30, "distance_km": 3,
                                            "date": day(person, -1)}, "claude")

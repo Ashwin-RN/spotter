@@ -265,7 +265,8 @@ LANDING_WORDS = (
     "Things to say first",
     "Am I on track for my goals?", "Each goal against its plan line, and the date it is reached at this pace.",
     "How am I doing?", "Your weight trend, calories a day, lift sessions, cardio and maintenance.",
-    "Lunch was two rotis and dal.", "Logs the meal. Each number is tagged: you said, saved food, USDA or estimate.",
+    "Lunch was two rotis and dal.",
+    "Asks how much dal, then logs the meal. Each number is tagged: you said, saved food, USDA or estimate.",
     "Everyday logging",
     f"Back squat, 3 sets of 5 at 60{NO_BREAK}kg", f"I weighed 72.5{NO_BREAK}kg this morning",
     f"30{NO_BREAK}minutes on the treadmill",
@@ -2150,7 +2151,7 @@ TOO_MANY = {"error": "too_many_writes", "message": "120 writes in the last 10 mi
 def test_a_limit_refusal_is_a_429_with_the_wait(client, stocked, monkeypatch, name, path, data):
     uid = only_user().id
     food = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}, "claude")
-    estimate = services.log_food(uid, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True}]}, "claude")
+    estimate = services.log_food(uid, {"entries": [{"description": "Dal", "kcal": 180, "estimated": True, "portion": "1"}]}, "claude")
     monkeypatch.setattr(services, name, lambda *args: dict(TOO_MANY))
     fill = {"today": stocked["today"].isoformat(), "weigh_in": stocked["weigh_in"], "food": food["id"],
             "estimate": estimate["ids"][0]}
@@ -2290,7 +2291,7 @@ def stock_food(user: User, weigh_in: bool = True) -> dict:
         assert "error" not in services.log_bodyweight(user.id, {"kg": "80"}, "claude")
     food = services.log_food(user.id, {"entries": [
         {"description": "Roti", "saved_food_id": roti["id"], "servings": 2, "meal": "lunch"},
-        {"description": "Dal", "kcal": 180, "estimated": True, "meal": "lunch"},
+        {"description": "Dal", "kcal": 180, "estimated": True, "portion": "1", "meal": "lunch"},
         {"description": "Tea", "kcal": 40, "meal": "breakfast"}]}, "claude")
     run = services.log_cardio(user.id, {"exercise": "Treadmill Run", "minutes": 30, "distance_km": 5,
                                         "machine_kcal": 300}, "claude")
@@ -2401,8 +2402,9 @@ def test_the_day_shows_food_by_meal_with_each_tag_and_the_numbers(client, fed):
     roti, dal = meal_of(food, "Lunch")
     assert (roti["name"], roti["figures"], roti["note"], roti["tags"]) == \
         ("Roti", "240\u00a0kcal, 2\u00a0rotis", None, [("tag-saved_food", "saved food")])
+    # macros-and-asking.md: the estimate's portion, "1", in the person's words after its kcal
     assert (dal["name"], dal["figures"], dal["note"], dal["tags"]) == \
-        ("Dal", "180\u00a0kcal", None, [("tag-claude_estimate", "estimate")])
+        ("Dal", "180\u00a0kcal, 1", None, [("tag-claude_estimate", "estimate")])
     [tea] = meal_of(food, "Breakfast")
     assert (tea["name"], tea["figures"], tea["tags"]) == ("Tea", "40\u00a0kcal", [("tag-you_said", "you said")])
     assert '<div class="meal empty">\n    <h3>Dinner</h3>' in food and '<div class="meal empty">\n    <h3>Snack</h3>' in food
@@ -2580,7 +2582,7 @@ def test_editing_a_foods_kcal_makes_it_you_said(client, fed):
     row = next(e for e in rows(FoodEntry, only_user().id) if e.id == dal)
     assert (row.kcal, row.source, row.estimated) == (150, "you_said", False)
     dal_row = next(e for e in meal_of(day_of(client, fed["today"]), "Lunch") if e["name"] == "Dal")
-    assert (dal_row["figures"], dal_row["tags"]) == ("150\u00a0kcal", [("tag-you_said", "you said")])
+    assert (dal_row["figures"], dal_row["tags"]) == ("150\u00a0kcal, 1", [("tag-you_said", "you said")])  # its portion
 
 
 def test_editing_a_foods_description_or_meal_keeps_its_tag(client, fed):
@@ -2850,7 +2852,7 @@ def test_confirm_makes_an_estimate_the_persons_number(client, fed):
     assert calls(only_user().id)[start:] == [("edit_entry", True, None)]
     lunch = re.search(r"<h3>Lunch</h3>(.*?)</ul>", day_of(client, fed["today"]), re.S).group(1)
     dal_row = next(e for e in food_entries(lunch) if e["name"] == "Dal")
-    assert (dal_row["figures"], dal_row["tags"]) == ("180\u00a0kcal", [("tag-you_said", "you said")])
+    assert (dal_row["figures"], dal_row["tags"]) == ("180\u00a0kcal, 1", [("tag-you_said", "you said")])  # its portion
     assert "/confirm" not in lunch
 
 
@@ -2873,7 +2875,7 @@ def test_confirming_a_number_that_is_already_the_persons_writes_nothing(client, 
 
 def test_confirming_someone_elses_estimate_is_a_404(client, fed, make_user):
     other = make_user()
-    theirs = services.log_food(other.id, {"entries": [{"description": "Secret soup", "kcal": 777, "estimated": True}]},
+    theirs = services.log_food(other.id, {"entries": [{"description": "Secret soup", "kcal": 777, "estimated": True, "portion": "1"}]},
                                "claude")
     for path in (f"/entries/food_entry/{theirs['ids'][0]}/confirm", "/entries/food_entry/abc/confirm",
                  "/entries/food_entry/99999/confirm"):
@@ -3857,7 +3859,7 @@ def log_one(monkeypatch, kind: str) -> dict:
     elif kind == "stated":
         entry = {"description": "Thali", "kcal": 650}
     else:
-        entry = {"description": "Biryani", "kcal": 700, "estimated": True}
+        entry = {"description": "Biryani", "kcal": 700, "estimated": True, "portion": "1"}
     result = services.log_food(uid, {"entries": [{**entry, "meal": "lunch"}]}, "claude")
     assert "error" not in result, result
     return result
@@ -3869,7 +3871,7 @@ def log_one(monkeypatch, kind: str) -> dict:
      ("tag-saved_food", "saved food")),
     ("usda", "Bananas, raw", "134 kcal, 150 g", None, ("tag-usda", "USDA")),
     ("stated", "Thali", "650 kcal", None, ("tag-you_said", "you said")),
-    ("estimate", "Biryani", "700 kcal", None, ("tag-claude_estimate", "estimate")),
+    ("estimate", "Biryani", "700 kcal, 1", None, ("tag-claude_estimate", "estimate")),  # its portion, "1"
 ])
 def test_each_kind_of_entry_draws_its_lines_its_tag_and_its_actions(client, monkeypatch, kind, name, figures, note,
                                                                      tag):
@@ -3921,7 +3923,7 @@ def test_each_totals_row_shows_by_its_condition(client, estimate, target, add_ba
     uid = only_user().id
     changes = {"add_back_exercise_kcal": add_back, **({"calorie_target_kcal": target} if target else {})}
     assert "error" not in services.update_settings(uid, changes, "web")
-    entries = [{"description": "Thali", "kcal": 1500}] + ([{"description": "Lassi", "kcal": 500, "estimated": True}]
+    entries = [{"description": "Thali", "kcal": 1500}] + ([{"description": "Lassi", "kcal": 500, "estimated": True, "portion": "1"}]
                                                           if estimate else [])
     assert "error" not in services.log_food(uid, {"entries": entries}, "claude")
     card = food_card(day_of(client, today_of(only_user()).isoformat()))
@@ -3946,7 +3948,7 @@ def test_an_estimate_of_zero_kcal_still_shows_the_estimates_rows(client):
     sign_in(client)
     uid = only_user().id
     assert "error" not in services.log_food(uid, {"entries": [{"description": "Thali", "kcal": 500},
-                                                              {"description": "Pickle", "kcal": 0, "estimated": True}]},
+                                                              {"description": "Pickle", "kcal": 0, "estimated": True, "portion": "1"}]},
                                             "claude")
     card = food_card(day_of(client, today_of(only_user()).isoformat()))
     assert "<dt>From estimates</dt><dd>0 kcal</dd>" in card and "<dt>Share from estimates</dt><dd>0%</dd>" in card
@@ -3993,7 +3995,9 @@ def test_the_fold_out_holds_the_contracts_fields_and_button(client):
     out = foldout_of(day_of(client, on))
     assert "<summary>Add food</summary>" in out and f'<form method="post" action="/day/{on}/food#add-food">' in out
     labels = re.findall(r'<label for="([^"]+)">([^<]+)</label>', out)
-    assert labels == [("food-description", "Food"), ("food-kcal", "Calories (kcal)"), ("food-meal", "Meal")]
+    assert labels == [("food-description", "Food"), ("food-kcal", "Calories (kcal)"), ("food-meal", "Meal"),
+                      ("food-portion", "How much you had"), ("food-protein_g", "Protein (g)"),
+                      ("food-carbs_g", "Carbs (g)"), ("food-fat_g", "Fat (g)")]  # macros-and-asking.md
     assert '<input id="food-kcal" name="kcal" inputmode="numeric" required autocomplete="off">' in out
     assert '<input id="food-description" name="description" required maxlength="200" autocomplete="off">' in out
     choices = re.findall(r'<option value="([^"]*)">([^<]+)</option>', out)
@@ -4699,7 +4703,7 @@ def stock_every_kind(user: User) -> dict:
         {"exercise": "Back Squat", "weight_kg": 60, "reps": 5}, {"exercise": "Pull-Up", "weight_kg": 0, "reps": 8}]},
         "claude")
     food = services.log_food(user.id, {"entries": [
-        {"description": "Biryani", "kcal": 1250, "estimated": True, "meal": "lunch"},
+        {"description": "Biryani", "kcal": 1250, "estimated": True, "portion": "1", "meal": "lunch"},
         {"description": "Tea", "kcal": 40, "meal": "breakfast"}]}, "claude")
     run = services.log_cardio(user.id, {"exercise": "Treadmill Run", "minutes": 75.5, "distance_km": 12.5,
                                         "incline_pct": 2.5, "speed_kmh": 10.25, "avg_hr": 140, "machine_kcal": 1100,
@@ -4771,7 +4775,8 @@ EDIT_LABELS = {
     "bodyweight": ["Weight (kg)", "Date"],
     "measurement": ["Value", "Date"],
     "lift_session": ["Notes", "Date"],
-    "food_entry": ["Food", "Calories (kcal)", "Meal", "Date"],
+    "food_entry": ["Food", "Calories (kcal)", "Meal", "How much you had", "Protein (g)", "Carbs (g)", "Fat (g)",
+                   "Date"],
     "cardio_entry": ["Activity", "Time (min)", "Distance (km)", "Incline (%)", "Speed (km/h)",
                      "Average heart rate (bpm)", "Machine's calories (kcal)", "Notes", "Date"],
 }
@@ -4780,7 +4785,9 @@ EDIT_VALUES = {
     "bodyweight": {"kg": "80"},
     "measurement": {"value": "84.55"},
     "lift_session": {"notes": "felt strong"},
-    "food_entry": {"description": "Biryani", "kcal": "1250", "meal": "lunch"},
+    # macros-and-asking.md: the estimate's portion as logged, and no macro logged: each macro's field empty.
+    "food_entry": {"description": "Biryani", "kcal": "1250", "meal": "lunch", "portion": "1", "protein_g": None,
+                   "carbs_g": None, "fat_g": None},
     "cardio_entry": {"exercise": "Treadmill Run", "minutes": "75.5", "distance_km": "12.5", "incline_pct": "2.5",
                      "speed_kmh": "10.25", "avg_hr": "140", "machine_kcal": "1100", "notes": "Long one"},
 }
@@ -5127,7 +5134,8 @@ EDIT_ATTRS = {
     "measurement": [("value", "input", "decimal", True, None, None)],
     "lift_session": [("notes", "textarea", None, False, None, "3")],
     "food_entry": [("description", "input", None, True, "200", None), ("kcal", "input", "numeric", True, None, None),
-                   ("meal", "select", None, False, None, None)],
+                   ("meal", "select", None, False, None, None), ("portion", "input", None, False, "64", None),
+                   *[(m, "input", "decimal", False, None, None) for m in ("protein_g", "carbs_g", "fat_g")]],
     "cardio_entry": [("exercise", "select", None, False, None, None), ("minutes", "input", "decimal", True, None, None),
                      ("distance_km", "input", "decimal", False, None, None),
                      ("incline_pct", "input", "decimal", False, None, None),
@@ -7718,3 +7726,408 @@ def test_each_count_on_today_and_progress_takes_its_noun_by_the_count(client):
                 weigh_ins = "weigh-in" if trends["bodyweight"]["weigh_ins_28d"] == 1 else "weigh-ins"
                 assert f"from {n} {weigh_ins} in 28 days." in sheets_of(page)["sheet-weight"]["sentence"], address
         assert re.search(r'<span class="aside">([^<]*)</span>', day).group(1) == f"{n} {sessions}"
+
+
+# ---------------------------------------------------------------- macros-and-asking.md: the pages (P4)
+
+def food_lines(markup: str) -> list[dict]:
+    """Each Food entry's line two, its macro line (None when it draws none) and its actions, entities decoded."""
+    out = []
+    for line in re.findall(r'<li class="entry-line">(.*?)</li>', markup, re.S):
+        figures = re.search(r'<span class="entry-figures">([^<]*)</span>', line).group(1)
+        macros = re.search(r'<span class="entry-macros">([^<]*)</span>', line)
+        out.append({"figures": html.unescape(figures), "macros": html.unescape(macros.group(1)) if macros else None,
+                    "confirm": "/confirm" in line})
+    return out
+
+
+def totals_of(card: str) -> dict[str, str]:
+    """The Food card's totals as {term: value}, entities decoded."""
+    totals = re.search(r'<dl class="facts totals">(.*?)</dl>', card, re.S).group(1)
+    return {t: html.unescape(v) for t, v in re.findall(r"<dt[^>]*>([^<]*)</dt><dd[^>]*>([^<]*)</dd>", totals)}
+
+
+def macro_rows_of(card: str) -> list[tuple[str, str]]:
+    return [(t, v) for t, v in totals_of(card).items() if t.startswith(("Protein", "Carbs", "Fat"))]
+
+
+def macro_day(client, entries: list[dict], settings: dict | None = None) -> tuple[int, list, str]:
+    """A signed-in person's day with these entries logged by the assistant: their id, the ids, the Food card."""
+    sign_in(client)
+    uid = only_user().id
+    if settings:
+        assert "error" not in services.update_settings(uid, settings, "web")
+    logged = services.log_food(uid, {"entries": entries}, "claude")
+    assert "error" not in logged, logged
+    return uid, logged["ids"], food_card(day_of(client, today_of(only_user()).isoformat()))
+
+
+def day_macros_of(uid: int) -> dict:
+    return services.get_log(uid, today_of(only_user()).isoformat(), 1)["days"][0]["food"]["macros"]
+
+
+STATED = {"macros_estimated": False}
+
+
+def test_a_macro_not_logged_says_so_and_a_real_zero_shows_0_g(client):
+    uid, _, card = macro_day(client, [
+        {"description": "Black coffee", "kcal": 5, "protein_g": 0, "carbs_g": 0, "fat_g": 0, **STATED},
+        {"description": "Rice", "kcal": 300, "carbs_g": 65.5, **STATED},
+        {"description": "Tea", "kcal": 40}])
+    assert [e["macros"] for e in food_lines(card)] == [
+        "Protein 0 g, carbs 0 g, fat 0 g", "Protein not logged, carbs 65.5 g, fat not logged",
+        "Protein, carbs and fat not logged"]
+    day = day_macros_of(uid)
+    assert (day["protein"]["g"], day["carbs"]["g"], day["fat"]["g"]) == (0, 65.5, 0)
+    assert macro_rows_of(card) == [("Protein", "0 g so far"), ("Carbs", "65.5 g so far"),
+                                   ("Fat", "0 g so far")]
+
+
+def test_a_day_with_no_macro_and_no_goal_draws_as_before(client, fed):
+    card = food_card(day_of(client, fed["today"]))
+    assert "entry-macros" not in card and [e["macros"] for e in food_lines(card)] == [None, None, None]
+    assert macro_rows_of(card) == []
+
+
+def test_a_macro_no_entry_holds_reads_not_logged_and_a_goal_shows_what_is_left(client):
+    uid, _, card = macro_day(client, [{"description": "Paneer", "kcal": 300, "protein_g": 92, **STATED},
+                                      {"description": "Tea", "kcal": 40}],
+                             {"protein_target_g": 150, "carbs_target_g": 80, "fat_target_g": 50})
+    day = day_macros_of(uid)
+    assert (day["protein"]["left_g"], day["carbs"]["g"], day["fat"]["left_g"]) == (58, None, 50)
+    assert macro_rows_of(card) == [
+        ("Protein", "92 g so far"), ("Protein left", "58 g of 150 g"),
+        ("Carbs", "Not logged"), ("Carbs left", "80 g of 80 g"),
+        ("Fat", "Not logged"), ("Fat left", "50 g of 50 g")]
+    assert "0 g" not in card.replace("80 g", "").replace("50 g", "").replace("150 g", "")
+
+
+def test_over_a_macro_goal_the_left_row_says_over(client):
+    _, _, card = macro_day(client, [{"description": "Whey", "kcal": 400, "protein_g": 62.5, **STATED}],
+                           {"protein_target_g": 50})
+    assert macro_rows_of(card)[:2] == [("Protein", "62.5 g"), ("Protein left", "12.5 g over 50 g")]
+    assert "-12" not in card
+
+
+def test_an_estimate_shows_its_portion_on_its_line_and_its_macros_marked(client):
+    _, _, card = macro_day(client, [{"description": "Dal", "kcal": 350, "estimated": True, "portion": "a big bowl",
+                                     "protein_g": 18, "carbs_g": 40, "fat_g": 12.5}])
+    assert food_lines(card) == [{"figures": "350 kcal, a big bowl", "confirm": True,
+                                 "macros": "Estimate: protein 18 g, carbs 40 g, fat 12.5 g"}]
+
+
+def test_a_saved_foods_portion_follows_its_servings(client):
+    sign_in(client)
+    uid = only_user().id
+    roti = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                                    "protein_g_per_serving": 3}, "claude")
+    assert "error" not in services.log_food(uid, {"entries": [{"saved_food_id": roti["id"], "servings": 2,
+                                                               "portion": "two thin ones"}]}, "claude")
+    [line] = food_lines(food_card(day_of(client, today_of(only_user()).isoformat())))
+    assert line == {"figures": "240 kcal, 2 rotis, two thin ones", "confirm": False,
+                    "macros": "Protein 6 g, carbs not logged, fat not logged"}  # Spotter's own: no mark
+
+
+@pytest.mark.parametrize("estimated", [True, False])
+def test_confirm_makes_estimated_macros_the_persons(client, estimated):
+    """Confirm on the line the person saw: an estimate's kcal and its macros, or a stated kcal with the assistant's
+    macros (decision 4's case). The kcal is sent only for an estimate; the macros at their own values."""
+    entry = {"description": "Wrap", "kcal": 520, "protein_g": 32, "carbs_g": 48, "fat_g": 18}
+    if estimated:
+        entry.update(estimated=True, portion="1 wrap")
+    uid, [wrap], card = macro_day(client, [entry])
+    assert food_lines(card)[0]["confirm"] and food_lines(card)[0]["macros"].startswith("Estimate: protein 32")
+    r = post(client, f"/entries/food_entry/{wrap}/confirm")
+    assert r.status_code == 303 and r.headers["location"].endswith("?saved=confirmed")
+    [row] = rows(FoodEntry, uid)
+    assert (row.kcal, row.source, row.protein_g, row.carbs_g, row.fat_g, row.macros_estimated) == \
+        (520, "you_said", 32, 48, 18, False)
+    [line] = food_lines(food_card(day_of(client, today_of(only_user()).isoformat())))
+    assert line == {"figures": "520 kcal" + (", 1 wrap" if estimated else ""), "confirm": False,
+                    "macros": "Protein 32 g, carbs 48 g, fat 18 g"}
+
+
+def test_confirm_on_a_saved_foods_entry_changes_nothing(client):
+    sign_in(client)
+    uid = only_user().id
+    roti = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                                    "protein_g_per_serving": 3}, "claude")
+    [entry] = services.log_food(uid, {"entries": [{"saved_food_id": roti["id"], "servings": 2}]}, "claude")["ids"]
+    r = post(client, f"/entries/food_entry/{entry}/confirm")
+    assert r.headers["location"].endswith("?saved=unchanged")
+    [row] = rows(FoodEntry, uid)
+    assert (row.source, row.saved_food_id, row.macros_estimated) == ("saved_food", roti["id"], False)
+
+
+def test_the_food_edit_form_draws_the_portion_and_the_macros_as_stored(client):
+    _, [dal], _ = macro_day(client, [{"description": "Dal", "kcal": 350, "estimated": True, "portion": "a big bowl",
+                                      "protein_g": 18, "carbs_g": 40.5}])
+    page = client.get(f"/entries/food_entry/{dal}/edit").text
+    labels = re.findall(r'<label for="(edit-[^"]+)">([^<]+)</label>', page)
+    assert labels == [("edit-description", "Food"), ("edit-kcal", "Calories (kcal)"), ("edit-meal", "Meal"),
+                      ("edit-portion", "How much you had"), ("edit-protein_g", "Protein (g)"),
+                      ("edit-carbs_g", "Carbs (g)"), ("edit-fat_g", "Fat (g)"), ("edit-date", "Date")]
+    assert 'name="portion" value="a big bowl" maxlength="64"' in page
+    assert 'name="protein_g" value="18" inputmode="decimal"' in page
+    assert 'name="carbs_g" value="40.5" inputmode="decimal"' in page
+    assert '<input id="edit-fat_g" name="fat_g" inputmode="decimal" autocomplete="off">' in page  # not logged: empty
+    assert "The protein, carbs and fat are an estimate." in page
+
+
+def edit_form_as_drawn(client, kind: str, entry_id: int) -> dict:
+    """An edit form's fields as the page drew them: each input's value and each select's chosen option."""
+    page = client.get(f"/entries/{kind}/{entry_id}/edit").text
+    form = re.search(r'<form class="stack" method="post"[^>]*>(.*?)</form>', page, re.S).group(1)
+    fields = {}
+    for tag in re.findall(r"<input [^>]*>", form):
+        name = re.search(r'name="([^"]+)"', tag).group(1)
+        value = re.search(r' value="([^"]*)"', tag)
+        fields[name] = html.unescape(value.group(1)) if value else ""
+    for name, options in re.findall(r'<select [^>]*name="([^"]+)"[^>]*>(.*?)</select>', form, re.S):
+        chosen = re.search(r'<option value="([^"]*)" selected>', options)
+        fields[name] = chosen.group(1) if chosen else ""
+    return fields
+
+
+def test_a_food_edit_posted_as_drawn_writes_nothing_and_keeps_the_estimate_mark(client):
+    uid, [dal], _ = macro_day(client, [{"description": "Dal", "kcal": 350, "estimated": True, "portion": "a bowl",
+                                        "protein_g": 18.5, "carbs_g": 40}])
+    drawn = edit_form_as_drawn(client, "food_entry", dal)
+    r = client.post(f"/entries/food_entry/{dal}/edit", data=drawn)
+    assert r.status_code == 303 and r.headers["location"].endswith("?saved=unchanged")
+    [row] = rows(FoodEntry, uid)
+    assert (row.protein_g, row.carbs_g, row.fat_g, row.macros_estimated, row.source) == \
+        (18.5, 40, None, True, "claude_estimate")
+
+
+def test_a_macro_edited_on_the_page_becomes_the_persons_and_an_emptied_one_is_cleared(client):
+    uid, [dal], _ = macro_day(client, [{"description": "Dal", "kcal": 350, "estimated": True, "portion": "a bowl",
+                                        "protein_g": 18, "carbs_g": 40}])
+    drawn = edit_form_as_drawn(client, "food_entry", dal)
+    r = client.post(f"/entries/food_entry/{dal}/edit", data={**drawn, "protein_g": "21", "carbs_g": "",
+                                                             "portion": "two bowls"})
+    assert r.status_code == 303 and r.headers["location"].endswith(f"?saved=food_entry:{dal}")
+    [row] = rows(FoodEntry, uid)
+    # Through edit_entry: the macros are the person's now; the kcal, left alone, stays the estimate it was.
+    assert (row.protein_g, row.carbs_g, row.macros_estimated, row.portion, row.kcal, row.source) == \
+        (21, None, False, "two bowls", 350, "claude_estimate")
+
+
+def test_a_food_edit_from_a_page_without_the_macro_fields_leaves_them(client):
+    uid, [dal], _ = macro_day(client, [{"description": "Dal", "kcal": 350, "protein_g": 18, **STATED}])
+    r = post(client, f"/entries/food_entry/{dal}/edit", description="Dal tadka", kcal="350", meal="lunch",
+             date=today_of(only_user()).isoformat())
+    assert r.status_code == 303
+    [row] = rows(FoodEntry, uid)
+    assert (row.description, row.protein_g, row.macros_estimated) == ("Dal tadka", 18, False)
+
+
+@pytest.mark.parametrize("field, value, says", [
+    ("protein_g", "2000", "Give the protein in grams as a plain number, from 0 to 1,250, or leave it empty."),
+    ("fat_g", "556", "Give the fat in grams as a plain number, from 0 to 555, or leave it empty."),
+    ("carbs_g", "lots", "Give the carbs in grams as a plain number, from 0 to 1,250, or leave it empty."),
+])
+def test_a_refused_macro_edit_says_why_beside_its_field(client, field, value, says):
+    uid, [dal], _ = macro_day(client, [{"description": "Dal", "kcal": 350, "protein_g": 18, **STATED}])
+    drawn = edit_form_as_drawn(client, "food_entry", dal)
+    r = client.post(f"/entries/food_entry/{dal}/edit", data={**drawn, field: value})
+    assert r.status_code == 400
+    box = re.search(rf'<p class="error" id="edit-{field}-error">([^<]*)</p>', r.text)
+    assert box and box.group(1) == says and f'name="{field}" value="{value}"' in r.text
+    [row] = rows(FoodEntry, uid)
+    assert (row.protein_g, row.carbs_g, row.fat_g) == (18, None, None)
+
+
+def test_the_add_food_form_logs_the_portion_and_the_persons_own_macros(client):
+    sign_in(client)
+    on = today_of(only_user()).isoformat()
+    r = post(client, f"/day/{on}/food", description="Wrap", kcal="520", meal="lunch", portion="1 wrap",
+             protein_g="32", carbs_g="48.5", fat_g="")
+    assert r.status_code == 303
+    [row] = rows(FoodEntry, only_user().id)
+    assert (row.source, row.portion, row.protein_g, row.carbs_g, row.fat_g, row.macros_estimated) == \
+        ("you_said", "1 wrap", 32, 48.5, None, False)
+
+
+def test_the_add_food_form_with_no_macro_logs_none(client):
+    sign_in(client)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/food", description="Tea", kcal="40", portion="",
+             protein_g="", carbs_g="", fat_g="")
+    assert r.status_code == 303
+    [row] = rows(FoodEntry, only_user().id)
+    assert (row.portion, row.protein_g, row.carbs_g, row.fat_g, row.macros_estimated) == (None, None, None, None,
+                                                                                            None)
+
+
+def test_a_refused_macro_in_the_add_food_form_says_why_and_keeps_what_was_typed(client):
+    sign_in(client)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/food", description="Whey", kcal="400",
+             portion="1 scoop", protein_g="1300")
+    assert r.status_code == 400 and rows(FoodEntry, only_user().id) == []
+    out = foldout_of(r.text)
+    box = re.search(r'<p class="error" id="food-protein_g-error">([^<]*)</p>', out)
+    assert box and box.group(1) == "Give the protein in grams as a plain number, from 0 to 1,250, or leave it empty."
+    assert 'name="protein_g" value="1300"' in out and 'name="portion" value="1 scoop"' in out
+
+
+# ---------------------------------------------------------------- Foods: macros a serving, a saved meal
+
+def saved_meal(uid: int) -> tuple[dict, dict]:
+    """A Roti with protein a serving, and a meal of 2 rotis and the person's own dal."""
+    roti = services.save_food(uid, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                                    "protein_g_per_serving": 3, "carbs_g_per_serving": 18,
+                                    "fat_g_per_serving": 0.5}, "claude")
+    meal = services.save_food(uid, {"name": "Usual lunch", "items": [
+        {"saved_food_id": roti["id"], "servings": 2},
+        {"description": "Dal", "kcal": 180, "protein_g": 9, "carbs_g": 20, "fat_g": 6}]}, "claude")
+    assert "error" not in roti and "error" not in meal, (roti, meal)
+    return roti, meal
+
+
+def foods_row(page: str, name: str) -> str:
+    return re.search(rf'<tr>\s*<td class="lead">{re.escape(name)}(.*?)</tr>', page, re.S).group(1)
+
+
+def test_foods_shows_each_macro_a_serving_in_its_column_and_a_blank_for_none(client):
+    sign_in(client)
+    uid = only_user().id
+    services.save_food(uid, {"name": "Tea", "serving_label": "1 cup", "kcal_per_serving": 40}, "claude")
+    services.save_food(uid, {"name": "Egg", "serving_label": "1 egg", "kcal_per_serving": 78,
+                             "protein_g_per_serving": 6.3, "fat_g_per_serving": 0}, "claude")
+    page = client.get("/foods").text
+    heads = re.findall(r'<th scope="col"(?: class="num")?>([^<]*)</th>', page)
+    assert heads == ["Food", "Serving", "kcal", "Times logged", "Protein (g)", "Fat (g)"]  # no carbs on any food
+    cells = lambda name: re.findall(r'<td class="num" data-label="([^"]+)">([^<]*)</td>', foods_row(page, name))  # noqa
+    assert cells("Egg")[2:] == [("Protein (g)", "6.3"), ("Fat (g)", "0")]  # a real 0 shows as 0
+    assert cells("Tea")[2:] == [("Protein (g)", ""), ("Fat (g)", "")]  # none: blank, never 0
+
+
+def test_foods_with_no_macro_on_any_food_draws_no_macro_column(client, fed):
+    page = client.get("/foods").text
+    assert "Protein (g)" not in page and "Carbs (g)" not in page and "Fat (g)" not in page
+
+
+def test_a_saved_meal_lists_its_foods_and_offers_no_edit(client):
+    sign_in(client)
+    roti, meal = saved_meal(only_user().id)
+    page = client.get("/foods").text
+    row = foods_row(page, "Usual lunch")
+    foods = re.search(r'<ul class="meal-foods" aria-label="Foods in Usual lunch">(.*?)</ul>', row).group(1)
+    assert [html.unescape(f) for f in re.findall(r"<li>([^<]*)</li>", foods)] == [
+        "Roti, 240 kcal, 2 servings", "Dal, 180 kcal"]
+    assert re.findall(r'<td class="num" data-label="([^"]+)">([^<]*)</td>', row) == [
+        ("kcal", "420"), ("Times logged", "0"), ("Protein (g)", "15"), ("Carbs (g)", "56"), ("Fat (g)", "7")]
+    assert f'href="/foods/{meal["id"]}/edit"' not in page and f'action="/foods/{meal["id"]}/delete"' in row
+    assert f'href="/foods/{roti["id"]}/edit"' in page  # a plain food keeps its Edit
+
+
+def test_a_saved_meals_edit_page_and_a_crafted_edit_change_nothing(client):
+    sign_in(client)
+    uid = only_user().id
+    _, meal = saved_meal(uid)
+    before = [f for f in rows(SavedFood, uid) if f.id == meal["id"]][0].items
+    page = client.get(f"/foods/{meal['id']}/edit")
+    assert page.status_code == 200 and "A saved meal's numbers come from its foods" in html.unescape(page.text)
+    assert 'name="kcal_per_serving"' not in page.text
+    r = post(client, f"/foods/{meal['id']}/edit", serving_label="1 plate", kcal_per_serving="500")
+    assert r.status_code == 409
+    [after] = [f for f in rows(SavedFood, uid) if f.id == meal["id"]]
+    assert (after.items, after.kcal_per_serving, after.serving_label) == (before, 420, "1 meal")
+
+
+def test_saving_a_meals_name_from_the_fold_out_is_refused_and_keeps_the_meal(client):
+    sign_in(client)
+    uid = only_user().id
+    _, meal = saved_meal(uid)
+    r = post(client, "/foods", name=" usual  LUNCH ", serving_label="1 plate", kcal_per_serving="500")
+    assert r.status_code == 400
+    box = re.search(r'<p class="error" id="food-name-error">([^<]*)</p>', r.text)
+    assert box and box.group(1) == web.MEAL_NAME_TAKEN
+    assert 'value="1 plate"' in r.text and '<details class="add" id="save-food" open>' in r.text
+    [after] = [f for f in rows(SavedFood, uid) if f.id == meal["id"]]
+    assert after.items is not None and after.kcal_per_serving == 420
+
+
+@pytest.mark.parametrize("where", ["edit page", "fold-out"])
+def test_a_plain_foods_save_from_the_page_keeps_its_macros(client, where):
+    sign_in(client)
+    uid = only_user().id
+    roti, _ = saved_meal(uid)
+    if where == "edit page":
+        r = post(client, f"/foods/{roti['id']}/edit", serving_label="1 roti", kcal_per_serving="110",
+                 grams_per_serving="40")
+    else:
+        r = post(client, "/foods", name="Roti", serving_label="1 roti", kcal_per_serving="110", grams_per_serving="40")
+    assert r.status_code == 303
+    [food] = [f for f in rows(SavedFood, uid) if f.id == roti["id"]]
+    assert (food.kcal_per_serving, food.grams_per_serving, food.protein_g_per_serving, food.carbs_g_per_serving,
+            food.fat_g_per_serving, food.items) == (110, 40, 3, 18, 0.5, None)
+
+
+# ---------------------------------------------------------------- Settings: the three daily goals
+
+def test_settings_sets_the_three_daily_goals_beside_the_calories(client):
+    sign_in(client)
+    r = post(client, "/settings/targets", calorie_target_kcal="2200", protein_target_g="150", carbs_target_g="250",
+             fat_target_g="70", target_sessions_per_week="", target_cardio_minutes_per_week="")
+    assert r.status_code == 303 and r.headers["location"] == SITE + "/settings?saved=targets#targets"
+    user = only_user()
+    assert (user.calorie_target_kcal, user.protein_target_g, user.carbs_target_g, user.fat_target_g) == \
+        (2200, 150, 250, 70)
+    page = client.get(r.headers["location"]).text
+    for field, value in (("protein_target_g", "150"), ("carbs_target_g", "250"), ("fat_target_g", "70")):
+        assert f'name="{field}" value="{value}"' in page
+
+
+def test_settings_clears_a_daily_goal_and_a_post_without_the_fields_leaves_them(client):
+    sign_in(client)
+    uid = only_user().id
+    services.update_settings(uid, {"protein_target_g": 150, "fat_target_g": 70}, "web")
+    post(client, "/settings/targets", calorie_target_kcal="", target_sessions_per_week="",
+         target_cardio_minutes_per_week="")  # a page drawn before the goals: they stay
+    assert (only_user().protein_target_g, only_user().fat_target_g) == (150, 70)
+    post(client, "/settings/targets", calorie_target_kcal="", protein_target_g="", carbs_target_g="", fat_target_g="70",
+         target_sessions_per_week="", target_cardio_minutes_per_week="")
+    assert (only_user().protein_target_g, only_user().fat_target_g) == (None, 70)
+
+
+@pytest.mark.parametrize("field, value, says", [
+    ("protein_target_g", "2501", "Give the protein as a whole number of grams with no comma, from 1 to 2,500 g, or "
+                                 "leave it empty."),
+    ("carbs_target_g", "0", "Give the carbs as a whole number of grams with no comma, from 1 to 2,500 g, or leave it "
+                            "empty."),
+    ("fat_target_g", "70.5", "Give the fat as a whole number of grams with no comma, from 1 to 1,111 g, or leave it "
+                             "empty."),
+    ("fat_target_g", "1,000", "Give the fat as a whole number of grams with no comma, from 1 to 1,111 g, or leave it "
+                              "empty."),
+])
+def test_a_refused_daily_goal_says_why_beside_the_field(client, field, value, says):
+    sign_in(client)
+    r = post(client, "/settings/targets", **{field: value})
+    assert r.status_code == 400
+    box = re.search(rf'<p class="error" id="{field}-error">([^<]*)</p>', r.text)
+    assert box and box.group(1) == says and f'name="{field}" value="{value}"' in r.text
+    assert getattr(only_user(), field) is None
+
+
+def test_a_portion_over_its_limit_says_why_and_the_new_page_lines_keep_the_text_rules(client):
+    """A crafted post past the input's maxlength is refused beside its field in the page's words. Every line P4 added
+    that no other test reads through the text rules passes them: the portion's and the macros' field lines, the meal
+    lines on Foods, and the daily goals' lines on Settings."""
+    sign_in(client)
+    long = "x" * (rules.TEXT_LIMITS["portion"] + 1)
+    r = post(client, f"/day/{today_of(only_user()).isoformat()}/food", description="Rice", kcal="200", portion=long)
+    assert r.status_code == 400 and rows(FoodEntry, only_user().id) == []
+    box = re.search(r'<p class="error" id="food-portion-error">([^<]*)</p>', foldout_of(r.text))
+    assert box and box.group(1) == web.FIELD_HELP[("food_entry", "portion")] == \
+        "Say how much you had in up to 64 characters, or leave it empty."
+    _, meal = saved_meal(only_user().id)
+    message = html.unescape(client.get(f"/foods/{meal['id']}/edit").text)
+    lines = [web.FIELD_HELP[("food_entry", f)] for f in ("portion", *rules.MACROS)] + [web.MEAL_NAME_TAKEN] + \
+        [web.TARGET_ERROR_WORDS[("invalid_field", f"{m}_target_g")] for m in ("protein", "carbs", "fat")] + \
+        ["Changed through your assistant", "A saved meal's numbers come from its foods, so it is not edited here.",
+         "Ask your assistant to change the meal, or go back to Foods.", "Protein, carbs and fat not logged",
+         "The protein, carbs and fat are an estimate. If you change one, they become numbers you said."]
+    assert all(line in message for line in lines[8:11])
+    for line in lines:
+        assert tr.check(line, tr.PAGE) == [], line

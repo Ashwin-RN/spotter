@@ -52,6 +52,7 @@ from app.models import (
 from app.services.common import no_account, version_sets
 
 ACCOUNT_COLUMNS = ("account_id", "email", "name", "time_zone", "weight_unit", "distance_unit", "calorie_target_kcal",
+                   "protein_target_g", "carbs_target_g", "fat_target_g",  # macros-and-asking.md, decision 2 A
                    "target_sessions_per_week", "target_cardio_minutes_per_week", "add_back_exercise_kcal",
                    "claude_can", "created_at")
 LEFT_OUT = ("user_id", "dedupe_key", "name_key")
@@ -79,14 +80,17 @@ README = """Spotter export
 
 Everything Spotter holds for this account, one CSV file per kind of record.
 
-  account.csv         the account and its settings, one row
+  account.csv         the account and its settings, one row; protein_target_g, carbs_target_g and
+                      fat_target_g are the daily goals in grams
   lift_sessions.csv   each lift session
   lift_sets.csv       each set, by session_id (the id in lift_sessions.csv): reps, or a hold's
                       time_s in seconds, or a carry's distance_m in metres and its time_s
   bodyweight.csv      each weigh-in, in kg
   measurements.csv    each measurement, in its unit
   goals.csv           each goal, open or closed
-  saved_foods.csv     each saved food
+  saved_foods.csv     each saved food; protein_g_per_serving, carbs_g_per_serving and
+                      fat_g_per_serving are grams a serving, and items holds a saved meal's foods
+                      as JSON, each with its numbers in the meal (blank for a plain food)
   routines.csv        each routine: lifts holds its items as JSON, in the order done. A lift has
                       exercise, sets, reps and weight_kg (null when none was given); a hold has
                       time_s, a carry or a sled distance_m and time_s, in place of reps; a cardio
@@ -94,7 +98,9 @@ Everything Spotter holds for this account, one CSV file per kind of record.
                       machine_kcal. saved_on is the date it was last saved
   food_entries.csv    each food entry; source says who supplied the number: you_said (the person),
                       saved_food (worked out from a saved food), usda (the USDA table) or
-                      claude_estimate (Claude's estimate)
+                      claude_estimate (Claude's estimate). protein_g, carbs_g and fat_g are
+                      grams, blank when not logged; macros_estimated is true when they are
+                      Claude's estimate; portion is how much was eaten, in the person's words
   cardio_entries.csv  each cardio session; estimated_kcal is the app's estimate, machine_kcal the
                       machine's own number
   entry_versions.csv  what an entry held before each edit or undo: kind and entry_id name the entry,
@@ -193,7 +199,7 @@ def export_data(user_id: int) -> dict:
                      SavedFood.user_id == user.id))}}
         files, rows = {}, {}
         account = [user.id, user.email, user.name, user.time_zone, user.weight_unit, user.distance_unit,
-                   user.calorie_target_kcal,
+                   user.calorie_target_kcal, user.protein_target_g, user.carbs_target_g, user.fat_target_g,
                    user.target_sessions_per_week, user.target_cardio_minutes_per_week, user.add_back_exercise_kcal,
                    user.claude_can, user.created_at]
         files["account.csv"], rows["account.csv"] = _csv(list(ACCOUNT_COLUMNS), [account]), 1
