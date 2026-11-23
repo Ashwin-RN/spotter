@@ -3467,5 +3467,54 @@
     "seed": [{"as": "roti", "service": "save_food", "data": {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120, "protein_g_per_serving": 3}}, {"as": "dal", "service": "save_food", "data": {"name": "Dal", "serving_label": "1 bowl", "kcal_per_serving": 180, "protein_g_per_serving": 9}}, {"as": "meal", "service": "save_food", "data": {"name": "Usual lunch", "items": [{"saved_food_id": "{{seed.roti}}", "servings": 2}, {"saved_food_id": "{{seed.dal}}", "servings": 1}]}}],
     "expect": {"function": "log_food", "inputs_include": {"entries": [{"saved_food_id": "{{seed.meal}}"}]}, "inputs_exclude": ["entries.*.kcal"], "no_call": ["log_lifts", "log_bodyweight", "log_measurement", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
     "db": [{"table": "food_entry", "count": 1, "all": {"source": "saved_food", "saved_food_id": "{{seed.meal}}", "servings": 1, "kcal": 420, "protein_g": 15}}]
+  },
+  {
+    "id": "lift_weight_asked",
+    "kind": "direct",
+    "core": false,
+    "say": "did 3 sets of 8 on bench",
+    "calls": {"must": [],
+              "may": ["whoami", "list_exercises", "guide", "log", "log_lifts"],
+              "must_not": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}}],
+    "expect": {"reply_asks": true, "reply_has_pattern": ["\\bweights?\\b|\\bhow (?:much|heavy)\\b|\\bkg\\b|\\bkilos?\\b|\\blbs?\\b|\\bpounds?\\b"], "ok_calls": {"log": 0, "log_lifts": 0}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 0}]
+  },
+  {
+    "id": "lift_weight_asked_then",
+    "kind": "direct",
+    "core": false,
+    "say": "I did 3 sets of 8 on bench",
+    "then": "60 kg",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises", "guide"],
+              "must_not": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}}],
+    "expect": {"function": "log_lifts", "inputs_include": {"sets": [{"weight_kg": 60, "reps": 8}]}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 3, "date": "{{today}}"}}, {"table": "lift_set", "count": 3, "all": {"exercise": "Bench Press", "weight_kg": 60, "reps": 8, "date": "{{today}}"}}]
+  },
+  {
+    "id": "lift_reps_asked",
+    "kind": "direct",
+    "core": false,
+    "say": "squatted 100 kg for 3 sets",
+    "calls": {"must": [],
+              "may": ["whoami", "list_exercises", "guide", "log", "log_lifts"],
+              "must_not": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}}],
+    "expect": {"reply_asks": true, "reply_has_pattern": ["\\breps?\\b|\\brepetitions?\\b|\\bhow many\\b"], "ok_calls": {"log": 0, "log_lifts": 0}, "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_set", "count": 0}]
+  },
+  {
+    "id": "pullups_no_ask",
+    "kind": "direct",
+    "core": false,
+    "say": "3 sets of 10 pull-ups",
+    "calls": {"must": ["log_lifts"],
+              "may": ["whoami", "list_exercises", "guide"],
+              "must_not": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "seed": [{"as": "earlier", "service": "log_bodyweight", "data": {"kg": 80.9, "date": "{{yesterday}}"}}],
+    "expect": {"function": "log_lifts", "reply_lacks": ["?"], "no_call": ["log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal", "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback", "save_routine"]},
+    "db": [{"table": "lift_session", "count": 1, "all": {"set_count": 3, "date": "{{today}}"}}, {"table": "lift_set", "count": 3, "all": {"exercise": "Pull-Up", "weight_kg": 0, "reps": 10, "date": "{{today}}"}}]
   }
 ]

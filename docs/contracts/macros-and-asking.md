@@ -328,3 +328,19 @@ No merge, deploy or eval run without the owner's word.
 Still to come on `main`: C5b, then C5c after C3's merge and its migration `0015`; the five old log functions are removed last. One more rebase is expected if C5b merges first.
 
 No merge, deploy or eval run without the owner's word.
+
+## Note, 2026-11-23: rebased onto C5b, and two picks
+
+`main` moved to `101306a`, where C5b (routines-and-programs.md, deploy 2) is live. P1 to P5 were committed as one commit on the owner's pick of 2026-11-23: they were built one after another in one tree, and P2 and P3 share the function file, the schemas, the rules and every hash pin, so a commit a package would hold states no build ran. The branch was then rebased onto `101306a`. Eight files conflicted and were merged by hand with both sides kept: `app/mcp_server.py` (the imports), `app/services/export.py` (the notes), `docs/can-and-cant.md` (C5b's Routines line beside C3's Food and Saved foods), `docs/evals.md`, `evals/cases.json`, `tests/test_evals.py`, `tests/test_golden_cases.py` and `tests/test_routines.py`. `tests/test_routine_items.py` read C5b's four cases as the last of the file; it now finds them by id, as `tests/test_routines.py` finds C5a's two. The published hashes pass as the merged server computes them: C5b moved `save_routine` and `get_routines` only. This note wins over the notes above where they differ.
+
+| # | Point | What C3 does |
+|---|---|---|
+| 1 | Cases | 277, 103 core: C5a's 2, then C5b's 4, then C3's 11, each direct and out of the core. The package in `tests/test_golden_cases.py` is 206: 189 + C5a's 2 + C5b's 4 + C3's 11. P6's four follow C3's |
+| 2 | The two ask cases, the owner's pick of 2026-11-23 | `guessed_number` and `portion_asked` pass a food log that Spotter refuses for its portion, followed by the question: `log` and `log_food` sit in `may` with `ok_calls` 0 each and no food row. Every other write stays in `must_not` and `no_call`. This is the eval section's rule above ("no successful write"); the note of 2026-11-22's "lists `log` in `must_not` and `no_call`" holds for the read cases |
+| 3 | P6 | Built right after P5 and before the review, on the owner's pick of 2026-11-23, rather than after C5's join |
+| 4 | The rotis line | The landing's and the hi page's "Lunch was two rotis and dal." now does "Asks how much dal, then logs the meal.", as `guessed_number` now asks |
+| 5 | The log | C3's `BUILD_LOG.md` entry goes after C5b's, now at the tail |
+
+Still to come on `main`: C5c, after C3's merge and its migration `0015`; the five old log functions are removed last.
+
+No merge, deploy or eval run without the owner's word.

@@ -311,7 +311,7 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
   judge reads their `kind` as its table word, so a case that pins `lift_session` passes `lifts` as well.
 - `guide` is no data read: its numbers ("1 to 60") are words on how to log, never figures of the person's.
   `read_any` and `quotes_spotter` never read it.
-- So every case keeps its words: 277 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
+- So every case keeps its words: 281 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
   asks for no write, so a refused `log` call whose kind resolves to none fails those too.
 - `tests/test_golden_cases.py` plays held runs of `stated_number`, `lb_weigh_in`, `waist_in_inches`,
   `hold_plank`, `miles_run`, `pick_lift_answer` and `hand_check_family` again with each call of the five sent as
@@ -910,7 +910,7 @@ Plank 3 × 60 s at 0 kg.
 ### The macros and asking cases
 
 **Eleven cases follow the four cardio and timed item cases, each `direct` and `core` false: the core stays at
-103, and the file holds 277** (contract `macros-and-asking.md`). They keep the five's names, so a `log` call is judged as its kind's
+103, and with the four lift ask cases below the file holds 281** (contract `macros-and-asking.md`). They keep the five's names, so a `log` call is judged as its kind's
 function. Each is judged on the record: the rows, the calls that succeeded and the calls made. An ask is no write and
 a question, never the reply's words alone. The read cases list every write in `must_not` and `no_call`, `log`
 among them. The two ask cases, `portion_asked` and `guessed_number`, keep `log` and `log_food` in `may` with
@@ -943,6 +943,30 @@ protein), Protein shake (180 kcal, 24 g) and Biscuits (150 kcal, no macros).
 | `protein_not_logged` and `portion_asked`: the reply's words | Their words beyond so far, 0 g and the amount words: weak until the judge is rebuilt |
 
 No case sends a photo: the runner sends no image.
+
+### The lift ask cases
+
+Four cases follow the macros and asking cases and close the file, each `direct` and `core` false: the core stays at
+103, and the file holds 281 (contract `macros-and-asking.md`, decision 14 A). They run on today's refusals: a set sent
+with no weight is refused as "weight_kg or weight_lb is missing" with the fix "Give weight_kg or weight_lb on set 1.",
+and one with no reps as "reps is missing" with "Give reps on set 1." Through `log` each names `parts[0]` in place of
+set 1. A pull-up with no weight is refused the same way: its fix does not say 0 for body weight. The two ask cases
+take the food pair's rule: `log` and `log_lifts` in `may` with `ok_calls` 0 for each, every other write in both
+lists, so a lift log refused for its missing number, then the question, passes. Each seed is a weigh-in the day
+before, so `whoami` offers no setup.
+
+| Case | Says (seed) | Passes when |
+|---|---|---|
+| `lift_weight_asked` | did 3 sets of 8 on bench | No `log` or `log_lifts` call succeeds, and no other write is called; a lift log refused for its weight may come first; the reply asks and has a weight word (weight, how much, how heavy, kg, kilos, lb, pounds); no lift set |
+| `lift_weight_asked_then` | I did 3 sets of 8 on bench, then "60 kg" | No write succeeds in the first turn; a `log_lifts` that succeeds in the second sends 60 kg and 8 reps. One session today, `set_count` 3: Bench Press 60 × 8 three times |
+| `lift_reps_asked` | squatted 100 kg for 3 sets | As `lift_weight_asked`, for the reps: the reply has reps, repetitions or how many |
+| `pullups_no_ask` | 3 sets of 10 pull-ups | `log_lifts` called; the reply asks nothing. One session today, `set_count` 3: Pull-Up 0 kg × 10 three times. A try refused for no weight, sent again with 0, passes |
+
+| Proves | Does not prove |
+|---|---|
+| A missing weight or reps is asked and never guessed: no lift log succeeds before the question, and 0 kg on a bench counts as a guess | That the refused try was refused for the missing number: `ok_calls` counts successes only, as in the food pair |
+| A pull-up is logged at 0 kg with no question, never at the person's weigh-in or an added weight | That a model reads 0 for a pull-up from the refusal: it may ask instead, and that run fails |
+| `lift_weight_asked_then`: the answer is logged in the second turn and nothing before it. On Codex and Gemini it fails unrun; `lift_weight_asked` is its one-turn twin | The reply's words beyond the weight or reps words: weak until the judge is rebuilt |
 
 ## What the evals prove
 

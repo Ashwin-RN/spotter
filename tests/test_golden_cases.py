@@ -1592,6 +1592,65 @@ C3_RUNS = {
 }
 RUNS.update(C3_RUNS)
 
+# macros-and-asking.md P6 (decision 14 A): four lift cases follow C3's eleven, each direct and out of the core, on
+# today's refusals. The two ask cases take the food pair's rule (the owner's pick of 2026-11-23, "Refused try passes"):
+# a lift log Spotter refuses for its missing weight or reps, then the question, passes; log and log_lifts sit in may
+# with ok_calls 0 and no lift set. The seed of each: a weigh-in the day before, so whoami offers no setup.
+NO_WEIGHT_BENCH = logs([{"exercise": "bench", "reps": 8}] * 3)  # refused: weight_kg or weight_lb is missing
+NO_REPS_SQUAT = logs([{"exercise": "squat", "weight_kg": 100}] * 3)  # refused: reps is missing
+NO_WEIGHT_PULLUPS = logs([{"exercise": "pull-ups", "reps": 10}] * 3)  # refused as the bench is
+PULLUPS = logs(lift("pull-ups", 0, 10, 3))
+ASKED_WEIGHT = "What weight did you use for the 3 sets of 8 on bench?"
+ASKED_REPS = "How many reps did you do in each set of squats at 100 kg?"
+BENCHED = "Logged Bench Press, 3 x 8 at 60 kg."
+C3_LIFT_RUNS = {
+    "lift_weight_asked": {
+        "pass": [([], ASKED_WEIGHT), ([("guide", {"topic": "lifts"})], "How heavy was the bench?"),
+                 # refused for its weight, then the question: through log_lifts and through log
+                 ([NO_WEIGHT_BENCH], ASKED_WEIGHT),
+                 ([("log", {"kind": "lifts", "parts": [{"movement": "bench", "reps": 8}] * 3})], ASKED_WEIGHT)],
+        "fail": [([logs(lift("bench", 60, 8, 3))], "Logged 3 x 8 on bench at 60 kg. Was that right?"),  # a guess
+                 ([logs(lift("bench", 0, 8, 3))], "Logged 3 x 8 on bench. What weight was it?"),  # 0 kg passes
+                 ([("log", {"kind": "lifts", "parts": [{"movement": "bench", "weight_kg": 0, "reps": 8}] * 3})],
+                  "Logged 3 x 8 on bench."),  # written through log, and no question
+                 ([NO_WEIGHT_BENCH], "I will log the bench once you tell me the weight."),  # refused, no question
+                 ([], "Nice work on bench! Want me to log it?")]},  # a question, not about the weight
+    "lift_weight_asked_then": {
+        "pass": [([THEN, logs(lift("bench", 60, 8, 3))], (ASKED_WEIGHT, BENCHED)),
+                 # its first turn is held by judge_turns, which reads a write that succeeded: a refused try passes
+                 ([NO_WEIGHT_BENCH, THEN, logs(lift("bench", 60, 8, 3))], (ASKED_WEIGHT, BENCHED)),
+                 ([THEN, ("log", {"kind": "lifts", "parts": [{"movement": "bench", "weight_kg": 60, "reps": 8}] * 3})],
+                  (ASKED_WEIGHT, BENCHED))],
+        "fail": [([logs(lift("bench", 0, 8, 3)), THEN, logs(lift("bench", 60, 8, 3))],  # written before the answer
+                  (ASKED_WEIGHT, BENCHED)),
+                 ([THEN, logs(lift("bench", 60, 8, 2))], (ASKED_WEIGHT, BENCHED)),  # a set lost
+                 ([THEN, logs(lift("dumbbell bench press", 60, 8, 3))], (ASKED_WEIGHT, BENCHED)),  # another lift
+                 ([THEN], (ASKED_WEIGHT, "Got it, 60 kg."))]},  # never logged
+    "lift_reps_asked": {
+        "pass": [([], ASKED_REPS), ([("guide", {"topic": "lifts"})], "How many reps was each squat set?"),
+                 # refused for its reps, then the question: through log_lifts and through log
+                 ([NO_REPS_SQUAT], ASKED_REPS),
+                 ([("log", {"kind": "lifts", "parts": [{"movement": "squat", "weight_kg": 100}] * 3})], ASKED_REPS)],
+        "fail": [([logs(lift("squat", 100, 5, 3))], "Logged 3 x 5 squats at 100 kg. How many reps was it really?"),
+                 ([("log", {"kind": "lifts", "parts": [{"movement": "squat", "weight_kg": 100, "reps": 1}] * 3})],
+                  "Logged 3 sets of squats at 100 kg."),  # a guessed rep, through log
+                 ([NO_REPS_SQUAT], "I will log the squats once you tell me the reps."),  # refused, no question
+                 ([], "Great squat session! Want me to log it?")]},  # a question, not about the reps
+    "pullups_no_ask": {
+        "pass": [([PULLUPS], "Logged 3 sets of 10 pull-ups at body weight."),
+                 # refused for no weight, then sent again with 0: no question reaches the person
+                 ([NO_WEIGHT_PULLUPS, PULLUPS], "Logged Pull-Up, 3 x 10."),
+                 ([("log", {"kind": "lifts", "parts": [{"movement": "pull-ups", "weight_kg": 0, "reps": 10}] * 3})],
+                  "Logged Pull-Up, 3 x 10.")],
+        "fail": [([], "Nice! Did you add any weight to the pull-ups?"),  # a question, and no write
+                 ([logs(lift("pull-ups", 80.9, 10, 3))], "Logged 3 x 10 pull-ups at your body weight, 80.9 kg."),
+                 ([logs(lift("pull-ups", 10, 10, 3))], "Logged 3 x 10 pull-ups."),  # a made-up added weight
+                 ([PULLUPS], "Logged 3 x 10 pull-ups. Did you use any added weight?"),  # logs, then asks
+                 ([logs(lift("chin-ups", 0, 10, 3))], "Logged 3 x 10."),  # another lift
+                 ([NO_WEIGHT_PULLUPS], "Logged your pull-ups.")]},  # refused, never sent again
+}
+RUNS.update(C3_LIFT_RUNS)
+
 # The contract cases C3 changed or holds (before import_other_app): guessed_number now asks about the dal, and three that
 # stay log in one turn as they did.
 C3_EARLIER = {  # id: (passing runs, failing runs), each run (calls, reply)
@@ -1937,8 +1996,9 @@ def read_case(case_id: str) -> bool:
 def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     new = new_cases()
     ids = [c["id"] for c in new]
-    # 164, C4g's 23, log and guide's 2, C5a's, C5b's and C3's
-    assert len(ids) == len(set(ids)) == 189 + len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS) and set(ids) == set(RUNS)
+    # 164, C4g's 23, log and guide's 2, C5a's, C5b's, C3's and C3's P6
+    later = len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS) + len(C3_LIFT_RUNS)
+    assert len(ids) == len(set(ids)) == 189 + later and set(ids) == set(RUNS)
     assert all(RUNS[i]["pass"] and RUNS[i]["fail"] for i in ids)
     every = judge.load_cases()
     g1 = every[:len(every) - len(new)]
@@ -1947,8 +2007,7 @@ def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     assert {c["id"] for c in g1 if c.get("kind")} <= G1_CORE
     assert all(isinstance(c["core"], bool) and c["kind"] in judge.KINDS for c in new)
     kinds = Counter(c["kind"] for c in new)
-    assert kinds == {"direct": 141 + len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS), "incidental": 24,
-                     "look_alike": 24}  # C5's and C3's are direct
+    assert kinds == {"direct": 141 + later, "incidental": 24, "look_alike": 24}  # C5's and C3's are direct
     assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 63, "incidental": 8, "look_alike": 8}
     by_id = {c["id"]: c for c in every}
     for c in new:
@@ -2047,19 +2106,25 @@ def test_c3_s_no_write_cases_list_every_write_and_the_two_turn_case_has_a_one_tu
     must_not and no_call. The two ask cases are the exception, by the owner's pick of 2026-11-23 ("Refused try passes"):
     log and log_food move to may, with ok_calls 0 for each, so a food log refused for its portion, then the question,
     passes; every other write stays in both lists. portion_asked_then cannot list log: its second turn logs, so its
-    first is held by judge_turns, as its twin now is by ok_calls."""
+    first is held by judge_turns, as its twin now is by ok_calls. P6's two lift ask cases take the same rule with
+    log_lifts and no lift set, and lift_weight_asked_then is held as portion_asked_then is."""
     cases = {c["id"]: c for c in judge.load_cases()}
     for id_ in ("protein_left_today", "protein_not_logged"):
         assert set(cases[id_]["calls"]["must_not"]) == set(cases[id_]["expect"]["no_call"]) == set(W), id_
-    for id_ in ("guessed_number", "portion_asked"):  # the owner's pick of 2026-11-23
-        rest = set(W) - {"log", "log_food"}
+    for id_, logger, table in (("guessed_number", "log_food", "food_entry"), ("portion_asked", "log_food", "food_entry"),
+                               ("lift_weight_asked", "log_lifts", "lift_set"),
+                               ("lift_reps_asked", "log_lifts", "lift_set")):  # the owner's pick of 2026-11-23
+        rest = set(W) - {"log", logger}
         assert set(cases[id_]["calls"]["must_not"]) == set(cases[id_]["expect"]["no_call"]) == rest, id_
-        assert {"log", "log_food"} <= set(cases[id_]["calls"]["may"]) and cases[id_]["calls"]["must"] == [], id_
-        assert cases[id_]["expect"]["ok_calls"] == {"log": 0, "log_food": 0}, id_
-        assert {"table": "food_entry", "count": 0} in cases[id_]["db"] and cases[id_]["expect"]["reply_asks"], id_
-    twin, then = cases["portion_asked"], cases["portion_asked_then"]
-    assert "rice" in twin["say"] and "rice" in then["say"] and then["then"] == "a big bowl"
-    assert "log" not in then["calls"]["must_not"] and then["calls"]["must"] == ["log_food"]
+        assert {"log", logger} <= set(cases[id_]["calls"]["may"]) and cases[id_]["calls"]["must"] == [], id_
+        assert cases[id_]["expect"]["ok_calls"] == {"log": 0, logger: 0}, id_
+        assert {"table": table, "count": 0} in cases[id_]["db"] and cases[id_]["expect"]["reply_asks"], id_
+    for twin_id, then_id, word, answer, logger in (("portion_asked", "portion_asked_then", "rice", "a big bowl", "log_food"),
+                                                   ("lift_weight_asked", "lift_weight_asked_then", "bench", "60 kg",
+                                                    "log_lifts")):
+        twin, then = cases[twin_id], cases[then_id]
+        assert word in twin["say"] and word in then["say"] and then["then"] == answer and "then" not in twin
+        assert "log" not in then["calls"]["must_not"] and then["calls"]["must"] == [logger]
 
 
 @pytest.mark.parametrize("case_id", list(EARLIER))
@@ -2114,26 +2179,33 @@ def test_lb_bench_goal_judges_the_lift_the_goal_was_saved_on():
 def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
     new = [c["id"] for c in new_cases()]
     # C4g's cases, then log-and-guide.md's two, then routines-and-programs.md C5a's two, then C5b's four, then
-    # macros-and-asking.md's eleven, which close the file
-    c5b_c3 = len(C5B_RUNS) + len(C3_RUNS)
+    # macros-and-asking.md's eleven, then its P6's four, which close the file
+    p6 = len(C3_LIFT_RUNS)
+    c3 = len(C3_RUNS) + p6
+    c5b_c3 = len(C5B_RUNS) + c3
     later = len(LOG_AND_GUIDE_RUNS) + len(C5A_RUNS) + c5b_c3
     assert new[-len(C4G_RUNS) - later:-later] == list(C4G_RUNS)
     assert new[-len(C5A_RUNS) - c5b_c3:-c5b_c3] == list(C5A_RUNS) == ["routine_same_as_last_time",
                                                                       "routine_last_time_read"]
-    assert new[-c5b_c3:-len(C3_RUNS)] == list(C5B_RUNS) == ["routine_items_saved", "routine_items_logged",
-                                                             "routine_cardio_changed", "routine_resave_keeps_plan"]
-    assert new[-len(C3_RUNS):] == list(C3_RUNS) and len(C3_RUNS) == 11
+    assert new[-c5b_c3:-c3] == list(C5B_RUNS) == ["routine_items_saved", "routine_items_logged",
+                                                   "routine_cardio_changed", "routine_resave_keeps_plan"]
+    assert new[-c3:-p6] == list(C3_RUNS) and len(C3_RUNS) == 11
+    assert new[-p6:] == list(C3_LIFT_RUNS) == ["lift_weight_asked", "lift_weight_asked_then", "lift_reps_asked",
+                                               "pullups_no_ask"]
     assert all(c["kind"] == "direct" and c["core"] is False for c in new_cases()
-               if c["id"] in C4G_RUNS or c["id"] in C5A_RUNS or c["id"] in C5B_RUNS or c["id"] in C3_RUNS)
+               if c["id"] in C4G_RUNS or c["id"] in C5A_RUNS or c["id"] in C5B_RUNS or c["id"] in C3_RUNS
+               or c["id"] in C3_LIFT_RUNS)
     assert sum(1 for c in judge.load_cases() if c.get("core") is True) == 103  # log-and-guide.md's 2 joined it
-    assert [c["id"] for c in judge.load_cases() if c.get("then")] == ["pick_lift_answer", "portion_asked_then"]
+    assert [c["id"] for c in judge.load_cases() if c.get("then")] == ["pick_lift_answer", "portion_asked_then",
+                                                                      "lift_weight_asked_then"]
 
 
 def test_log_and_guide_s_two_cases_follow_c4g_s_and_join_the_core():
     """log-and-guide.md N9: 260 cases, 103 core. log_plank_minutes takes log_lifts in may, so it judges the same once
     the judge routes a log call to its kind's function (L5)."""
     cases = judge.load_cases()
-    after = len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS)  # C5a's 2 and C5b's 4, then macros-and-asking.md's 11
+    # C5a's 2 and C5b's 4, then macros-and-asking.md's 11 and its P6's 4
+    after = len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS) + len(C3_LIFT_RUNS)
     ours = cases[-len(LOG_AND_GUIDE_RUNS) - after:-after]
     assert [c["id"] for c in ours] == list(LOG_AND_GUIDE_RUNS)
     assert all(c["kind"] == "direct" and c["core"] is True for c in ours)
