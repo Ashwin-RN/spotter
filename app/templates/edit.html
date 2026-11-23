@@ -15,7 +15,7 @@
 <div class="card">
   {% if kind == "food_entry" %}
   <p class="small">This number is <span class="tag tag-{{ entry.source }}">{{ source_words.get(entry.source, entry.source) }}</span>. If you change the kcal, it becomes a number you said.</p>
-  {% if entry.macros_estimated %}<p class="small">The protein, carbs and fat are an estimate. If you change one, they become numbers you said.</p>{% endif %}
+  {% if entry.macros_estimated %}<p class="small">The protein, carbs and fat are an estimate. If you change one, all become numbers you said.</p>{% endif %}
   {% endif %}
   <form class="stack" method="post" action="/entries/{{ kind }}/{{ entry_id }}/edit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -30,7 +30,7 @@
     {{ parts.field("edit-kcal", "kcal", "Calories (kcal)", errors.get("kcal"), values.kcal, inputmode="numeric", required=true) }}
     {{ parts.field("edit-meal", "meal", "Meal", errors.get("meal"), values.meal, choices=meal_choices) }}
     {{ parts.field("edit-portion", "portion", "How much you had", errors.get("portion"), values.portion, maxlength=portion_limit) }}
-    {# Protein, carbs and fat in grams: each empty when not logged. A changed one becomes the person's own number. #}
+    {# Protein, carbs and fat in grams: each empty when not logged. Once one changes, every one held is sent, so all become the person's own. #}
     {{ parts.field("edit-protein_g", "protein_g", "Protein (g)", errors.get("protein_g"), values.protein_g, inputmode="decimal") }}
     {{ parts.field("edit-carbs_g", "carbs_g", "Carbs (g)", errors.get("carbs_g"), values.carbs_g, inputmode="decimal") }}
     {{ parts.field("edit-fat_g", "fat_g", "Fat (g)", errors.get("fat_g"), values.fat_g, inputmode="decimal") }}

@@ -59,8 +59,10 @@ save_food with items (a saved meal, contract macros-and-asking.md): 2 to 30 item
     entry is. A meal inside a meal, or an item sent with estimated true, is refused. Stored as JSON, each item as
     resolved: description, kcal, the three macros, source and its ids and amounts. kcal_per_serving and the macros a
     serving are the sums, sent by no one: a macro is null when any item lacks it. serving_label defaults to "1 meal".
-    A meal is logged by its id as one saved food. A plain save sends kcal_per_serving and the macros a serving it
-    has: one left out is cleared, as grams_per_serving is, and a save of a meal's name with no items makes it plain.
+    A meal is logged by its id as one saved food. A plain save over a saved food keeps a macro a serving left out,
+    and one sent as null clears it (grams_per_serving is cleared when left out, as before). A save of a live meal's
+    name with no items is refused with nothing written: the meal is changed by sending its items. A deleted food
+    brought back by a plain save takes only the macros sent.
 
 day_numbers(user, food_rows, cardio_rows)
     One day's numbers: total, estimated, estimated share, target, remaining, net. log_food and
@@ -568,9 +570,9 @@ def save_food(user_id: int, data: dict | None, by: str, drawn_at=None) -> dict:
         else:
             values["kcal_per_serving"], err = rules.bounded("kcal_per_serving", data.get("kcal_per_serving"))
             errors += [err] if err else []
-            for field in PER_SERVING:  # left out: none, as grams_per_serving is
+            for field in (f for f in PER_SERVING if f in data):  # left out: a saved one is kept, a new food has none
                 values[field] = None
-                if data.get(field) not in (None, ""):
+                if data[field] not in (None, ""):
                     values[field], err = rules.bounded(field, data[field])
                     errors += [err] if err else []
             values["items"] = None
@@ -594,6 +596,10 @@ def save_food(user_id: int, data: dict | None, by: str, drawn_at=None) -> dict:
             if stale:
                 return stale
         was_deleted = not created and food.deleted_at is not None
+        if not meal and not created and food.items is not None and not was_deleted:
+            return meal_name_taken(food.name)  # a plain save would drop the meal's foods
+        if not meal and was_deleted:  # one brought back plain starts from what is sent, never a meal's sums
+            values.update({field: None for field in PER_SERVING if field not in values})
         differs = created or any(getattr(food, field) != value for field, value in values.items())
         if differs and not created:
             keep_version(s, food, by)  # the food as it stands, before it changes
@@ -612,6 +618,12 @@ def save_food(user_id: int, data: dict | None, by: str, drawn_at=None) -> dict:
                             f"{formatting.show(food.kcal_per_serving, 'kcal_per_serving')}{grams}{foods}."
                             + serving_macros_text(food)),
                 "links": {"foods": links.page("foods")}}
+
+
+def meal_name_taken(name: str) -> dict:
+    """A plain save of a live saved meal's name: refused, so the meal keeps its foods (the web's MEAL_NAME_TAKEN)."""
+    return rules.error("invalid_field", f"name '{rules.quote(name)}' is a saved meal.",
+                       "Send the meal's foods as items to change it, or give another name. Nothing was saved.")
 
 
 def serving_macros_text(f: SavedFood) -> str:

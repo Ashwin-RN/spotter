@@ -52,12 +52,12 @@ BEFORE_INPUTS = {
     "update_settings": "b0de26c1baebb38324461efd63dcd1d4de7bad9771f4bbbfc1b2f82852de97ea",  # C3: the daily goals
     "get_log": "0a7487c06e022de4836e876a3fd7b8c534d4c838345e9c5beb88b3936a0c9ba7",  # exercise list: SetOut; C4e: NewBest; C3: a food entry's macros and portion, the day's macros, its goals
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
-    "edit_entry": "cd950b5b63a74e18193d8fac41467a241768b67c9bdc7d33dd51e5e68a5b1c4a",  # exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words; C3: macros and portion
+    "edit_entry": "90bc76937f94a754a74d9c1da43e06811b3c373aaaf3035d752b84b693e3138c",  # exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words; C3: macros and portion; C3 fix: the mark when every macro held is sent
     "restore_entry": "7ef4931069bb011e48b55cb21e2c574ea21c2716112a85957b0ad0499220cb67",  # log and guide: kind words, id words
     "delete_entry": "02798afe3eee1addad25aac4c73de15475ec648830d12f67134cd910b308e7b0",  # log and guide: kind words, id words
     "find_food": "604b2d990283e23b972257805fd8f662f738d6bb7d30e823a0ca8b77b67da6d8",  # log and guide: ids log takes; C3: macros a serving, a meal's items, USDA's a 100 g
     "log_food": "e344fdb6652c3e7d9bd9068d83cdfeff1e7f7cfb984a8e192832e805b67a850f",  # 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words; C3: macros, portion, the food sentence, the day's macros, its goals
-    "save_food": "a28c70524a287f0997af2fd255ddc2cde6c868b40393073d218208e58159ac0a",  # log and guide: ids log takes; C3: macros a serving, items
+    "save_food": "bdebb114e62368d0f68373ecb2de872df8de6e6e2c79a0e45e1d48c25802da54",  # log and guide: ids log takes; C3: macros a serving, items; C3 fix: a macro left out is kept
     "log_cardio": "5a4106f698eae37d7b11fe096d19f60e2d405050ada8b23aa7e33b65df8d8794",  # 2026-11-20: exercise's words name both walks
     "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
     "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",

@@ -66,10 +66,11 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit])
   carries units_note. delete_entry's preview and delete carry summary: the entry in one line in the person's units
   for a session, a weigh-in, a cardio entry and a routine, none for the other kinds.
 - A food entry's macros and portion (contract macros-and-asking.md): protein_g, carbs_g and fat_g, each sent replaces
-  the stored one, a null clears it, and macros_estimated becomes false: the person stated them. A macro sent at its
-  stored value while the mark is true is changed too, as a restated kcal is: the person confirmed it. With no macro
-  left the mark is null. A kcal edit leaves the macros and their mark as they are. portion is the person's words; a
-  null clears it.
+  the stored one and a null clears it. One mark covers the three (the owner's pick of 2026-11-23, "Stays an
+  estimate"): macros_estimated becomes false only when the edit sends every macro the entry holds after it, as the
+  page's Confirm does; an edit of fewer leaves it as it is. In such an edit a macro sent at its stored value while
+  the mark is true is changed too, as a restated kcal is: the person confirmed it. With no macro left the mark is
+  null. A kcal edit leaves the macros and their mark as they are. portion is the person's words; a null clears it.
 - Kind words (contract log-and-guide.md, decision 52). edit_entry, delete_entry and restore_entry take log's five
   kind words as well as the table words: log_shape.table_word maps lifts, food and cardio to lift_session,
   food_entry and cardio_entry at the door, before the kind check and before confirm_code hashes the kind. So a
@@ -555,8 +556,12 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
         # A stated number makes a food entry the person's, even when it is the number already there
         # (decision 1: "yes, that's right" is the same number, stated).
         restated = kind == "food_entry" and "kcal" in new and row.source != "you_said"
-        # A macro sent at the value an estimate holds is the person's confirmation, as a restated kcal is.
-        confirmed = kind == "food_entry" and row.macros_estimated is True
+        # One mark covers the three macros, so they become the person's own only when the edit sends every macro the
+        # entry holds after it, as the page's Confirm does; one sent at the value an estimate holds is then the
+        # person's confirmation, as a restated kcal is. An edit of fewer leaves the mark as it is.
+        held_after = [m for m in rules.MACROS if kind == "food_entry" and new.get(m, getattr(row, m)) is not None]
+        stated = bool(held_after) and all(m in new for m in held_after)
+        confirmed = stated and row.macros_estimated is True
         changed = [f for f in EDITABLE[kind] if f in new and (new[f] != current[f] or (f == "kcal" and restated)
                                                                or (f in rules.MACROS and confirmed
                                                                    and new[f] is not None))]
@@ -649,10 +654,13 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
             row.source, row.estimated = "you_said", False  # an edited number is the person's number
             row.saved_food_id = row.servings = row.usda_fdc_id = row.grams = None
             note = KCAL_NOTE
-        if kind == "food_entry" and set(rules.MACROS) & set(changed):  # macros sent are the person's own grams
+        if kind == "food_entry" and set(rules.MACROS) & set(changed):
             held = any(getattr(row, m) is not None for m in rules.MACROS)
-            row.macros_estimated = False if held else None
-            if held:
+            if not held:
+                row.macros_estimated = None
+            elif stated:  # every macro held was sent: the person's own grams
+                row.macros_estimated = False
+            if row.macros_estimated is False:
                 note = f"{note} {MACROS_NOTE}" if note else MACROS_NOTE
         if kind == "cardio_entry":
             est = cardio.estimate(s, user, row.exercise, row.minutes, today)

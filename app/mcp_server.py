@@ -1210,7 +1210,7 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             "Changes one of the person's entries in place, keeping its id. A lift session: its date, notes or "
             "whole set list. A weigh-in: its weight or date. A measurement: its value or date. A food entry: its "
             "date, meal, description, kcal, macros or portion; a kcal makes it the person's own number, tagged "
-            "you_said, and macros sent become their own grams. A cardio "
+            "you_said, and macros become their own grams when every one held is sent. A cardio "
             "entry: its date, activity, minutes, distance, incline, speed, heart rate, machine calories or notes; "
             "its estimate is worked out again. Send only what changes. Returns the entry before and after. "
             "Moving a weigh-in or measurement onto a day that already has one is refused, never silently replaced."
@@ -1236,14 +1236,11 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         kcal: Annotated[Number | None, Field(
             description="A food entry's calories, as the person stated them. It becomes their own number.")] = None,
         protein_g: Annotated[Number | None, Field(
-            description="A food entry's protein in grams, as the person stated them. They become their own numbers. "
-                        "null clears it.")] = not_sent(),
+            description="A food entry's protein in grams, as the person stated them. null clears it.")] = not_sent(),
         carbs_g: Annotated[Number | None, Field(
-            description="A food entry's carbs in grams, as the person stated them. They become their own numbers. "
-                        "null clears it.")] = not_sent(),
+            description="A food entry's carbs in grams, as the person stated them. null clears it.")] = not_sent(),
         fat_g: Annotated[Number | None, Field(
-            description="A food entry's fat in grams, as the person stated them. They become their own numbers. "
-                        "null clears it.")] = not_sent(),
+            description="A food entry's fat in grams, as the person stated them. null clears it.")] = not_sent(),
         portion: Annotated[str | None, Field(
             description="A food entry's portion, how much was eaten, in the person's words. null clears it.")]
             = not_sent(),
@@ -1382,21 +1379,26 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
             description="Calories in one serving, as the person gave them, 0 to 5,000. Needed but with items.")] = None,
         grams_per_serving: Annotated[Number | None, Field(description="Grams in one serving, if known.")] = None,
         protein_g_per_serving: Annotated[Number | None, Field(
-            description="Protein in grams in one serving, as the person gave it, 0 to 1,250. Not with items.")] = None,
+            description="Protein in grams in one serving, as the person gave it, 0 to 1,250. Not with items. Left "
+                        "out, a saved one is kept; null clears it.")] = not_sent(),
         carbs_g_per_serving: Annotated[Number | None, Field(
-            description="Carbs in grams in one serving, as the person gave them, 0 to 1,250. Not with items.")] = None,
+            description="Carbs in grams in one serving, as the person gave them, 0 to 1,250. Not with items. Left "
+                        "out, a saved one is kept; null clears it.")] = not_sent(),
         fat_g_per_serving: Annotated[Number | None, Field(
-            description="Fat in grams in one serving, as the person gave it, 0 to 555. Not with items.")] = None,
+            description="Fat in grams in one serving, as the person gave it, 0 to 555. Not with items. Left out, a "
+                        "saved one is kept; null clears it.")] = not_sent(),
         items: Annotated[list[MealItemIn] | None, Field(
             description="A meal's foods, 2 to 30: a saved food by saved_food_id with servings, a USDA food by "
                         "usda_fdc_id with grams, or the person's own description and kcal, with any macros they gave. "
                         "No estimate.")] = None,
         key: Key = None,
     ) -> Annotated[CallToolResult, SaveFoodResult]:
-        data = _sent(name=name, serving_label=serving_label, kcal_per_serving=kcal_per_serving,
-                     grams_per_serving=grams_per_serving, protein_g_per_serving=protein_g_per_serving,
-                     carbs_g_per_serving=carbs_g_per_serving, fat_g_per_serving=fat_g_per_serving,
-                     items=None if items is None else [x.model_dump(exclude_none=True) for x in items])
+        # A macro sent as null is passed on, so the service clears it; one left out is not passed, so a saved one stays.
+        data = {**_sent(name=name, serving_label=serving_label, kcal_per_serving=kcal_per_serving,
+                        grams_per_serving=grams_per_serving,
+                        items=None if items is None else [x.model_dump(exclude_none=True) for x in items]),
+                **_nullable(protein_g_per_serving=protein_g_per_serving, carbs_g_per_serving=carbs_g_per_serving,
+                            fat_g_per_serving=fat_g_per_serving)}
         return await wrapper.call("save_food", SaveFoodResult,
                                   lambda account: services.save_food(account, data, "claude"))
 

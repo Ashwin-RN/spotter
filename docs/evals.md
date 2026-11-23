@@ -312,7 +312,10 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
 - `guide` is no data read: its numbers ("1 to 60") are words on how to log, never figures of the person's.
   `read_any` and `quotes_spotter` never read it.
 - So every case keeps its words: 281 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
-  asks for no write, so a refused `log` call whose kind resolves to none fails those too.
+  asks for no write, so a refused `log` call whose kind resolves to none fails those too. The four ask cases
+  (`guessed_number`, `portion_asked`, `lift_weight_asked`, `lift_reps_asked`) are the exception, on the owner's
+  pick of 2026-11-23: `log` is in their `may` with `ok_calls` 0, so a `log` call Spotter refuses before the
+  question passes and a written one fails.
 - `tests/test_golden_cases.py` plays held runs of `stated_number`, `lb_weigh_in`, `waist_in_inches`,
   `hold_plank`, `miles_run`, `pick_lift_answer` and `hand_check_family` again with each call of the five sent as
   `log`: each judges as it does through the five, the answer checks reading a `log` call's own answer. A measurement

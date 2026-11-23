@@ -634,7 +634,7 @@ def meal_item_refused(where: str, why: str) -> dict:
         return error("invalid_field", f"{where} is a saved meal itself.",
                      "Send that meal's foods as items instead.")
     return error("invalid_field", f"{where}: estimated was sent.",
-                 "A meal takes the person's own numbers only: log an estimate as a food entry of its own.")
+                 "Ask the person for the food's kcal, or save it with save_food first. Nothing was saved.")
 
 
 def match_meal(name, where: str = "") -> tuple[str | None, dict | None]:

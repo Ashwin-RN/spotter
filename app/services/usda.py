@@ -20,8 +20,8 @@ food(fdc_id)  -> ({fdc_id, description, data_type, kcal_per_100g, protein_g_per_
 - Data types: Foundation, SR Legacy and Survey (FNDDS). Energy: nutrient 1008 (Energy, kcal), by its
   id or by its number, 208; a food with no kcal value is left out of a search and is an error by id.
 - The macros (contract macros-and-asking.md, decision 12), each in g, by id or by number: protein 1003 or 203, fat
-  1004 or 204, carbohydrate by difference 1005 or 205, kept at 1 dp. A food with energy but no value for one keeps
-  null for it: never a fallback to another nutrient.
+  1004 or 204, carbohydrate by difference 1005 or 205, kept at 2 dp as kcal is. A food with energy but no value for
+  one keeps null for it: never a fallback to another nutrient.
 - Two shared caches, which hold no user id: usda_search (the normalised query -> the fdc ids it found)
   and usda_food (one row per food). A cached answer is used while it is younger than CACHE_DAYS and its
   macros were read (macros_read, set by every store since 0015); an older one, or one cached before 0015, is
@@ -179,7 +179,8 @@ def _parsed(item) -> dict | None:
     kcal = _energy(item.get("foodNutrients"))
     if not isinstance(fdc_id, int) or isinstance(fdc_id, bool) or data_type not in DATA_TYPES or kcal is None:
         return None
-    macros = {column: _nutrient(item.get("foodNutrients"), nid, number, "g", 1)
+    # At 2 dp, as kcal is: an entry's grams are rounded to 1 dp only after the scaling (food.times).
+    macros = {column: _nutrient(item.get("foodNutrients"), nid, number, "g", 2)
               for column, (nid, number) in MACRO_NUTRIENTS.items()}
     return {"fdc_id": fdc_id, "description": str(item.get("description") or "")[:DESCRIPTION_MAX],
             "data_type": data_type, "kcal_per_100g": kcal, **{column: macros[column] for column in MACRO_COLUMNS}}

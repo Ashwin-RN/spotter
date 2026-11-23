@@ -7913,6 +7913,24 @@ def test_a_macro_edited_on_the_page_becomes_the_persons_and_an_emptied_one_is_cl
         (21, None, False, "two bowls", 350, "claude_estimate")
 
 
+def test_one_macro_changed_on_the_page_sends_every_one_held_so_all_become_the_persons(client, monkeypatch):
+    """One mark covers the three, and edit_entry flips it only when every macro held is sent: the person saw them all
+    on the form, so the page sends the others at the values it showed."""
+    uid, [dal], _ = macro_day(client, [{"description": "Dal", "kcal": 350, "estimated": True, "portion": "a bowl",
+                                        "protein_g": 18, "carbs_g": 40.5, "fat_g": 12}])
+    sent = []
+    real = services.edit_entry
+    monkeypatch.setattr(services, "edit_entry", lambda *a, **k: sent.append(a[3]) or real(*a, **k))
+    drawn = edit_form_as_drawn(client, "food_entry", dal)
+    r = client.post(f"/entries/food_entry/{dal}/edit", data={**drawn, "protein_g": "21"})
+    assert r.status_code == 303 and sent == [{"protein_g": "21", "carbs_g": "40.5", "fat_g": "12"}]
+    [row] = rows(FoodEntry, uid)
+    assert (row.protein_g, row.carbs_g, row.fat_g, row.macros_estimated, row.source) ==         (21, 40.5, 12, False, "claude_estimate")
+    r = client.post(f"/entries/food_entry/{dal}/edit", data={**edit_form_as_drawn(client, "food_entry", dal),
+                                                             "description": "Dal tadka"})
+    assert r.status_code == 303 and sent[-1] == {"description": "Dal tadka"}  # no macro changed: none sent
+
+
 def test_a_food_edit_from_a_page_without_the_macro_fields_leaves_them(client):
     uid, [dal], _ = macro_day(client, [{"description": "Dal", "kcal": 350, "protein_g": 18, **STATED}])
     r = post(client, f"/entries/food_entry/{dal}/edit", description="Dal tadka", kcal="350", meal="lunch",
@@ -8127,7 +8145,7 @@ def test_a_portion_over_its_limit_says_why_and_the_new_page_lines_keep_the_text_
         [web.TARGET_ERROR_WORDS[("invalid_field", f"{m}_target_g")] for m in ("protein", "carbs", "fat")] + \
         ["Changed through your assistant", "A saved meal's numbers come from its foods, so it is not edited here.",
          "Ask your assistant to change the meal, or go back to Foods.", "Protein, carbs and fat not logged",
-         "The protein, carbs and fat are an estimate. If you change one, they become numbers you said."]
+         "The protein, carbs and fat are an estimate. If you change one, all become numbers you said."]
     assert all(line in message for line in lines[8:11])
     for line in lines:
         assert tr.check(line, tr.PAGE) == [], line

@@ -6,7 +6,7 @@ before. No test touches the network: USDA answers through services.usda.urlopen,
 import json
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app import calllog, config, db, rules, services
 from app.mcp_schemas import FoodEntryIn, LOG_FOOD_DESCRIPTION, LOG_FOOD_MACROS, SavedFood as SavedFoodModel
@@ -206,10 +206,10 @@ def test_usda_reads_the_three_macros_by_id_or_number_and_a_missing_one_stays_nul
     fake(monkeypatch, with_banana(fat=None))
     found, err = usda.food(173944)
     assert err is None and (found["protein_g_per_100g"], found["carbs_g_per_100g"], found["fat_g_per_100g"]) == (
-        1.1, 22.8, None)
+        1.09, 22.84, None)
     fake(monkeypatch, {"foods": [with_banana(2, shape="search")]})
     hits, err = usda.search("banana")
-    assert err is None and (hits[0]["protein_g_per_100g"], hits[0]["fat_g_per_100g"]) == (1.1, 0.3)
+    assert err is None and (hits[0]["protein_g_per_100g"], hits[0]["fat_g_per_100g"]) == (1.09, 0.33)
     with db.new_session() as s:
         assert all(row.macros_read for row in s.scalars(select(UsdaFood)))
 
@@ -217,10 +217,19 @@ def test_usda_reads_the_three_macros_by_id_or_number_and_a_missing_one_stays_nul
 def test_a_usda_entry_s_macros_are_its_grams_a_100_g_times_the_grams(user, keyed, monkeypatch):
     fake(monkeypatch, with_banana())
     r = eat(user, {"usda_fdc_id": 173944, "grams": 150})
-    # The cache keeps each figure a 100 g at 1 dp (1.1, 22.8, 0.3), and the entry is that times 1.5, at 1 dp.
-    assert macros_of(r["entries"][0]) == (1.7, 34.2, 0.5, False)
+    # The cache keeps each figure a 100 g at 2 dp, as kcal is (1.09, 22.84, 0.33), and the entry is that times 1.5,
+    # rounded to 1 dp only then.
+    assert macros_of(r["entries"][0]) == (1.6, 34.3, 0.5, False)
     found = services.find_food(user.id, "banana")
     assert "usda" in found  # its hits carry the figures a 100 g, as the model publishes them
+
+
+def test_a_small_usda_figure_a_100_g_is_never_rounded_to_a_zero_before_the_scaling(user, keyed, monkeypatch):
+    fake(monkeypatch, with_banana(fdc_id=170000, kcal=30, protein=0.04, fat=0.04, carbs=7.04))
+    r = eat(user, {"usda_fdc_id": 170000, "grams": 400})
+    assert macros_of(r["entries"][0]) == (0.2, 28.2, 0.2, False)
+    found, err = usda.food(170000)
+    assert err is None and (found["protein_g_per_100g"], found["fat_g_per_100g"]) == (0.04, 0.04)
 
 
 def test_a_cached_food_from_before_0015_is_stale_and_fetched_again(keyed, monkeypatch):
@@ -229,7 +238,7 @@ def test_a_cached_food_from_before_0015_is_stale_and_fetched_again(keyed, monkey
                        fetched_at=db.utcnow(), macros_read=False))
     f = fake(monkeypatch, with_banana())
     found, err = usda.food(173944)
-    assert err is None and found["protein_g_per_100g"] == 1.1 and len(f.requests) == 1
+    assert err is None and found["protein_g_per_100g"] == 1.09 and len(f.requests) == 1
     usda.food(173944)
     assert len(f.requests) == 1  # read since 0015: the cache answers
 
@@ -343,18 +352,39 @@ def test_through_mcp_the_day_with_a_goal_fits_the_published_shape(http):
 
 # ---------------------------------------------------------------- marks, edits and undo
 
-def test_a_macro_edit_replaces_marks_false_and_leaves_the_kcal_s_tag(user):
+def test_a_macro_edit_replaces_and_the_mark_turns_false_only_when_every_macro_held_is_sent(user):
+    """One mark covers the three (the owner's pick of 2026-11-23, "Stays an estimate"): an edit of fewer than the
+    entry holds leaves the others an estimate, and so leaves the mark as it is."""
     guess = eat(user, {"description": "Dal", "kcal": 180, "estimated": True, "portion": "a bowl", "protein_g": 9,
                        "fat_g": 4})["ids"][0]
     r = services.edit_entry(user.id, "food_entry", guess, {"protein_g": 11}, "claude")
-    assert r["changed"] == ["protein_g"] and macros_of(r["after"]) == (11, None, 4, False)
-    assert r["after"]["source"] == "claude_estimate" and r["note"] == "The macros are now the person's own grams."
-    assert r["summary"] == "Food entry changed: protein_g from 9 to 11."
+    assert r["changed"] == ["protein_g"] and macros_of(r["after"]) == (11, None, 4, True) and "note" not in r
+    assert r["after"]["source"] == "claude_estimate" and r["summary"] == "Food entry changed: protein_g from 9 to 11."
     cleared = services.edit_entry(user.id, "food_entry", guess, {"fat_g": None}, "claude")
-    assert cleared["changed"] == ["fat_g"] and macros_of(cleared["after"]) == (11, None, None, False)
-    assert cleared["summary"] == "Food entry changed: fat_g 4 cleared."
+    assert cleared["changed"] == ["fat_g"] and macros_of(cleared["after"]) == (11, None, None, True)
+    assert cleared["summary"] == "Food entry changed: fat_g 4 cleared." and "note" not in cleared
+    stated = services.edit_entry(user.id, "food_entry", guess, {"protein_g": 11}, "claude")  # every one held, sent
+    assert stated["changed"] == ["protein_g"] and macros_of(stated["after"]) == (11, None, None, False)
+    assert stated["note"] == "The macros are now the person's own grams."
     gone = services.edit_entry(user.id, "food_entry", guess, {"protein_g": None}, "claude")
     assert macros_of(gone["after"]) == (None, None, None, None) and "note" not in gone  # no macro: no mark
+
+
+def test_an_edit_sending_every_macro_held_marks_them_the_person_s_and_a_restate_of_fewer_changes_nothing(user):
+    guess = eat(user, {"description": "Paneer curry", "kcal": 400, "estimated": True, "portion": "a bowl",
+                       "protein_g": 20, "carbs_g": 30, "fat_g": 25})["ids"][0]
+    same = services.edit_entry(user.id, "food_entry", guess, {"protein_g": 20}, "claude")
+    assert same["changed"] == [] and same["after"]["macros_estimated"] is True  # a restate of one is no change
+    one_cleared = services.edit_entry(user.id, "food_entry", guess,
+                                      {"protein_g": 22, "carbs_g": 30, "fat_g": None}, "claude")
+    assert one_cleared["changed"] == ["protein_g", "carbs_g", "fat_g"]
+    assert macros_of(one_cleared["after"]) == (22, 30, None, False)
+    assert one_cleared["summary"] == ("Food entry changed: protein_g from 20 to 22. carbs_g 30 confirmed by the "
+                                      "person. fat_g 25 cleared.")
+    assert one_cleared["note"] == "The macros are now the person's own grams."
+    added = eat(user, {"description": "Rice", "kcal": 200})["ids"][0]  # no macro, no mark
+    r = services.edit_entry(user.id, "food_entry", added, {"carbs_g": 44}, "claude")
+    assert macros_of(r["after"]) == (None, 44, None, False)  # the only one held, sent
 
 
 def test_a_macro_restated_on_an_estimate_is_the_person_s_and_a_kcal_edit_leaves_the_macros(user):
@@ -469,7 +499,7 @@ def test_a_meal_refuses_an_estimate_a_meal_inside_it_its_own_sums_and_a_count_ou
     one = {"saved_food_id": roti}
     cases = [
         ([one, {"description": "Rice", "kcal": 200, "estimated": True}], "invalid_field", "Item 2: estimated was sent.",
-         "A meal takes the person's own numbers only: log an estimate as a food entry of its own."),
+         "Ask the person for the food's kcal, or save it with save_food first. Nothing was saved."),
         ([one, {"saved_food_id": meal["id"]}], "invalid_field", "Item 2 is a saved meal itself.",
          "Send that meal's foods as items instead."),
         ([one], "invalid_field", "items holds 1; a meal needs 2 to 30.",
@@ -506,9 +536,75 @@ def test_a_meal_saved_again_keeps_a_version_and_an_undo_brings_its_items_back(us
     undone = services.restore_entry(user.id, "saved_food", meal["id"], "claude", undo_edit=True)
     assert undone["undone"] is True and undone["entry"]["kcal_per_serving"] == 420
     assert undone["entry"]["items"][0]["servings"] == 2
+    versions = versions_of(meal["id"])
     plain = services.save_food(user.id, {"name": "Usual lunch", "serving_label": "1 plate", "kcal_per_serving": 400},
                                "claude")
-    assert plain["food"]["items"] is None and plain["food"]["protein_g_per_serving"] is None
+    assert plain == MEAL_TAKEN  # a plain save of a meal's name is refused, so the meal keeps its foods
+    with db.new_session() as s:
+        kept = s.get(SavedFood, meal["id"])
+        assert kept.kcal_per_serving == 420 and len(json.loads(kept.items)) == 2
+    assert versions_of(meal["id"]) == versions  # nothing written
+
+
+def versions_of(food_id: int) -> int:
+    with db.new_session() as s:
+        return s.scalar(select(func.count()).select_from(EntryVersion).where(
+            EntryVersion.kind == "saved_food", EntryVersion.entry_id == food_id))
+
+
+MEAL_TAKEN = {"error": "invalid_field", "message": "name 'Usual lunch' is a saved meal.",
+              "fix": "Send the meal's foods as items to change it, or give another name. Nothing was saved."}
+
+
+def test_a_save_over_a_saved_food_keeps_a_macro_left_out_and_null_clears_it(user):
+    roti = saved(user, protein_g_per_serving=3, carbs_g_per_serving=18, fat_g_per_serving=0.4)["id"]
+    again = saved(user, kcal=125)
+    assert (again["food"]["kcal_per_serving"], again["food"]["protein_g_per_serving"],
+            again["food"]["carbs_g_per_serving"], again["food"]["fat_g_per_serving"]) == (125, 3, 18, 0.4)
+    assert again["summary"] == "Updated Roti: 1 roti is 125 kcal. Protein 3 g, carbs 18 g and fat 0.4 g a serving."
+    cleared = saved(user, kcal=125, carbs_g_per_serving=None, fat_g_per_serving=1)
+    assert (cleared["food"]["protein_g_per_serving"], cleared["food"]["carbs_g_per_serving"],
+            cleared["food"]["fat_g_per_serving"]) == (3, None, 1)
+    fresh = saved(user, name="Dal", kcal=180, protein_g_per_serving=9)
+    assert (fresh["food"]["carbs_g_per_serving"], fresh["food"]["fat_g_per_serving"]) == (None, None)
+    logged = eat(user, {"saved_food_id": roti, "servings": 2})["entries"][0]
+    assert macros_of(logged) == (6, None, 2, False)
+
+
+def test_a_deleted_meal_brought_back_by_a_plain_save_takes_only_what_is_sent(user):
+    roti, dal, meal = lunch(user)
+    preview = services.delete_entry(user.id, "saved_food", meal["id"], "claude")
+    services.delete_entry(user.id, "saved_food", meal["id"], "claude", confirm=preview["confirm"])
+    back = services.save_food(user.id, {"name": "Usual lunch", "serving_label": "1 plate", "kcal_per_serving": 400,
+                                        "protein_g_per_serving": 20}, "claude")
+    assert back["summary"].startswith("Brought back and updated Usual lunch")
+    assert back["food"]["items"] is None and (back["food"]["protein_g_per_serving"],
+                                              back["food"]["carbs_g_per_serving"],
+                                              back["food"]["fat_g_per_serving"]) == (20, None, None)
+
+
+def test_an_old_chat_s_three_field_save_keeps_a_food_s_macros_and_never_turns_a_meal_plain(http):
+    """A chat opened before C3 holds save_food with name, serving_label and kcal_per_serving only."""
+    token = sign_for("user_01OLDSAVE")
+    roti = ok(http, token, "save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                                         "protein_g_per_serving": 3, "carbs_g_per_serving": 18,
+                                         "fat_g_per_serving": 0.4})["id"]
+    dal = ok(http, token, "save_food", {"name": "Dal", "serving_label": "1 bowl", "kcal_per_serving": 180})["id"]
+    meal = ok(http, token, "save_food", {"name": "Usual lunch", "items": [{"saved_food_id": roti, "servings": 2},
+                                                                          {"saved_food_id": dal}]})
+    again = ok(http, token, "save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 125})
+    assert (again["food"]["protein_g_per_serving"], again["food"]["carbs_g_per_serving"],
+            again["food"]["fat_g_per_serving"]) == (3, 18, 0.4)
+    logged = ok(http, token, "log_food", {"entries": [{"saved_food_id": roti, "servings": 2}]})["entries"][0]
+    assert (logged["kcal"], *macros_of(logged)) == (250, 6, 36, 0.8, False)
+    refused = failed(http, token, "save_food", {"name": "Usual lunch", "serving_label": "1 meal",
+                                                "kcal_per_serving": 600})
+    assert {k: refused[k] for k in MEAL_TAKEN} == MEAL_TAKEN
+    found = ok(http, token, "find_food", {"query": "usual lunch"})["saved"][0]
+    assert found["id"] == meal["id"] and found["kcal_per_serving"] == 420 and len(found["items"]) == 2
+    cleared = ok(http, token, "save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 125,
+                                            "fat_g_per_serving": None})
+    assert (cleared["food"]["protein_g_per_serving"], cleared["food"]["fat_g_per_serving"]) == (3, None)
 
 
 def test_a_plain_saved_food_takes_its_macros_a_serving_and_their_ranges(user):
@@ -532,10 +628,35 @@ def test_save_food_takes_a_meal_through_mcp_and_its_item_s_unknown_key_is_named(
                                                                       {"description": "Rice", "kcal": 200,
                                                                        "estimated": True}]})
     assert refused["message"] == "Item 2: 'estimated' is not a field of a meal's item."
-    assert refused["fix"].endswith(" A meal takes the person's own numbers only: log an estimate as a food entry of "
-                                   "its own.")
+    assert refused["fix"].endswith(" Ask the person for the food's kcal, or save it with save_food first. Nothing "
+                                   "was saved.")
     logged = ok(http, token, "log", {"kind": "food", "details": {"entries": [{"saved_food_id": meal["id"]}]}})
     assert logged["entries"][0]["kcal"] == 420 and logged["entries"][0]["source"] == "saved_food"
+
+
+# ---------------------------------------------------------------- photos (decision 15 A)
+
+BINARY = ("binary", "base64", "base64url", "byte")  # how pydantic and JSON Schema publish bytes
+
+
+def schema_nodes(node):
+    """Every object in a JSON schema, nested ones and $defs included."""
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from schema_nodes(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from schema_nodes(value)
+
+
+def test_no_function_takes_an_image_no_input_schema_has_a_bytes_field_or_a_content_encoding(http):
+    tools = registered_tools(http)  # every registered function, the hidden ones too
+    assert "log_food" in tools and "save_food" in tools
+    for name, tool in tools.items():
+        for node in schema_nodes(tool["inputSchema"]):
+            assert not {"contentEncoding", "contentMediaType"} & set(node), name
+            assert node.get("format") not in BINARY, name
 
 
 # ---------------------------------------------------------------- the call log

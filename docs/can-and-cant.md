@@ -149,12 +149,13 @@ Every food entry carries one of four tags. Spotter works the tag out; Claude nev
 - **Macros.** `protein_g`, `carbs_g` and `fat_g` are grams for what was eaten. Each is null when not
   logged, never 0 g. `macros_estimated` says who supplied them: false only when the person stated them,
   such as from a label; left out, they count as Claude's estimate. A saved or USDA food takes none:
-  Spotter works them out from the food, and a macro the food has no figure for stays null. An edit of a
-  macro makes the grams the person's own; an edit of `kcal` leaves them as they are.
+  Spotter works them out from the food, and a macro the food has no figure for stays null. An edit that
+  sends every macro held makes them the person's own; an edit of `kcal` leaves them as they are.
 - **A saved meal.** `save_food` with `items` saves a meal of 2 to 30 foods: saved foods by id and
   servings, USDA foods by id and grams, or the person's own numbers, never an estimate. Spotter adds up
   the meal's calories and macros; a macro is null when any of its foods lacks it. The meal is logged by
-  its id with servings, as one saved food.
+  its id with servings, as one saved food. A food saved again keeps a macro left out, and null clears
+  one. A meal is changed by sending its items: its name saved with none is refused.
 - **Photos.** Spotter never receives a photo. The assistant reads a photo of a meal and sends its foods as
   words and numbers, as estimates with their portions.
 - **The meal.** Claude passes the meal the person named for a food, and never asks. Otherwise Spotter

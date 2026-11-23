@@ -2265,7 +2265,8 @@ def edit_changes(kind: str, entry: dict, form, units=None) -> dict:
     field posted in lb or mi is compared as text with what the page fills it with in that unit (edit_values), never
     as a number: 80 kg fills as 176.35 lb, which is 79.99 kg sent back, so an untouched one is never sent (decision
     16). A changed one is sent as typed, under its name in that unit, and the service converts it. Both names of a
-    pair are both sent as posted, and the service refuses them: neither is dropped."""
+    pair are both sent as posted, and the service refuses them: neither is dropped. A food entry whose macros are an
+    estimate sends every macro it holds once one of them changed, so the three become the person's own."""
     filled = edit_values(kind, entry, formatting.Units("lb", "mi"))  # each field keyed by its name in lb or mi
     changes = {}
     for field in posted_fields(EDIT_FIELDS[kind], form):
@@ -2276,6 +2277,11 @@ def edit_changes(kind: str, entry: dict, form, units=None) -> dict:
             changes.update(changed_fields((field,), entry, form))
         elif str(form.get(names[0]) or "").strip() != filled[names[0]]:
             changes[names[0]] = str(form.get(names[0]) or "")
+    if entry.get("macros_estimated") is True and set(rules.MACROS) & set(changes):
+        # One mark covers the three macros, and edit_entry makes them the person's own only when every one held is
+        # sent: the person saw them all on the form, so the others go too, at the values the form shows.
+        changes.update({m: str(form.get(m) or "") for m in rules.MACROS
+                        if m not in changes and m in form and entry.get(m) is not None})
     return changes
 
 
@@ -2377,10 +2383,10 @@ FOOD_ERROR_GENERAL = "That food was not saved. Check each field and try again."
 # The fields the edit page draws: the name stays, since it is how save_food finds the food.
 FOOD_EDIT_FIELDS = FOOD_FIELDS[1:]
 # A saved food's macros a serving (contract macros-and-asking.md). The page's forms draw none of them: a save from
-# the page sends the stored ones back, since save_food clears one a plain save leaves out.
+# the page sends the stored ones back as they are (kept_macros).
 PER_SERVING = tuple(f"{m}_per_serving" for m in rules.MACROS)
-# A saved meal (one with items) is changed through the assistant only: save_food with no items makes it a plain
-# food, and a meal's numbers are the sums of its foods. The page offers it no edit and refuses a save of its name.
+# A saved meal (one with items) is changed through the assistant only: save_food refuses a save of its name with no
+# items, and a meal's numbers are the sums of its foods. The page offers it no edit and refuses a save of its name.
 MEAL_NAME_TAKEN = "That name is a saved meal. Give another name, or change the meal through your assistant."
 
 
@@ -2392,8 +2398,8 @@ def food_form(form) -> dict:
 
 
 def kept_macros(food: dict | None) -> dict:
-    """The stored macros a serving of the food a save from Foods updates, sent back as they are: no form draws them,
-    and save_food clears one a plain save leaves out."""
+    """The stored macros a serving of the food a save from Foods updates, sent back as they are, since no form draws
+    them. save_food would keep one left out too; the page does not lean on it."""
     return {f: food[f] for f in PER_SERVING if (food or {}).get(f) is not None}
 
 

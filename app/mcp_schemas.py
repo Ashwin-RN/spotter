@@ -107,7 +107,7 @@ NEAR_MISSES = {
     "log_bodyweight": dict.fromkeys(("weight", "weight_kg", "weight_lb", "lbs"), _BODY_WEIGHT),
     "update_settings": {"length_unit": "Spotter keeps body sizes in cm: there is no length unit to set."},
     # save_food's items (macros-and-asking.md, decision 10): a meal holds no estimate.
-    "item": {"estimated": "A meal takes the person's own numbers only: log an estimate as a food entry of its own."},
+    "item": {"estimated": "Ask the person for the food's kcal, or save it with save_food first. Nothing was saved."},
     # log's (contract log-and-guide.md): a part's or a kind's own field sent at log's top, in route's own words for
     # the same mistake; and a part's near misses, as a set's and a cardio session's are.
     "log": {**dict.fromkeys(("movement", "exercise", "sets", "weight_kg", "weight_lb", "reps", "time_s", "distance_m",

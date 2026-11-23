@@ -80,12 +80,12 @@ PUBLISHED = {
     "update_settings": "467871ccb5681a52aa8a62d575fc30f633be70c7bba1f6429ca1e926215130ca",  # units; inputs; C3: the daily goals
     "get_log": "c9cb9ae3ada02a65d5b612272cd127d71ef0b010c4d667760edb606c6ea476a3",  # units; inputs; exercise list: SetOut; C4e: NewBest's kinds; C3: a food entry's macros and portion, the day's macros, its goals
     "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
-    "edit_entry": "28de89d0cc325c6e9ba022fdaac7f9b9a5121b8a8b9e023b49c4cf2dbd7c8c39",  # units; inputs; exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words; C3: macros and portion
+    "edit_entry": "2570fdcf021e7d14a0d1419ff89e1979b66f94c804e88b3544d35710032bdc71",  # units; inputs; exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words; C3: macros and portion; C3 fix: the mark when every macro held is sent
     "restore_entry": "6b129d5d669ea420a54d4a98bc846235dcd6186c493e1b9d961ab761391048bb",  # routines: kind routine; inputs; log and guide: kind words, id words
     "delete_entry": "bd1eb2e551d6276b7eda7d6f07aa8af4dfd71e28086cf6ae3df4ab3f206366cd",  # routines: kind routine; units; inputs; log and guide: kind words, id words
     "find_food": "04fec870a886016e15d4081f06587b2e940217de7072c49ed653a7b4b92bda25",  # inputs; log and guide: ids log takes; C3: macros a serving, a meal's items, USDA's a 100 g
     "log_food": "4f5b1cedbfd6b3df92b75adc527153302d1a09ea0ed34f6ed6a2f982c14d9a84",  # inputs; 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words; C3: macros, portion, the food sentence, the day's macros, its goals
-    "save_food": "3ba9dca8292aec95f19380f915e5f96798439527cd693be7dbc0309d0fa42613",  # inputs; log and guide: ids log takes; C3: macros a serving, items
+    "save_food": "5abd9db8b0490a5f8473b090efcacf20c3dcc1ec3f4dd7484bc26ece3ad95229",  # inputs; log and guide: ids log takes; C3: macros a serving, items; C3 fix: a macro left out is kept
     "log_cardio": "235cf20d40f883d11a98e826d5e8292c94f55f503b92ab114abcc9c39b705e13",  # units; inputs; 2026-11-20: exercise's words name both walks
     "get_trends": "76a12552c23e443d455dd77b910788c66030f05c3f4ea5b3df0d46d69845b30f",  # inputs
     "get_goals": "6d71cb0446594ce9d51a5eaa6719394018946cfa273a49d49a4bf559cc13a391",  # units; inputs
