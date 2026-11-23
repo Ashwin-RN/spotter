@@ -425,3 +425,25 @@ Read again at the pickup, against the code as log-and-guide leaves it; no new te
 | The page | `page_read` also returns each item's plan words |
 | C3's overlap | `app/log_shape.py` joins "Files C3 also touches" |
 | `routine_resave_keeps_plan` | A fourth case measures whether a resave keeps a plan's heart rate and machine calories, which `get_routines`' fields do not carry; a miss goes to the owner's gaps list, no text fix |
+
+**2026-11-23, C5c redrawn after C3 went live (`10d37e0`).** Read against `main` at `10d37e0`, where log-and-guide, C5a, C5b and C3 (`0015`) stand. His go the same day. C5c is its own deploy, after C5b's. These rows overrule the C5c rows above wherever they differ; a row not named here holds as written.
+
+| Row | C5c as it is built |
+|---|---|
+| Counts | With `save_program`: `NEEDS` 30, 22 listed for everyone, 25 for the owner, 16 writes (`common.WRITE_FUNCTIONS` and the judge's copy). Cases 284, the package 213, the core 104 (pick 19's 102 counted before log-and-guide's and C3's core cases). `get_routines` runs one statement more, always: 4, or 5 with a cardio item. The setup text stays 4,084. `README.md` and `docs/can-and-cant.md` state no function count: only the function table's row and a README line beside the routines line change |
+| `get_routines`' description | C5b's text with the fewest words changed: "and their program" in the first sentence, "or asks what today's workout is" where it says when to call it. Names `log` and `guide` only. `log_with` stays as C5b built it |
+| `program` in `get_routines` (R10) | An optional field, present only when a program is saved, left out otherwise, so every answer for a person with no program is today's. Its words: "The person's program, present only when one is saved: this week's number, today's routine, the next one and this week's days." One deploy: no required field is added |
+| The states (R10) | Running: `week`, `today` (null on a rest day), `next`, `this_week` the 7 days of the program week. Not started: `week`, `today` and `this_week` null, `next` the first day with a routine. Ended: `week`, `today`, `this_week` and `next` null. Each state has its line in `words` |
+| The function's place (R11) | `save_program` right after `save_routine` in the list, the two writes together; `names[-3:]` in `tests/test_data.py` holds |
+| `days[].weekday` (R11) | A string, not an enum: the service checks it, case and spaces forgiven, so "'weds' is not a weekday." is said. No input of the server uses an enum |
+| A day's routine | Matched by the routine's name key as `save_routine` folds it, stored as the routine's own stored name; at the read, a day whose routine is not live gives its stored name and the words say it is not saved now |
+| `start_on` (decision 18) | Blank is today. Not a date: `invalid_date` naming `start_on`. More than 2 years back: `date_too_old` as `rules.entry_date` words it, naming `start_on`. More than 52 weeks on: `date_too_far` with `field` `start_on` (goals' code), "start_on 2028-01-03 is more than 52 weeks after today, 2026-11-23." / "Give a start at most 52 weeks on: 2027-11-22 at the latest." `rules.entry_date` refuses every future date, so the "existing date rule" row cannot hold |
+| The cap | `rules.PROGRAM_WEEKS = (1, 52)`, one constant for the weeks in all and the forward bound, its comment naming it a cap, revisited from use |
+| The row (R8) | No `saved_on`: nothing reads it. The rest as R8 |
+| Delete preview | `entries.entry_words` gives a program its line, as a routine's, so the person sees words before a yes |
+| `save_program`'s result | `{kind: "program", id, created, program {id, name, start_on, blocks, weeks, updated_at}, summary, links {routines}}`, TOP, as `SaveRoutineResult` |
+| Kept apart | `save_routine`, `delete_entry` and `restore_entry` of a routine, and `edit_entry` never read the program table: `tests/test_macros_schema.py` writes through them at `0015`. A test helper `before_0016` strips the new table beside `before_0015` for the older migration tests |
+| `{{weekday:N}}` | In `evals/run.py`'s dates and the judge's placeholder check; its test passes a fixed today, all seven weekdays, never the real clock |
+| The seeded cases | `program_today_logged` and `program_rest_day` seed a program of 4 weeks from `{{days_ago:14}}`, so today is in week 3 |
+| Packages | C5c1 the program and its checklist, C5c3 the evals and docs, C5c2 the page, built one after another in the one worktree; one commit for C5c, one review of the whole |
+| Before the deploy | A Postgres run, by his okay: `0016` up, down, up over a written row, and a `get_routines` read with a program |
