@@ -1600,7 +1600,26 @@ The review on a frozen copy of `04c0668` found one must fix: a `save_food` with 
 
 ### The eval run
 
-Owed, on the owner's word: `python -m evals.need main` says yes, as the model-read text changed.
+On the owner's word of 2026-11-23, both gate models at once, on `7212948`: C3's 15 cases and the 38 whose `must` holds a function C3 changed (`guessed_number` among them), 3 runs each. The older cases that missed were run again on `main` (`101306a`), 3 runs each.
+
+| Model | Counted | Logging cases | Cost |
+|---|---|---|---|
+| `claude-sonnet-5-5` | 131 of 150 | 116 of 126 | $14.4449; the run on `main` $2.3386 |
+| `gpt-6-luna` | 126 of 150 | 109 of 126 | plan usage, none given |
+
+The stored rows and the answers:
+
+- C3's cases on Sonnet: 13 of 15 at 3 of 3. Every portion, meal, macro and lift ask case stored what its row says: the stated macros marked the person's, the estimate with its portion, a saved food's and a meal's sums, the goal as a setting, and no write before the question in each ask case.
+- `lift_weight_asked` on `gpt-6-luna`, 1 run of 3: bench logged at 0 kg for 3 x 8 instead of asking the weight; the reply said so. The only C3 case that stored a wrong number. Sonnet asked 3 of 3.
+- `guessed_number` on Sonnet, 2 runs of 3: the two rotis logged as an estimate with their portion, then the question about the dal. Nothing wrong stored; the case asks for no write.
+- `macros_estimated` on `gpt-6-luna`, 1 run of 3: the eggs logged with their kcal and portion and no macros.
+- `protein_left_today`: the 91 g left was right in every run, but worked out by the model from `get_data`'s entries and goal in 1 run of 3 on Sonnet and 3 of 3 on `gpt-6-luna`: `get_data` holds no day's total or `left_g`, `get_log` does.
+- The older cases that missed miss the same way on `main`: `delete_preview_clear_target` (the gym target said to be empty already, never cleared; 0 of 3 on both models and on `main`), `undo_saved_food_change` (no undo tried; 0 of 3 on both and on `main`), `edit_day_taken`, `recent_biryani_again`, `separate_food_repeat` (a meal sent), `rambling_day_log` (a set count never said), `old_run_fix_and_snack` (one wrong edit reverted). Nothing in them is C3's.
+- `portion_asked_then` and `lift_weight_asked_then` cannot run on Codex, which sends one message a conversation; their one-turn twins passed there 3 of 3 and 2 of 3.
+
+Wording only: `protein_not_logged` quoted Spotter's 35 g and said the biscuits hold none, without the words "so far" (0 of 3 on both); `parents_meal_card` once listed the foods without their numbers.
+
+Each miss is in the gaps list, none fixed now (the owner's rule of 2026-11-22).
 
 ### Known limits
 
@@ -1614,4 +1633,4 @@ Owed, on the owner's word: `python -m evals.need main` says yes, as the model-re
 
 ### What is left
 
-The eval run, the merge and the deploy, each on the owner's word. C5c, programs over weeks and migration `0016`, waits for this merge.
+The merge and the deploy, each on the owner's word. C5c, programs over weeks and migration `0016`, waits for this merge.
