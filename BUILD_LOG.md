@@ -1634,3 +1634,54 @@ Each miss is in the gaps list, none fixed now (the owner's rule of 2026-11-22).
 ### What is left
 
 The merge and the deploy, each on the owner's word. C5c, programs over weeks and migration `0016`, waits for this merge.
+
+## C5c: a training program over weeks
+
+On 2026-11-23. Contract `docs/contracts/routines-and-programs.md`, package C5c, redrawn after C3 went live, with its as-built note. Storage, code, a page, model-read text and four eval cases; migration `0016`. Its own deploy, after C5b's.
+
+### What was built
+
+| Package | Commit | What it did |
+|---|---|---|
+| Contract | `5db8358` | C5c redrawn against `10d37e0`: the counts, the program left out of `get_routines` when none is saved, the weekday checked by the service, `start_on`'s words, the 52-week cap, the packages |
+| C5c | `5974b7a` | Migration `0016`, one program a person: a saved routine for each training day of the week, in blocks of weeks. `save_program` (22 functions listed, 25 for the owner, 16 writes); `program` in `get_routines`, present only when one is saved, with this week's number, today's routine, the next one and this week's days; delete and restore of kind `program`, the export's `programs.csv`, the account delete's count; the Routines page's program card with Delete and Undo; the eval runner's `{{weekday:N}}`, `program` with `week_count` and `day_count`; four cases, 285 in all, 104 core |
+
+Built as three packages one after another in one tree (the program and its checklist, the evals and docs, the page) and committed as one. The review on a frozen copy found one must fix, a route table pin. Its should-fix points, done in the one fix round: a program changed with its start left out lost the start (the owner's pick: it keeps a program's start while it has not ended); `program_saved` passed a program with a day nobody asked for (`day_count` added); `program_rest_day` passed replies that gave tomorrow's routine as today's. A fourth case, `program_day_moved`, measures a mid-way change keeping the start. The 28 older cases that pin their `must_not` to every write gained `save_program` there and nothing else.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| The touched test files | Each package's files plain and with `-W error`, green after each last edit; the fix round 3,286 passed over 20 files, both ways |
+| The whole suite on the working tree before the fix round | 7,931 passed, 5 failed: pins of the program's two routes and its count line, fixed in the fix round |
+| Postgres 17 (`postgres:17-alpine`, local) | On `5974b7a`: `0016` up with a program written, down to `0015` with the routines and sets kept and the table gone, up again; the constraints `pk_program`, `uq_program_user_id`, `fk_program_user_id_user`; a change with the start left out kept it; `get_routines` with a program the same on Postgres and SQLite |
+| The page | Seen in Chrome at 320 and 390 px from a test-client render: a long routine name, today marked, a routine no longer saved. No CSS rule |
+| `get_routines` with no program | The same answer field for field as before; one statement more, 4 (5 with a cardio item) |
+| The setup text | 4,084 characters, unchanged |
+
+### The eval run
+
+On `5974b7a`, 3 runs a case: on Sonnet the 37 cases that use the routine, program, delete or restore functions; on `gpt-6-luna` the 25 routine and program cases.
+
+| Model | Counted | Logging cases | Cost |
+|---|---|---|---|
+| `claude-sonnet-5-5` | 79 of 105 | 67 of 90 | $9.3795 |
+| `gpt-6-luna` | 47 of 69 | 34 of 54 | plan usage, none given |
+
+The four program cases passed 12 of 12 on Sonnet. On `gpt-6-luna`: `program_rest_day` and `program_day_moved` 3 of 3, `program_saved` 1 of 3 and `program_today_logged` 0 of 3, each miss a model that never called `get_routines` and asked for the exercises (the gap C5b's run found); nothing written in those runs.
+
+Sonnet's misses were in 10 delete and undo cases. The same 10 on `main` (`10d37e0`) the same evening: 6 of 30, against 7 of 30 here, the same misses: an undo done by an edit or a new entry instead of `restore_entry`, a delete after the model sent the confirm code itself, and replies "Nothing is deleted yet" failed by the judge's "is deleted" pattern.
+
+Three routine cases on `gpt-6-luna` came out lower than on `main` (3 of 3 each there, 1, 1 and 2 here), one run of `save_hinge_routine` logging the lifts as today's session instead of saving the routine. Run again at 6 runs a side, branch and `main` at once: branch 17 of 18 with no wrong write, `main` 12 of 18 with none. Pooled, the wrong write is 1 of 9 on the branch and 0 of 9 on `main`. Each miss is a tracked gap; no text was changed for it.
+
+### Known limits
+
+- A new program saved over a running one with its start left out takes the old start, until the person gives the date.
+- A kept start with fewer weeks can read as ended at once.
+- A routine resaved under another case shows in the program by its stored spelling.
+- `save_program` requires a name; what to do when the person gives none is not decided.
+- About 95 older cases list every write in `must_not` but are pinned to no list, so a stray `save_program` there passes.
+
+### What is left
+
+C5 is complete with this deploy.
