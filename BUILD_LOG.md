@@ -1564,3 +1564,54 @@ On Sonnet the four C5b cases passed 3 of 3 each; the one miss was a reply that e
 ### What is left
 
 C5c, programs over weeks and migration `0016`, waits for C3's merge.
+
+## C3: protein, carbs and fat, the portion asked first, a saved meal
+
+On 2026-11-21 to 2026-11-23. Contract `docs/contracts/macros-and-asking.md`, its owner's picks of 2026-11-21 (all 20 as the lead's, 1 and 2 A) and five dated notes. Storage, code, pages, model-read text and 15 eval cases; migration `0015`. Built on log-and-guide, then rebased onto C5a (`fcba0e8`) and C5b (`101306a`).
+
+### What was built
+
+| Package | Commit | What it did |
+|---|---|---|
+| Contract | `93f28d4` | The decisions, read against `3b2441e`, with notes for each rebase |
+| P1 Storage | `ce2a0bc` | Migration `0015`: protein, carbs and fat in grams, `macros_estimated` and `portion` on a food entry; the macros a serving and a meal's `items` on a saved food; the three figures a 100 g and `macros_read` on a USDA food; three daily goals on the account. Nine range rules. Null is "not logged", never 0 g |
+| P2 Food | `ce2a0bc` | Each macro marked as the person's or the assistant's estimate; an estimate refused without its `portion`, the fix telling the model to ask once; a saved food's macros times its servings and a USDA food's times its grams; a saved meal of 2 to 30 foods through `save_food`'s `items`, its numbers the sums, logged by its id as one food; edits, undo and the export; the call log's `atwater=`; `log`'s food kind through `log_food_step` |
+| P3 Daily goals | `ce2a0bc` | `protein_target_g`, `carbs_target_g` and `fat_target_g` set through `update_settings`, beside the calorie target; the day's macros with what is left or over; `set_goal` refuses the three as goal kinds |
+| P4 Pages | `ce2a0bc` | The day page's macro line and totals ("not logged", never "0 g"; "so far" while an entry has none), the portion on its line, the edit page's fields, Confirm for estimated macros, a meal's foods on Foods (a meal is changed through the assistant), the three goals on Settings, the hi page's lines |
+| P5 Docs and evals | `ce2a0bc` | `docs/can-and-cant.md`, the README (the photo line among them), `docs/evals.md`, 11 food cases, the judge's columns, dated notes on `data-on-request.md` and `log-and-guide.md` |
+| P6 Lifts | `04c0668` | 4 cases: a missing weight or reps asked, a pull-up logged at 0 kg with no question |
+| Fix round | `a80f42e`, `5a04835` | Below |
+
+P1 to P5 are one commit on the owner's pick of 2026-11-23: they were built one after another in one tree, and P2 and P3 share the function file, the schemas, the rules and every hash pin. The owner's picks of 2026-11-23: the four ask cases (`portion_asked`, `guessed_number`, `lift_weight_asked`, `lift_reps_asked`) pass a log Spotter refuses, then the question; P6 built before the review. The setup text is unchanged at 4,084 characters.
+
+### The review and the fix round
+
+The review on a frozen copy of `04c0668` found one must fix: a `save_food` with only the old three fields cleared a saved food's macros, and a meal's name saved that way dropped its foods. The fix: a macro left out is kept and a null clears it; a meal's name with no items is refused. Its should-fix points: the refusal for an estimated meal item sent the model to log a food entry nobody ate; one macro's edit marked all three as the person's (the owner's pick, "Stays an estimate": the mark turns only when every held macro is sent, and the edit page sends them all). Its minor point: USDA macros were rounded before scaling (a 150 g banana gave 1.7 g protein, not 1.6). The contract's promised test that no function takes an image was added. The fresh re-check of the fix round found no must fix; its should fix, the meal item refusal's words, was reworded on the owner's word (`5a04835`). The owner kept as built: a stated kcal with estimated macros needs no portion.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| The touched test files, each package and the fix round | Plain and with `-W error`, green after each last edit: P2 4,338 over 34 files, P3 1,494 over 14, P4 1,530 over 7 and 2,358 in 23 page files, P5 3,579 over 17, P6 2,188 over 10, the fix round 3,854 over 22, the reword 1,653 over 8 |
+| The whole suite | 7,784 passed with `-W error` on an export of `ce2a0bc`; on `5a04835`: 7,795 passed, plain, in 19 min 16 s |
+| Postgres 17 (`postgres:17-alpine`, local) | On `5a04835`, by the owner's okay: `main`'s code (`101306a`) wrote rows of every kind at `0014`; `0015` up, every new column set, the nine rules (8 out-of-range writes refused, 3 edge writes taken), down with every old row as it was, up again with the models matching. Passed. A run on 2026-11-21 had passed on the same file |
+| Hashes | Printed from the built server after each rebase and the fix round, never merged by hand |
+| Sizes | `guide` food 4,885 (3,626 before); `get_data` 7,495 of its 7,500 cap; `save_food` 7,930, `edit_entry` 8,664 |
+
+### The eval run
+
+Owed, on the owner's word: `python -m evals.need main` says yes, as the model-read text changed.
+
+### Known limits
+
+- A missing set count cannot be seen: "bench 60 for 8" is one set.
+- A meal changed for one day is logged food by food; an estimate inside a saved meal is refused.
+- A food photo is untested by the runner: one check by hand in Chrome.
+- A chat opened before the deploy may not be able to send `portion`: checked at the live check.
+- Daily goals as settings keep no history of their changes.
+- `save_food` still clears `grams_per_serving` when left out, as on `main`; a deleted plain food brought back by a plain save takes only the macros sent. Both tracked.
+- A set with no weight is refused with "Give weight_kg or weight_lb on set 1.", which never says 0 for bodyweight.
+
+### What is left
+
+The eval run, the merge and the deploy, each on the owner's word. C5c, programs over weeks and migration `0016`, waits for this merge.
