@@ -79,6 +79,13 @@ def a_delete_s_second_call(account: int) -> dict:
             "confirm": services.delete_entry(account, "bodyweight", entry, "claude")["confirm"]}
 
 
+def a_program_call(account: int) -> dict:
+    """save_program's arguments, the routine its day names saved first, through the web (no row of a call)."""
+    assert "error" not in services.save_routine(account, {"name": "Push day", "lifts": [
+        {"exercise": "Bench Press", "sets": 3, "reps": 8}]}, "web")
+    return {"name": "PPL", "blocks": [{"weeks": 8, "days": [{"weekday": "monday", "routine": "Push day"}]}]}
+
+
 def a_deleted_weigh_in(account: int) -> int:
     entry = a_weigh_in(account)
     assert services.delete_entry(account, "bodyweight", entry)["deleted"] is True
@@ -106,6 +113,7 @@ CALLS = {
     "send_feedback": lambda account: {"text": "The chart is confusing."},  # feedback.md decision 7
     "save_routine": lambda account: {"name": "Push day",  # routines.md decision 5
                                      "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8}]},
+    "save_program": lambda account: a_program_call(account),  # routines-and-programs.md R11
 }
 
 
@@ -414,8 +422,9 @@ def looks(statements: list[str]) -> list[str]:
 # and get_log shows no saved food.
 READS = {"set_goal": "get_goals", "update_settings": "whoami", "save_food": "find_food",
          "save_routine": "get_routines",  # routines.md R11, and a routine to delete or restore
-         "delete_entry": "get_log, find_food for a saved food, or get_routines for a routine",
-         "restore_entry": "get_log, find_food for a saved food, or get_routines for a routine"}
+         "save_program": "get_routines",  # routines-and-programs.md R11, and the program to delete or restore
+         "delete_entry": "get_log, find_food for a saved food, or get_routines for a routine or the program",
+         "restore_entry": "get_log, find_food for a saved food, or get_routines for a routine or the program"}
 
 
 # send_feedback has no read to name: tests/test_feedback.py holds its own fix (feedback.md decision 7).
@@ -1078,7 +1087,8 @@ UNKEYED = ('action="/sign-out"', 'action="/settings/export"')  # they write noth
 def test_every_form_that_writes_carries_one_hidden_key_as_its_last_field_and_the_three_others_carry_none():
     forms = [form for path in sorted(TEMPLATES.glob("*.html")) for form in FORM.findall(path.read_text("utf-8"))]
     keyed = [form for form in forms if not any(action in form for action in UNKEYED)]
-    assert (len(forms), len(keyed)) == (23, 20)  # routines.md: a routine's Delete; units.md R16: the Units card
+    assert (len(forms), len(keyed)) == (24, 21)  # routines.md: a routine's Delete; units.md R16: the Units card; C5c:
+    # the program's Delete
     field = '<input type="hidden" name="key" value="{{ form_key() }}">'
     for form in forms:
         assert form.count(field) == (form in keyed) and form.count('name="key"') == form.count(field), form[:80]
@@ -1118,6 +1128,18 @@ def a_deleted_routine(user: int) -> int:
     routine = a_routine(user)
     assert services.delete_entry(user, "routine", routine)["deleted"] is True
     return routine
+
+
+def a_program(user: int) -> int:
+    a_routine(user)
+    return services.save_program(user, {"name": "PPL", "blocks": [{"weeks": 8, "days": [
+        {"weekday": "monday", "routine": "Push day"}]}]}, "web")["id"]
+
+
+def a_deleted_program(user: int) -> int:
+    program = a_program(user)
+    assert services.delete_entry(user, "program", program)["deleted"] is True
+    return program
 
 
 def a_goal(user: int) -> int:
@@ -1161,6 +1183,9 @@ FORMS = {
     "a routine's delete": (a_routine, "/routines", "/routines/{id}/delete", "", {}, True),  # routines.md R15
     "a routine's undo": (a_deleted_routine, "/routines?deleted=routine:{id}", "/routines/{id}/restore", "", {},
                          True),
+    "the program's delete": (a_program, "/routines", "/routines/program/{id}/delete", "", {}, True),  # C5c
+    "the program's undo": (a_deleted_program, "/routines?deleted=program:{id}", "/routines/program/{id}/restore", "",
+                           {}, True),
 }
 
 

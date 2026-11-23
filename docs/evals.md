@@ -311,7 +311,7 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
   judge reads their `kind` as its table word, so a case that pins `lift_session` passes `lifts` as well.
 - `guide` is no data read: its numbers ("1 to 60") are words on how to log, never figures of the person's.
   `read_any` and `quotes_spotter` never read it.
-- So every case keeps its words: 281 cases, 103 core. `log` is in the `no_call` and `must_not` of each case that
+- So every case keeps its words: 285 cases, 104 core. `log` is in the `no_call` and `must_not` of each case that
   asks for no write, so a refused `log` call whose kind resolves to none fails those too. The four ask cases
   (`guessed_number`, `portion_asked`, `lift_weight_asked`, `lift_reps_asked`) are the exception, on the owner's
   pick of 2026-11-23: `log` is in their `may` with `ok_calls` 0, so a `log` call Spotter refuses before the
@@ -349,7 +349,9 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
   anything else, `read` among them, stops the load.
 - `seed` rows are made through Spotter's services, in order: `save_food`, `log_bodyweight`,
   `log_measurement`, `log_lifts`, `log_cardio`, `set_goal`, `import_entries`, `save_routine`, `update_settings`,
-  `log_food`, each with `data`, and `four_weeks` and `sixteen_weeks`, which take no data.
+  `log_food`, `save_program`, each with `data`, and `four_weeks` and `sixteen_weeks`, which take no data.
+  - `save_program` saves the person's program. Each day names a routine seeded before it, and each weekday is a
+    `{{weekday:N}}`, so a case never depends on the real weekday.
   - `log_food` logs a day's food as the web logs it, macros and all. It returns ids, not one id, so it has no
     `as`. A seeded estimate needs its `portion`, as any estimate does. A saved meal is a `save_food` seed with
     `items`, each naming a food seeded before it.
@@ -363,8 +365,10 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
     `{kind, entry_id, changes}`, all three, and `entry_id` is that row's `{{seed.<as>}}`.
 - `db` checks the person's live rows, or with `"state": "deleted"` the soft-deleted ones.
   - The tables: `food_entry`, `saved_food`, `bodyweight`, `measurement`, `cardio_entry`, `lift_session`,
-    `lift_set`, `goal`, `feedback`, `routine`.
+    `lift_set`, `goal`, `feedback`, `routine`, `program`.
   - A `lift_session` row carries `set_count`: how many sets it holds.
+  - A `program` row carries `week_count` and `day_count`: the weeks and the training days of its blocks, each
+    added over every block, beside its `start_on`.
   - A `saved_food` row carries `item_count`: how many foods its `items` hold, 0 for a plain food. A `food_entry`
     row holds `protein_g`, `carbs_g`, `fat_g`, `macros_estimated` and `portion`, each null when not logged, so
     `{"where": {"protein_g": null}, "count": 0}` says every entry holds protein.
@@ -390,6 +394,7 @@ A placeholder is a whole string. It works in `seed`, `expect` and `db`.
 | `{{yesterday}}` | The day before. |
 | `{{days_ago:N}}` | N from 0 to 60. The day N days before today. |
 | `{{next_month_end:N}}` | N from 1 to 12. The last day of month N, the next one strictly after today. |
+| `{{weekday:N}}` | N from 0 to 6. The weekday N days after today, in lower case, such as `tuesday`. |
 | `{{seed.<as>}}` | The id of the seeded row named `as`. In `seed`, only in the data of a later seed: one that names an `as` no earlier seed gave stops the load. |
 
 `{{next_month_end:N}}` in examples, today 10 November 2026:
@@ -834,8 +839,8 @@ so "Or was it Back Squat?" fails and Spotter's own first-day question ("what do 
 
 Every seeded lift set in the file sends `exact` true, so a seeded Back Squat stays Back Squat after a seeded Smith
 Squat. The new
-cases follow the last, each `direct` and `core` false, so they are not in the core: it is 103, with the two log and
-guide cases below.
+cases follow the last, each `direct` and `core` false, so they are not in the core: it is 104, with the two log and
+guide cases and `program_saved` below.
 
 | Case | Says (seed) | Passes when |
 |---|---|---|
@@ -913,7 +918,8 @@ Plank 3 × 60 s at 0 kg.
 ### The macros and asking cases
 
 **Eleven cases follow the four cardio and timed item cases, each `direct` and `core` false: the core stays at
-103, and with the four lift ask cases below the file holds 281** (contract `macros-and-asking.md`). They keep the five's names, so a `log` call is judged as its kind's
+103, and with the four lift ask cases and the four program cases below the file holds 285** (contract
+`macros-and-asking.md`). They keep the five's names, so a `log` call is judged as its kind's
 function. Each is judged on the record: the rows, the calls that succeeded and the calls made. An ask is no write and
 a question, never the reply's words alone. The read cases list every write in `must_not` and `no_call`, `log`
 among them. The two ask cases, `portion_asked` and `guessed_number`, keep `log` and `log_food` in `may` with
@@ -949,8 +955,8 @@ No case sends a photo: the runner sends no image.
 
 ### The lift ask cases
 
-Four cases follow the macros and asking cases and close the file, each `direct` and `core` false: the core stays at
-103, and the file holds 281 (contract `macros-and-asking.md`, decision 14 A). They run on today's refusals: a set sent
+Four cases follow the macros and asking cases, each `direct` and `core` false: the core stays at 103 (contract
+`macros-and-asking.md`, decision 14 A). They run on today's refusals: a set sent
 with no weight is refused as "weight_kg or weight_lb is missing" with the fix "Give weight_kg or weight_lb on set 1.",
 and one with no reps as "reps is missing" with "Give reps on set 1." Through `log` each names `parts[0]` in place of
 set 1. A pull-up with no weight is refused the same way: its fix does not say 0 for body weight. The two ask cases
@@ -970,6 +976,32 @@ before, so `whoami` offers no setup.
 | A missing weight or reps is asked and never guessed: no lift log succeeds before the question, and 0 kg on a bench counts as a guess | That the refused try was refused for the missing number: `ok_calls` counts successes only, as in the food pair |
 | A pull-up is logged at 0 kg with no question, never at the person's weigh-in or an added weight | That a model reads 0 for a pull-up from the refusal: it may ask instead, and that run fails |
 | `lift_weight_asked_then`: the answer is logged in the second turn and nothing before it. On Codex and Gemini it fails unrun; `lift_weight_asked` is its one-turn twin | The reply's words beyond the weight or reps words: weak until the judge is rebuilt |
+
+### The program cases
+
+Four cases follow the lift ask cases and close the file, each `direct` (contract `routines-and-programs.md`, C5c).
+`program_saved` joins the core, as `save_program` is new and every function is some core case's `must`: the core
+is 104, and the file holds 285. The other three are not in the core. `program_today_logged` keeps the five's names in
+`must` and `ok_calls`, as the routine cases do: the judge routes a `log` call to its kind's function. A program is
+judged by its row: `start_on`, `week_count` and `day_count`. Its days are judged on `save_program`'s inputs, as the
+row holds them as text, and their number on `day_count`, so a day the person never named fails. The two seeded cases' seed: Pull day (Barbell Row 3 × 8 at 60), Push day (Bench Press 3 × 8 at 60)
+and a program of 4 weeks from `{{days_ago:14}}`, so today is in week 3. `program_day_moved` (the owner's pick of
+2026-11-23) seeds Push day and Pull day and a program "Four weeks" from `{{days_ago:14}}`, Push day on monday and
+Pull day on wednesday: a change sent with `start_on` left out keeps that start.
+
+| Case | Says (seed) | Passes when |
+|---|---|---|
+| `program_saved` | I'm starting an 8 week PPL program today: push day on Mondays, pull day on Wednesdays, legs day on Fridays (Push day, Pull day and Legs day) | One successful `save_program` with a block of 8 weeks: Push day on monday, Pull day on wednesday, Legs day on friday. No `save_routine`, no log. One program, `start_on` today, `week_count` 8, so one block, `day_count` 3; 3 routines; no session |
+| `program_today_logged` | Log today's workout (the seed, Pull day on `{{weekday:0}}`, today, and Push day on `{{weekday:2}}`) | One successful `log_lifts`. One session today, `set_count` 3: Barbell Row 60 × 8 three times. No Bench Press set |
+| `program_rest_day` | What's my workout today? (the seed, Pull day on `{{weekday:1}}`, tomorrow, and Push day on `{{weekday:3}}`) | `get_routines` called; no write, `log` among them; the reply names Pull day, the next one, and never says today is Pull day. No session |
+| `program_day_moved` | Move pull day to Friday in my program (the seed, Push day on monday and Pull day on wednesday, from `{{days_ago:14}}`) | One successful `save_program` with a block of 4 weeks: Push day on monday, Pull day on friday. No other write. One program, `start_on` `{{days_ago:14}}` (kept, whether left out or sent again), `week_count` 4, `day_count` 2; 2 routines; no session |
+
+| Proves | Does not prove |
+|---|---|
+| A schedule said in one sentence becomes one program over the routines already saved, with nothing else written | That the program's name is the person's word for word: the case passes any name |
+| The routine logged is today's by the program, on any weekday: the seed's days are `{{weekday:N}}` | That the model read the program rather than guessed: only Pull day is right today, and a log of Push day fails |
+| `program_rest_day`: a read, and no write on a rest day | That the reply says today is a rest day: it is judged on Pull day named and today never called Pull day |
+| `program_day_moved`: a change to a running program keeps its start, so its week | That the model read the program's start: a run that leaves start_on out passes on the service's rule alone |
 
 ## What the evals prove
 

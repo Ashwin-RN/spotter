@@ -9,7 +9,8 @@ a 64-bit call-log id on Postgres, and the database's own rules. 0013 (contract e
 stable key and a retired mark, and a set its time_s and distance_m, with reps now nullable. 0015 (contract
 macros-and-asking.md) adds protein, carbs and fat in grams to a food entry, a saved food and the USDA cache, a food
 entry's macros_estimated mark and portion, a saved meal's items, the cache's macros_read mark, and the person's three
-daily amounts in grams.
+daily amounts in grams. 0016 (contract routines-and-programs.md) adds the person's training program (program), one a
+person.
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -402,6 +403,25 @@ class Routine(Base):
     name_key: Mapped[str] = mapped_column(String(255))
     lifts: Mapped[str] = mapped_column(Text)  # JSON
     saved_on: Mapped[dt.date] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, onupdate=_now)
+    deleted_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class Program(Base):
+    """The person's training program (migration 0016, contract routines-and-programs.md R8 and its note of 2026-11-23):
+    a weekday schedule in blocks of weeks, one row a person, deleted rows included. Not an entry table, as a routine.
+    start_on is the person's date week 1 starts; blocks is JSON text, [{weeks, days: [{weekday, routine}]}], each day
+    a lower-case weekday and a routine's stored name. No saved_on: nothing reads it. Deleted with the account."""
+
+    __tablename__ = "program"
+    __table_args__ = (UniqueConstraint("user_id"),)  # one a person, and the one index: every read is by user_id
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = _user_id()
+    name: Mapped[str] = mapped_column(String(64))
+    start_on: Mapped[dt.date] = mapped_column(Date)
+    blocks: Mapped[str] = mapped_column(Text)  # JSON
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now, onupdate=_now)
     deleted_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)

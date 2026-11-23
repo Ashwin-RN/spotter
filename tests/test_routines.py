@@ -71,8 +71,9 @@ SAVE_DESCRIPTION = (
     "To save a session already logged, read it with get_log and send each lift with its number of sets, its reps, "
     "time or distance, and its heaviest weight.")
 GET_DESCRIPTION = (
-    "The person's saved routines, each item with its plan, the weight to log for a lift and last time. Call it when "
-    "the person names a routine, such as log my push day. To log one, send the sets of its lifts, holds and carries "
+    "The person's saved routines and their program, each item with its plan, the weight to log for a lift and last "
+    "time. Call it when the person names a routine, such as log my push day, or asks what today's workout is. To log "
+    "one, send the sets of its lifts, holds and carries "
     "with log, kind lifts, one part a set, the lift as movement, with exact true, with each change the person names, "
     "and leave the date out for today. Send each cardio item with log, kind cardio, as its log_with says, with a heart "
     "rate or the machine's calories only when the person gives them today. Send each weight_kg as given, in "
@@ -81,7 +82,8 @@ GET_DESCRIPTION = (
     "given, each with the lift as movement, and for cardio last's minutes, distance, incline and speed.")
 # units.md; exercise-list.md R3: exact true; log-and-guide.md row 4: the sets go to log; routines-and-programs.md
 # decision 12, last; C5b, the note of 2026-11-22: holds, carries and cardio in log's words, a plan's heart rate and
-# machine calories never logged as today's
+# machine calories never logged as today's; C5c, the note of 2026-11-23: "and their program", "or asks what today's
+# workout is"
 KEY_WORDS = mcp_server.KEY_DESCRIPTION
 # C5b: a time and a distance in log's part words, a cardio number in log_cardio's, each the constant itself
 LIFT_IN = {"exercise": "The lift or the cardio activity, exactly as list_exercises gives it.",
@@ -856,8 +858,11 @@ def test_the_published_words_arguments_results_and_annotations_are_the_contract_
     got = getting["outputSchema"]
     assert {k: v["description"] for k, v in got["properties"].items()} == {
         "routines": "Every live routine, by name.", "how": HOW,
-        "summary": "The routines by name, in one line, ready to quote.", "note": "Present when no routine is saved.",
-        "links": "Pages to offer the person. Put links last in a reply."}
+        "summary": ("The routines by name, in one line, ready to quote, after the program's words when one is "
+                    "saved."),  # C5c: the summary leads with the program's words
+        "program": ("The person's program, present only when one is saved: this week's number, today's routine, the "
+                    "next one and this week's days."),  # C5c, the note of 2026-11-23: optional
+        "note": "Present when no routine is saved.", "links": "Pages to offer the person. Put links last in a reply."}
     assert {k: v["description"] for k, v in got["$defs"]["RoutineToLog"]["properties"].items()} == {
         "id": ID_WORDS, "name": NAME_IN, "saved_on": "The person's date when the routine was last saved.",
         "lifts": LIFTS_IN, "words": ("The routine's items in words, each lift with the weight to log, in the person's "
@@ -887,19 +892,20 @@ def test_the_kind_and_id_words_and_delete_entry_s_first_sentence_are_the_contrac
     tools = {t["name"]: t for t in tool_list(http, sign())}
     # log-and-guide.md rows 3 and 52: the id comes from log, and the kind words name log's five too
     entry_id = ("The entry's id, from log or get_log, with the kind it came with. A saved food's id comes from save_food "
-                "or find_food, a routine's from save_routine or get_routines.")
+                "or find_food, a routine's from save_routine or get_routines, the program's from save_program or "
+                "get_routines.")  # routines-and-programs.md, "Texts that change (C5c)"
     deleting, restoring = tools["delete_entry"]["inputSchema"], tools["restore_entry"]["inputSchema"]
     assert deleting["properties"]["kind"]["description"] == (
-        "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio. Or saved_food or "
-        "routine.")
+        "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio. Or saved_food, "
+        "routine or program.")
     assert restoring["properties"]["kind"]["description"] == (
         "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio. With undo_edit, "
-        "saved_food too. Or routine, to bring back a deleted one.")
+        "saved_food too. Or routine or program, to bring back a deleted one.")
     assert deleting["properties"]["entry_id"]["description"] == restoring["properties"]["entry_id"]["description"] == \
         entry_id
     assert tools["delete_entry"]["description"].startswith(
-        "Deletes one of the person's entries, saved foods or routines, in two calls. With no confirm, nothing is "
-        "deleted:")
+        "Deletes one of the person's entries, saved foods, routines or their program, in two calls. With no confirm, "
+        "nothing is deleted:")
     edit = tools["edit_entry"]["inputSchema"]["properties"]
     assert edit["entry_id"]["description"] == mcp_server.ENTRY_ID_DESCRIPTION and "routine" not in json.dumps(edit)
 
@@ -911,8 +917,8 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     registered = registered_tools(client)
     tools = [t for name, t in registered.items() if name not in ("log", "guide")]
     names = [t["name"] for t in tools]
-    assert names == [*list(BEFORE)[:20], "save_routine", "get_routines", "what_is_logged", "get_data",
-                     *list(BEFORE)[20:]]  # data-on-request.md: its two after get_routines
+    assert names == [*list(BEFORE)[:20], "save_routine", "save_program", "get_routines", "what_is_logged", "get_data",
+                     *list(BEFORE)[20:]]  # data-on-request.md: its two after get_routines; C5c: save_program
     # inputs.md then moved every one: its changes are taken out here (tests/test_inputs.py diffs the two).
     hashes = {t["name"]: hashlib.sha256(compact(without_inputs(t)).encode()).hexdigest() for t in tools}
     # Routines moved delete_entry, restore_entry and whoami; units then moved its thirteen (units.md), of these.
@@ -928,7 +934,7 @@ def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_publ
     assert hashes["restore_entry"] != BEFORE["restore_entry"] and "restore_entry" not in units
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
     assert everyone == [n for n in registered if n not in mcp_server.OWNER_FUNCTIONS + mcp_server.RETIRING]
-    assert len(everyone) == web.FUNCTION_COUNT == 21
+    assert len(everyone) == web.FUNCTION_COUNT == 22  # C5c: save_program
 
 
 def test_the_instructions_do_not_change_4084_characters():  # data-on-request.md: DATA_RULE; exercise-list.md C4c
@@ -954,7 +960,7 @@ def test_a_save_and_a_read_through_mcp_pass_their_models_and_the_trace_writes_li
         ("get_routines", "read", "")]
     assert "lifts" in KNOWN_NAMES and set(RoutineLiftIn.model_fields) <= KNOWN_NAMES
     assert TABLES == ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food",
-                      "routine", "goal")
+                      "routine", "program", "goal")  # C5c: the program
     marked = failed(http, token, "save_routine", {"name": "Pull day", "lifts": [{**lift(), "colour": "red"}]})
     # A field the model does not name is refused before the service, in R5's words (inputs.md D1 and D6: was
     # dropped), and counted, never named, in tried.
@@ -1134,11 +1140,12 @@ def test_settings_links_to_the_page_and_says_what_each_setting_lets_the_assistan
     page = client.get("/settings").text
     assert ('<p><a class="action" href="/foods">Saved foods</a></p>\n'
             '  <p><a class="action" href="/routines">Saved routines</a></p>') in page
-    assert ("Your assistant can log and import entries, edit and restore them, save foods and routines, and set goals. "
-            "It can change your time zone, units and targets, and delete entries, saved foods and routines. Before a "
-            "delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can be "
-            "restored.") in page  # units.md R16: units joins what it can change
-    assert "Everything above except deleting: your assistant cannot delete an entry, a saved food or a routine." in page
+    assert ("Your assistant can log and import entries, edit and restore them, save foods, routines and programs, and "
+            "set goals. It can change your time zone, units and targets, and delete entries, saved foods, routines and "
+            "programs. Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can "
+            "be restored.") in page  # units.md R16: units joins what it can change; C5c: programs
+    assert ("Everything above except deleting: your assistant cannot delete an entry, a saved food, a routine or a "
+            "program.") in page
     assert links.page("routines").endswith("/routines") and ("/routines", web.routines_page, ["GET"]) in web.PAGES
 
 
@@ -1266,9 +1273,10 @@ def test_every_statement_on_routine_names_the_person_s_id(client, make_user):
     assert read(other.id)["routines"][0]["lifts"][0]["weight_kg"] == 99.0
 
 
-# The user, the routines, and the one statement of weights and last time (hardening D5: no lifts.history). C5's R3
-# planned one more statement for last; it is the same statement, so the weight to log and last are one session.
-GET_STATEMENTS = 3
+# The user, the routines, the program, and the one statement of weights and last time (hardening D5: no
+# lifts.history). C5's R3 planned one more statement for last; it is the same statement, so the weight to log and last
+# are one session. C5c (the note of 2026-11-23): the program's read, one statement more, always.
+GET_STATEMENTS = 4
 
 
 def test_get_routines_runs_a_fixed_number_of_statements_however_many_routines_and_sessions(make_user, clock):
@@ -1285,7 +1293,7 @@ def test_get_routines_runs_a_fixed_number_of_statements_however_many_routines_an
     assert counts[small.id] == counts[large.id] == GET_STATEMENTS
     nobody = make_user()
     _, seen = statements_of(lambda: services.get_routines(nobody.id))
-    assert len(seen) == 2  # with no routine, history is not walked
+    assert len(seen) == 3  # with no routine, history is not walked: the user, the routines, the program
 
 
 # ---------------------------------------------------------------- the migration (decision 1, R2, R3, P8)
@@ -1347,7 +1355,7 @@ def test_0010_builds_the_table_on_sqlite_and_comes_down_leaving_no_other_change(
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0015"  # macros
+    assert script.get_revision("0010").down_revision == "0009" and script.get_current_head() == "0016"  # programs
 
 
 def test_the_model_is_no_entry_table_and_its_columns_are_in_the_contract_s_order():
@@ -1764,8 +1772,8 @@ def test_an_unchanged_save_of_a_routine_stored_before_this_build_writes_nothing(
 
 
 def test_the_statement_count_holds_with_nothing_logged_with_last_and_with_items_left_out(make_user, clock):
-    """No cardio item placed: three statements (the user, the routines, the weights and last). One placed: a fourth,
-    cardio's last (the note of 2026-11-22), however many routines, items and entries."""
+    """No cardio item placed: four statements (the user, the routines, the program, the weights and last). One placed:
+    a fifth, cardio's last (the note of 2026-11-22), however many routines, items and entries."""
     bare, full, lifting = make_user(), make_user(), make_user()
     save(bare.id)
     made = save(full.id, "Legs day", [lift("Back Squat", 4, 5, 100)])
@@ -1850,6 +1858,7 @@ def test_of_the_published_list_only_get_routines_and_save_routine_moved(make_cli
     tools = registered_tools(make_client(owner_user_id=OWNER))
     hashes = {name: hashlib.sha256(compact(t).encode()).hexdigest() for name, t in tools.items()}
     assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED
+    # C5c (the note of 2026-11-23) moved get_routines again, and delete_entry and restore_entry: tests/test_programs.py
     assert {name for name in AT_9950F13 if hashes[name] != AT_9950F13[name]} == {"save_routine", "get_routines"}
     getting = tools["get_routines"]
     assert getting["outputSchema"]["$defs"]["LiftToLog"]["properties"]["last"]["anyOf"][0] == {

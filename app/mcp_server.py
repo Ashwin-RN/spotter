@@ -111,7 +111,9 @@ from app.mcp_schemas import (
     GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult, GuideResult,
     ImportEntriesResult, ImportRowIn, Key, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult,
     LogMeasurementResult, LogPartIn, LogSetIn, MealItemIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult,
-    OwnerFeedbackResult, ROUTINE_LIFTS, RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveRoutineResult, SendFeedbackResult, SetGoalResult, SetIn, UpdateSettingsResult,
+    OwnerFeedbackResult, PROGRAM_BLOCKS, PROGRAM_NAME, PROGRAM_START_ON, ROUTINE_LIFTS, ProgramBlockIn, ProgramDayIn,
+    RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveProgramResult, SaveRoutineResult, SendFeedbackResult,
+    SetGoalResult, SetIn, UpdateSettingsResult,
     WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
 )
 from app.models import CLAUDE_CAN, User
@@ -277,7 +279,7 @@ NEEDS = {
     "get_trends": "read", "get_goals": "read",
     "import_entries": "log",
     "send_feedback": "log",
-    "save_routine": "log", "get_routines": "read",
+    "save_routine": "log", "save_program": "log", "get_routines": "read",
     "what_is_logged": "read", "get_data": "read",
     "owner_calls": "read", "owner_feedback": "read", "owner_delete_feedback": "read",
 }
@@ -302,13 +304,14 @@ _SENT: ContextVar[dict | None] = ContextVar("spotter_sent_arguments", default=No
 LOG_DAYS = (1, 14)  # what get_log takes; the service judges, the schema says it
 # log's five kind words work too (log-and-guide.md, decision 52): log_shape.TABLE_WORDS maps each to its table word.
 KIND_DESCRIPTION = "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio."
-RESTORE_KIND_DESCRIPTION = (KIND_DESCRIPTION + " With undo_edit, saved_food too. Or routine, to bring back a deleted "
-                            "one.")
-# delete_entry takes a saved food (switch, ruling 1) and a routine (routines, decision 11)
-DELETE_KIND_DESCRIPTION = KIND_DESCRIPTION + " Or saved_food or routine."
+RESTORE_KIND_DESCRIPTION = (KIND_DESCRIPTION + " With undo_edit, saved_food too. Or routine or program, to bring back "
+                            "a deleted one.")
+# delete_entry takes a saved food (switch, ruling 1), a routine (routines, decision 11) and the program
+# (routines-and-programs.md, decision 19)
+DELETE_KIND_DESCRIPTION = KIND_DESCRIPTION + " Or saved_food, routine or program."
 ENTRY_ID_DESCRIPTION = "The entry's id, from log or get_log, with the kind it came with."
 RESTORE_ID_DESCRIPTION = (ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or find_food, a routine's "
-                          "from save_routine or get_routines.")
+                          "from save_routine or get_routines, the program's from save_program or get_routines.")
 
 CAN_AND_CANT = ROOT / "docs" / "can-and-cant.md"
 CAN_AND_CANT_URI = "spotter://can-and-cant"
@@ -410,7 +413,8 @@ class LookupMemo:
 # ---------------------------------------------------------------- a call that does not fit its function
 
 # How an item of a list is named in a refusal, as the services name it: "Set 1", "Entry 2", "Lift 1", "Row 3, set 2".
-ITEM_WORDS = {"sets": "set", "entries": "entry", "lifts": "lift", "rows": "row", "parts": "part", "items": "item"}
+ITEM_WORDS = {"sets": "set", "entries": "entry", "lifts": "lift", "rows": "row", "parts": "part", "items": "item",
+              "blocks": "block", "days": "day"}  # save_program's blocks and their days: "Block 1, day 2"
 # An unknown key in an item (decision 2): the services' own words, by the list it was sent in. Each is
 # (what the item is, the fix, NEAR_MISSES' row). The import's rows allow any key: its service refuses one.
 # A list whose items are another model in one function is named by (function, list): log_lifts' sets are LogSetIn
@@ -423,6 +427,9 @@ ITEM_FIELDS = {
     "entries": ("a food entry", f"Use: {', '.join(food.ENTRY_FIELDS)}. source is decided by the server.", "entry"),
     "lifts": ("a lift", f"Use: {routines.LIFT_FIELDS_TEXT}.", "lift"),
     "items": ("a meal's item", f"Use: {', '.join(food.ITEM_FIELDS)}.", "item"),  # save_food's (macros-and-asking.md)
+    # save_program's (routines-and-programs.md): a block, and a day inside one, named by the list the key was sent in
+    "blocks": ("a block", f"Use: {', '.join(ProgramBlockIn.model_fields)}.", "block"),
+    "days": ("a day", f"Use: {', '.join(ProgramDayIn.model_fields)}.", "day"),
 }
 # What each published type takes, in a refusal's words: (message, fix).
 TYPE_WORDS = {
@@ -530,7 +537,8 @@ def _problem(function: str, schema: dict, arguments: dict, err: dict) -> dict:
     sent = _sent_at(arguments, loc, err.get("input"))
     at = f"{where}: " if where else ""
     on = f" on {where.lower()}" if where else ""
-    item = ITEM_FIELDS.get((function, loc[0])) or ITEM_FIELDS.get(loc[0]) if loc else None
+    inner = loc[-3] if len(loc) >= 3 and isinstance(loc[-2], int) else loc[0] if loc else None  # the list it was in
+    item = ITEM_FIELDS.get((function, inner)) or ITEM_FIELDS.get(inner) if loc else None
     if kind == "extra_forbidden" and len(loc) >= 2 and item:
         what, fix, row = item
         key = str(loc[-1])
@@ -1304,9 +1312,9 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         name="delete_entry",
         title="Delete an entry",
         description=(
-            "Deletes one of the person's entries, saved foods or routines, in two calls. With no confirm, nothing is "
-            "deleted: the answer is a preview, with dry_run true, the entry as it stands and a confirm code. Send the same "
-            "kind and id with that confirm to delete. A confirm that does not match the entry as it stands deletes "
+            "Deletes one of the person's entries, saved foods, routines or their program, in two calls. With no "
+            "confirm, nothing is deleted: the answer is a preview, with dry_run true, the entry as it stands and a "
+            "confirm code. Send the same kind and id with that confirm to delete. A confirm that does not match the entry as it stands deletes "
             "nothing and returns the preview again. Nothing is erased: restore_entry brings a deleted entry back. "
             + DELETE_RULE + " Allowed only when the person lets Claude delete; otherwise the answer is not_allowed."
         ),
@@ -1532,7 +1540,8 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         return await wrapper.call("send_feedback", SendFeedbackResult,
                                   lambda account: services.send_feedback(account, data))
 
-    # A routine's two (contract routines.md), after send_feedback, so everyone's list is the ones above, then these.
+    # A routine's two (contract routines.md), after send_feedback, so everyone's list is the ones above, then these;
+    # save_program between them (routines-and-programs.md, the note of 2026-11-23), so the two writes stand together.
     @server.tool(
         name="save_routine",
         title="Save a routine",
@@ -1557,11 +1566,33 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
                                   lambda account: services.save_routine(account, data, "claude"))
 
     @server.tool(
+        name="save_program",
+        title="Save a program",
+        description=(
+            "Saves the person's training program: the routine for each day of the week, in blocks of weeks that "
+            "repeat the same days, such as 8 weeks of push on Monday, pull on Wednesday and legs on Friday. Each day "
+            "names a routine already saved: save the routines first with save_routine. Saving a program replaces the "
+            "one there. Send only what the person said or agreed to."
+        ),
+        annotations=SETTING,
+    )
+    async def save_program(
+        name: Annotated[str, Field(description=PROGRAM_NAME)],
+        blocks: Annotated[list[ProgramBlockIn], Field(description=PROGRAM_BLOCKS)],
+        start_on: Annotated[str | None, Field(description=PROGRAM_START_ON)] = None,
+        key: Key = None,
+    ) -> Annotated[CallToolResult, SaveProgramResult]:
+        data = _sent(name=name, start_on=start_on, blocks=[x.model_dump() for x in blocks])
+        return await wrapper.call("save_program", SaveProgramResult,
+                                  lambda account: services.save_program(account, data, "claude"))
+
+    @server.tool(
         name="get_routines",
         title="Get routines",
         description=(
-            "The person's saved routines, each item with its plan, the weight to log for a lift and last time. Call "
-            "it when the person names a routine, such as log my push day. To log one, send the sets of its lifts, "
+            "The person's saved routines and their program, each item with its plan, the weight to log for a lift and "
+            "last time. Call it when the person names a routine, such as log my push day, or asks what today's "
+            "workout is. To log one, send the sets of its lifts, "
             "holds and carries with log, kind lifts, one part a set, the lift as movement, with exact true, with each "
             "change the person names, and leave the date out for today. Send each cardio item with log, kind cardio, "
             "as its log_with says, with a heart rate or the machine's calories only when the person gives them today. "

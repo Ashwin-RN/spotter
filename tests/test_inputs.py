@@ -53,8 +53,8 @@ BEFORE_INPUTS = {
     "get_log": "0a7487c06e022de4836e876a3fd7b8c534d4c838345e9c5beb88b3936a0c9ba7",  # exercise list: SetOut; C4e: NewBest; C3: a food entry's macros and portion, the day's macros, its goals
     "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
     "edit_entry": "90bc76937f94a754a74d9c1da43e06811b3c373aaaf3035d752b84b693e3138c",  # exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words; C3: macros and portion; C3 fix: the mark when every macro held is sent
-    "restore_entry": "7ef4931069bb011e48b55cb21e2c574ea21c2716112a85957b0ad0499220cb67",  # log and guide: kind words, id words
-    "delete_entry": "02798afe3eee1addad25aac4c73de15475ec648830d12f67134cd910b308e7b0",  # log and guide: kind words, id words
+    "restore_entry": "2fac8ff6f555fbc14a32ff5a102300a08d0bdf2d44c1415a1a3b7879ac4eb6f6",  # log and guide: kind words, id words; C5c: kind program, the program's id
+    "delete_entry": "79bfe1e0dd84bb4c67eebefb7a60e716f0b7997bb4ff6c2e0be9e3255ee06ef4",  # log and guide: kind words, id words; C5c: kind program, the program's id, the first sentence
     "find_food": "604b2d990283e23b972257805fd8f662f738d6bb7d30e823a0ca8b77b67da6d8",  # log and guide: ids log takes; C3: macros a serving, a meal's items, USDA's a 100 g
     "log_food": "e344fdb6652c3e7d9bd9068d83cdfeff1e7f7cfb984a8e192832e805b67a850f",  # 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words; C3: macros, portion, the food sentence, the day's macros, its goals
     "save_food": "bdebb114e62368d0f68373ecb2de872df8de6e6e2c79a0e45e1d48c25802da54",  # log and guide: ids log takes; C3: macros a serving, items; C3 fix: a macro left out is kept
@@ -64,7 +64,7 @@ BEFORE_INPUTS = {
     "import_entries": "5bfa3ce4279e3aca8619fdcc0dbc987081ca9b27f79fa9a74dd836377bc865c5",  # exercise list
     "send_feedback": "63bf4722f94c7863dcafce688f8864224c46cbf30868d971e5347475a0686184",
     "save_routine": "4d81200fa0c288b0ee8a5a1c8bffcb38ec8016359e8ad31043541d5ef7b981a6",  # exercise list; C4c: help, band; C5a: sets and reps optional; C5b: holds, carries and cardio
-    "get_routines": "d7dd893333de70dc78d22a1c943887f06954659fb338f38c529ce40c8a9017a3",  # exercise list; C4c: exact true, help; log and guide: sets sent with log; C5a: last, same as last time; C5b: log_with, the kinds' plans, cardio's last, last's numbers as they are
+    "get_routines": "8adf0966e80851c4443f04d075bcbbebd117de809e4fb2be2d17299a47804a52",  # exercise list; C4c: exact true, help; log and guide: sets sent with log; C5a: last, same as last time; C5b: log_with, the kinds' plans, cardio's last, last's numbers as they are; C5c: the program, today's workout
     "owner_calls": "c9ea367aa190315d016fa4d014e783b8947dc436b81984600bebc785211d1cbb",  # log and guide L4: function, caller, all_accounts, a call's account_id
     "owner_feedback": "242b0d08f0ca2b4bb696ec818f327ede1d2b2b71b6959dba0e687cc9b628a5f7",
     "owner_delete_feedback": "e6d44e98f7ac2ce9945b277c0c592c7bde7ba6060b6628990f3a1bc16764909b",
@@ -200,6 +200,9 @@ def seeded(user: User) -> dict:
     goal = services.set_goal(uid, {"kind": "bodyweight", "target_value": 70, "start_value": 80,
                                    "target_date": (today + timedelta(days=200)).isoformat()}, "claude")["id"]
     note = services.send_feedback(uid, {"text": "The chart is confusing."})["id"]
+    # routines-and-programs.md C5c: the routine save_program's base names
+    assert "error" not in services.save_routine(uid, {"name": "Push day", "lifts": [
+        {"exercise": "Bench Press", "sets": 3, "reps": 8}]}, "claude")
     return {"weigh_in": weigh_in, "gone": gone, "saved_food": saved["id"], "goal": goal, "note": note}
 
 
@@ -251,6 +254,8 @@ def bases(user: User, ids: dict) -> dict:
                           "topic": "logging"},
         "save_routine": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8,
                                                         "weight_kg": 60}]},
+        "save_program": {"name": "PPL", "start_on": day(0), "blocks": [{"weeks": 8, "days": [  # C5c
+            {"weekday": "monday", "routine": "Push day"}]}]},
         "get_routines": {},
         "what_is_logged": {},  # data-on-request.md: its two, so the sweep's values reach get_data's fields
         "get_data": {"area": "lift_sets", "fields": ["reps"], "filters": {"exercise": "Back Squat"},
@@ -265,7 +270,9 @@ def test_every_base_call_succeeds_and_names_every_function(owner_person, monkeyp
     client, token, user = owner_person
     calls = bases(user, seeded(user))
     before = list(BEFORE_INPUTS)  # log-and-guide.md: log and guide after list_exercises, as registered
-    assert list(calls) == [*before[:2], "log", "guide", *before[2:22], "what_is_logged", "get_data", *before[22:]]
+    # C5c: save_program right after save_routine
+    assert list(calls) == [*before[:2], "log", "guide", *before[2:21], "save_program", *before[21:22], "what_is_logged",
+                           "get_data", *before[22:]]
     for name, arguments in calls.items():
         result = tool_call(client, token, name, arguments)
         assert result["isError"] is False, (name, result)
@@ -604,6 +611,8 @@ def form_seeds(uid: int, today: date) -> dict:
                             "target_date": (today + timedelta(days=200)).isoformat()}, "claude")
     services.save_routine(uid, {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8}]},
                           "claude")
+    services.save_program(uid, {"name": "PPL", "blocks": [{"weeks": 8, "days": [  # C5c: the program card's Delete
+        {"weekday": "monday", "routine": "Push day"}]}]}, "claude")
     return {"entries": entries, "spare": spare, "saved_food": saved, "on": on}
 
 

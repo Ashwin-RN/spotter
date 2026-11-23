@@ -19,6 +19,8 @@ from it. It knows nothing else.
 - **Routines:** workouts the person does often, saved by name, in the order done: each lift with its sets
   and reps, a hold's time, a carry's distance, and cardio with its minutes. A weight, distance, incline,
   speed, heart rate or machine calories when the person gave one.
+- **Program:** one a person: a saved routine for each training day of the week, in blocks of weeks that
+  repeat the same days, from the day week 1 starts.
 - **Cardio:** the activity, minutes, and distance, incline, speed, heart rate and the machine's
   calories when given.
 - **Goals:** a target to reach by a date, of four kinds (below).
@@ -394,7 +396,19 @@ Each answer holds with the same time zone set at both runs. The last row is the 
 - Saving the same name again replaces the routine. There is no undo of a replace: save it again as it
   was. `delete_entry` takes kind `routine`, in its two calls, and `restore_entry` brings a deleted
   routine back.
-- The import does not bring routines over, and the export holds them in `routines.csv`.
+- A program is saved with `save_program`: its weeks in blocks, in order, each block with its training days,
+  a day a weekday and a saved routine's name. 1 to 52 weeks in all, 1 to 7 days a block, each weekday at
+  most once in a block. Each day names a routine already saved: the routines are saved first.
+- Week 1 starts on `start_on`: at most 2 years back and at most 52 weeks on. Left out, it is the saved
+  program's start if that has not ended, else today, so a change keeps the program's week.
+- A person has one program. Saving one replaces it, and there is no undo of a replace: save it again as it
+  was. `delete_entry` takes kind `program`, in its two calls, and `restore_entry` brings it back.
+- `get_routines` gives the program when one is saved: this week's number, today's routine or a rest day,
+  the next day with a routine and this week's days, with its line in `words`. Before its start it gives
+  the first day with a routine; after its end, that it ended. A day whose routine is no longer saved
+  keeps its name, and the line says it is not saved now.
+- The import does not bring routines or the program over, and the export holds them in `routines.csv`
+  and `programs.csv`.
 
 ## Data on request
 
@@ -507,7 +521,8 @@ Claude may call these functions, and nothing else:
 | `import_entries` | Brings history over from another app's export, as dated rows: a preview first, then the rows. |
 | `send_feedback` | Sends a note to Spotter's maker, when the person asks or says yes to the offer. |
 | `save_routine` | Saves a workout by name: its lifts, holds, carries and cardio, in the order done. |
-| `get_routines` | The saved routines, each item with its plan, the weight to log and last time. |
+| `save_program` | Saves the person's program: a saved routine for each training day of the week, in blocks of weeks. |
+| `get_routines` | The saved routines, each item with its plan, the weight to log and last time, and the program. |
 | `what_is_logged` | What Spotter can hold and what the person has logged, area by area, with the open goals. |
 | `get_data` | One query over the person's entries: an area, its fields, filters, groups and totals, all worked out by Spotter. |
 

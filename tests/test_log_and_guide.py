@@ -1656,7 +1656,7 @@ def test_the_list_holds_log_and_guide_where_log_lifts_stood_and_none_of_the_five
     assert owner == [*everyone, *mcp_server.OWNER_FUNCTIONS] and not set(FIVE) & set(owner)
     assert mcp_server.RETIRING == FIVE == log_shape.LOG_FUNCTIONS
     assert set(FIVE) <= set(registered_tools(client)) and set(FIVE) <= set(mcp_server.NEEDS)
-    assert len(everyone) == 21 == web.FUNCTION_COUNT
+    assert len(everyone) == 22 == web.FUNCTION_COUNT  # routines-and-programs.md: save_program
 
 
 # log's and guide's published entries, as compact JSON: name, title, description, schemas and annotations.

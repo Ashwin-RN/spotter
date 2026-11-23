@@ -892,6 +892,7 @@ OTHER_TABLES: dict[str, str] = {
     "user": "The settings: whoami gives them.",
     "goal": "get_goals reads goals; the open ones ride along with the data.",
     "routine": "get_routines reads them.",
+    "program": "get_routines reads it.",
     "call_log": "Internal: what calls did.",
     "write_key": "Internal: a write's own key.",
     "entry_version": "Internal: an entry as it stood before an edit.",

@@ -3,9 +3,12 @@
 export_data(user_id)
     A read. One CSV per table the person owns, plus account.csv and README.txt:
       account.csv, lift_sessions.csv, lift_sets.csv, bodyweight.csv, measurements.csv, goals.csv,
-      saved_foods.csv, routines.csv, food_entries.csv, cardio_entries.csv, entry_versions.csv, feedback.csv
+      saved_foods.csv, routines.csv, programs.csv, food_entries.csv, cardio_entries.csv, entry_versions.csv,
+      feedback.csv
     - routines.csv: each routine the person saved (contracts routines.md and routines-and-programs.md), its
       items as the JSON stored: a lift's, a hold's, a carry's or a cardio item's shape.
+    - programs.csv: the person's program (routines-and-programs.md), one row at most, its blocks as the JSON
+      stored: each block's weeks and days, a day a weekday and a routine's name.
     - entry_versions.csv: what an entry held before each edit or undo still kept (contract
       edit-history.md): its kind, the entry's id, when, who, why, and the values as JSON (_before): as stored,
       without LEFT_OUT, and with names as the other files give them. A set is {exercise, set_number,
@@ -47,7 +50,7 @@ from sqlalchemy.orm import selectinload
 from app import db, formatting
 from app.models import (
     Bodyweight, CardioEntry, EntryVersion, Exercise, Feedback, FoodEntry, Goal, LiftSession, LiftSet, Measurement,
-    Routine, SavedFood, User,
+    Program, Routine, SavedFood, User,
 )
 from app.services.common import no_account, version_sets
 
@@ -64,6 +67,7 @@ TABLES = {
     "goals.csv": (Goal, {"exercise_id": "exercise"}),
     "saved_foods.csv": (SavedFood, {}),
     "routines.csv": (Routine, {}),
+    "programs.csv": (Program, {}),
     "food_entries.csv": (FoodEntry, {"saved_food_id": "saved_food"}),
     "cardio_entries.csv": (CardioEntry, {"exercise_id": "exercise", "avg_hr": "avg_hr_bpm"}),
 }
@@ -73,8 +77,8 @@ SET_COLUMNS = ("session_id", "exercise", "set_number", "weight_kg", "reps", "tim
 VERSION_COLUMNS = ("kind", "entry_id", "created_at", "by", "why", "before")
 FEEDBACK_COLUMNS = ("id", "created_at", "topic", "text", "doing", "expected", "happened")
 ORDER = ("account.csv", "lift_sessions.csv", "lift_sets.csv", "bodyweight.csv", "measurements.csv", "goals.csv",
-         "saved_foods.csv", "routines.csv", "food_entries.csv", "cardio_entries.csv", "entry_versions.csv",
-         "feedback.csv")
+         "saved_foods.csv", "routines.csv", "programs.csv", "food_entries.csv", "cardio_entries.csv",
+         "entry_versions.csv", "feedback.csv")
 
 README = """Spotter export
 
@@ -96,6 +100,8 @@ Everything Spotter holds for this account, one CSV file per kind of record.
                       time_s, a carry or a sled distance_m and time_s, in place of reps; a cardio
                       item has exercise, minutes, distance_km, incline_pct, speed_kmh, avg_hr and
                       machine_kcal. saved_on is the date it was last saved
+  programs.csv        your program: blocks holds its weeks as JSON, each with weeks and days, a day
+                      a weekday and a routine's name. start_on is the day week 1 starts
   food_entries.csv    each food entry; source says who supplied the number: you_said (the person),
                       saved_food (worked out from a saved food), usda (the USDA table) or
                       claude_estimate (Claude's estimate). protein_g, carbs_g and fat_g are

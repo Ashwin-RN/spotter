@@ -19,7 +19,7 @@ from app.main import create_app
 from evals import judge
 from evals.recorder import CallRecorder, parse_body, token_key
 from evals.run import (
-    LocalServer, child_env, cli_command, dates_for, local_time_zone, mcp_config, next_month_end, person_rows,
+    LocalServer, child_env, cli_command, dates_for, dates_on, local_time_zone, mcp_config, next_month_end, person_rows,
 )
 from tests.conftest import HEADERS, settings
 
@@ -45,9 +45,9 @@ CONTRACT_CASES = {"stated_number", "guessed_number", "saved_food", "meal_not_ask
                   "look_trip_hours", "inc_deload", "look_deload", "save_food_asked", "edit_fixes_minutes",
                   "food_lookup", "routine_read", "exercise_list", "catch_up", "import_other_app"}
 # function-list.md, G1's note of 2026-11-17: the golden package's reviewed cases follow G1's (tests/test_golden_cases.py)
-# 164, exercise-list.md C4g's 23, log-and-guide.md's 2, routines-and-programs.md C5a's 2 and C5b's 4, and
-# macros-and-asking.md's 11 and its P6's 4
-GOLDEN_PACKAGE = 210
+# 164, exercise-list.md C4g's 23, log-and-guide.md's 2, routines-and-programs.md C5a's 2 and C5b's 4,
+# macros-and-asking.md's 11 and its P6's 4, and routines-and-programs.md C5c's 3
+GOLDEN_PACKAGE = 214
 EM_DASH, EN_DASH = "\u2014", "\u2013"
 WRITES = set(common.WRITE_FUNCTIONS)
 
@@ -1011,6 +1011,16 @@ def test_person_rows_gives_each_session_its_own_set_count_and_never_another_pers
     assert "set_count" in judge._rows_text([{"set_count": 6}])
 
 
+def test_a_failed_program_check_shows_its_weeks_its_days_and_its_start():
+    """routines-and-programs.md R15: a program row's week_count, day_count and start_on are in a failed check's
+    reason."""
+    row = {"id": 1, "name": "PPL", "start_on": "2026-11-17", "week_count": 12, "day_count": 4, "blocks": "[]",
+           "deleted_at": None}
+    reasons = judge.judge_db([{"table": "program", "count": 1, "all": {"week_count": 8}}], {"program": [row]})
+    assert len(reasons) == 1 and '"week_count": 12' in reasons[0] and '"start_on": "2026-11-17"' in reasons[0], reasons
+    assert '"day_count": 4' in reasons[0], reasons
+
+
 def test_a_saved_food_row_counts_its_items_and_a_reason_shows_the_food_columns(make_user):
     """macros-and-asking.md: a saved meal's row carries item_count, 0 for a plain food, and a failed row check shows a
     food entry's macros and portion and a saved food's serving numbers and items."""
@@ -1329,8 +1339,9 @@ def test_every_function_on_everyone_s_list_is_some_case_s_must():
     assert everyone - musts == set()
     core = [c for c in cases if c.get("core") is True]
     # log-and-guide.md N9: guide_how_food and log_plank_minutes join the core, so guide and log are each a must there.
+    # routines-and-programs.md C5c (pick 19): program_saved joins it, so save_program is a must there.
     # NEEDS still holds the five, which old chats call by name, so it is wider than a new chat's list.
-    assert len(core) == 103 and everyone - {name for c in core for name in c["calls"]["must"]} == set()
+    assert len(core) == 104 and everyone - {name for c in core for name in c["calls"]["must"]} == set()
     named = {name for c in cases for key in ("must", "may", "must_not") for name in c["calls"][key]}
     assert named <= everyone  # no tag names a function nobody has, or the owner's
     # The two the release run of 2026-11-17 never called each have a case of their own.
@@ -1620,6 +1631,33 @@ def test_dates_for_gives_days_ago_for_the_catch_up_case():
     assert judge.resolve("{{days_ago:3}}", dates) == dates["days_ago:3"]
 
 
+@pytest.mark.parametrize("today, first", [
+    ("2026-11-16", "monday"), ("2026-11-17", "tuesday"), ("2026-11-18", "wednesday"), ("2026-11-19", "thursday"),
+    ("2026-11-20", "friday"), ("2026-11-21", "saturday"), ("2026-11-22", "sunday"),
+])
+def test_weekday_n_is_the_weekday_n_days_after_a_fixed_today(today, first):
+    """routines-and-programs.md R15: {{weekday:N}}, N from 0 to 6, the weekday N days after today in lower case, on a
+    fixed today: every today of one week, each N, against the calendar's weekdays. Never the real clock."""
+    week = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    dates = dates_on(dt.date.fromisoformat(today))
+    start = week.index(first)
+    assert [dates[f"weekday:{n}"] for n in range(7)] == [week[(start + n) % 7] for n in range(7)]
+    assert dates["weekday:0"] == first and "weekday:7" not in dates and "weekday:-1" not in dates
+    assert judge.resolve({"weekday": "{{weekday:2}}"}, dates) == {"weekday": week[(start + 2) % 7]}
+    # the rest of the dates are dates_for's, on this today
+    assert dates["today"] == today and dates["days_ago:14"] == (dt.date.fromisoformat(today)
+                                                                - dt.timedelta(days=14)).isoformat()
+
+
+def test_weekday_n_out_of_its_range_stops_the_load():
+    base = {"id": "a", "say": "x", "calls": {"must": [], "may": [], "must_not": []}, "expect": {"reply_asks": True}}
+    assert judge.case_problems({**base, "seed": [{"service": "save_program", "data": {"blocks": [{"weeks": 1, "days": [
+        {"weekday": "{{weekday:6}}", "routine": "Push day"}]}]}}]}) == []
+    problems = judge.case_problems({**base, "seed": [{"service": "save_program", "data": {"blocks": [{"weeks": 1,
+        "days": [{"weekday": "{{weekday:7}}", "routine": "Push day"}]}]}}]})
+    assert problems and all("weekday:7" in p and "N runs from 0 to 6" in p for p in problems), problems
+
+
 def test_the_effort_is_a_flag_of_its_own_before_the_model():
     command = cli_command("claude", "Waist 84", "c.json", "claude-sonnet-5-5", "xhigh")
     assert command[-4:] == ["--effort", "xhigh", "--model", "claude-sonnet-5-5"]
@@ -1703,8 +1741,8 @@ def test_main_runs_the_core_alone_the_set_each_gate_runs(monkeypatch, capsys):
     monkeypatch.setattr(run, "run_once", fake_run_once)
     assert run.main(["--core", "--n", "1", "--time-zone", "Asia/Kolkata"]) == 0
     core = [c["id"] for c in judge.load_cases() if c.get("core") is True]
-    assert seen == core and len(core) == 103  # log-and-guide.md N9
-    assert "103 cases x 1 runs" in capsys.readouterr().out
+    assert seen == core and len(core) == 104  # log-and-guide.md N9, and routines-and-programs.md C5c's program_saved
+    assert "104 cases x 1 runs" in capsys.readouterr().out
     seen.clear()
     assert run.main(["--core", "--case", "connected_identity", "--case", "stated_number", "--n", "1",
                      "--time-zone", "Asia/Kolkata"]) == 0

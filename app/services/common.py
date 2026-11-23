@@ -91,10 +91,11 @@ ANSWER_WAIT = 2.0  # seconds a key sent again waits for a first send that has wr
 ANSWER_EVERY = 0.1  # seconds between its looks
 ANSWER_LOST = 60  # seconds: a kept row older than this with no answer lost it, so no send waits for it
 # The read that shows what a write did, named in already_done's fix. Any other write: get_log. A delete or a
-# restore takes a saved food and a routine too, which get_log does not show.
-ENTRY_OR_FOOD = "get_log, find_food for a saved food, or get_routines for a routine"
+# restore takes a saved food, a routine and the program too, which get_log does not show.
+ENTRY_OR_FOOD = "get_log, find_food for a saved food, or get_routines for a routine or the program"
 READ_BACK = {"set_goal": "get_goals", "update_settings": "whoami", "save_food": "find_food",
-             "save_routine": "get_routines", "delete_entry": ENTRY_OR_FOOD, "restore_entry": ENTRY_OR_FOOD}
+             "save_routine": "get_routines", "save_program": "get_routines", "delete_entry": ENTRY_OR_FOOD,
+             "restore_entry": ENTRY_OR_FOOD}
 # No read shows a note (contract feedback.md), so already_done's fix for send_feedback names none.
 SEND_AGAIN = "Send it again with a new key. The same note within 10 minutes is saved once."
 # The claim of the call running: {key, function, fingerprint, row}. keyed() puts it in the context of the thread
@@ -113,6 +114,7 @@ KIND_LABELS = {
     "cardio_entry": ("cardio entry", "the id that logging it returned, or one from get_log"),
     "saved_food": ("saved food", "the id that save_food returned, or one from find_food"),
     "routine": ("routine", "the id that save_routine returned, or one from get_routines"),
+    "program": ("program", "the id that save_program returned, or one from get_routines"),
     "goal": ("goal", "the id that set_goal returned, or a goal_id from get_progress"),
 }
 
@@ -120,8 +122,8 @@ KIND_LABELS = {
 # Two writes are exempt on purpose, the person's own way out and their own switch: delete_account
 # and set_claude_can. Their call-log rows are written but do not count, and they are never refused.
 WRITE_FUNCTIONS = ("log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "save_routine",
-                   "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
-                   "import_entries", "send_feedback")
+                   "save_program", "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry",
+                   "restore_entry", "import_entries", "send_feedback")
 WRITE_LIMIT = 120
 WRITE_WINDOW_MINUTES = 10
 READ_LIMIT = 120  # a throttled read (find_food): its own rows in the same 10 minutes

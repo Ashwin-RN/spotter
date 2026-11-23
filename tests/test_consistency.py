@@ -21,7 +21,8 @@ from sqlalchemy import func, select
 
 from app import db, links, services, users
 from app.formatting import day, day_utc, days, field, show, widen
-from app.models import Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, Routine, SavedFood, User
+from app.models import (Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, Program, Routine, SavedFood,
+                        User)
 from app.services import lifts
 
 from . import text_rules as tr
@@ -423,7 +424,8 @@ TARGET_FIELDS = (("calorie_target_kcal", "kcal"), ("target_sessions_per_week", "
 # Delete my account's lines, by the one table's words, and the table each counts, deleted rows included.
 DELETE_LINES = (("Lift sessions", LiftSession), ("Weigh-ins", Bodyweight), ("Measurements", Measurement),
                 ("Food entries", FoodEntry), ("Cardio sessions", CardioEntry), ("Saved foods", SavedFood),
-                ("Routines", Routine), ("Goals", Goal))  # routines.md R14: Routines after Saved foods
+                ("Routines", Routine), ("Programs", Program),  # routines.md R14: Routines after Saved foods
+                ("Goals", Goal))  # routines-and-programs.md R12: Programs after Routines, as web.DELETE_COUNTS
 
 
 def test_settings_holds_the_user_rows_own_values_figure_by_figure(client, account):

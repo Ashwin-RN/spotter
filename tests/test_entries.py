@@ -478,7 +478,7 @@ def test_a_delete_previewed_by_log_s_word_is_confirmed_by_the_table_word_and_the
 
 def test_log_s_words_are_taken_exactly_as_written_and_any_other_word_is_refused_as_before(user):
     made = log_weigh_in(user)
-    every = f"Use one of: {', '.join([*entry_kinds(), 'saved_food', 'routine'])}."
+    every = f"Use one of: {', '.join([*entry_kinds(), 'saved_food', 'routine', 'program'])}."  # C5c: program
     for kind in ("lift", "Lifts", "FOOD", " cardio", "weigh-in", "lifts "):
         for call in (services.delete_entry, services.restore_entry):
             refused = call(user.id, kind, made["id"])

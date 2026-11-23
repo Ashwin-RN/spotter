@@ -35,7 +35,7 @@ from .test_web import client, seam, sign_in, web_client  # noqa: F401 - fixtures
 
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
 HARDENING = "0012"  # the revision this file's migration tests run to
-HEAD = "0015"  # the code's head, which /ready reads (macros-and-asking.md: 0015, the macros)
+HEAD = "0016"  # the code's head, which /ready reads (routines-and-programs.md: 0016, the program)
 
 # ---------------------------------------------------------------- the rules of D12, as the contract lists them
 
@@ -730,7 +730,8 @@ def test_inside_a_migration_on_sqlite_foreign_keys_are_off_and_the_run_still_com
     try:
         assert _version(engine) == HARDENING
         with engine.connect() as c:
-            assert set(inspect(c).get_table_names()) == set(Base.metadata.tables) | {"alembic_version"}
+            assert set(inspect(c).get_table_names()) == (set(Base.metadata.tables) - NEW_TABLES_IN_0016
+                                                         | {"alembic_version"})  # at 0012: less what 0016 adds
             assert c.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1  # a new connection: on again
     finally:
         engine.dispose()
@@ -918,6 +919,17 @@ NEW_COLUMNS_IN_0015 = {
 
 
 def before_0015(diffs: list) -> list:
-    """compare_metadata's list at a revision before 0015, less 0015's own entries: its add_column lines only."""
-    return [d for d in diffs
+    """compare_metadata's list at a revision before 0015, less 0015's own entries, its add_column lines only, and
+    0016's (before_0016)."""
+    return [d for d in before_0016(diffs)
             if isinstance(d, list) or not (d[0] == "add_column" and (d[2], d[3].name) in NEW_COLUMNS_IN_0015)]
+
+
+# What compare_metadata shows at a revision before 0016 that 0016 adds (routines-and-programs.md): one table.
+NEW_TABLES_IN_0016 = {"program"}
+
+
+def before_0016(diffs: list) -> list:
+    """compare_metadata's list at a revision before 0016, less 0016's own entry: its add_table line only."""
+    return [d for d in diffs
+            if isinstance(d, list) or not (d[0] == "add_table" and d[1].name in NEW_TABLES_IN_0016)]

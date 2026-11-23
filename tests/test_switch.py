@@ -42,8 +42,10 @@ from .test_trace import OWNER, sign_for
 from .test_web import client, location, only_user, post, seam, sign_in, web_client  # noqa: F401
 from .test_hardening_schema import before_0012
 
-KINDS = ["lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "routine"]
-UNDONE = [kind for kind in KINDS if kind != "routine"]  # a routine keeps no version, so no undo (routines.md 6)
+KINDS = ["lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "routine",
+         "program"]  # routines-and-programs.md decision 19: the program, as a routine
+# a routine and the program keep no version, so no undo (routines.md 6, routines-and-programs.md R12)
+UNDONE = [kind for kind in KINDS if kind not in ("routine", "program")]
 PREVIEW_NOTE = ("Nothing was deleted. Show the person this entry and ask. Send the same kind and id with this confirm "
                 "only when they say yes.")
 MISMATCH_NOTE = ("That confirm does not match this entry as it stands, so nothing was deleted. Show the person the "
@@ -55,8 +57,8 @@ RULE = ("Delete only the entry the person named. When their words fit more than 
         "brings it back. If the person did not want it deleted, restore it, and say they can turn deleting off on "
         "Settings.")
 DESCRIPTION = (
-    "Deletes one of the person's entries, saved foods or routines, in two calls. With no confirm, nothing is deleted: "
-    "the answer is a preview, with dry_run true, the entry as it stands and a confirm code. Send the same kind and id with that "
+    "Deletes one of the person's entries, saved foods, routines or their program, in two calls. With no confirm, "
+    "nothing is deleted: the answer is a preview, with dry_run true, the entry as it stands and a confirm code. Send the same kind and id with that "
     "confirm to delete. A confirm that does not match the entry as it stands deletes nothing and returns the preview "
     "again. Nothing is erased: restore_entry brings a deleted entry back. " + RULE + " Allowed only when the person "
     "lets Claude delete; otherwise the answer is not_allowed.")
@@ -69,6 +71,9 @@ OWNER_FEEDBACK_BEFORE = "242b0d08f0ca2b4bb696ec818f327ede1d2b2b71b6959dba0e687cc
 
 
 # ---------------------------------------------------------------- helpers
+
+PROGRAM = {"name": "PPL", "blocks": [{"weeks": 8, "days": [{"weekday": "monday", "routine": "Push day"}]}]}  # routines-and-programs.md
+
 
 def model_of(kind: str):
     return entries._deletable()[kind]
@@ -86,6 +91,9 @@ def make(account: int, kind: str) -> int:
                                                            "kcal_per_serving": 120}, "claude"),
         "routine": lambda: services.save_routine(account, {"name": "Push day", "lifts": [
             {"exercise": "Bench Press", "sets": 3, "reps": 8}]}, "claude"),
+        "program": lambda: (services.save_routine(account, {"name": "Push day", "lifts": [  # the routine it names
+            {"exercise": "Bench Press", "sets": 3, "reps": 8}]}, "web"),
+                            services.save_program(account, PROGRAM, "claude"))[1],
     }[kind]()
     assert "error" not in made, made
     return made["ids"][0] if kind == "food_entry" else made["id"]
@@ -96,6 +104,9 @@ def edit(account: int, kind: str, entry_id: int) -> None:
     if kind == "saved_food":
         done = services.save_food(account, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 130},
                                   "claude")
+    elif kind == "program":  # the program likewise (routines-and-programs.md R9)
+        done = services.save_program(account, {**PROGRAM, "blocks": [{"weeks": 4, "days": PROGRAM["blocks"][0][
+            "days"]}]}, "claude")
     elif kind == "routine":  # a routine is changed by saving it again (routines.md decision 5)
         done = services.save_routine(account, {"name": "Push day", "lifts": [
             {"exercise": "Bench Press", "sets": 4, "reps": 8}]}, "claude")
@@ -397,7 +408,7 @@ def test_both_web_deletes_delete_in_one_post_and_land_with_undo(client, kind):
 
 
 # The kinds whose delete carries summary: the entry in one line (units.md R14).
-SUMMED = {"lift_session", "bodyweight", "cardio_entry", "routine"}
+SUMMED = {"lift_session", "bodyweight", "cardio_entry", "routine", "program"}  # the program: its line too
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -510,7 +521,7 @@ def test_0009_turns_every_account_to_log_delete_moves_no_updated_at_and_comes_do
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0015"  # macros
+    assert script.get_revision("0009").down_revision == "0008" and script.get_current_head() == "0016"  # programs
 
 
 def test_0009_s_statement_is_built_so_postgres_gets_user_quoted(monkeypatch):
@@ -541,11 +552,12 @@ def test_the_rule_is_in_the_instructions_and_the_description_and_the_published_w
     # Ruling round 1: kind and entry_id name a saved food too, and since routines.md a routine. edit_entry keeps the
     # shared words.
     assert tool["inputSchema"]["properties"]["kind"]["description"] == (  # and log's five words (log-and-guide.md, 52)
-        "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio. Or saved_food or "
-        "routine.")
+        "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio. Or saved_food, "
+        "routine or program.")
     assert tool["inputSchema"]["properties"]["entry_id"]["description"] == mcp_server.RESTORE_ID_DESCRIPTION == (
         mcp_server.ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or find_food, a routine's from "
-                                          "save_routine or get_routines.")
+                                          "save_routine or get_routines, the program's from save_program or "
+                                          "get_routines.")
     edit = {t["name"]: t for t in tool_list(http, sign())}["edit_entry"]["inputSchema"]["properties"]
     assert (edit["kind"]["description"], edit["entry_id"]["description"]) == (
         mcp_server.KIND_DESCRIPTION, mcp_server.ENTRY_ID_DESCRIPTION)

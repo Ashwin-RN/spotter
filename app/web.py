@@ -33,7 +33,9 @@ and Settings.
     /foods/{id}/edit               one saved food's serving, kcal and grams (GET, POST)
     /routines                      the routines as a table, each item with its plan, the weight get_routines
                                    gives and last time, and no form; delete and Undo POST to /routines/{id}/delete
-                                   and /restore
+                                   and /restore. The program's card above them, this week's days from
+                                   get_routines' program; its delete and Undo POST to
+                                   /routines/program/{id}/delete and /restore
     /settings                      seven cards: the account, the time zone (POST), the units (POST, with its card
                                    field), the targets (POST to /settings/targets), the switch for what Claude may
                                    do (POST to /settings/claude-can), the person's data (export, delete), and
@@ -120,11 +122,11 @@ from app import calllog, charts, csrf, db, exercises as exercise_list, formattin
 from app import metrics, users, web_auth
 from app.config import ROOT, Settings, get_settings
 from app.models import (
-    CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, Routine,
-    SavedFood, User,
+    CLAUDE_CAN, MEASUREMENT_KINDS, Bodyweight, CardioEntry, FoodEntry, Goal, LiftSession, Measurement, Program,
+    Routine, SavedFood, User,
 )
 from app.services import account as account_checks, body, common, lifts, measurements, progress as progress_data
-from app.services import goals as goal_rules, trends as trend_rules
+from app.services import goals as goal_rules, programs, trends as trend_rules
 from app.services.routines import page_read as routine_page_read
 
 log = logging.getLogger("spotter")
@@ -341,12 +343,13 @@ FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS}
 # away, deleting: tests/test_web_account.py holds the two side by side. The stored values never change. No text a
 # connected model reads comes from these tables.
 CLAUDE_CAN_LINES = {
-    "log_delete": "Your assistant can log and import entries, edit and restore them, save foods and routines, and set "
-                  "goals. It can change your time zone, units and targets, and delete entries, saved foods and "
-                  "routines. "
+    "log_delete": "Your assistant can log and import entries, edit and restore them, save foods, routines and "
+                  "programs, and set goals. It can change your time zone, units and targets, and delete entries, "
+                  "saved foods, routines and programs. "
                   "Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can be "
                   "restored.",
-    "log": "Everything above except deleting: your assistant cannot delete an entry, a saved food or a routine.",
+    "log": "Everything above except deleting: your assistant cannot delete an entry, a saved food, a routine or a "
+           "program.",
 }
 CLAUDE_CAN_LABELS = {"log_delete": "Read, log and delete", "log": "Read and log"}
 
@@ -536,7 +539,7 @@ STATUS_CLASSES = {"reached": "tag-good", "on track": "tag-good", "behind": "tag-
 # ENTRY_WORDS spells it). Deleted rows count: they go too.
 DELETE_COUNTS = ((LiftSession, "Lift sessions"), (Bodyweight, "Weigh-ins"), (Measurement, "Measurements"),
                  (FoodEntry, "Food entries"), (CardioEntry, "Cardio sessions"), (SavedFood, "Saved foods"),
-                 (Routine, "Routines"), (Goal, "Goals"))
+                 (Routine, "Routines"), (Program, "Programs"), (Goal, "Goals"))
 
 ISO_DAY = rules.ISO_DAY  # YYYY-MM-DD in ASCII digits: the one date pattern, chat's and the addresses' (inputs.md D7)
 
@@ -2612,18 +2615,59 @@ async def food_restore_page(request: Request) -> Response:
 # The kind delete_entry and restore_entry name a routine by, and its one spelling on the page (contract routines.md).
 ROUTINE = "routine"
 ROUTINE_WORDS = "Routine"
-# The strips after a write, by mark and value, as Foods' are: deleted=routine:{id} is the Undo strip (routine_strip),
-# and any other mark or value shows none. The words never come from the address.
-ROUTINE_STRIPS = {("restored", ROUTINE): f"{ROUTINE_WORDS} restored."}
+# The program's kind and spelling, as the routine's (routines-and-programs.md decision 19): the page's Delete deletes
+# at once, with Undo.
+PROGRAM = "program"
+PROGRAM_WORDS = "Program"
+# The strips after a write, by mark and value, as Foods' are: deleted=routine:{id} and deleted=program:{id} are the
+# Undo strips (routine_strip), and any other mark or value shows none. The words never come from the address.
+ROUTINE_STRIPS = {("restored", ROUTINE): f"{ROUTINE_WORDS} restored.",
+                  ("restored", PROGRAM): f"{PROGRAM_WORDS} restored."}
+# Each kind's Undo address under /routines/, with the id: /routines/{id}/restore, /routines/program/{id}/restore.
+STRIP_KINDS = {ROUTINE: (ROUTINE_WORDS, ""), PROGRAM: (PROGRAM_WORDS, f"{PROGRAM}/")}
 
 
 def routine_strip(params) -> dict | None:
-    """The one strip Routines shows after a write: {"words", "undo"}, where undo is the id its Undo form restores."""
-    kind, _, routine_id = str(params.get("deleted") or "").partition(":")
-    if kind == ROUTINE and plain_id(routine_id):
-        return {"words": f"{ROUTINE_WORDS} deleted.", "undo": routine_id}
+    """The one strip Routines shows after a write: {"words", "undo"}, where undo is the address under /routines/ its
+    Undo form restores: the routine's id, or program/ and the program's id."""
+    kind, _, entry_id = str(params.get("deleted") or "").partition(":")
+    if kind in STRIP_KINDS and plain_id(entry_id):
+        words, under = STRIP_KINDS[kind]
+        return {"words": f"{words} deleted.", "undo": f"{under}{entry_id}"}
     words = ROUTINE_STRIPS.get(("restored", params.get("restored")))
     return {"words": words, "undo": None} if words else None
+
+
+# The program card's words of its own (routines-and-programs.md, the page): the contract gives the running card's;
+# a not-started or ended program says get_routines' own words for it.
+PROGRAM_REST = "Rest day"
+PROGRAM_NONE_LEFT = "No routine day is left after today."
+
+
+def program_card(program: dict | None, live_names: list[str], today) -> dict | None:
+    """The program card (routines-and-programs.md, the page, decision 14), from get_routines' program as it is
+    (programs.program_read): every week, date, state and routine is the service's, never worked out here. Running:
+    "Week 3 of 8, from Mon 2 Nov.", this week's days (the day, the routine or "Rest day", today's row marked) and
+    "Next: Push day on Mon 23 Nov." (or that no routine day is left). Not started or ended: get_routines' words. A
+    routine of this week or the next that is not live is said under the table in get_routines' words, "Pull day is
+    not saved now.", by its name key as save_routine folds it (programs.name_key)."""
+    if program is None:
+        return None
+    card = {"id": program["id"], "name": program["name"], "running": program["state"] == "running"}
+    if not card["running"]:
+        return {**card, "lines": [program["words"]], "days": [], "after": []}
+    start = formatting.day(program["start_on"], today)
+    head = f"Week {formatting.show(program['week'], 'count')} of {formatting.show(program['weeks'], 'count')}, " \
+           f"from {start}."
+    days = [{"day": formatting.day(d["date"], today), "routine": d["routine"] or PROGRAM_REST,
+             "today": d["date"] == today.isoformat()} for d in program["this_week"]]
+    upcoming = program["next"]
+    after = (f"Next: {upcoming['routine']} on {formatting.day(upcoming['date'], today)}." if upcoming
+             else PROGRAM_NONE_LEFT)
+    live = {programs.name_key(name) for name in live_names}
+    named = [d["routine"] for d in program["this_week"] if d["routine"]] + ([upcoming["routine"]] if upcoming else [])
+    gone = [f"{name} is not saved now." for name in dict.fromkeys(named) if programs.name_key(name) not in live]
+    return {**card, "lines": [head], "days": days, "after": [after, *gone]}
 
 
 ROUTINE_NEVER = "Not logged yet."
@@ -2655,7 +2699,8 @@ async def routines_page(request: Request) -> Response:
     today = users.today_for(user)
     cards = [{"id": r["id"], "name": r["name"], "rows": routine_rows(r["lifts"], plans.get(r["id"], []), today),
               "left_out": left_out.get(r["id"], [])} for r in result.get("routines", [])]
-    return page(request, "routines.html", routines=cards, strip=routine_strip(request.query_params))
+    program = program_card(result.get("program"), [r["name"] for r in result.get("routines", [])], today)
+    return page(request, "routines.html", routines=cards, program=program, strip=routine_strip(request.query_params))
 
 
 async def routine_delete_page(request: Request) -> Response:
@@ -2691,6 +2736,39 @@ async def routine_restore_page(request: Request) -> Response:
     if failed(result):
         return not_found_page(request)
     return redirect(marked(links.page("routines"), "restored", ROUTINE))
+
+
+async def program_delete_page(request: Request) -> Response:
+    """POST: delete the program (soft) at once, as a routine's Delete does, back to Routines with Undo (decision 19).
+    The person's own click: the switch is not read, as for a routine."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await write(user, "delete_entry", services.delete_entry, user.id, PROGRAM,
+                         request.path_params["program_id"])
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if failed(result):
+        return not_found_page(request)
+    return redirect(marked(links.page("routines"), "deleted", f"{PROGRAM}:{result['id']}"))
+
+
+async def program_restore_page(request: Request) -> Response:
+    """POST: Undo after the program's delete, back to Routines, which says the program is restored. A stale strip
+    meets one refusal: the program is live already (a save since brought it back). One a person, so no cap."""
+    user = await current_user(request)
+    if user is None:
+        return redirect(links.page("sign_in"))
+    result = await write(user, "restore_entry", services.restore_entry, user.id, PROGRAM,
+                         request.path_params["program_id"], "web")
+    if "too_many_writes" in codes(result):
+        return too_many(request, result)
+    if "not_deleted" in codes(result):
+        return message(request, "Already back", "That program is not deleted, so there was nothing to undo.",
+                       "Go back to Routines to see it.", status_code=409)
+    if failed(result):
+        return not_found_page(request)
+    return redirect(marked(links.page("routines"), "restored", PROGRAM))
 
 
 # ---------------------------------------------------------------- the targets on Settings
@@ -3316,6 +3394,8 @@ PAGES = [
     ("/routines", routines_page, ["GET"]),
     ("/routines/{routine_id}/delete", routine_delete_page, ["POST"]),
     ("/routines/{routine_id}/restore", routine_restore_page, ["POST"]),
+    ("/routines/program/{program_id}/delete", program_delete_page, ["POST"]),  # routines-and-programs.md decision 19
+    ("/routines/program/{program_id}/restore", program_restore_page, ["POST"]),
     ("/settings/targets", targets_page, ["POST"]),
     ("/entries/{kind}/{entry_id}/edit", edit_page, ["GET", "POST"]),
     ("/entries/food_entry/{entry_id}/confirm", confirm_page, ["POST"]),

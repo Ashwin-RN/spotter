@@ -531,6 +531,37 @@ class RoutineLiftIn(BaseModel):
     machine_kcal: Whole | None = Field(default=None, description=CARDIO_MACHINE_KCAL_DESCRIPTION)
 
 
+# A program's block and day (routines-and-programs.md R11 and its note of 2026-11-23). weekday is text, not an enum:
+# the service checks it, case and spaces forgiven, so its own words say "'weds' is not a weekday.". No range is
+# published on weeks: the service judges the weeks in all.
+PROGRAM_NAME = "The program's name, as the person says it, such as PPL. 1 to 64 characters."
+PROGRAM_START_ON = ("The day week 1 starts, YYYY-MM-DD. Left out: the saved program's start if it has not "
+                    "ended, else today.")
+PROGRAM_BLOCKS = "The weeks in order, 1 to 52 weeks in all. A block is some weeks that repeat the same days."
+PROGRAM_WEEKS = "How many weeks this block runs."
+PROGRAM_DAYS = "The training days of each week in this block, each weekday at most once."
+PROGRAM_WEEKDAY = "monday to sunday."
+PROGRAM_ROUTINE = "A saved routine's name, as get_routines gives it."
+
+
+class ProgramDayIn(BaseModel):
+    """One training day of a program's week."""
+
+    model_config = INPUT
+
+    weekday: str = Field(description=PROGRAM_WEEKDAY)
+    routine: str = Field(description=PROGRAM_ROUTINE)
+
+
+class ProgramBlockIn(BaseModel):
+    """Some weeks of a program that repeat the same days."""
+
+    model_config = INPUT
+
+    weeks: Whole = Field(description=PROGRAM_WEEKS)
+    days: list[ProgramDayIn] = Field(description=PROGRAM_DAYS)
+
+
 # An import's rows are named fields for every kind: no positional lists. A field these models do not name still
 # reaches the service (extra allow), which refuses its row in its own words, so a misspelt field such as
 # speed_kmh or kg is never dropped on the way.
@@ -1949,6 +1980,72 @@ class RoutineToLog(BaseModel):
                     "to quote.")
 
 
+# ---------------------------------------------------------------- save_program, and the program in get_routines
+
+PROGRAM_ID = "The program's id, for delete_entry and restore_entry with kind program."
+
+
+class ProgramDay(BaseModel):
+    weekday: str = Field(description="monday to sunday.")
+    routine: str = Field(description="The routine's name.")
+
+
+class ProgramBlock(BaseModel):
+    weeks: int = Field(description=PROGRAM_WEEKS)
+    days: list[ProgramDay] = Field(description="The training days of each week in this block, in weekday order.")
+
+
+class SavedProgram(BaseModel):
+    id: int = Field(description=PROGRAM_ID)
+    name: str = Field(description=PROGRAM_NAME)
+    start_on: str = Field(description="The day week 1 starts, YYYY-MM-DD.")
+    blocks: list[ProgramBlock] = Field(description="The weeks in order, as saved.")
+    weeks: int = Field(description="How many weeks the program runs in all.")
+    updated_at: str = Field(description="When it last changed, UTC.")
+
+
+class SaveProgramResult(BaseModel):
+    model_config = TOP
+
+    kind: str = Field(description="program.")
+    id: int = Field(description=PROGRAM_ID)
+    created: bool = Field(description="True when the person had no program. False when theirs was replaced or "
+                                      "brought back.")
+    program: SavedProgram = Field(description="The program as saved.")
+    summary: str = Field(description="What this call did, in one line, ready to quote.")
+    links: RoutinesLinks = Field(description=LINKS_LAST)
+
+
+class ProgramNext(BaseModel):
+    date: str = Field(description="The day, YYYY-MM-DD.")
+    routine: str = Field(description="That day's routine by name.")
+
+
+class ProgramWeekDay(BaseModel):
+    date: str = Field(description="The day, YYYY-MM-DD.")
+    weekday: str = Field(description="monday to sunday.")
+    routine: str | None = Field(description="That day's routine by name, or null for a rest day.")
+
+
+class ProgramToday(BaseModel):
+    id: int = Field(description=PROGRAM_ID)
+    name: str = Field(description=PROGRAM_NAME)
+    start_on: str = Field(description="The day week 1 starts, YYYY-MM-DD.")
+    weeks: int = Field(description="How many weeks the program runs in all.")
+    week: int | None = Field(description="This week's number, from 1, while the program runs; null before its start "
+                                         "and after its end.")
+    state: str = Field(description="not_started, running or ended.")
+    today: str | None = Field(
+        description="Today's routine by name; null on a rest day and when the program is not running.")
+    next: ProgramNext | None = Field(
+        description="The next day with a routine: after today while it runs, the first one before its start. Null "
+                    "when none is left.")
+    this_week: list[ProgramWeekDay] | None = Field(
+        description="The 7 days of this program week, while it runs, each with its routine. Null otherwise.")
+    blocks: list[ProgramBlock] = Field(description="The weeks in order, as saved.")
+    words: str = Field(description="Where the program stands, in one line, ready to quote.")
+
+
 class GetRoutinesResult(BaseModel):
     model_config = TOP
 
@@ -1957,7 +2054,13 @@ class GetRoutinesResult(BaseModel):
         description="weight_kg is the heaviest set of the lift's latest session, unless the routine was saved on a "
                     "later day than that session, with a weight of its own. Quote these numbers; do not work out "
                     "your own.")
-    summary: str = Field(description="The routines by name, in one line, ready to quote.")
+    summary: str = Field(description="The routines by name, in one line, ready to quote, after the program's words "
+                                     "when one is saved.")
+    # routines-and-programs.md, the note of 2026-11-23: optional, left out with none, so every answer for a person
+    # with no program is as before.
+    program: ProgramToday | None = Field(
+        default=None, description="The person's program, present only when one is saved: this week's number, today's "
+                                  "routine, the next one and this week's days.")
     note: str | None = Field(default=None, description="Present when no routine is saved.")
     links: RoutinesLinks = Field(description=LINKS_LAST)
 
@@ -2082,6 +2185,7 @@ RESULTS = {
     "import_entries": ImportEntriesResult,
     "send_feedback": SendFeedbackResult,
     "save_routine": SaveRoutineResult,
+    "save_program": SaveProgramResult,
     "get_routines": GetRoutinesResult,
     "what_is_logged": WhatIsLoggedResult,
     "get_data": GetDataResult,

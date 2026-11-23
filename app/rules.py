@@ -76,6 +76,10 @@ ROUTINES_MAX = 20
 ROUTINE_LIFTS = (1, 20)
 ROUTINE_LIFT_SETS = (1, 10)
 ROUTINE_NAME_MAX = 64
+# A program (contract routines-and-programs.md, decision 18): 1 to 52 weeks in all, and a start at most 52 weeks
+# after today. A cap, not a measured number: a year, so a reply's week count stays short, and a start a year out is a
+# slip of the year. The one constant serves both bounds; revisited from use.
+PROGRAM_WEEKS = (1, 52)
 
 # Measurement kinds: unit, lowest, highest, whole number only. One table, read by logging and editing.
 MEASUREMENTS = {

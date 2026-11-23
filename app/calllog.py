@@ -49,7 +49,8 @@ from sqlalchemy import delete, select, update
 from app import db
 from app.log_shape import table_word
 from app.mcp_schemas import (
-    FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, LogPartIn, LogSetIn, MealItemIn, RoutineLiftIn, SetIn,
+    FoodEntryIn, ImportFoodIn, ImportRowIn, ImportSetIn, LogPartIn, LogSetIn, MealItemIn, ProgramBlockIn,
+    ProgramDayIn, RoutineLiftIn, SetIn,
 )
 from app.models import CallLog, EntryVersion, Feedback, WriteKey
 
@@ -68,8 +69,9 @@ SWEEP_BATCH = 1000  # rows a delete statement of the sweep takes at most
 SWEEP_BATCHES = 50  # statements a table takes at most in one sweep
 SWEEP_RETRY_MINUTES = 10  # how soon a group whose sweep failed or stopped at the cap is due again
 CALLERS = ("web", "claude")
-# Spotter's eight tables: the one value tried writes (kind=food_entry), and an import's rows counted by kind.
-TABLES = ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "routine", "goal")
+# Spotter's nine tables: the one value tried writes (kind=food_entry), and an import's rows counted by kind.
+TABLES = ("lift_session", "bodyweight", "measurement", "food_entry", "cardio_entry", "saved_food", "routine", "program",
+          "goal")
 # The functions whose kind names a table. Any other kind (a goal's, a measurement's) is a name only. Their kind is
 # read as its table word (log_shape.table_word, log-and-guide.md decision 52), as the service reads it: lifts is
 # written kind=lift_session.
@@ -101,8 +103,10 @@ KNOWN_NAMES = frozenset({
     "protein_g_per_serving", "carbs_g_per_serving", "fat_g_per_serving", "items",
     # update_settings' three daily goals in grams (macros-and-asking.md, P3).
     "protein_target_g", "carbs_target_g", "fat_target_g",
+    # save_program's (routines-and-programs.md): a block's and a day's fields are ProgramBlockIn's and ProgramDayIn's.
+    "start_on", "blocks",
 }) | {name for model in (SetIn, LogSetIn, FoodEntryIn, ImportSetIn, ImportFoodIn, ImportRowIn, RoutineLiftIn, LogPartIn,
-                         MealItemIn)
+                         MealItemIn, ProgramBlockIn, ProgramDayIn)
        for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.
 STEPS = {"no_subject": "account", "signups_closed": "account", "no_account": "account",

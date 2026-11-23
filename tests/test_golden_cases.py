@@ -50,11 +50,9 @@ G1_CORE = {"how_am_i_doing", "data_lifting", "data_back_on_track", "data_empty",
 
 
 def dates_on(today: date) -> dict[str, str]:
-    """run.dates_for on a fixed today."""
-    dates = {"today": today.isoformat(), "yesterday": (today - timedelta(days=1)).isoformat()}
-    dates.update({f"days_ago:{n}": (today - timedelta(days=n)).isoformat() for n in range(judge.DAYS_AGO + 1)})
-    dates.update({f"next_month_end:{m}": next_month_end(today, m).isoformat() for m in range(1, 13)})
-    return dates
+    """run.dates_for on a fixed today: the runner's own dates_on, {{weekday:N}} among them (routines-and-programs.md,
+    R15), so a seeded program's weekdays fall on this today's."""
+    return run.dates_on(today)
 
 
 def new_cases() -> list[dict]:
@@ -1651,6 +1649,96 @@ C3_LIFT_RUNS = {
 }
 RUNS.update(C3_LIFT_RUNS)
 
+# routines-and-programs.md C5c (the note of 2026-11-23): the three program cases close the file, each direct;
+# program_saved is in the core (pick 19), the other two are not. Their seed: Pull day (Barbell Row 3 x 8 at 60) and
+# Push day (Bench Press 3 x 8 at 60), program_saved's also Legs day (Back Squat 4 x 5 at 100); the read and log cases
+# a program of 4 weeks from {{days_ago:14}}, so today is in week 3: program_today_logged's Pull day on {{weekday:0}}
+# (today) and Push day on {{weekday:2}}, program_rest_day's Pull day on {{weekday:1}} (tomorrow) and Push day on
+# {{weekday:3}}. Each wrong run is one its case exists to catch.
+PPL_DAYS = [{"weekday": "monday", "routine": "Push day"}, {"weekday": "wednesday", "routine": "Pull day"},
+            {"weekday": "friday", "routine": "Legs day"}]
+PPL = ("save_program", {"name": "PPL", "blocks": [{"weeks": 8, "days": PPL_DAYS}]})
+PPL_TOLD = "Saved PPL: 8 weeks from today. Push day on Monday, Pull day on Wednesday and Legs day on Friday."
+ROWED_TODAY = logs(lift("Barbell Row", 60, 8, 3, exact=True))
+PULL_TOLD = "Logged your pull day: Barbell Row 3 x 8 at 60 kg."
+FOUR_WEEKS_DAYS = [{"weekday": "monday", "routine": "Push day"}, {"weekday": "wednesday", "routine": "Pull day"}]
+MOVED_PULL = ("save_program", {"name": "Four weeks", "blocks": [{"weeks": 4, "days": [
+    {"weekday": "monday", "routine": "Push day"}, {"weekday": "friday", "routine": "Pull day"}]}]})
+MOVED_TOLD = "Moved Pull day to Friday. Four weeks is in week 3 of 4."
+C5C_RUNS = {
+    "program_saved": {
+        "pass": [([("get_routines", {}), PPL], PPL_TOLD),
+                 # a name of its own, today's date sent, the weekdays and routines in other cases
+                 ([("save_program", {"name": "8 week program", "start_on": "{{today}}", "blocks": [{"weeks": 8, "days": [
+                     {"weekday": "Monday", "routine": "push day"}, {"weekday": "Wednesday", "routine": "pull day"},
+                     {"weekday": "Friday", "routine": "legs day"}]}]})], PPL_TOLD)],
+        "fail": [([("save_routine", {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8}]}),
+                   PPL], PPL_TOLD),  # a routine saved again, which the person never asked for
+                 ([logs(lift("Bench Press", 60, 8, 3, exact=True)), PPL], PPL_TOLD),  # a workout logged
+                 ([("save_program", {"name": "PPL", "blocks": [{"weeks": 4, "days": PPL_DAYS}]})], PPL_TOLD),  # 4 weeks
+                 ([("save_program", {"name": "PPL", "blocks": [{"weeks": 4, "days": PPL_DAYS}] * 2})],
+                  PPL_TOLD),  # two blocks where the person said one run of 8 weeks
+                 ([("save_program", {"name": "PPL", "blocks": [{"weeks": 8, "days": PPL_DAYS},
+                                                              {"weeks": 4, "days": PPL_DAYS[:1]}]})],
+                  PPL_TOLD),  # 4 weeks more than the person said: only the row's week_count shows it
+                 ([("save_program", {"name": "PPL", "start_on": "{{days_ago:7}}",
+                                     "blocks": [{"weeks": 8, "days": PPL_DAYS}]})], PPL_TOLD),  # a start not said
+                 ([("save_program", {"name": "PPL", "blocks": [{"weeks": 8, "days": PPL_DAYS[:2]}]})],
+                  PPL_TOLD),  # legs day lost
+                 ([("save_program", {"name": "PPL", "blocks": [{"weeks": 8, "days": PPL_DAYS + [
+                     {"weekday": "saturday", "routine": "Push day"}]}]})],
+                  PPL_TOLD),  # a Saturday the person never named: only the row's day_count shows it
+                 ([], "Shall I save that as your program?")]},  # never saved
+    "program_today_logged": {
+        "pass": [([("get_routines", {}), ROWED_TODAY], PULL_TOLD),
+                 ([("get_routines", {}), ("log", {"kind": "lifts", "parts": [
+                     {"movement": "Barbell Row", "weight_kg": 60, "reps": 8, "exact": True}] * 3})], PULL_TOLD)],
+        "fail": [([("get_routines", {}), logs(lift("Bench Press", 60, 8, 3, exact=True))],
+                  "Logged your push day: Bench Press 3 x 8 at 60 kg."),  # the wrong routine for today
+                 ([("get_routines", {}), logs(lift("Barbell Row", 60, 8, 3, exact=True),
+                                              lift("Bench Press", 60, 8, 3, exact=True))],
+                  "Logged your pull and push days."),  # both routines
+                 ([("get_routines", {}), logs(lift("Barbell Row", 60, 8, 2, exact=True))], PULL_TOLD),  # a set lost
+                 ([("get_routines", {}), ROWED_TODAY, logs(lift("Bench Press", 60, 8, 3, exact=True),
+                                                           date="{{yesterday}}")],
+                  PULL_TOLD),  # push day logged too, on another day: a second log
+                 ([("get_routines", {})], "Today is your pull day: Barbell Row 3 x 8 at 60 kg.")]},  # never logged
+    "program_rest_day": {
+        "pass": [([("get_routines", {})], "Rest day today. Pull day is tomorrow."),  # a full stop before Pull day
+                 ([("get_routines", {})], "Today is a rest day. Next is Pull day, tomorrow."),
+                 ([who(), ("get_routines", {})], "Rest day today. Your next workout is Pull day."),
+                 ([("get_routines", {})],
+                  "Four weeks, week 3 of 4. Today is a rest day. Next: Pull day on Tue 24 Nov."),  # Spotter's own line
+                 ([("get_routines", {})], "Today is a rest day; tomorrow is Pull day."),
+                 ([("get_routines", {})],  # a curly apostrophe and a bold Pull day, neither said of today
+                  "Today\u2019s a rest day. Your next workout is **Pull day**, tomorrow.")],
+        "fail": [([("get_routines", {}), ROWED_TODAY], "Logged your pull day."),  # a log on a rest day
+                 ([("get_routines", {})], "Today is Push day: Bench Press 3 x 8 at 60 kg."),  # the wrong routine
+                 # tomorrow's routine said as today's, in six forms (the C5c review, S3)
+                 ([("get_routines", {})], "Today's workout is Pull day."),
+                 ([("get_routines", {})], "Today is your Pull day."),
+                 ([("get_routines", {})], "Today is **Pull day**."),
+                 ([("get_routines", {})], "Today\u2019s workout is Pull day."),  # a curly apostrophe
+                 ([("get_routines", {})], "Today: Pull day."),  # Spotter's running form, said on a rest day
+                 ([("get_routines", {})], "Your workout today: Pull day."),
+                 ([("get_routines", {})], "You have a rest day today. Enjoy it, then pull tomorrow."),  # no Pull day
+                 ([], "Pull day, I think.")]},  # no read of the program
+    # the owner's pick of 2026-11-23 (the C5c review's S1): a change with start_on left out keeps the program's start
+    "program_day_moved": {
+        "pass": [([("get_routines", {}), MOVED_PULL], MOVED_TOLD),  # start_on left out
+                 ([("get_routines", {}), ("save_program", {**MOVED_PULL[1], "start_on": "{{days_ago:14}}"})],
+                  MOVED_TOLD)],  # the stored start sent again
+        "fail": [([("get_routines", {}), ("save_program", {**MOVED_PULL[1], "start_on": "{{today}}"})],
+                  MOVED_TOLD),  # week 1 moved to today
+                 ([("get_routines", {}), ("save_program", {"name": "Four weeks", "blocks": [
+                     {"weeks": 4, "days": FOUR_WEEKS_DAYS}]})], MOVED_TOLD),  # Pull day kept on Wednesday
+                 ([("get_routines", {}), ("save_program", {"name": "Four weeks", "blocks": [
+                     {"weeks": 4, "days": FOUR_WEEKS_DAYS + [{"weekday": "friday", "routine": "Pull day"}]}]})],
+                  MOVED_TOLD),  # Friday added, Wednesday kept: a third day
+                 ([], "Shall I move Pull day to Friday?")]},  # never saved
+}
+RUNS.update(C5C_RUNS)
+
 # The contract cases C3 changed or holds (before import_other_app): guessed_number now asks about the dal, and three that
 # stay log in one turn as they did.
 C3_EARLIER = {  # id: (passing runs, failing runs), each run (calls, reply)
@@ -1996,8 +2084,8 @@ def read_case(case_id: str) -> bool:
 def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     new = new_cases()
     ids = [c["id"] for c in new]
-    # 164, C4g's 23, log and guide's 2, C5a's, C5b's, C3's and C3's P6
-    later = len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS) + len(C3_LIFT_RUNS)
+    # 164, C4g's 23, log and guide's 2, C5a's, C5b's, C3's, C3's P6 and C5c's
+    later = len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS) + len(C3_LIFT_RUNS) + len(C5C_RUNS)
     assert len(ids) == len(set(ids)) == 189 + later and set(ids) == set(RUNS)
     assert all(RUNS[i]["pass"] and RUNS[i]["fail"] for i in ids)
     every = judge.load_cases()
@@ -2008,7 +2096,8 @@ def test_the_package_follows_g1_s_cases_and_each_case_has_its_runs():
     assert all(isinstance(c["core"], bool) and c["kind"] in judge.KINDS for c in new)
     kinds = Counter(c["kind"] for c in new)
     assert kinds == {"direct": 141 + later, "incidental": 24, "look_alike": 24}  # C5's and C3's are direct
-    assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 63, "incidental": 8, "look_alike": 8}
+    # C5c's program_saved joins the core (routines-and-programs.md, pick 19)
+    assert Counter(c["kind"] for c in new if c["core"]) == {"direct": 64, "incidental": 8, "look_alike": 8}
     by_id = {c["id"]: c for c in every}
     for c in new:
         if c["kind"] == "look_alike":
@@ -2179,7 +2268,14 @@ def test_lb_bench_goal_judges_the_lift_the_goal_was_saved_on():
 def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
     new = [c["id"] for c in new_cases()]
     # C4g's cases, then log-and-guide.md's two, then routines-and-programs.md C5a's two, then C5b's four, then
-    # macros-and-asking.md's eleven, then its P6's four, which close the file
+    # macros-and-asking.md's eleven, then its P6's four, then C5c's four, which close the file
+    c5c = len(C5C_RUNS)
+    assert new[-c5c:] == list(C5C_RUNS) == ["program_saved", "program_today_logged", "program_rest_day",
+                                            "program_day_moved"]
+    by_id = {c["id"]: c for c in new_cases()}
+    assert [(by_id[i]["kind"], by_id[i]["core"]) for i in C5C_RUNS] == [("direct", True), ("direct", False),
+                                                                        ("direct", False), ("direct", False)]
+    new = new[:-c5c]
     p6 = len(C3_LIFT_RUNS)
     c3 = len(C3_RUNS) + p6
     c5b_c3 = len(C5B_RUNS) + c3
@@ -2195,7 +2291,7 @@ def test_c4g_s_new_cases_follow_the_last_and_stay_out_of_the_core():
     assert all(c["kind"] == "direct" and c["core"] is False for c in new_cases()
                if c["id"] in C4G_RUNS or c["id"] in C5A_RUNS or c["id"] in C5B_RUNS or c["id"] in C3_RUNS
                or c["id"] in C3_LIFT_RUNS)
-    assert sum(1 for c in judge.load_cases() if c.get("core") is True) == 103  # log-and-guide.md's 2 joined it
+    assert sum(1 for c in judge.load_cases() if c.get("core") is True) == 104  # log-and-guide.md's 2, C5c's 1
     assert [c["id"] for c in judge.load_cases() if c.get("then")] == ["pick_lift_answer", "portion_asked_then",
                                                                       "lift_weight_asked_then"]
 
@@ -2204,12 +2300,12 @@ def test_log_and_guide_s_two_cases_follow_c4g_s_and_join_the_core():
     """log-and-guide.md N9: 260 cases, 103 core. log_plank_minutes takes log_lifts in may, so it judges the same once
     the judge routes a log call to its kind's function (L5)."""
     cases = judge.load_cases()
-    # C5a's 2 and C5b's 4, then macros-and-asking.md's 11 and its P6's 4
-    after = len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS) + len(C3_LIFT_RUNS)
+    # C5a's 2 and C5b's 4, then macros-and-asking.md's 11 and its P6's 4, then C5c's 4
+    after = len(C5A_RUNS) + len(C5B_RUNS) + len(C3_RUNS) + len(C3_LIFT_RUNS) + len(C5C_RUNS)
     ours = cases[-len(LOG_AND_GUIDE_RUNS) - after:-after]
     assert [c["id"] for c in ours] == list(LOG_AND_GUIDE_RUNS)
     assert all(c["kind"] == "direct" and c["core"] is True for c in ours)
-    assert len(cases) == 260 + after and sum(1 for c in cases if c.get("core") is True) == 103
+    assert len(cases) == 260 + after and sum(1 for c in cases if c.get("core") is True) == 104
     by_id = {c["id"]: c for c in cases}
     food = by_id["guide_how_food"]["calls"]
     assert food["must"] == ["guide"] and set(W) <= set(food["must_not"])
@@ -2512,5 +2608,37 @@ def test_every_read_case_passes_on_nine_todays(today, monkeypatch, app_settings)
             for calls, reply in RUNS[case["id"]]["pass"]:
                 reasons = player.verdict(case, people[group], calls, reply)
                 assert reasons == [], (today, case["id"], reasons)
+    finally:
+        player.close()
+
+
+
+# ---------------------------------------------------------------- routines-and-programs.md C5c: the seeded program
+
+@pytest.mark.parametrize("today", TODAYS[:7], ids=[d.isoformat() for d in TODAYS[:7]])
+def test_the_seeded_program_puts_today_in_week_3_on_every_weekday(today, monkeypatch, app_settings):
+    """The two seeded program cases on each weekday of one week: {{weekday:N}} lands Pull day on today in
+    program_today_logged and on tomorrow in program_rest_day, so get_routines gives what each case judges, and
+    program_today_logged's passing runs pass and its first wrong run fails. The fixed todays, never the real one."""
+    from app import services
+    player = Player(monkeypatch, app_settings, today)
+    try:
+        cases = {c["id"]: c for c in new_cases()}
+        person = player.person(cases["program_today_logged"])
+        program = services.get_routines(person.user_id)["program"]
+        assert (program["state"], program["week"], program["weeks"], program["today"]) == ("running", 3, 4, "Pull day")
+        assert program["words"] == "Four weeks, week 3 of 4. Today: Pull day."
+        rest = services.get_routines(player.person(cases["program_rest_day"]).user_id)["program"]
+        tomorrow = (today + timedelta(days=1)).isoformat()
+        assert (rest["week"], rest["today"], rest["next"]) == (3, None, {"date": tomorrow, "routine": "Pull day"})
+        assert rest["words"].startswith("Four weeks, week 3 of 4. Today is a rest day. Next: Pull day on ")
+        import re  # Spotter's own rest day line never trips the case's lacks pattern (spotter_texts reads no words key)
+        for pattern in cases["program_rest_day"]["expect"]["reply_lacks_pattern"]:
+            assert not re.search(pattern, rest["words"], re.IGNORECASE), (today, pattern, rest["words"])
+        case = cases["program_today_logged"]
+        for calls, reply in RUNS["program_today_logged"]["pass"]:
+            assert player.verdict(case, player.person(case), calls, reply) == [], (today, reply)
+        calls, reply = RUNS["program_today_logged"]["fail"][0]
+        assert player.verdict(case, player.person(case), calls, reply), (today, reply)
     finally:
         player.close()

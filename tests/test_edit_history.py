@@ -712,15 +712,16 @@ def test_restore_entry_publishes_undo_edit_and_no_allow_repeat_and_the_instructi
                    **dict.fromkeys(("restore_entry", "delete_entry"),  # switch, ruling 1: delete_entry takes these
                                    mcp_server.ENTRY_ID_DESCRIPTION + " A saved food's id comes from save_food or "
                                                                      "find_food, a routine's from save_routine or "
-                                                                     "get_routines.")}  # routines.md
+                                                                     "get_routines, the program's from save_program or "
+                                                                     "get_routines.")}  # routines.md; C5c
     # restore_entry's kind has words of its own: an undo takes a saved food too. The other two keep the shared ones,
     # which name log's five kind words beside the table words (log-and-guide.md, decision 52).
     kinds = {t["name"]: t["inputSchema"]["properties"]["kind"]["description"] for t in tool_list(http, sign())
              if "kind" in t["inputSchema"]["properties"] and t["name"].endswith("_entry")}
     shared = "lift_session or lifts, bodyweight, measurement, food_entry or food, cardio_entry or cardio."
-    assert kinds == {"edit_entry": shared, "delete_entry": shared + " Or saved_food or routine.",  # and routines.md
-                     "restore_entry": shared + " With undo_edit, saved_food too. Or routine, to bring back a deleted "
-                                               "one."}
+    assert kinds == {"edit_entry": shared, "delete_entry": shared + " Or saved_food, routine or program.",  # and C5c
+                     "restore_entry": shared + " With undo_edit, saved_food too. Or routine or program, to bring back "
+                                               "a deleted one."}
     assert tool["description"] == (
         "Brings back a deleted or replaced entry. If the day already has a live one of the same kind, the two swap: "
         "the live one is set aside and can itself be restored. With undo_edit true it undoes the last edit of a live "
@@ -1411,7 +1412,7 @@ def test_0007_adds_the_version_table_the_models_match_and_it_comes_down_again():
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0015"  # macros
+    assert script.get_revision("0007").down_revision == "0006" and script.get_current_head() == "0016"  # programs
 
 
 def test_every_kind_s_table_name_fits_the_version_s_kind_column():
@@ -1419,8 +1420,9 @@ def test_every_kind_s_table_name_fits_the_version_s_kind_column():
     only, at its first edit: SQLite does not hold a text column to its length."""
     width = EntryVersion.__table__.c.kind.type.length
     names = [model.__tablename__ for model in entries._deletable().values()]
-    # A routine is deleted and restored by id but keeps no version (routines.md decision 6): its name fits too.
-    assert width == 16 and set(MODELS) | {"routine"} == set(names) == set(entries._deletable())
+    # A routine is deleted and restored by id but keeps no version (routines.md decision 6): its name fits too. The
+    # program likewise (routines-and-programs.md R12).
+    assert width == 16 and set(MODELS) | {"routine", "program"} == set(names) == set(entries._deletable())
     assert all(len(name) <= width for name in names), names
 
 

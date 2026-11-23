@@ -447,3 +447,18 @@ Read again at the pickup, against the code as log-and-guide leaves it; no new te
 | The seeded cases | `program_today_logged` and `program_rest_day` seed a program of 4 weeks from `{{days_ago:14}}`, so today is in week 3 |
 | Packages | C5c1 the program and its checklist, C5c3 the evals and docs, C5c2 the page, built one after another in the one worktree; one commit for C5c, one review of the whole |
 | Before the deploy | A Postgres run, by his okay: `0016` up, down, up over a written row, and a `get_routines` read with a program |
+
+**2026-11-23, C5c as built.** Three packages in order (the program and its checklist, the evals and docs, the page), one review on a frozen copy, one fix round. These rows record what the build, the review and the owner's picks changed; a row not named here holds as the note above says.
+
+| Row | As built |
+|---|---|
+| `start_on` left out (the owner's pick, the review's S1) | Keeps the saved program's start while it has not ended, so a change keeps its week; today when there is no program, a deleted one or an ended one. Its words: "The day week 1 starts, YYYY-MM-DD. Left out: the saved program's start if it has not ended, else today." This overrules "blank is today" for a change. A new program saved over a running one with the start left out takes the old start, until the person gives the date |
+| `program.today`'s words | "Today's routine by name; null on a rest day and when the program is not running." |
+| Texts the tables did not give | The builders' own, ruled to stand: a first routine day after the start ("PPL starts on Tue 24 Nov. First: Pull day on Wed 25 Nov."), no routine day left, the block, day and count refusals, the unknown routine with none saved, the delete preview, the Settings lines, the page's "Rest day", "No routine day is left after today.", "Program deleted.", "Program restored." and its stale Undo lines |
+| The shared refusal path | An item's words are picked by the innermost list a key was sent in, so "Block 1, day 1: ..." is said; every older nested refusal is byte for byte the same (the review's probe) |
+| `get_routines` with no program | The answer is the same field for field; one statement more |
+| The old cases | Not left alone, as the scope said: 28 cases that pin `must_not` and `no_call` to every write gained `save_program` there, and nothing else |
+| The cases | `program_saved` says "an 8 week PPL program", as `name` is required; it checks `day_count` 3. The two seeded cases' program is "Four weeks", so no reply passes on its name; `program_rest_day` needs "pull day" and refuses a reply that calls today Pull day. A fourth case, `program_day_moved`, measures a mid-way change keeping the start. 285 cases, the package 214, the core 104 |
+| The eval runner | `{{weekday:N}}`, `program` with `week_count` and `day_count` |
+| The page | The card above the routines, outside the routines' block; the page reads which routines are live by the routines' name key from the same read, and names every routine of this week and the next that is not saved now, more than `get_routines`' words name. No CSS rule: seen at 320 and 390 px |
+| Left as they are | A routine resaved under another case shows in the program by its stored spelling; a kept start with fewer weeks can read as ended at once; the `invalid_date` fix still says "or leave it out for today" |

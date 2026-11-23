@@ -909,7 +909,8 @@ def test_the_confirm_page_says_what_goes_by_count(signed, make_user):
     page = signed.get("/settings/delete").text
     counts = dict(re.findall(r'<li class="entry-line"><span>([^<]+)</span><strong>(\d+)</strong></li>', page))
     assert counts == {"Lift sessions": "2", "Weigh-ins": "2", "Measurements": "3", "Food entries": "3",
-                      "Cardio sessions": "1", "Saved foods": "1", "Routines": "0", "Goals": "1"}  # routines.md R14
+                      "Cardio sessions": "1", "Saved foods": "1", "Routines": "0", "Programs": "0",
+                      "Goals": "1"}  # routines.md R14; routines-and-programs.md R12
     assert "so does your sign-in" in page and "This cannot be undone." in page
     form = re.search(r'<form method="post" action="/settings/delete">(.*?)</form>', page, re.S).group(1)
     assert f'value="{session_of(signed)["csrf"]}"' in form and "Delete my account" in form
@@ -1477,15 +1478,17 @@ SWITCH_EVERYTHING = {"whoami", "list_exercises", "get_progress", "get_log", "fin
                      "edit_entry", "restore_entry", "save_food", "set_goal", "update_settings",
                      "send_feedback",  # feedback.md decision 3
                      "save_routine", "get_routines",  # routines.md decisions 5 and 7
+                     "save_program",  # routines-and-programs.md R11
                      "what_is_logged", "get_data"}  # data-on-request.md: two reads
 SWITCH_ALLOWS = {
     "log_delete": (SWITCH_EVERYTHING | {"delete_entry"},
-                   "Your assistant can log and import entries, edit and restore them, save foods and routines, and set "
-                   "goals. It can change your time zone, units and targets, and delete entries, saved foods and "
-                   "routines. Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted "
-                   "one can be restored."),  # units.md R16: units joins what it can change
+                   "Your assistant can log and import entries, edit and restore them, save foods, routines and "
+                   "programs, and set goals. It can change your time zone, units and targets, and delete entries, "
+                   "saved foods, routines and programs. Before a delete it is shown the entry and told to ask you. "
+                   "Nothing is erased: a deleted one can be restored."),  # units.md R16; routines-and-programs.md
     "log": (SWITCH_EVERYTHING,
-            "Everything above except deleting: your assistant cannot delete an entry, a saved food or a routine."),
+            "Everything above except deleting: your assistant cannot delete an entry, a saved food, a routine or a "
+            "program."),
 }
 
 
@@ -1599,7 +1602,8 @@ def test_the_delete_page_in_the_contracts_order_with_none_logged(signed):
     lines = re.findall(r'<li class="entry-line"><span>([^<]+)</span><strong>(\d+)</strong></li>', page)
     assert lines == [(label, "0") for _, label in web.DELETE_COUNTS]
     assert [label for _, label in web.DELETE_COUNTS] == ["Lift sessions", "Weigh-ins", "Measurements", "Food entries",
-                                                         "Cardio sessions", "Saved foods", "Routines", "Goals"]
+                                                         "Cardio sessions", "Saved foods", "Routines", "Programs",
+                                                         "Goals"]
     [form] = card.find_all("form")
     assert form.attrs == {"method": "post", "action": "/settings/delete"}
     assert [(b.classes, b.text()) for b in form.find_all("button")] == [(["danger"], "Delete my account")]

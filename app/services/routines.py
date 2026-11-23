@@ -53,6 +53,8 @@ get_routines(user_id)
     heart rate and the machine's calories in its words only. The weights and last are one statement, run only when a
     routine places a lift, and cardio's last one more, run only when a routine places a cardio item (hardening D5),
     so a read runs a fixed number of statements however many routines and sessions.
+    The program (programs.program_read), present only when one is saved, the summary led by its words: one statement
+    more, always, by user_id (the note of 2026-11-23). save_routine never reads the program.
     The read never raises on an item (decision 3, R2). An item is placed (placed) only when its exercise is a kind on
     the list, or a name the list no longer holds (as before C5a: a rename leaves the old name in the JSON; the main
     chat's C5a ruling 1), read as a lift of reps, and it holds its kind's numbers as numbers; any other key on it is
@@ -89,7 +91,7 @@ from sqlalchemy.orm import aliased
 from app import db, formatting, links, log_shape, metrics, rules, users
 from app.exercises import BY_NAME as LISTED
 from app.models import CardioEntry, Exercise, LiftSession, LiftSet, Routine, User
-from app.services import cardio, lifts
+from app.services import cardio, lifts, programs
 from app.services.common import (
     check_by, check_data, check_write_limit, exercises, lock_user, no_account, sent, with_units_note,
 )
@@ -709,6 +711,7 @@ def _read(user_id: int) -> tuple[dict, dict[int, list[str]], dict[int, list[str]
         rows = list(s.scalars(select(Routine).where(Routine.user_id == user.id, Routine.deleted_at.is_(None))
                               .order_by(Routine.name_key, Routine.id)))
         stored = {row.id: _stored(row) for row in rows}
+        program = programs.live_program(s, user.id)  # one statement, always (the note of 2026-11-23)
         found = [x for items in stored.values() for x in filter(None, map(placed, items))]
         named = {x["exercise"] for x in found if item_kind(x["exercise"]) != "cardio"}
         activities = {x["exercise"] for x in found if item_kind(x["exercise"]) == "cardio"}
@@ -737,14 +740,18 @@ def _read(user_id: int) -> tuple[dict, dict[int, list[str]], dict[int, list[str]
     out = {"routines": routines, "how": HOW,
            "summary": f"{formatting.show(n, 'count')} routine{'' if n == 1 else 's'}: {names}." if n else NONE_YET}
     out["summary"] += "".join(f" {line}" for line in dict.fromkeys(lines))
+    if program is not None:  # present only when one is saved, and the summary leads with its words
+        out["program"] = programs.program_read(program, today, {row.name_key for row in rows})
+        out["summary"] = f"{out['program']['words']} {out['summary']}"
     if not n:
         out["note"] = NONE_NOTE
     return {**out, "links": {"routines": links.page("routines")}}, left, plans
 
 
 def get_routines(user_id: int) -> dict:
-    """Every live routine, each item with its plan, the weight to log and last time. Returns {routines, how,
-    summary[, note], links} or {error, message, fix}. See the module notes."""
+    """Every live routine, each item with its plan, the weight to log and last time, and the program when one is
+    saved. Returns {routines, how, summary[, program][, note], links} or {error, message, fix}. See the module
+    notes."""
     return _read(user_id)[0]
 
 

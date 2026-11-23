@@ -84,6 +84,8 @@ WRITES = {
     "send_feedback": lambda u, ids: services.send_feedback(u.id, {"text": "The chart is confusing."}),  # feedback.md 3
     "save_routine": lambda u, ids: services.save_routine(u.id, {"name": "Push day", "lifts": [  # routines.md 5
         {"exercise": "Bench Press", "sets": 3, "reps": 8}]}, "claude"),
+    "save_program": lambda u, ids: services.save_program(u.id, {"name": "PPL", "blocks": [  # routines-and-programs.md
+        {"weeks": 8, "days": [{"weekday": "monday", "routine": "Push day"}]}]}, "claude"),
 }
 
 
@@ -93,8 +95,15 @@ def setup_zone(user):
         s.get(User, user.id).time_zone = "UTC"
 
 
-# What each write needs first: an import needs a time zone.
-SETUPS = {"import_entries": setup_zone}
+def setup_routine(user):
+    """The routine a program's day names (routines-and-programs.md), saved first through the service: no row of a
+    call."""
+    assert "error" not in services.save_routine(user.id, {"name": "Push day", "lifts": [
+        {"exercise": "Bench Press", "sets": 3, "reps": 8}]}, "web")
+
+
+# What each write needs first: an import needs a time zone, a program a routine.
+SETUPS = {"import_entries": setup_zone, "save_program": setup_routine}
 
 
 def prepare(user, name):

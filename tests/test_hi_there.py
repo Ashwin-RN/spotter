@@ -805,15 +805,18 @@ def route_rows(overrides: dict) -> list[tuple[str, str, bool]]:
             for r in web.routes(settings(**{**WEB, **overrides}))]
 
 
-# The routines page's three rows (routines.md), straight after the Foods restore row, all behind the page limit.
+# The routines page's five rows (routines.md, and the program's delete and restore of routines-and-programs.md C5c),
+# straight after the Foods restore row, all behind the page limit.
 ROUTINES_ROUTES = [("/routines", "GET HEAD", True), ("/routines/{routine_id}/delete", "POST", True),
-                   ("/routines/{routine_id}/restore", "POST", True)]
+                   ("/routines/{routine_id}/restore", "POST", True),
+                   ("/routines/program/{program_id}/delete", "POST", True),
+                   ("/routines/program/{program_id}/restore", "POST", True)]
 
 
 @pytest.mark.parametrize("state", ["signed out", "no web sign-in", "no server address"])
 def test_the_route_tables_differ_from_before_by_hi_alone(state):
     """R14: the parent's rows plus one, /hi straight after /, GET and HEAD, not behind the page limit. At the join,
-    routines' three rows too, after the Foods restore row, and nothing else."""
+    routines' five rows too, after the Foods restore row, and nothing else."""
     at = PARENT_ROUTES.index(("/foods/{food_id}/restore", "POST", True)) + 1
     joined = PARENT_ROUTES[:at] + ROUTINES_ROUTES + PARENT_ROUTES[at:]
     before = joined if state == "signed out" else [(p, m, False) for p, m, _ in joined]

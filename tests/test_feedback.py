@@ -81,8 +81,8 @@ PUBLISHED = {
     "get_log": "c9cb9ae3ada02a65d5b612272cd127d71ef0b010c4d667760edb606c6ea476a3",  # units; inputs; exercise list: SetOut; C4e: NewBest's kinds; C3: a food entry's macros and portion, the day's macros, its goals
     "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
     "edit_entry": "2570fdcf021e7d14a0d1419ff89e1979b66f94c804e88b3544d35710032bdc71",  # units; inputs; exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words; C3: macros and portion; C3 fix: the mark when every macro held is sent
-    "restore_entry": "6b129d5d669ea420a54d4a98bc846235dcd6186c493e1b9d961ab761391048bb",  # routines: kind routine; inputs; log and guide: kind words, id words
-    "delete_entry": "bd1eb2e551d6276b7eda7d6f07aa8af4dfd71e28086cf6ae3df4ab3f206366cd",  # routines: kind routine; units; inputs; log and guide: kind words, id words
+    "restore_entry": "72e22c17db53b4a9f1984905f6226cb0b321670a736d289c99de7113b66c1102",  # routines: kind routine; inputs; log and guide: kind words, id words; C5c: kind program, the program's id
+    "delete_entry": "f8c168792149e65a45797ff53e8cd71e0cb4a2048422daf1bf6b338830f21817",  # routines: kind routine; units; inputs; log and guide: kind words, id words; C5c: kind program, the program's id, the first sentence
     "find_food": "04fec870a886016e15d4081f06587b2e940217de7072c49ed653a7b4b92bda25",  # inputs; log and guide: ids log takes; C3: macros a serving, a meal's items, USDA's a 100 g
     "log_food": "4f5b1cedbfd6b3df92b75adc527153302d1a09ea0ed34f6ed6a2f982c14d9a84",  # inputs; 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words; C3: macros, portion, the food sentence, the day's macros, its goals
     "save_food": "5abd9db8b0490a5f8473b090efcacf20c3dcc1ec3f4dd7484bc26ece3ad95229",  # inputs; log and guide: ids log takes; C3: macros a serving, items; C3 fix: a macro left out is kept
@@ -91,7 +91,8 @@ PUBLISHED = {
     "get_goals": "6d71cb0446594ce9d51a5eaa6719394018946cfa273a49d49a4bf559cc13a391",  # units; inputs
     "import_entries": "1d890d48348660778e2105210bd298c8b5613f69c0981af43f9703b990960cec",  # inputs; exercise list: names, reps
     "save_routine": "2e8a53847d39cf06243d016e94c7753f3b367a361505ce4f07cd58f83d30ff80",  # routines: new; units; inputs; exercise list: reps, help; C4c: help, band; C5a: sets and reps optional; C5b: holds, carries and cardio
-    "get_routines": "74706c8ce888df83097100def3fe0bea991ac739ab205faf093210934260ce41",  # routines: new, R18's words; units; inputs; exercise list: reps; the matcher: exact true; C4c: help; log and guide: sets sent with log; C5a: last, same as last time, sets and reps optional; C5b: log_with, the kinds' plans, cardio's last, last's numbers as they are
+    "save_program": "dbacab901067299e6f69668440e43070e538f2daeaab2417a48b5761ae2c5b8f",  # C5c: new; S1: start_on left out keeps the program's start
+    "get_routines": "e325b099df11dd9f9be27af6ada63a8e1e476a621ba2cb9f10ef2d5af3c6129f",  # routines: new, R18's words; units; inputs; exercise list: reps; the matcher: exact true; C4c: help; log and guide: sets sent with log; C5a: last, same as last time, sets and reps optional; C5b: log_with, the kinds' plans, cardio's last, last's numbers as they are; C5c: the program, today's workout
     "owner_calls": "f0b0b69a5eac257d4d4c83ec83fbee2ec33715c70c7b7b26830bffa02dc2c6a0",  # inputs; log and guide L4: function, caller, all_accounts, a call's account_id
 }
 # switch decision 18; data-on-request.md: DATA_RULE after GOALS_RULE; exercise-list.md C4c: a lift in the person's
@@ -216,7 +217,7 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0015"  # macros
+    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0016"  # programs
 
 
 def test_the_topics_are_a_tuple_in_the_models_and_no_status_is():
@@ -267,8 +268,8 @@ def test_send_feedback_is_published_after_the_nineteen_with_its_words_and_a_key(
     # routines.md: save_routine and get_routines follow it, before the owner's three; data-on-request.md: its two
     # after them.
     listed = [name for name in PUBLISHED if name not in RETIRING]  # log-and-guide.md: the five in no list
-    assert [t["name"] for t in tools] == listed[:16] + ["send_feedback", "save_routine", "get_routines",
-                                                        "what_is_logged", "get_data"] == FUNCTIONS
+    assert [t["name"] for t in tools] == listed[:16] + ["send_feedback", "save_routine", "save_program",
+                                                        "get_routines", "what_is_logged", "get_data"] == FUNCTIONS
     tool = tools[16]
     assert (tool["title"], tool["description"]) == ("Send feedback", described(CAP))
     assert tool["annotations"] == {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False,

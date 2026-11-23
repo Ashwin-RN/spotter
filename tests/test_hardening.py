@@ -756,7 +756,7 @@ def test_get_routines_sends_one_statement_for_its_weights_and_never_calls_histor
 
     monkeypatch.setattr(lifts, "history", never)
     out, seen = statements_of(lambda: services.get_routines(uid))
-    assert "error" not in out and len(seen) == 3
+    assert "error" not in out and len(seen) == 4  # the user, the routines, the program, the weights and last
     assert [sql for sql, _ in seen if "lift_set" in sql and "row_number" in sql.lower()] == \
            [sql for sql, _ in seen if "lift_set" in sql]
 

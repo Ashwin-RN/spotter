@@ -51,7 +51,9 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit])
   restore_entry is what it was, but for one more sentence in not_deleted's fix and the web's refusal above.
 - A routine (contract routines.md) is deleted and restored by id as a saved food is, the two calls included. A
   restore that would make one live past rules.ROUTINES_MAX is too_many_routines, as a save is. It is never edited
-  here and keeps no version: undo_edit on it is nothing_to_undo.
+  here and keeps no version: undo_edit on it is nothing_to_undo. The program (contract routines-and-programs.md,
+  decision 19, R12) is the same, with no cap: a person holds one row ever. A routine's delete, restore or edit never
+  reads the program.
 - A web edit form sends the entry's updated_at as its page drew it (drawn_at, from get_entry). An entry that
   changed since is refused with entry_changed, under the lock, and nothing is saved.
 - Edit, delete and restore are writes: lock_user first, then common.check_write_limit.
@@ -64,7 +66,7 @@ restore_entry(user_id, kind, entry_id[, by, undo_edit])
   3 mi to 3.4 mi"), and sets go through lifts.sets_text; a kg weight, a km distance and a km/h speed keep the
   field's name, as before. A weight in lb or a distance or speed in miles, while the person has not chosen,
   carries units_note. delete_entry's preview and delete carry summary: the entry in one line in the person's units
-  for a session, a weigh-in, a cardio entry and a routine, none for the other kinds.
+  for a session, a weigh-in, a cardio entry, a routine and the program, none for the other kinds.
 - A food entry's macros and portion (contract macros-and-asking.md): protein_g, carbs_g and fat_g, each sent replaces
   the stored one and a null clears it. One mark covers the three (the owner's pick of 2026-11-23, "Stays an
   estimate"): macros_estimated becomes false only when the edit sends every macro the entry holds after it, as the
@@ -86,11 +88,11 @@ from sqlalchemy import Index, select
 from app import db, formatting, links, metrics, rules, users
 from app.log_shape import table_word
 from app.models import (
-    CLAUDE_CAN, IMPORTED, Bodyweight, CardioEntry, Exercise, FoodEntry, Goal, LiftSession, Measurement, Routine,
-    SavedFood, entry_models,
+    CLAUDE_CAN, IMPORTED, Bodyweight, CardioEntry, Exercise, FoodEntry, Goal, LiftSession, Measurement, Program,
+    Routine, SavedFood, entry_models,
 )
 from app.rules import error, quote
-from app.services import body, cardio, food, lifts, measurements, routines
+from app.services import body, cardio, food, lifts, measurements, programs, routines
 from app.services.common import (
     KIND_LABELS, check_by, check_data, check_write_limit, entry_changed, exercises, keep_version, lock_user,
     newest_version, no_account, not_found, owned, pair, put_back, read_version, row_dict, sent, truthy,
@@ -132,7 +134,7 @@ PREVIEW_NOTE = ("Nothing was deleted. Show the person this entry and ask. Send t
                 "only when they say yes.")
 MISMATCH_NOTE = ("That confirm does not match this entry as it stands, so nothing was deleted. Show the person the "
                  "entry and ask again.")
-ROUTINE_LIVE = "Nothing to do: it is live. get_routines shows it."  # not_deleted's fix for a routine
+ROUTINE_LIVE = "Nothing to do: it is live. get_routines shows it."  # not_deleted's fix for a routine or the program
 
 
 def entry_kinds() -> dict[str, type]:
@@ -141,8 +143,8 @@ def entry_kinds() -> dict[str, type]:
 
 
 def _deletable() -> dict[str, type]:
-    """What delete_entry and restore_entry take: every entry kind, a saved food and a routine."""
-    return {**entry_kinds(), "saved_food": SavedFood, "routine": Routine}
+    """What delete_entry and restore_entry take: every entry kind, a saved food, a routine and the program."""
+    return {**entry_kinds(), "saved_food": SavedFood, "routine": Routine, "program": Program}
 
 
 def _readable() -> dict[str, type]:
@@ -174,6 +176,8 @@ def entry_dict(row) -> dict:
         return {**food.food_dict(row), "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None}
     if isinstance(row, Routine):
         return {**routines.routine_dict(row), "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None}
+    if isinstance(row, Program):
+        return {**programs.program_dict(row), "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None}
     return row_dict(row)
 
 
@@ -182,7 +186,7 @@ def _links(row) -> dict:
         return {"goals": links.page("goals")}
     if isinstance(row, SavedFood):
         return {"foods": links.page("foods")}
-    if isinstance(row, Routine):
+    if isinstance(row, (Routine, Program)):
         return {"routines": links.page("routines")}
     return {"day": links.page("day", date=row.date)}
 
@@ -260,8 +264,8 @@ def delete_entry(user_id: int, kind: str, entry_id, by: str | None = None, confi
 
 
 def entry_words(row, today, units=None) -> str | None:
-    """The entry in one line, in the person's units (R14), for delete_entry: a session, a weigh-in, a cardio entry
-    and a routine. None for any other kind."""
+    """The entry in one line, in the person's units (R14), for delete_entry: a session, a weigh-in, a cardio entry,
+    a routine and the program. None for any other kind."""
     if isinstance(row, LiftSession):
         sets = [(x.exercise.name, x.weight_kg, x.reps, x.time_s, x.distance_m)
                 for x in sorted(row.sets, key=lambda x: x.id)]
@@ -273,6 +277,8 @@ def entry_words(row, today, units=None) -> str | None:
     if isinstance(row, Routine):  # routines-and-programs.md C5a: with no lift it places, the name alone
         words = routines.lift_words(json.loads(row.lifts), units=units)
         return f"{row.name}: {words}." if words else f"{row.name}."
+    if isinstance(row, Program):  # routines-and-programs.md, the note of 2026-11-23: words before a yes
+        return programs.program_words(row, today)
     return None
 
 
@@ -301,7 +307,7 @@ def restore_entry(user_id: int, kind: str, entry_id, by: str | None = None, undo
             return not_found(kind)
         if row.deleted_at is None:
             return error("not_deleted", "This entry is not deleted, so there is nothing to restore.",
-                         ROUTINE_LIVE if kind == "routine" else
+                         ROUTINE_LIVE if kind in ("routine", "program") else
                          "Nothing to do: it is live. get_log shows it on its day. To undo its last edit, send "
                          "undo_edit true.")
         if kind == "routine" and routines.live_count(s, user_id) >= rules.ROUTINES_MAX:
@@ -342,6 +348,9 @@ def _undo_edit(s, model, kind: str, user_id: int, entry_id, by) -> dict:
     if kind == "routine":  # a replace keeps no version (decision 6): said again, it is back
         return error("nothing_to_undo", "A routine has no earlier values kept.",
                      "Save it again with save_routine, as it was.")
+    if kind == "program":  # the same: a save replaces it and keeps no version (R12)
+        return error("nothing_to_undo", "A program has no earlier values kept.",
+                     "Save it again with save_program, as it was.")
     version = newest_version(s, row)
     editor = "save_food" if kind == "saved_food" else "edit_entry"
     if version is None:
@@ -493,6 +502,8 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
     if kind == "routine":
         return error("unknown_kind", "A routine is not edited here.",
                      "Use save_routine with the same name and the whole routine.")
+    if kind == "program":
+        return error("unknown_kind", "A program is not edited here.", "Use save_program with the whole program.")
     if not (isinstance(kind, str) and kind in EDITABLE):
         return error("unknown_kind", f"'{quote(kind)}' is not a kind of entry that can be edited.",
                      f"Use one of: {', '.join(EDITABLE)}.")

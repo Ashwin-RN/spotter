@@ -472,6 +472,25 @@ def test_the_other_paths(make_user):
     for n in range(19):
         services.save_routine(user.id, {"name": f"Day {n}", "lifts": push[1:]}, "claude")
     say("routine cap", services.save_routine(user.id, {"name": "One more", "lifts": push}, "claude"), "One more")
+    # The program (routines-and-programs.md C5c): saved, replaced over two blocks, the same again, its delete's preview,
+    # deleted and brought back, the three refusals by id, and a save refused on every check. Its name is the person's
+    # own text, and get_routines below reads it.
+    ppl = {"name": "PPL", "blocks": [{"weeks": 8, "days": [{"weekday": "monday", "routine": "Push day"}]}]}
+    plan = say("save_program", services.save_program(user.id, ppl, "claude"), "PPL")
+    split = {**ppl, "blocks": [{"weeks": 4, "days": ppl["blocks"][0]["days"]},
+                               {"weeks": 1, "days": [{"weekday": "friday", "routine": "Day 1"}]}]}
+    say("save_program replaced", services.save_program(user.id, split, "claude"), "PPL", "Day 1")
+    say("save_program same", services.save_program(user.id, split, "claude"), "PPL")
+    say("program preview", services.delete_entry(user.id, "program", plan["id"], "claude"), "PPL", "Day 1")
+    say("delete program", services.delete_entry(user.id, "program", plan["id"]), "PPL", "Day 1")
+    say("save_program back", services.save_program(user.id, ppl, "claude"), "PPL")
+    say("program undo", services.restore_entry(user.id, "program", plan["id"], "claude", undo_edit=True))
+    say("program edit", services.edit_entry(user.id, "program", plan["id"], {"name": "x"}, "claude"))
+    say("program live", services.restore_entry(user.id, "program", plan["id"], "claude"))
+    say("save_program refused", services.save_program(user.id, {
+        "name": "PPL", "start_on": "2099-01-05", "blocks": [{"weeks": 60, "days": [
+            {"weekday": "weds", "routine": "pul day"}, {"weekday": "monday", "routine": "pul day"},
+            {"weekday": "Monday", "routine": "Push day"}]}]}, "claude"), "pul day", "weds", 60)
     every_read(seen, user.id)
     texts_seen = seen.texts()
     assert any(t.startswith("Replaced the ") and "weigh-in of 80.5 kg" in t for t in texts_seen)
@@ -481,6 +500,8 @@ def test_the_other_paths(make_user):
     assert "Weigh-in: nothing changed. Every value given is already stored." in texts_seen
     assert "Roti" in str(roti["summary"]) and ", 40 g a serving." in roti["summary"]
     assert "1 saved food, 1 deleted." in texts_seen
+    # The program on the file's fixed Tue 10 Nov: running, a rest day, the next routine named (routines-and-programs.md)
+    assert any(t.startswith("PPL, week 1 of 8. Today is a rest day. Next: Push day on Mon 16 Nov.") for t in texts_seen)
     assert ("Cardio entry changed: distance_km set to 4. avg_hr set to 118. speed_kmh set to 5.3, worked out from "
             "distance and minutes.") in texts_seen   # filled where it was empty: never Python's None
     assert "Measurement changed: value from 84.25 cm to 84.34 cm." in texts_seen

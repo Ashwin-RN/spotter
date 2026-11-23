@@ -10,7 +10,10 @@
    incline, speed, heart rate and machine calories, from routines.page_read's plans) and Last time (the day,
    then the sets or the session as get_routines' last words say them, or "Not logged yet."), from
    web.routine_rows, every number through app.formatting. An item get_routines leaves out shows its line under the
-   table. Under the cards, how each weight is chosen. No routines: a dashed card. #}
+   table. Under the cards, how each weight is chosen. No routines: a dashed card. The program card (C5c) above
+   them, drawn with or without a live routine: h2 the program's name with Delete beside it, then web.program_card's
+   lines: running, the week line, this week's days as a Day (td.lead) and Routine table with today's row marked by
+   a tag, the next routine day and any routine not saved now; not started or ended, get_routines' own words. #}
 <div class="page-head">
   <h1>Routines</h1>
   <p class="lede">Workouts you do often, saved by name. Say "log my push day" and your assistant logs its sets. Routines are saved by talking to your assistant.</p>
@@ -20,6 +23,37 @@
 {{ parts.undo_strip(strip.words, "/routines/" ~ strip.undo ~ "/restore", csrf_token) }}
 {% elif strip %}
 {{ parts.saved_line(strip.words) }}
+{% endif %}
+
+{% if program %}
+<section class="card saved-foods program" aria-labelledby="program-{{ program.id }}-title">
+  <div class="card-head">
+    <h2 id="program-{{ program.id }}-title">{{ program.name }}</h2>
+    <form method="post" action="/routines/program/{{ program.id }}/delete" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="link" aria-describedby="program-{{ program.id }}-title">Delete</button>
+      <input type="hidden" name="key" value="{{ form_key() }}">
+    </form>
+  </div>
+  {% for line in program.lines %}
+  <p class="muted">{{ line }}</p>
+  {% endfor %}
+  {% if program.days %}
+  <div class="table-wrap">
+    <table class="rows" aria-labelledby="program-{{ program.id }}-title">
+      <thead><tr><th scope="col">Day</th><th scope="col">Routine</th></tr></thead>
+      <tbody>
+        {% for d in program.days %}
+        <tr{% if d.today %} aria-current="date"{% endif %}><td class="lead">{{ d.day }}{% if d.today %} <span class="tag">Today</span>{% endif %}</td><td data-label="Routine">{{ d.routine }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% for line in program.after %}
+  <p{% if not loop.first %} class="small"{% endif %}>{{ line }}</p>
+  {% endfor %}
+</section>
 {% endif %}
 
 {% if routines %}

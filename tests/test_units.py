@@ -820,7 +820,7 @@ def test_0011_adds_the_two_columns_on_sqlite_and_comes_down_leaving_no_other_cha
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0011").down_revision == "0010" and script.get_current_head() == "0015"  # macros
+    assert script.get_revision("0011").down_revision == "0010" and script.get_current_head() == "0016"  # programs
 
 
 # ---------------------------------------------------------------- the six eval cases (decision 20)

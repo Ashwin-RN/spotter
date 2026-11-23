@@ -22,7 +22,8 @@ from app.models import FoodEntry, SavedFood, UsdaFood, User
 
 from .conftest import alembic_config
 from .test_hardening_schema import (
-    _agree, _ids, _insert, _key_check, _master, _plain, _refused, _sqlite_at, _taken, _version, write_everything,
+    _agree, _ids, _insert, _key_check, _master, _plain, _refused, _sqlite_at, _taken, _version, before_0016,
+    write_everything,
 )
 
 UP, DOWN = "0015", "0014"
@@ -115,7 +116,7 @@ def test_0015_follows_0014_and_is_the_head():
     migration = _migration()
     assert migration.revision == UP and migration.down_revision == DOWN
     script = ScriptDirectory.from_config(alembic_config("sqlite://"))
-    assert script.get_current_head() == UP and script.get_revision(UP).down_revision == DOWN
+    assert script.get_current_head() == "0016" and script.get_revision(UP).down_revision == DOWN  # 0016 follows it
 
 
 def test_the_migration_s_lists_are_the_contract_s():
@@ -140,7 +141,7 @@ def test_0015_up_down_and_up_over_rows_of_every_kind_with_each_new_column_set(mo
         assert {t: len(rows) > 0 for t, rows in at_head.items()} == {t: True for t in at_head}  # every table
         for table, values in SET.items():
             assert [{k: r[k] for k in values} for r in at_head[table]] == [values] * len(at_head[table]), table
-        assert _key_check(engine) == [] and _agree(engine) == []
+        assert _key_check(engine) == [] and before_0016(_agree(engine)) == []
         command.downgrade(cfg, DOWN)
         assert _version(engine) == DOWN
         at_0014 = _named(engine)
@@ -153,7 +154,7 @@ def test_0015_up_down_and_up_over_rows_of_every_kind_with_each_new_column_set(mo
             command.upgrade(cfg, UP)
             assert _version(engine) == UP
             assert _named(engine) == _with(at_head, EMPTY)  # every row back, each new column empty, no macro read
-            assert _key_check(engine) == [] and _agree(engine) == []
+            assert _key_check(engine) == [] and before_0016(_agree(engine)) == []
             assert _master(engine) == master_head  # the rebuilt tables come back word for word
             command.downgrade(cfg, DOWN)
             assert _named(engine) == at_0014 and _key_check(engine) == []

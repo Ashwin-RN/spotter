@@ -264,6 +264,8 @@ CALLABLE = ["whoami", "list_exercises",
             "send_feedback",  # feedback.md decision 2: the twentieth, after the nineteen
             "save_routine", "get_routines",  # routines.md R10: after send_feedback
             "what_is_logged", "get_data"]  # data-on-request.md: after get_routines
+# routines-and-programs.md, the note of 2026-11-23: save_program right after save_routine, the two writes together
+CALLABLE.insert(CALLABLE.index("save_routine") + 1, "save_program")
 # What everyone's list publishes: every callable function but the five.
 FUNCTIONS = [name for name in CALLABLE if name not in RETIRING]
 # The functions each run one service of their own name: all but log and guide, whose work is the kind's own step and
@@ -275,7 +277,8 @@ READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": 
 WRITE_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 SETTING_HINTS = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 # Was {"update_settings", "save_food", "import_entries"}: the import is a write, as the log functions are.
-SETTINGS = {"update_settings", "save_food", "save_routine"}  # idempotent: the same call twice ends in the same state
+# idempotent: the same call twice ends in the same state
+SETTINGS = {"update_settings", "save_food", "save_routine", "save_program"}
 DELETE_HINTS = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 DELETES = {"delete_entry"}
 
@@ -456,6 +459,10 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("save_routine", push)  # created
     keep("save_routine", push)  # the same again: nothing changed
     keep("get_routines")  # one: Bench Press from today's session, Dip with no weight at all
+    ppl = {"name": "PPL", "blocks": [{"weeks": 4, "days": [{"weekday": "monday", "routine": "Push day"}]}]}
+    keep("save_program", ppl)  # created (routines-and-programs.md)
+    keep("save_program", ppl)  # the same again: nothing changed
+    keep("get_routines")  # with the program
     # A fourth person, who never chose units, says pounds and miles (units.md R7): each write carries units_note,
     # and a delete's preview its summary.
     lb_token = sign(claims(sub="user_01POUNDS", email="pounds@example.com", name="Pounds"))
@@ -990,6 +997,7 @@ OPTIONAL_ARGUMENTS = {
     "import_entries": {"dry_run": False, "weight_unit": "lb", "distance_unit": "mi", "length_unit": "in"},
     "send_feedback": {"doing": "Doing", "expected": "Expected", "happened": "Happened", "topic": "pages"},
     "save_routine": {},  # routines.md: name and lifts are required, and a lift's weight_kg sits inside lifts
+    "save_program": {"start_on": "2026-01-05"},  # routines-and-programs.md: name and blocks are required
     "get_routines": {},
     "what_is_logged": {},  # data-on-request.md: no arguments
     "get_data": {"fields": ["kcal"], "filters": {"meal": "lunch"}, "from_date": "2026-01-02", "to_date": "2026-01-03",
@@ -1015,9 +1023,11 @@ REQUIRED = {"log": {"kind": "lifts"},
                                          "minutes": 30.0, "distance": 3.1, "speed": 6.2}]},
             "send_feedback": {"text": "Text"},
             "save_routine": {"name": "Push day", "lifts": [{"exercise": "Bench Press", "sets": 3, "reps": 8}]},
+            "save_program": {"name": "PPL", "blocks": [{"weeks": 8, "days": [{"weekday": "monday",
+                                                                              "routine": "Push day"}]}]},
             "get_data": {"area": "food"}}
 DATA_WRITES = {"log_lifts", "log_bodyweight", "set_goal", "update_settings", "log_measurement", "log_food",
-               "save_food", "log_cardio", "import_entries", "save_routine"}
+               "save_food", "log_cardio", "import_entries", "save_routine", "save_program"}
 
 
 def spy_on_services(monkeypatch) -> dict[str, tuple]:
@@ -1395,7 +1405,8 @@ CONTRACT_NEEDS = {
     "get_trends": "read", "get_goals": "read",
     "import_entries": "log",
     "send_feedback": "log",  # feedback.md decision 3
-    "save_routine": "log", "get_routines": "read",  # routines.md decisions 5 and 7
+    "save_routine": "log", "save_program": "log",  # routines.md decision 5; routines-and-programs.md R11
+    "get_routines": "read",  # routines.md decision 7
     "what_is_logged": "read", "get_data": "read",  # data-on-request.md: two reads
 }
 ALLOWS = {"log": {"read", "log"}, "log_delete": {"read", "log", "log_delete"}}  # switch decision 1: two settings

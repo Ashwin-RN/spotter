@@ -90,13 +90,16 @@ pair, on a look_alike case only: the id of the incidental case it is paired with
 seed, rows created for the person before the run, through Spotter's own services, in order:
 
   {"as": "roti", "service": "save_food" | "log_bodyweight" | "log_measurement" | "log_lifts" | "log_cardio" |
-   "set_goal" | "import_entries" | "save_routine" | "update_settings" | "log_food", "data": {...}}
+   "set_goal" | "import_entries" | "save_routine" | "update_settings" | "log_food" | "save_program", "data": {...}}
                                     import_entries returns no one id: no "as".
                                     update_settings (contract units.md R20) sets the person's own settings, such
                                     as weight_unit lb; it returns no id either: no "as".
                                     log_food (contract macros-and-asking.md) logs a day's food, macros and all, as
                                     the web logs it; it returns ids, not one id: no "as". An estimate seeded needs
                                     its portion, as any estimate does.
+                                    save_program (contract routines-and-programs.md, R15) saves the person's
+                                    program; each day names a routine seeded before it, and its weekdays are
+                                    {{weekday:N}} placeholders, so a case never depends on the real weekday.
   {"service": "four_weeks"}         a seed that takes no data: four weeks of everything, three goals
                                     (evals/four_weeks.py). No "as": it returns no one id.
   {"service": "sixteen_weeks"}      the same kind: a year of weigh-ins, sixteen weeks of lifts, food, cardio
@@ -116,7 +119,8 @@ db, checks on the person's rows after the run:
   A lift_session row carries set_count: how many sets it holds (evals/run.py's person_rows counts them). A
   routine row carries lift_count: how many lifts its lifts JSON holds. A saved_food row carries item_count: how many
   foods its items JSON holds, 0 for a plain food (contract macros-and-asking.md: a saved meal is a saved food with
-  items). A food_entry row holds protein_g, carbs_g, fat_g, macros_estimated and portion, each null when not logged. A lift_set row is one set of the person's
+  items). A program row carries week_count and day_count: the weeks and the training days of its blocks JSON, each
+  added over every block, beside its start_on (contract routines-and-programs.md, R15). A food_entry row holds protein_g, carbs_g, fat_g, macros_estimated and portion, each null when not logged. A lift_set row is one set of the person's
   (contract exercise-list.md, C4g): exercise (the lift's name), weight_kg, reps, time_s, distance_m, set_number,
   session_id, and its session's date and deleted_at, so a set of a deleted session reads as deleted.
 
@@ -132,9 +136,10 @@ kind is read as its table word (log_shape.table_word), so lifts and lift_session
 call as sent: routing is the judge's alone.
 
 Placeholders, as a whole string: "{{today}}" and "{{yesterday}}" (the person's own dates, YYYY-MM-DD),
-"{{days_ago:N}}" (N from 0 to DAYS_AGO, 60: the day N days before today), and "{{next_month_end:N}}" (N from 1 to
-12: the last day of month N, the next one strictly after today in the person's zone), anywhere in seed, expect and
-db; "{{seed.<as>}}" (the id of the seeded row) in
+"{{days_ago:N}}" (N from 0 to DAYS_AGO, 60: the day N days before today), "{{next_month_end:N}}" (N from 1 to
+12: the last day of month N, the next one strictly after today in the person's zone), and "{{weekday:N}}" (N from 0
+to WEEKDAY_N, 6: the weekday N days after today, in lower case, such as tuesday: contract routines-and-programs.md,
+R15), anywhere in seed, expect and db; "{{seed.<as>}}" (the id of the seeded row) in
 expect and db, and in the data of a seed that comes after the one it names. A seed that names an "as" no
 earlier seed gave is a problem when the cases are loaded, and so is any other name, or an N out of its range.
 resolve() replaces them before seeding and before judging.
@@ -166,19 +171,21 @@ DATA_READS = ("what_is_logged", "get_data", "get_log", "get_progress", "get_tren
 # Spotter's writes, as app/services/common.py's WRITE_FUNCTIONS names them (a test holds the two equal). A case
 # whose must holds one is a logging case: the release bar of the contract's exit check 6.
 WRITE_FUNCTIONS = ("log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "save_routine",
-                   "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry", "restore_entry",
-                   "import_entries", "send_feedback")
+                   "save_program", "log_cardio", "set_goal", "update_settings", "edit_entry", "delete_entry",
+                   "restore_entry", "import_entries", "send_feedback")
 DAYS_AGO = 60  # {{days_ago:N}} for N from 0 to this (evals/run.py's dates_for gives them)
+WEEKDAY_N = 6  # {{weekday:N}} for N from 0 to this: the weekday N days after today (routines-and-programs.md, R15)
 DB_KEYS = {"table", "state", "where", "count", "all", "rows"}
 DB_STATES = ("live", "deleted")
 SWITCHES = ("log", "log_delete")
 # update_settings: units.md R20. log_food: macros-and-asking.md, a day's food with its macros, seeded as the web logs it.
+# save_program: routines-and-programs.md R15, the person's program, its days naming routines seeded before it.
 SEED_SERVICES = {"save_food", "log_bodyweight", "log_measurement", "log_lifts", "log_cardio", "set_goal",
-                 "import_entries", "edit_entry", "save_routine", "update_settings", "log_food"}
+                 "import_entries", "edit_entry", "save_routine", "update_settings", "log_food", "save_program"}
 EDIT_SEED_KEYS = {"kind", "entry_id", "changes"}  # an edit_entry seed's data: see seed_service
 NO_DATA_SERVICES = {"four_weeks", "sixteen_weeks"}  # called as seed_service(name)(user_id): see seed_service
 DB_TABLES = {"food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "lift_set",
-             "goal", "feedback", "routine"}
+             "goal", "feedback", "routine", "program"}
 _PLACEHOLDER = re.compile(r"^\{\{\s*([a-z_]+(?:\.[A-Za-z0-9_]+|:[0-9]+)?)\s*\}\}$")
 
 
@@ -288,8 +295,10 @@ def _placeholder_problems(value: Any) -> list[tuple[str, str]]:
             continue
         if base == "next_month_end" and n and 1 <= int(n) <= 12:
             continue
-        out.append((name, {"days_ago": f"N runs from 0 to {DAYS_AGO}", "next_month_end": "N runs from 1 to 12"}.get(
-            base, "no such name")))
+        if base == "weekday" and n and 0 <= int(n) <= WEEKDAY_N:
+            continue
+        out.append((name, {"days_ago": f"N runs from 0 to {DAYS_AGO}", "next_month_end": "N runs from 1 to 12",
+                           "weekday": f"N runs from 0 to {WEEKDAY_N}"}.get(base, "no such name")))
     return out
 
 
@@ -892,7 +901,8 @@ def _rows_text(rows: list[dict]) -> str:
             "servings", "protein_g", "carbs_g", "fat_g", "macros_estimated", "portion", "name", "serving_label",
             "kcal_per_serving", "protein_g_per_serving", "carbs_g_per_serving", "fat_g_per_serving", "item_count",
             "items", "minutes", "exercise_id", "estimated_kcal", "id", "status", "target_value", "target_date",
-            "set_count", "lift_count", "exercise", "weight_kg", "reps", "time_s", "distance_m", "session_id")
+            "set_count", "lift_count", "exercise", "weight_kg", "reps", "time_s", "distance_m", "session_id",
+            "start_on", "week_count", "day_count")  # a program's (routines-and-programs.md, R15)
     return "; ".join(json.dumps({k: r[k] for k in keep if k in r}) for r in rows)
 
 

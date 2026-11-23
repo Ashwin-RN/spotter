@@ -38,7 +38,7 @@ CASES = ["data_basketball", "data_lifting", "data_calories", "data_squat_goal", 
 # log first, as the no-write cases list it (log-and-guide.md: log joined every write list by script).
 W = ["log", "log_lifts", "log_bodyweight", "log_measurement", "log_food", "save_food", "log_cardio", "set_goal",
      "update_settings", "edit_entry", "restore_entry", "delete_entry", "import_entries", "send_feedback",
-     "save_routine"]
+     "save_routine", "save_program"]  # routines-and-programs.md: save_program, which the eight cases' lists gain
 
 
 @pytest.fixture

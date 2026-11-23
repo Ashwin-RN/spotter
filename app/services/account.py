@@ -81,7 +81,7 @@ from sqlalchemy import delete, func, select, update
 from app import db, exercises as exercise_list, formatting, links, rules, users
 from app.models import (
     CLAUDE_CAN, EXERCISE_KINDS, IMPORTED, Bodyweight, CallLog, CardioEntry, Exercise, FoodEntry, Goal, LiftSession,
-    LiftSet, Measurement, Routine, SavedFood, User, entry_models,
+    LiftSet, Measurement, Program, Routine, SavedFood, User, entry_models,
 )
 from app.rules import error, quote
 from app.services.common import check_by, check_data, check_write_limit, lock_user, no_account, truthy
@@ -356,7 +356,7 @@ def set_claude_can(user_id: int, value) -> dict:
 
 # ---------------------------------------------------------------- deleting the account
 
-OWNED = (LiftSession, Bodyweight, Measurement, Goal, SavedFood, FoodEntry, CardioEntry, Routine)
+OWNED = (LiftSession, Bodyweight, Measurement, Goal, SavedFood, FoodEntry, CardioEntry, Routine, Program)
 
 
 def delete_account(user_id: int) -> dict:

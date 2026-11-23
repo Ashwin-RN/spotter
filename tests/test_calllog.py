@@ -163,10 +163,15 @@ MARKED_CALLS = [
     # A routine's name and a lift's exercise: refused, the marker is no lift on the list (routines.md).
     ("save_routine", {"name": MARKER, "lifts": [{"exercise": MARKER, "sets": 3, "reps": 8}]}),
     ("get_routines", {}),
+    # A program's name, its start and a day's weekday and routine (routines-and-programs.md): refused, the marker is
+    # no date.
+    ("save_program", {"name": MARKER, "start_on": MARKER, "blocks": [{"weeks": 4, "days": [
+        {"weekday": MARKER, "routine": MARKER}]}]}),
     # get_data's text arguments (data-on-request.md): refused, the marker is no area.
     ("get_data", {"area": MARKER, "from_date": MARKER, "to_date": MARKER, "order": MARKER, "cursor": MARKER}),
 ]
-REFUSED = 22  # the marked calls the services refuse. Was 17, before save_routine; 18 before get_data; 19 before log
+REFUSED = 23  # the marked calls the services refuse. Was 17, before save_routine; 18 before get_data; 19 before log;
+# 22 before save_program
 
 
 def string_fields(schema: dict) -> set[str]:

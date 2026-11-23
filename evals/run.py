@@ -37,7 +37,7 @@ from evals.recorder import CallRecorder
 
 RUN_TIMEOUT = 300  # seconds per CLI run: 180 until 2026-11-17, when two data runs were cut off mid-answer
 TABLES = ("food_entry", "saved_food", "bodyweight", "measurement", "cardio_entry", "lift_session", "goal",
-          "feedback", "routine")
+          "feedback", "routine", "program")
 
 # Set by the Claude Code session this may be started from. They make a child CLI think it is part of that
 # session (or point it at its IDE and messaging sockets), so they are dropped: each run then is what it
@@ -132,6 +132,7 @@ EFFORTS = {"claude": ("low", "medium", "high", "xhigh", "max"),
            "codex": ("low", "medium", "high", "xhigh", "max", "ultra"),
            "gemini": ("minimal", "low", "medium", "high", "xhigh")}
 DAYS_AGO = judge.DAYS_AGO  # {{days_ago:N}} for N from 0 to this
+WEEKDAY_N = judge.WEEKDAY_N  # {{weekday:N}} for N from 0 to this
 # The reason a case with a second turn (then) fails on Codex or Gemini, unrun: their runners send one message a
 # conversation, and a first turn alone is no run of the case.
 TWO_TURNS_UNSENT = "{client} sends one message a conversation, so this case's second turn cannot be sent: failed, not run"
@@ -237,14 +238,23 @@ def next_month_end(today: dt.date, month: int) -> dt.date:
     raise AssertionError("unreachable")
 
 
-def dates_for(zone: str) -> dict[str, str]:
-    """The placeholders' dates for a person in this zone: today, yesterday, days_ago:0 to :60, next_month_end:1 to
-    :12."""
-    today = dt.datetime.now(zoneinfo.ZoneInfo(zone)).date()
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")  # date.weekday()'s order
+
+
+def dates_on(today: dt.date) -> dict[str, str]:
+    """The placeholders' dates on this today: today, yesterday, days_ago:0 to :60, next_month_end:1 to :12, and
+    weekday:0 to :6, the weekday N days after today in lower case, as save_program takes it (contract
+    routines-and-programs.md, R15), so a schedule case never depends on the real weekday."""
     dates = {"today": today.isoformat(), "yesterday": (today - dt.timedelta(days=1)).isoformat()}
     dates.update({f"days_ago:{n}": (today - dt.timedelta(days=n)).isoformat() for n in range(DAYS_AGO + 1)})
     dates.update({f"next_month_end:{m}": next_month_end(today, m).isoformat() for m in range(1, 13)})
+    dates.update({f"weekday:{n}": WEEKDAYS[(today + dt.timedelta(days=n)).weekday()] for n in range(WEEKDAY_N + 1)})
     return dates
+
+
+def dates_for(zone: str) -> dict[str, str]:
+    """The placeholders' dates for a person in this zone: dates_on the person's today."""
+    return dates_on(dt.datetime.now(zoneinfo.ZoneInfo(zone)).date())
 
 
 # A bearer token's shape (a JWT: three base64url parts, the first from '{"'), masked in a text a run raised even when
@@ -401,7 +411,9 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
     case can check, from the running settings' database. Dates and times come back as ISO strings. A
     lift_session row also carries set_count: how many lift_set rows it holds (0 for none), from one counted
     query over all of the person's sessions. A routine row carries lift_count: how many lifts its lifts JSON holds,
-    and a saved_food row item_count: how many foods its items JSON holds, 0 for a plain food (macros-and-asking.md).
+    a saved_food row item_count: how many foods its items JSON holds, 0 for a plain food (macros-and-asking.md),
+    and a program row week_count and day_count: the weeks and the training days of its blocks JSON, each added over
+    every block (routines-and-programs.md, R15).
     lift_set, which has no user_id of its own, is every set of the person's sessions, one row a set (contract
     exercise-list.md, C4g): its id, session_id, set_number, exercise (the lift's name), weight_kg, reps, time_s and
     distance_m, with its session's date and deleted_at, so a set of a deleted session reads as deleted. A goal row
@@ -438,6 +450,10 @@ def person_rows(user_id: int) -> dict[str, list[dict]]:
         row["lift_count"] = len(json.loads(row["lifts"]))
     for row in found["saved_food"]:
         row["item_count"] = len(json.loads(row["items"])) if row.get("items") else 0
+    for row in found["program"]:
+        blocks = json.loads(row["blocks"])
+        row["week_count"] = sum(block["weeks"] for block in blocks)
+        row["day_count"] = sum(len(block["days"]) for block in blocks)
     return found
 
 

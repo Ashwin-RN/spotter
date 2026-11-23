@@ -14,8 +14,9 @@ from evals.four_weeks import four_weeks
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
 BOM = "\ufeff"
 FILES = ["account.csv", "lift_sessions.csv", "lift_sets.csv", "bodyweight.csv", "measurements.csv", "goals.csv",
-         "saved_foods.csv", "routines.csv", "food_entries.csv", "cardio_entries.csv", "entry_versions.csv",
-         "feedback.csv", "README.txt"]  # routines.md decision 14: routines.csv after saved_foods.csv
+         "saved_foods.csv", "routines.csv", "programs.csv", "food_entries.csv", "cardio_entries.csv",
+         "entry_versions.csv", "feedback.csv", "README.txt"]  # routines.md decision 14: routines.csv after
+# saved_foods.csv; routines-and-programs.md decision 20: programs.csv after routines.csv
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +45,8 @@ def one_of_everything(user_id: int) -> dict:
                                      "web")["id"]
     ids["routine"] = services.save_routine(user_id, {"name": "Push day", "lifts": [
         {"exercise": "Bench Press", "sets": 3, "reps": 8, "weight_kg": 60}]}, "claude")["id"]  # one in routines.csv
+    ids["program"] = services.save_program(user_id, {"name": "PPL", "blocks": [{"weeks": 4, "days": [
+        {"weekday": "monday", "routine": "Push day"}]}]}, "claude")["id"]  # one in programs.csv
     ids["food"] = services.log_food(user_id, {"entries": [{"saved_food_id": ids["roti"], "servings": 2},
                                                           {"description": "dal, with \"ghee\"", "kcal": 180,
                                                            "estimated": True, "portion": "a bowl"}]},
@@ -63,8 +66,9 @@ def test_every_table_and_every_file(make_user):
     assert list(r["files"]) == FILES and list(r["rows"]) == FILES[:-1]
     assert r["rows"] == {"account.csv": 1, "lift_sessions.csv": 1, "lift_sets.csv": 2, "bodyweight.csv": 2,
                          "measurements.csv": 2, "goals.csv": 1, "saved_foods.csv": 1, "routines.csv": 1,
-                         "food_entries.csv": 2, "cardio_entries.csv": 1, "entry_versions.csv": 1, "feedback.csv": 1}
-    assert r["summary"] == "16 rows in 12 CSV files, deleted rows included, times in UTC."
+                         "programs.csv": 1, "food_entries.csv": 2, "cardio_entries.csv": 1, "entry_versions.csv": 1,
+                         "feedback.csv": 1}
+    assert r["summary"] == "17 rows in 13 CSV files, deleted rows included, times in UTC."
     account = table(r["files"]["account.csv"])
     assert account == [{"account_id": str(user.id), "email": "asha@example.com", "name": "Asha",
                         "time_zone": "Asia/Kolkata", "weight_unit": "", "distance_unit": "",  # units.md R19
