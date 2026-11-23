@@ -499,7 +499,7 @@ def test_a_meal_refuses_an_estimate_a_meal_inside_it_its_own_sums_and_a_count_ou
     one = {"saved_food_id": roti}
     cases = [
         ([one, {"description": "Rice", "kcal": 200, "estimated": True}], "invalid_field", "Item 2: estimated was sent.",
-         "Ask the person for the food's kcal, or save it with save_food first. Nothing was saved."),
+         "If the kcal is the person's own, send the item without estimated; else ask them for it. Nothing was saved."),
         ([one, {"saved_food_id": meal["id"]}], "invalid_field", "Item 2 is a saved meal itself.",
          "Send that meal's foods as items instead."),
         ([one], "invalid_field", "items holds 1; a meal needs 2 to 30.",
@@ -628,8 +628,8 @@ def test_save_food_takes_a_meal_through_mcp_and_its_item_s_unknown_key_is_named(
                                                                       {"description": "Rice", "kcal": 200,
                                                                        "estimated": True}]})
     assert refused["message"] == "Item 2: 'estimated' is not a field of a meal's item."
-    assert refused["fix"].endswith(" Ask the person for the food's kcal, or save it with save_food first. Nothing "
-                                   "was saved.")
+    assert refused["fix"].endswith(" If the kcal is the person's own, send the item without estimated; else ask "
+                                   "them for it. Nothing was saved.")
     logged = ok(http, token, "log", {"kind": "food", "details": {"entries": [{"saved_food_id": meal["id"]}]}})
     assert logged["entries"][0]["kcal"] == 420 and logged["entries"][0]["source"] == "saved_food"
 

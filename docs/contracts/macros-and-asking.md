@@ -344,3 +344,22 @@ No merge, deploy or eval run without the owner's word.
 Still to come on `main`: C5c, after C3's merge and its migration `0015`; the five old log functions are removed last.
 
 No merge, deploy or eval run without the owner's word.
+
+## Note, 2026-11-23: the review, the owner's two picks and the fix round
+
+C3 as built (`04c0668`, P1 to P6) was reviewed on a frozen copy: one must fix, two should fix, two minor. The fix round is `a80f42e`, re-checked on a frozen copy because the review had a must fix: clean, no must fix. Its one should fix, the meal item refusal's words, was reworded after it (row 4). This note wins over the sections above and the notes before it where they differ.
+
+| # | Point | As built now |
+|---|---|---|
+| 1 | The review's must fix: a `save_food` with only the old three fields cleared a saved food's macros, and a meal's name saved that way dropped its foods | A save over a saved food keeps a macro a serving left out, and a null clears one (`not_sent()`, as `update_settings`'s targets). A save of a live meal's name with no `items` is refused: "Send the meal's foods as items to change it, or give another name. Nothing was saved." A deleted food brought back plain takes only the macros sent. This replaces the row "The old `save_food`, three fields required" and the saved meal's "Edited" row. `grams_per_serving` still clears when left out, as on `main`: tracked, not changed |
+| 2 | "Marks, edits and the confirm tap", the row "`edit_entry` sends any macro"; model-read text row 5 | The owner's pick of 2026-11-23, "Stays an estimate": one mark covers the three macros, so it becomes false only when the edit sends every macro the entry holds after it, as the confirm tap does. An edit of fewer replaces what it sends and leaves the mark as it was. The edit page sends every held macro once one changes, so a page edit marks them the person's own. `edit_entry`'s words: "and macros become their own grams when every one held is sent." |
+| 3 | The goal line: "An estimate is never written without the portion the person ate" | The owner's pick of 2026-11-23, "Keep as built": the portion is needed when the kcal is an estimate (decision 6 as written). A stated kcal with estimated macros, such as a label's kcal with the assistant's protein, needs none: the label is the serving |
+| 4 | An estimated meal item's refusal | Its fix no longer says to log the food as an entry of its own, which would write food nobody ate: "If the kcal is the person's own, send the item without estimated; else ask them for it. Nothing was saved." It asked for a kcal already given when an item carried estimated false, and its "save it with save_food first" let an estimate be stored with no mark (the re-check; reworded on the owner's word of 2026-11-23) |
+| 5 | "Every number is stored at 1 dp" | A USDA food's protein, carbs and fat a 100 g are kept at 2 dp, as its kcal is; an entry's grams are rounded to 1 dp after the scaling. A 150 g banana gives 1.6 g protein, not 1.7 |
+| 6 | Photos: "A test pins that no input schema has a field of type bytes or a `contentEncoding`" | The test was missing from P2; the fix round adds it (`tests/test_macros.py`) |
+| 7 | Migration 0015's rules, "each from 0 to 100,000" | The food and saved food grams are `>= 0 AND <= 100000`; the three daily goals are `> 0 AND <= 100000`, as `calorie_target_kcal`'s rule is |
+| 8 | The `save_meal` case | It says "save my usual lunch as a meal: 2 rotis and a bowl of dal" |
+| 9 | Hashes moved in the fix round | `save_food` and `edit_entry`, printed from the built server and pinned in `tests/test_feedback.py` and `tests/test_inputs.py`. The setup text is still 4,084 characters |
+| 10 | The Postgres check | On the owner's word of 2026-11-23, `0015` runs once more on a local Postgres at the final commit, up, down, up over a written row; the run of 2026-11-21 was on the same file by the session's record, without a byte copy at the minute of the run |
+
+No merge, deploy or eval run without the owner's word.
