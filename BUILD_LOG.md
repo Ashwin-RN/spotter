@@ -1738,3 +1738,25 @@ Every passing run was `whoami`, `guide`, `log`, and the judge read each `log` ca
 ### What is left
 
 Log and guide is complete with this deploy.
+
+## The mascot icon: Spots in the favicon set
+
+The owner's pick of 2026-11-24. The three favicon files change from the dumbbell mark to Spots, the mascot: a
+cheetah's head with a striped sweatband, blowing a whistle, on red.
+
+| File in `app/static/` | What it holds now |
+|---|---|
+| `favicon.svg` | The icon as vector, 22 shapes, no script, style or outside address |
+| `favicon.ico` | The same, 32 by 32 |
+| `apple-touch-icon.png` | The same, 180 by 180 |
+
+No template, link, page text or model-read text changes. The names, sizes and links stay as stage 6 fixed them, and
+its contract carries a dated note. The dumbbell stays as `icons/training.svg`.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| `tests/test_page_rules.py`, `tests/test_pages_text.py` | Plain and with `-W error`, green |
+| The docs tests | Green |
+| `python -m evals.need main` | No run owed: no model-read text changed |

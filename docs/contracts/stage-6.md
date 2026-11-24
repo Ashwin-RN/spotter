@@ -1948,6 +1948,10 @@ A table: Quantity, Value, Remark (D20). One row per quantity, in groups.
 | `favicon.ico` | The same mark, 32 by 32 | `<link rel="icon" href="/static/favicon.ico" sizes="32x32">` |
 | `apple-touch-icon.png` | The same mark on black, 180 by 180 | `<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">` |
 
+Note, 2026-11-24: the three files now hold Spots, the mascot: a cheetah's head with a striped sweatband, blowing a
+whistle, on red. The file names, the sizes and the three links are unchanged. The dumbbell stays as
+`icons/training.svg`.
+
 - All from `/static`, so `img-src 'self'` covers them.
 
 #### Titles
