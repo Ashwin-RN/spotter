@@ -27,6 +27,7 @@ from sqlalchemy.exc import OperationalError
 
 from app import calllog, db, mcp_server, models, services, web
 from app.db import make_engine
+from app.log_shape import LOG_FUNCTIONS
 from app.models import FEEDBACK_TOPICS, Base, CallLog, EntryVersion, Feedback, WriteKey
 from app.services import common, feedback
 from evals import judge
@@ -36,7 +37,7 @@ from . import text_rules as tr
 from .conftest import TEST_DIR, alembic_config, rpc, sign
 from .test_calllog import MARKER, rows
 from .test_idempotency import K, age, count, keys, writer  # noqa: F401 - writer is a fixture
-from .test_mcp import CAN_AND_CANT, FUNCTIONS, RETIRING, call, failed, ok, registered_tools, set_switch, tool_list
+from .test_mcp import CAN_AND_CANT, FUNCTIONS, call, failed, ok, registered_tools, set_switch, tool_list
 from .test_trace import OWNER, sign_for, tools_call
 from .test_hardening_schema import before_0012
 
@@ -66,27 +67,22 @@ READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": T
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 # What each function published before this work: the SHA-256 of the tool as compact JSON with sorted keys. inputs.md
 # moved every one (additionalProperties false on each, and three descriptions): tests/test_inputs.py diffs the two.
-# log-and-guide.md: the five log functions are in no list now, and each entry is read as registered, unchanged; log and
-# guide are new.
+# log-and-guide.md: log and guide are new. The five log functions are no longer registered (L6): their rows went with
+# them.
 PUBLISHED = {
     "whoami": "395eb54a0fbd3c884062ddd9ec397b9f62eb81f5414610c3d615a6a52c764f8c",  # first day, and the routine step at the join: setup; units; inputs; C3: the daily goals in targets
     "list_exercises": "f29f1d02ded26e18a95c7fc1b9a35bcc7b5a6956ffce800495a8b14fd6ce05e9",  # exercise list C4d: search; C4f: a side; log and guide: log takes the person's words
     "log": "da37eea52fb1bf2ea0cb48cd49d26fb986b22e3bf6b1b852bac29b0b0c9e8b98",  # log and guide: new
     "guide": "6cd1e0ccb93506850e8e80b09fc5b9d863c49ab0cc4818c4bfa066e10544709f",  # log and guide: new
-    "log_lifts": "cce7125486e2e61961d17789ad4423a84a77c524201269d3ff55faca60cae9e9",  # gym logging: adds to a day; units; inputs; exercise list: SetOut, LogSetIn; the matcher: exact, words; C4e: NewBest's kinds; C4f: hand_check, a side; 2026-11-20: a pair's weight
-    "log_bodyweight": "4e0cf3d35e2f5dd37906ec46c1d52c48133bd98464671582161bd335ca057c7a",  # units; inputs
     "set_goal": "4884389da3489b31587b727cd0f9a6bb3df852de4e5e4f594dfb0e6798260f3b",  # units; inputs
     "get_progress": "ce39ac5048c32dd5a92b65f7fd319642aeec9b44524c3805fc39e9b1f0f82a00",  # units; inputs; exercise list C4e: Best's kinds; 2026-11-20: Best.text
     "update_settings": "467871ccb5681a52aa8a62d575fc30f633be70c7bba1f6429ca1e926215130ca",  # units; inputs; C3: the daily goals
     "get_log": "c9cb9ae3ada02a65d5b612272cd127d71ef0b010c4d667760edb606c6ea476a3",  # units; inputs; exercise list: SetOut; C4e: NewBest's kinds; C3: a food entry's macros and portion, the day's macros, its goals
-    "log_measurement": "72f4654b038c70d1dfb8a378067e6b44d9d6a328470b523b719f730b30955710",  # inputs
     "edit_entry": "2570fdcf021e7d14a0d1419ff89e1979b66f94c804e88b3544d35710032bdc71",  # units; inputs; exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words; C3: macros and portion; C3 fix: the mark when every macro held is sent
     "restore_entry": "72e22c17db53b4a9f1984905f6226cb0b321670a736d289c99de7113b66c1102",  # routines: kind routine; inputs; log and guide: kind words, id words; C5c: kind program, the program's id
     "delete_entry": "f8c168792149e65a45797ff53e8cd71e0cb4a2048422daf1bf6b338830f21817",  # routines: kind routine; units; inputs; log and guide: kind words, id words; C5c: kind program, the program's id, the first sentence
     "find_food": "04fec870a886016e15d4081f06587b2e940217de7072c49ed653a7b4b92bda25",  # inputs; log and guide: ids log takes; C3: macros a serving, a meal's items, USDA's a 100 g
-    "log_food": "4f5b1cedbfd6b3df92b75adc527153302d1a09ea0ed34f6ed6a2f982c14d9a84",  # inputs; 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words; C3: macros, portion, the food sentence, the day's macros, its goals
     "save_food": "5abd9db8b0490a5f8473b090efcacf20c3dcc1ec3f4dd7484bc26ece3ad95229",  # inputs; log and guide: ids log takes; C3: macros a serving, items; C3 fix: a macro left out is kept
-    "log_cardio": "235cf20d40f883d11a98e826d5e8292c94f55f503b92ab114abcc9c39b705e13",  # units; inputs; 2026-11-20: exercise's words name both walks
     "get_trends": "76a12552c23e443d455dd77b910788c66030f05c3f4ea5b3df0d46d69845b30f",  # inputs
     "get_goals": "6d71cb0446594ce9d51a5eaa6719394018946cfa273a49d49a4bf559cc13a391",  # units; inputs
     "import_entries": "1d890d48348660778e2105210bd298c8b5613f69c0981af43f9703b990960cec",  # inputs; exercise list: names, reps
@@ -267,7 +263,7 @@ def test_send_feedback_is_published_after_the_nineteen_with_its_words_and_a_key(
     tools = tool_list(http, sign())
     # routines.md: save_routine and get_routines follow it, before the owner's three; data-on-request.md: its two
     # after them.
-    listed = [name for name in PUBLISHED if name not in RETIRING]  # log-and-guide.md: the five in no list
+    listed = list(PUBLISHED)
     assert [t["name"] for t in tools] == listed[:16] + ["send_feedback", "save_routine", "save_program",
                                                         "get_routines", "what_is_logged", "get_data"] == FUNCTIONS
     tool = tools[16]
@@ -539,8 +535,9 @@ def test_only_the_owner_s_list_has_the_owner_s_three_in_order_and_a_non_owner_s_
     assert json.loads(lists["other"][0])["result"]["tools"] == owner[:-3]  # the owner's, less the three
     hashes = {name: hashlib.sha256(compact(t).encode()).hexdigest()
               for name, t in registered_tools(make_client(owner_user_id=OWNER)).items()}
-    assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED  # nothing that was there changed, the five too
-    assert not set(RETIRING) & {t["name"] for t in owner} and set(RETIRING) <= set(PUBLISHED)
+    assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED  # nothing that was there changed
+    # The five are no longer registered (L6): in no list, and nothing published under their names.
+    assert not set(LOG_FUNCTIONS) & set(hashes) and not set(LOG_FUNCTIONS) & set(PUBLISHED)
     assert web.FUNCTION_COUNT == len(FUNCTIONS)
 
 

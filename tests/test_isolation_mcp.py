@@ -12,6 +12,8 @@ from datetime import date, timedelta
 import pytest
 
 from app import db, services
+from app.log_shape import LOG_FUNCTIONS
+from app.mcp_schemas import LOG_ARGUMENTS
 from app.models import Goal, SavedFood, User
 from app.services.common import row_dict
 
@@ -33,7 +35,7 @@ ID_CALLS = [
     *[("edit_entry", "entry_id", kind, {"kind": kind, **EDITS[kind]}) for kind in ENTRY_KINDS],
     *[("delete_entry", "entry_id", kind, {"kind": kind}) for kind in ENTRY_KINDS],
     *[("restore_entry", "entry_id", kind, {"kind": kind}) for kind in ENTRY_KINDS],
-    ("log_food", "saved_food_id", "saved_food", {}),  # inside an entry: see food_call below
+    ("log", "saved_food_id", "saved_food", {}),  # inside a food entry, in log's details: see food_call below
     ("save_food", "saved_food_id", "saved_food", {}),  # inside a meal's item (macros-and-asking.md): see meal_call
 ]
 
@@ -57,18 +59,21 @@ def bob(http) -> dict:
     account = allow_everything(http, B)
     t = token(B)
     today = date.fromisoformat(ok(http, t, "whoami")["today"])
-    session = ok(http, t, "log_lifts", {"sets": squat(120), "notes": "Bob's squat",
-                                        "date": (today - timedelta(days=2)).isoformat()})
-    weigh_in = ok(http, t, "log_bodyweight", {"kg": 91.5})
-    measurement = ok(http, t, "log_measurement", {"kind": "waist", "value": 97.25})
-    gone = ok(http, t, "log_measurement", {"kind": "hips", "value": 103.75})
+    # B logs through log (log-and-guide.md): the five are reached through it since L6.
+    session = ok(http, t, "log", {"kind": "lifts", "notes": "Bob's squat",
+                                  "parts": [{"movement": "Back Squat", "weight_kg": 120, "reps": 5}] * 3,
+                                  "date": (today - timedelta(days=2)).isoformat()})
+    weigh_in = ok(http, t, "log", {"kind": "bodyweight", "details": {"kg": 91.5}})
+    measurement = ok(http, t, "log", {"kind": "measurement", "details": {"kind": "waist", "value": 97.25}})
+    gone = ok(http, t, "log", {"kind": "measurement", "details": {"kind": "hips", "value": 103.75}})
     code = ok(http, t, "delete_entry", {"kind": "measurement", "entry_id": gone["id"]})["confirm"]  # switch: two calls
     ok(http, t, "delete_entry", {"kind": "measurement", "entry_id": gone["id"], "confirm": code})
     goal = ok(http, t, "set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 180,
                                     "target_date": (today + timedelta(days=90)).isoformat(), "text": "Bob's goal"})
     saved = ok(http, t, "save_food", {"name": "Bob's roti", "serving_label": "1 roti", "kcal_per_serving": 123})
-    food = ok(http, t, "log_food", {"entries": [{"description": "Bob's dal", "kcal": 321}]})
-    cardio = ok(http, t, "log_cardio", {"exercise": "Treadmill Walk", "minutes": 47, "notes": "Bob's walk"})
+    food = ok(http, t, "log", {"kind": "food", "details": {"entries": [{"description": "Bob's dal", "kcal": 321}]}})
+    cardio = ok(http, t, "log", {"kind": "cardio", "parts": [{"movement": "Treadmill Walk", "minutes": 47}],
+                                 "notes": "Bob's walk"})
     return {"account": account, "goal": goal["id"], "lift_session": session["id"], "bodyweight": weigh_in["id"],
             "measurement": measurement["id"], "deleted_measurement": gone["id"], "saved_food": saved["id"],
             "food_entry": food["ids"][0], "cardio_entry": cardio["id"]}
@@ -96,10 +101,11 @@ def id_arguments(schema: dict) -> set[str]:
 
 
 def test_every_function_that_takes_an_id_is_in_the_table(http):
-    # The five too, which no list holds now and a chat opened before still calls (log-and-guide.md). log's ids are
-    # inside details, an open object: its food entries reach log_food's own checks, as the table's log_food row does.
+    # log's ids are inside details, an open object its schema does not spell out (log-and-guide.md): they are the ids
+    # of the five's own argument models, which log routes to. A food entry's saved_food_id is the table's log row.
     taking_ids = {name: id_arguments(t["inputSchema"]) for name, t in registered_tools(http).items()
                   if name not in ("owner_calls", "owner_feedback", "owner_delete_feedback")}
+    taking_ids["log"] = set().union(*(id_arguments(LOG_ARGUMENTS[name].model_json_schema()) for name in LOG_FUNCTIONS))
     taking_ids = {name: props for name, props in taking_ids.items() if props}
     expected: dict[str, set[str]] = {}
     for function, argument, _, _ in ID_CALLS:
@@ -108,8 +114,8 @@ def test_every_function_that_takes_an_id_is_in_the_table(http):
 
 
 def food_call(argument: str, theirs_id: int) -> dict:
-    """log_food carries the id inside an entry."""
-    return {"entries": [{"description": "A's roti", argument: theirs_id, "servings": 1}]}
+    """log carries the id inside a food entry, in details."""
+    return {"kind": "food", "details": {"entries": [{"description": "A's roti", argument: theirs_id, "servings": 1}]}}
 
 
 def meal_call(argument: str, theirs_id: int) -> dict:
@@ -155,8 +161,8 @@ def test_bs_id_gets_a_the_same_not_found_as_a_missing_id(http, bob, function, ar
     ids = [bob[kind]] + ([bob["deleted_measurement"]] if function == "restore_entry" and kind == "measurement" else [])
     for theirs_id in ids:
         before = snapshot(bob["account"], kind, theirs_id)
-        if function in ("log_food", "save_food"):
-            nested = food_call if function == "log_food" else meal_call
+        if function in ("log", "save_food"):
+            nested = food_call if function == "log" else meal_call
             theirs = failed(http, t, function, nested(argument, theirs_id))
             missing = failed(http, t, function, nested(argument, MISSING_ID))
         else:
@@ -164,7 +170,8 @@ def test_bs_id_gets_a_the_same_not_found_as_a_missing_id(http, bob, function, ar
             missing = failed(http, t, function, {argument: MISSING_ID, **others})
         assert theirs["error"] == "not_found", (function, kind, theirs)
         assert theirs == missing  # word for word: nothing says the id exists
-        told = re.sub(r"(?:Entry|Item) \d+: ", "", theirs["message"] + theirs["fix"])  # an entry's place, not an id
+        # an entry's place, not an id: log names it as sent (log-and-guide.md)
+        told = re.sub(r"(?:Entry|Item) \d+: |details\.entries\[\d+\]: ", "", theirs["message"] + theirs["fix"])
         assert not re.search(r"\b" + str(theirs_id) + r"\b", told)
         assert snapshot(bob["account"], kind, theirs_id) == before
     if function == "save_food":  # nothing of A's was saved either
@@ -196,7 +203,7 @@ def bobs_goals(http, bob) -> dict:
     t = token(B)
     today = date.fromisoformat(ok(http, t, "whoami")["today"])
     by = (today + timedelta(days=90)).isoformat()
-    ok(http, t, "log_cardio", {"exercise": "Outdoor Run", "minutes": 31.5, "distance_km": 5})
+    ok(http, t, "log", {"kind": "cardio", "parts": [{"movement": "Outdoor Run", "minutes": 31.5, "distance_km": 5}]})
     ids = {"lift": bob["goal"]}
     for kind, arguments in (("bodyweight", {"target_value": 85.5}),
                             ("measurement", {"measurement_kind": "waist", "target_value": 90.5}),

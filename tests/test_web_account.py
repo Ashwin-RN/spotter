@@ -1474,7 +1474,7 @@ SWITCH_EVERYTHING = {"whoami", "list_exercises", "get_progress", "get_log", "fin
                      "log", "guide",  # log-and-guide.md: log at log, guide a read
                      "owner_calls", "owner_feedback", "owner_delete_feedback",  # trace.md 16, feedback.md 8:
                      # the owner's alone, at read
-                     "log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "import_entries",
+                     "import_entries",  # the five log functions are no longer registered (log-and-guide.md, L6)
                      "edit_entry", "restore_entry", "save_food", "set_goal", "update_settings",
                      "send_feedback",  # feedback.md decision 3
                      "save_routine", "get_routines",  # routines.md decisions 5 and 7

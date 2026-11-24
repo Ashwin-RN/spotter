@@ -24,7 +24,7 @@ from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import event, inspect, select, update
 
-from app import db, links, mcp_schemas, mcp_server, rules, services, web
+from app import db, links, log_shape, mcp_schemas, mcp_server, rules, services, web
 from app.calllog import KNOWN_NAMES, TABLES
 from app.db import make_engine
 from app.mcp_schemas import GetRoutinesResult, RoutineLiftIn, SaveRoutineResult
@@ -802,7 +802,8 @@ def test_the_write_limit_counts_a_save_and_a_save_is_refused_past_it(writer, mon
     http, token, _ = writer
     monkeypatch.setattr(common, "WRITE_LIMIT", 1)
     assert ok(http, token, "save_routine", {"name": "Push day", "lifts": [lift()]})["created"] is True
-    assert failed(http, token, "log_bodyweight", {"kg": 80})["error"] == "too_many_writes"  # the save counted
+    # the save counted
+    assert failed(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})["error"] == "too_many_writes"
     assert failed(http, token, "save_routine", {"name": "Pull day", "lifts": [lift()]})["error"] == "too_many_writes"
     assert len(table()) == 1 and "save_routine" in common.WRITE_FUNCTIONS
     assert common.already_done("save_routine")["fix"] == ("Read it back with get_routines. Send a new key for a new "
@@ -912,28 +913,28 @@ def test_the_kind_and_id_words_and_delete_entry_s_first_sentence_are_the_contrac
 
 def test_only_the_two_new_ones_delete_entry_and_restore_entry_differ_in_the_published_list(make_client):
     client = make_client(owner_user_id=OWNER)
-    # log-and-guide.md: every registered function, the five that no list holds now among them, less log and guide,
-    # which are new.
+    # log-and-guide.md: every registered function less log and guide, which are new. The five log functions are no
+    # longer registered (deploy 2), so they are left out of BEFORE's side too.
     registered = registered_tools(client)
     tools = [t for name, t in registered.items() if name not in ("log", "guide")]
     names = [t["name"] for t in tools]
-    assert names == [*list(BEFORE)[:20], "save_routine", "save_program", "get_routines", "what_is_logged", "get_data",
-                     *list(BEFORE)[20:]]  # data-on-request.md: its two after get_routines; C5c: save_program
+    kept = [n for n in BEFORE if n not in log_shape.LOG_FUNCTIONS]
+    assert names == [*kept[:15], "save_routine", "save_program", "get_routines", "what_is_logged", "get_data",
+                     *kept[15:]]  # data-on-request.md: its two after get_routines; C5c: save_program
     # inputs.md then moved every one: its changes are taken out here (tests/test_inputs.py diffs the two).
     hashes = {t["name"]: hashlib.sha256(compact(without_inputs(t)).encode()).hexdigest() for t in tools}
     # Routines moved delete_entry, restore_entry and whoami; units then moved its thirteen (units.md), of these.
-    units = {"whoami", "log_lifts", "log_bodyweight", "log_cardio", "edit_entry", "set_goal", "update_settings",
-             "get_progress", "get_goals", "get_log", "delete_entry"}
+    units = {"whoami", "edit_entry", "set_goal", "update_settings", "get_progress", "get_goals", "get_log",
+             "delete_entry"}
     # The exercise list (exercise-list.md, deploy 2) moved import_entries' names part and list_exercises (R8).
-    # 2026-11-20: log_food's meal words lead with sending the meal the person named.
     # log-and-guide.md L2 moved find_food and save_food too (rows 7 and 8), beside entries already here.
     # log-and-guide.md L4 moved owner_calls: function, caller, all_accounts, and a call's account_id.
-    assert {n for n in BEFORE if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami",
-                                                            "import_entries", "list_exercises", "log_food", "find_food",
-                                                            "save_food", "owner_calls"} | units
+    assert {n for n in kept if hashes[n] != BEFORE[n]} == {"delete_entry", "restore_entry", "whoami",
+                                                           "import_entries", "list_exercises", "find_food",
+                                                           "save_food", "owner_calls"} | units
     assert hashes["restore_entry"] != BEFORE["restore_entry"] and "restore_entry" not in units
     everyone = [t["name"] for t in tool_list(make_client(), sign())]
-    assert everyone == [n for n in registered if n not in mcp_server.OWNER_FUNCTIONS + mcp_server.RETIRING]
+    assert everyone == [n for n in registered if n not in mcp_server.OWNER_FUNCTIONS]
     assert len(everyone) == web.FUNCTION_COUNT == 22  # C5c: save_program
 
 
@@ -1852,8 +1853,8 @@ AT_9950F13 = {"save_routine": "235aceb04e92e26d0d8f59f1e9e3cfb8d36e91ef77226646f
 
 def test_of_the_published_list_only_get_routines_and_save_routine_moved(make_client):
     """Decision 2: sets and reps optional in two result models, last added, one sentence in get_routines. Every
-    other function's hash in tests/test_feedback.py's PUBLISHED is the one it held at 9950f13. The five log functions
-    are left out of the list, so the hashes are read from the registered tools (log-and-guide.md, L0)."""
+    other function's hash in tests/test_feedback.py's PUBLISHED is the one it held at 9950f13. The hashes are read
+    from the registered tools (log-and-guide.md, L0); the five log functions are no longer among them (deploy 2)."""
     from .test_feedback import PUBLISHED
     tools = registered_tools(make_client(owner_user_id=OWNER))
     hashes = {name: hashlib.sha256(compact(t).encode()).hexdigest() for name, t in tools.items()}

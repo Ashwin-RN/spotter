@@ -2,8 +2,8 @@
 (contract exercise-list.md): what a set takes by its lift (R6), word for word; a hold, a carry, a band set and a help
 set logged, read, edited, undone and exported (R14, R15, R16); the duplicate key over time and distance; routines,
 goals and imports, which take only lifts of reps (R10, R11); a version of four items from before 0013 put back; the
-sets table on the pages; log_lifts' own set model through /mcp (R3, for now with an exact name). Every new message,
-fix and summary keeps the text rules.
+sets table on the pages; log_lifts' own set model, and sets through log on /mcp (R3, for now with an exact name).
+Every new message, fix and summary keeps the text rules.
 
 Every date is a fixed today through db.utcnow, never the real date.
 """
@@ -17,9 +17,9 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import select
 
-from app import db, rules, services, web
+from app import db, mcp_server, rules, services, web
 from app.formatting import KG_KM, Units
-from app.mcp_schemas import LogSetIn, SetIn
+from app.mcp_schemas import LOG_ARGUMENTS, LogSetIn, SetIn
 from app.models import EntryVersion, Exercise, Goal, LiftSession, Routine, User
 from app.services import common, lifts
 
@@ -512,13 +512,15 @@ def test_the_sets_table_gains_time_and_distance_only_when_a_set_holds_them():
     assert ">-20<" in helped
 
 
-# ---------------------------------------------------------------- through /mcp: log_lifts' own set model (R3)
+# ---------------------------------------------------------------- log_lifts' own set model (R3), and through /mcp
 
 def test_log_lifts_takes_its_own_set_model_and_edit_entry_takes_set_in_with_the_same_fields_for_now(writer):
-    """Since C4c (R3) log_lifts' sets also take exact and the person's own words: tests/test_matcher.py."""
+    """Since C4c (R3) log_lifts' sets also take exact and the person's own words: tests/test_matcher.py. log_lifts is
+    no longer registered (log-and-guide.md, deploy 2): its set model is read from its argument model, whose schema is
+    the one it published, and its sets are sent through log, kind lifts."""
     http, token, account = writer
-    tools = registered_tools(http)  # log_lifts, though no list holds it now (log-and-guide.md)
-    logged = tools["log_lifts"]["inputSchema"]
+    tools = registered_tools(http)
+    logged = LOG_ARGUMENTS["log_lifts"].model_json_schema()
     edit = tools["edit_entry"]["inputSchema"]
     assert "LogSetIn" in logged["$defs"] and "SetIn" not in logged["$defs"] and "SetIn" in edit["$defs"]
     assert list(LogSetIn.model_fields) == [*SetIn.model_fields, "exact"] and list(SetIn.model_fields) == [
@@ -537,21 +539,41 @@ def test_log_lifts_takes_its_own_set_model_and_edit_entry_takes_set_in_with_the_
     for field in ("weight_kg", "weight_lb"):  # a pair's: one weight in both hands (Goblet Squat) is that weight
         assert ("Use 0 for bodyweight work. For a pair of dumbbells or kettlebells, or two cables, one hand's weight. "
                 "Help on Assisted Pull-Up or Assisted Dip as a minus weight.") in props[field]["description"]
-    hold = ok(http, token, "log_lifts", {"date": DAY, "sets": [{"exercise": "Plank", "weight_kg": 0, "time_s": 60}]})
+    hold = ok(http, token, "log", {"kind": "lifts", "date": DAY, "parts": [{"movement": "Plank", "weight_kg": 0,
+                                                                             "time_s": 60}]})
     assert hold["session"]["sets"][0]["time_s"] == 60 and hold["summary"].startswith("Plank 60 s on ")
-    wrong = failed(http, token, "log_lifts", {"sets": [{"exercise": "Plank", "weight_kg": 0, "seconds": 60}]})
+    # An unknown key in a set: log refuses it in a part's words before the set model is reached, so the set model's
+    # own refusal is read from it directly (mcp_server.misfit_model).
+    sent = {"sets": [{"exercise": "Plank", "weight_kg": 0, "seconds": 60}]}
+    model = LOG_ARGUMENTS["log_lifts"]
+    wrong = mcp_server.schema_refusal("log_lifts", model.model_json_schema(), sent,
+                                      *mcp_server.misfit_model(model, sent))
     assert wrong["message"] == "Set 1: 'seconds' is not a field of a set."
     assert wrong["fix"].startswith("Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m, exact.")
+    # What a model gets: the same key sent in a part through log, refused in a part's words.
+    seconds = failed(http, token, "log", {"kind": "lifts", "parts": [{"movement": "Plank", "weight_kg": 0,
+                                                                       "seconds": 60}]})
+    assert (seconds["error"], seconds["message"], seconds["fix"]) == (
+        "invalid_field", "Part 1: 'seconds' is not a field of a part.",
+        "Use: movement, weight_kg, weight_lb, reps, time_s, distance_m, exact, minutes, distance_km, distance_mi. "
+        "Send a time as time_s or minutes, as the person said it.")
     again = failed(http, token, "edit_entry", {"kind": "lift_session", "entry_id": hold["id"],
                                                "sets": [{"exercise": "Plank", "weight_kg": 0, "seconds": 90}]})
     assert again["fix"].startswith("Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m.")
-    refused = failed(http, token, "log_lifts", {"sets": [{"exercise": "Plank", "weight_kg": 0, "reps": 60}]})
-    assert (refused["error"], refused["message"]) == ("invalid_field", "Set 1: Plank records time, not reps.")
+    refused = failed(http, token, "log", {"kind": "lifts", "parts": [{"movement": "Plank", "weight_kg": 0,
+                                                                       "reps": 60}]})
+    # The service's own words, said as log was sent (log-and-guide.md, said_as_sent): Set 1 is parts[0].
+    assert (refused["error"], refused["message"]) == ("invalid_field", "parts[0]: Plank records time, not reps.")
 
 
 def test_every_result_over_a_hold_a_carry_and_help_passes_its_published_model_through_mcp(writer):
     http, token, account = writer
-    logged = ok(http, token, "log_lifts", {"date": DAY, "sets": SESSION})
+    logged = ok(http, token, "log", {"kind": "lifts", "date": DAY, "parts": [
+        {"movement": "Plank", "weight_kg": 0, "time_s": 60},
+        {"movement": "Plank", "weight_kg": 0, "time_s": 60},
+        {"movement": "Farmer's Carry", "weight_kg": 32, "distance_m": 40, "time_s": 45},
+        {"movement": "Band Pull-Apart", "reps": 15},
+        {"movement": "Assisted Pull-Up", "weight_kg": -20, "reps": 8}]})  # SESSION, as log's parts
     assert _sets(logged["session"]) == STORED
     day = ok(http, token, "get_log", {"date": DAY})
     assert _sets(day["days"][0]["sessions"][0]) == STORED

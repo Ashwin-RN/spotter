@@ -1281,15 +1281,17 @@ def test_recorder_keeps_calls_per_token(provider, make_user, token_for):
                                json={"jsonrpc": "2.0", "id": id_, "method": method, "params": params or {}})
 
         assert rpc(a, "tools/call", {"name": "whoami", "arguments": {}}).status_code == 200
-        rpc(a, "tools/call", {"name": "log_bodyweight", "arguments": {"kg": 70, "date": "2001-01-01"}}, 2)
+        rpc(a, "tools/call", {"name": "log", "arguments": {"kind": "bodyweight", "details": {"kg": 70},
+                                                    "date": "2001-01-01"}}, 2)
         rpc(a, "tools/call", {"name": "delete_entry", "arguments": {"kind": "bodyweight", "entry_id": 1}}, 3)
         rpc(b, "tools/list")
         assert client.get("/health").status_code == 200
 
     calls = recorder.calls(a)
-    assert [c["name"] for c in calls] == ["whoami", "log_bodyweight", "delete_entry"]
+    assert [c["name"] for c in calls] == ["whoami", "log", "delete_entry"]
     assert calls[0]["is_error"] is False
-    assert calls[1]["arguments"] == {"kg": 70, "date": "2001-01-01"} and calls[1]["is_error"] is True
+    assert calls[1]["arguments"] == {"kind": "bodyweight", "details": {"kg": 70}, "date": "2001-01-01"}
+    assert calls[1]["is_error"] is True and calls[1]["error"] == "date_too_old"  # a date more than 2 years back
     assert calls[2]["is_error"] is True and calls[2]["error"] == "not_allowed"  # the switch set to log
     assert recorder.calls(b) == [] and recorder.methods(b) == ["tools/list"]
     assert recorder.calls("never-used") == []
@@ -1332,7 +1334,7 @@ def test_every_case_carries_the_three_call_tags_and_they_agree_with_its_expect()
 def test_every_function_on_everyone_s_list_is_some_case_s_must():
     """The coverage test: no cost, no run. The owner's three are listed for him alone, so they are left out. It holds
     for the full set and for the core, the cases each gate runs (python -m evals.run --core)."""
-    from app import mcp_server
+    from app import log_shape, mcp_server
     everyone = set(mcp_server.NEEDS) - set(mcp_server.OWNER_FUNCTIONS)
     cases = judge.load_cases()
     musts = {name for c in cases for name in c["calls"]["must"]}
@@ -1340,10 +1342,11 @@ def test_every_function_on_everyone_s_list_is_some_case_s_must():
     core = [c for c in cases if c.get("core") is True]
     # log-and-guide.md N9: guide_how_food and log_plank_minutes join the core, so guide and log are each a must there.
     # routines-and-programs.md C5c (pick 19): program_saved joins it, so save_program is a must there.
-    # NEEDS still holds the five, which old chats call by name, so it is wider than a new chat's list.
     assert len(core) == 104 and everyone - {name for c in core for name in c["calls"]["must"]} == set()
+    # log-and-guide.md L6: the five are no longer registered, but a tag may name one as the routed name of log's kind
+    # (the judge reads a log call as its kind's function too).
     named = {name for c in cases for key in ("must", "may", "must_not") for name in c["calls"][key]}
-    assert named <= everyone  # no tag names a function nobody has, or the owner's
+    assert named <= everyone | set(log_shape.LOG_FUNCTIONS)  # no tag names a function nobody has, or the owner's
     # The two the release run of 2026-11-17 never called each have a case of their own.
     assert {"save_food", "edit_entry"} <= {name for c in cases if len(c["calls"]["must"]) == 1
                                            for name in c["calls"]["must"]}
@@ -1597,14 +1600,14 @@ def test_the_recorder_keeps_each_data_read_s_answer_and_no_other(provider, make_
     recorder = CallRecorder(create_app(settings(), fetch=provider.fetch))
     token = token_for("user_rec_c")
     with TestClient(recorder) as client:
-        for i, (name, arguments) in enumerate((("whoami", {}), ("log_bodyweight", {"kg": 80.4}),
+        for i, (name, arguments) in enumerate((("whoami", {}), ("log", {"kind": "bodyweight", "details": {"kg": 80.4}}),
                                                ("get_data", {"area": "weigh_ins"}), ("what_is_logged", {}),
                                                ("get_data", {"area": "lift_set"})), 1):
             client.post("/mcp", headers={**HEADERS, "Authorization": f"Bearer {token}"},
                         json={"jsonrpc": "2.0", "id": i, "method": "tools/call",
                               "params": {"name": name, "arguments": arguments}})
     calls = recorder.calls(token)
-    assert [c["name"] for c in calls] == ["whoami", "log_bodyweight", "get_data", "what_is_logged", "get_data"]
+    assert [c["name"] for c in calls] == ["whoami", "log", "get_data", "what_is_logged", "get_data"]
     assert all(c["answered"] for c in calls)
     assert "answer" not in calls[0] and "answer" not in calls[1]  # not data reads
     assert calls[2]["answer"]["columns"][:2] == ["date", "id"] and calls[2]["answer"]["rows"][0][2] == 80.4
@@ -2224,8 +2227,9 @@ def test_the_recorder_keeps_every_call_s_answer_as_result_and_a_data_read_s_as_a
     make_user(subject="user_rec_r", email="r@example.com", name="R", time_zone="Asia/Kolkata")
     recorder = CallRecorder(create_app(settings(), fetch=provider.fetch))
     token = token_for("user_rec_r")
-    sent = (("whoami", {}), ("log_lifts", {"sets": [{"exercise": "zorbinator", "weight_kg": 20, "reps": 8}]}),
-            ("log_lifts", {"sets": [{"exercise": "bench", "weight_kg": 60, "reps": 5}]}), ("get_log", {}))
+    sent = (("whoami", {}),
+            ("log", {"kind": "lifts", "parts": [{"movement": "zorbinator", "weight_kg": 20, "reps": 8}]}),
+            ("log", {"kind": "lifts", "parts": [{"movement": "bench", "weight_kg": 60, "reps": 5}]}), ("get_log", {}))
     with TestClient(recorder) as client:
         for i, (name, arguments) in enumerate(sent, 1):
             client.post("/mcp", headers={**HEADERS, "Authorization": f"Bearer {token}"},

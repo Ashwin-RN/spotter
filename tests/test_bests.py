@@ -624,5 +624,6 @@ def test_get_progress_and_get_log_over_every_kind_pass_their_published_models_th
         read = ok(http, token, "get_progress", {"exercise": name})
         assert read["lift"]["bests"], name
     assert ok(http, token, "get_log", {"date": day(2)})["days"][0]["sessions"][0]["new_bests"]
-    logged = ok(http, token, "log_lifts", {"date": day(9), "sets": [one("Plank", 0, time_s=120)]})
+    logged = ok(http, token, "log", {"kind": "lifts", "date": day(9), "parts": [
+        {"movement": "Plank", "exact": True, "weight_kg": 0, "time_s": 120}]})
     assert logged["new_bests"][0]["text"] == "Plank longest hold 120 s, up from 90 s"

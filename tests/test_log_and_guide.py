@@ -14,7 +14,11 @@ name, log in the write tuple and guide among the reads, the call row's notes, an
 the limits, the key and the switch; and no refusal of log naming one of the five.
 
 Package L3: the text both lists read names none of the five: not_found's fix for each log kind, set_goal's start
-refusals and its time fix, save_routine's refusal of a lift without reps, and what_is_logged's saved food id."""
+refusals and its time fix, save_routine's refusal of a lift without reps, and what_is_logged's saved food id.
+
+Package L6 (deploy 2): the five are no longer registered. A call of one by name is the unknown function. Their words,
+argument models, steps and services stay: log runs each kind through them, and guide gives their words. What these
+tests sent through one of the five now goes through log, or through the kind's own model and step in process."""
 
 import ast
 import hashlib
@@ -31,7 +35,7 @@ from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT
 from app.log_shape import KINDS, route, said_as_sent
 from app.mcp_schemas import LOG_ARGUMENTS
-from app.mcp_server import LOG_STEPS, misfit, misfit_model, read_arguments, schema_refusal
+from app.mcp_server import LOG_STEPS, misfit_model, read_arguments, schema_refusal
 
 from . import text_rules as tr
 from .conftest import FakeProvider, claims, settings, sign, whoami
@@ -91,17 +95,17 @@ def test_the_published_hashes_and_the_instructions_are_unmoved(http):
 def test_registered_tools_is_the_owner_s_list_entry_for_entry(make_client):
     client = make_client(owner_user_id=OWNER)
     listed = tool_list(client, sign(claims(sub=OWNER)))
-    # L1b: the owner's list is every registered function but the five, entry for entry.
-    assert [t for t in registered_tools(client).values() if t["name"] not in FIVE] == listed
+    # L1b: the owner's list is every registered function, entry for entry; since L6 the five are not among them.
+    assert list(registered_tools(client).values()) == listed
     assert set(registered_tools(client)) == set(mcp_server.NEEDS)  # every registered function
 
 
-def test_each_of_the_five_publishes_its_named_constants(http):
-    tools = registered_tools(http)
-    for name, (description, fields) in WORDS.items():
-        assert tools[name]["description"] == description, name
-        published = {field: node["description"] for field, node in tools[name]["inputSchema"]["properties"].items()}
-        assert published == fields, name
+def test_each_of_the_five_s_argument_models_carries_its_named_constants():
+    """Was: each of the five publishes them. No longer registered (L6), the five publish nothing; their argument
+    models still carry each field's words, which guide gives (the guide tests below hold the descriptions)."""
+    for name, (_description, fields) in WORDS.items():
+        schema = LOG_ARGUMENTS[name].model_json_schema()
+        assert {field: node["description"] for field, node in schema["properties"].items()} == fields, name
 
 
 def test_the_moved_texts_live_in_mcp_schemas_and_read_back_under_their_names():
@@ -129,19 +133,16 @@ def test_mcp_schemas_imports_only_app_rules_from_the_app():
 
 # ---------------------------------------------------------------- the argument models
 
-def test_each_argument_model_s_schema_is_its_registered_function_s_input_schema(http, server):
-    tools = registered_tools(http)
+def test_the_argument_models_and_the_steps_are_the_five_s_in_order_and_none_is_registered(http, server):
+    """Was: each model's schema is its registered function's input schema. Since L6 no function of the five is
+    registered or published; the models and the steps stay, in the five's order."""
     assert list(LOG_ARGUMENTS) == list(FIVE) == list(LOG_STEPS)
-    for name, model in LOG_ARGUMENTS.items():
-        schema = model.model_json_schema()
-        assert schema == tools[name]["inputSchema"], name  # as published, through the wire
-        assert schema == server._tool_manager.get_tool(name).parameters, name  # as registered
-        assert compact(schema) == compact(tools[name]["inputSchema"]), name
+    assert not set(FIVE) & set(registered_tools(http))
+    assert all(server._tool_manager.get_tool(name) is None for name in FIVE)
 
 
-# Arguments for each of the five, each sent to misfit with the registered function and to misfit_model with the
-# argument model: an unknown key at the top and in an item, a wrong type, a missing field, a bool for a number, lists
-# and objects sent as JSON text, and calls that fit.
+# Arguments for each of the five, sent to misfit_model with the argument model: an unknown key at the top and in an
+# item, a wrong type, a missing field, a bool for a number, lists and objects sent as JSON text, and calls that fit.
 SQUAT = {"exercise": "squat", "weight_kg": 100, "reps": 5}
 MISFITS = {
     "log_lifts": [
@@ -183,22 +184,166 @@ MISFITS = {
 CASES = [(name, arguments) for name, every in MISFITS.items() for arguments in every]
 
 
-def _errors(found):
-    return None if found is None or found[1] is None else found[1].errors(include_url=False)
+# What misfit_model and schema_refusal answer for each case, None where it fits, each problem as (code, message, fix):
+# read from the code at L6, where it was the same answer misfit and schema_refusal gave for the registered function
+# at 81da59f, case for case (the test this replaced, run there). The five are no longer registered (L6), so the
+# registered side is gone and the answer is pinned.
+MISFIT_REFUSALS = [
+    None,  # 0: log_lifts fits
+    None,  # 1: log_lifts fits
+    [  # 2: log_lifts
+        ('invalid_field', "Set 1: 'weight' is not a field of a set.",
+         'Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m, exact. Send the weight in weight_kg or '
+         'weight_lb, in the unit the person said.'),
+    ],
+    [  # 3: log_lifts
+        ('invalid_field', "'kg' is not a field of log_lifts.",
+         'log_lifts takes: sets, date, notes, allow_repeat, new_session, key.'),
+        ('invalid_field', "Set 1: reps must be a whole number, not 'five'.",
+         'Give reps on set 1 as a whole number.'),
+    ],
+    [  # 4: log_lifts
+        ('invalid_field', 'Set 1: reps must be a whole number, not true.',
+         'Give reps on set 1 as a whole number.'),
+    ],
+    [  # 5: log_lifts
+        ('invalid_field', 'allow_repeat must be true or false, not 1.',
+         'Send allow_repeat as true or false, or leave it out.'),
+        ('invalid_field', "new_session must be true or false, not 'yes'.",
+         'Send new_session as true or false, or leave it out.'),
+    ],
+    [  # 6: log_lifts
+        ('invalid_field', 'sets must be a list, not {"exercise": "squat"}.',
+         'Send sets as a list.'),
+    ],
+    [  # 7: log_lifts
+        ('invalid_field', "sets must be a list, not 'not json'.",
+         'Send sets as a list.'),
+    ],
+    [  # 8: log_lifts
+        ('missing_field', 'sets is missing.',
+         'Give sets.'),
+    ],
+    None,  # 9: log_bodyweight fits
+    None,  # 10: log_bodyweight fits
+    [  # 11: log_bodyweight
+        ('invalid_field', 'kg must be a number, not true.',
+         'Give kg as a number.'),
+    ],
+    [  # 12: log_bodyweight
+        ('invalid_field', "kg must be a number, not '80kg'.",
+         'Give kg as a number.'),
+    ],
+    [  # 13: log_bodyweight
+        ('invalid_field', "'weight' is not a field of log_bodyweight.",
+         'log_bodyweight takes: kg, lb, date, allow_repeat, key. Send the body weight in kg or lb, in the unit '
+         'the person said.'),
+    ],
+    [  # 14: log_bodyweight
+        ('invalid_field', 'lb must be a number, not [180].',
+         'Give lb as a number.'),
+    ],
+    [  # 15: log_bodyweight
+        ('invalid_field', 'date must be text, not 5.',
+         'Give date as text.'),
+    ],
+    None,  # 16: log_measurement fits
+    [  # 17: log_measurement
+        ('missing_field', 'kind is missing.',
+         'Give kind.'),
+        ('missing_field', 'value is missing.',
+         'Give value.'),
+    ],
+    [  # 18: log_measurement
+        ('invalid_field', "value must be a number, not 'abc'.",
+         'Give value as a number.'),
+    ],
+    [  # 19: log_measurement
+        ('invalid_field', 'kind must be text, not ["waist"].',
+         'Give kind as text.'),
+    ],
+    [  # 20: log_measurement
+        ('invalid_field', "'unit' is not a field of log_measurement.",
+         "log_measurement takes: kind, value, date, allow_repeat, key. value is in the kind's own unit: cm for "
+         'waist, hips, chest, arm and thigh. Spotter takes no inches for a body size.'),
+    ],
+    [  # 21: log_measurement
+        ('invalid_field', "value must be a number, not 'nan'.",
+         'Give value as a number.'),
+    ],
+    None,  # 22: log_food fits
+    None,  # 23: log_food fits
+    [  # 24: log_food
+        ('invalid_field', "Entry 1: 'calories' is not a field of a food entry.",
+         'Use: description, meal, kcal, estimated, portion, protein_g, carbs_g, fat_g, macros_estimated, '
+         'saved_food_id, servings, usda_fdc_id, grams. source is decided by the server. For the calories, send '
+         'kcal.'),
+    ],
+    [  # 25: log_food
+        ('invalid_field', "'meal' is not a field of log_food.",
+         'log_food takes: entries, date, allow_repeat, key.'),
+    ],
+    [  # 26: log_food
+        ('invalid_field', 'entries must be a list, not {"description": "dal"}.',
+         'Send entries as a list.'),
+    ],
+    [  # 27: log_food
+        ('invalid_field', 'entries must be a list, not \'{"description": "dal"}\'.',
+         'Send entries as a list.'),
+    ],
+    [  # 28: log_food
+        ('invalid_field', 'Entry 1: saved_food_id must be a whole number, not true.',
+         'Give saved_food_id on entry 1 as a whole number.'),
+        ('invalid_field', "Entry 1: servings must be a number, not 'two'.",
+         'Give servings on entry 1 as a number.'),
+        ('invalid_field', "allow_repeat must be true or false, not 'true'.",
+         'Send allow_repeat as true or false, or leave it out.'),
+    ],
+    None,  # 29: log_cardio fits
+    [  # 30: log_cardio
+        ('invalid_field', "'distance' is not a field of log_cardio.",
+         'log_cardio takes: exercise, minutes, date, distance_km, distance_mi, incline_pct, speed_kmh, '
+         'speed_mph, avg_hr, machine_kcal, notes, allow_repeat, key. Send distance_km or distance_mi, in the '
+         'unit the person said.'),
+    ],
+    [  # 31: log_cardio
+        ('missing_field', 'minutes is missing.',
+         'Give minutes.'),
+    ],
+    [  # 32: log_cardio
+        ('invalid_field', 'avg_hr must be a whole number, not 140.5.',
+         'Give avg_hr as a whole number.'),
+        ('invalid_field', "machine_kcal must be a whole number, not 'lots'.",
+         'Give machine_kcal as a whole number.'),
+    ],
+    [  # 33: log_cardio
+        ('invalid_field', 'minutes must be a number, not false.',
+         'Give minutes as a number.'),
+        ('invalid_field', "allow_repeat must be true or false, not 'true'.",
+         'Send allow_repeat as true or false, or leave it out.'),
+    ],
+    [  # 34: log_cardio
+        ('invalid_field', "'speed' is not a field of log_cardio.",
+         'log_cardio takes: exercise, minutes, date, distance_km, distance_mi, incline_pct, speed_kmh, '
+         'speed_mph, avg_hr, machine_kcal, notes, allow_repeat, key. Send speed_kmh or speed_mph, in the unit '
+         'the person said.'),
+        ('invalid_field', 'exercise must be text, not 7.',
+         'Give exercise as text.'),
+    ],
+]
 
 
-@pytest.mark.parametrize(("name", "arguments"), CASES, ids=[f"{n}-{i}" for i, (n, _) in enumerate(CASES)])
-def test_misfit_model_answers_as_misfit_does_for_the_registered_function(server, name, arguments):
-    tool = server._tool_manager.get_tool(name)
+@pytest.mark.parametrize(("name", "arguments", "pinned"), [(*case, pin) for case, pin in zip(CASES, MISFIT_REFUSALS)],
+                         ids=[f"{n}-{i}" for i, (n, _) in enumerate(CASES)])
+def test_misfit_model_answers_as_the_registered_function_did(name, arguments, pinned):
+    assert len(MISFIT_REFUSALS) == len(CASES)
     model = LOG_ARGUMENTS[name]
-    by_tool, by_model = misfit(tool, arguments), misfit_model(model, arguments)
-    assert (by_tool is None) == (by_model is None)
-    if by_tool is None:
+    found = misfit_model(model, arguments)
+    assert (found is None) == (pinned is None)
+    if found is None:
         return
-    assert by_tool[0] == by_model[0]  # the unknown top-level keys
-    assert _errors(by_tool) == _errors(by_model)
-    assert schema_refusal(name, tool.parameters, arguments, *by_tool) == \
-        schema_refusal(name, model.model_json_schema(), arguments, *by_model)
+    assert schema_refusal(name, model.model_json_schema(), arguments, *found) == \
+        rules.combine([rules.error(*problem) for problem in pinned])
 
 
 def test_the_cases_cover_fits_and_misfits_of_each_kind(server):
@@ -261,17 +406,54 @@ STEPS = {
          {"exercise": "Outdoor Run", "minutes": 25.5, "distance_km": 5, "speed_kmh": 12}),
     ],
 }
-STEP_CASES = [(name, sent, data) for name, every in STEPS.items() for sent, data in every]
+# Each of STEPS' calls as log takes it, in the same order: the five are no longer registered (L6), so the call
+# through /mcp goes as log, which routes it to the same arguments.
+SQUAT_PART = {"movement": "squat", "weight_kg": 100, "reps": 5}
+STEPS_AS_LOG = {
+    "log_lifts": [
+        {"kind": "lifts", "parts": [{**SQUAT_PART, "time_s": None}, {"movement": "Plank", "time_s": 60, "exact": True}],
+         "date": DAY, "notes": "Felt strong.", "allow_repeat": True, "details": {"new_session": True}},
+        {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_lb": 225, "reps": 5, "exact": None}],
+         "date": None, "notes": None, "allow_repeat": False, "details": {"new_session": False}},
+        {"kind": "lifts", "parts": json.dumps([{"movement": "Farmer's Carry", "weight_kg": 30, "distance_m": 40,
+                                                "time_s": 45}])},
+    ],
+    "log_bodyweight": [
+        {"kind": "bodyweight", "details": {"lb": 180.5}, "date": DAY, "allow_repeat": True},
+        {"kind": "bodyweight", "details": {"kg": 80, "lb": None}, "date": None, "allow_repeat": False},
+    ],
+    "log_measurement": [
+        {"kind": "measurement", "details": {"kind": "waist", "value": 81.5}, "date": DAY, "allow_repeat": True},
+        {"kind": "measurement", "details": {"kind": "sleep_hours", "value": "7.5"}, "allow_repeat": False},
+    ],
+    "log_food": [
+        {"kind": "food", "details": {"entries": [{"description": "dal", "kcal": 300, "estimated": True,
+                                                  "meal": "lunch"},
+                                                 {"saved_food_id": 4, "servings": 2, "description": None}]},
+         "date": DAY, "allow_repeat": True},
+        {"kind": "food", "details": {"entries": json.dumps([{"description": "banana", "kcal": 100}])},
+         "allow_repeat": False},
+    ],
+    "log_cardio": [
+        {"kind": "cardio", "parts": [{"movement": "Treadmill Walk", "minutes": 30, "distance_mi": 2}],
+         "details": {"incline_pct": 5, "speed_mph": 4, "avg_hr": 130, "machine_kcal": 250}, "date": DAY,
+         "notes": "Easy.", "allow_repeat": True},
+        {"kind": "cardio", "parts": [{"movement": "Outdoor Run", "minutes": 25.5, "distance_km": 5}],
+         "details": {"speed_kmh": 12, "avg_hr": None}, "notes": None, "allow_repeat": False},
+    ],
+}
+STEP_CASES = [(name, sent, logged, data) for name, every in STEPS.items()
+              for (sent, data), logged in zip(every, STEPS_AS_LOG[name], strict=True)]
 
 
-@pytest.mark.parametrize(("name", "sent", "data"), STEP_CASES,
-                         ids=[f"{n}-{i}" for i, (n, _, _) in enumerate(STEP_CASES)])
-def test_each_step_gives_the_service_the_data_the_body_did(http, monkeypatch, name, sent, data):
+@pytest.mark.parametrize(("name", "sent", "logged", "data"), STEP_CASES,
+                         ids=[f"{n}-{i}" for i, (n, _, _, _) in enumerate(STEP_CASES)])
+def test_each_step_gives_the_service_the_data_the_body_did(http, monkeypatch, name, sent, logged, data):
     token = sign()
     whoami(http, token)
     account = one_user().id
     received = spy_on_services(monkeypatch)
-    failed(http, token, name, sent)  # the decorated function, through /mcp
+    failed(http, token, "log", logged)  # through /mcp, as log (L6: was the decorated function)
     assert received.pop(name) == ((account, data, "claude"), {})
     arguments = dict(read_arguments(LOG_ARGUMENTS[name], sent))
     LOG_STEPS[name](account, **arguments)  # the step alone, from the argument model
@@ -280,23 +462,25 @@ def test_each_step_gives_the_service_the_data_the_body_did(http, monkeypatch, na
     assert received.pop(name) == ((account, data, "claude"), {})
 
 
-def test_each_decorated_function_runs_its_step_with_every_field(http, monkeypatch):
+def test_log_runs_each_kind_s_step_with_every_field(http, monkeypatch):
+    """Was: each decorated function runs its step. The five are no longer registered (L6): log runs each kind's step
+    from LOG_STEPS, with every field of the kind's argument model."""
     seen = {}
     for name in FIVE:
         def step(account, _name=name, **arguments):
             seen[_name] = (account, arguments)
             return {"error": "spy", "message": "Recorded.", "fix": "None."}
 
-        monkeypatch.setattr(mcp_server, f"{name}_step", step)
+        monkeypatch.setitem(mcp_server.LOG_STEPS, name, step)
     token = sign()
     whoami(http, token)
     account = one_user().id
     for name in FIVE:
-        sent = STEPS[name][0][0]
-        keyed = {**sent, "key": f"key-{name}-01"}  # a key of each function's own: one key on two is key_reused
-        failed(http, token, name, keyed)
+        sent, logged = STEPS[name][0][0], STEPS_AS_LOG[name][0]
+        key = f"key-{name}-01"  # a key of each call's own: one key on two is key_reused
+        failed(http, token, "log", {**logged, "key": key})
         model = LOG_ARGUMENTS[name]
-        assert seen[name] == (account, dict(read_arguments(model, keyed))), name
+        assert seen[name] == (account, dict(read_arguments(model, {**sent, "key": key}))), name
         assert set(seen[name][1]) == set(model.model_fields), name
 
 
@@ -1146,6 +1330,15 @@ def test_every_new_model_read_text_keeps_the_text_rules():
 # L2: food's FoodEntryIn words lose "in a log_food call", 3639 to 3626 (row 6). macros-and-asking.md: food's description
 # gains the macros' sentence and FoodEntryIn its five fields, 3626 to 4885, as printed on the built server.
 GUIDE_SIZES = {"log": 1894, "lifts": 2884, "bodyweight": 1311, "measurement": 1404, "food": 4885, "cardio": 2864}
+# L6: each answer's words, as printed from the code at the fix round (the five's rows of PUBLISHED went with them).
+GUIDE_HASHES = {
+    "log": "bf09af2418bf52b7b666b586d6c6345c66bede12b4d8613c5c8bbc8ba040b06a",
+    "lifts": "809ddaf5a9b1d33af3bc3cddd836d684bca78a28441e0dbbcc2abdc3b4f9e195",
+    "bodyweight": "e50a28a2c17c57ad1a154b7c16cd41f70dce452cca9d77b37dd8ea86dcfe6dfc",
+    "measurement": "29fee1a1f74202075e14f7e6916bf8d0dc1f85b49e4d8a5fbdf6e2f0bb08347a",
+    "food": "90cf98ca6a97cd8821e68867de4a1b7f08770f001dd1c81199d76f18ab33a63d",
+    "cardio": "2538e1e3c14030f25c66899db6ff642dec1ae7cd44cb75da548e80a9c5801e12",
+}
 
 
 def test_guide_has_an_answer_for_each_topic_and_each_is_a_guide_result():
@@ -1164,6 +1357,16 @@ def test_each_guide_answer_s_size_is_pinned(capsys):
     with capsys.disabled():
         print("\nguide answer sizes, compact JSON characters:", sizes)
     assert sizes == GUIDE_SIZES
+
+
+def test_each_guide_answer_s_words_are_pinned(capsys):
+    """Since L6 the five publish nothing, so their words reach a model only through guide: the SHA-256 of each topic's
+    answer as compact JSON, as tests/test_feedback.py's PUBLISHED pins a published function, so a change of a word
+    that keeps the length is caught too."""
+    hashes = {topic: hashlib.sha256(compact(answer).encode()).hexdigest() for topic, answer in guide.ANSWERS.items()}
+    with capsys.disabled():
+        print("\nguide answer hashes, SHA-256 of the compact JSON:", hashes)
+    assert hashes == GUIDE_HASHES
 
 
 S_ = mcp_schemas
@@ -1229,15 +1432,16 @@ def test_each_guide_answer_is_its_kind_s_own_description_and_field_words(kind):
             assert word in answer["how"]
 
 
-def test_each_guide_answer_matches_its_registered_function(http):
-    tools = registered_tools(http)
+def test_each_guide_answer_matches_its_kind_s_function_s_words_and_model():
+    """Was: matches its registered function. The five are no longer registered (L6): the same words and schema, from
+    the constants and the argument model."""
     for kind, function in log_shape.KIND_FUNCTIONS.items():
-        tool, answer = tools[function], guide.ANSWERS[kind]
-        assert answer["how"] == tool["description"]
+        schema, answer = LOG_ARGUMENTS[function].model_json_schema(), guide.ANSWERS[kind]
+        assert answer["how"] == WORDS[function][0]
         for field, node in answer["details"]["properties"].items():
-            assert node == tool["inputSchema"]["properties"][field], (kind, field)
+            assert node == schema["properties"][field], (kind, field)
         for field, words in answer["top"].items():
-            assert words == tool["inputSchema"]["properties"][field]["description"], (kind, field)
+            assert words == schema["properties"][field]["description"], (kind, field)
 
 
 def test_guide_log_names_every_kind_with_its_words():
@@ -1398,9 +1602,21 @@ def noon(monkeypatch):
     monkeypatch.setattr(db, "utcnow", lambda: at)
 
 
+def own_answer(account: int, function: str, own: dict) -> dict:
+    """The kind's own answer to a call in its function's own shape, run in process as the registered function ran it
+    before L6: its argument model's refusal (misfit_model, schema_refusal), else its step and service (LOG_STEPS). No
+    call row and no key: the five are no longer registered, so no call of one reaches /mcp."""
+    model = LOG_ARGUMENTS[function]
+    found = misfit_model(model, own)
+    if found is not None:
+        return schema_refusal(function, model.model_json_schema(), own, *found)
+    return LOG_STEPS[function](account, **dict(read_arguments(model, own)))
+
+
 def the_same_through_both(client, seed: list, sent: dict, function: str, own: dict, n: int):
-    """The same entry, through log for one person and through the kind's own function for another, each seeded the
-    same: (log's answer, the function's answer), after the two people's rows are found the same."""
+    """The same entry, through log for one person and through the kind's own model and step for another (own_answer,
+    since L6), each seeded the same through /mcp: (log's answer, the kind's own answer), after the two people's rows
+    are found the same."""
     first, second = person(2 * n), person(2 * n + 1)
     ids = [account_of(client, t) for t in (first, second)]
     seeded = {first: None, second: None}
@@ -1408,14 +1624,16 @@ def the_same_through_both(client, seed: list, sent: dict, function: str, own: di
         for token in (first, second):
             seeded[token] = answer_of(client, token, name, arguments).get("id")
     through_log = answer_of(client, first, "log", filled(sent, seeded[first]))
-    through_own = answer_of(client, second, function, filled(own, seeded[second]))
+    through_own = own_answer(ids[1], function, filled(own, seeded[second]))
     assert tables_of(ids[0]) == tables_of(ids[1]), (sent, own)
     return through_log, through_own
 
 
 SQUAT_SET = {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}
 BENCH = {"exercise": "Bench Press", "weight_kg": 80, "reps": 5, "exact": True}
-# (what it shows, the seed through the five, a log call, the kind's function, the same call in its own shape)
+BENCH_PART = {"movement": "Bench Press", "weight_kg": 80, "reps": 5, "exact": True}  # the same set as log's part
+# (what it shows, the seed through /mcp, a log call, the kind's function, the same call in its own shape). A seed of
+# the five's went through log since L6.
 BOTH = [
     ("lifts", [], {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}]},
      "log_lifts", {"sets": [SQUAT_SET]}),
@@ -1456,7 +1674,7 @@ BOTH = [
     ("a routine's sets with exact", [], {"kind": "lifts", "parts": [{"movement": "Bench Press", "weight_kg": 80,
                                                                      "reps": 5, "exact": True}] * 3},
      "log_lifts", {"sets": [BENCH] * 3}),
-    ("new_session", [("log_lifts", {"sets": [SQUAT_SET]})],
+    ("new_session", [("log", {"kind": "lifts", "parts": [SET]})],
      {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}],
       "details": {"new_session": True}}, "log_lifts", {"sets": [SQUAT_SET], "new_session": True}),
     ("a hold", [], {"kind": "lifts", "parts": [{"movement": "plank", "weight_kg": 0, "time_s": 90}]}, "log_lifts",
@@ -1473,12 +1691,12 @@ BOTH = [
     ("a run in metres, stored as km", [], {"kind": "cardio", "parts": [{"movement": "Outdoor Run", "minutes": 30,
                                                                         "distance_m": 5000}]},
      "log_cardio", {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5}),
-    ("the per-hand check", [("log_lifts", {"sets": [BENCH]})],
+    ("the per-hand check", [("log", {"kind": "lifts", "parts": [BENCH_PART]})],
      {"kind": "lifts", "parts": [{"movement": "Dumbbell Bench Press", "weight_kg": 50, "reps": 8}]},
      "log_lifts", {"sets": [{"exercise": "Dumbbell Bench Press", "weight_kg": 50, "reps": 8}]}),
-    ("a duplicate", [("log_bodyweight", {"kg": 80})], {"kind": "bodyweight", "details": {"kg": 80}},
-     "log_bodyweight", {"kg": 80}),
-    ("allow_repeat", [("log_food", {"entries": [{"description": "Dal", "kcal": 180}]})],
+    ("a duplicate", [("log", {"kind": "bodyweight", "details": {"kg": 80}})],
+     {"kind": "bodyweight", "details": {"kg": 80}}, "log_bodyweight", {"kg": 80}),
+    ("allow_repeat", [("log", {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180}]}})],
      {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180}]}, "allow_repeat": True},
      "log_food", {"entries": [{"description": "Dal", "kcal": 180}], "allow_repeat": True}),
     ("a back-dated entry", [], {"kind": "bodyweight", "details": {"kg": 81}, "date": "back"}, "log_bodyweight",
@@ -1562,15 +1780,16 @@ def test_a_usda_food_through_log_and_through_log_food_gives_the_same_rows_and_an
 
 def test_pick_lift_through_log_is_the_matcher_s_question_and_exact_answers_it_on_both_dates(http):
     token = person(300)
-    smith = {"exercise": "Smith Squat", "weight_kg": 60, "reps": 5, "exact": True}
-    answer_of(http, token, "log_lifts", {"sets": [SQUAT_SET | {"exact": True}], "date": days_ago(3)})
-    answer_of(http, token, "log_lifts", {"sets": [smith]})
+    account = account_of(http, token)
+    smith = {"movement": "Smith Squat", "weight_kg": 60, "reps": 5, "exact": True}
+    answer_of(http, token, "log", {"kind": "lifts", "parts": [SET | {"exact": True}], "date": days_ago(3)})
+    answer_of(http, token, "log", {"kind": "lifts", "parts": [smith]})
     for date in (None, days_ago(3)):
         sent = {"kind": "lifts", "parts": [{"movement": "squat", "weight_kg": 80, "reps": 5}],
                 **({"date": date} if date else {})}
         asked = answer_of(http, token, "log", sent)
-        own = answer_of(http, token, "log_lifts", {"sets": [{"exercise": "squat", "weight_kg": 80, "reps": 5}],
-                                                   **({"date": date} if date else {})})
+        own = own_answer(account, "log_lifts", {"sets": [{"exercise": "squat", "weight_kg": 80, "reps": 5}],
+                                                **({"date": date} if date else {})})  # in process since L6
         assert asked["error"] == own["error"] == "pick_lift" and asked == said_as_sent(own, "lifts")
         assert "exact true" in asked["fix"] and not FIVE_NAMES.search(json.dumps(asked))
         picked = answer_of(http, token, "log", {**sent, "parts": [{"movement": "Back Squat", "weight_kg": 80, "reps": 5,
@@ -1629,20 +1848,22 @@ def test_route_s_refusal_comes_after_the_account_the_row_and_the_switch(http):
 
 # ---------------------------------------------------------------- the five, by name
 
-def test_each_of_the_five_called_by_name_answers_as_before_its_row_under_its_own_name(http):
+def test_each_of_the_five_called_by_name_is_the_unknown_function_and_writes_no_row_and_no_entry(http):
+    """Was: each answers as before, its row under its own name. Since L6 (deploy 2) the five are not registered: a
+    call of one by name, with arguments that once fit, is the library's unknown function, and nothing is written."""
     token = person(320)
+    account = account_of(http, token)
     calls = [("log_lifts", {"sets": [SQUAT_SET]}), ("log_bodyweight", {"kg": 80}),
              ("log_measurement", {"kind": "waist", "value": 86}),
              ("log_food", {"entries": [{"description": "Dal", "kcal": 180}]}),
              ("log_cardio", {"exercise": "Outdoor Walk", "minutes": 30})]
-    before = len(rows())
+    assert [name for name, _ in calls] == list(FIVE)
+    before, entries = len(rows()), tables_of(account)
     for name, arguments in calls:
-        answer = answer_of(http, token, name, arguments)
-        assert "error" not in answer, (name, answer)
-        mcp_schemas.RESULTS[name].model_validate(answer)
-    logged = rows()[before:]
-    assert [(r.function, r.caller, r.outcome) for r in logged] == [(n, "claude", "written") for n, _ in calls]
-    assert all(r.notes is None for r in logged)  # no kind= or word=: only log notes those
+        result = call(http, token, name, arguments)
+        assert result["isError"] is True and "structuredContent" not in result, (name, result)
+        assert result["content"] == [{"type": "text", "text": f"Unknown tool: {name}"}], (name, result)
+    assert len(rows()) == before and tables_of(account) == entries  # no call row, no entry
     assert not {t["name"] for t in tool_list(http, token)} & set(FIVE)
 
 
@@ -1654,8 +1875,9 @@ def test_the_list_holds_log_and_guide_where_log_lifts_stood_and_none_of_the_five
     owner = [t["name"] for t in tool_list(client, sign(claims(sub=OWNER)))]
     assert everyone[:4] == ["whoami", "list_exercises", "log", "guide"] and everyone[4] == "set_goal"
     assert owner == [*everyone, *mcp_server.OWNER_FUNCTIONS] and not set(FIVE) & set(owner)
-    assert mcp_server.RETIRING == FIVE == log_shape.LOG_FUNCTIONS
-    assert set(FIVE) <= set(registered_tools(client)) and set(FIVE) <= set(mcp_server.NEEDS)
+    # L6: RETIRING went with the five, which are now neither registered nor in NEEDS.
+    assert not hasattr(mcp_server, "RETIRING") and FIVE == log_shape.LOG_FUNCTIONS
+    assert not set(FIVE) & set(registered_tools(client)) and not set(FIVE) & set(mcp_server.NEEDS)
     assert len(everyone) == 22 == web.FUNCTION_COUNT  # routines-and-programs.md: save_program
 
 
@@ -1767,7 +1989,7 @@ def test_pair_takes_the_room_log_s_notes_leave_and_word_goes_before_pair_is_cut_
 
 def test_a_log_call_s_pair_note_follows_its_kind_and_word(http):
     token = person(341)
-    answer_of(http, token, "log_lifts", {"sets": [BENCH]})
+    answer_of(http, token, "log", {"kind": "lifts", "parts": [BENCH_PART]})
     answer_of(http, token, "log", {"kind": "lifts", "parts": [{"movement": "Dumbbell Bench Press", "weight_kg": 50,
                                                                "reps": 8}]})
     notes = rows()[-1].notes
@@ -1785,7 +2007,6 @@ def test_the_write_limit_counts_log_and_the_read_limit_counts_guide(http):
     with db.session_scope() as s:
         s.add_all(models.CallLog(user_id=account, function="log", started_at=started, ms=1, ok=True, result_bytes=1)
                   for _ in range(services.common.WRITE_LIMIT))
-    assert answer_of(http, token, "log_bodyweight", {"kg": 80})["error"] == "too_many_writes"  # log's rows count
     assert answer_of(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})["error"] == "too_many_writes"
     other = person(351)
     account = account_of(http, other)
@@ -1798,16 +2019,18 @@ def test_the_write_limit_counts_log_and_the_read_limit_counts_guide(http):
     assert "guide" not in services.common.WRITE_FUNCTIONS
 
 
-def test_a_key_on_log_gives_the_first_answer_again_and_crossed_with_log_lifts_is_key_reused(http):
+def test_a_key_on_log_gives_the_first_answer_again_and_on_another_log_call_is_key_reused(http):
+    """Was: crossed with log_lifts. The five are no longer registered (L6), so the key is crossed between two log
+    calls of different kinds."""
     token = person(360)
     account = account_of(http, token)
     sent = {"kind": "bodyweight", "details": {"kg": 80}, "key": "abcdefgh01"}
     first = call(http, token, "log", sent)
     again = call(http, token, "log", sent)
     assert again["content"][0]["text"] == first["content"][0]["text"] and rows()[-1].outcome == "repeat"
-    lifted = call(http, token, "log_lifts", {"sets": [SQUAT_SET], "key": "crossed001"})
+    lifted = call(http, token, "log", {"kind": "lifts", "parts": [SET], "key": "crossed001"})
     assert lifted["isError"] is False
-    crossed = answer_of(http, token, "log", {"kind": "lifts", "parts": [SET], "key": "crossed001"})
+    crossed = answer_of(http, token, "log", {"kind": "bodyweight", "details": {"kg": 81}, "key": "crossed001"})
     assert crossed["error"] == "key_reused" and not FIVE_NAMES.search(json.dumps(crossed))
     from evals.run import person_rows
     assert len(person_rows(account)["lift_set"]) == 1  # nothing written by the second

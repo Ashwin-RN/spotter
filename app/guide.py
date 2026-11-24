@@ -1,11 +1,11 @@
 """guide (contract docs/contracts/log-and-guide.md): how to log each kind log takes, by topic.
 
 Each answer is built once, at import, from the five log functions' own words: each one's description constant and its
-argument model's schema (mcp_schemas.LOG_ARGUMENTS), which equals the function's published input schema. So while the
-five are listed, guide and the five cannot disagree, and when the five go the words stay. For a kind: its own
-description; what its parts take, with each part field's own words and the line on the other forms Spotter converts;
-its details as a schema, with the five's own words, units and ranges; and the words of the fields at log's top. For
-topic log: every kind, its words, what it records, its parts and its details.
+argument model's schema (mcp_schemas.LOG_ARGUMENTS), which equals the input schema the function published until it was
+no longer registered (log-and-guide.md, L6). The words stayed: guide is where they reach a model now. For a kind:
+its own description; what its parts take, with each part field's own words and the line on the other forms Spotter
+converts; its details as a schema, with the five's own words, units and ranges; and the words of the fields at log's
+top. For topic log: every kind, its words, what it records, its parts and its details.
 
 kind, the field log takes the word by, is read as topic (decision 44); both sent with two words is refused.
 

@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import select
 
 from app import db, exercises, mcp_server, rules, services
-from app.mcp_schemas import LogSetIn, SetIn
+from app.mcp_schemas import LOG_ARGUMENTS, LOG_LIFTS_DESCRIPTION, LogSetIn, SetIn
 from app.models import Exercise, LiftSession
 
 from . import text_rules as tr
@@ -505,13 +505,13 @@ def test_goal_lift_runs_over_the_candidates_that_take_a_goal():
 
 def test_through_mcp_set_goal_takes_a_word_and_its_pick_lift_reaches_the_client(writer):
     http, token, account = writer
-    ok(http, token, "log_lifts", {"date": day(6), "sets": [{"exercise": "Smith Squat", "weight_kg": 60, "reps": 5,
-                                                            "exact": True}]})
+    ok(http, token, "log", {"kind": "lifts", "date": day(6), "parts": [{"movement": "Smith Squat", "weight_kg": 60,
+                                                                         "reps": 5, "exact": True}]})
     taken = ok(http, token, "set_goal", {"kind": "lift", "exercise": "squat", "target_value": 120,
                                          "target_date": day(-60)})
     assert taken["goal"]["exercise"] == "Smith Squat"
-    ok(http, token, "log_lifts", {"date": day(2), "sets": [{"exercise": "Back Squat", "weight_kg": 80, "reps": 5,
-                                                            "exact": True}]})
+    ok(http, token, "log", {"kind": "lifts", "date": day(2), "parts": [{"movement": "Back Squat", "weight_kg": 80,
+                                                                         "reps": 5, "exact": True}]})
     asked = failed(http, token, "set_goal", {"kind": "lift", "exercise": "squats", "target_value": 140,
                                              "target_date": day(-60)})
     assert (asked["error"], asked["field"], asked["fix"]) == (
@@ -678,34 +678,49 @@ def test_log_set_in_takes_the_person_s_words_and_exact_while_set_in_keeps_an_exa
 
 def test_through_mcp_a_word_is_logged_pick_lift_reaches_the_client_and_exact_answers_it(writer):
     http, token, account = writer
-    tools = registered_tools(http)  # log_lifts, though no list holds it now (log-and-guide.md)
-    log_lifts, routines = tools["log_lifts"], tools["get_routines"]
-    assert log_lifts["description"].endswith(
+    tools = registered_tools(http)
+    routines = tools["get_routines"]
+    # log_lifts is no longer registered (log-and-guide.md, deploy 2): its words are read from their constants, which
+    # still feed guide, and its set model from its argument model, whose schema is the one it published.
+    assert LOG_LIFTS_DESCRIPTION.endswith(
         "Send the person's own word for a lift; Spotter picks it and the summary names it. pick_lift means two lifts "
         "fit: ask which.")
     # log-and-guide.md row 4: a routine's sets go to log; routines-and-programs.md C5b: its holds' and carries' too
     assert ("send the sets of its lifts, holds and carries with log, kind lifts, one part a set, the lift as movement, "
             "with exact true, with each change") in routines["description"]
-    props = log_lifts["inputSchema"]["$defs"]["LogSetIn"]["properties"]
+    props = LOG_ARGUMENTS["log_lifts"].model_json_schema()["$defs"]["LogSetIn"]["properties"]
     assert set(props) == {"exercise", "weight_kg", "weight_lb", "reps", "time_s", "distance_m", "exact"}
     assert tools["edit_entry"]["inputSchema"]["$defs"]["SetIn"]["properties"]["exercise"]["description"] == (
         "The exercise name, exactly as list_exercises gives it.")
-    for text in (log_lifts["description"], routines["description"]):
+    for text in (LOG_LIFTS_DESCRIPTION, routines["description"]):
         assert tr.check(text, tr.CLAUDE) == [], text
 
-    first = ok(http, token, "log_lifts", {"date": day(5), "sets": [{"exercise": "squat", "weight_kg": 80, "reps": 5}]})
+    first = ok(http, token, "log", {"kind": "lifts", "date": day(5), "parts": [{"movement": "squat", "weight_kg": 80,
+                                                                                 "reps": 5}]})
     assert first["session"]["sets"][0]["exercise"] == "Back Squat"
-    ok(http, token, "log_lifts", {"date": day(2), "sets": [{"exercise": "Smith Squat", "weight_kg": 60, "reps": 5}]})
-    asked = failed(http, token, "log_lifts", {"sets": [{"exercise": "squat", "weight_kg": 80, "reps": 5}]})
+    ok(http, token, "log", {"kind": "lifts", "date": day(2), "parts": [{"movement": "Smith Squat", "weight_kg": 60,
+                                                                         "reps": 5}]})
+    asked = failed(http, token, "log", {"kind": "lifts", "parts": [{"movement": "squat", "weight_kg": 80, "reps": 5}]})
     assert asked["error"] == "pick_lift" and asked["candidates"] == [
         {"name": "Back Squat", "last": day(5)}, {"name": "Smith Squat", "last": day(2)}]
-    picked = ok(http, token, "log_lifts", {"sets": [{"exercise": "Back Squat", "weight_kg": 80, "reps": 5,
-                                                     "exact": True}]})
+    picked = ok(http, token, "log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 80, "reps": 5,
+                                                                  "exact": True}]})
     assert picked["session"]["sets"][0]["exercise"] == "Back Squat"
-    wrong = failed(http, token, "log_lifts", {"sets": [{"exercise": "Plank", "weight_kg": 0, "seconds": 60}]})
+    # An unknown key in a set: log refuses it in a part's words before the set model is reached, so the set model's
+    # own refusal is read from it directly (mcp_server.misfit_model).
+    sent = {"sets": [{"exercise": "Plank", "weight_kg": 0, "seconds": 60}]}
+    model = LOG_ARGUMENTS["log_lifts"]
+    wrong = mcp_server.schema_refusal("log_lifts", model.model_json_schema(), sent,
+                                      *mcp_server.misfit_model(model, sent))
     assert wrong["fix"].startswith("Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m, exact.")
-    not_bool = failed(http, token, "log_lifts", {"sets": [{"exercise": "Back Squat", "weight_kg": 80, "reps": 5,
-                                                           "exact": "yes"}]})
+    # What a model gets: the same key sent in a part through log, refused in a part's words, exact among them.
+    seconds = failed(http, token, "log", {"kind": "lifts", "parts": [{"movement": "Plank", "weight_kg": 0,
+                                                                       "seconds": 60}]})
+    assert seconds["message"] == "Part 1: 'seconds' is not a field of a part."
+    assert seconds["fix"].startswith("Use: movement, weight_kg, weight_lb, reps, time_s, distance_m, exact, minutes, "
+                                     "distance_km, distance_mi.")
+    not_bool = failed(http, token, "log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 80,
+                                                                        "reps": 5, "exact": "yes"}]})
     assert "exact" in not_bool["message"]
     # A read never asks (R19): both logged, the every-lift form with only those two, through its published model.
     read = ok(http, token, "get_progress", {"exercise": "squat"})

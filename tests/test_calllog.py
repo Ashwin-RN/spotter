@@ -12,12 +12,19 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
 from app import calllog, db, log_shape, services
+from app.mcp_schemas import LOG_ARGUMENTS
 from app.models import CallLog
 
 from .conftest import HEADERS, rpc, sign
-from .test_mcp import CALLABLE, REQUIRED, call, compact, one_user, registered_tools, squat, tool_list
+from .test_mcp import CALLABLE, REQUIRED, call, compact, one_user, registered_tools, tool_list
 
 MARKER = "zq-marker-5b1e"
+WEIGH_IN = {"kind": "bodyweight", "details": {"kg": 80}}  # one weigh-in as log takes it (log-and-guide.md)
+
+
+def squat_parts(weight: float, reps: int = 5, sets: int = 3) -> list[dict]:
+    """squat()'s sets as log's lift parts: the lift as movement."""
+    return [{"movement": "Back Squat", "weight_kg": weight, "reps": reps} for _ in range(sets)]
 
 
 def rows() -> list[CallLog]:
@@ -45,25 +52,28 @@ def timed(client, token, name, arguments=None):
 # ---------------------------------------------------------------- one row per call
 
 def test_a_success_writes_one_row_with_every_column(http):
-    before, result, after = timed(http, sign(), "log_bodyweight", {"kg": 80.5})
+    # log-and-guide.md, deploy 2: the five are reached through log, and the row is log's.
+    before, result, after = timed(http, sign(), "log", {"kind": "bodyweight", "details": {"kg": 80.5}})
     assert result["isError"] is False
     [row] = rows()
-    check_row(row, "log_bodyweight", True, None, result, one_user().id, before, after)
+    check_row(row, "log", True, None, result, one_user().id, before, after)
 
 
 def test_a_duplicate_is_an_ok_row(http):
     token = sign()
-    call(http, token, "log_bodyweight", {"kg": 80.5})  # a lift is never a duplicate now (gym-logging.md decision 3)
-    result = call(http, token, "log_bodyweight", {"kg": 80.5})
+    weigh_in = {"kind": "bodyweight", "details": {"kg": 80.5}}
+    call(http, token, "log", weigh_in)  # a lift is never a duplicate now (gym-logging.md decision 3)
+    result = call(http, token, "log", weigh_in)
     assert result["structuredContent"]["duplicate"] is True
     assert [(r.ok, r.error_code) for r in rows()] == [(True, None), (True, None)]
 
 
 def test_a_service_error_writes_a_not_ok_row_with_its_code(http):
-    before, result, after = timed(http, sign(), "log_lifts", {"sets": squat(100), "date": "not-a-date"})
+    before, result, after = timed(http, sign(), "log", {"kind": "lifts", "parts": squat_parts(100),
+                                                         "date": "not-a-date"})
     assert result["structuredContent"]["error"] == "invalid_date"
     [row] = rows()
-    check_row(row, "log_lifts", False, "invalid_date", result, one_user().id, before, after)
+    check_row(row, "log", False, "invalid_date", result, one_user().id, before, after)
 
 
 def test_a_crash_writes_a_not_ok_row(http, monkeypatch, logs):
@@ -96,7 +106,7 @@ def test_an_identity_error_writes_a_row_with_no_user(make_client):
 
 def test_every_function_writes_its_own_row(http):
     token = sign()
-    for name in CALLABLE:  # the five by name too, and log and guide under their own (log-and-guide.md)
+    for name in CALLABLE:  # every registered function: log and guide under their own (log-and-guide.md)
         call(http, token, name, REQUIRED.get(name, {}))
     assert [r.function for r in rows()] == CALLABLE
 
@@ -120,9 +130,11 @@ MARKED_CALLS = [
     ("log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}], "notes": MARKER}),
     ("log", {"kind": "food", "details": {"entries": [{"description": MARKER, "kcal": 100}]}}),
     ("guide", {"topic": MARKER, "kind": MARKER}),
-    ("log_lifts", {"sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}], "date": MARKER, "notes": MARKER}),
-    ("log_lifts", {"sets": squat(100), "notes": MARKER}),
-    ("log_bodyweight", {"kg": 80, "date": MARKER}),
+    # The five's own marked calls, sent through log since deploy 2 (L6), each marker in the same string as before.
+    ("log", {"kind": "lifts", "parts": [{"movement": MARKER, "weight_kg": 100, "reps": 5}], "date": MARKER,
+             "notes": MARKER}),
+    ("log", {"kind": "lifts", "parts": squat_parts(100), "notes": MARKER}),
+    ("log", {"kind": "bodyweight", "details": {"kg": 80}, "date": MARKER}),
     ("set_goal", {"kind": MARKER, "exercise": MARKER, "measurement_kind": MARKER, "target_value": 150,
                   "target_date": MARKER, "text": MARKER, "start_value": 100, "status": MARKER,
                   "weight_unit": MARKER}),  # units.md R12
@@ -136,7 +148,7 @@ MARKED_CALLS = [
     ("get_progress", {"exercise": MARKER}),
     ("update_settings", {"time_zone": MARKER, "weight_unit": MARKER, "distance_unit": MARKER}),  # units.md
     ("get_log", {"date": MARKER, "days": 3}),
-    ("log_measurement", {"kind": MARKER, "value": 84, "date": MARKER}),
+    ("log", {"kind": "measurement", "details": {"kind": MARKER, "value": 84}, "date": MARKER}),
     ("edit_entry", {"kind": MARKER, "entry_id": 1, "date": MARKER, "notes": MARKER,
                     "sets": [{"exercise": MARKER, "weight_kg": 100, "reps": 5}], "meal": MARKER,
                     "description": MARKER, "exercise": MARKER, "portion": MARKER}),
@@ -144,14 +156,14 @@ MARKED_CALLS = [
     # Refused at the service, an unknown kind: a new account may delete (switch decision 2), and confirm is marked too.
     ("delete_entry", {"kind": MARKER, "entry_id": 1, "confirm": MARKER}),
     ("find_food", {"query": MARKER}),  # a read: it answers, with nothing found
-    ("log_food", {"entries": [{"description": MARKER, "meal": MARKER, "kcal": 100, "portion": MARKER}],
-                  "date": MARKER}),
-    ("log_food", {"entries": [{"description": MARKER, "kcal": 100}]}),  # succeeds: the marker is the person's text
+    ("log", {"kind": "food", "details": {"entries": [{"description": MARKER, "meal": MARKER, "kcal": 100,
+                                                      "portion": MARKER}]}, "date": MARKER}),
+    ("log", {"kind": "food", "details": {"entries": [{"description": MARKER, "kcal": 100}]}}),  # succeeds
     ("save_food", {"name": MARKER, "serving_label": MARKER, "kcal_per_serving": 100}),  # succeeds
     # A saved meal's items (macros-and-asking.md): an item's own description, marked. It succeeds.
     ("save_food", {"name": "Usual lunch", "items": [{"description": MARKER, "kcal": 100},
                                                      {"description": "Dal", "kcal": 180}]}),
-    ("log_cardio", {"exercise": MARKER, "minutes": 30, "date": MARKER, "notes": MARKER}),
+    ("log", {"kind": "cardio", "parts": [{"movement": MARKER, "minutes": 30}], "date": MARKER, "notes": MARKER}),
     ("get_trends", {}),  # no string arguments: in the table so their rows are checked too
     ("get_goals", {"include_closed": True}),
     # Every string argument of the import, the rows' too: refused (the person has no time zone yet).
@@ -171,7 +183,7 @@ MARKED_CALLS = [
     ("get_data", {"area": MARKER, "from_date": MARKER, "to_date": MARKER, "order": MARKER, "cursor": MARKER}),
 ]
 REFUSED = 23  # the marked calls the services refuse. Was 17, before save_routine; 18 before get_data; 19 before log;
-# 22 before save_program
+# 22 before save_program. The five's seven calls, through log since L6, are refused as they were: five of them
 
 
 def string_fields(schema: dict) -> set[str]:
@@ -200,7 +212,7 @@ def marked_fields(arguments: dict) -> set[str]:
 
 
 def test_the_marker_table_covers_every_string_argument(http):
-    for tool in registered_tools(http).values():  # the five too, which no list holds now
+    for tool in registered_tools(http).values():
         if tool["name"] in ("owner_calls", "owner_feedback", "owner_delete_feedback"):
             continue
         marked = set().union(*(marked_fields(a) for name, a in MARKED_CALLS if name == tool["name"]))
@@ -210,6 +222,16 @@ def test_the_marker_table_covers_every_string_argument(http):
         assert string_fields(tool["inputSchema"]) - own_key == marked, tool["name"]
 
 
+def test_the_marker_table_covers_every_string_field_of_each_kind_log_takes():
+    """log's own schema names only its own fields; each kind's fields are its argument model's (LOG_ARGUMENTS), which
+    log reaches through route. Every string field of each kind's model carries the marker in some log call of that
+    kind, as the five's own calls did before deploy 2 (L6). The key's marker is sent in tests/test_idempotency.py."""
+    for function, model in LOG_ARGUMENTS.items():
+        routed = [log_shape.route(a) for name, a in MARKED_CALLS if name == "log"]
+        marked = set().union(*(marked_fields(r.arguments) for r in routed if r.function == function))
+        assert string_fields(model.model_json_schema()) - {"key"} == marked, function
+
+
 def test_a_marker_in_every_argument_reaches_no_log_row_and_no_log_line(make_client, logs):
     client = make_client(auth_debug=True)
     token = sign()
@@ -217,7 +239,7 @@ def test_a_marker_in_every_argument_reaches_no_log_row_and_no_log_line(make_clie
     for name, arguments in MARKED_CALLS:
         result = call(client, token, name, arguments)
         errors += result["isError"]
-    assert errors == REFUSED  # the marked calls refused; the other eight succeed
+    assert errors == REFUSED  # the marked calls refused; the other twelve succeed
     logged = rows()
     assert len(logged) == len(MARKED_CALLS)
     for row in logged:
@@ -234,8 +256,8 @@ def test_a_crash_whose_message_holds_the_marker_never_logs_it(http, monkeypatch,
     def crash(*args, **kwargs):
         raise RuntimeError(f"failed while saving {MARKER}")
 
-    monkeypatch.setattr(services, "log_bodyweight", crash)
-    result = call(http, sign(), "log_bodyweight", {"kg": 80})
+    monkeypatch.setattr(services, "log_bodyweight", crash)  # what log's bodyweight step calls
+    result = call(http, sign(), "log", WEIGH_IN)
     assert result["structuredContent"]["error"] == "internal_error"
     assert MARKER not in result["content"][0]["text"]
     [row] = rows()
@@ -250,7 +272,7 @@ def test_a_database_error_holding_the_marker_never_logs_it(http, monkeypatch, lo
         raise OperationalError(f"SELECT '{MARKER}'", {"name": MARKER}, Exception(MARKER))
 
     monkeypatch.setattr(services, "log_bodyweight", down)
-    result = call(http, sign(), "log_bodyweight", {"kg": 80})
+    result = call(http, sign(), "log", WEIGH_IN)
     assert result["structuredContent"]["error"] == "database_unavailable"
     assert "OperationalError" in logs.text and MARKER not in logs.text and MARKER not in result["content"][0]["text"]
     assert rows()[0].error_code == "database_unavailable"
@@ -280,7 +302,7 @@ def test_a_failing_call_log_write_does_not_fail_the_call(http, monkeypatch, logs
         raise OperationalError("INSERT", {}, Exception("disk full"))
 
     monkeypatch.setattr(calllog, step, broken)
-    result = call(http, sign(), "log_bodyweight", {"kg": 80})
+    result = call(http, sign(), "log", WEIGH_IN)
     assert result["isError"] is False and result["structuredContent"]["weigh_in"]["kg"] == 80
     assert "call log could not be written: OperationalError" in logs.text
     assert "disk full" not in logs.text
@@ -316,12 +338,12 @@ def test_the_row_is_started_before_the_service_runs_and_completed_after(http, mo
     call(http, token, "whoami")
     account = one_user().id
     monkeypatch.setattr(services, "log_bodyweight", stand_in)
-    result = call(http, token, "log_bodyweight", {"kg": 80})
-    assert ("log_bodyweight", False, "in_progress", 0, 0, account) in seen  # the row was there first
+    result = call(http, token, "log", WEIGH_IN)
+    assert ("log", False, "in_progress", 0, 0, account) in seen  # the row was there first
     row = rows()[-1]
-    assert (row.function, row.ok, row.error_code, row.user_id) == ("log_bodyweight", False, "stand_in", account)
+    assert (row.function, row.ok, row.error_code, row.user_id) == ("log", False, "stand_in", account)
     assert row.result_bytes == len(result["content"][0]["text"].encode("utf-8"))
-    assert [r.function for r in rows()] == ["whoami", "log_bodyweight"]  # one row per call
+    assert [r.function for r in rows()] == ["whoami", "log"]  # one row per call
     assert not [r for r in rows() if r.error_code == "in_progress"]
 
 
@@ -339,6 +361,11 @@ def test_a_refused_call_has_a_completed_row_too(http):
 
 KINDS = ["waist", "hips", "chest", "arm", "thigh", "steps"]
 VALUES = {"waist": 84, "hips": 98, "chest": 101, "arm": 34, "thigh": 58, "steps": 9000}
+
+
+def measurement(kind: str) -> dict:
+    """One measurement as log takes it (log-and-guide.md): kind measurement, its own kind and value in details."""
+    return {"kind": "measurement", "details": {"kind": kind, "value": VALUES[kind]}}
 
 
 def seed_writes(account: int, how_many: int) -> None:
@@ -359,7 +386,7 @@ def test_writes_one_after_another_stop_exactly_at_the_limit(http):
     token = sign()
     call(http, token, "whoami")
     seed_writes(one_user().id, services.WRITE_LIMIT - 2)
-    answers = [call(http, token, "log_measurement", {"kind": kind, "value": VALUES[kind]}) for kind in KINDS]
+    answers = [call(http, token, "log", measurement(kind)) for kind in KINDS]
     assert [a["isError"] for a in answers] == [False, False, True, True, True, True]
     assert {a["structuredContent"]["error"] for a in answers[2:]} == {"too_many_writes"}
     assert measurements_saved() == 2
@@ -380,7 +407,7 @@ def test_simultaneous_writes_never_pass_the_limit(http):
 
     def send(kind: str) -> None:
         barrier.wait()
-        answers[kind] = call(http, token, "log_measurement", {"kind": kind, "value": VALUES[kind]})
+        answers[kind] = call(http, token, "log", measurement(kind))
 
     threads = [threading.Thread(target=send, args=(kind,)) for kind in KINDS]
     for t in threads:
@@ -421,7 +448,9 @@ def with_surrogates(arguments: dict) -> dict:
         if value == MARKER:
             return SURROGATE
         if isinstance(value, list):
-            return [{k: swap(v) for k, v in item.items()} if isinstance(item, dict) else swap(item) for item in value]
+            return [swap(item) for item in value]
+        if isinstance(value, dict):  # log's details, and the food entries inside them
+            return {k: swap(v) for k, v in value.items()}
         return value
 
     return {k: swap(v) for k, v in arguments.items()}
@@ -434,7 +463,7 @@ def test_a_lone_surrogate_in_every_string_argument_always_gets_an_answer(make_cl
         sent = with_surrogates(arguments)
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": sent}}
         wire = json.dumps(body).encode("ascii")  # the surrogate travels as a JSON escape, as a client sends it
-        assert (b"d83d" in wire) == bool(marked_fields(arguments)), name
+        assert (b"d83d" in wire) == (MARKER in json.dumps(arguments)), name  # log's details too
         r = client.post("/mcp", content=wire, headers={**HEADERS, "Authorization": f"Bearer {token}"})
         assert r.status_code < 500, (name, r.status_code)
         answer = r.json()
@@ -489,7 +518,7 @@ def test_a_pool_timeout_is_database_unavailable(http, monkeypatch, logs):
         raise PoolTimeout(f"QueuePool limit reached {MARKER}")
 
     monkeypatch.setattr(services, "log_bodyweight", busy)
-    result = call(http, sign(), "log_bodyweight", {"kg": 80})
+    result = call(http, sign(), "log", WEIGH_IN)
     assert result["structuredContent"]["error"] == "database_unavailable"
     assert rows()[0].error_code == "database_unavailable"
     assert "TimeoutError" in logs.text and MARKER not in logs.text

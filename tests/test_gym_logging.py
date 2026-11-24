@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import event, func, select, update
 
 from app import db, formatting, services, users
-from app.mcp_schemas import LogLiftsResult
+from app.mcp_schemas import LOG_ARGUMENTS, LOG_LIFTS_DESCRIPTION, LogLiftsResult
 from app.models import EntryVersion, LiftSession, LiftSet
 from app.services import lifts
 
@@ -23,7 +23,7 @@ from . import text_rules as tr
 from .conftest import lock_sql, sign
 from .test_calllog import rows
 from .test_idempotency import K, keys, writer  # noqa: F401 - writer is a fixture
-from .test_mcp import call, failed, ok, registered_tools, tool_list
+from .test_mcp import call, failed, ok, tool_list
 
 BENCH = ("Bench Press", 80, 5)
 SETS_FIX = "Send new_session true to start another session that day, or send fewer sets."
@@ -60,6 +60,11 @@ def user(make_user):
 
 def sets(*rows_):
     return [{"exercise": e, "weight_kg": w, "reps": r} for e, w, r in rows_]
+
+
+def parts(*rows_):
+    """The same sets as log's parts, for a call through /mcp: log, kind lifts (log-and-guide.md)."""
+    return [{"movement": e, "weight_kg": w, "reps": r} for e, w, r in rows_]
 
 
 def log(person, *rows_, by="claude", **data):
@@ -299,7 +304,7 @@ def test_a_delete_s_confirm_code_from_before_an_add_deletes_nothing_through_mcp(
     first, on = started(account, how)
     older(first)
     code = ok(http, token, "delete_entry", {"kind": "lift_session", "entry_id": first})["confirm"]
-    assert ok(http, token, "log_lifts", {"sets": sets(BENCH), **on})["id"] == first
+    assert ok(http, token, "log", {"kind": "lifts", "parts": parts(BENCH), **on})["id"] == first
     late = ok(http, token, "delete_entry", {"kind": "lift_session", "entry_id": first, "confirm": code})
     assert (late["deleted"], late["dry_run"]) == (False, True) and late["confirm"] != code
     assert stored(first)["deleted_at"] is None and len(stored(first)["sets"]) == 2
@@ -514,8 +519,8 @@ def test_allow_repeat_sent_directly_is_taken_and_the_answer_and_the_rows_are_wha
 
 def test_allow_repeat_sent_through_mcp_is_taken_and_adds_as_any_call_does(writer):
     http, token, _ = writer
-    first = ok(http, token, "log_lifts", {"sets": sets(BENCH)})
-    added = ok(http, token, "log_lifts", {"sets": sets(BENCH), "allow_repeat": True})
+    first = ok(http, token, "log", {"kind": "lifts", "parts": parts(BENCH)})
+    added = ok(http, token, "log", {"kind": "lifts", "parts": parts(BENCH), "allow_repeat": True})
     assert added["id"] == first["id"] and added["duplicate"] is False and len(added["session"]["sets"]) == 2
     assert rows()[-1].outcome == "written" and "allow_repeat" in rows()[-1].tried.split()
 
@@ -524,10 +529,10 @@ def test_allow_repeat_sent_through_mcp_is_taken_and_adds_as_any_call_does(writer
 
 def test_the_same_key_and_call_twice_is_one_add_and_the_first_answer_and_its_second_row_reads_repeat(writer):
     http, token, _ = writer
-    ok(http, token, "log_lifts", {"sets": sets(BENCH)})
-    sent = {"sets": sets(BENCH), "key": K}
-    first = call(http, token, "log_lifts", sent)
-    again = call(http, token, "log_lifts", sent)
+    ok(http, token, "log", {"kind": "lifts", "parts": parts(BENCH)})
+    sent = {"kind": "lifts", "parts": parts(BENCH), "key": K}
+    first = call(http, token, "log", sent)
+    again = call(http, token, "log", sent)
     assert again == first and len(first["structuredContent"]["session"]["sets"]) == 2
     assert len(stored(first["structuredContent"]["id"])["sets"]) == 2
     assert [r.outcome for r in rows()[-2:]] == ["written", "repeat"]
@@ -535,10 +540,11 @@ def test_the_same_key_and_call_twice_is_one_add_and_the_first_answer_and_its_sec
 
 def test_a_key_on_an_add_that_was_refused_is_free(writer):
     http, token, _ = writer
-    full = ok(http, token, "log_lifts", {"sets": sets(*[BENCH] * 60)})
-    refused = failed(http, token, "log_lifts", {"sets": sets(BENCH), "key": K})
+    full = ok(http, token, "log", {"kind": "lifts", "parts": parts(*[BENCH] * 60)})
+    refused = failed(http, token, "log", {"kind": "lifts", "parts": parts(BENCH), "key": K})
     assert refused["error"] == "sets_count_out_of_range" and keys() == []
-    taken = ok(http, token, "log_lifts", {"sets": sets(BENCH), "new_session": True, "key": K})
+    taken = ok(http, token, "log", {"kind": "lifts", "parts": parts(BENCH), "details": {"new_session": True},
+                                    "key": K})
     assert taken["id"] != full["id"] and [r.outcome for r in rows()[-2:]] == ["refused", "written"]
 
 
@@ -638,27 +644,27 @@ def test_the_reads_count_one_session_for_a_day_said_set_by_set(user):
 
 # ---------------------------------------------------------------- through MCP (decisions 2, 3, 14, 15)
 
-def test_the_published_description_arguments_and_result_fields_are_the_contract_s_words(http):
-    tool = registered_tools(http)["log_lifts"]  # though no list holds it now (log-and-guide.md)
-    assert (tool["title"], tool["description"]) == ("Log a lift session", DESCRIPTION)
-    schema = tool["inputSchema"]
+def test_the_description_arguments_and_result_fields_are_the_contract_s_words():
+    """log_lifts is no longer registered (log-and-guide.md, deploy 2): its words are read from their constants and its
+    argument and result models, which still feed guide and hold log's answer of kind lifts. Its title and annotations
+    had no constant and went with it."""
+    assert LOG_LIFTS_DESCRIPTION == DESCRIPTION
+    schema = LOG_ARGUMENTS["log_lifts"].model_json_schema()
     assert list(schema["properties"]) == ["sets", "date", "notes", "allow_repeat", "new_session", "key"]
     assert {name: schema["properties"][name]["description"] for name in ARGUMENTS} == ARGUMENTS
     assert schema["required"] == ["sets"]  # new_session and allow_repeat are optional, false when left out
     for name in ("allow_repeat", "new_session"):
         assert (schema["properties"][name]["type"], schema["properties"][name]["default"]) == ("boolean", False)
-    out = tool["outputSchema"]["properties"]
+    out = LogLiftsResult.model_json_schema()["properties"]
     assert {name: out[name]["description"] for name in RESULT} == RESULT and "note" not in out
     assert "note" not in LogLiftsResult.model_fields
-    assert tool["annotations"] == {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False,
-                                   "openWorldHint": False}  # WRITE, as before
 
 
 def test_an_add_s_answer_passes_its_model_carries_no_note_and_its_row_reads_written_naming_new_session(writer):
     http, token, _ = writer
-    first = call(http, token, "log_lifts", {"sets": sets(BENCH)})
-    added = call(http, token, "log_lifts", {"sets": sets(BENCH), "notes": "Felt fine"})
-    second = call(http, token, "log_lifts", {"sets": sets(BENCH), "new_session": True})
+    first = call(http, token, "log", {"kind": "lifts", "parts": parts(BENCH)})
+    added = call(http, token, "log", {"kind": "lifts", "parts": parts(BENCH), "notes": "Felt fine"})
+    second = call(http, token, "log", {"kind": "lifts", "parts": parts(BENCH), "details": {"new_session": True}})
     for result in (first, added, second):
         assert result["isError"] is False and "note" not in result["structuredContent"]
         LogLiftsResult.model_validate(result["structuredContent"])
@@ -666,5 +672,6 @@ def test_an_add_s_answer_passes_its_model_carries_no_note_and_its_row_reads_writ
     assert answers[1]["id"] == answers[0]["id"] != answers[2]["id"]
     assert answers[1]["summary"].startswith("Added Bench Press 1 × 5 at 80 kg to the session on ")
     made = rows()[-3:]
-    assert [(r.function, r.outcome, r.ok) for r in made] == [("log_lifts", "written", True)] * 3
-    assert "new_session" not in made[1].tried.split() and "new_session" in made[2].tried.split()
+    # log's row (log-and-guide.md, "What a call row records"): its own name, and new_session named inside details
+    assert [(r.function, r.outcome, r.ok) for r in made] == [("log", "written", True)] * 3
+    assert "details{new_session}" not in made[1].tried.split() and "details{new_session}" in made[2].tried.split()

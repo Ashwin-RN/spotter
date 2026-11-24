@@ -383,11 +383,12 @@ CARDIO_NOTES_DESCRIPTION = "How it went, in the person's words."
 CARDIO_ALLOW_REPEAT_DESCRIPTION = "true logs it even when it matches a session from the last 10 minutes."
 
 
-# Each of the five's arguments as one model, apart from its registered function, so a call that reaches the same
-# service another way reads them with the same fields, types, ranges and words (mcp_server.misfit_model). Each model's
-# JSON schema equals its function's published input schema: the same title as the library gives the function's own
-# model, the fields in the signature's order, and additionalProperties false, which build_server sets on the function.
-# No docstring: one would be published as the schema's description, which the function's own schema has none of.
+# Each of the five's arguments as one model, apart from any registered function, so log, which reaches the same
+# services, reads them with the same fields, types, ranges and words (mcp_server.misfit_model), and guide gives their
+# words. The five are no longer registered (log-and-guide.md, L6). Each model's JSON schema equals the input schema its
+# function published until then: the same title as the library gave the function's own model, the fields in the
+# signature's order, and additionalProperties false, which build_server set on the function.
+# No docstring: one would become the schema's description, which the published schema had none of.
 
 def _arguments_of(function: str) -> ConfigDict:
     return ConfigDict(extra="forbid", title=f"{function}Arguments")
@@ -451,7 +452,7 @@ class LogCardioIn(BaseModel):
     key: Key = None
 
 
-# Each of the five's argument model, by the function's name, in the order they are registered.
+# Each of the five's argument model, by the function's name, in the order they were registered until L6.
 LOG_ARGUMENTS = {"log_lifts": LogLiftsIn, "log_bodyweight": LogBodyweightIn, "log_measurement": LogMeasurementIn,
                  "log_food": LogFoodIn, "log_cardio": LogCardioIn}
 

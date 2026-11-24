@@ -526,8 +526,6 @@ Claude may call these functions, and nothing else:
 | `what_is_logged` | What Spotter can hold and what the person has logged, area by area, with the open goals. |
 | `get_data` | One query over the person's entries: an area, its fields, filters, groups and totals, all worked out by Spotter. |
 
-A chat opened before the change holds log_lifts, log_bodyweight, log_measurement, log_food and log_cardio in their place: they log the same entries.
-
 `whoami` reports `claude_can`, the person's setting for what Claude may do:
 
 | Setting | Claude may |

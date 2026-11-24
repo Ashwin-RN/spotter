@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import select
 
 from app import calllog, db, exercises, rules, services
-from app.mcp_schemas import LogLiftsResult, LogSetIn, SetIn
+from app.mcp_schemas import LOG_ARGUMENTS, LogLiftsResult, LogSetIn, SetIn
 from app.models import CallLog, Exercise
 from app.services import lifts
 
@@ -45,6 +45,11 @@ def day(n: int) -> str:
 
 def one(exercise: str, weight, reps: int = 8) -> dict:
     return {"exercise": exercise, "exact": True, "weight_kg": weight, "reps": reps}
+
+
+def part(movement: str, weight, reps: int = 8) -> dict:
+    """One set as log's part, for a call through /mcp: log, kind lifts (log-and-guide.md)."""
+    return {"movement": movement, "exact": True, "weight_kg": weight, "reps": reps}
 
 
 def log(uid: int, on: str, *sets: dict, new: bool = True) -> dict:
@@ -352,16 +357,21 @@ def ids(*names: str) -> list[int]:
     return [by[n] for n in names]
 
 
+# A log call's row notes its kind and word first (log-and-guide.md, "What a call row records"); pair= comes after.
+LOGGED = "kind=lifts word=lifts"
+
+
 def test_the_ratio_is_noted_whenever_the_bar_lift_is_logged_and_never_a_weight(http):
     token = sign()
-    ok(http, token, "log_lifts", {"sets": [one("Bench Press", 81.15, 5)], "date": day(1)})
-    ok(http, token, "log_lifts", {"sets": [one("Dumbbell Bench Press", 37.35)], "date": day(2), "new_session": True})
-    asked = ok(http, token, "log_lifts", {"sets": [one("Dumbbell Bench Press", 43.65)], "date": day(3),
-                                         "new_session": True})
+    ok(http, token, "log", {"kind": "lifts", "parts": [part("Bench Press", 81.15, 5)], "date": day(1)})
+    ok(http, token, "log", {"kind": "lifts", "parts": [part("Dumbbell Bench Press", 37.35)], "date": day(2),
+                            "details": {"new_session": True}})
+    asked = ok(http, token, "log", {"kind": "lifts", "parts": [part("Dumbbell Bench Press", 43.65)], "date": day(3),
+                                    "details": {"new_session": True}})
     assert asked["hand_check"]
     [dumbbell] = ids("Dumbbell Bench Press")
     # 74.7 over 81.15 is 0.92, at or below it: noted, not asked. 87.3 over 81.15 is 1.08: noted and asked.
-    assert [r.notes for r in rows()] == [None, f"pair={dumbbell}:0.92", f"pair={dumbbell}:1.08"]
+    assert [r.notes for r in rows()] == [LOGGED, f"{LOGGED} pair={dumbbell}:0.92", f"{LOGGED} pair={dumbbell}:1.08"]
     for row in rows():
         for column in CallLog.__table__.columns:
             text = str(getattr(row, column.key))
@@ -371,10 +381,10 @@ def test_the_ratio_is_noted_whenever_the_bar_lift_is_logged_and_never_a_weight(h
 
 def test_no_note_without_the_bar_lift_and_none_on_a_refusal(http):
     token = sign()
-    ok(http, token, "log_lifts", {"sets": [one("Dumbbell Bench Press", 40)], "date": day(1)})  # no Bench Press
-    result = call(http, token, "log_lifts", {"sets": [one("Dumbbell Bench Press", 40)], "date": "soon"})
+    ok(http, token, "log", {"kind": "lifts", "parts": [part("Dumbbell Bench Press", 40)], "date": day(1)})  # no Bench
+    result = call(http, token, "log", {"kind": "lifts", "parts": [part("Dumbbell Bench Press", 40)], "date": "soon"})
     assert result["isError"] is True
-    assert [r.notes for r in rows()] == [None, None]
+    assert [r.notes for r in rows()] == [LOGGED, LOGGED]  # no pair=
 
 
 def test_the_pair_note_is_cut_at_a_whole_item_to_fit_the_column(http):
@@ -386,15 +396,17 @@ def test_the_pair_note_is_cut_at_a_whole_item_to_fit_the_column(http):
     assert len(pairs) >= 20
     token = sign()
     bars = list(dict.fromkeys(pairs.values()))
-    ok(http, token, "log_lifts", {"sets": [one(b, 61.35, 5) for b in bars], "date": day(1)})
-    out = ok(http, token, "log_lifts", {"sets": [one(n, 23.45) for n in pairs], "date": day(2), "new_session": True})
+    ok(http, token, "log", {"kind": "lifts", "parts": [part(b, 61.35, 5) for b in bars], "date": day(1)})
+    out = ok(http, token, "log", {"kind": "lifts", "parts": [part(n, 23.45) for n in pairs], "date": day(2),
+                                  "details": {"new_session": True}})
     assert "hand_check" not in out  # 46.9 kg in both hands, below 61.35 kg
     noted = rows()[-1].notes
-    assert noted.startswith("pair=") and len(noted) <= calllog.NOTES_MAX
-    items = noted.removeprefix("pair=").split(",")
+    head = f"{LOGGED} pair="  # the pair note sizes itself to what kind= and word= leave (calllog.room)
+    assert noted.startswith(head) and len(noted) <= calllog.NOTES_MAX
+    items = noted.removeprefix(head).split(",")
     every = [f"{i}:0.76" for i in ids(*pairs)]
     assert items == every[:len(items)] and len(items) < len(every)  # whole items, in the order sent, cut
-    assert len(",".join(every[:len(items) + 1])) > calllog.NOTES_MAX - len("pair=")  # the next would not fit
+    assert len(",".join(every[:len(items) + 1])) > calllog.NOTES_MAX - len(head)  # the next would not fit
     assert "61.35" not in noted and "23.45" not in noted and "46.9" not in noted
 
 
@@ -407,21 +419,24 @@ def test_pair_note_cuts_at_a_whole_item():
     assert lifts._ratio(100, 80) == "1.25" and lifts._ratio(80, 100) == "0.8" and lifts._ratio(160, 80) == "2"
 
 
-# ---------------------------------------------------------------- the published field
+# ---------------------------------------------------------------- the result field
 
-def test_hand_check_is_published_and_described(http):
-    tool = registered_tools(http)["log_lifts"]  # though no list holds it now (log-and-guide.md)
-    spec = tool["outputSchema"]["properties"]["hand_check"]
+def test_hand_check_is_described_in_its_result_model():
+    """log_lifts is no longer registered and log publishes no output schema (log-and-guide.md, deploy 2 and N6): the
+    field's words are read from LogLiftsResult, which Wrapper.call holds log's answer of kind lifts to."""
+    schema = LogLiftsResult.model_json_schema()
+    spec = schema["properties"]["hand_check"]
     assert spec["description"] == ("Present when a dumbbell, kettlebell or two-cable weight may be both hands' "
                                    "total: ask the person once, as it says. The weight was logged as sent.")
-    assert "hand_check" not in tool["outputSchema"].get("required", [])
+    assert "hand_check" not in schema.get("required", [])
     clean(spec["description"])
 
 
 def test_hand_check_reaches_the_assistant_through_mcp(http):
     token = sign()
-    ok(http, token, "log_lifts", {"sets": [one("Barbell Curl", 30)], "date": day(1)})
-    out = ok(http, token, "log_lifts", {"sets": [{"exercise": "hammer curls", "weight_kg": 20, "reps": 10}] * 3})
+    ok(http, token, "log", {"kind": "lifts", "parts": [part("Barbell Curl", 30)], "date": day(1)})
+    out = ok(http, token, "log", {"kind": "lifts", "parts": [{"movement": "hammer curls", "weight_kg": 20,
+                                                               "reps": 10}] * 3})
     assert out["hand_check"] == line("Dumbbell Hammer Curl", "20 kg", "40 kg", "Barbell Curl", "30 kg", "20", "10")
     assert [x["weight_kg"] for x in out["session"]["sets"]] == [20, 20, 20]
     assert one_user().id
@@ -466,8 +481,11 @@ def test_the_set_fields_say_one_side_s_reps_and_time(http):
             "distance.")
         for field in ("reps", "time_s", "distance_m"):
             clean(model.model_fields[field].description)
-    tools = registered_tools(http)  # the five too, though no list holds them now
+    # log_lifts is no longer registered (log-and-guide.md, deploy 2): its schema from its argument model, the one it
+    # published, which guide still gives.
+    schemas = {"log_lifts": LOG_ARGUMENTS["log_lifts"].model_json_schema(),
+               "edit_entry": registered_tools(http)["edit_entry"]["inputSchema"]}
     for name, model in (("log_lifts", "LogSetIn"), ("edit_entry", "SetIn")):
-        props = tools[name]["inputSchema"]["$defs"][model]["properties"]
+        props = schemas[name]["$defs"][model]["properties"]
         assert "one side's reps" in props["reps"]["description"] and "one side's time" in props["time_s"]["description"]
         assert "one side's distance" in props["distance_m"]["description"]

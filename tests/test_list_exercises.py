@@ -429,7 +429,7 @@ def test_the_search_s_text_never_reaches_the_call_log(writer):
 
 def test_the_resource_is_every_row_whatever_the_person_logged(writer):
     http, token, account_id = writer
-    ok(http, token, "log_lifts", {"sets": [{"exercise": "Hack Squat", "weight_kg": 100, "reps": 8}]})
+    ok(http, token, "log", {"kind": "lifts", "parts": [{"movement": "Hack Squat", "weight_kg": 100, "reps": 8}]})
     listed = {r["uri"]: r for r in rpc(http, "resources/list", token=token).json()["result"]["resources"]}
     assert listed["spotter://exercises"]["description"] == (
         "Every exercise Spotter knows, as JSON, with its equipment and how its weight is logged.")

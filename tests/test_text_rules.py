@@ -313,7 +313,8 @@ def test_code_words_are_found_on_a_page():
 
 def test_function_names_come_from_the_server():
     names = tr.function_names()
-    assert "whoami" in names and "log_lifts" in names
+    # log_lifts was one until the five were no longer registered (log-and-guide.md, L6); get_log is one now.
+    assert "whoami" in names and "get_log" in names and "log_lifts" not in names
 
 
 def test_sentence_length():

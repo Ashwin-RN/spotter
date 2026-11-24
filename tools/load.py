@@ -2,9 +2,10 @@
 
 Starts Spotter in-process on 127.0.0.1 with the evals' fake sign-in provider (evals/issuer.py), makes
 --people throwaway people with signed tokens, and has them all call MCP at once, each in its own thread,
-for --seconds: whoami, log_food, log_lifts, get_log, get_trends, get_goals, round and round. Then it prints,
-for each function and in all: calls, errors by code, and the 50th and 95th percentile and the slowest time,
-in ms, as the caller saw them (the request's whole round trip).
+for --seconds: whoami, log with a food entry (log:food), log with two squat sets (log:lifts), get_log,
+get_trends, get_goals, round and round. Then it prints, for each of those calls and in all: calls, errors by
+code, and the 50th and 95th percentile and the slowest time, in ms, as the caller saw them (the request's
+whole round trip).
 
 The database is DATABASE_URL, read through app.config like every setting: a local copy, never the live
 site. It must be set (unset would be the repo's own spotter.db), and its host must be local: a Postgres
@@ -41,7 +42,9 @@ from sqlalchemy import make_url  # noqa: E402
 
 from app.config import DEFAULT_DATABASE_URL, LOCAL_HOSTS  # noqa: E402
 
-FUNCTIONS = ("whoami", "log_food", "log_lifts", "get_log", "get_trends", "get_goals")
+# Each call a person makes in a turn, by its line in the table. log:food and log:lifts are both log, with its kind.
+FUNCTIONS = ("whoami", "log:food", "log:lifts", "get_log", "get_trends", "get_goals")
+SENT_AS = {"log:food": "log", "log:lifts": "log"}  # the function's name on the wire, where it is not the line's
 HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 HOST = "127.0.0.1"
 REQUEST_TIMEOUT = 60  # seconds: longer than every database limit, so a slow answer is measured, not cut off
@@ -105,7 +108,7 @@ def percentile(sorted_ms: list[float], share: float) -> float:
 
 
 def table(results: dict[str, list[tuple[float, str | None]]], seconds: float) -> str:
-    """The printed table: one line a function in FUNCTIONS order, then all of them together."""
+    """The printed table: one line a call in FUNCTIONS order, then all of them together."""
     rows = [("function", "calls", "errors", "p50 ms", "p95 ms", "slowest ms")]
     everything: list[tuple[float, str | None]] = []
     for name in FUNCTIONS:
@@ -133,13 +136,14 @@ def _row(name: str, calls: list[tuple[float, str | None]]) -> tuple[str, ...]:
 # ---------------------------------------------------------------- one person's loop
 
 def arguments(name: str, turn: int) -> dict:
-    """Each function's arguments. The numbers move with the turn, so the duplicate guard never answers
-    instead of a real write."""
-    if name == "log_food":
-        return {"entries": [{"description": "Banana", "kcal": 80 + turn % 900}]}
-    if name == "log_lifts":
-        return {"sets": [{"exercise": "Back Squat", "weight_kg": 60 + (turn % 400) / 4, "reps": 5},
-                         {"exercise": "Back Squat", "weight_kg": 60 + (turn % 400) / 4, "reps": 5}]}
+    """Each call's arguments, by its line in FUNCTIONS. The numbers move with the turn, so the duplicate guard
+    never answers instead of a real write."""
+    if name == "log:food":
+        return {"kind": "food", "details": {"entries": [{"description": "Banana", "kcal": 80 + turn % 900}]}}
+    if name == "log:lifts":
+        weight = 60 + (turn % 400) / 4
+        return {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": weight, "reps": 5},
+                                           {"movement": "Back Squat", "weight_kg": weight, "reps": 5}]}
     if name == "get_log":
         return {"days": 7}
     return {}
@@ -172,7 +176,7 @@ def person_loop(base_url: str, token: str, deadline: float, record) -> None:
                 if time.monotonic() >= deadline:
                     return
                 body = {"jsonrpc": "2.0", "id": next(ids), "method": "tools/call",
-                        "params": {"name": name, "arguments": arguments(name, turn)}}
+                        "params": {"name": SENT_AS.get(name, name), "arguments": arguments(name, turn)}}
                 started = time.perf_counter()
                 try:
                     code = outcome(client.post("/mcp", json=body))

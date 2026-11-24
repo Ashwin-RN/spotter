@@ -18,10 +18,11 @@ from mcp.server.mcpserver import MCPServer
 from sqlalchemy import func, select
 from starlette.testclient import TestClient
 
-from app import db, links, log_shape, mcp_server, services
+from app import db, guide, links, log_shape, mcp_schemas, mcp_server, services
 from app.config import Settings
+from app.log_shape import LOG_FUNCTIONS
 from app.main import create_app
-from app.mcp_schemas import RESULTS
+from app.mcp_schemas import LOG_ARGUMENTS, RESULTS
 from app.mcp_server import CAN_AND_CANT, REQUIRED_SCOPES, SCOPES
 from app.models import Bodyweight, CallLog, LiftSession, User
 
@@ -252,25 +253,26 @@ def test_spotter_logs_through_its_own_handler_added_once(provider):
 
 # ================================================================ stage 2: the seven functions
 
-# The five log functions log and guide take the place of in the list (log-and-guide.md): listed for nobody, and still
-# registered, so a chat that holds them calls them by name.
-RETIRING = ["log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio"]
-# Every function anyone but the owner can call, in the order registered: the five among them.
+# Every function anyone but the owner can call, in the order registered. The five log functions log and guide took
+# the place of (log-and-guide.md) are no longer registered (deploy 2, L6): a call of one by name is the unknown
+# function. Their services stay, and log reaches them (app.log_shape.LOG_FUNCTIONS).
 CALLABLE = ["whoami", "list_exercises",
             "log", "guide",  # log-and-guide.md: right after list_exercises, where log_lifts stood in the list
-            "log_lifts", "log_bodyweight", "set_goal", "get_progress", "update_settings",
-            "get_log", "log_measurement", "edit_entry", "restore_entry", "delete_entry",
-            "find_food", "log_food", "save_food", "log_cardio", "get_trends", "get_goals", "import_entries",
+            "set_goal", "get_progress", "update_settings",
+            "get_log", "edit_entry", "restore_entry", "delete_entry",
+            "find_food", "save_food", "get_trends", "get_goals", "import_entries",
             "send_feedback",  # feedback.md decision 2: the twentieth, after the nineteen
             "save_routine", "get_routines",  # routines.md R10: after send_feedback
             "what_is_logged", "get_data"]  # data-on-request.md: after get_routines
 # routines-and-programs.md, the note of 2026-11-23: save_program right after save_routine, the two writes together
 CALLABLE.insert(CALLABLE.index("save_routine") + 1, "save_program")
-# What everyone's list publishes: every callable function but the five.
-FUNCTIONS = [name for name in CALLABLE if name not in RETIRING]
-# The functions each run one service of their own name: all but log and guide, whose work is the kind's own step and
-# guide's answers (tests/test_log_and_guide.py).
-SERVED = [name for name in CALLABLE if name not in ("log", "guide")]
+# What everyone's list publishes: every callable function.
+FUNCTIONS = list(CALLABLE)
+# The functions that each run one service of their own name: all but log and guide, whose work is the kind's own
+# step and guide's answers (tests/test_log_and_guide.py).
+OWN_SERVICE = [name for name in CALLABLE if name not in ("log", "guide")]
+# Every service a call reaches, so spy_on_services replaces each: those, and the five's, which log reaches.
+SERVED = [*OWN_SERVICE, *LOG_FUNCTIONS]
 READS = {"whoami", "list_exercises", "guide", "get_progress", "get_log", "find_food", "get_trends", "get_goals",
          "get_routines", "what_is_logged", "get_data"}
 READ_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
@@ -343,9 +345,15 @@ def squat(weight: float, reps: int = 5, sets: int = 3) -> list[dict]:
     return [{"exercise": "Back Squat", "weight_kg": weight, "reps": reps} for _ in range(sets)]
 
 
+def squat_parts(weight: float, reps: int = 5, sets: int = 3) -> list[dict]:
+    """The same sets as log's parts, one part a set (log-and-guide.md)."""
+    return [{"movement": "Back Squat", "weight_kg": weight, "reps": reps} for _ in range(sets)]
+
+
 def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     """One of every result shape each function has, through MCP."""
-    seen: dict[str, list[dict]] = {name: [] for name in CALLABLE if name != "log"}  # log's are its kinds' own
+    # log's answers are its kinds' own, kept under the kind's function, whose result model they are held to.
+    seen: dict[str, list[dict]] = {name: [] for name in [*CALLABLE, *LOG_FUNCTIONS] if name != "log"}
 
     def keep(name: str, arguments: dict | None = None, as_token: str = token, into: str | None = None) -> dict:
         """into: the result model's row a log answer is kept under, its kind's function's (log has none)."""
@@ -366,26 +374,30 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("list_exercises", {"kind": "lift", "category": "push"})
     keep("get_progress")  # nothing logged: note
     keep("get_progress", {"exercise": "Back Squat"})  # nothing logged: note
-    keep("log_cardio", {"exercise": "Treadmill Walk", "minutes": 30})  # no weigh-in yet: no estimate, a note
+    keep("log", {"kind": "cardio", "parts": [{"movement": "Treadmill Walk", "minutes": 30}]},
+         into="log_cardio")  # no weigh-in yet: no estimate, a note
     keep("find_food", {"query": "dal"})  # nothing saved or logged; USDA off: usda null and a note
-    estimate = keep("log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True, "portion": "2"},
-                                             {"description": "Dal", "kcal": 180, "estimated": True,
-                                              "portion": "a bowl"}]})  # note
-    keep("log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True, "portion": "2"},
-                                  {"description": "Dal", "kcal": 180, "estimated": True,
-                                   "portion": "a bowl"}]})  # duplicate
+    two = {"kind": "food", "details": {"entries": [
+        {"description": "2 rotis", "kcal": 240, "estimated": True, "portion": "2"},
+        {"description": "Dal", "kcal": 180, "estimated": True, "portion": "a bowl"}]}}
+    estimate = keep("log", two, into="log_food")  # note
+    keep("log", two, into="log_food")  # duplicate
     # macros-and-asking.md: an entry with its macros, so the day's macros block is filled, and one without
-    keep("log_food", {"entries": [{"description": "Chicken wrap", "kcal": 520, "protein_g": 32, "carbs_g": 48,
-                                   "fat_g": 18, "macros_estimated": False}, {"description": "Tea", "kcal": 40}]})
+    keep("log", {"kind": "food", "details": {"entries": [
+        {"description": "Chicken wrap", "kcal": 520, "protein_g": 32, "carbs_g": 48, "fat_g": 18,
+         "macros_estimated": False}, {"description": "Tea", "kcal": 40}]}}, into="log_food")
     for days_ago, weight in ((21, 100), (14, 102.5), (7, 105)):
-        keep("log_lifts", {"sets": squat(weight), "date": (today - timedelta(days=days_ago)).isoformat()})
-    sets = squat(110) + [{"exercise": "Bench Press", "weight_kg": 60, "reps": 8}]
-    keep("log_lifts", {"sets": sets, "notes": "Felt strong"})  # new bests
-    keep("log_lifts", {"sets": sets, "notes": "Felt strong"})  # an add to today's session (gym-logging.md)
-    keep("log_bodyweight", {"kg": 82, "date": (today - timedelta(days=30)).isoformat()})
-    keep("log_bodyweight", {"kg": 80.4})
-    keep("log_bodyweight", {"kg": 80.4})  # duplicate: note
-    keep("log_bodyweight", {"kg": 80.1})  # replaces today's: replaced and note
+        keep("log", {"kind": "lifts", "parts": squat_parts(weight),
+                     "date": (today - timedelta(days=days_ago)).isoformat()}, into="log_lifts")
+    sets = squat_parts(110) + [{"movement": "Bench Press", "weight_kg": 60, "reps": 8}]
+    keep("log", {"kind": "lifts", "parts": sets, "notes": "Felt strong"}, into="log_lifts")  # new bests
+    # an add to today's session (gym-logging.md)
+    keep("log", {"kind": "lifts", "parts": sets, "notes": "Felt strong"}, into="log_lifts")
+    keep("log", {"kind": "bodyweight", "details": {"kg": 82}, "date": (today - timedelta(days=30)).isoformat()},
+         into="log_bodyweight")
+    keep("log", {"kind": "bodyweight", "details": {"kg": 80.4}}, into="log_bodyweight")
+    keep("log", {"kind": "bodyweight", "details": {"kg": 80.4}}, into="log_bodyweight")  # duplicate: note
+    keep("log", {"kind": "bodyweight", "details": {"kg": 80.1}}, into="log_bodyweight")  # replaces today's: note
     target_date = (today + timedelta(days=60)).isoformat()
     lift_goal = keep("set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 140,
                                   "target_date": target_date, "text": "A big squat"})
@@ -396,9 +408,11 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("update_settings", {"time_zone": "Asia/Kolkata"})  # changed
     keep("update_settings", {"time_zone": "Asia/Kolkata"})  # already set: nothing changed
     keep("whoami")  # a zone is set: no note
-    first = keep("log_measurement", {"kind": "waist", "value": 84})
-    keep("log_measurement", {"kind": "waist", "value": 84})  # duplicate: note
-    second = keep("log_measurement", {"kind": "Waist", "value": 83.5})  # replaces: replaced and note
+    first = keep("log", {"kind": "measurement", "details": {"kind": "waist", "value": 84}}, into="log_measurement")
+    keep("log", {"kind": "measurement", "details": {"kind": "waist", "value": 84}},
+         into="log_measurement")  # duplicate: note
+    second = keep("log", {"kind": "measurement", "details": {"kind": "Waist", "value": 83.5}},
+                  into="log_measurement")  # replaces: replaced and note
     keep("get_log")
     log = keep("get_log", {"days": 14})
     session_id = next(s["id"] for day in log["days"] for s in day["sessions"])
@@ -419,10 +433,11 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("find_food", {"query": "roti"})  # a saved hit and a recent entry
     keep("update_settings", {"calorie_target_kcal": 2200, "target_cardio_minutes_per_week": 150,
                              "add_back_exercise_kcal": True})  # a target: remaining and net are numbers
-    keep("log_food", {"entries": [{"description": "Roti", "saved_food_id": roti["id"], "servings": 2,
-                                   "meal": "Dinner"}]})
-    cardio = keep("log_cardio", {"exercise": "Treadmill Run", "minutes": 25, "distance_km": 4.5,
-                                 "machine_kcal": 280, "notes": "Intervals"})  # an estimate and a pace
+    keep("log", {"kind": "food", "details": {"entries": [{"description": "Roti", "saved_food_id": roti["id"],
+                                                          "servings": 2, "meal": "Dinner"}]}}, into="log_food")
+    cardio = keep("log", {"kind": "cardio", "parts": [{"movement": "Treadmill Run", "minutes": 25, "distance_km": 4.5}],
+                          "details": {"machine_kcal": 280}, "notes": "Intervals"},
+                  into="log_cardio")  # an estimate and a pace
     keep("edit_entry", {"kind": "food_entry", "entry_id": estimate["ids"][1], "kcal": 150})  # becomes you_said
     keep("edit_entry", {"kind": "cardio_entry", "entry_id": cardio["id"], "minutes": 30})  # re-estimated
     keep("get_log", {"days": 14})
@@ -448,7 +463,7 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     keep("get_goals", {"include_closed": True}, as_token=full_token)
     # A third person with one weigh-in: get_trends has no rate, and its note says why.
     one_token = sign(claims(sub="user_01ONE", email="one@example.com", name="One"))
-    keep("log_bodyweight", {"kg": 80}, as_token=one_token)
+    keep("log", {"kind": "bodyweight", "details": {"kg": 80}}, as_token=one_token, into="log_bodyweight")
     keep("get_trends", as_token=one_token)
     assert seen["get_trends"][-1]["note"] and seen["get_trends"][-1]["bodyweight"]["rate_per_week"] is None
     keep("send_feedback", {"text": "The chart is confusing.", "topic": "pages"})  # saved (feedback.md decision 2)
@@ -467,11 +482,14 @@ def every_result(client: TestClient, token: str) -> dict[str, list[dict]]:
     # and a delete's preview its summary.
     lb_token = sign(claims(sub="user_01POUNDS", email="pounds@example.com", name="Pounds"))
     whoami(client, lb_token)
-    keep("log_lifts", {"sets": [{"exercise": "Bench Press", "weight_lb": 225, "reps": 5}]}, as_token=lb_token)
+    keep("log", {"kind": "lifts", "parts": [{"movement": "Bench Press", "weight_lb": 225, "reps": 5}]},
+         as_token=lb_token, into="log_lifts")
     # A pair total above that bench: hand_check (exercise-list.md R13), on an add to the day's session.
-    keep("log_lifts", {"sets": [{"exercise": "Dumbbell Bench Press", "weight_lb": 120, "reps": 8}]}, as_token=lb_token)
-    weighed = keep("log_bodyweight", {"lb": 185}, as_token=lb_token)
-    keep("log_cardio", {"exercise": "Outdoor Run", "minutes": 27, "distance_mi": 3}, as_token=lb_token)
+    keep("log", {"kind": "lifts", "parts": [{"movement": "Dumbbell Bench Press", "weight_lb": 120, "reps": 8}]},
+         as_token=lb_token, into="log_lifts")
+    weighed = keep("log", {"kind": "bodyweight", "details": {"lb": 185}}, as_token=lb_token, into="log_bodyweight")
+    keep("log", {"kind": "cardio", "parts": [{"movement": "Outdoor Run", "minutes": 27, "distance_mi": 3}]},
+         as_token=lb_token, into="log_cardio")
     keep("edit_entry", {"kind": "bodyweight", "entry_id": weighed["id"], "lb": 184}, as_token=lb_token)
     keep("set_goal", {"kind": "bodyweight", "target_value": 175, "weight_unit": "lb",
                       "target_date": (today + timedelta(days=60)).isoformat()}, as_token=lb_token)
@@ -558,7 +576,9 @@ def test_every_result_field_is_described(http):
 
 
 def test_the_arguments_are_typed_parameters(http):
-    schemas = {name: t["inputSchema"] for name, t in registered_tools(http).items()}  # the five, though not listed
+    schemas = {name: t["inputSchema"] for name, t in registered_tools(http).items()}
+    # The five are no longer registered (L6): their argument models' schemas, which log's kinds and guide read.
+    schemas.update({name: LOG_ARGUMENTS[name].model_json_schema() for name in LOG_FUNCTIONS})
     assert list(schemas["log"]["properties"]) == ["kind", "parts", "details", "date", "notes", "allow_repeat", "key"]
     assert schemas["log"]["required"] == ["kind"]
     assert list(schemas["log"]["$defs"]["LogPartIn"]["properties"]) == [
@@ -655,7 +675,7 @@ def test_a_service_field_with_no_schema_entry_fails_the_check():
 
 def test_results_are_the_services_own_dicts(http):
     token = sign()
-    ok(http, token, "log_lifts", {"sets": squat(100)})
+    ok(http, token, "log", {"kind": "lifts", "parts": squat_parts(100)})
     account = one_user().id
     assert ok(http, token, "list_exercises") == services.list_exercises(account)
     assert ok(http, token, "get_progress") == services.get_progress(account)
@@ -665,7 +685,8 @@ def test_results_are_the_services_own_dicts(http):
 
 
 def test_an_error_is_flagged_and_carries_the_fix_as_structure_and_text(http):
-    result = call(http, sign(), "log_lifts", {"sets": [{"exercise": "Back Squatt", "weight_kg": 100, "reps": 5}]})
+    result = call(http, sign(), "log", {"kind": "lifts", "parts": [{"movement": "Back Squatt", "weight_kg": 100,
+                                                                      "reps": 5}]})
     assert result["isError"] is True
     error = result["structuredContent"]
     assert error["error"] == "unknown_exercise" and error["message"] and error["fix"]
@@ -681,26 +702,29 @@ def test_a_list_exercises_error_is_flagged(http):
 
 def test_log_lifts_twice_adds_to_the_session_and_new_session_logs_another(http):
     token = sign()
-    first = ok(http, token, "log_lifts", {"sets": squat(100), "notes": "Easy"})
-    again = ok(http, token, "log_lifts", {"sets": squat(100), "notes": "Easy"})
+    sent = {"kind": "lifts", "parts": squat_parts(100), "notes": "Easy"}
+    first = ok(http, token, "log", sent)
+    again = ok(http, token, "log", sent)
     assert first["duplicate"] is False and again["duplicate"] is False
     assert again["id"] == first["id"] and "note" not in again and len(again["session"]["sets"]) == 6
     assert sessions_logged() == 1
-    repeat = ok(http, token, "log_lifts", {"sets": squat(100), "notes": "Easy", "new_session": True})
+    repeat = ok(http, token, "log", {**sent, "details": {"new_session": True}})
     assert repeat["duplicate"] is False and repeat["id"] != first["id"]
     assert sessions_logged() == 2
 
 
 @pytest.mark.parametrize("name, arguments, field", [
-    ("log_bodyweight", {"kg": "heavy"}, "kg must be a number, not 'heavy'."),
-    ("log_lifts", {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": "five"}]},
-     "Set 1: reps must be a whole number, not 'five'."),
-    ("log_lifts", {"sets": "not a list"}, "sets must be a list, not 'not a list'."),
+    ("log", {"kind": "bodyweight", "details": {"kg": "heavy"}}, "details.kg must be a number, not 'heavy'."),
+    ("log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": "five"}]},
+     "Part 1: reps must be a whole number, not 'five'."),
+    ("log", {"kind": "lifts", "parts": "not a list"}, "parts must be a list, not 'not a list'."),
     ("set_goal", {"goal_id": "twelve", "status": "dropped"}, "goal_id must be a whole number, not 'twelve'."),
-    ("log_lifts", {"sets": squat(100), "allow_repeat": "perhaps"}, "allow_repeat must be true or false, not 'perhaps'."),
-], ids=["kg as text", "reps as text", "sets not a list", "goal_id as text", "allow_repeat not a bool"])
+    ("log", {"kind": "lifts", "parts": squat_parts(100), "allow_repeat": "perhaps"},
+     "allow_repeat must be true or false, not 'perhaps'."),
+], ids=["kg as text", "reps as text", "parts not a list", "goal_id as text", "allow_repeat not a bool"])
 def test_a_wrong_typed_argument_is_a_tool_error_naming_the_field(http, name, arguments, field):
-    """inputs.md D11: was the library's text, the field's path on a line of its own. Now Spotter's own refusal."""
+    """inputs.md D11: was the library's text, the field's path on a line of its own. Now Spotter's own refusal. The
+    four that went through the five go through log (L6): its refusal names each field as log was sent it."""
     result = call(http, sign(), name, arguments)
     assert result["isError"] is True
     assert (result["structuredContent"]["error"], result["structuredContent"]["message"]) == ("invalid_field", field)
@@ -789,7 +813,7 @@ def test_signups_closed_is_the_calls_error(make_client):
     client = make_client(signups_per_day=0)
     error = failed(client, sign(), "whoami")
     assert error["error"] == "signups_closed" and error["fix"]
-    assert failed(client, sign(), "log_lifts", {"sets": squat(100)})["error"] == "signups_closed"
+    assert failed(client, sign(), "log", {"kind": "lifts", "parts": squat_parts(100)})["error"] == "signups_closed"
 
 
 def test_a_database_that_cannot_be_reached_is_database_unavailable(make_client, logs):
@@ -828,15 +852,16 @@ def test_no_database_session_is_opened_on_the_event_loop(http, monkeypatch):
     monkeypatch.setattr(db, "new_session", recording_session)
     monkeypatch.setattr(mcp_server, "get_access_token", recording_token)
     token = sign()
-    calls = [("whoami", {}), ("list_exercises", {}), ("log_lifts", {"sets": squat(100)}),
-             ("log_bodyweight", {"kg": 80}), ("get_progress", {}),
+    calls = [("whoami", {}), ("list_exercises", {}), ("log", {"kind": "lifts", "parts": squat_parts(100)}),
+             ("log", {"kind": "bodyweight", "details": {"kg": 80}}), ("get_progress", {}),
              ("set_goal", {"kind": "lift", "exercise": "Back Squat", "target_value": 150,
                            "target_date": (date.today() + timedelta(days=90)).isoformat()}),
              ("update_settings", {"time_zone": "Europe/London"}),
-             ("get_log", {"days": 3}), ("log_measurement", {"kind": "waist", "value": 84}),
-             ("find_food", {"query": "dal"}), ("log_food", {"entries": [{"description": "Dal", "kcal": 180}]}),
+             ("get_log", {"days": 3}), ("log", {"kind": "measurement", "details": {"kind": "waist", "value": 84}}),
+             ("find_food", {"query": "dal"}),
+             ("log", {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180}]}}),
              ("save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}),
-             ("log_cardio", {"exercise": "Treadmill Walk", "minutes": 30})]
+             ("log", {"kind": "cardio", "parts": [{"movement": "Treadmill Walk", "minutes": 30}]})]
     calls += [("get_trends", {}), ("get_goals", {"include_closed": True})]
     for name, arguments in calls:
         ok(http, token, name, arguments)
@@ -885,11 +910,10 @@ def test_can_and_cant_names_exactly_the_twelve_functions():
     # It names no function a new chat cannot call (restore_entry, say): the five are not in a new chat's list.
     assert named & service_functions <= set(FUNCTIONS)
     assert set(FUNCTIONS) <= named  # and it names every function a new chat lists
-    # One line under the table names the five, as plain words, for a chat opened before log and guide; no other line
-    # names any of them (log-and-guide.md, rows 22 to 25). The line goes at deploy 2 (L6).
-    naming = [line for line in text.splitlines() if any(re.search(rf"\b{name}\b", line) for name in RETIRING)]
-    assert naming == ["A chat opened before the change holds log_lifts, log_bodyweight, log_measurement, log_food and "
-                      "log_cardio in their place: they log the same entries."]
+    # The line under the table that named the five for a chat opened before log and guide went at deploy 2 (L6,
+    # log-and-guide.md rows 22 to 25): no line names any of them.
+    naming = [line for line in text.splitlines() if any(re.search(rf"\b{name}\b", line) for name in LOG_FUNCTIONS)]
+    assert naming == []
 
 
 def test_can_and_cant_states_the_limit_the_delete_consent_and_that_an_edit_keeps_what_it_replaces():
@@ -966,8 +990,6 @@ OPTIONAL_ARGUMENTS = {
     "log": {"parts": [{"movement": "squat", "weight_kg": 100, "reps": 5}], "details": {"new_session": True},
             "date": "2026-01-02", "notes": "Notes", "allow_repeat": True},  # log-and-guide.md
     "guide": {"topic": "food", "kind": "food"},
-    "log_lifts": {"date": "2026-01-02", "notes": "Notes", "allow_repeat": True, "new_session": True},
-    "log_bodyweight": {"kg": 80.5, "lb": 177.5, "date": "2026-01-02", "allow_repeat": True},  # units.md: kg or lb
     "set_goal": {"kind": "lift", "exercise": "Back Squat", "measurement_kind": "waist", "distance_km": 5.5,
                  "distance_mi": 3.4, "target_value": 150.5, "target_date": "2099-01-01", "text": "Text",
                  "start_value": 100.5, "weight_unit": "lb", "goal_id": 7, "status": "open"},
@@ -977,7 +999,6 @@ OPTIONAL_ARGUMENTS = {
                         "target_cardio_minutes_per_week": 150, "add_back_exercise_kcal": True, "weight_unit": "lb",
                         "distance_unit": "mi"},
     "get_log": {"date": "2026-01-02", "days": 7},
-    "log_measurement": {"date": "2026-01-02", "allow_repeat": True},
     "edit_entry": {"date": "2026-01-02", "notes": "Notes", "sets": squat(105), "kg": 80.5, "lb": 177.5, "value": 84.5,
                    "meal": "lunch", "description": "Dal", "kcal": 150.0, "exercise": "Treadmill Walk", "minutes": 30.0,
                    "distance_km": 3.5, "distance_mi": 2.2, "incline_pct": 2.0, "speed_kmh": 7.0, "speed_mph": 4.3,
@@ -986,12 +1007,9 @@ OPTIONAL_ARGUMENTS = {
     "restore_entry": {"undo_edit": True},
     "delete_entry": {"confirm": "0123456789ab"},  # switch decision 7: the second call's code
     "find_food": {"limit": 5},
-    "log_food": {"date": "2026-01-02", "allow_repeat": True},
     "save_food": {"serving_label": "1 roti", "kcal_per_serving": 120.0, "grams_per_serving": 40.0,
                   "protein_g_per_serving": 3.5, "carbs_g_per_serving": 18.5, "fat_g_per_serving": 0.5,
                   "items": [{"description": "Dal", "kcal": 180.0}, {"saved_food_id": 7, "servings": 2.0}]},
-    "log_cardio": {"date": "2026-01-02", "distance_km": 3.5, "distance_mi": 2.2, "incline_pct": 2.0, "speed_kmh": 7.0,
-                   "speed_mph": 4.3, "avg_hr": 130, "machine_kcal": 210, "notes": "Easy", "allow_repeat": True},
     "get_trends": {},
     "get_goals": {"include_closed": True},
     "import_entries": {"dry_run": False, "weight_unit": "lb", "distance_unit": "mi", "length_unit": "in"},
@@ -1005,15 +1023,11 @@ OPTIONAL_ARGUMENTS = {
                  "cursor": "c1.x"},
 }
 REQUIRED = {"log": {"kind": "lifts"},
-            "log_lifts": {"sets": squat(100)},
-            "log_measurement": {"kind": "waist", "value": 84.5},
             "edit_entry": {"kind": "lift_session", "entry_id": 7},
             "restore_entry": {"kind": "measurement", "entry_id": 7},
             "delete_entry": {"kind": "bodyweight", "entry_id": 7},
             "find_food": {"query": "banana"},
-            "log_food": {"entries": [{"description": "Dal", "kcal": 180.0}]},
             "save_food": {"name": "Roti"},  # macros-and-asking.md: serving_label and kcal_per_serving optional
-            "log_cardio": {"exercise": "Treadmill Walk", "minutes": 30.0},
             "import_entries": {"rows": [{"kind": "bodyweight", "date": "2026-01-02", "weight": 180.5},
                                         {"kind": "lift_session", "date": "2026-01-03", "notes": "Old app",
                                          "sets": [{"exercise": "Deadlift", "weight": 315.0, "reps": 5, "times": 3}]},
@@ -1077,7 +1091,7 @@ def service_input(name: str, account: int, arguments: dict) -> tuple:
 
 
 def test_the_argument_table_lists_every_optional_argument(http):
-    for tool in registered_tools(http).values():  # the five too: a chat that holds them still calls them
+    for tool in registered_tools(http).values():
         if tool["name"] in mcp_server.OWNER_FUNCTIONS:
             continue
         schema = tool["inputSchema"]
@@ -1089,7 +1103,63 @@ def test_the_argument_table_lists_every_optional_argument(http):
         assert set(schema.get("required", [])) == set(REQUIRED.get(tool["name"], {})), tool["name"]
 
 
-@pytest.mark.parametrize("name", SERVED)
+# The five's services, which log reaches (L6: the five are no longer registered): for each, (log's call, the same
+# arguments in the kind's own shape), every field first and the fewest second, as REQUIRED and OPTIONAL_ARGUMENTS held
+# them for the five before.
+DAY_SENT = "2026-01-02"
+THROUGH_LOG = {
+    "log_lifts": [
+        ({"kind": "lifts", "parts": squat_parts(100), "date": DAY_SENT, "notes": "Notes", "allow_repeat": True,
+          "details": {"new_session": True}},
+         {"sets": squat(100), "date": DAY_SENT, "notes": "Notes", "allow_repeat": True, "new_session": True}),
+        ({"kind": "lifts", "parts": squat_parts(100)}, {"sets": squat(100)})],
+    "log_bodyweight": [  # units.md: kg or lb
+        ({"kind": "bodyweight", "details": {"kg": 80.5, "lb": 177.5}, "date": DAY_SENT, "allow_repeat": True},
+         {"kg": 80.5, "lb": 177.5, "date": DAY_SENT, "allow_repeat": True}),
+        ({"kind": "bodyweight"}, {})],
+    "log_measurement": [
+        ({"kind": "measurement", "details": {"kind": "waist", "value": 84.5}, "date": DAY_SENT, "allow_repeat": True},
+         {"kind": "waist", "value": 84.5, "date": DAY_SENT, "allow_repeat": True}),
+        ({"kind": "measurement", "details": {"kind": "waist", "value": 84.5}}, {"kind": "waist", "value": 84.5})],
+    "log_food": [
+        ({"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180.0}]}, "date": DAY_SENT,
+          "allow_repeat": True},
+         {"entries": [{"description": "Dal", "kcal": 180.0}], "date": DAY_SENT, "allow_repeat": True}),
+        ({"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180.0}]}},
+         {"entries": [{"description": "Dal", "kcal": 180.0}]})],
+    "log_cardio": [
+        ({"kind": "cardio", "parts": [{"movement": "Treadmill Walk", "minutes": 30.0, "distance_km": 3.5,
+                                       "distance_mi": 2.2}],
+          "details": {"incline_pct": 2.0, "speed_kmh": 7.0, "speed_mph": 4.3, "avg_hr": 130, "machine_kcal": 210},
+          "date": DAY_SENT, "notes": "Easy", "allow_repeat": True},
+         {"exercise": "Treadmill Walk", "minutes": 30.0, "date": DAY_SENT, "distance_km": 3.5, "distance_mi": 2.2,
+          "incline_pct": 2.0, "speed_kmh": 7.0, "speed_mph": 4.3, "avg_hr": 130, "machine_kcal": 210, "notes": "Easy",
+          "allow_repeat": True}),
+        ({"kind": "cardio", "parts": [{"movement": "Treadmill Walk", "minutes": 30.0}]},
+         {"exercise": "Treadmill Walk", "minutes": 30.0})],
+}
+
+
+@pytest.mark.parametrize("name", LOG_FUNCTIONS)
+def test_every_argument_sent_through_log_reaches_the_kind_s_service_and_no_other(http, monkeypatch, name):
+    """The five's rows of the test below, moved to log (L6): what was not sent is left out here too. The every-field
+    call names every field of the kind's argument model but key, and the fewest its required ones, as the argument
+    table held them for the five (key: tests/test_idempotency.py)."""
+    schema = LOG_ARGUMENTS[name].model_json_schema()
+    (_, every), (_, fewest) = THROUGH_LOG[name]
+    assert set(every) == set(schema["properties"]) - {"key"}, name
+    assert set(fewest) == set(schema.get("required", [])), name
+    token = sign()
+    whoami(http, token)
+    account = one_user().id
+    received = spy_on_services(monkeypatch)
+    set_switch(account, "log_delete")
+    for logged, own in THROUGH_LOG[name]:
+        failed(http, token, "log", logged)
+        assert received.pop(name) == service_input(name, account, own), logged
+
+
+@pytest.mark.parametrize("name", OWN_SERVICE)
 def test_every_argument_sent_reaches_the_service_and_no_other(http, monkeypatch, name):
     token = sign()
     whoami(http, token)
@@ -1106,8 +1176,8 @@ def test_every_argument_sent_reaches_the_service_and_no_other(http, monkeypatch,
 
 def test_writes_through_mcp_are_stored_as_by_claude(http):
     token = sign()
-    ok(http, token, "log_lifts", {"sets": squat(100)})
-    ok(http, token, "log_bodyweight", {"kg": 80})
+    ok(http, token, "log", {"kind": "lifts", "parts": squat_parts(100)})
+    ok(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})
     with db.session_scope() as session:
         assert [s.logged_by for s in session.scalars(select(LiftSession))] == ["claude"]
         assert [b.logged_by for b in session.scalars(select(Bodyweight))] == ["claude"]
@@ -1399,9 +1469,9 @@ def set_switch(account: int, value: str) -> None:
 CONTRACT_NEEDS = {
     "whoami": "read", "list_exercises": "read", "get_progress": "read", "get_log": "read",
     "log": "log", "guide": "read",  # log-and-guide.md: log at log, guide a read
-    "log_lifts": "log", "log_bodyweight": "log", "set_goal": "log", "update_settings": "log",
-    "log_measurement": "log", "edit_entry": "log", "restore_entry": "log", "delete_entry": "log_delete",
-    "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
+    "set_goal": "log", "update_settings": "log",
+    "edit_entry": "log", "restore_entry": "log", "delete_entry": "log_delete",
+    "find_food": "read", "save_food": "log",
     "get_trends": "read", "get_goals": "read",
     "import_entries": "log",
     "send_feedback": "log",  # feedback.md decision 3
@@ -1416,10 +1486,11 @@ def test_every_registered_function_has_a_level_and_every_level_a_function(http):
     registered = {t["name"] for t in tool_list(http, sign())}
     # OWNER_FUNCTIONS, the owner's three, are the owner's alone, at read, in no one else's list (trace.md 16,
     # feedback.md 8).
-    # RETIRING, the five, are in no one's list and still registered at log (log-and-guide.md).
-    assert registered == set(mcp_server.NEEDS) - set(mcp_server.OWNER_FUNCTIONS) - set(RETIRING)
+    # The five are no longer registered (log-and-guide.md, L6): in no list and with no level.
+    assert registered == set(mcp_server.NEEDS) - set(mcp_server.OWNER_FUNCTIONS)
     assert set(registered_tools(http)) - set(mcp_server.OWNER_FUNCTIONS) == set(CONTRACT_NEEDS) == set(CALLABLE)
-    assert registered == set(FUNCTIONS) and list(mcp_server.RETIRING) == RETIRING
+    assert registered == set(FUNCTIONS) and not set(LOG_FUNCTIONS) & set(mcp_server.NEEDS)
+    assert not hasattr(mcp_server, "RETIRING")
     assert mcp_server.NEEDS == {**CONTRACT_NEEDS, "owner_calls": "read", "owner_feedback": "read",
                                 "owner_delete_feedback": "read"}
 
@@ -1439,7 +1510,7 @@ def test_the_switch_gates_every_function_as_the_contract_says(http, monkeypatch,
     account = one_user().id
     set_switch(account, level)
     received = spy_on_services(monkeypatch)
-    for name in SERVED:  # log and guide by both settings: tests/test_log_and_guide.py
+    for name in OWN_SERVICE:  # log and guide by both settings: tests/test_log_and_guide.py
         received.pop(name, None)
         error = failed(http, token, name, REQUIRED.get(name, {}))
         if CONTRACT_NEEDS[name] in ALLOWS[level]:
@@ -1453,7 +1524,7 @@ def test_the_switch_gates_every_function_as_the_contract_says(http, monkeypatch,
 
 def test_a_refused_write_writes_nothing_and_leaves_a_call_log_row(http):
     token = sign()
-    logged = ok(http, token, "log_lifts", {"sets": squat(100)})
+    logged = ok(http, token, "log", {"kind": "lifts", "parts": squat_parts(100)})
     account = one_user().id
     set_switch(account, "log")  # switch decision 14: the one refused write is delete_entry at log
     result = call(http, token, "delete_entry", {"kind": "lift_session", "entry_id": logged["id"]})
@@ -1468,7 +1539,7 @@ def test_a_refused_write_writes_nothing_and_leaves_a_call_log_row(http):
 
 def test_delete_is_refused_at_log_and_the_entry_stays(http):
     token = sign()
-    logged = ok(http, token, "log_bodyweight", {"kg": 80})
+    logged = ok(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})
     set_switch(one_user().id, "log")  # switch decision 2: a new account starts at log_delete
     error = failed(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": logged["id"]})
     assert error["error"] == "not_allowed" and error["message"] == "This account lets Claude read and log, not delete."
@@ -1485,7 +1556,7 @@ def test_an_unknown_switch_value_counts_as_log():  # switch decision 4: was read
     assert mcp_server.level_of("everything") == "log" and mcp_server.level_of(None) == "log"
     assert mcp_server.level_of("read") == "log"
     assert mcp_server.not_allowed("delete_entry", "everything")["error"] == "not_allowed"
-    assert mcp_server.not_allowed("log_lifts", "everything") is None
+    assert mcp_server.not_allowed("log", "everything") is None
     assert mcp_server.not_allowed("whoami", "everything") is None
 
 
@@ -1513,7 +1584,7 @@ def test_too_many_writes_reaches_claude_as_an_error_with_the_wait(http, monkeypa
     refusal = {"error": "too_many_writes", "message": "120 writes in the last 10 minutes.",
                "fix": "Wait 4 minutes, then retry.", "wait_minutes": 4}
     monkeypatch.setattr(services, "log_lifts", lambda *a: refusal)
-    result = call(http, sign(), "log_lifts", {"sets": squat(100)})
+    result = call(http, sign(), "log", {"kind": "lifts", "parts": squat_parts(100)})
     assert result["isError"] is True and result["structuredContent"] == refusal
     with db.session_scope() as session:
         row = session.scalars(select(CallLog)).one()
@@ -1530,9 +1601,10 @@ def test_get_log_publishes_the_days_range(http):
 def test_the_write_limit_counts_the_same_names_the_switch_gates_as_writes():
     # The services count call-log rows by function name; every write Claude can make must be among them.
     writes = {name for name, level in mcp_server.NEEDS.items() if level != "read"}
-    # Besides them, only the web's own writes, which no function makes (delete account).
+    # Besides them, only the web's own writes, which no function makes (delete account), and the five's names: no
+    # longer registered (L6), they stay in the write tuple for the web's own call rows.
     assert writes <= set(services.WRITE_FUNCTIONS)
-    assert set(services.WRITE_FUNCTIONS) - writes <= {"delete_account"}
+    assert set(services.WRITE_FUNCTIONS) - writes <= {"delete_account", *LOG_FUNCTIONS}
     assert not {"add_sample_data", "remove_sample_data"} & set(services.WRITE_FUNCTIONS)   # decision 7
 
 
@@ -1564,7 +1636,7 @@ def test_every_food_entry_field_sent_reaches_the_service_and_no_other(http, monk
     whoami(http, token)
     account = one_user().id
     received = spy_on_services(monkeypatch)
-    failed(http, token, "log_food", {"entries": [entry, {"description": "Tea", "kcal": 40}]})
+    failed(http, token, "log", {"kind": "food", "details": {"entries": [entry, {"description": "Tea", "kcal": 40}]}})
     assert received["log_food"] == ((account, {"entries": [entry, {"description": "Tea", "kcal": 40.0}]}, "claude"), {})
 
 
@@ -1572,12 +1644,20 @@ def test_a_source_sent_by_the_caller_never_reaches_the_service(http, monkeypatch
     token = sign()
     whoami(http, token)
     received = spy_on_services(monkeypatch)
-    refused = failed(http, token, "log_food", {"entries": [{"description": "Dal", "kcal": 180, "source": "usda"}],
-                                               "source": "you_said"})
-    # inputs.md D1: refused, both of them, where they were dropped before; the service is never called.
-    assert [p["message"] for p in refused["errors"]] == ["'source' is not a field of log_food.",
-                                                         "Entry 1: 'source' is not a field of a food entry."]
+    entries = {"entries": [{"description": "Dal", "kcal": 180, "source": "usda"}]}
+    # inputs.md D1: refused, both of them, where they were dropped before; the service is never called. Through log
+    # (L6), one a call: a field log does not take is refused before the kind's own model reads the entries.
+    top = failed(http, token, "log", {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180}]},
+                                      "source": "you_said"})
+    inner = failed(http, token, "log", {"kind": "food", "details": entries})
+    assert [p["message"] for p in top["errors"] + inner["errors"]] == [
+        "'source' is not a field of log.", "details.entries[0]: 'source' is not a field of a food entry."]
     assert "log_food" not in received
+
+
+def food_call(entries: list[dict]) -> dict:
+    """A log call of kind food with these entries (log-and-guide.md)."""
+    return {"kind": "food", "details": {"entries": entries}}
 
 
 def food_tags(result: dict) -> list[tuple[str, float, bool]]:
@@ -1586,10 +1666,10 @@ def food_tags(result: dict) -> list[tuple[str, float, bool]]:
 
 def test_a_stated_number_is_you_said_and_a_worked_out_one_is_claude_estimate(http):
     token = sign()
-    stated = ok(http, token, "log_food", {"entries": [{"description": "Dal", "kcal": 180}]})
+    stated = ok(http, token, "log", food_call([{"description": "Dal", "kcal": 180}]))
     assert food_tags(stated) == [("you_said", 180, False)] and "note" not in stated
-    guessed = ok(http, token, "log_food", {"entries": [{"description": "2 rotis", "kcal": 240, "estimated": True,
-                                                        "portion": "2"}]})
+    guessed = ok(http, token, "log", food_call([{"description": "2 rotis", "kcal": 240, "estimated": True,
+                                            "portion": "2"}]))
     assert food_tags(guessed) == [("claude_estimate", 240, True)]
     assert "estimate" in guessed["note"] and guessed["day"]["estimated_kcal"] == 240
 
@@ -1597,8 +1677,7 @@ def test_a_stated_number_is_you_said_and_a_worked_out_one_is_claude_estimate(htt
 def test_a_saved_food_by_id_is_tagged_saved_food_with_the_apps_number(http):
     token = sign()
     roti = ok(http, token, "save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120})
-    logged = ok(http, token, "log_food", {"entries": [{"description": "Rotis", "saved_food_id": roti["id"],
-                                                       "servings": 2}]})
+    logged = ok(http, token, "log", food_call([{"description": "Rotis", "saved_food_id": roti["id"], "servings": 2}]))
     [entry] = logged["entries"]
     assert (entry["source"], entry["kcal"], entry["estimated"]) == ("saved_food", 240, False)
     assert (entry["saved_food_id"], entry["servings"]) == (roti["id"], 2)
@@ -1611,7 +1690,7 @@ def test_a_number_with_an_id_is_refused_through_mcp(http, ids):
     if "saved_food_id" in ids:
         ids = {**ids, "saved_food_id": ok(http, token, "save_food", {"name": "Roti", "serving_label": "1 roti",
                                                                      "kcal_per_serving": 120})["id"]}
-    result = call(http, token, "log_food", {"entries": [{"description": "Roti", "kcal": 300, **ids}]})
+    result = call(http, token, "log", food_call([{"description": "Roti", "kcal": 300, **ids}]))
     assert result["isError"] is True
     error = result["structuredContent"]
     assert error["error"] == "invalid_field" and "app supplies the number" in error["fix"]
@@ -1619,7 +1698,7 @@ def test_a_number_with_an_id_is_refused_through_mcp(http, ids):
 
 
 def test_a_meal_left_out_is_picked_by_the_server_not_asked(http):
-    entry = ok(http, sign(), "log_food", {"entries": [{"description": "Dal", "kcal": 180}]})["entries"][0]
+    entry = ok(http, sign(), "log", food_call([{"description": "Dal", "kcal": 180}]))["entries"][0]
     assert entry["meal"] in ("breakfast", "lunch", "dinner", "snack")
 
 
@@ -1662,8 +1741,8 @@ def test_can_and_cant_and_the_readme_state_the_macros_the_portion_the_meal_and_t
 
 def test_a_cardio_estimate_names_the_compendium(http):
     token = sign()
-    ok(http, token, "log_bodyweight", {"kg": 80})
-    result = ok(http, token, "log_cardio", {"exercise": "Treadmill Walk", "minutes": 30})
+    ok(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})
+    result = ok(http, token, "log", {"kind": "cardio", "parts": [{"movement": "Treadmill Walk", "minutes": 30}]})
     assert "Compendium" in result["estimate"]["source"]
     assert result["estimate"]["weight_kg"] == 80
 
@@ -1765,8 +1844,9 @@ def test_the_instructions_say_log_the_activity_dont_ask_and_never_delete_on_a_gu
 
 
 def test_log_cardio_and_delete_entry_carry_the_same_rules(http):
-    tools = registered_tools(http)  # log_cardio, though not listed
-    exercise = tools["log_cardio"]["inputSchema"]["properties"]["exercise"]["description"]
+    tools = registered_tools(http)
+    # log_cardio is no longer registered (L6): its exercise words, which guide cardio gives as a part's movement.
+    exercise = mcp_schemas.CARDIO_EXERCISE_DESCRIPTION
     for words in CARDIO_WORDS:
         assert words in exercise, words
     delete = tools["delete_entry"]["description"]
@@ -1787,7 +1867,11 @@ def cardio_now(entry_id: int) -> dict:
 def cardio(http) -> tuple[str, int]:
     """A token and one cardio entry with every extra set."""
     token = sign()
-    entry = ok(http, token, "log_cardio", {"exercise": "Treadmill Run", "minutes": 30, **CARDIO_EXTRAS})
+    notes, distance = CARDIO_EXTRAS["notes"], CARDIO_EXTRAS["distance_km"]
+    details = {k: v for k, v in CARDIO_EXTRAS.items() if k not in ("notes", "distance_km")}
+    entry = ok(http, token, "log", {"kind": "cardio", "parts": [{"movement": "Treadmill Run", "minutes": 30,
+                                                                 "distance_km": distance}],
+                                    "details": details, "notes": notes})
     return token, entry["id"]
 
 
@@ -1806,7 +1890,8 @@ def test_a_cardio_extra_sent_as_null_is_cleared_and_the_rest_are_kept(http, card
 
 def test_a_null_speed_is_worked_out_from_distance_and_minutes(http):
     token = sign()
-    entry_id = ok(http, token, "log_cardio", {"exercise": "Treadmill Run", "minutes": 30, "speed_kmh": 9})["id"]
+    entry_id = ok(http, token, "log", {"kind": "cardio", "parts": [{"movement": "Treadmill Run", "minutes": 30}],
+                                       "details": {"speed_kmh": 9}})["id"]
     ok(http, token, "edit_entry", {"kind": "cardio_entry", "entry_id": entry_id, "distance_km": 5})
     assert cardio_now(entry_id)["speed_kmh"] == 9  # the stated speed is kept
     result = ok(http, token, "edit_entry", {"kind": "cardio_entry", "entry_id": entry_id, "speed_kmh": None})
@@ -2009,6 +2094,7 @@ def test_the_new_fields_are_published(http):
     # Decision 3: no function's input or output schema, nor its description, says a word of sample data.
     for tool in registered_tools(http).values():
         assert "sample" not in json.dumps(tool).casefold(), tool["name"]
+    assert "sample" not in json.dumps(guide.ANSWERS).casefold()  # the five's words, which guide gives since L6
     for name in ("set_goal", "get_goals", "get_progress"):
         assert GOAL_NUMBER_KEYS == set(out[name]["$defs"]["GoalNumbers"]["properties"]), name
 
@@ -2198,7 +2284,7 @@ def test_the_instructions_send_every_entry_to_log_after_the_sentence_on_lift_nam
             + " Leave the date out for something done today") in text
     # Where the sleep sentence stood: from 544, past the first 512 characters; "Spotter picks the lift." keeps its place.
     assert text.index(ROUTING_SENTENCE) == 544 and text.index(lift) + len(lift) == 497
-    assert SLEEP_SENTENCE not in text and not [name for name in RETIRING if name in text]
+    assert SLEEP_SENTENCE not in text and not [name for name in LOG_FUNCTIONS if name in text]
     assert len(text) == 4084 < 4096 and text.endswith(PLAN_LINE_SENTENCE)
     assert text.count("Goals: ") == 1 and mcp_server.GOALS_MONTH_END in text and mcp_server.MONTH_END_RULE not in text
     for word in ("sleep", "steps", "resting heart rate", "water"):  # what the sleep sentence named, now in log's kind
@@ -2209,7 +2295,7 @@ def test_the_instructions_send_every_entry_to_log_after_the_sentence_on_lift_nam
 
 def test_no_entry_a_new_chat_lists_names_one_of_the_five(http):
     # log-and-guide.md L2, rows 2 to 4 and 6 to 8: a new chat lists log and guide, so its text names log, never the five.
-    named = {t["name"]: [f for f in RETIRING if f in json.dumps(t)] for t in tool_list(http, sign())}
+    named = {t["name"]: [f for f in LOG_FUNCTIONS if f in json.dumps(t)] for t in tool_list(http, sign())}
     assert {name: five for name, five in named.items() if five} == {}
 
 
@@ -2228,9 +2314,10 @@ def test_the_meal_rule_leads_with_sending_the_meal_the_person_named(http):
     text = mcp_server.INSTRUCTIONS
     assert mcp_server.FOOD_NAME_RULE + " " + MEAL_SENTENCE + " Cardio: " in text
     assert "Leave the meal out unless" not in text and text.count("which meal") == 1
-    food = registered_tools(http)["log_food"]  # though not listed
-    assert food["inputSchema"]["$defs"]["FoodEntryIn"]["properties"]["meal"]["description"] == MEAL_FIELD
-    assert "only when the person named" not in json.dumps(food)
+    # log_food is no longer registered (L6): its words as mcp_schemas holds them, which guide food gives.
+    schema = mcp_schemas.LOG_ARGUMENTS["log_food"].model_json_schema()
+    assert schema["$defs"]["FoodEntryIn"]["properties"]["meal"]["description"] == MEAL_FIELD
+    assert "only when the person named" not in json.dumps([schema, mcp_schemas.LOG_FOOD_DESCRIPTION])
     doc = " ".join(CAN_AND_CANT.read_text(encoding="utf-8").split())
     assert MEAL_DOC in doc and "passes a meal only when" not in doc
     for words in (MEAL_SENTENCE, MEAL_FIELD):
@@ -2277,7 +2364,7 @@ def test_the_estimate_sentence_leaves_room_for_the_food_rule():
 
 
 def test_the_descriptions_carry_the_same_sentences(http):
-    tools = registered_tools(http)  # log_food, though not listed
+    tools = registered_tools(http)
     assert mcp_server.TRENDS_RULE in tools["get_trends"]["description"]
     assert mcp_server.GOALS_RULE in tools["get_goals"]["description"]
     for name in ("get_trends", "get_goals"):
@@ -2294,9 +2381,9 @@ def test_the_descriptions_carry_the_same_sentences(http):
     for kind in ("waist", "hips", "chest", "arm", "thigh", "resting_hr"):
         assert kind in goal["inputSchema"]["properties"]["measurement_kind"]["description"], kind
     assert "cardio_best" in goal["inputSchema"]["properties"]["distance_km"]["description"]
-    food = tools["log_food"]
-    entry = food["inputSchema"]["$defs"]["FoodEntryIn"]
-    assert mcp_server.FOOD_NAME_RULE in food["description"]
+    # log_food is no longer registered (L6): its words as mcp_schemas holds them, which guide food gives.
+    entry = mcp_schemas.LOG_ARGUMENTS["log_food"].model_json_schema()["$defs"]["FoodEntryIn"]
+    assert mcp_server.FOOD_NAME_RULE in mcp_schemas.LOG_FOOD_DESCRIPTION
     assert mcp_server.FOOD_NAME_RULE in entry["properties"]["description"]["description"]
     assert "description" not in entry.get("required", [])  # optional: a saved or USDA food defaults to its name
 
@@ -2336,7 +2423,7 @@ def test_can_and_cant_lists_every_function_once_in_order_and_counts_none():
     start = next(i for i, line in enumerate(section) if line.startswith("|"))
     table = list(itertools.takewhile(lambda line: line.startswith("|"), section[start:]))
     rows = [re.match(r"\| `([a-z_]+)` \| ", line).group(1) for line in table[2:]]
-    offered = [name for name in mcp_server.NEEDS if name not in mcp_server.OWNER_FUNCTIONS + mcp_server.RETIRING]
+    offered = [name for name in mcp_server.NEEDS if name not in mcp_server.OWNER_FUNCTIONS]
     assert rows == FUNCTIONS and set(rows) == set(offered) and len(rows) == len(offered)
     sentence = " ".join(line for line in section[:start] if line.strip())
     assert sentence.endswith("nothing else:"), sentence
@@ -2374,10 +2461,10 @@ def test_set_goal_of_every_kind_through_mcp(http):
     token = sign()
     today = date.fromisoformat(whoami(http, token)["today"])
     by = (today + timedelta(days=90)).isoformat()
-    ok(http, token, "log_lifts", {"sets": squat(90)})
-    ok(http, token, "log_bodyweight", {"kg": 80})
-    ok(http, token, "log_measurement", {"kind": "waist", "value": 88})
-    ok(http, token, "log_cardio", {"exercise": "Outdoor Run", "minutes": 30, "distance_km": 5})
+    ok(http, token, "log", {"kind": "lifts", "parts": squat_parts(90)})
+    ok(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})
+    ok(http, token, "log", {"kind": "measurement", "details": {"kind": "waist", "value": 88}})
+    ok(http, token, "log", {"kind": "cardio", "parts": [{"movement": "Outdoor Run", "minutes": 30, "distance_km": 5}]})
     cases = [({"kind": "lift", "exercise": "Back Squat", "target_value": 120}, "kg", "up"),  # now: 105, Epley
              ({"kind": "bodyweight", "target_value": 75}, "kg", "down"),
              ({"kind": "measurement", "measurement_kind": "waist", "target_value": 80}, "cm", "down"),
@@ -2418,7 +2505,7 @@ def test_set_goal_refusals_carry_fixes_that_work(http):
 
 def test_the_new_reads_are_the_services_own_dicts(http):
     token = sign()
-    ok(http, token, "log_bodyweight", {"kg": 80})
+    ok(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})
     ok(http, token, "set_goal", {"kind": "bodyweight", "target_value": 75, "target_date": a_year_on(http, token)})
     account = one_user().id
     assert ok(http, token, "get_trends") == services.get_trends(account)
@@ -2500,7 +2587,7 @@ def test_import_entries_is_annotated_as_the_log_functions_are(http):
     """Ruled after fix round 3: a write, not a setting. It writes up to 200 rows with no undo, a re-run can write again
     in the documented cases, and every real call counts against the write limit."""
     hints = {name: t["annotations"] for name, t in registered_tools(http).items()}
-    assert hints["import_entries"] == WRITE_HINTS == hints["log_food"] == hints["log_lifts"] == hints["log"]
+    assert hints["import_entries"] == WRITE_HINTS == hints["log"]  # the five, no longer registered (L6), are not here
     assert hints["import_entries"]["idempotentHint"] is False
 
 
@@ -2509,7 +2596,9 @@ def test_who_logged_it_names_import_wherever_a_result_says(http):
     said = {(name, owner): spec["description"] for name, out in outputs.items()
             for owner, obj in [("", out), *out.get("$defs", {}).items()]
             for prop, spec in obj.get("properties", {}).items() if prop == "logged_by"}
-    assert {owner for _, owner in said} == {"Session", "WeighIn", "MeasurementOut", "LogSession"}
+    # Session was published only in log_lifts' output schema; log publishes none (log-and-guide.md N6), so since L6
+    # no published schema holds it.
+    assert {owner for _, owner in said} == {"WeighIn", "MeasurementOut", "LogSession"}
     assert set(said.values()) == {"Who logged it: claude, web or import."}
 
 

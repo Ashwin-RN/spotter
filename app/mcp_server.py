@@ -53,10 +53,11 @@ are objects the service checks, so a bad value gets the service's words, not the
 an area or a field; DATA_RULE sits after GOALS_RULE in the instructions.
 
 Log and guide (contract log-and-guide.md). log records one entry of any of the five kinds, and guide says how, by
-topic; both are registered right after list_exercises, so a new chat's list holds them where log_lifts stood. The five
-log functions (RETIRING) leave every account's list, the owner's too, and stay registered, in NEEDS and in
-common.WRITE_FUNCTIONS: a chat that holds them still calls them by name and gets the same answer, its row under its own
-name. A log call first meets misfit on log's own schema, like any call; then log_shape.route, on the arguments as sent,
+topic; both are registered right after list_exercises, where log_lifts stood in the list. The five log functions they
+took the place of are no longer registered (deploy 2): a call of one by name is the library's unknown function. Their
+steps (LOG_STEPS), argument models, result models and words stay, since log runs each kind through them, and their
+names stay in common.WRITE_FUNCTIONS for the web's own rows. A log call first meets misfit on log's own schema, like
+any call; then log_shape.route, on the arguments as sent,
 gives the kind's function and its arguments in that function's own shape; then Wrapper.call("log", ...), so the
 account, the row, the switch, the write limit and the key come first. Inside the work, kind= and word= are noted, the
 kind's argument model checks the routed arguments (misfit_model) and the kind's own step (LOG_STEPS) runs its
@@ -97,20 +98,10 @@ from app import guide as guides
 from app.auth import JwksTokenVerifier, UserinfoClient
 from app.config import ROOT, Settings, get_settings
 from app.mcp_schemas import (
-    BODYWEIGHT_ALLOW_REPEAT_DESCRIPTION, BODYWEIGHT_DATE_DESCRIPTION, BODYWEIGHT_KG_DESCRIPTION,
-    BODYWEIGHT_LB_DESCRIPTION, CARDIO_ALLOW_REPEAT_DESCRIPTION, CARDIO_AVG_HR_DESCRIPTION, CARDIO_DATE_DESCRIPTION,
-    CARDIO_DISTANCE_KM_DESCRIPTION, CARDIO_DISTANCE_MI_DESCRIPTION, CARDIO_EXERCISE_DESCRIPTION,
-    CARDIO_INCLINE_PCT_DESCRIPTION, CARDIO_MACHINE_KCAL_DESCRIPTION, CARDIO_MINUTES_DESCRIPTION,
-    CARDIO_NOTES_DESCRIPTION, CARDIO_RULE, CARDIO_SPEED_KMH_DESCRIPTION, CARDIO_SPEED_MPH_DESCRIPTION,
-    FOOD_ALLOW_REPEAT_DESCRIPTION, FOOD_DATE_DESCRIPTION, FOOD_ENTRIES_DESCRIPTION, FOOD_NAME_RULE, FOOD_RULE,
-    IMPORT_ROWS, KEY_DESCRIPTION, LIFTS_ALLOW_REPEAT_DESCRIPTION, LIFTS_DATE_DESCRIPTION, LIFTS_NEW_SESSION_DESCRIPTION,
-    LIFTS_NOTES_DESCRIPTION, LIFTS_SETS_DESCRIPTION, LOG_BODYWEIGHT_DESCRIPTION, LOG_CARDIO_DESCRIPTION,
-    LOG_FOOD_DESCRIPTION, LOG_LIFTS_DESCRIPTION, LOG_MEASUREMENT_DESCRIPTION, MEASUREMENT_ALLOW_REPEAT_DESCRIPTION,
-    MEASUREMENT_DATE_DESCRIPTION, MEASUREMENT_KIND_DESCRIPTION, MEASUREMENT_VALUE_DESCRIPTION, NEAR_CUTOFF,
-    NEAR_MISSES, DeleteEntryResult, EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn, GetDataResult,
-    GetGoalsResult, GetLogResult, GetProgressResult, GetRoutinesResult, GetTrendsResult, GuideResult,
-    ImportEntriesResult, ImportRowIn, Key, LogBodyweightResult, LogCardioResult, LogFoodResult, LogLiftsResult,
-    LogMeasurementResult, LogPartIn, LogSetIn, MealItemIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult,
+    CARDIO_RULE, FOOD_NAME_RULE, FOOD_RULE, IMPORT_ROWS, KEY_DESCRIPTION, NEAR_CUTOFF, NEAR_MISSES, DeleteEntryResult,
+    EditEntryResult, ExercisesResult, FindFoodResult, FoodEntryIn, GetDataResult, GetGoalsResult, GetLogResult,
+    GetProgressResult, GetRoutinesResult, GetTrendsResult, GuideResult, ImportEntriesResult, ImportRowIn, Key,
+    LogPartIn, LogSetIn, MealItemIn, Number, OwnerCallsResult, OwnerDeleteFeedbackResult,
     OwnerFeedbackResult, PROGRAM_BLOCKS, PROGRAM_NAME, PROGRAM_START_ON, ROUTINE_LIFTS, ProgramBlockIn, ProgramDayIn,
     RestoreEntryResult, RoutineLiftIn, SaveFoodResult, SaveProgramResult, SaveRoutineResult, SendFeedbackResult,
     SetGoalResult, SetIn, UpdateSettingsResult,
@@ -272,9 +263,9 @@ LEVELS = ("read", "log", "log_delete")
 NEEDS = {
     "whoami": "read", "list_exercises": "read", "log": "log", "guide": "read",
     "get_progress": "read", "get_log": "read",
-    "log_lifts": "log", "log_bodyweight": "log", "set_goal": "log", "update_settings": "log",
-    "log_measurement": "log", "edit_entry": "log", "restore_entry": "log",
-    "find_food": "read", "log_food": "log", "save_food": "log", "log_cardio": "log",
+    "set_goal": "log", "update_settings": "log",
+    "edit_entry": "log", "restore_entry": "log",
+    "find_food": "read", "save_food": "log",
     "delete_entry": "log_delete",
     "get_trends": "read", "get_goals": "read",
     "import_entries": "log",
@@ -286,9 +277,6 @@ NEEDS = {
 # Listed for the owner alone, and refused to anyone else (is_owner). At read, so the owner's own switch, which is
 # about the owner's own record, gates none of them.
 OWNER_FUNCTIONS = ("owner_calls", "owner_feedback", "owner_delete_feedback")
-# The five log functions log and guide take the place of (log-and-guide.md, decision 50): listed for nobody, the owner
-# too, and still registered, so a chat that holds them calls them by name and gets the same answer as before.
-RETIRING = ("log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio")
 # The read limit counts these together (services.common.check_reads): every function at the read level.
 READ_FUNCTIONS = tuple(name for name, level in NEEDS.items() if level == "read")
 NOT_ALLOWED_MESSAGES = {"log": "This account lets Claude read and log, not delete."}
@@ -417,9 +405,9 @@ ITEM_WORDS = {"sets": "set", "entries": "entry", "lifts": "lift", "rows": "row",
               "blocks": "block", "days": "day"}  # save_program's blocks and their days: "Block 1, day 2"
 # An unknown key in an item (decision 2): the services' own words, by the list it was sent in. Each is
 # (what the item is, the fix, NEAR_MISSES' row). The import's rows allow any key: its service refuses one.
-# A list whose items are another model in one function is named by (function, list): log_lifts' sets are LogSetIn
-# (exercise-list.md R3), every other function's sets SetIn. log's parts are LogPartIn (log-and-guide.md); its details
-# are an open object, which route checks by the kind.
+# A list whose items are another model in one function is named by (function, list): the sets of log's lifts, checked
+# under their routed name log_lifts (log_work), are LogSetIn (exercise-list.md R3), every other function's sets SetIn.
+# log's parts are LogPartIn (log-and-guide.md); its details are an open object, which route checks by the kind.
 ITEM_FIELDS = {
     "sets": ("a set", f"Use: {', '.join(SetIn.model_fields)}.", "set"),
     ("log_lifts", "sets"): ("a set", f"Use: {', '.join(LogSetIn.model_fields)}.", "set"),
@@ -618,8 +606,9 @@ def read_arguments(model: type[BaseModel], arguments: dict) -> BaseModel:
 
 def misfit_model(model: type[BaseModel], arguments: dict) -> tuple[list, ValidationError | None] | None:
     """misfit's form for an argument model in place of a registered function: (the unknown top-level keys, the schema
-    failure) of the arguments, or None when they fit. The same answer misfit gives for the function the model is of;
-    schema_refusal takes it with model.model_json_schema(), which equals that function's published input schema."""
+    failure) of the arguments, or None when they fit. The same answer misfit gave for the function the model is of
+    while it was registered; schema_refusal takes it with model.model_json_schema(), which equals the input schema
+    that function published."""
     taken = model.model_json_schema().get("properties", {})
     unknown = [key for key in arguments if key not in taken]
     try:
@@ -654,9 +643,8 @@ class SpotterServer(MCPServer):
         return app
 
     async def list_tools(self) -> list:
-        """Every function but RETIRING for the owner; for everyone else, all but RETIRING and OWNER_FUNCTIONS. A
-        function left out still answers a call by name (call_tool finds it in the tool manager)."""
-        tools = [t for t in await super().list_tools() if t.name not in RETIRING]
+        """Every function for the owner; for everyone else, all but OWNER_FUNCTIONS, exactly as before them."""
+        tools = await super().list_tools()
         return tools if is_owner(get_access_token()) else [t for t in tools if t.name not in OWNER_FUNCTIONS]
 
     wrapper: "Wrapper | None" = None  # build_server sets it: a schema refusal runs through it
@@ -827,8 +815,8 @@ def not_sent():
 
 # ---------------------------------------------------------------- the five log functions' steps
 
-# Each turns one of the five's validated arguments into its service's data and calls the service, by Claude. The
-# decorated function's work is its step, and a call that reaches the same service another way takes the same step.
+# Each turns one of the five's validated arguments into its service's data and calls the service, by Claude. The five
+# are no longer registered (log-and-guide.md, deploy 2): log runs each kind's step through LOG_STEPS (log_work).
 # The arguments come as keywords, one a field of the kind's argument model (mcp_schemas.LOG_ARGUMENTS), as a model
 # gives them one level deep (dict(model)): a set and a food entry stay models. key is taken and passed to nothing: the
 # wrapper reads it from the arguments as sent. The service is looked up when the step runs.
@@ -1017,39 +1005,6 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         return await wrapper.call("guide", GuideResult, functools.partial(guide_work, dict(_SENT.get() or {})))
 
     @server.tool(
-        name="log_lifts",
-        title="Log a lift session",
-        description=LOG_LIFTS_DESCRIPTION,
-        annotations=WRITE,
-    )
-    async def log_lifts(
-        sets: Annotated[list[LogSetIn], Field(description=LIFTS_SETS_DESCRIPTION)],
-        date: Annotated[str | None, Field(description=LIFTS_DATE_DESCRIPTION)] = None,
-        notes: Annotated[str | None, Field(description=LIFTS_NOTES_DESCRIPTION)] = None,
-        allow_repeat: Annotated[StrictBool, Field(description=LIFTS_ALLOW_REPEAT_DESCRIPTION)] = False,
-        new_session: Annotated[StrictBool, Field(description=LIFTS_NEW_SESSION_DESCRIPTION)] = False,
-        key: Key = None,
-    ) -> Annotated[CallToolResult, LogLiftsResult]:
-        return await wrapper.call("log_lifts", LogLiftsResult, lambda account: log_lifts_step(
-            account, sets=sets, date=date, notes=notes, allow_repeat=allow_repeat, new_session=new_session, key=key))
-
-    @server.tool(
-        name="log_bodyweight",
-        title="Log body weight",
-        description=LOG_BODYWEIGHT_DESCRIPTION,
-        annotations=WRITE,
-    )
-    async def log_bodyweight(
-        kg: Annotated[Number | None, Field(description=BODYWEIGHT_KG_DESCRIPTION)] = None,
-        lb: Annotated[Number | None, Field(description=BODYWEIGHT_LB_DESCRIPTION)] = None,
-        date: Annotated[str | None, Field(description=BODYWEIGHT_DATE_DESCRIPTION)] = None,
-        allow_repeat: Annotated[StrictBool, Field(description=BODYWEIGHT_ALLOW_REPEAT_DESCRIPTION)] = False,
-        key: Key = None,
-    ) -> Annotated[CallToolResult, LogBodyweightResult]:
-        return await wrapper.call("log_bodyweight", LogBodyweightResult, lambda account: log_bodyweight_step(
-            account, kg=kg, lb=lb, date=date, allow_repeat=allow_repeat, key=key))
-
-    @server.tool(
         name="set_goal",
         title="Set or change a goal",
         description=(
@@ -1196,22 +1151,6 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
         return await wrapper.call("get_log", GetLogResult, lambda account: services.get_log(account, **sent))
 
     @server.tool(
-        name="log_measurement",
-        title="Log a measurement",
-        description=LOG_MEASUREMENT_DESCRIPTION,
-        annotations=WRITE,
-    )
-    async def log_measurement(
-        kind: Annotated[str, Field(description=MEASUREMENT_KIND_DESCRIPTION)],
-        value: Annotated[Number, Field(description=MEASUREMENT_VALUE_DESCRIPTION)],
-        date: Annotated[str | None, Field(description=MEASUREMENT_DATE_DESCRIPTION)] = None,
-        allow_repeat: Annotated[StrictBool, Field(description=MEASUREMENT_ALLOW_REPEAT_DESCRIPTION)] = False,
-        key: Key = None,
-    ) -> Annotated[CallToolResult, LogMeasurementResult]:
-        return await wrapper.call("log_measurement", LogMeasurementResult, lambda account: log_measurement_step(
-            account, kind=kind, value=value, date=date, allow_repeat=allow_repeat, key=key))
-
-    @server.tool(
         name="edit_entry",
         title="Edit an entry",
         description=(
@@ -1354,21 +1293,6 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
                                   lambda account: services.find_food(account, query, **sent))
 
     @server.tool(
-        name="log_food",
-        title="Log food",
-        description=LOG_FOOD_DESCRIPTION,
-        annotations=WRITE,
-    )
-    async def log_food(
-        entries: Annotated[list[FoodEntryIn], Field(description=FOOD_ENTRIES_DESCRIPTION)],
-        date: Annotated[str | None, Field(description=FOOD_DATE_DESCRIPTION)] = None,
-        allow_repeat: Annotated[StrictBool, Field(description=FOOD_ALLOW_REPEAT_DESCRIPTION)] = False,
-        key: Key = None,
-    ) -> Annotated[CallToolResult, LogFoodResult]:
-        return await wrapper.call("log_food", LogFoodResult, lambda account: log_food_step(
-            account, entries=entries, date=date, allow_repeat=allow_repeat, key=key))
-
-    @server.tool(
         name="save_food",
         title="Save a food",
         description=(
@@ -1409,32 +1333,6 @@ def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: User
                             fat_g_per_serving=fat_g_per_serving)}
         return await wrapper.call("save_food", SaveFoodResult,
                                   lambda account: services.save_food(account, data, "claude"))
-
-    @server.tool(
-        name="log_cardio",
-        title="Log cardio",
-        description=LOG_CARDIO_DESCRIPTION,
-        annotations=WRITE,
-    )
-    async def log_cardio(
-        exercise: Annotated[str, Field(description=CARDIO_EXERCISE_DESCRIPTION)],
-        minutes: Annotated[Number, Field(description=CARDIO_MINUTES_DESCRIPTION)],
-        date: Annotated[str | None, Field(description=CARDIO_DATE_DESCRIPTION)] = None,
-        distance_km: Annotated[Number | None, Field(description=CARDIO_DISTANCE_KM_DESCRIPTION)] = None,
-        distance_mi: Annotated[Number | None, Field(description=CARDIO_DISTANCE_MI_DESCRIPTION)] = None,
-        incline_pct: Annotated[Number | None, Field(description=CARDIO_INCLINE_PCT_DESCRIPTION)] = None,
-        speed_kmh: Annotated[Number | None, Field(description=CARDIO_SPEED_KMH_DESCRIPTION)] = None,
-        speed_mph: Annotated[Number | None, Field(description=CARDIO_SPEED_MPH_DESCRIPTION)] = None,
-        avg_hr: Annotated[Whole | None, Field(description=CARDIO_AVG_HR_DESCRIPTION)] = None,
-        machine_kcal: Annotated[Whole | None, Field(description=CARDIO_MACHINE_KCAL_DESCRIPTION)] = None,
-        notes: Annotated[str | None, Field(description=CARDIO_NOTES_DESCRIPTION)] = None,
-        allow_repeat: Annotated[StrictBool, Field(description=CARDIO_ALLOW_REPEAT_DESCRIPTION)] = False,
-        key: Key = None,
-    ) -> Annotated[CallToolResult, LogCardioResult]:
-        return await wrapper.call("log_cardio", LogCardioResult, lambda account: log_cardio_step(
-            account, exercise=exercise, minutes=minutes, date=date, distance_km=distance_km, distance_mi=distance_mi,
-            incline_pct=incline_pct, speed_kmh=speed_kmh, speed_mph=speed_mph, avg_hr=avg_hr,
-            machine_kcal=machine_kcal, notes=notes, allow_repeat=allow_repeat, key=key))
 
     @server.tool(
         name="get_trends",

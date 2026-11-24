@@ -450,8 +450,8 @@ def test_list_exercises_and_filters(user):
 
 # ---------------------------------------------------------------- texts name only functions Claude has
 
-# The functions a new chat lists: the planned list in tests/test_mcp.py. The five log functions still answer a chat
-# opened before log and guide, but no text names them, so a new chat is sent to none (log-and-guide.md, L3).
+# The functions a new chat lists: the planned list in tests/test_mcp.py. The five log functions are no longer
+# registered (log-and-guide.md, L6), and no text names them, so a chat is sent to none (L3).
 # OWNER_FUNCTIONS are the owner's alone.
 OFFERED = tuple(FUNCTIONS)
 # Functions that exist but Claude cannot call: every other public service function (get_entry,

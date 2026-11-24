@@ -45,6 +45,25 @@ from .test_hardening_schema import before_0012
 
 WRITES = common.WRITE_FUNCTIONS
 K = "retry-0001"
+
+
+def sent_as(name: str) -> str:
+    """The function a write's call is sent as: the five are no longer registered (log-and-guide.md, deploy 2), so
+    each is reached through log with its kind, and its call row and its key claim are log's."""
+    return "log" if name in log_shape.LOG_FUNCTIONS else name
+
+
+# A squat session as log takes it, new_session in details: a lift has no 10-minute guard (gym-logging.md).
+SESSION = {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}] * 3,
+           "details": {"new_session": True}}
+WEIGH_IN = {"kind": "bodyweight", "details": {"kg": 80}}  # a weigh-in as log takes it
+
+
+def weigh_in(kg: float) -> dict:
+    return {"kind": "bodyweight", "details": {"kg": kg}}
+
+
+
 def keys() -> list[WriteKey]:
     with db.session_scope() as s:
         return list(s.scalars(select(WriteKey).order_by(WriteKey.id)))
@@ -94,15 +113,18 @@ def a_deleted_weigh_in(account: int) -> int:
 
 # One call of each write function that writes, as arguments. allow_repeat on the logs: the 10-minute guard is
 # off, so only the key stands between a second send and a second entry. A lift has no guard: new_session makes
-# a second send a second session (gym-logging.md).
+# a second send a second session (gym-logging.md). The five's are log's calls of their kind (sent_as).
 CALLS = {
     "log": lambda account: {"kind": "bodyweight", "details": {"kg": 80.5}, "allow_repeat": True},  # log-and-guide.md
-    "log_lifts": lambda account: {"sets": squat(100), "new_session": True},
-    "log_bodyweight": lambda account: {"kg": 80.5, "allow_repeat": True},
-    "log_measurement": lambda account: {"kind": "waist", "value": 84.5, "allow_repeat": True},
-    "log_food": lambda account: {"entries": [{"description": "Dal", "kcal": 180}], "allow_repeat": True},
+    "log_lifts": lambda account: SESSION,
+    "log_bodyweight": lambda account: {"kind": "bodyweight", "details": {"kg": 80.5}, "allow_repeat": True},
+    "log_measurement": lambda account: {"kind": "measurement", "details": {"kind": "waist", "value": 84.5},
+                                        "allow_repeat": True},
+    "log_food": lambda account: {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180}]},
+                                 "allow_repeat": True},
     "save_food": lambda account: {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120},
-    "log_cardio": lambda account: {"exercise": "Treadmill Walk", "minutes": 30, "allow_repeat": True},
+    "log_cardio": lambda account: {"kind": "cardio", "parts": [{"movement": "Treadmill Walk", "minutes": 30}],
+                                   "allow_repeat": True},
     "set_goal": lambda account: {"kind": "bodyweight", "target_value": 75, "start_value": 80, "target_date": FAR},
     "update_settings": lambda account: {"time_zone": "Asia/Kolkata"},
     "edit_entry": lambda account: {"kind": "bodyweight", "entry_id": a_weigh_in(account), "kg": 81},
@@ -137,26 +159,27 @@ def test_the_table_of_calls_covers_every_write_function():
 def test_a_write_sent_twice_with_one_key_writes_once_answers_the_same_and_its_second_row_reads_repeat(writer, name):
     http, token, account = writer
     arguments = {**CALLS[name](account), "key": K}
+    sent = sent_as(name)
     before = every_table()
-    first = call(http, token, name, arguments)
+    first = call(http, token, sent, arguments)
     after = every_table()
-    second = call(http, token, name, arguments)
+    second = call(http, token, sent, arguments)
     assert first["isError"] is False and after != before  # the first send wrote
     assert second == first  # the text word for word, its parse as the structured content, and not an error
     assert every_table() == after  # nothing was written twice: the key's own row was complete before the first reply
     a, b = rows()[-2:]
-    assert (a.function, a.outcome, a.ok) == (name, "written", True)
-    assert (b.function, b.outcome, b.ok, b.error_code, b.step) == (name, "repeat", True, None, None)
+    assert (a.function, a.outcome, a.ok) == (sent, "written", True)
+    assert (b.function, b.outcome, b.ok, b.error_code, b.step) == (sent, "repeat", True, None, None)
     assert b.result_bytes == a.result_bytes and "key" in a.tried.split() and "key" in b.tried.split()
     [kept] = keys()
-    assert (kept.user_id, kept.key, kept.function) == (account, K, name)
+    assert (kept.user_id, kept.key, kept.function) == (account, K, sent)  # log claims under its own name
     assert kept.answer == first["content"][0]["text"] and re.fullmatch(r"[0-9a-f]{64}", kept.fingerprint)
 
 
 def test_the_same_arguments_in_another_order_are_the_same_call(writer):
     http, token, _ = writer
-    first = call(http, token, "log_measurement", {"kind": "waist", "value": 84, "key": K})
-    again = call(http, token, "log_measurement", {"key": K, "value": 84, "kind": "waist"})
+    first = call(http, token, "log", {"kind": "measurement", "details": {"kind": "waist", "value": 84}, "key": K})
+    again = call(http, token, "log", {"key": K, "details": {"value": 84, "kind": "waist"}, "kind": "measurement"})
     assert again == first and rows()[-1].outcome == "repeat"
     assert common.fingerprint("f", {"a": 1, "b": [2], "key": "x"}) == common.fingerprint("f", {"b": [2], "a": 1})
     assert common.fingerprint("f", {"a": 1}) != common.fingerprint("g", {"a": 1})
@@ -164,7 +187,7 @@ def test_the_same_arguments_in_another_order_are_the_same_call(writer):
 
 def test_the_key_row_holds_a_fingerprint_and_never_an_argument(writer):
     http, token, _ = writer
-    call(http, token, "log_lifts", {"sets": squat(100), "notes": MARKER, "key": K})
+    call(http, token, "log", {"kind": "lifts", "parts": SESSION["parts"], "notes": MARKER, "key": K})
     [kept] = keys()
     assert all(MARKER not in str(getattr(kept, c.key)) for c in WriteKey.__table__.columns if c.name != "answer")
     assert MARKER in kept.answer  # the first answer is the person's own data, kept 24 hours
@@ -174,13 +197,13 @@ def test_the_key_row_holds_a_fingerprint_and_never_an_argument(writer):
 
 def test_two_sends_at_once_with_one_key_write_once_and_both_get_the_first_answer(writer):
     http, token, _ = writer
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
+    arguments = {**SESSION, "key": K}
     barrier = threading.Barrier(4)
     answers: list[dict] = []
 
     def send() -> None:
         barrier.wait()
-        answers.append(call(http, token, "log_lifts", arguments))
+        answers.append(call(http, token, "log", arguments))
 
     threads = [threading.Thread(target=send) for _ in range(4)]
     for t in threads:
@@ -189,13 +212,13 @@ def test_two_sends_at_once_with_one_key_write_once_and_both_get_the_first_answer
         t.join(timeout=60)
     assert len(answers) == 4 and count(LiftSession) == 1
     assert all(a == answers[0] and a["isError"] is False for a in answers)  # never already_done
-    assert sorted(r.outcome for r in rows() if r.function == "log_lifts") == ["repeat"] * 3 + ["written"]
+    assert sorted(r.outcome for r in rows() if r.function == "log") == ["repeat"] * 3 + ["written"]
     assert len(keys()) == 1
 
 
 def test_a_retry_that_arrives_while_the_first_send_is_still_writing_gets_the_first_answer(writer, monkeypatch):
     http, token, _ = writer
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
+    arguments = {**SESSION, "key": K}
     inside, go = threading.Event(), threading.Event()
     real = lifts.check_write_limit
     answers: dict[str, dict] = {}
@@ -206,7 +229,7 @@ def test_a_retry_that_arrives_while_the_first_send_is_still_writing_gets_the_fir
         return real(s, user_id)
 
     def send(name: str) -> None:
-        answers[name] = call(http, token, "log_lifts", arguments)
+        answers[name] = call(http, token, "log", arguments)
 
     monkeypatch.setattr(lifts, "check_write_limit", held)
     first, retry = (threading.Thread(target=send, args=(name,)) for name in ("first", "retry"))
@@ -220,15 +243,15 @@ def test_a_retry_that_arrives_while_the_first_send_is_still_writing_gets_the_fir
         t.join(timeout=60)
     assert answers["retry"] == answers["first"] and answers["first"]["isError"] is False  # never already_done
     assert count(LiftSession) == 1 and len(keys()) == 1
-    assert sorted(r.outcome for r in rows() if r.function == "log_lifts") == ["repeat", "written"]
+    assert sorted(r.outcome for r in rows() if r.function == "log") == ["repeat", "written"]
 
 
 def test_a_retry_that_arrives_before_the_first_answer_is_kept_waits_for_it_and_gets_it(writer):
     """The first send has committed and not yet kept its answer: its row is there, its answer empty. The retry
     is stopped under the lock, reads the row again every 100 ms, and answers with the first answer once it is in."""
     http, token, account = writer
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
-    first = call(http, token, "log_lifts", arguments)
+    arguments = {**SESSION, "key": K}
+    first = call(http, token, "log", arguments)
     text = first["content"][0]["text"]
     with db.session_scope() as s:
         s.execute(update(WriteKey).values(answer=None))
@@ -238,7 +261,7 @@ def test_a_retry_that_arrives_before_the_first_answer_is_kept_waits_for_it_and_g
 
     timer = threading.Timer(0.25, keep)
     timer.start()
-    retry = call(http, token, "log_lifts", arguments)
+    retry = call(http, token, "log", arguments)
     timer.join()
     assert retry == first and count(LiftSession) == 1 and rows()[-1].outcome == "repeat"
 
@@ -249,7 +272,7 @@ def test_a_send_stopped_by_the_key_of_a_first_send_that_is_then_refused_runs_the
     freed. A second send of the same key is stopped under the lock by that row. Once the row has gone it runs the
     work once more, so it gets its own answer, never the first one's refusal and never already_done."""
     http, token, _ = writer
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
+    arguments = {**SESSION, "key": K}
     inside, go, stopped = threading.Event(), threading.Event(), threading.Event()
     real_limit, real_waited, real_settle = lifts.check_write_limit, common._waited, common.settle
     limits: list[int] = []
@@ -273,7 +296,7 @@ def test_a_send_stopped_by_the_key_of_a_first_send_that_is_then_refused_runs_the
         return real_settle(user_id, claim, result, text)
 
     def send(name: str) -> None:
-        answers[name] = call(http, token, "log_lifts", arguments)
+        answers[name] = call(http, token, "log", arguments)
 
     monkeypatch.setattr(lifts, "check_write_limit", refused_once)
     monkeypatch.setattr(common, "_waited", waited)
@@ -289,16 +312,17 @@ def test_a_send_stopped_by_the_key_of_a_first_send_that_is_then_refused_runs_the
     assert stopped.is_set() and answers["second"]["isError"] is False  # its own answer, from its second run
     assert answers["second"]["structuredContent"]["duplicate"] is False and count(LiftSession) == 1
     assert [k.answer for k in keys()] == [answers["second"]["content"][0]["text"]]
-    assert sorted(r.outcome for r in rows() if r.function == "log_lifts") == ["refused", "written"]
+    assert sorted(r.outcome for r in rows() if r.function == "log") == ["refused", "written"]
 
 
 # ---------------------------------------------------------------- decision 7: what does not keep its key
 
 def test_a_refused_call_leaves_its_key_free(writer):
     http, token, _ = writer
-    refused = failed(http, token, "log_lifts", {"sets": squat(100), "date": "soon", "key": K})
+    lifts = {"kind": "lifts", "parts": SESSION["parts"]}
+    refused = failed(http, token, "log", {**lifts, "date": "soon", "key": K})
     assert refused["error"] == "invalid_date" and keys() == []  # refused under the lock: its row is deleted
-    assert ok(http, token, "log_lifts", {"sets": squat(100), "key": K})["duplicate"] is False
+    assert ok(http, token, "log", {**lifts, "key": K})["duplicate"] is False
     assert [r.outcome for r in rows()[-2:]] == ["refused", "written"] and count(LiftSession) == 1
 
 
@@ -319,19 +343,19 @@ def test_a_crash_leaves_its_key_free(writer, monkeypatch):
         raise ValueError(MARKER)
 
     with monkeypatch.context() as patched:
-        patched.setattr(rules, "entry_date", broken)  # inside log_bodyweight's transaction, after the lock
-        crashed = failed(http, token, "log_bodyweight", {"kg": 80, "key": K})
+        patched.setattr(rules, "entry_date", broken)  # inside the bodyweight service's transaction, after the lock
+        crashed = failed(http, token, "log", {**WEIGH_IN, "key": K})
     assert crashed["error"] == "internal_error" and keys() == []  # the row rolled back with the write
-    assert ok(http, token, "log_bodyweight", {"kg": 80, "key": K})["duplicate"] is False
+    assert ok(http, token, "log", {**WEIGH_IN, "key": K})["duplicate"] is False
     assert [r.outcome for r in rows()[-2:]] == ["failed", "written"] and count(Bodyweight) == 1
 
 
 def test_a_duplicate_inside_the_10_minutes_keeps_its_key_and_its_answer(writer):
     http, token, _ = writer
-    ok(http, token, "log_bodyweight", {"kg": 80})
-    duplicate = call(http, token, "log_bodyweight", {"kg": 80, "key": K})
+    ok(http, token, "log", WEIGH_IN)
+    duplicate = call(http, token, "log", {**WEIGH_IN, "key": K})
     assert duplicate["structuredContent"]["duplicate"] is True
-    assert call(http, token, "log_bodyweight", {"kg": 80, "key": K}) == duplicate
+    assert call(http, token, "log", {**WEIGH_IN, "key": K}) == duplicate
     assert [r.outcome for r in rows()[-3:]] == ["written", "duplicate", "repeat"]
 
 
@@ -339,16 +363,20 @@ def test_a_duplicate_inside_the_10_minutes_keeps_its_key_and_its_answer(writer):
 
 def test_a_key_sent_with_another_call_is_refused_and_nothing_is_written(writer):
     http, token, _ = writer
-    first = call(http, token, "log_bodyweight", {"kg": 80, "key": K})
+    first = call(http, token, "log", {**WEIGH_IN, "key": K})
     before = every_table()
-    for name, arguments in (("log_bodyweight", {"kg": 81, "key": K}), ("log_lifts", {"sets": squat(100), "key": K})):
+    # log with other numbers, log with another kind, and another write function (log-and-guide.md: log claims under
+    # its own name, so the five's two are both log's now).
+    for name, arguments in (("log", {**weigh_in(81), "key": K}),
+                            ("log", {"kind": "lifts", "parts": SESSION["parts"], "key": K}),
+                            ("save_food", {**CALLS["save_food"](None), "key": K})):
         refused = failed(http, token, name, arguments)
         assert refused == {"error": "key_reused", "message": "This key was used for another call.",
                            "fix": "Send a new key for a new write."}
         row = rows()[-1]
         assert (row.ok, row.error_code, row.outcome, row.step) == (False, "key_reused", "refused", "key")
     assert every_table() == before
-    assert call(http, token, "log_bodyweight", {"kg": 80, "key": K}) == first  # the first call's key still answers it
+    assert call(http, token, "log", {**WEIGH_IN, "key": K}) == first  # the first call's key still answers it
 
 
 def test_under_the_lock_a_key_kept_for_another_call_is_refused_too(make_user):
@@ -375,12 +403,13 @@ def test_under_the_lock_a_key_kept_for_another_call_is_refused_too(make_user):
 
 def test_one_person_s_key_never_reaches_another_person_s_row(http):
     asha, ben = sign(claims(sub="user_01ASHA")), sign(claims(sub="user_01BEN"))
-    hers = call(http, asha, "log_bodyweight", {"kg": 60, "key": K})
-    his = call(http, ben, "log_lifts", {"sets": squat(100), "key": K})  # the same key, another person, another call
+    hers = call(http, asha, "log", {**weigh_in(60), "key": K})
+    lifts = {"kind": "lifts", "parts": SESSION["parts"], "key": K}
+    his = call(http, ben, "log", lifts)  # the same key, another person, another call
     assert hers["isError"] is False and his["isError"] is False
-    assert call(http, ben, "log_lifts", {"sets": squat(100), "key": K}) == his
-    assert call(http, asha, "log_bodyweight", {"kg": 60, "key": K}) == hers
-    assert sorted((k.function, k.key) for k in keys()) == [("log_bodyweight", K), ("log_lifts", K)]
+    assert call(http, ben, "log", lifts) == his
+    assert call(http, asha, "log", {**weigh_in(60), "key": K}) == hers
+    assert sorted((k.function, k.key) for k in keys()) == [("log", K), ("log", K)]  # log claims under its own name
     assert len({k.user_id for k in keys()}) == 2 and count(Bodyweight) == 1 and count(LiftSession) == 1
 
 
@@ -388,12 +417,12 @@ def test_one_person_s_key_never_reaches_another_person_s_row(http):
 
 def test_a_kept_key_whose_answer_was_not_kept_is_already_done_and_writes_nothing(writer, monkeypatch):
     http, token, _ = writer
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
-    ok(http, token, "log_lifts", arguments)
+    arguments = {**SESSION, "key": K}
+    ok(http, token, "log", arguments)
     with db.session_scope() as s:  # as when the process stopped between the write and keeping its answer
         s.execute(update(WriteKey).values(answer=None))
     monkeypatch.setattr(common, "ANSWER_WAIT", 0.2)
-    lost = failed(http, token, "log_lifts", arguments)
+    lost = failed(http, token, "log", arguments)
     assert lost == {"error": "already_done", "message": "This call already ran. Its answer was not kept.",
                     "fix": "Read it back with get_log. Send a new key for a new write."}
     row = rows()[-1]
@@ -435,10 +464,10 @@ READ_BACKED = [name for name in WRITES if name != "send_feedback"]
 def test_already_done_names_the_read_that_shows_what_the_write_did(writer, name):
     http, token, account = writer
     arguments = {**CALLS[name](account), "key": K}
-    assert call(http, token, name, arguments)["isError"] is False
+    assert call(http, token, sent_as(name), arguments)["isError"] is False
     lose_the_answer(seconds=61)
     read = READS.get(name, "get_log")
-    assert failed(http, token, name, arguments) == {
+    assert failed(http, token, sent_as(name), arguments) == {
         "error": "already_done", "message": "This call already ran. Its answer was not kept.",
         "fix": f"Read it back with {read}. Send a new key for a new write."}
     named = re.findall(r"whoami|[a-z]+_[a-z]+", read)  # each a function there is, which a read-only assistant may call
@@ -483,12 +512,12 @@ def test_a_send_stopped_twice_by_a_row_that_goes_each_time_is_already_done_and_n
 def test_a_lost_answer_over_60_seconds_old_is_already_done_in_one_look_with_no_wait_and_no_work(
         writer, statements, monkeypatch):
     http, token, _ = writer
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
-    ok(http, token, "log_lifts", arguments)
+    arguments = {**SESSION, "key": K}
+    ok(http, token, "log", arguments)
     lose_the_answer(seconds=61)
     slept, received = no_sleep(monkeypatch), spy_on_services(monkeypatch)
     statements.clear()
-    assert failed(http, token, "log_lifts", arguments)["error"] == "already_done"
+    assert failed(http, token, "log", arguments)["error"] == "already_done"
     assert len(looks(statements)) == 1 and slept == [] and received == {}  # before the work, so before the lock
     row = rows()[-1]
     assert (row.error_code, row.outcome, row.step) == ("already_done", "refused", "key") and common.ANSWER_LOST == 60
@@ -530,21 +559,22 @@ def test_a_lost_answer_over_60_seconds_old_asks_usda_nothing(make_client, monkey
     token = sign()
     fake = Fake(banana(shape="detail"))
     monkeypatch.setattr(usda, "urlopen", fake)
-    arguments = {"entries": [{"usda_fdc_id": 173944, "grams": 100}], "allow_repeat": True, "key": K}
-    assert call(http, token, "log_food", arguments)["isError"] is False and len(fake.requests) == 1
+    arguments = {"kind": "food", "details": {"entries": [{"usda_fdc_id": 173944, "grams": 100}]}, "allow_repeat": True,
+                 "key": K}
+    assert call(http, token, "log", arguments)["isError"] is False and len(fake.requests) == 1
     lose_the_answer(seconds=61)
     with db.session_scope() as s:  # the cache forgets the food: a lookup now would ask USDA again
         s.query(UsdaFood).delete()
     for _ in range(3):
-        assert failed(http, token, "log_food", arguments)["error"] == "already_done"
+        assert failed(http, token, "log", arguments)["error"] == "already_done"
     assert len(fake.requests) == 1 and count(FoodEntry) == 1 and count(UsdaFood) == 0
 
 
 def test_a_row_59_seconds_old_with_no_answer_is_still_waited_for_and_gets_the_answer_when_it_arrives(
         writer, monkeypatch):
     http, token, account = writer
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
-    first = call(http, token, "log_lifts", arguments)
+    arguments = {**SESSION, "key": K}
+    first = call(http, token, "log", arguments)
     text = first["content"][0]["text"]
     now = db.utcnow()
     monkeypatch.setattr(db, "utcnow", lambda: now)  # the row stays 59 seconds old however long this test takes
@@ -556,7 +586,7 @@ def test_a_row_59_seconds_old_with_no_answer_is_still_waited_for_and_gets_the_an
         common.settle(account, {"row": keys()[0].id}, json.loads(text), text)
 
     monkeypatch.setattr(common, "time", SimpleNamespace(monotonic=time.monotonic, sleep=sleep))
-    retry = call(http, token, "log_lifts", arguments)
+    retry = call(http, token, "log", arguments)
     assert retry == first and slept == [common.ANSWER_EVERY] and count(LiftSession) == 1
     assert rows()[-1].outcome == "repeat"
 
@@ -566,15 +596,15 @@ def test_130_sends_of_a_key_whose_answer_was_lost_hold_no_thread_and_reach_no_lo
     2 seconds. The write limit still never refuses one, and each one's row still counts toward it."""
     http, token, _ = writer
     monkeypatch.setattr(calllog, "_swept_keys", db.utcnow())  # the sweep is not a send: none in this test
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
-    ok(http, token, "log_lifts", arguments)
+    arguments = {**SESSION, "key": K}
+    ok(http, token, "log", arguments)
     lose_the_answer(seconds=61)
     slept = no_sleep(monkeypatch)
     statements.clear()
-    codes = {call(http, token, "log_lifts", arguments)["structuredContent"].get("error") for _ in range(130)}
+    codes = {call(http, token, "log", arguments)["structuredContent"].get("error") for _ in range(130)}
     assert codes == {"already_done"} and slept == [] and len(looks(statements)) == 130
     assert not [s for s in statements if "write_key" in s and not s.lstrip().upper().startswith("SELECT")]
-    assert failed(http, token, "log_bodyweight", {"kg": 80})["error"] == "too_many_writes"  # 132 rows in the window
+    assert failed(http, token, "log", WEIGH_IN)["error"] == "too_many_writes"  # 132 rows in the window
     assert count(LiftSession) == 1 and count(Bodyweight) == 0
 
 
@@ -591,10 +621,10 @@ def test_an_answer_too_large_to_keep_is_already_done_on_the_next_send(writer, mo
     http, token, _ = writer
     monkeypatch.setattr(common, "ANSWER_MAX", 10)
     monkeypatch.setattr(common, "ANSWER_WAIT", 0)
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
-    assert ok(http, token, "log_lifts", arguments)["duplicate"] is False
+    arguments = {**SESSION, "key": K}
+    assert ok(http, token, "log", arguments)["duplicate"] is False
     assert [k.answer for k in keys()] == [None]
-    assert failed(http, token, "log_lifts", arguments)["error"] == "already_done" and count(LiftSession) == 1
+    assert failed(http, token, "log", arguments)["error"] == "already_done" and count(LiftSession) == 1
 
 
 def test_a_write_whose_reply_failed_is_already_done_on_the_next_send(writer, monkeypatch):
@@ -603,9 +633,9 @@ def test_a_write_whose_reply_failed_is_already_done_on_the_next_send(writer, mon
     monkeypatch.setattr(common, "ANSWER_WAIT", 0)
     with monkeypatch.context() as patched:  # a lone surrogate: the write lands and the reply cannot be sent
         patched.setattr(services, "log_bodyweight", lambda *args: {**real(*args), "summary": chr(0xD83D)})
-        assert failed(http, token, "log_bodyweight", {"kg": 80, "key": K})["error"] == "internal_error"
+        assert failed(http, token, "log", {**WEIGH_IN, "key": K})["error"] == "internal_error"
     assert [k.answer for k in keys()] == [None] and rows()[-1].outcome == "written"
-    assert failed(http, token, "log_bodyweight", {"kg": 80, "key": K})["error"] == "already_done"
+    assert failed(http, token, "log", {**WEIGH_IN, "key": K})["error"] == "already_done"
     assert count(Bodyweight) == 1
 
 
@@ -629,13 +659,13 @@ def test_a_key_that_cannot_be_settled_is_logged_by_type_and_swallowed(make_user,
 def test_an_expired_key_is_never_honoured_swept_or_not(writer, monkeypatch):
     http, token, _ = writer
     monkeypatch.setattr(calllog, "_swept_keys", db.utcnow())  # no sweep in this test
-    arguments = {"sets": squat(100), "new_session": True, "key": K}
-    first = ok(http, token, "log_lifts", arguments)
+    arguments = {**SESSION, "key": K}
+    first = ok(http, token, "log", arguments)
     age(WriteKey, keys()[0].id, hours=23, minutes=59)
-    assert ok(http, token, "log_lifts", arguments) == first and count(LiftSession) == 1  # still kept
+    assert ok(http, token, "log", arguments) == first and count(LiftSession) == 1  # still kept
     age(WriteKey, keys()[0].id, hours=25)
     assert len(keys()) == 1  # not swept
-    again = ok(http, token, "log_lifts", arguments)
+    again = ok(http, token, "log", arguments)
     assert again["id"] != first["id"] and count(LiftSession) == 2 and rows()[-1].outcome == "written"
     [kept] = keys()  # the old row went under the lock, and the new write holds the key
     assert db.utcnow() - kept.created_at < timedelta(minutes=1) and json.loads(kept.answer) == again
@@ -661,7 +691,8 @@ def test_the_sweep_deletes_a_key_25_hours_old_keeps_one_23_hours_old_and_runs_on
         s.add(old_call)
     ok(http, token, "whoami")
     assert [k.id for k in keys()] == [kept] and old_call.id in {r.id for r in rows()}  # the keys only
-    assert ok(http, token, "log_lifts", {"sets": squat(100), "key": "old-key-01"})["duplicate"] is False  # free
+    assert ok(http, token, "log", {"kind": "lifts", "parts": SESSION["parts"], "key": "old-key-01"})[
+        "duplicate"] is False  # free
     again = plant(account, "old-key-02", hours=25)
     ok(http, token, "whoami")
     assert again in {k.id for k in keys()}  # within the hour: no sweep
@@ -706,7 +737,7 @@ def test_one_delete_of_the_sweep_that_fails_never_costs_the_other(make_user, mon
 def test_a_key_of_another_shape_is_invalid_key_and_nothing_runs(writer, monkeypatch, key):
     http, token, _ = writer
     received = spy_on_services(monkeypatch)
-    refused = failed(http, token, "log_bodyweight", {"kg": 80, "key": key})
+    refused = failed(http, token, "log", {**WEIGH_IN, "key": key})
     assert refused == {"error": "invalid_key", "message": "key must be 8 to 64 letters, digits, - or _.",
                        "fix": "Send 8 to 64 letters, digits, - or _, or leave the key out."}
     row = rows()[-1]
@@ -718,14 +749,14 @@ def test_a_key_of_another_shape_is_invalid_key_and_nothing_runs(writer, monkeypa
                                  "f47ac10b-58cc-4372-a567-0e02b2c3d479"])
 def test_a_key_of_8_to_64_letters_digits_hyphens_and_underscores_is_taken(writer, key):
     http, token, _ = writer
-    assert ok(http, token, "log_bodyweight", {"kg": 80, "key": key})["duplicate"] is False
+    assert ok(http, token, "log", {**WEIGH_IN, "key": key})["duplicate"] is False
     assert [k.key for k in keys()] == [key]
 
 
 def test_a_key_sent_as_null_or_left_out_runs_as_before(writer):
     http, token, _ = writer
-    plain = ok(http, token, "log_bodyweight", {"kg": 80})
-    null = ok(http, token, "log_bodyweight", {"kg": 80, "key": None})
+    plain = ok(http, token, "log", WEIGH_IN)
+    null = ok(http, token, "log", {**WEIGH_IN, "key": None})
     assert null["duplicate"] is True and null["id"] == plain["id"]  # the 10-minute guard, as with no key
     assert keys() == [] and [r.outcome for r in rows()[-2:]] == ["written", "duplicate"]
 
@@ -734,7 +765,7 @@ def test_each_write_function_publishes_key_with_the_contract_s_words_and_no_othe
     words = ("Optional. A key of your own for this one write: 8 to 64 letters, digits, - or _. Send the same key "
              "when you send the same call again: nothing is written twice and the first answer comes back. A new "
              "write takes a new key.")
-    for tool in registered_tools(http).values():  # the five too, though no list holds them now
+    for tool in registered_tools(http).values():  # log among them, which takes key for every kind
         properties = tool["inputSchema"]["properties"]
         if tool["name"] not in WRITES:
             assert "key" not in properties, tool["name"]
@@ -749,16 +780,36 @@ def test_each_write_function_publishes_key_with_the_contract_s_words_and_no_othe
     assert len(mcp_server.INSTRUCTIONS) == 4084 and " key" not in mcp_server.INSTRUCTIONS
 
 
+# Every argument each of the five's services takes, as log sends it with that kind (log-and-guide.md): the five are
+# reached through log since L6, so tests/test_mcp.py's tables no longer hold their rows.
+EVERY_LOGGED = {
+    "log_lifts": {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}] * 3,
+                  "details": {"new_session": True}, "date": "2026-01-02", "notes": "Notes", "allow_repeat": True},
+    "log_bodyweight": {"kind": "bodyweight", "details": {"kg": 80.5, "lb": 177.5}, "date": "2026-01-02",
+                       "allow_repeat": True},
+    "log_measurement": {"kind": "measurement", "details": {"kind": "waist", "value": 84.5}, "date": "2026-01-02",
+                        "allow_repeat": True},
+    "log_food": {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180.0}]}, "date": "2026-01-02",
+                 "allow_repeat": True},
+    "log_cardio": {"kind": "cardio",
+                   "parts": [{"movement": "Treadmill Walk", "minutes": 30.0, "distance_km": 3.5, "distance_mi": 2.2}],
+                   "details": {"incline_pct": 2.0, "speed_kmh": 7.0, "speed_mph": 4.3, "avg_hr": 130,
+                               "machine_kcal": 210},
+                   "date": "2026-01-02", "notes": "Easy", "allow_repeat": True},
+}
+
+
 @pytest.mark.parametrize("name", WRITES)
 def test_the_key_never_reaches_a_service(http, monkeypatch, name):
     token = sign()
     account = ok(http, token, "whoami")["account_id"]
     set_switch(account, "log_delete")
     received = spy_on_services(monkeypatch)
-    every = {**REQUIRED.get(name, {}), **OPTIONAL_ARGUMENTS[name]}
-    assert failed(http, token, name, {**every, "key": K})["error"] == "spy"
-    if name == "log":  # log-and-guide.md: log's work is its kind's step, so its kind's service is reached
-        name, every = "log_lifts", log_shape.route(every).arguments
+    every = EVERY_LOGGED[name] if name in EVERY_LOGGED else {**REQUIRED.get(name, {}), **OPTIONAL_ARGUMENTS[name]}
+    assert failed(http, token, sent_as(name), {**every, "key": K})["error"] == "spy"
+    if sent_as(name) == "log":  # log-and-guide.md: log's work is its kind's step, so its kind's service is reached
+        routed = log_shape.route(every)
+        name, every = routed.function, routed.arguments
     assert received[name] == service_input(name, account, every) and keys() == []
 
 
@@ -780,8 +831,8 @@ def test_the_key_s_value_reaches_no_call_log_column_and_no_log_line(make_client,
     for name in WRITES:
         arguments = {**CALLS[name](account), "key": MARKER}
         for _ in range(2):  # written or refused by key_reused, then the same again
-            call(client, token, name, arguments)
-    call(client, token, "log_bodyweight", {"kg": 80, "date": "soon", "key": MARKER})  # refused by the service
+            call(client, token, sent_as(name), arguments)
+    call(client, token, "log", {**WEIGH_IN, "date": "soon", "key": MARKER})  # refused by the service
     logged = rows()
     assert {"written", "repeat", "refused"} <= {r.outcome for r in logged}
     assert sum("key" in (r.tried or "").split() for r in logged) == 2 * len(WRITES) + 1
@@ -799,12 +850,13 @@ def test_a_repeat_of_log_food_makes_no_usda_call(make_client, monkeypatch):
     token = sign()
     fake = Fake(banana(shape="detail"))
     monkeypatch.setattr(usda, "urlopen", fake)
-    arguments = {"entries": [{"usda_fdc_id": 173944, "grams": 100}], "allow_repeat": True, "key": K}
-    first = call(http, token, "log_food", arguments)
+    arguments = {"kind": "food", "details": {"entries": [{"usda_fdc_id": 173944, "grams": 100}]}, "allow_repeat": True,
+                 "key": K}
+    first = call(http, token, "log", arguments)
     assert first["isError"] is False and len(fake.requests) == 1
     with db.session_scope() as s:  # the cache forgets the food: a lookup now would ask USDA again
         s.query(UsdaFood).delete()
-    assert call(http, token, "log_food", arguments) == first
+    assert call(http, token, "log", arguments) == first
     assert len(fake.requests) == 1 and count(FoodEntry) == 1 and count(UsdaFood) == 0
 
 
@@ -852,10 +904,10 @@ def test_with_no_key_a_write_never_touches_the_key_table(writer, statements, mon
     monkeypatch.setattr(calllog, "_swept_keys", db.utcnow())  # the sweep is not the write: none in this test
     arguments = CALLS[name](account)
     statements.clear()
-    assert call(http, token, name, arguments)["isError"] is False
+    assert call(http, token, sent_as(name), arguments)["isError"] is False
     assert statements and not [s for s in statements if "write_key" in s]
     assert keys() == [] and "key" not in rows()[-1].tried.split()
-    call(http, token, name, {**arguments, "key": K})  # and with a key it does, so the check above can fail
+    call(http, token, sent_as(name), {**arguments, "key": K})  # and with a key it does, so the check above can fail
     assert [s for s in statements if "write_key" in s]
 
 
@@ -932,8 +984,8 @@ def test_0006_adds_the_key_table_the_models_match_and_it_comes_down_again():
 
 def test_deleting_the_account_deletes_its_keys_and_no_one_else_s(http):
     asha, ben = sign(claims(sub="user_01ASHA")), sign(claims(sub="user_01BEN"))
-    ok(http, asha, "log_bodyweight", {"kg": 60, "key": K})
-    ok(http, ben, "log_bodyweight", {"kg": 80, "key": K})
+    ok(http, asha, "log", {**weigh_in(60), "key": K})
+    ok(http, ben, "log", {**WEIGH_IN, "key": K})
     hers = ok(http, asha, "whoami")["account_id"]
     assert services.delete_account(hers)["deleted"] is True
     assert [k.user_id for k in keys()] == [ok(http, ben, "whoami")["account_id"]]

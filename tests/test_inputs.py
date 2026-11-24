@@ -2,8 +2,8 @@
 it with a code and a fix, and a refused call writes nothing.
 
 Two parts. The sweep sends every field of every function, read from the owner's tools/list (nested through $defs),
-and every field of every form a page draws, a bad value at a time over a valid base call held here, and holds what
-each must give. Then one test per decision, each refusal's words word for word.
+log's details for each kind as read from that kind's own argument model, and every field of every form a page draws,
+a bad value at a time over a valid base call held here, and holds what each must give. Then one test per decision, each refusal's words word for word.
 
 Dates are worked from the person's today (users.today_for), never typed: 0001-01-01 and 9999-12-31 are the only fixed
 dates, and the boundary tests of decision 15 set the person's today at a seam.
@@ -22,6 +22,8 @@ import pytest
 from sqlalchemy import func, select, text as sql, update
 
 from app import db, formatting, mcp_server, rules, services, users, web
+from app.log_shape import DETAIL_FIELDS, KIND_FUNCTIONS, LOG_FUNCTIONS
+from app.mcp_schemas import LOG_ARGUMENTS
 from app.models import Base, CallLog, Feedback, Goal, User
 from app.services import common, feedback, goals, owner, usda
 from evals import judge
@@ -41,24 +43,20 @@ from .test_web import client, only_user, post, seam, sign_in, today_of, web_clie
 # its package C4b moved log_lifts (LogSetIn), get_log (SetOut), edit_entry (SetIn), import_entries, save_routine and
 # get_routines (reps 1 to 100, the import's names part), C4d list_exercises (search, count, note), and C4e log_lifts,
 # get_log and get_progress (NewBest's and Best's kinds and units). On 2026-11-20 an outside review moved log_lifts and
-# edit_entry (a pair's weight) and get_progress (Best.text).
+# edit_entry (a pair's weight) and get_progress (Best.text). log-and-guide.md L6: the five log functions' rows went
+# with their registrations; their argument models, which log routes to, are held to the same checks below.
 BEFORE_INPUTS = {
     "whoami": "b38038e10238cf4ced8d65aebd4ebbfbd35ccabb604c254f75c00595ff94426a",  # C3: the daily goals in targets
     "list_exercises": "5c4dace8b6b714d2523bc3e7a5f6ebb34b65753d7d4da2abb11f5c2bf12bbfa3",  # exercise list C4d: search; C4f: a side; log and guide: log takes the person's words
-    "log_lifts": "25bad23e53f48945c75888f6f706afe840f0253c68dcf1db3d7e3efdaf6f7c11",  # exercise list: LogSetIn; C4e: NewBest; C4f: hand_check, a side; 2026-11-20: a pair's weight
-    "log_bodyweight": "62a520d93a8c65d8e66bdc12cff2c1fb1b3e981730e8b06e97b3b5a183bb790a",
     "set_goal": "001cc988cf2a05368940fca6fc6a440cd0988ba2e50ecb9441336ebef98abec2",
     "get_progress": "81b1ca6ab08ee7a300aa32893713e73457fc836f649b845bb4260dfdfb17edd5",  # exercise list C4e: Best; 2026-11-20: Best.text
     "update_settings": "b0de26c1baebb38324461efd63dcd1d4de7bad9771f4bbbfc1b2f82852de97ea",  # C3: the daily goals
     "get_log": "0a7487c06e022de4836e876a3fd7b8c534d4c838345e9c5beb88b3936a0c9ba7",  # exercise list: SetOut; C4e: NewBest; C3: a food entry's macros and portion, the day's macros, its goals
-    "log_measurement": "7456c5853a541df971d7b8ab8f382d835e82a6b1ca35c8ece0c60c985db12647",
     "edit_entry": "90bc76937f94a754a74d9c1da43e06811b3c373aaaf3035d752b84b693e3138c",  # exercise list: SetIn; C4f: a side; 2026-11-20: a pair's weight; log and guide: kind words, id words; C3: macros and portion; C3 fix: the mark when every macro held is sent
     "restore_entry": "2fac8ff6f555fbc14a32ff5a102300a08d0bdf2d44c1415a1a3b7879ac4eb6f6",  # log and guide: kind words, id words; C5c: kind program, the program's id
     "delete_entry": "79bfe1e0dd84bb4c67eebefb7a60e716f0b7997bb4ff6c2e0be9e3255ee06ef4",  # log and guide: kind words, id words; C5c: kind program, the program's id, the first sentence
     "find_food": "604b2d990283e23b972257805fd8f662f738d6bb7d30e823a0ca8b77b67da6d8",  # log and guide: ids log takes; C3: macros a serving, a meal's items, USDA's a 100 g
-    "log_food": "e344fdb6652c3e7d9bd9068d83cdfeff1e7f7cfb984a8e192832e805b67a850f",  # 2026-11-20: meal leads with sending; log and guide: FoodEntryIn's words; C3: macros, portion, the food sentence, the day's macros, its goals
     "save_food": "bdebb114e62368d0f68373ecb2de872df8de6e6e2c79a0e45e1d48c25802da54",  # log and guide: ids log takes; C3: macros a serving, items; C3 fix: a macro left out is kept
-    "log_cardio": "5a4106f698eae37d7b11fe096d19f60e2d405050ada8b23aa7e33b65df8d8794",  # 2026-11-20: exercise's words name both walks
     "get_trends": "ffb7403c8b2029888d1c57e431059922e77c4884e21934b0632d0e68c063aa3e",
     "get_goals": "deea8694d330fa819c06766d8d24217c74a69c41314448f93946f97803995c94",
     "import_entries": "5bfa3ce4279e3aca8619fdcc0dbc987081ca9b27f79fa9a74dd836377bc865c5",  # exercise list
@@ -112,9 +110,14 @@ def without_inputs(tool: dict) -> dict:
 
 
 def owner_tools(make_client) -> list[dict]:
-    """The owner's list and the five log functions, which no list holds now and a chat opened before still calls
-    (log-and-guide.md), in the order registered."""
+    """The owner's list: every registered function, in the order registered."""
     return list(registered_tools(make_client(owner_user_id=OWNER)).values())
+
+
+def model_schemas() -> dict[str, dict]:
+    """The five log functions' own argument schemas (log-and-guide.md): no function publishes them since L6, and log
+    routes each kind's call to its model. misfit_model holds that each is the schema its function published."""
+    return {name: LOG_ARGUMENTS[name].model_json_schema() for name in LOG_FUNCTIONS}
 
 
 def test_the_published_list_differs_only_by_additional_properties_and_the_three_descriptions(make_client):
@@ -128,11 +131,16 @@ def test_the_published_list_differs_only_by_additional_properties_and_the_three_
         for name, spec in schema.get("$defs", {}).items():  # the import's three allow, as they did, for its preview
             expected = False if name in FORBIDDING else True if name.startswith("Import") else None
             assert spec.get("additionalProperties") is expected, (tool["name"], name)
-    by_name = {t["name"]: t for t in tools}
+    models = model_schemas()
+    for function, schema in models.items():  # the five's models forbid what they did as published
+        assert schema["additionalProperties"] is False, function
+        for name, spec in schema.get("$defs", {}).items():
+            assert spec.get("additionalProperties") is (False if name in FORBIDDING else None), (function, name)
+    by_name = {t["name"]: t["inputSchema"] for t in tools} | models
     for (function, argument), (_, now) in DESCRIPTIONS.items():
-        assert by_name[function]["inputSchema"]["properties"][argument]["description"] == now
+        assert by_name[function]["properties"][argument]["description"] == now
         assert tr.check(now, tr.CLAUDE) == [], now
-    defs = {name for t in tools for name in t["inputSchema"].get("$defs", {})}
+    defs = {name for schema in by_name.values() for name in schema.get("$defs", {})}
     assert set(FORBIDDING) <= defs and {"ImportRowIn", "ImportSetIn", "ImportFoodIn"} <= defs  # those three allow
 
 
@@ -218,9 +226,6 @@ def bases(user: User, ids: dict) -> dict:
         "log": {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}], "date": day(1),
                 "notes": "Easy", "allow_repeat": False},
         "guide": {"topic": "food"},
-        "log_lifts": {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}], "date": day(1),
-                      "notes": "Easy", "allow_repeat": False, "new_session": False},
-        "log_bodyweight": {"kg": 80, "date": day(1), "allow_repeat": False},
         "set_goal": {"kind": "cardio_best", "exercise": "Outdoor Walk", "distance_km": 5, "target_value": 28,
                      "target_date": later, "text": "Sub 28", "start_value": 31},
         "get_progress": {"exercise": "Back Squat"},
@@ -228,16 +233,11 @@ def bases(user: User, ids: dict) -> dict:
                             "target_cardio_minutes_per_week": 150, "add_back_exercise_kcal": True, "weight_unit": "kg",
                             "distance_unit": "km"},
         "get_log": {"date": day(1), "days": 3},
-        "log_measurement": {"kind": "waist", "value": 84, "date": day(1), "allow_repeat": False},
         "edit_entry": {"kind": "bodyweight", "entry_id": ids["weigh_in"], "kg": 79},
         "restore_entry": {"kind": "bodyweight", "entry_id": ids["gone"], "undo_edit": False},
         "delete_entry": {"kind": "bodyweight", "entry_id": ids["weigh_in"]},
         "find_food": {"query": "roti", "limit": 5},
-        "log_food": {"entries": [{"description": "Dal", "kcal": 180, "estimated": False}], "date": day(1),
-                     "allow_repeat": False},
         "save_food": {"name": "Idli", "serving_label": "1 idli", "kcal_per_serving": 40, "grams_per_serving": 50},
-        "log_cardio": {"exercise": "Outdoor Run", "minutes": 30, "date": day(1), "distance_km": 5, "incline_pct": 1,
-                       "speed_kmh": 10, "avg_hr": 150, "machine_kcal": 300, "notes": "Easy", "allow_repeat": False},
         "get_trends": {},
         "get_goals": {"include_closed": False},
         "import_entries": {"rows": [
@@ -266,14 +266,33 @@ def bases(user: User, ids: dict) -> dict:
     }
 
 
+def kind_bases(user: User) -> dict:
+    """A valid log call of each kind, every field it takes filled in (log-and-guide.md): the five's own fields as log
+    sends them, so each sweep value replaces one of them. They were the five's base calls before L6."""
+    today = users.today_for(user)
+    day = (today - timedelta(days=1)).isoformat()
+    return {
+        "lifts": {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}], "date": day,
+                  "notes": "Easy", "allow_repeat": False, "details": {"new_session": False}},
+        "bodyweight": {"kind": "bodyweight", "details": {"kg": 80}, "date": day, "allow_repeat": False},
+        "measurement": {"kind": "measurement", "details": {"kind": "waist", "value": 84}, "date": day,
+                        "allow_repeat": False},
+        "food": {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180, "estimated": False}]},
+                 "date": day, "allow_repeat": False},
+        "cardio": {"kind": "cardio", "parts": [{"movement": "Outdoor Run", "minutes": 30, "distance_km": 5}],
+                   "details": {"incline_pct": 1, "speed_kmh": 10, "avg_hr": 150, "machine_kcal": 300}, "date": day,
+                   "notes": "Easy", "allow_repeat": False},
+    }
+
+
 def test_every_base_call_succeeds_and_names_every_function(owner_person, monkeypatch):
     client, token, user = owner_person
     calls = bases(user, seeded(user))
     before = list(BEFORE_INPUTS)  # log-and-guide.md: log and guide after list_exercises, as registered
     # C5c: save_program right after save_routine
-    assert list(calls) == [*before[:2], "log", "guide", *before[2:21], "save_program", *before[21:22], "what_is_logged",
-                           "get_data", *before[22:]]
-    for name, arguments in calls.items():
+    assert list(calls) == [*before[:2], "log", "guide", *before[2:16], "save_program", *before[16:17], "what_is_logged",
+                           "get_data", *before[17:]]
+    for name, arguments in [*calls.items(), *(("log", base) for base in kind_bases(user).values())]:
         result = tool_call(client, token, name, arguments)
         assert result["isError"] is False, (name, result)
         clear_call_log()
@@ -285,9 +304,10 @@ def _resolve(schema: dict, node):
     return mcp_server._node(schema, node)
 
 
-def fields_of(schema: dict):
+def fields_of(schema: dict, into: tuple = ()):
     """(path, spec) of every field of a published input schema, nested through $defs: a list of objects is walked
-    at its first item, (name, 0, field); a list of plain values names its first item, (name, 0)."""
+    at its first item, (name, 0, field); a list of plain values names its first item, (name, 0). An object field
+    named in into is walked too, (name, field): log's details, spelled out for one kind (kind_schema)."""
     def walk(node, path):
         for name, spec in node.get("properties", {}).items():
             spec = _resolve(schema, spec)
@@ -298,17 +318,34 @@ def fields_of(schema: dict):
                     yield from walk(items, (*path, name, 0))
                 else:
                     yield (*path, name, 0), items
+            elif name in into and spec.get("type") == "object":
+                yield from walk(spec, (*path, name))
     yield from walk(_resolve(schema, schema), ())
 
 
-def objects_of(schema: dict):
-    """(path, the fields it takes) of every object in a published input schema: the top level, and each list's item."""
+def objects_of(schema: dict, into: tuple = ()):
+    """(path, the fields it takes) of every object in a published input schema: the top level, each list's item, and
+    each object field named in into."""
     yield (), list(schema.get("properties", {}))
-    for path, spec in fields_of(schema):
+    for path, spec in fields_of(schema, into):
         if spec.get("type") == "array":
             items = _resolve(schema, spec.get("items")) or {}
             if items.get("type") == "object":
                 yield (*path, 0), list(items.get("properties", {}))
+        elif path[-1] in into and spec.get("type") == "object":
+            yield path, list(spec.get("properties", {}))
+
+
+def kind_schema(log_schema: dict, kind: str) -> dict:
+    """log's published schema with details spelled out for one kind (log-and-guide.md): details is an open object
+    there, and log routes each of its fields to the kind's own argument model, so each field's spec is the model's,
+    a food entry's through the model's $defs."""
+    model = LOG_ARGUMENTS[KIND_FUNCTIONS[kind]].model_json_schema()
+    schema = copy.deepcopy(log_schema)
+    schema["properties"]["details"] = {"type": "object",
+                                       "properties": {f: model["properties"][f] for f in DETAIL_FIELDS[kind]}}
+    schema.setdefault("$defs", {}).update(model.get("$defs", {}))
+    return schema
 
 
 NUMBER_VALUES = [True, False, "12abc", "", "   ", "1_0", "8e1", "٨٠", "８０", "nan", "inf", [1], {},
@@ -327,8 +364,7 @@ LIMITS = {
 }
 LIMITS_BY = {("save_routine", "name"): rules.ROUTINE_NAME_MAX,
              **{("send_feedback", f): feedback.TEXT_MAX for f in ("text", "doing", "expected", "happened")}}
-ENTRY_DATES = {"log_lifts", "log_bodyweight", "log_measurement", "log_food", "log_cardio", "edit_entry",
-               "import_entries"}
+ENTRY_DATES = {"log", "edit_entry", "import_entries"}  # log for the five since L6 (log-and-guide.md)
 
 
 def date_values(function: str, field: str, today: date) -> list[str]:
@@ -363,6 +399,7 @@ NEAR_KEYS = {  # the near misses of decision 3, by where they apply: a function'
     "log_cardio": ("calories", "cal", "kcal", "distance", "speed", "duration", "time", "heart_rate", "hr", "incline"),
     "log_bodyweight": ("weight", "weight_kg", "weight_lb", "lbs"), "update_settings": ("length_unit",),
     "sets": ("weight", "weight_lbs", "lbs", "lb", "kg", "weight_kgs"),
+    "parts": ("weight", "weight_lbs", "lbs", "lb", "kg", "weight_kgs"),  # log's lift parts, the sets of before (L6)
     "lifts": ("weight", "weight_lbs", "lbs", "lb", "kg", "weight_kgs"),
     "entries": ("serving", "serving_count", "qty", "quantity", "amount", "calories", "cal", "kcals"),
 }
@@ -378,8 +415,11 @@ def put(arguments: dict, path: tuple, value, items: dict) -> dict:
     field's twin in the other unit is taken out, so the value is judged on its own."""
     out = copy.deepcopy(arguments)
     node = out
-    for part in path[:-1]:
+    for at, part in enumerate(path[:-1]):
         if isinstance(part, int):
+            node = node[part]
+            continue
+        if isinstance(node.get(part), dict) and not isinstance(path[at + 1], int):  # log's details, an object
             node = node[part]
             continue
         if part not in node or not isinstance(node[part], list):
@@ -392,6 +432,7 @@ def put(arguments: dict, path: tuple, value, items: dict) -> dict:
 
 
 ITEMS = {"sets": {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}, "entries": {"description": "Dal", "kcal": 180},
+         "parts": {"movement": "Back Squat", "weight_kg": 100, "reps": 5},
          "lifts": {"exercise": "Bench Press", "sets": 3, "reps": 8}}
 
 
@@ -445,28 +486,41 @@ def test_the_sweep_through_mcp(owner_person, monkeypatch):
     # none, so even a good amount (2 servings, 100 grams) is refused there, never dropped.
     entry_for = {"servings": {"saved_food_id": ids["saved_food"], "servings": 2},
                  "grams": {"usda_fdc_id": 1001, "grams": 100}}
-    no_id = {("entries", 0, "servings"): 2, ("entries", 0, "grams"): 100}
+    no_id = {("details", "entries", 0, "servings"): 2, ("details", "entries", 0, "grams"): 100}
     today = users.today_for(user)
-    # Every registered function, from the code: log and guide, and the five that no list holds now.
+    # Every registered function, from the code: log and guide among them.
     schemas = {name: t["inputSchema"] for name, t in registered_tools(client).items()}
     assert set(schemas) == set(calls)
+    # Then log once more for each kind, details spelled out from the kind's own model (kind_schema): the five's own
+    # fields, which they were swept by as functions before L6 (log-and-guide.md). Their kind is left to log's own
+    # sweep above, and so are the parts but for cardio's: lifts' are swept there. A kind that takes no parts is not
+    # sent parts here: route refuses a list of parts there, but takes an empty one (log_shape.route), so the sweep
+    # would read that as taken.
+    targets = [(function, function, schema, calls[function], ()) for function, schema in schemas.items()]
+    for kind, base in kind_bases(user).items():
+        targets.append((f"log {kind}", "log", kind_schema(schemas["log"], kind), base, ("details",)))
     # The import's rows are written once first, so a call with one bad row writes nothing: its other rows are there.
     assert tool_call(client, token, "import_entries", calls["import_entries"])["isError"] is False
     clear_call_log()
     findings, sent, started, used = [], 0, time.monotonic(), set()
-    for function, schema in schemas.items():
-        base = calls[function]
-        cases = [(path, value) for path, spec in fields_of(schema) for value in values_for(function, path, spec, today)]
-        for path, taken in objects_of(schema):
-            keys = ["zz_unknown", *NEAR_KEYS.get(function if not path else path[-2], ())]
+    for label, function, schema, base, into in targets:
+        kind = base.get("kind") if into else None
+        cases = [(path, value) for path, spec in fields_of(schema, into)
+                 for value in values_for(function, path, spec, today)]
+        for path, taken in objects_of(schema, into):
+            near = KIND_FUNCTIONS[kind] if path == ("details",) else function if not path else path[-2]
+            keys = ["zz_unknown", *NEAR_KEYS.get(near, ())]
             cases += [((*path, key), 1) for key in keys if key not in taken]
+        if kind:  # each kind's own fields only: details, the top fields as that kind's service takes them, the parts
+            cases = [(path, value) for path, value in cases if path and path[0] != "kind"
+                     and (path[0] != "parts" or kind == "cardio")]
         cases = [(path, value, False) for path, value in cases]
-        if function == "log_food":
+        if kind == "food":
             cases += [(path, value, True) for path, good in no_id.items() for value in (good, *NUMBER_VALUES)]
         for path, value, plain in cases:
             path = row_path(base, path)
-            if function == "log_food" and path[-1] in entry_for and path[0] == "entries" and not plain:
-                arguments = put({**base, "entries": [entry_for[path[-1]]]}, path, value, ITEMS)
+            if kind == "food" and path[-1] in entry_for and path[:2] == ("details", "entries") and not plain:
+                arguments = put({**base, "details": {"entries": [entry_for[path[-1]]]}}, path, value, ITEMS)
             else:
                 arguments = put(base, path, value, ITEMS)
             before = rows_held()
@@ -475,7 +529,7 @@ def test_the_sweep_through_mcp(owner_person, monkeypatch):
             clear_call_log()
             sent += 1
             field = next(p for p in reversed(path) if isinstance(p, str))
-            where = f"{function} {'.'.join(map(str, path))}={json.dumps(value)[:40]}"
+            where = f"{label} {'.'.join(map(str, path))}={json.dumps(value)[:40]}"
             out = result.get("structuredContent") or {}
             text = (result.get("content") or [{}])[0].get("text", "")
             if any(w in text for w in LIBRARY_WORDS) or out.get("error") in CRASHES:
@@ -566,7 +620,7 @@ def form_kind(field: dict) -> str:
 
 def form_values(kind: str, name: str, today: date) -> list[str]:
     if kind == "date":  # a goal's date takes a goal's date values; an entry's, an entry's
-        return [*date_values("set_goal" if name == "target_date" else "log_bodyweight", name, today), *FORM_TEXT]
+        return [*date_values("set_goal" if name == "target_date" else "log", name, today), *FORM_TEXT]
     return [*FORM_NUMBER, *FORM_TEXT] if kind == "number" else FORM_TEXT
 
 
@@ -740,7 +794,7 @@ def taken(person, function: str, arguments: dict) -> dict:
 
 def fields_taken(person, function: str) -> str:
     client, token, _ = person
-    tool = registered_tools(client)[function]  # the five too, though no list holds them now
+    tool = registered_tools(client)[function]
     return ", ".join(tool["inputSchema"]["properties"])
 
 
@@ -775,16 +829,37 @@ NEAR_TABLE = [
     (("update_settings",), ("length_unit",), LENGTH),
 ]
 NEAR_CASES = [(where, key, sentence) for places, keys, sentence in NEAR_TABLE for where in places for key in keys]
-TOP_BASE = {"log_measurement": {"kind": "waist", "value": 84}, "edit_entry": {"kind": "bodyweight", "entry_id": 1},
-            "log_cardio": {"exercise": "Outdoor Run", "minutes": 30}, "log_bodyweight": {"kg": 80},
-            "update_settings": {"time_zone": "UTC"}}
+TOP_BASE = {"edit_entry": {"kind": "bodyweight", "entry_id": 1}, "update_settings": {"time_zone": "UTC"}}
+# The three log functions whose near-miss rows (mcp_schemas.NEAR_MISSES) are at their own top level: since L6 their
+# fields are log's details of that kind, and route refuses a key there in log's words, the row's sentence said as
+# log was sent (log-and-guide.md, model-read rows 9 and 10): (the kind, its details, the rest of the call).
+LOG_TOP = {"log_measurement": ("measurement", {"kind": "waist", "value": 84}, {}),
+           "log_cardio": ("cardio", {}, {"parts": [{"movement": "Outdoor Run", "minutes": 30}]}),
+           "log_bodyweight": ("bodyweight", {"kg": 80}, {})}
+# Each row's sentence as route says it, in the names log was sent (log_shape.said).
+AS_SENT = {
+    BODY_SIZE: "details.value is in the kind's own unit: cm for waist, hips, chest, arm and thigh. Spotter takes no "
+               "inches for a body size.",
+    MACHINE: "For the calories the machine or watch showed, send details.machine_kcal.",
+    DISTANCE: "Send parts[0].distance_km or parts[0].distance_mi, in the unit the person said.",
+    SPEED: "Send details.speed_kmh or details.speed_mph, in the unit the person said.",
+    MINUTES: "Send the time as parts[0].minutes.",
+    HEART: "Send the average heart rate as details.avg_hr.",
+    INCLINE: "Send the incline as details.incline_pct.",
+    BODY_WEIGHT: "Send the body weight in details.kg or details.lb, in the unit the person said.",
+}
 ITEM_CALLS = {  # an item's list: the call around it, the item, its place's words, the service's own fix
-    "set": ("log_lifts", "sets", {"exercise": "Back Squat", "weight_kg": 100, "reps": 5}, "Set 1", "a set",
-            "Use: exercise, weight_kg, weight_lb, reps, time_s, distance_m, exact."),  # exercise-list.md R6, R3
-    "lift": ("save_routine", "lifts", {"exercise": "Bench Press", "sets": 3, "reps": 8}, "Lift 1", "a lift",
+    # log-and-guide.md: a set is a lift part of log since L6, and log's own schema names it (misfit, ITEM_WORDS).
+    "set": ("log", lambda item: {"kind": "lifts", "parts": [item]},
+            {"movement": "Back Squat", "weight_kg": 100, "reps": 5}, "Part 1", "a part",
+            "Use: movement, weight_kg, weight_lb, reps, time_s, distance_m, exact, minutes, distance_km, distance_mi."),
+    "lift": ("save_routine", lambda item: {"name": "Push day", "lifts": [item]},
+             {"exercise": "Bench Press", "sets": 3, "reps": 8}, "Lift 1", "a lift",
              "Use: exercise, sets, reps, weight_kg or weight_lb, time_s or minutes, distance_m, distance_km or "
              "distance_mi, incline_pct, speed_kmh or speed_mph, avg_hr, machine_kcal."),  # routines-and-programs.md C5b
-    "entry": ("log_food", "entries", {"description": "Dal", "kcal": 180}, "Entry 1", "a food entry",
+    # A food entry in log's details: the food service's own check, its place said as sent.
+    "entry": ("log", lambda item: {"kind": "food", "details": {"entries": [item]}},
+              {"description": "Dal", "kcal": 180}, "details.entries[0]", "a food entry",
               "Use: description, meal, kcal, estimated, portion, protein_g, carbs_g, fat_g, macros_estimated, "
               "saved_food_id, servings, usda_fdc_id, grams. source is decided by the server."),  # macros-and-asking.md
 }
@@ -794,11 +869,17 @@ ITEM_CALLS = {  # an item's list: the call around it, the item, its place's word
 def test_each_near_miss_names_the_field_meant(person, where, key, sentence):
     """Decisions 2 and 3: the key named in the services' words, and the near miss's sentence after the fix."""
     if where in ITEM_CALLS:
-        function, items, item, place, what, fix = ITEM_CALLS[where]
-        extra = {"name": "Push day"} if function == "save_routine" else {}
-        out = refused(person, function, {items: [{**item, key: 1}], **extra})
+        function, around, item, place, what, fix = ITEM_CALLS[where]
+        out = refused(person, function, around({**item, key: 1}))
         assert (out["error"], out["message"], out["fix"]) == (
             "invalid_field", f"{place}: '{key}' is not a field of {what}.", f"{fix} {sentence}")
+    elif where in LOG_TOP:
+        kind, details, rest = LOG_TOP[where]
+        out = refused(person, "log", {"kind": kind, "details": {**details, key: 1}, **rest})
+        assert (out["error"], out["message"], out["fix"]) == (
+            "invalid_field", f"'details.{key}' is not a field {kind} takes in details.",
+            f"In details, {kind} takes: {', '.join(DETAIL_FIELDS[kind])}. guide with topic {kind} gives each. "
+            f"{AS_SENT[sentence]}")
     else:
         out = refused(person, where, {**TOP_BASE[where], key: 1})
         assert (out["error"], out["message"], out["fix"]) == (
@@ -815,22 +896,28 @@ def test_an_item_s_unknown_key_reads_as_the_service_s_own_refusal(person):
     own = services.save_routine(user.id, {"name": "Push day", "lifts": [{**ITEM_CALLS["lift"][2], "colour": "red"}]},
                                 "claude")
     assert (out["message"], out["fix"]) == (own["message"], own["fix"])
-    out = refused(person, "log_food", {"entries": [{**ITEM_CALLS["entry"][2], "serving": 2}]})
+    out = refused(person, "log", {"kind": "food", "details": {"entries": [{**ITEM_CALLS["entry"][2], "serving": 2}]}})
     own = services.log_food(user.id, {"entries": [{**ITEM_CALLS["entry"][2], "serving": 2}]}, "claude")
-    assert out["message"] == own["message"] and out["fix"] == f"{own['fix']} {SERVINGS}"
+    # log names the entry as it was sent (log-and-guide.md, said_as_sent): the service's "Entry 1" is details.entries[0]
+    assert own["message"] == "Entry 1: 'serving' is not a field of a food entry."
+    assert out["message"] == "details.entries[0]: 'serving' is not a field of a food entry."
+    assert out["fix"] == f"{own['fix']} {SERVINGS}"
 
 
 def test_a_key_near_no_field_by_the_table_gets_the_nearest_by_spelling_or_none(person):
-    near = refused(person, "log_bodyweight", {"kgs": 80})
-    assert near["fix"] == f"log_bodyweight takes: {fields_taken(person, 'log_bodyweight')}. The nearest field is kg."
-    far = refused(person, "log_bodyweight", {"kg": 80, "zz_unknown": 1})
-    assert far["fix"] == f"log_bodyweight takes: {fields_taken(person, 'log_bodyweight')}."
+    # A weigh-in's fields are log's details since L6 (log-and-guide.md): route names them as sent.
+    takes = "In details, bodyweight takes: kg, lb. guide with topic bodyweight gives each."
+    near = refused(person, "log", {"kind": "bodyweight", "details": {"kgs": 80}})
+    assert near["fix"] == f"{takes} The nearest field is details.kg."
+    far = refused(person, "log", {"kind": "bodyweight", "details": {"kg": 80, "zz_unknown": 1}})
+    assert far["fix"] == takes
     none = refused(person, "whoami", {"zz_unknown": 1})
     assert none["fix"] == "whoami takes no fields: send none."
-    two = refused(person, "log_bodyweight", {"kg": 80, "aa": 1, "bb": 2})  # every unknown key is named
-    assert [e["message"] for e in two["errors"]] == ["'aa' is not a field of log_bodyweight.",
-                                                    "'bb' is not a field of log_bodyweight."]
-    assert two["message"] == "2 problems. 'aa' is not a field of log_bodyweight. 'bb' is not a field of log_bodyweight."
+    two = refused(person, "log", {"kind": "bodyweight", "details": {"kg": 80, "aa": 1, "bb": 2}})  # each one named
+    assert [e["message"] for e in two["errors"]] == ["'details.aa' is not a field bodyweight takes in details.",
+                                                    "'details.bb' is not a field bodyweight takes in details."]
+    assert two["message"] == ("2 problems. 'details.aa' is not a field bodyweight takes in details. 'details.bb' is "
+                              "not a field bodyweight takes in details.")
 
 
 # Decision 4: one grammar of a number as text.
@@ -849,7 +936,7 @@ def test_the_number_grammar_on_both_sides():
 
 @pytest.mark.parametrize("text, number", [(" 8 ", 8), ("+8", 8), ("8.", 8), (".5", 0.5)])
 def test_text_in_the_grammar_is_its_number_through_mcp(person, text, number):
-    out = taken(person, "log_measurement", {"kind": "sleep_hours", "value": text})
+    out = taken(person, "log", {"kind": "measurement", "details": {"kind": "sleep_hours", "value": text}})
     assert out["measurement"]["value"] == number
     if number == int(number):  # a whole-number field takes it too
         taken(person, "update_settings", {"target_sessions_per_week": text})
@@ -863,9 +950,9 @@ def test_text_in_the_grammar_is_its_number_through_mcp(person, text, number):
 @pytest.mark.parametrize("value", [True, False, *NUMBER_TEXT_REFUSED[:7]])
 def test_a_bool_or_text_outside_the_grammar_is_refused_through_mcp(person, value):
     shown = json.dumps(value) if not isinstance(value, str) else f"'{value}'"
-    out = refused(person, "log_measurement", {"kind": "sleep_hours", "value": value})
-    assert (out["error"], out["message"], out["fix"]) == ("invalid_field", f"value must be a number, not {shown}.",
-                                                          "Give value as a number.")
+    out = refused(person, "log", {"kind": "measurement", "details": {"kind": "sleep_hours", "value": value}})
+    assert (out["error"], out["message"], out["fix"]) == (  # named as log was sent (log-and-guide.md)
+        "invalid_field", f"details.value must be a number, not {shown}.", "Give details.value as a number.")
     whole = refused(person, "get_log", {"days": value})
     assert whole["message"] == f"days must be a whole number, not {shown}."
     assert whole["fix"] == "Give days as a whole number, from 1 to 14."
@@ -915,7 +1002,7 @@ def test_a_date_in_another_form_is_refused_in_chat_in_the_import_and_on_the_page
     yesterday = users.today_for(user) - timedelta(days=1)
     week = yesterday.isocalendar()
     for sent in (yesterday.strftime("%Y%m%d"), f"{week.year}-W{week.week:02d}-{week.weekday}"):
-        out = refused(person, "log_bodyweight", {"kg": 80, "date": sent})
+        out = refused(person, "log", {"kind": "bodyweight", "details": {"kg": 80}, "date": sent})
         assert (out["error"], out["message"], out["fix"]) == (
             "invalid_date", f"date '{sent}' is not a date.", "Give the date as YYYY-MM-DD, or leave it out for today.")
         out = refused(person, "get_log", {"date": sent})
@@ -973,24 +1060,27 @@ def test_the_owner_s_account_id_email_and_request_id_are_checked(person, functio
 
 
 # Decision 11: the words of a schema refusal, a row each.
+# The five's rows are log's since L6 (log-and-guide.md), each named as log was sent: a set is parts[n], a weigh-in's kg
+# is details.kg, a food entry is details.entries[n]. The kind's own model judges them, as it judged the five's calls.
 SCHEMA_ROWS = [
-    ("log_lifts", {}, "missing_field", "sets is missing.", "Give sets."),
-    ("log_lifts", {"sets": [{"exercise": "Back Squat", "weight_kg": 100}]}, "missing_field", "Set 1: reps is missing.",
-     "Give reps on set 1."),
-    ("log_bodyweight", {"kg": "12abc"}, "invalid_field", "kg must be a number, not '12abc'.", "Give kg as a number."),
+    ("log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100}]}, "missing_field",
+     "parts[0]: reps is missing.", "Give reps on parts[0]."),
+    ("log", {"kind": "bodyweight", "details": {"kg": "12abc"}}, "invalid_field",
+     "details.kg must be a number, not '12abc'.", "Give details.kg as a number."),
     ("import_entries", {"rows": [{"kind": "lift_session", "date": "2026-01-01", "sets": [
         {"exercise": "Deadlift", "weight": 100, "reps": 5}, {"exercise": "Deadlift", "weight": True, "reps": 5}]}]},
      "invalid_field", "Row 1, set 2: weight must be a number, not true.", "Give weight on row 1, set 2 as a number."),
     ("get_log", {"days": 2.5}, "invalid_field", "days must be a whole number, not 2.5.",
      "Give days as a whole number, from 1 to 14."),
-    ("log_food", {"entries": [{"description": "Dal", "saved_food_id": [1]}]}, "invalid_field",
-     "Entry 1: saved_food_id must be a whole number, not [1].", "Give saved_food_id on entry 1 as a whole number."),
-    ("log_bodyweight", {"kg": 80, "allow_repeat": "perhaps"}, "invalid_field",
+    ("log", {"kind": "food", "details": {"entries": [{"description": "Dal", "saved_food_id": [1]}]}}, "invalid_field",
+     "details.entries[0]: saved_food_id must be a whole number, not [1].",
+     "Give saved_food_id on details.entries[0] as a whole number."),
+    ("log", {"kind": "bodyweight", "details": {"kg": 80}, "allow_repeat": "perhaps"}, "invalid_field",  # log's own
      "allow_repeat must be true or false, not 'perhaps'.", "Send allow_repeat as true or false, or leave it out."),
-    ("log_lifts", {"sets": [{"exercise": "Back Squat", "weight_kg": 100, "reps": 5}], "notes": 12}, "invalid_field",
-     "notes must be text, not 12.", "Give notes as text."),
-    ("log_lifts", {"sets": "not a list"}, "invalid_field", "sets must be a list, not 'not a list'.",
-     "Send sets as a list."),
+    ("log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 100, "reps": 5}], "notes": 12},
+     "invalid_field", "notes must be text, not 12.", "Give notes as text."),
+    ("log", {"kind": "lifts", "parts": "not a list"}, "invalid_field", "parts must be a list, not 'not a list'.",
+     "Send parts as a list."),
     ("save_routine", {"name": "Push day", "lifts": ["x"]}, "invalid_field", "Lift 1: it must be an object of named fields.",
      "Send each item with its named fields: exercise, sets, reps, weight_kg, weight_lb, time_s, minutes, distance_m, "
      "distance_km, distance_mi, incline_pct, speed_kmh, speed_mph, avg_hr, machine_kcal."),  # C5b: every kind's
@@ -1014,6 +1104,23 @@ def test_each_schema_failure_is_spotter_s_own_refusal(person, function, argument
     assert tr.check(message, tr.MESSAGE) == [] and tr.check(fix, tr.MESSAGE) == []
 
 
+def model_refusal(function: str, arguments: dict) -> dict:
+    """The refusal one of the five's own argument models gives, as log's work builds it before said_as_sent names its
+    fields as sent (mcp_server.log_work). For a case log's own schema or route refuses first, in log's words, so it
+    never reaches the model through /mcp (log-and-guide.md, L6)."""
+    model = LOG_ARGUMENTS[function]
+    found = mcp_server.misfit_model(model, arguments)
+    assert found is not None, (function, arguments)
+    return mcp_server.schema_refusal(function, model.model_json_schema(), arguments, *found)
+
+
+def test_a_kind_s_own_model_keeps_decision_11_s_words_where_log_refuses_first(person):
+    out = model_refusal("log_lifts", {})  # was through /mcp; log's route refuses kind lifts with no parts first
+    assert (out["error"], out["message"], out["fix"]) == ("missing_field", "sets is missing.", "Give sets.")
+    first = refused(person, "log", {"kind": "lifts"})
+    assert (first["error"], first["message"]) == ("missing_field", "lifts needs parts: one part a set.")
+
+
 def test_anything_else_pydantic_refuses_is_named_by_its_type():
     schema = {"properties": {"odd": {"description": "No type."}, "n": {"type": "number"}}}
     out = mcp_server._problem("f", schema, {"odd": 1}, {"type": "weird", "loc": ("odd",), "input": 1})
@@ -1023,12 +1130,20 @@ def test_anything_else_pydantic_refuses_is_named_by_its_type():
 
 
 def test_two_problems_and_an_unknown_key_come_back_as_one_refusal(person):
-    out = refused(person, "log_bodyweight", {"kg": True, "zz": 1})
+    # Through /mcp both at log's own level (log-and-guide.md, L6): an unknown key at log's top is refused by log's own
+    # schema before the kind's model runs, and an unknown key in details by route, so the model's two are held below.
+    out = refused(person, "log", {"kind": "lifts", "parts": "x", "zz": 1})
+    assert out["message"] == "2 problems. 'zz' is not a field of log. parts must be a list, not 'x'."
+    assert [e["error"] for e in out["errors"]] == ["invalid_field", "invalid_field"]
+    out = model_refusal("log_bodyweight", {"kg": True, "zz": 1})
     assert out["message"] == "2 problems. 'zz' is not a field of log_bodyweight. kg must be a number, not true."
     assert [e["error"] for e in out["errors"]] == ["invalid_field", "invalid_field"]
-    missing = refused(person, "log_measurement", {"zz": 1})
+    missing = model_refusal("log_measurement", {"zz": 1})
     assert missing["error"] == "invalid_field" and [e["error"] for e in missing["errors"]] == [
         "invalid_field", "missing_field", "missing_field"]
+    through_log = refused(person, "log", {"kind": "measurement", "details": {"zz": 1}})  # route's one, first
+    assert [e["message"] for e in through_log["errors"]] == [
+        "'details.zz' is not a field measurement takes in details."]
 
 
 # Decision 12: the row and the order.
@@ -1036,11 +1151,11 @@ def test_a_schema_refusal_writes_one_call_log_row_and_no_other(person):
     client, token, user = person
     clear_call_log()
     before = rows_held()
-    out = refused(person, "log_lifts", {"sets": "x", "zz": 1})
+    out = refused(person, "log", {"kind": "lifts", "parts": "x", "zz": 1})
     with db.session_scope() as s:
-        [row] = list(s.scalars(select(CallLog)))
+        [row] = list(s.scalars(select(CallLog)))  # log's row since L6, its own names (log-and-guide.md)
         assert (row.function, row.ok, row.error_code, row.outcome, row.step, row.tried, row.caller) == (
-            "log_lifts", False, out["error"], "refused", "check", "other[1] sets", "claude")
+            "log", False, out["error"], "refused", "check", "kind other[1] parts", "claude")
         assert common._counted(s, user.id, common.WRITE_FUNCTIONS)[0] == 1  # it counts against the write limit
     assert rows_held() == before
 
@@ -1052,7 +1167,9 @@ def test_a_schema_refusal_meets_the_order_every_call_meets(person, make_client):
     set_switch(user.id, "log")
     assert refused(person, "delete_entry", {"kind": 5, "entry_id": 1})["error"] == "not_allowed"  # the switch
     set_switch(user.id, "log_delete")
-    assert refused(person, "log_bodyweight", {"kg": True, "key": "bad"})["error"] == "invalid_key"  # the key's shape
+    # the key's shape, before a refusal of log's own schema (L6: the five's own call is log's now)
+    assert refused(person, "log", {"kind": "bodyweight", "details": {"kg": 80}, "allow_repeat": "yes", "key": "bad"})[
+        "error"] == "invalid_key"
     with db.session_scope() as s:
         s.add_all(CallLog(user_id=user.id, function="get_log", started_at=db.utcnow(), ms=1, ok=True, result_bytes=1)
                   for _ in range(common.READS_LIMIT))
@@ -1211,10 +1328,11 @@ def test_can_and_cant_says_the_input_rules():
 
 
 # The owner's questions 1 to 3, as decided.
-STRICT = [("log_lifts", "allow_repeat"), ("log_lifts", "new_session"), ("update_settings", "add_back_exercise_kcal"),
+# log-and-guide.md L6: the five's allow_repeat is log's own allow_repeat, one field for every kind, checked by log's
+# own schema before any kind's model; their five rows are its one row. log_lifts' new_session is in details below.
+STRICT = [("log", "allow_repeat"), ("update_settings", "add_back_exercise_kcal"),
           ("get_goals", "include_closed"), ("restore_entry", "undo_edit"), ("owner_calls", "no_account"),
-          ("owner_calls", "failed_only"), ("owner_calls", "all_accounts"), ("log_bodyweight", "allow_repeat"), ("log_measurement", "allow_repeat"),
-          ("log_food", "allow_repeat"), ("log_cardio", "allow_repeat")]
+          ("owner_calls", "failed_only"), ("owner_calls", "all_accounts")]
 
 
 @pytest.mark.parametrize("function, field", STRICT)
@@ -1225,15 +1343,24 @@ def test_true_or_false_is_strict_on_every_field(person, function, field, loose):
     assert f"{field} must be true or false, not {shown}." in [e["message"] for e in out["errors"]]
 
 
+@pytest.mark.parametrize("loose", ["yes", 1])
+def test_new_session_is_strict_in_log_s_details(person, loose):
+    out = refused(person, "log", {"kind": "lifts", "parts": [ITEM_CALLS["set"][2]], "details": {"new_session": loose}})
+    shown = "'yes'" if loose == "yes" else "1"
+    assert f"details.new_session must be true or false, not {shown}." in [e["message"] for e in out["errors"]]
+
+
 def test_estimated_is_strict_too(person):
-    out = refused(person, "log_food", {"entries": [{"description": "Dal", "kcal": 180, "estimated": "yes"}]})
-    assert out["message"] == "Entry 1: estimated must be true or false, not 'yes'."
+    out = refused(person, "log", {"kind": "food", "details": {"entries": [{"description": "Dal", "kcal": 180,
+                                                                           "estimated": "yes"}]}})
+    assert out["message"] == "details.entries[0]: estimated must be true or false, not 'yes'."
 
 
 def test_a_whole_number_is_quoted_with_no_point_zero(person):
     assert (rules.as_sent(0.0), rules.as_sent(-100.0), rules.as_sent(2.5), rules.as_sent(1e20)) == ("0", "-100", "2.5",
                                                                                                     "1e+20")
-    assert refused(person, "log_bodyweight", {"kg": -100})["message"] == "kg -100 is outside 20 to 400."
+    assert refused(person, "log", {"kind": "bodyweight", "details": {"kg": -100}})[
+        "message"] == "details.kg -100 is outside 20 to 400."  # named as log was sent (log-and-guide.md)
 
 
 def test_a_name_of_only_invisible_characters_is_missing(person):
@@ -1286,9 +1413,9 @@ def test_a_schema_refusal_with_a_key_keeps_no_key_and_answers_the_same_again(per
     """Decision 12: a keyed write refused at the check frees its key, as a service's refusal does: sent again, the
     same refusal comes back, and no key row is left."""
     from app.models import WriteKey
-    sent = {"kg": True, "key": "retry-input-0001"}
-    first, again = refused(person, "log_bodyweight", sent), refused(person, "log_bodyweight", sent)
-    assert first == again and first["message"] == "kg must be a number, not true."
+    sent = {"kind": "bodyweight", "details": {"kg": True}, "key": "retry-input-0001"}
+    first, again = refused(person, "log", sent), refused(person, "log", sent)
+    assert first == again and first["message"] == "details.kg must be a number, not true."
     with db.session_scope() as s:
         assert s.scalar(select(func.count()).select_from(WriteKey)) == 0
 
@@ -1316,17 +1443,20 @@ def test_servings_and_grams_with_no_food_id_are_refused_never_dropped(person):
     _, _, user = person
     sent = {"entries": [{"description": "Dal", "kcal": 100, "servings": -5, "grams": 99999}]}
     before = rows_held()
-    for out in (services.log_food(user.id, sent, "claude"), refused(person, "log_food", sent)):
+    # The service's own words, and log's, which name the entry as it was sent (log-and-guide.md, L6).
+    for out, place in ((services.log_food(user.id, sent, "claude"), "Entry 1"),
+                       (refused(person, "log", {"kind": "food", "details": sent}), "details.entries[0]")):
         assert [(e["error"], e["message"], e["fix"]) for e in out["errors"]] == [
-            ("invalid_field", "Entry 1: servings goes only with saved_food_id.",
+            ("invalid_field", f"{place}: servings goes only with saved_food_id.",
              "Send servings with a saved food's id, or leave it out and send kcal for the amount eaten."),
-            ("invalid_field", "Entry 1: grams goes only with usda_fdc_id.",
+            ("invalid_field", f"{place}: grams goes only with usda_fdc_id.",
              "Send grams with a USDA food's id, or leave it out and send kcal for the amount eaten.")]
         for e in out["errors"]:
             assert tr.check(e["message"], tr.MESSAGE) == [] and tr.check(e["fix"], tr.MESSAGE) == []
     assert rows_held() == before
     good = {"entries": [{"description": "Dal", "kcal": 100, "servings": 2}]}  # even a good amount, with no food
-    assert refused(person, "log_food", good)["message"] == "Entry 1: servings goes only with saved_food_id."
+    assert refused(person, "log", {"kind": "food", "details": good})[
+        "message"] == "details.entries[0]: servings goes only with saved_food_id."
 
 
 def test_a_note_of_only_invisible_characters_is_missing(person):
@@ -1355,9 +1485,9 @@ def test_blank_letters_and_bare_marks_are_invisible(person, blank):
 
 
 def test_a_number_too_large_for_a_float_is_not_a_number(person):
-    out = refused(person, "log_bodyweight", {"kg": "1" * 400})
-    assert out["message"] == f"kg must be a number, not '{'1' * 79}\u2026'." and "inf" not in out["message"]
-    assert out["fix"] == "Give kg as a number."
+    out = refused(person, "log", {"kind": "bodyweight", "details": {"kg": "1" * 400}})  # named as sent
+    assert out["message"] == f"details.kg must be a number, not '{'1' * 79}\u2026'." and "inf" not in out["message"]
+    assert out["fix"] == "Give details.kg as a number."
 
 
 @pytest.mark.parametrize("days", [20, 0, "20"])
@@ -1370,7 +1500,11 @@ def test_days_out_of_range_says_the_range(person, days):
 
 
 def test_an_unknown_key_s_control_characters_are_shown_escaped(person):
-    out = refused(person, "log_bodyweight", {"kg": 80, "a\nb\u200bc": 1})
-    assert out["message"] == "'a\\nb\\u200bc' is not a field of log_bodyweight."
-    nested = refused(person, "log_lifts", {"sets": [{"exercise": "Back Squat", "weight_kg": 60, "reps": 5, "x\ty": 1}]})
-    assert nested["message"] == "Set 1: 'x\\ty' is not a field of a set."
+    # Through log since L6 (log-and-guide.md): at its top, in its details, and in a part.
+    out = refused(person, "log", {"kind": "bodyweight", "details": {"kg": 80}, "a\nb\u200bc": 1})
+    assert out["message"] == "'a\\nb\\u200bc' is not a field of log."
+    inner = refused(person, "log", {"kind": "bodyweight", "details": {"kg": 80, "a\nb\u200bc": 1}})
+    assert inner["message"] == "'details.a\\nb\\u200bc' is not a field bodyweight takes in details."
+    nested = refused(person, "log", {"kind": "lifts", "parts": [{"movement": "Back Squat", "weight_kg": 60, "reps": 5,
+                                                                 "x\ty": 1}]})
+    assert nested["message"] == "Part 1: 'x\\ty' is not a field of a part."

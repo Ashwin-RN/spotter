@@ -233,8 +233,8 @@ every function loaded up front (`ENABLE_TOOL_SEARCH=false`). So the runner sets 
 - The run prints one line for it, at the start and under the table, such as "tool search: on, the CLI's default
   (ENABLE_TOOL_SEARCH left unset)". Codex and Gemini print "tool search: not applied".
 
-`--transcripts` keeps what a run did, step by step, so a pass can be read for a search step before the first `log`
-and for any call of a hidden name. Every kept text is masked: the run's token, and anything shaped like a token. The
+`--transcripts` keeps what a run did, step by step, so a pass can be read for a search step before the first `log`.
+Every kept text is masked: the run's token, and anything shaped like a token. The
 start line says where the files are, and "Kept:" names the directory at the end. Each transcript holds the throwaway
 person's data in full.
 
@@ -306,7 +306,7 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
 - Every check that reads a call by name reads the routed calls: `function`, the three `inputs_*`, `refused`,
   `ok_calls`, `no_call`, the four answer checks, the tags' `must` and `must_not`, and the two-turn checks.
 - A reason names a routed call as `log (lifts)`: "log (bodyweight) was called and should not have been",
-  "log_lifts was not called (calls: whoami, log (bodyweight))". A call of the five by name keeps its own words.
+  "log_lifts was not called (calls: whoami, log (bodyweight))". No run calls one of the five by name: they are not registered.
 - `edit_entry`, `delete_entry` and `restore_entry` take `log`'s kind words too (the contract's decision 52). The
   judge reads their `kind` as its table word, so a case that pins `lift_session` passes `lifts` as well.
 - `guide` is no data read: its numbers ("1 to 60") are words on how to log, never figures of the person's.
@@ -317,9 +317,10 @@ and `made_must_call`. `evals/without.py` calls `judge_calls`, so it is routed to
   pick of 2026-11-23: `log` is in their `may` with `ok_calls` 0, so a `log` call Spotter refuses before the
   question passes and a written one fails.
 - `tests/test_golden_cases.py` plays held runs of `stated_number`, `lb_weigh_in`, `waist_in_inches`,
-  `hold_plank`, `miles_run`, `pick_lift_answer` and `hand_check_family` again with each call of the five sent as
-  `log`: each judges as it does through the five, the answer checks reading a `log` call's own answer. A measurement
-  goes both ways: kind `measurement` with `details.kind`, and the measurement's own word as the kind.
+  `hold_plank`, `miles_run`, `pick_lift_answer` and `hand_check_family` again with each call sent as `log`: each
+  run passes or fails as the case means, the answer checks reading a `log` call's own answer, and no run calls one
+  of the five by name. A measurement goes both ways: kind `measurement` with `details.kind`, and the measurement's
+  own word as the kind.
 
 ## The cases
 
@@ -726,9 +727,10 @@ judged again: `data_lifting` 3 of 3 (it was 1), `data_empty` 3 of 3 (it was 2), 
 - The measured pick-up rate is a ceiling: Spotter is the only MCP server in each run, so no other tool competes
   for the step.
 - **The coverage test** (`tests/test_evals.py`): every function in `NEEDS` (`app/mcp_server.py`) is in at least one
-  case's `must`. The owner's three are left out. It costs nothing and runs no model. Since the first deploy of
-  `log-and-guide.md`, `NEEDS` is wider than a new chat's list: it still holds the five log functions, which a chat
-  opened before calls by name, so each of them, and `log` and `guide`, is some case's `must`.
+  case's `must`. The owner's three are left out. It costs nothing and runs no model. Since the second deploy of
+  `log-and-guide.md`, the five log functions are not registered and `NEEDS` holds none of them. The cases keep
+  their names: the judge reads a `log` call as its kind's function, so a case may name one of the five as a kind's
+  routed name, and the test lets those names through.
 - Functions with a case of their own: every write, `whoami`, `get_data`, `list_exercises`, `get_routines`.
   `what_is_logged`, `get_log`, `get_progress`, `get_trends` and `get_goals` are each one of the data reads a
   route-free case takes; `find_food` is one of two for `food_lookup`.
@@ -754,7 +756,7 @@ the same package and played the same way: see "The exercise list cases".
   The core is the package's core cases with G1's golden cases and the seven cases G1 added: the reviewed list
   dropped its overlaps in favour of G1's drafts, so without them the core would miss those situations.
   The coverage test holds for both: every function in `NEEDS` but the owner's is the `must` of a case, and of a core
-  case. `NEEDS` is wider than a new chat's list while the five log functions answer old chats (above).
+  case. A case may also name one of the five, as a `log` kind's routed name (above).
 - **Kinds.** The reviewer sorted the cases six ways: direct, incidental, look-alike, ambiguous, multi and
   adversarial. The last three load as `direct`: they count in the pass count, as every direct case does.
   - Ambiguous: words that fit more than one entry, kind or unit. Most pass when the reply asks and nothing is written.
@@ -885,7 +887,7 @@ guide cases and `program_saved` below.
 | Case | Says | Passes when | Notes |
 |---|---|---|---|
 | `guide_how_food` | how do I log food with you? | `guide` called; no write, `log` among them; no food entry; the reply gives no kcal figure of its own: no number before kcal, kcals, cal, cals or calories | Strict on purpose: a reply with a worked example, such as "dal, 180 kcal", fails, and so does a figure quoted from `guide`'s own words. Read such a fail by hand |
-| `log_plank_minutes` | held a plank for 2 minutes | `log` called (`log_lifts` is in its `may`); no other write; the reply names Plank; one Plank set today, `time_s` 120, no reps | A plank sent with no weight is refused by the service, its fix naming 0 for body weight, as `log_lifts` refuses it; a right call after it passes, through `log` as through `log_lifts` in `hold_plank`. The right row logged through `log_lifts` alone fails: the case's `must` is `log` |
+| `log_plank_minutes` | held a plank for 2 minutes | `log` called (`log_lifts` is in its `may`); no other write; the reply names Plank; one Plank set today, `time_s` 120, no reps | A plank sent with no weight is refused by the service, its fix naming 0 for body weight, as `log_lifts` refuses it; a right call after it passes, as in `hold_plank` |
 
 ### The two last time cases
 

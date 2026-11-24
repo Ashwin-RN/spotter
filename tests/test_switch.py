@@ -453,8 +453,8 @@ def test_an_unknown_stored_value_is_refused_by_the_database_and_would_count_as_l
         set_switch(account, stored_value)
     assert mcp_server.level_of(stored_value) == "log"
     assert mcp_server.not_allowed("delete_entry", stored_value)["error"] == "not_allowed"
-    assert mcp_server.not_allowed("log_bodyweight", stored_value) is None
-    assert ok(http, token, "log_bodyweight", {"kg": 80})["duplicate"] is False  # the row kept log_delete
+    assert mcp_server.not_allowed("log", stored_value) is None
+    assert ok(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})["duplicate"] is False  # kept log_delete
 
 
 def test_a_new_account_starts_at_log_delete_by_a_first_call_through_mcp(http):
@@ -602,7 +602,7 @@ def test_the_instructions_name_settings_for_three_acts_only():
 def test_only_whoami_and_delete_entry_differ_in_the_published_list_and_owner_feedback_does_not(make_client):
     client = make_client(owner_user_id=OWNER)
     tools = {name: hashlib.sha256(compact(t).encode()).hexdigest() for name, t in registered_tools(client).items()}
-    moved = {name for name, sha in PUBLISHED.items() if tools[name] != sha}  # the five read as registered
+    moved = {name for name, sha in PUBLISHED.items() if tools[name] != sha}
     assert moved == set()  # PUBLISHED holds the two new hashes: tests/test_feedback.py
     # inputs.md moved every one, owner_feedback too: with its changes taken out, owner_feedback is as before.
     [held] = [t for t in tool_list(client, sign_for(OWNER)) if t["name"] == "owner_feedback"]

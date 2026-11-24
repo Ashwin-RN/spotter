@@ -566,16 +566,17 @@ def test_the_first_days_lines_hold_to_the_code(make_user):
 # ---------------------------------------------------------------- the page: part 2's typed facts
 
 def test_sets_said_one_by_one_go_into_that_days_session(http):
-    """R3, the one test that waits for the join with gym logging: log_lifts' published description holds the gym logging
-    contract's words. It fails on this work's own tree and passes at the join."""
-    tool = registered_tools(http)["log_lifts"]  # though no list holds it now (log-and-guide.md)
-    assert "each later call adds its sets to it" in tool["description"]
+    """R3, the one test that waits for the join with gym logging: log_lifts' description holds the gym logging
+    contract's words. It fails on this work's own tree and passes at the join. log_lifts is no longer registered
+    (log-and-guide.md, L6): its words, which guide lifts gives, as mcp_schemas holds them."""
+    assert "each later call adds its sets to it" in mcp_schemas.LOG_LIFTS_DESCRIPTION
 
 
 def test_what_comes_back_in_part_two_holds_to_the_code(http):
-    tools = registered_tools(http)  # log_cardio, though no list holds it now
+    tools = registered_tools(http)
+    # log_cardio is no longer registered (L6): its words, which guide cardio gives, as mcp_schemas holds them.
     assert "estimates the calories from the activity's MET value and the person's current body weight" in \
-        tools["log_cardio"]["description"]
+        mcp_schemas.LOG_CARDIO_DESCRIPTION
     lift = inspect.getsource(progress._one)
     assert all(f'"{key}"' in lift for key in ("estimated_max_over_time", "bests", "trend"))
     assert "days: 1 to 14" in log_service.__doc__ and mcp_server.LOG_DAYS[1] == 14
@@ -686,8 +687,8 @@ def test_what_spotter_keeps_and_does_not_do_holds_to_the_code(http, make_user):
     cannot = doc[doc.index("## What it cannot tell you"):doc.index("## Duplicates")]
     assert CANNOT_LINE in cannot and "It gives no medical advice." in cannot
     assert "weight_kg" in SetIn.model_fields
-    tools = registered_tools(http)  # log_cardio, though no list holds it now
-    assert "distance_km" in tools["log_cardio"]["inputSchema"]["properties"]
+    # log_cardio is no longer registered (L6): its argument model, which log's cardio and guide read.
+    assert "distance_km" in mcp_schemas.LOG_ARGUMENTS["log_cardio"].model_json_schema()["properties"]
     assert "lb x 0.45359237, mi x 1.609344" in " ".join(doc.split())
     columns = set(FoodEntry.__table__.c.keys())
     # macros-and-asking.md: a food entry holds kcal, protein, carbs and fat since 0015, and no other nutrient, as the

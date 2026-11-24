@@ -19,7 +19,8 @@ from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, select
 
-from app import calllog, db, formatting, mcp_server, metrics, rules, services, users
+from app import calllog, db, formatting, log_shape, mcp_server, metrics, rules, services, users
+from app.mcp_schemas import LOG_ARGUMENTS, RESULTS
 from app.db import make_engine
 from app.formatting import KG_KM, Units
 from app.models import Bodyweight, CardioEntry, EntryVersion, Goal, LiftSet, Routine, User
@@ -683,13 +684,16 @@ def test_through_mcp_a_lb_person_logs_and_the_trace_writes_the_names_sent(http):
     token = sign()
     who = ok(http, token, "whoami")
     assert who["units"] == {"weight": "kg", "distance": "km"}
-    logged = ok(http, token, "log_lifts", {"sets": [{"exercise": "Bench Press", "weight_lb": 225, "reps": 5}]})
+    # Through log (log-and-guide.md, deploy 2): its row's tried names the parts' and details' fields inside them.
+    logged = ok(http, token, "log", {"kind": "lifts", "parts": [{"movement": "Bench Press", "weight_lb": 225,
+                                                                  "reps": 5}]})
     assert logged["units_note"] == WEIGHT_NOTE and "weight_lb" in last().tried
-    weighed = ok(http, token, "log_bodyweight", {"lb": 185})
-    assert weighed["weigh_in"]["kg"] == 83.91 and last().tried.split() == ["lb"]
-    ok(http, token, "log_cardio", {"exercise": "Outdoor Run", "minutes": 30, "distance_mi": 3, "speed_mph": 6})
-    assert {"distance_mi", "speed_mph"} <= set(last().tried.split())
-    refused = failed(http, token, "log_bodyweight", {"kg": 80, "lb": 176})
+    weighed = ok(http, token, "log", {"kind": "bodyweight", "details": {"lb": 185}})
+    assert weighed["weigh_in"]["kg"] == 83.91 and last().tried.split() == ["details{lb}", "kind"]
+    ok(http, token, "log", {"kind": "cardio", "parts": [{"movement": "Outdoor Run", "minutes": 30, "distance_mi": 3}],
+                            "details": {"speed_mph": 6}})
+    assert last().tried.split() == ["details{speed_mph}", "kind", "parts[1]{distance_mi,minutes,movement}"]
+    refused = failed(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80, "lb": 176}})
     assert refused["error"] == "invalid_field" and "units_note" not in refused
     assert {"lb", "distance_mi", "speed_mph"} <= calllog.KNOWN_NAMES and "weight_lb" in calllog.KNOWN_NAMES
     assert ok(http, token, "update_settings", {"weight_unit": "lb"})["changed"] == ["weight_unit"]
@@ -698,16 +702,17 @@ def test_through_mcp_a_lb_person_logs_and_the_trace_writes_the_names_sent(http):
 
 def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_are_4084(make_client):
     client = make_client(owner_user_id=OWNER)
-    tools = list(registered_tools(client).values())  # the owner's list and the five, which no list holds now
+    tools = list(registered_tools(client).values())  # the owner's list
     hashes = {t["name"]: hashlib.sha256(compact(t).encode()).hexdigest() for t in tools}
     # inputs.md moved every one after: with its changes taken out, exactly the thirteen differ from before units.
+    # The five log functions are no longer registered (log-and-guide.md, deploy 2): left out on both sides.
     held = {t["name"]: hashlib.sha256(compact(without_inputs(t)).encode()).hexdigest() for t in tools}
     # exercise-list.md's deploy 2 moved import_entries' names part and list_exercises (R8) too.
-    # 2026-11-20: log_food's meal words lead with sending the meal the person named.
     # log-and-guide.md L2: restore_entry's kind and id words, and find_food's and save_food's ids (rows 3, 7, 8, 52).
     # log-and-guide.md L4: owner_calls' function, caller and all_accounts, and a call's account_id.
-    assert {name for name, sha in BEFORE_UNITS.items() if held[name] != sha} == THIRTEEN | {
-        "import_entries", "list_exercises", "log_food", "restore_entry", "find_food", "save_food", "owner_calls"}
+    five = set(log_shape.LOG_FUNCTIONS)
+    assert {name for name, sha in BEFORE_UNITS.items() if name not in five and held[name] != sha} == THIRTEEN - five | {
+        "import_entries", "list_exercises", "restore_entry", "find_food", "save_food", "owner_calls"}
     assert {name: hashes[name] for name in PUBLISHED} == PUBLISHED
     # data-on-request.md: DATA_RULE; exercise-list.md C4c
     # 2026-11-20: the sleep routing sentence, the shorter Goals sentence, the meal sentence
@@ -719,7 +724,9 @@ def test_of_the_published_list_exactly_the_thirteen_differ_and_the_instructions_
         "of the unit the person said, and say weights and distances as Spotter's summaries give them.")
     for name in THIRTEEN - {"whoami", "update_settings", "get_goals", "get_progress", "get_log", "delete_entry",
                             "get_routines"}:
-        out = next(t for t in tools if t["name"] == name)["outputSchema"]
+        # One of the five: its result model, which Wrapper.call still holds log's answer of that kind to.
+        out = (RESULTS[name].model_json_schema() if name in five
+               else next(t for t in tools if t["name"] == name)["outputSchema"])
         assert "units_note" in out["properties"] and "units_note" not in out.get("required", []), name
 
 
@@ -764,14 +771,18 @@ def test_every_new_text_passes_its_surface(lb):
 
 
 def test_the_new_published_words_keep_the_text_rules(http):
-    tools = registered_tools(http)  # the five, though not listed
+    tools = registered_tools(http)
+    # The five are no longer registered (log-and-guide.md, deploy 2): their words from their argument models, which
+    # still feed guide.
+    schemas = {name: tool["inputSchema"] for name, tool in tools.items()}
+    schemas.update({name: model.model_json_schema() for name, model in LOG_ARGUMENTS.items()})
     words = [tools["whoami"]["description"], tools["whoami"]["outputSchema"]["properties"]["units"]["description"],
              tools["update_settings"]["description"], tools["get_routines"]["description"]]
     for name, fields in (("log_bodyweight", ("kg", "lb")), ("log_cardio", ("distance_mi", "speed_mph")),
                          ("set_goal", ("distance_mi", "weight_unit", "target_value", "start_value")),
                          ("update_settings", ("weight_unit", "distance_unit")),
                          ("edit_entry", ("lb", "distance_mi", "speed_mph"))):
-        words += [tools[name]["inputSchema"]["properties"][f]["description"] for f in fields]
+        words += [schemas[name]["properties"][f]["description"] for f in fields]
     for text in words:
         assert tr.check(text, tr.CLAUDE) == [], text
 

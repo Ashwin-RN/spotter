@@ -40,9 +40,9 @@ WEB = {"workos_client_id": CLIENT, "workos_api_key": API_KEY}
 PROVIDER = "https://provider.example/authorize"
 CODE = "code-one-time-5e2c"
 METADATA_PATH = "/.well-known/oauth-protected-resource/mcp"
-# The functions the landing counts: every one but the owner's three, OWNER_FUNCTIONS (feedback.md decision 13), and
-# the five log functions, RETIRING, which no new chat lists (log-and-guide.md, N7): what a new chat lists.
-OFFERED = len(mcp_server.NEEDS) - len(mcp_server.OWNER_FUNCTIONS) - len(mcp_server.RETIRING)
+# The functions the landing counts: every one but the owner's three, OWNER_FUNCTIONS (feedback.md decision 13): what a
+# new chat lists (log-and-guide.md, N7).
+OFFERED = len(mcp_server.NEEDS) - len(mcp_server.OWNER_FUNCTIONS)
 
 
 class FakeSeam:

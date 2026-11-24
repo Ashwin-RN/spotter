@@ -236,7 +236,7 @@ def test_writes_do_not_count_as_reads_and_are_not_held_by_the_read_limit(http, p
     plant(person.id, ("log_food", "log_bodyweight"), 100)
     assert call(http, token, "get_log")["isError"] is False
     plant(person.id, ("get_log",), READS_LIMIT + 5)
-    result = call(http, token, "log_bodyweight", {"kg": 80})
+    result = call(http, token, "log", {"kind": "bodyweight", "details": {"kg": 80}})
     assert result["isError"] is False, result
 
 
@@ -568,7 +568,7 @@ def test_the_load_tool_only_calls_this_machine():
 
 def test_the_load_tool_prints_each_function_and_all():
     tool = load_tool()
-    results = {"whoami": [(10.0, None), (30.0, None)], "log_food": [(5.0, None), (50.0, "too_many_writes")]}
+    results = {"whoami": [(10.0, None), (30.0, None)], "log:food": [(5.0, None), (50.0, "too_many_writes")]}
     printed = tool.table(results, 2.0)
     lines = printed.splitlines()
     assert lines[0].split() == ["function", "calls", "errors", "p50", "ms", "p95", "ms", "slowest", "ms"]

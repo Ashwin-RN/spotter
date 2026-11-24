@@ -9,7 +9,8 @@ import pytest
 from sqlalchemy import func, select
 
 from app import calllog, config, db, rules, services
-from app.mcp_schemas import FoodEntryIn, LOG_FOOD_DESCRIPTION, LOG_FOOD_MACROS, SavedFood as SavedFoodModel
+from app.mcp_schemas import (FoodEntryIn, LOG_ARGUMENTS, LOG_FOOD_DESCRIPTION, LOG_FOOD_MACROS, LogFoodResult,
+                             SavedFood as SavedFoodModel)
 from app.models import CallLog, EntryVersion, FoodEntry, SavedFood, UsdaFood
 from app.services import common, food, usda
 from tests import text_rules as tr
@@ -149,39 +150,30 @@ def test_a_portion_holds_64_characters_and_the_text_rules(user):
 
 
 def test_a_portion_sent_as_a_number_is_refused_as_text_is_asked_for(http):
-    """inputs.md: a wrong type is refused, never coerced. The fix asks for the portion as text."""
+    """inputs.md: a wrong type is refused, never coerced. The fix asks for the portion as text. Through log, the
+    entry is named as sent (log-and-guide.md, said_as_sent)."""
     token = sign_for("user_01PORTIONNUMBER")
-    refused = failed(http, token, "log_food", {"entries": [{"description": "Idli", "kcal": 150, "estimated": True,
-                                                            "portion": 3}]})
-    assert refused["message"] == "Entry 1: portion must be text, not 3."
-    assert refused["fix"] == "Give portion on entry 1 as text."
+    refused = failed(http, token, "log", {"kind": "food", "details": {"entries": [
+        {"description": "Idli", "kcal": 150, "estimated": True, "portion": 3}]}})
+    assert refused["message"] == "details.entries[0]: portion must be text, not 3."
+    assert refused["fix"] == "Give portion on details.entries[0] as text."
 
 
-def test_a_chat_opened_before_holds_no_portion_field_and_its_estimate_is_refused_then_logged(http):
-    """Note of 2026-11-22, point 7: a chat opened before C3 holds log_food with no portion. Its estimate is refused
-    with the fix, then the same call with portion is logged."""
-    token = sign_for("user_01OLDCHAT")
-    estimate = {"description": "2 rotis", "kcal": 240, "estimated": True}
-    refused = failed(http, token, "log_food", {"entries": [estimate]})
-    assert (refused["error"], refused["message"]) == ("missing_field", "Entry 1: portion is missing for an estimate.")
-    assert "send it as portion in entry 1" in refused["fix"]
-    logged = ok(http, token, "log_food", {"entries": [{**estimate, "portion": "2"}]})
-    assert logged["entries"][0]["source"] == "claude_estimate" and logged["entries"][0]["portion"] == "2"
-
-
-def test_through_log_the_portion_refusal_names_its_entry_as_sent(http):
+def test_through_log_the_portion_refusal_names_its_entry_as_sent(http, user):
     token = sign_for("user_01LOGPORTION")
     entries = [{"description": "Dal", "kcal": 180}, {"description": "Rice", "kcal": 200, "estimated": True}]
     refused = failed(http, token, "log", {"kind": "food", "details": {"entries": entries}})
-    assert refused["message"] == "details.entries[1]: portion is missing for an estimate."
+    assert (refused["error"], refused["message"]) == ("missing_field",
+                                                      "details.entries[1]: portion is missing for an estimate.")
     assert refused["fix"] == PORTION_FIX.format("details.entries[1]")
-    own = failed(http, token, "log_food", {"entries": entries})
+    own = eat(user, *entries)  # the food service's own words, log_food being no longer registered (deploy 2)
     assert own["message"] == "Entry 2: portion is missing for an estimate."
     entries[1]["portion"] = "a plate"
     entries[1]["carbs_g"] = 45
     logged = ok(http, token, "log", {"kind": "food", "details": {"entries": entries}})
     assert [(e["portion"], e["carbs_g"], e["macros_estimated"]) for e in logged["entries"]] == [
         (None, None, None), ("a plate", 45, True)]
+    assert logged["entries"][1]["source"] == "claude_estimate"
 
 
 # ---------------------------------------------------------------- saved and USDA foods
@@ -339,15 +331,16 @@ def test_with_every_goal_cleared_a_day_with_no_macro_answers_as_an_account_that_
 def test_through_mcp_the_day_with_a_goal_fits_the_published_shape(http):
     token = sign_for("user_01GOALS")
     ok(http, token, "update_settings", {"protein_target_g": 150})
-    r = ok(http, token, "log_food", {"entries": [WRAP]})
+    r = ok(http, token, "log", {"kind": "food", "details": {"entries": [WRAP]}})
     assert r["day"]["macros"]["protein"] == {"g": 32, "target_g": 150, "left_g": 118, "entries_without": 0}
     day = ok(http, token, "get_log", {})["days"][0]["food"]
     assert day["macros"] == r["day"]["macros"]
     tools = registered_tools(http)
-    left = tools["log_food"]["outputSchema"]["$defs"]["MacroDay"]["properties"]["left_g"]
+    # log publishes no output schema (log-and-guide.md, N6): its food answer is held to LogFoodResult (Wrapper.call).
+    food_out = LogFoodResult.model_json_schema()
+    left = food_out["$defs"]["MacroDay"]["properties"]["left_g"]
     assert left["description"] == "The goal minus g, with g as 0 while null; below 0 when over. Null without a goal."
-    assert tools["get_log"]["outputSchema"]["$defs"]["MacroDay"] == tools["log_food"]["outputSchema"]["$defs"][
-        "MacroDay"]
+    assert tools["get_log"]["outputSchema"]["$defs"]["MacroDay"] == food_out["$defs"]["MacroDay"]
 
 
 # ---------------------------------------------------------------- marks, edits and undo
@@ -416,7 +409,7 @@ def test_a_portion_edit_and_a_macro_edit_pass_the_checks_a_log_does(user):
 
 def test_edit_entry_passes_a_null_macro_on_through_mcp(http):
     token = sign_for("user_01EDITMACRO")
-    logged = ok(http, token, "log_food", {"entries": [WRAP]})
+    logged = ok(http, token, "log", {"kind": "food", "details": {"entries": [WRAP]}})
     entry = logged["ids"][0]
     r = ok(http, token, "edit_entry", {"kind": "food", "entry_id": entry, "carbs_g": None, "portion": "1 wrap"})
     assert r["changed"] == ["carbs_g", "portion"] and r["after"]["carbs_g"] is None
@@ -595,7 +588,8 @@ def test_an_old_chat_s_three_field_save_keeps_a_food_s_macros_and_never_turns_a_
     again = ok(http, token, "save_food", {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 125})
     assert (again["food"]["protein_g_per_serving"], again["food"]["carbs_g_per_serving"],
             again["food"]["fat_g_per_serving"]) == (3, 18, 0.4)
-    logged = ok(http, token, "log_food", {"entries": [{"saved_food_id": roti, "servings": 2}]})["entries"][0]
+    logged = ok(http, token, "log", {"kind": "food", "details": {"entries": [{"saved_food_id": roti,
+                                                                              "servings": 2}]}})["entries"][0]
     assert (logged["kcal"], *macros_of(logged)) == (250, 6, 36, 0.8, False)
     refused = failed(http, token, "save_food", {"name": "Usual lunch", "serving_label": "1 meal",
                                                 "kcal_per_serving": 600})
@@ -651,10 +645,14 @@ def schema_nodes(node):
 
 
 def test_no_function_takes_an_image_no_input_schema_has_a_bytes_field_or_a_content_encoding(http):
-    tools = registered_tools(http)  # every registered function, the hidden ones too
-    assert "log_food" in tools and "save_food" in tools
-    for name, tool in tools.items():
-        for node in schema_nodes(tool["inputSchema"]):
+    tools = registered_tools(http)  # every registered function
+    assert "log" in tools and "save_food" in tools
+    schemas = {name: tool["inputSchema"] for name, tool in tools.items()}
+    # The five's argument models too: log's details are an open object, and guide gives each kind's fields from these
+    # (log-and-guide.md), so a food entry's fields are in LogFoodIn's schema and in no registered one.
+    schemas.update({name: model.model_json_schema() for name, model in LOG_ARGUMENTS.items()})
+    for name, schema in schemas.items():
+        for node in schema_nodes(schema):
             assert not {"contentEncoding", "contentMediaType"} & set(node), name
             assert node.get("format") not in BINARY, name
 
@@ -663,17 +661,18 @@ def test_no_function_takes_an_image_no_input_schema_has_a_bytes_field_or_a_conte
 
 def test_atwater_notes_each_entry_with_all_three_macros_and_no_value(http):
     token = sign_for("user_01ATWATER")
-    ok(http, token, "log_food", {"entries": [WRAP, {"description": "Tea", "kcal": 40, "protein_g": 1},
-                                             {"description": "Water", "kcal": 0, "protein_g": 0, "carbs_g": 0,
-                                              "fat_g": 0}]})
+    ok(http, token, "log", {"kind": "food", "details": {"entries": [
+        WRAP, {"description": "Tea", "kcal": 40, "protein_g": 1},
+        {"description": "Water", "kcal": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0}]}})
     # 4 x 32 + 4 x 48 + 9 x 18 = 482 over 520: 0.93. Tea lacks two; water has no kcal above 0.
-    assert notes()[-1] == "atwater=0.93"
+    assert notes()[-1] == "kind=food word=food atwater=0.93"  # after kind= and word=, from the food service
     ok(http, token, "log", {"kind": "meal", "details": {"entries": [{**WRAP, "kcal": 482}]}})
-    assert notes()[-1] == "kind=food word=meal atwater=1"  # after kind= and word=, from the food service
-    ok(http, token, "log_food", {"entries": [{"description": "Tea", "kcal": 40}]})
-    assert notes()[-1] is None
-    refused = failed(http, token, "log_food", {"entries": [WRAP, {"description": "x", "kcal": 1, "estimated": True}]})
-    assert refused["error"] == "missing_field" and notes()[-1] is None  # a refused call notes none
+    assert notes()[-1] == "kind=food word=meal atwater=1"
+    ok(http, token, "log", {"kind": "food", "details": {"entries": [{"description": "Tea", "kcal": 40}]}})
+    assert notes()[-1] == "kind=food word=food"  # no atwater=
+    refused = failed(http, token, "log", {"kind": "food", "details": {"entries": [
+        WRAP, {"description": "x", "kcal": 1, "estimated": True}]}})
+    assert refused["error"] == "missing_field" and notes()[-1] == "kind=food word=food"  # a refused call: no atwater=
 
 
 def test_atwater_is_cut_at_a_whole_item_to_the_room_left(user):
@@ -712,7 +711,10 @@ def test_the_food_sentence_is_in_log_food_s_description_after_the_food_rule_and_
     assert f"{mcp_server.FOOD_RULE} {LOG_FOOD_MACROS} " in LOG_FOOD_DESCRIPTION
     assert LOG_FOOD_MACROS not in mcp_server.INSTRUCTIONS and len(mcp_server.INSTRUCTIONS) == 4084
     tools = registered_tools(http)
-    entry = tools["log_food"]["inputSchema"]["$defs"]["FoodEntryIn"]["properties"]
+    # log_food is no longer registered (log-and-guide.md, deploy 2): its words from its description, its argument
+    # model, whose schema is the one it published and guide's food topic gives, and its result model.
+    food_in, food_out = LOG_ARGUMENTS["log_food"].model_json_schema(), LogFoodResult.model_json_schema()
+    entry = food_in["$defs"]["FoodEntryIn"]["properties"]
     assert entry["portion"]["description"] == FoodEntryIn.model_fields["portion"].description
     assert entry["protein_g"]["description"] == ("Protein in grams for what was eaten: the person's number, or yours. "
                                                  "Never with saved_food_id or usda_fdc_id.")
@@ -737,8 +739,8 @@ def test_the_food_sentence_is_in_log_food_s_description_after_the_food_rule_and_
             for value in node:
                 yield from words(value)
 
-    texts = [text for name in ("log_food", "save_food", "edit_entry", "find_food", "get_log")
-             for text in words(tools[name])]
+    texts = [LOG_FOOD_DESCRIPTION, *words(food_in), *words(food_out)]
+    texts += [text for name in ("save_food", "edit_entry", "find_food", "get_log") for text in words(tools[name])]
     assert len(texts) > 100
     for text in texts:
         assert tr.check(text, tr.CLAUDE) == [], text

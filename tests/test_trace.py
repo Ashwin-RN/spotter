@@ -24,6 +24,8 @@ from sqlalchemy.exc import OperationalError
 
 from app import calllog, db, main, mcp_server, rules, services, web
 from app.config import load_settings
+from app.log_shape import LOG_FUNCTIONS
+from app.mcp_schemas import LOG_ARGUMENTS
 from app.db import make_engine
 from app.main import MAX_BODY_BYTES
 from app.models import Base, Bodyweight, CallLog, User
@@ -32,7 +34,7 @@ from app.services import usda
 from . import text_rules as tr
 from .conftest import HEADERS, RESOURCE, TEST_DIR, alembic_config, claims, rpc, sign
 from .test_calllog import MARKED_CALLS, MARKER, rows
-from .test_mcp import FUNCTIONS, RETIRING, registered_tools, set_switch, squat
+from .test_mcp import FUNCTIONS, set_switch
 from .test_usda import KEY, Fake, banana
 from .test_web import client, post, seam, sign_in, web_client  # noqa: F401 - fixtures
 from .test_hardening_schema import before_0012
@@ -66,6 +68,14 @@ def crash(*args, **kwargs):
     raise KeyError(MARKER)
 
 
+# A weigh-in and a squat session as log takes them (log-and-guide.md): the five are reached through log since L6.
+WEIGH_IN = {"kind": "bodyweight", "details": {"kg": 80}}
+
+
+def squat_parts(weight: float, sets: int = 3) -> list[dict]:
+    return [{"movement": "Back Squat", "weight_kg": weight, "reps": 5} for _ in range(sets)]
+
+
 @pytest.fixture
 def stderr():
     """Spotter's own handler, writing to a buffer for the test: the real format and the real filter."""
@@ -97,7 +107,7 @@ def test_every_response_carries_its_own_id_and_no_caller_chooses_it(http):
 
 
 def test_an_mcp_call_s_row_carries_the_id_of_its_response_and_its_result_does_not(http):
-    r, result = tools_call(http, sign(), "log_bodyweight", {"kg": 80.5})
+    r, result = tools_call(http, sign(), "log", {"kind": "bodyweight", "details": {"kg": 80.5}})
     row = last()
     assert row.request_id == r.headers["x-request-id"] and row.caller == "claude"
     assert row.request_id not in r.text  # decision 17: the header only
@@ -170,12 +180,13 @@ def test_what_each_call_tried_is_names_and_counts_and_a_web_write_reads_like_an_
         seen[label] = (last().caller, last().tried)
         return result["structuredContent"]
 
-    through_mcp("food", "log_food", {"date": today(), "entries": [{"description": "Dal", "kcal": 300, "meal": "lunch"},
-                                                                  {"description": "Roti", "kcal": 120}]})
-    through_mcp("lifts", "log_lifts", {"sets": squat(100, sets=5), "notes": "Felt strong"})
-    weigh_in = through_mcp("weigh-in", "log_bodyweight", {"kg": 80})["id"]
+    # The four logs through log since L6 (log-and-guide.md): log's row names its own fields, one level deep.
+    through_mcp("food", "log", {"kind": "food", "date": today(), "details": {"entries": [
+        {"description": "Dal", "kcal": 300, "meal": "lunch"}, {"description": "Roti", "kcal": 120}]}})
+    through_mcp("lifts", "log", {"kind": "lifts", "parts": squat_parts(100, sets=5), "notes": "Felt strong"})
+    weigh_in = through_mcp("weigh-in", "log", WEIGH_IN)["id"]
     through_mcp("edit", "edit_entry", {"kind": "bodyweight", "entry_id": weigh_in, "kg": 81})
-    through_mcp("measurement", "log_measurement", {"kind": "waist", "value": 84})
+    through_mcp("measurement", "log", {"kind": "measurement", "details": {"kind": "waist", "value": 84}})
     later = (db.utcnow().date() + timedelta(days=365)).isoformat()  # inputs.md D15: at most 5 years. Was 2099-01-31
     through_mcp("goal", "set_goal", {"kind": "bodyweight", "target_value": 75, "target_date": later})
     through_mcp("import", "import_entries", {"rows": [
@@ -190,11 +201,12 @@ def test_what_each_call_tried_is_names_and_counts_and_a_web_write_reads_like_an_
     assert post(client, "/settings/targets", calorie_target_kcal="2200").status_code == 303
     seen["web settings"] = (last().caller, last().tried)
     assert seen == {
-        "food": ("claude", "date entries[2]{description,kcal,meal}"),
-        "lifts": ("claude", "notes sets[5]{exercise,reps,weight_kg}"),
-        "weigh-in": ("claude", "kg"),
+        # log's kind is never written, and an object's names only: its notes say the kind (log-and-guide.md).
+        "food": ("claude", "date details{entries} kind"),
+        "lifts": ("claude", "kind notes parts[5]{movement,reps,weight_kg}"),
+        "weigh-in": ("claude", "details{kg} kind"),
         "edit": ("claude", "entry_id kg kind=bodyweight"),
-        "measurement": ("claude", "kind value"),  # a measurement's kind: a name only
+        "measurement": ("claude", "details{kind,value} kind"),  # a measurement's kind: a name only
         "goal": ("claude", "kind target_date target_value"),  # a goal's kind, though "bodyweight": a name only
         "import": ("claude", "rows[3]{date,entries,kind,notes,weight} rows.kind{bodyweight=2,food_entry=1} "
                              "weight_unit"),
@@ -206,8 +218,8 @@ def test_what_each_call_tried_is_names_and_counts_and_a_web_write_reads_like_an_
 
 def test_a_name_spotter_does_not_know_is_counted_never_written(http):
     token = sign()
-    tools_call(http, token, "log_bodyweight", {"kg": 80, MARKER: 1, "colour": "red"})
-    assert last().tried == "kg other[2]"
+    tools_call(http, token, "log", {**WEIGH_IN, MARKER: 1, "colour": "red"})
+    assert last().tried == "details{kg} kind other[2]"
     tools_call(http, token, "import_entries", {"rows": [{"kind": "bodyweight", "date": "2026-11-01", "weight": 80,
                                                           MARKER: 1, "entries": [{"description": "Oats", "kcal": 1,
                                                                                   "meal": "lunch", "colour": 1}]}],
@@ -226,16 +238,15 @@ def test_a_long_tried_is_cut_at_a_whole_name():
 def test_the_known_names_are_every_name_in_the_published_tool_schemas(make_client):
     client = make_client(owner_user_id=OWNER)
     tools = rpc(client, "tools/list", token=sign_for(OWNER)).json()["result"]["tools"]
-    # log-and-guide.md: the published names, and the five's own registered schemas, which a chat opened before them
-    # still sends.
-    five = [registered_tools(client)[name] for name in RETIRING]
+    # log-and-guide.md: the published names, and the five's own argument schemas, which log routes to and the web's
+    # rows under the five's names still send. Since L6 no function publishes those: they are read from the models.
+    five = [LOG_ARGUMENTS[name].model_json_schema() for name in LOG_FUNCTIONS]
     published = set()
-    for tool in [*tools, *five]:
-        schema = tool["inputSchema"]
+    for schema in [*(tool["inputSchema"] for tool in tools), *five]:
         for obj in [schema, *schema.get("$defs", {}).values()]:
             published |= set(obj.get("properties", {}))
     assert len(tools) == len(FUNCTIONS) + len(mcp_server.OWNER_FUNCTIONS) and published == calllog.KNOWN_NAMES
-    assert not {t["name"] for t in tools} & set(RETIRING)
+    assert not {t["name"] for t in tools} & set(LOG_FUNCTIONS)
 
 
 # ---------------------------------------------------------------- decisions 7 to 9: outcome, step, frame
@@ -243,8 +254,8 @@ def test_the_known_names_are_every_name_in_the_published_tool_schemas(make_clien
 def test_each_outcome(http, monkeypatch):
     token = sign()
     tools_call(http, token, "whoami")
-    tools_call(http, token, "log_bodyweight", {"kg": 80})
-    tools_call(http, token, "log_bodyweight", {"kg": 80})
+    tools_call(http, token, "log", WEIGH_IN)
+    tools_call(http, token, "log", WEIGH_IN)
     tools_call(http, token, "import_entries", {"rows": [{"kind": "bodyweight", "date": "2026-11-01", "weight": 80}],
                                                "weight_unit": "kg"})  # refused: no time zone yet
     tools_call(http, token, "update_settings", {"time_zone": "UTC"})
@@ -253,7 +264,7 @@ def test_each_outcome(http, monkeypatch):
     monkeypatch.setattr(services, "get_trends", crash)
     tools_call(http, token, "get_trends")
     assert [(r.function, r.outcome) for r in rows()] == [
-        ("whoami", "read"), ("log_bodyweight", "written"), ("log_bodyweight", "duplicate"),
+        ("whoami", "read"), ("log", "written"), ("log", "duplicate"),
         ("import_entries", "refused"), ("update_settings", "written"), ("import_entries", "preview"),
         ("get_trends", "failed")]
 
@@ -265,7 +276,7 @@ def test_a_write_that_landed_and_failed_in_its_reply_reads_written(http, monkeyp
         return {**real(*args), "summary": chr(0xD83D)}  # a lone surrogate: the reply cannot be sent
 
     monkeypatch.setattr(services, "log_bodyweight", unsendable)
-    r, result = tools_call(http, sign(), "log_bodyweight", {"kg": 80})
+    r, result = tools_call(http, sign(), "log", WEIGH_IN)
     assert result["structuredContent"]["error"] == "internal_error"
     row = last()
     assert (row.ok, row.error_code, row.outcome, row.step) == (False, "internal_error", "written", "reply")
@@ -283,12 +294,12 @@ def test_each_step(make_client, monkeypatch, usda_reply):
     set_switch(last().user_id, "log")  # switch decision 14: the one refusal left is delete_entry at log
     tools_call(http, token, "delete_entry", {"kind": "bodyweight", "entry_id": 1})
     set_switch(last().user_id, "log_delete")
-    tools_call(http, token, "log_lifts", {"sets": squat(100), "date": "soon"})
+    tools_call(http, token, "log", {"kind": "lifts", "parts": squat_parts(100), "date": "soon"})
     usda_reply(socket.timeout("timed out"))
-    tools_call(http, token, "log_food", {"entries": [{"usda_fdc_id": 173944, "grams": 100}]})
+    tools_call(http, token, "log", {"kind": "food", "details": {"entries": [{"usda_fdc_id": 173944, "grams": 100}]}})
     monkeypatch.setattr(services, "log_measurement", lambda *a: {"error": "too_many_writes", "message": "m",
                                                                  "fix": "f", "wait_minutes": 1})
-    tools_call(http, token, "log_measurement", {"kind": "waist", "value": 84})
+    tools_call(http, token, "log", {"kind": "measurement", "details": {"kind": "waist", "value": 84}})
     monkeypatch.setattr(services, "get_log", lambda *a, **k: (_ for _ in ()).throw(
         OperationalError("SELECT", {}, Exception("down"))))
     tools_call(http, token, "get_log")
@@ -305,8 +316,8 @@ def test_a_crash_s_frame_is_the_innermost_line_in_app_and_never_its_message(http
     def broken(*args, **kwargs):
         raise ValueError(MARKER)
 
-    monkeypatch.setattr(rules, "entry_date", broken)  # what log_bodyweight calls inside its own check
-    tools_call(http, sign(), "log_bodyweight", {"kg": 80})
+    monkeypatch.setattr(rules, "entry_date", broken)  # what the bodyweight service calls inside its own check
+    tools_call(http, sign(), "log", WEIGH_IN)
     frame = last().frame
     assert re.fullmatch(r"services/body\.py:\d+ \w+", frame) and MARKER not in frame
 
@@ -317,7 +328,7 @@ def test_a_failed_commit_shows_as_db_py_in_session_scope(http, monkeypatch):
             s.add(CallLog(function="x"))  # not null columns left empty: the commit fails
 
     monkeypatch.setattr(services, "log_bodyweight", commits_nothing)
-    tools_call(http, sign(), "log_bodyweight", {"kg": 80})
+    tools_call(http, sign(), "log", WEIGH_IN)
     assert re.fullmatch(r"db\.py:\d+ session_scope", last().frame)
 
 
@@ -391,10 +402,12 @@ def test_each_usda_reason_reaches_the_row_the_log_line_and_the_message(make_clie
 def test_a_usda_food_with_no_energy_value_is_no_energy(make_client, usda_reply, stderr):
     http = make_client(usda_api_key=KEY)
     usda_reply({"fdcId": 173944, "dataType": "SR Legacy", "description": "x", "foodNutrients": []})
-    r, result = tools_call(http, sign(), "log_food", {"entries": [{"usda_fdc_id": 173944, "grams": 100}]})
+    r, result = tools_call(http, sign(), "log", {"kind": "food",
+                                                 "details": {"entries": [{"usda_fdc_id": 173944, "grams": 100}]}})
     out = result["structuredContent"]
     assert (out["error"], out["message"]) == ("usda_unavailable", DID_NOT_ANSWER)
-    assert (last().notes, last().step) == ("usda=no_energy", "lookup")
+    # log's own notes first, its kind and word (log-and-guide.md), then the food service's
+    assert (last().notes, last().step) == ("kind=food word=food usda=no_energy", "lookup")
     assert "USDA lookup failed: no_energy" in stderr.getvalue()
     usda_reply(banana(fdc_id=1, shape="detail"))  # another food than the one asked for
     assert usda.food(173944)[1]["message"] == DID_NOT_ANSWER
@@ -446,7 +459,7 @@ def test_a_failing_sweep_never_fails_a_call(http, monkeypatch, logs):
         raise OperationalError("DELETE", {}, Exception(MARKER))
 
     monkeypatch.setattr(calllog, "delete", broken)
-    r, result = tools_call(http, sign(), "log_bodyweight", {"kg": 80})
+    r, result = tools_call(http, sign(), "log", WEIGH_IN)
     assert result["isError"] is False and last().outcome == "written"  # the call's own row is complete
     assert "The call log could not be swept: OperationalError" in logs.text and MARKER not in logs.text
 
@@ -497,7 +510,7 @@ def test_the_owner_reads_lines_a_person_s_calls_and_one_request(make_client, mak
     make_user(subject="user_01BEN", email="ben@example.com", name="Ben")
     make_user(subject="user_01BEN2", email="BEN@example.com", name="Ben again")
     ben = sign_for("user_01BEN")
-    first, _ = tools_call(client, sign_for("user_01ASHA"), "log_bodyweight", {"kg": 80})
+    first, _ = tools_call(client, sign_for("user_01ASHA"), "log", WEIGH_IN)
     monkeypatch.setattr(services, "get_trends", crash)
     tools_call(client, sign_for("user_01ASHA"), "get_trends")
     tools_call(client, ben, "whoami")
@@ -519,8 +532,8 @@ def test_the_owner_reads_lines_a_person_s_calls_and_one_request(make_client, mak
     assert ID.fullmatch(first.headers["x-request-id"]) and lines["accounts"][0]["last_call"].endswith("Z")
     calls = read(email="ASHA@EXAMPLE.COM")["calls"]
     assert [(c["function"], c["outcome"], c["step"]) for c in calls] == [("get_trends", "failed", "crash"),
-                                                                       ("log_bodyweight", "written", None)]
-    assert calls[1]["tried"] == "kg" and calls[1]["caller"] == "claude" and set(calls[1]) == {
+                                                                       ("log", "written", None)]
+    assert calls[1]["tried"] == "details{kg} kind" and calls[1]["caller"] == "claude" and set(calls[1]) == {
         "started_at", "caller", "function", "ok", "error", "outcome", "step", "frame", "tried", "notes", "ms",
         "result_bytes", "request_id"}
     assert read(account_id=asha.id) == read(email="asha@example.com")
@@ -531,8 +544,7 @@ def test_the_owner_reads_lines_a_person_s_calls_and_one_request(make_client, mak
     assert twice["calls"] is None and {a["name"] for a in twice["accounts"]} == {"Ben", "Ben again"}
     assert read(email="nobody@example.com") == {"hours": 24, "accounts": [], "calls": None}
     one = read(request_id=first.headers["x-request-id"])
-    assert [(c["function"], c["request_id"]) for c in one["calls"]] == [("log_bodyweight",
-                                                                       first.headers["x-request-id"])]
+    assert [(c["function"], c["request_id"]) for c in one["calls"]] == [("log", first.headers["x-request-id"])]
     assert one["hours"] is None  # no window applies to a request id (fix round, item 5)
     # Failed: Asha's crash only. The owner's own call, still running while it reads, is not (fix round, item 1).
     assert all(line["account_id"] is not None for line in read()["accounts"])  # no call without an account here
@@ -591,9 +603,15 @@ def test_the_five_s_rows_with_caller_claude_read_across_two_accounts_and_none_of
         web_person = s.scalar(select(User).where(User.subject == WEB_SUBJECT))
     asha = make_user(subject="user_01ASHA", email="asha@example.com", name="Asha")
     assert post(client, f"/day/{today()}/weigh-in", kg="80.5").status_code == 303  # log_bodyweight, from the web
-    tools_call(client, sign_for(WEB_SUBJECT), "log_bodyweight", {"kg": 81})  # the same person, through an assistant
-    tools_call(client, sign_for("user_01ASHA"), "log_bodyweight", {"kg": 60})
-    tools_call(client, sign_for("user_01ASHA"), "log_measurement", {"kind": "waist", "value": 70})
+    # Since L6 an assistant reaches the five only through log, and a call of one by name is the unknown function,
+    # with no row. So the rows under their names with caller claude are a chat's from before deploy 2: planted.
+    with db.session_scope() as s:
+        for user_id, function in ((web_person.id, "log_bodyweight"), (asha.id, "log_bodyweight"),
+                                  (asha.id, "log_measurement")):
+            s.execute(insert(CallLog).values(function=function, caller="claude", user_id=user_id, ok=True, ms=1,
+                                             result_bytes=1, started_at=db.utcnow()))
+    assert tools_call(client, sign_for("user_01ASHA"), "log_bodyweight", {"kg": 60})[1]["isError"] is True
+    tools_call(client, sign_for("user_01ASHA"), "log", {"kind": "bodyweight", "details": {"kg": 60}})  # log's row
     owner = sign_for(OWNER)
 
     def calls(**arguments):
@@ -601,13 +619,15 @@ def test_the_five_s_rows_with_caller_claude_read_across_two_accounts_and_none_of
         assert result["isError"] is False, result
         return result["structuredContent"]["calls"]
 
-    from_claude = [c for name in RETIRING for c in calls(function=name, caller="claude")]
+    from_claude = [c for name in LOG_FUNCTIONS for c in calls(function=name, caller="claude")]
     assert sorted((c["account_id"], c["function"]) for c in from_claude) == sorted([
         (web_person.id, "log_bodyweight"), (asha.id, "log_bodyweight"), (asha.id, "log_measurement")])
     assert {c["caller"] for c in from_claude} == {"claude"}  # none of the web's
-    [from_web] = [c for name in RETIRING for c in calls(function=name, caller="web")]
+    [from_web] = [c for name in LOG_FUNCTIONS for c in calls(function=name, caller="web")]
     assert (from_web["account_id"], from_web["function"], from_web["caller"]) == (web_person.id, "log_bodyweight",
                                                                                  "web")
+    [through_log] = calls(function="log", caller="claude")  # the call by name wrote no row; log's is log's own
+    assert (through_log["account_id"], through_log["notes"]) == (asha.id, "kind=bodyweight word=bodyweight")
     assert len(calls(function="log_bodyweight")) == 3  # both callers, with no caller named
     assert last().tried == "all_accounts function"
 
@@ -739,7 +759,7 @@ def test_a_marker_as_a_value_or_as_a_name_reaches_no_trace_column_and_no_log_lin
     token = sign()
     for name, arguments in MARKED_CALLS:  # the marker in every string argument, as tests/test_calllog.py sends it
         tools_call(client, token, name, arguments)
-    tools_call(client, token, "log_bodyweight", {"kg": 80, MARKER: MARKER})  # an unknown argument
+    tools_call(client, token, "log", {**WEIGH_IN, MARKER: MARKER})  # an unknown argument
     tools_call(client, token, "import_entries", {"rows": [{"kind": "bodyweight", "date": MARKER, MARKER: MARKER}],
                                                  "weight_unit": "kg"})
     monkeypatch.setattr(services, "get_progress", crash)  # a crash whose message is the marker
