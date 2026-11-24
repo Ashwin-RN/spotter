@@ -1685,3 +1685,56 @@ Three routine cases on `gpt-6-luna` came out lower than on `main` (3 of 3 each t
 ### What is left
 
 C5 is complete with this deploy.
+
+## Log and guide, deploy 2: the five old log functions removed
+
+On 2026-11-23 and 2026-11-24. Contract `docs/contracts/log-and-guide.md`, package L6, with its as-built note. Code, tests and one line of model-read text; no migration. Deploy 2 of two, after C3 and C5c.
+
+### Why
+
+Deploy 1 put `log` and `guide` in every new chat's list and kept `log_lifts`, `log_bodyweight`, `log_measurement`, `log_food` and `log_cardio` registered and unlisted, for chats opened before it. The owner's go for deploy 2 came on 2026-11-23, once C3 and C5c were on `main`. The call log read that day: no assistant call of the five in 72 hours, and none of any function since 2026-11-21 but the reads themselves.
+
+### What was built
+
+| Package | Commit | What it did |
+|---|---|---|
+| L6 | `8041d3e` | The five's registrations, their names in `NEEDS` and `RETIRING` are gone. A call of one by name answers "Unknown tool", with no call row, no key and no entry. Their steps, argument models, result models, words and services stay: `log` runs each kind through them and `guide` gives their words. `app/web.py`'s count no longer reads `RETIRING` and stays 22. `tools/load.py` sends `log`. `docs/can-and-cant.md` loses the line on chats opened before the change. 26 test files: each call of the five through `/mcp` sends `log` in its own shape |
+
+Built in two steps in one tree. Step 1 made the app change and ran the whole suite to get the list: 470 failed and 39 errors over 24 files, each a call of the five by name, a pin on their registration, or the removed line. Step 2 moved those tests, four builders on files that do not overlap, with one rule: move the call, keep the assert, and no helper that maps the five's arguments onto `log`. No assert on a stored row, a number or an error code changed. A refusal's words follow `log`'s, as the contract decided: `details.kg`, `details.entries[0]`, "Part 1".
+
+The review on a frozen copy found no must fix. It built the server from both trees and compared what a chat reads: the function list for the owner and for everyone else, the instructions, each `guide` topic and `whoami` are the same bytes as at `81da59f`. Its four should-fix points, done in the one fix round: the log-leak test now demands a marker in every string field of each kind; `docs/evals.md` no longer says the five are registered; the `seconds` key in a part is pinned as `log` answers it; each `guide` topic's answer is pinned by hash beside its size.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| The touched test files | Each builder's files plain and with `-W error`, green after its last edit; the fix round's 10 files the same |
+| The whole suite on the joined tree, before the fix round | 7,937 passed |
+| Test ids | 7,945 at `81da59f`, 7,938 now; each one that went is named in the contract's note |
+| The 35 argument-check pins | Equal to what the registered five answered at `81da59f`, read from both trees |
+| The golden cases' made-up runs | Each run's judge reasons compared before and after the move: no failing run passes, no passing run fails |
+| The setup text | 4,084 characters, unchanged |
+| The homepage count | 22, unchanged |
+
+### The eval run
+
+`python -m evals.need main` says yes for `spotter://can-and-cant` alone. A run gives the model Spotter's functions and no resource, so no case can measure the line that went. Six logging cases (`stated_number`, `treadmill_mph`, `sleep_record`, `precise_scale_reading`, `hurried_squat`, `hold_plank`) ran 3 times each on both gate models, as a check of the runner and the judge on a tree without the five.
+
+| Model | Counted | Cost |
+|---|---|---|
+| `claude-sonnet-5-5` | 17 of 18 | $1.5660 |
+| `gpt-6-luna` | 15 of 18 | plan usage, none given |
+
+Every passing run was `whoami`, `guide`, `log`, and the judge read each `log` call as its kind's function.
+
+`treadmill_mph` missed once on Sonnet and twice on `gpt-6-luna`: after a `list_exercises` call the model logged Incline Treadmill Walk for a treadmill walk at 4 percent, 216 kcal where the case wants Treadmill Walk and 117. Run again on the branch and on `main`, pooled: Sonnet 7 of 9 on the branch and 6 of 6 on `main`; `gpt-6-luna` 4 of 9 on the branch and 13 of 18 on `main`. The same miss on both trees, which give the model the same bytes. `sleep_record` missed once on `gpt-6-luna`: it called `whoami` alone and said Spotter holds no sleep. Each is a tracked gap; no text was changed for it.
+
+### Known limits
+
+- A chat opened before deploy 1 can no longer log: its five functions answer "Unknown tool". A new chat lists `log`.
+- An empty `parts` list is taken on kinds bodyweight, measurement and food.
+- `logged_by`'s words on a lift session are in no published schema, since `log` publishes none.
+
+### What is left
+
+Log and guide is complete with this deploy.
