@@ -110,7 +110,7 @@ from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import FileResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute, Mount, Route, request_response
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
@@ -3421,6 +3421,14 @@ def routes(settings: Settings) -> list[BaseRoute]:
         # Outermost, so a database outage while refusing a form is the not-set-up page, not a 500.
         handler = _db_safe(handler)
         built.append(Route(path, handler, methods=methods, middleware=stack))
-    built.append(Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static",
-                       middleware=[Middleware(SecurityHeaders, headers=headers_for(settings, static=True))]))
+    static = [Middleware(SecurityHeaders, headers=headers_for(settings, static=True))]
+    # The icon at the site's root too, where favicon crawlers look (icon-addresses.md): static's headers, no
+    # session, no database, no page limit, in both arms.
+    built.append(Route("/favicon.ico", root_favicon, methods=["GET"], middleware=static))
+    built.append(Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static", middleware=static))
     return built
+
+
+async def root_favicon(request: Request) -> FileResponse:
+    """/favicon.ico: the bytes of /static/favicon.ico, with its content type, as StaticFiles sends them."""
+    return FileResponse(HERE / "static" / "favicon.ico")

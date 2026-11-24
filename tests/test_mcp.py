@@ -242,6 +242,40 @@ def test_calls_are_stateless_and_answered_in_json(http):
     assert whoami(http, token)["user_id"] == "user_01TEST"
 
 
+# icon-addresses.md: the server's icons and website, on the configured site's origin, the PNG first.
+SITE_IDENTITY = {"websiteUrl": "https://spotter.example.app", "icons": [
+    {"src": "https://spotter.example.app/static/apple-touch-icon.png", "mimeType": "image/png", "sizes": ["180x180"]},
+    {"src": "https://spotter.example.app/static/favicon.svg", "mimeType": "image/svg+xml", "sizes": ["any"]}]}
+
+
+@pytest.mark.parametrize("version", ["2025-06-18", "2025-11-25"])
+def test_the_server_declares_its_icons_and_website(http, version):
+    init = rpc(http, "initialize", {"protocolVersion": version, "capabilities": {},
+                                    "clientInfo": {"name": "test", "version": "0"}}, token=sign())
+    info = init.json()["result"]["serverInfo"]
+    assert {key: info.get(key) for key in SITE_IDENTITY} == SITE_IDENTITY
+
+
+def test_the_icons_follow_the_configured_origin_never_a_request_s_host(make_client):
+    client = make_client(mcp_resource_url="https://other.example/mcp")
+    forged = {**HEADERS, "Authorization": f"Bearer {sign(claims(aud='https://other.example/mcp'))}",
+              "Host": "evil.example", "X-Forwarded-Host": "evil.example"}
+    body = client.post("/mcp", headers=forged, json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}}).json()
+    info = body["result"]["serverInfo"]
+    assert info["websiteUrl"] == "https://other.example"
+    assert [icon["src"] for icon in info["icons"]] == ["https://other.example/static/apple-touch-icon.png",
+                                                      "https://other.example/static/favicon.svg"]
+
+
+def test_without_a_site_origin_the_server_declares_no_icons_and_no_website():
+    assert mcp_server.site_identity(None) == {}
+    assert Settings(DOMAIN, None).site_origin is None  # the origin this case stands for
+    built = mcp_server.site_identity("https://spotter.example.app")
+    assert built["website_url"] == SITE_IDENTITY["websiteUrl"]
+    assert [icon.model_dump(by_alias=True, exclude_none=True) for icon in built["icons"]] == SITE_IDENTITY["icons"]
+
+
 def test_spotter_logs_through_its_own_handler_added_once(provider):
     create_app(Settings(None, None), fetch=provider.fetch)
     create_app(Settings(None, None), fetch=provider.fetch)

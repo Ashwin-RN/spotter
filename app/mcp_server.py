@@ -87,7 +87,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError
 from mcp.server.mcpserver.utilities.func_metadata import FuncMetadata
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.types import CallToolResult, Icon, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, StrictBool, ValidationError
 from sqlalchemy.exc import InterfaceError, InternalError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
@@ -908,11 +908,22 @@ def guide_work(sent: dict, _account: int) -> dict:
     return answer
 
 
+def site_identity(origin: str | None) -> dict:
+    """The server's website and icons for serverInfo (icon-addresses.md), from the configured site origin, never a
+    request's host. The PNG first, then the SVG. No origin: neither."""
+    if origin is None:
+        return {}
+    return {"website_url": origin,
+            "icons": [Icon(src=f"{origin}/static/apple-touch-icon.png", mime_type="image/png", sizes=["180x180"]),
+                      Icon(src=f"{origin}/static/favicon.svg", mime_type="image/svg+xml", sizes=["any"])]}
+
+
 def build_server(settings: Settings, verifier: JwksTokenVerifier, userinfo: UserinfoClient) -> MCPServer:
     """A fresh server per app: the library's session manager can be started only once."""
     server = SpotterServer(
         name="Spotter",
         version="0.1",
+        **site_identity(settings.site_origin),
         instructions=INSTRUCTIONS,
         log_level=LIBRARY_LOG_LEVEL,  # the library's own logging.basicConfig would otherwise set INFO
         token_verifier=verifier,

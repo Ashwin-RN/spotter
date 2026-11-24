@@ -814,12 +814,17 @@ ROUTINES_ROUTES = [("/routines", "GET HEAD", True), ("/routines/{routine_id}/del
                    ("/routines/program/{program_id}/restore", "POST", True)]
 
 
+# icon-addresses.md: the icon at the site's root, straight before /static, GET and HEAD, not behind the page limit.
+FAVICON_ROUTE = ("/favicon.ico", "GET HEAD", False)
+
+
 @pytest.mark.parametrize("state", ["signed out", "no web sign-in", "no server address"])
 def test_the_route_tables_differ_from_before_by_hi_alone(state):
     """R14: the parent's rows plus one, /hi straight after /, GET and HEAD, not behind the page limit. At the join,
-    routines' five rows too, after the Foods restore row, and nothing else."""
+    routines' five rows too, after the Foods restore row, and since icon-addresses.md the root favicon row straight
+    before /static, and nothing else."""
     at = PARENT_ROUTES.index(("/foods/{food_id}/restore", "POST", True)) + 1
-    joined = PARENT_ROUTES[:at] + ROUTINES_ROUTES + PARENT_ROUTES[at:]
+    joined = PARENT_ROUTES[:at] + ROUTINES_ROUTES + PARENT_ROUTES[at:-1] + [FAVICON_ROUTE] + PARENT_ROUTES[-1:]
     before = joined if state == "signed out" else [(p, m, False) for p, m, _ in joined]
     assert route_rows(OVERRIDES[state]) == before[:1] + [("/hi", "GET HEAD", False)] + before[1:]
 

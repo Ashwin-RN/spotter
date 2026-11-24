@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from sqlalchemy import event
 
 from app import db, formatting, services, web
 from app.models import Bodyweight, SavedFood
@@ -36,7 +37,7 @@ from .test_pages_text import (ACCOUNTS, BUILT, CLAUDE_SKIPS, ENTRY_MODELS, ERROR
                               get_paths, names_of, page_findings, parse, render_error_page, route_of, step_4_findings,
                               structure_findings)
 from .test_web import FIXED_NOW, client, only_user, post, seam, sign_in, today_of, web_client  # noqa: F401 - fixtures
-from .test_web import landing_in
+from .test_web import NO_WEB, landing_in
 
 STATIC = Path(web.HERE) / "static"
 
@@ -643,6 +644,53 @@ def test_each_favicon_exists_and_answers_200(client, name):
     assert r.status_code == 200 and r.content == (STATIC / name).read_bytes()
     assert r.headers["content-type"].startswith(FAVICONS[name]), r.headers["content-type"]
     assert r.headers["x-content-type-options"] == "nosniff"
+
+
+def statements_during(fn) -> tuple[object, int]:
+    """fn's result and how many database statements ran while it did."""
+    seen = []
+    engine = db.get_engine()
+    count = lambda *a: seen.append(1)  # noqa: E731
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        return fn(), len(seen)
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+
+
+def test_the_root_favicon_is_the_static_one_signed_out(client):
+    """icon-addresses.md: /favicon.ico answers 200 with the file's bytes, and the content type, cache line and fixed
+    headers /static/favicon.ico gets. No cookie, and no database statement."""
+    static = client.get("/static/favicon.ico")
+    root, statements = statements_during(lambda: client.get("/favicon.ico"))
+    assert root.status_code == 200 and root.content == (STATIC / "favicon.ico").read_bytes()
+    assert statements == 0 and "set-cookie" not in root.headers
+    assert root.headers["content-type"] == static.headers["content-type"]
+    assert root.headers["cache-control"] == static.headers["cache-control"] == web.STATIC_CACHE
+    for name in ("x-content-type-options", "x-frame-options", "referrer-policy", "content-security-policy",
+                 "strict-transport-security"):
+        assert root.headers[name] == static.headers[name], name
+    assert root.headers["x-content-type-options"] == "nosniff"
+    head = client.head("/favicon.ico")
+    assert head.status_code == 200 and head.content == b"" and head.headers["content-type"] == static.headers[
+        "content-type"]
+
+
+def test_the_root_favicon_is_behind_no_page_limit(client, monkeypatch):
+    monkeypatch.setattr(web, "PAGE_LIMIT", 2)
+    sign_in(client)
+    assert [client.get("/favicon.ico").status_code for _ in range(5)] == [200] * 5
+    assert [client.get("/progress").status_code for _ in range(3)] == [200, 200, 429]  # the limit is on
+
+
+@pytest.mark.parametrize("overrides", [NO_WEB, {"authkit_domain": None, "mcp_resource_url": None}],
+                         ids=["no web sign-in", "no server address"])
+def test_the_root_favicon_answers_on_the_off_site(web_client, overrides):
+    off = web_client(**overrides)
+    r = off.get("/favicon.ico")
+    assert r.status_code == 200 and r.content == (STATIC / "favicon.ico").read_bytes()
+    assert r.headers["cache-control"] == web.STATIC_CACHE and r.headers["x-content-type-options"] == "nosniff"
+    assert off.get("/sign-in").status_code == 503  # the off site it is: sign-in is not set up
 
 
 def test_the_favicons_are_clean():

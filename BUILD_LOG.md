@@ -1854,3 +1854,25 @@ one written into the contract's notes. The page sentence first written for P1 wa
   other wording.
 - A lift goal set earlier from a single keeps the start figure it was given.
 - The lift page's own chart draws its projection from its own points and was not changed.
+
+## The icon's addresses: /favicon.ico at the root, and the server's own icon
+
+Assistant apps and favicon crawlers still showed the old icon after the mascot entry above. Two gaps on our side,
+closed here, as `docs/contracts/icon-addresses.md` says.
+
+| Change | Where |
+|---|---|
+| `/favicon.ico` at the root answers 200 with the bytes of `app/static/favicon.ico`, GET and HEAD, with the content type and fixed headers `/static` files get. No session, no database, no page limit. It sits beside the `/static` mount, so the off site has it too | `app/web.py` |
+| The server declares its website and two icons in `serverInfo`, from the configured site origin: the 180 by 180 PNG first, then the SVG. With no origin, neither | `app/mcp_server.py`, `site_identity` |
+| The route table pin gains the `/favicon.ico` row, straight before `/static` | `tests/test_hi_there.py` |
+
+No page, template, function description, server instructions or `docs/can-and-cant.md` changes.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| `tests/test_page_rules.py`, `tests/test_mcp.py`, `tests/test_hi_there.py`, `tests/test_web.py`, `tests/test_no_sample.py`, `tests/test_log_and_guide.py`, `tests/test_docs.py`, `tests/test_text_rules.py` | Plain: 2467 passed |
+| The three touched test files with `-W error` | 564 passed |
+| Each new behaviour broken once | No root route: 7 red. No static headers: 3 red. No icons or website: 4 red. The icons swapped: 4 red. A fixed website: 1 red |
+| `python -m evals.need main` | Yes: `result text app/mcp_server.py`. The one new string literal of 20 or more characters in that file is `/static/apple-touch-icon.png`, and the check counts such literals as result text. The surface it compares takes `instructions` from `initialize`, not `serverInfo` |
