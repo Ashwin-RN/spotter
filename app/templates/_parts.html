@@ -126,7 +126,8 @@
 {%- set eaten_week = cal and cal.avg_7d is not none -%}
   {% if bw %}
   {% call sheet("sheet-weight", "Last 4 weeks", bw.smoothed|show("bodyweight_derived", unit=False, units=units), "Weight trend", unit=weight, link=weight_link) %}
-  <p class="sentence">{% if rated %}The trend moved {{ bw.rate_per_week|show("weight_rate", units=units) }}&nbsp;{{ weight }} a week from {{ bw.rate_window.from|days(bw.rate_window.to, today) }}.{% else %}{{ glance.rate_words }}{% endif %}{% if bw.now is not none %} The {{ glance.basis }} is {{ bw.now|show("bodyweight_derived", units=units) }}{% if bw.weigh_ins_28d == 0 %}. No weigh-ins in the last 28 days.{% else %}, from {{ bw.weigh_ins_28d|show("count") }} {{ "weigh-in" if bw.weigh_ins_28d == 1 else "weigh-ins" }} in 28 days.{% endif %}{% endif %}</p>
+  <p class="sentence">{% if rated %}The trend moved {{ bw.rate_per_week|show("weight_rate", units=units) }}&nbsp;{{ weight }} a week from {{ bw.rate_window.from|days(bw.rate_window.to, today) }}.{% else %}{{ glance.rate_words }}{% endif %}{% if bw.now is not none %} The {{ glance.basis }} is {{ bw.now|show("bodyweight_derived", units=units) }}{% if bw.weigh_ins_28d == 0 %}. No weigh-ins in the last 28 days.{% else %}. {{
+    bw.weigh_ins_28d|show("count") }} {{ "weigh-in" if bw.weigh_ins_28d == 1 else "weigh-ins" }} in the last 28 days.{% endif %}{% endif %}</p>
   <div class="panel">
     <p class="panel-title">Smoothed weight</p>
     {% if glance.weight_chart %}{{ glance.weight_chart }}

@@ -894,3 +894,8 @@ Measured on the built server, compact JSON characters of the published entry: `g
 ## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
 
 The `days` area's `weight_kg` (line 295), the day's weigh-in, is the last in the one order: effective date, then id, as `get_trends` takes it (the logic audit's decision 5). It went by the real date, then id, so after a change of time zone a weigh-in dated tomorrow could be today's weight in `get_data` and not in `get_trends`. `tests/test_data.py` holds the two equal.
+
+## Note, 2026-11-26: single rep and two page lines (`docs/contracts/single-rep-and-pages.md`)
+
+Line 178. On a row of 1 rep above 0 kg, `estimated_max_kg` is the weight, shown at the estimated max's own step.
+The field keeps its own words under decision 2 of the new contract.

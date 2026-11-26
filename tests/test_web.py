@@ -5309,7 +5309,7 @@ def test_the_weight_sheet_on_the_fixed_day(fixed_day):
     assert sheet_frame_findings(sheet, "sheet-weight", "/progress#body-weight") == []
     assert (sheet["period"], sheet["giant"], sheet["title"]) == ("Last 4 weeks", f"79.2{NB}kg", "Weight trend")
     assert sheet["sentence"] == (f"The trend moved -0.24{NB}kg a week from 27 Oct to 10 Nov. The 7-day average is "
-                                 f"79{NB}kg, from 28 weigh-ins in 28 days.")
+                                 f"79{NB}kg. 28 weigh-ins in the last 28 days.")
     assert sheet["middle"] == [("p", "sentence"), ("div", "panel"), ("div", "table-wrap")]
     assert sheet["panel"] == ["Smoothed weight", "svg"]
     [svg] = sheet["svg"]
@@ -5436,7 +5436,7 @@ def test_which_tiles_open_a_sheet_state_by_state(client, state, opens):
             assert "is-empty" in t["classes"] and t["label"] is None and "popovertarget" not in t["attrs"]
 
 
-def test_one_weigh_in_has_no_rate_and_the_chart_says_why_it_is_empty(client):
+def test_one_weigh_in_has_no_rate_and_the_chart_says_why_it_is_empty(client, pinned):
     sign_in(client)
     services.log_bodyweight(only_user().id, {"kg": "80"}, "claude")
     page = day_of(client, today_of(only_user()).isoformat())
@@ -5445,7 +5445,7 @@ def test_one_weigh_in_has_no_rate_and_the_chart_says_why_it_is_empty(client):
     assert sheet_frame_findings(sheet, "sheet-weight", "/progress#body-weight") == []
     # The rate's sentence is left out, and the read's own words say why (web.rate_note).
     assert sheet["sentence"] == ("The weekly rate needs a weigh-in from 14 to 42 days ago. The 7-day average is "
-                                 f"80{NB}kg, from 1 weigh-in in 28 days.")
+                                 f"80{NB}kg. 1 weigh-in in the last 28 days.")
     assert sheet["panel"] == ["Smoothed weight",
                               "One weigh-in in the last 28 days. The chart starts from the second one."]
     assert sheet["svg"] == []
@@ -5500,7 +5500,7 @@ def test_the_training_sentence_names_each_target_that_is_set(client, sessions, c
                                  f"0{NB}min a week over 4 weeks." + words)
 
 
-def test_a_zero_rate_and_a_calorie_target_show_as_figures(client):
+def test_a_zero_rate_and_a_calorie_target_show_as_figures(client, pinned):
     """A rate of 0 is a rate, and a target shows in its row with a blank remark: zero is a value."""
     sign_in(client)
     uid, today = only_user().id, today_of(only_user())
@@ -5512,8 +5512,8 @@ def test_a_zero_rate_and_a_calorie_target_show_as_figures(client):
     assert tiles_of(page)[0]["note"] == f"0{NB}kg a week"
     weight = sheets_of(page)["sheet-weight"]
     window = formatting.days(today - timedelta(days=14), today, today)  # the last weigh-in 14 to 42 days back
-    assert weight["sentence"] == (f"The trend moved 0{NB}kg a week from {window}. The 7-day average is 80{NB}kg, "
-                                  "from 4 weigh-ins in 28 days.")
+    assert weight["sentence"] == (f"The trend moved 0{NB}kg a week from {window}. The 7-day average is 80{NB}kg. "
+                                  "4 weigh-ins in the last 28 days.")
     assert weight["rows"][2] == [("Rate", []), (f"0{NB}kg a week", ["num"]), (window, ["remark"])]
     calories = sheets_of(page)["sheet-calories"]
     assert calories["sentence"] == (f"Over the last 28 days it is 1,000{NB}kcal a day, and 0% of it is estimates. "
@@ -7724,7 +7724,7 @@ def test_weigh_ins_imported_in_lb_read_back_in_kg_once_on_their_day_page_and_on_
     assert 78 < bw["smoothed"] < 81  # kg, not lb, and not a pound converted twice
 
 
-def test_each_count_on_today_and_progress_takes_its_noun_by_the_count(client):
+def test_each_count_on_today_and_progress_takes_its_noun_by_the_count(client, pinned):
     """The merged tree's check: "1 lift sessions last 7 days" on the Training tile. Each count with a noun on Today's
     and Progress' tiles and sheets, at 0, 1 and 2: the Training tile's label and its sheet's title, the day page's
     lift sessions in 28 days and the Weight sheet's weigh-ins. Each figure is get_trends' or get_days' own."""
@@ -7749,7 +7749,8 @@ def test_each_count_on_today_and_progress_takes_its_noun_by_the_count(client):
             assert (sheet["giant"], sheet["title"]) == (str(n), sessions.capitalize()), address
             if n:
                 weigh_ins = "weigh-in" if trends["bodyweight"]["weigh_ins_28d"] == 1 else "weigh-ins"
-                assert f"from {n} {weigh_ins} in 28 days." in sheets_of(page)["sheet-weight"]["sentence"], address
+                sentence = sheets_of(page)["sheet-weight"]["sentence"]
+                assert sentence.endswith(f". {n} {weigh_ins} in the last 28 days."), address
         assert re.search(r'<span class="aside">([^<]*)</span>', day).group(1) == f"{n} {sessions}"
 
 

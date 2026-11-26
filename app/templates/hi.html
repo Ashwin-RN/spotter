@@ -46,7 +46,12 @@
   <p>Spotter works out every number in code, from what you logged.</p>
   <p>Your assistant is told to quote them. The numbers it may estimate are a food's calories, protein, carbs and fat, and it must say so.</p>
   <ul class="plain-list">
-    <li><b>Bests.</b> Each weighted set of {{ works.epley_min|show("count") }} to {{ works.epley_max|show("count") }} reps gives an estimated one-rep max, by the Epley formula. A new best beats every earlier set of that lift, by that estimate or by weight. A hold counts by time, a carry by load, a band by reps and help by less of it. Your lift now is your best session of the last {{ works.recent_days|show("count") }} days, or your latest before that. One light day does not pull it down.</li>
+    <li><b>Bests.</b> Each weighted set of {{ works.epley_min|show("count") }} to {{ works.epley_max|show("count") }} reps
+      gives an estimated one-rep max. A single rep is its own weight, and more reps go by the Epley formula.
+      A new best beats every earlier set of that lift, by that estimate or by weight.
+      A hold counts by time, a carry by load, a band by reps and help by less of it.
+      Your lift now is your best session of the last {{ works.recent_days|show("count") }} days, or your latest before that.
+      One light day does not pull it down.</li>
     <li><b>Body weight now.</b> The average of your weigh-ins in the last {{ works.average_days|show("count") }} days, or your latest when that week has none.</li>
     <li><b>The weight trend.</b> A smoothed line through every weigh-in: each one moves it a tenth of the way. Its rate a week needs a weigh-in in the last {{ works.rate_latest_days|show("count") }} days and one from {{ works.rate_from|show("count") }} to {{ works.rate_to|show("count") }} days ago.</li>
     <li><b>Goal pace.</b> Each goal shows the pace a week it needs to make its date, and your pace so far. Your pace so far is a straight line fitted through the last {{ works.fit_weeks|show("count") }} weeks, from at least {{ works.fit_points|show("count") }} points on {{ works.fit_days|show("count") }} days.</li>

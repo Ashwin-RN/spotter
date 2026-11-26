@@ -617,33 +617,44 @@ def _goal_desc(goal: dict, today: date, units=None) -> str:
     return " ".join(said)
 
 
-def _projection_end(goal: dict) -> tuple[date, float] | None:
-    """Where the projection ends: (projected date, target); with a projection but no projected date,
-    (target date, projected value); with no projection, None. It starts at (today, now)."""
-    if goal.get("latest") is None:
+def _projection_end(goal: dict, today: date, target_date: date) -> date | None:
+    """The future end date before the cap and grid cuts, if there is a line to draw."""
+    if goal.get("fit") is None or target_date < today:
         return None
     if goal.get("projected_date"):
-        return _date(goal["projected_date"]), float(goal["target_value"])
-    projection = goal.get("projection") or {}
-    if projection.get("projected") is not None:
-        return _date(goal["target_date"]), float(projection["projected"])
-    return None
+        end = _date(goal["projected_date"])
+    elif (goal.get("projection") or {}).get("projected") is not None:
+        end = target_date
+    else:
+        return None
+    return end if end > today else None
+
+
+def _projection_clip(start: float, end: float, lo: float, hi: float) -> tuple[float, float] | None:
+    """The fractions of the segment at which it enters and leaves the grid."""
+    change = end - start
+    if change == 0:
+        return (0.0, 1.0) if lo <= start <= hi else None
+    enter, leave = sorted(((lo - start) / change, (hi - start) / change))
+    enter, leave = max(0.0, enter), min(1.0, leave)
+    return (enter, leave) if enter < leave else None
 
 
 def goal_svg(goal: dict | None, today: date, element_id: str | None = None, units=None) -> Markup:
-    """A goal's path, for its card on Goals and the landing picture: the dashed plan line from start to
+    """A goal's path, for its card on Goals: the dashed plan line from start to
     target, the actual line with a dot per point, the now figure ringed at today, the dotted projection
-    from now to the target at the projected date, the today line with "Today", a target tick with its
+    along the fit from today, the today line with "Today", a target tick with its
     value, labelled grid lines, the start and target dates. One point: the plan line, one ringed dot,
     the today line. No projection without one.
 
     goal: one of goals.goal_charts' goals, unrounded: {goal_id, label, kind, unit, start_date,
     start_value, target_date, target_value, latest, needed_per_week, actual_per_week, projected_date,
-    projection {projected} | None, plan_line, path {plan [{date, value}], actual [{date, value}]}}.
+    projection {projected} | None, fit {today, per_day} | None, plan_line,
+    path {plan [{date, value}], actual [{date, value}]}}.
     "Now" is the goal's latest, at today: path.actual has a point per date that has one, so it can end
     before today. The desc says the goal's plan_line as written; its own figures go through show,
     never widened. A projected date far past the target date is held at half the plan's length beyond
-    it, and a projected value inside the grid; the desc keeps the real figures. units: the person's; a
+    it, and the grid edges cut the line along its slope. The desc keeps the real figures. units: the person's; a
     weight goal is drawn in its weight unit, a measurement or a time as stored.
     """
     if not goal or not (goal.get("path") or {}).get("plan"):
@@ -660,21 +671,22 @@ def goal_svg(goal: dict | None, today: date, element_id: str | None = None, unit
     start, target_date = _on(_date(goal["start_date"]), today), _date(goal["target_date"])
     known = [start, today, target_date] + [d for d, _ in plan] + [d for d, _, _ in actual]
     first = min(known)
-    end = _projection_end(goal)
+    end = _projection_end(goal, today, target_date)
     if end is not None:
-        cap = max(target_date + timedelta(days=max((target_date - first).days, 1) // 2), today + timedelta(days=1))
-        if end[0] > cap:  # far out: draw to the cap, at the value the line has there
-            share = (cap - today).days / max((end[0] - today).days, 1)
-            end = (cap, now + (end[1] - now) * share)
-        known.append(end[0])
-        end = (end[0], shown(end[1]))
-    last = max(known)
+        cap = max(target_date + timedelta(days=(target_date - first).days // 2), today + timedelta(days=1))
+        end = min(end, cap)
     target = shown(float(goal["target_value"]))
     values = [v for _, v in plan] + [shown(v) for _, v, _ in actual] + [target]
     values += [shown(now)] if now is not None else []
     ticks = _ticks(min(values), max(values), STEPS[quantity])
-    if end is not None:  # a wild projection is held inside the grid, not followed
-        end = (end[0], min(max(end[1], ticks[0]), ticks[-1]))
+    clip = None
+    if end is not None:  # the fit from today to the end day, cut where it leaves the grid
+        start_value = shown(goal["fit"]["today"])
+        end_value = shown(goal["fit"]["today"] + goal["fit"]["per_day"] * (end - today).days)
+        clip = _projection_clip(start_value, end_value, ticks[0], ticks[-1])
+    if clip is not None:  # only a line that is drawn reaches the dates: a hidden one never stretches them
+        known.append(end)
+    last = max(known)
     labels = _tick_labels(ticks, quantity, _goal_unit(goal, units))
     target_text = _goal_target(goal, units)
     left = _margin(labels)
@@ -697,12 +709,13 @@ def goal_svg(goal: dict | None, today: date, element_id: str | None = None, unit
                f'y1="{_c(target_y)}" y2="{_c(target_y)}" />')
     out.append(f'<text class="goal-label" x="{_c(max(tick_x, left + 10) + GAP)}" y="{_c(target_y + AXIS / 3)}">'
                f'{escape(target_text)}</text>')
-    if end is not None:
-        now_xy = (x(today), y(shown(now)))
-        end_xy = (x(end[0]), y(end[1]))
-        out.append(f'<line class="projection" x1="{_c(now_xy[0])}" y1="{_c(now_xy[1])}" '
-                   f'x2="{_c(end_xy[0])}" y2="{_c(end_xy[1])}" />')
-        out.append(f'<circle class="dot proj-end" cx="{_c(end_xy[0])}" cy="{_c(end_xy[1])}" r="3.5" />')
+    if clip is not None:
+        start_x, width = x(today), x(end) - x(today)
+        change = end_value - start_value
+        (x1, y1), (x2, y2) = [(_c(start_x + width * share), _c(y(start_value + change * share)))
+                               for share in clip]
+        out.append(f'<line class="projection" x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" />')
+        out.append(f'<circle class="dot proj-end" cx="{x2}" cy="{y2}" r="3.5" />')
     # The actual line: a point per date. A point at today takes the now figure, so the line meets the ring.
     drawn = [(d, now if (d == today and now is not None) else v, real) for d, v, real in actual]
     if len(drawn) > 1:

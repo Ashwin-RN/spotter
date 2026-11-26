@@ -433,7 +433,7 @@ def test_an_add_that_raises_the_session_s_estimated_max_reports_it_as_get_log_do
 def test_an_add_that_raises_only_the_heaviest_weight_reports_only_that(user):
     log(user, ("Back Squat", 100, 8), date=day(user, -7))           # 126.67, 100 kg
     today = log(user, ("Back Squat", 90, 5))
-    added = log(user, ("Back Squat", 102.5, 1))                      # 105.92: under 126.67; 102.5 kg over 100
+    added = log(user, ("Back Squat", 102.5, 1))                      # 102.5 is under 126.67 and heavier than 100 kg
     best = [("weight", 102.5, 100, "Back Squat heaviest weight 102.5 kg, up from 100 kg")]
     assert reported(added) == best == logged_bests(user, today["id"], day(user))
 

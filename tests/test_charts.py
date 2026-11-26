@@ -417,6 +417,7 @@ def goal_like(**over) -> dict:
             "start_date": "2026-10-14", "start_value": 79.9, "target_date": "2027-01-05", "target_value": 77.0,
             "latest": 79.0123, "needed_per_week": -0.2512, "actual_per_week": -0.29,
             "projected_date": "2026-12-26", "projection": {"projected": 76.5, "latest": 79.0123},
+            "fit": {"today": 78.95, "per_day": -1.95 / 46},
             "should_be_today": 78.9611, "ahead_by": -0.0512, "days_ahead": -2, "vs_plan": "behind",
             "now_basis": "average_7d", "plan_line": "79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind.",
             "path": {"plan": [{"date": "2026-10-14", "value": 79.9}, {"date": "2026-11-10", "value": 78.9611},
@@ -445,9 +446,11 @@ def test_the_goal_chart_draws_plan_actual_projection_today_and_target():
     assert len([d for d in of_class(root, "circle", "dot") if "proj-end" not in classes(d)]) == 5
     [latest] = of_class(root, "circle", "is-latest")
     assert latest.find(f"{SVG}title").text == "Tue 10 Nov: 79 kg"
-    # The projection runs from (today, now) to (the projected date, the target).
-    assert at(projection, "x1", "y1") == at(latest, "cx", "cy") and projection.get("x1") == today.get("x1")
-    assert projection.get("y2") == tick.get("y1") and len(of_class(root, "circle", "proj-end")) == 1
+    # The fit and the ring share today's date and have different values.
+    assert projection.get("x1") == today.get("x1") == latest.get("cx")
+    assert projection.get("y1") != latest.get("cy") and projection.get("y2") == tick.get("y1")
+    [end] = of_class(root, "circle", "proj-end")
+    assert at(end, "cx", "cy") == at(projection, "x2", "y2")
     assert float(plan.get("x2")) == float(tick.get("x2")) > float(projection.get("x2"))  # reached before the date
     assert "Today" in texts(root, "today-label")
     assert texts(root, "goal-label") == ["77 kg"] and {"Wed 14 Oct", "Tue 5 Jan 2027"} <= set(texts(root))
@@ -492,7 +495,8 @@ def test_one_point_draws_the_plan_line_one_ringed_dot_and_the_today_line():
 
 
 def test_a_projection_with_no_projected_date_ends_at_the_target_date():
-    root = parsed(charts.goal_svg(goal_like(projected_date=None, projection={"projected": 78.0}), TODAY))
+    goal = goal_like(projected_date=None, projection={"projected": 78.0}, fit={"today": 79.0, "per_day": -1 / 56})
+    root = parsed(charts.goal_svg(goal, TODAY))
     [projection] = of_class(root, "line", "projection")
     [tick] = of_class(root, "line", "target-tick")
     assert projection.get("x2") == tick.get("x2")
@@ -502,13 +506,17 @@ def test_a_projection_with_no_projected_date_ends_at_the_target_date():
 
 
 def test_a_projected_date_far_past_the_target_is_held_inside_the_chart():
-    root = parsed(charts.goal_svg(goal_like(projected_date="2028-06-01", status="behind"), TODAY))
+    goal = goal_like(projected_date="2028-06-01", status="behind", fit={"today": 79.5, "per_day": -0.003})
+    root = parsed(charts.goal_svg(goal, TODAY))
     [projection] = of_class(root, "line", "projection")
     [tick] = of_class(root, "line", "target-tick")
     [grid] = of_class(root, "line", "grid")[:1]
     assert float(tick.get("x2")) < float(projection.get("x2")) <= float(grid.get("x2"))
     assert "Thu 1 Jun 2028" in root.find(f"{SVG}desc").text
     inside_grid(root, [float(projection.get("y2"))])
+    (d1, v1), (d2, v2) = projection_values(root, goal)
+    assert d1 == 0 and d2 == pytest.approx(97, abs=0.01)  # 56 days to the target and 41 more to the cap
+    assert (v2 - v1) / (d2 - d1) == pytest.approx(goal["fit"]["per_day"], rel=0.01)
 
 
 def test_a_cardio_time_goal_reads_in_m_ss_and_seconds():
@@ -539,7 +547,7 @@ def test_the_goal_charts_now_is_its_latest_at_today_not_the_last_point():
     [ring] = of_class(root, "circle", "is-latest")
     [today] = of_class(root, "line", "today-line")
     [projection] = of_class(root, "line", "projection")
-    assert ring.get("cx") == today.get("x1") == projection.get("x1") and ring.get("cy") == projection.get("y1")
+    assert ring.get("cx") == today.get("x1") == projection.get("x1") and ring.get("cy") != projection.get("y1")
     assert ring.find(f"{SVG}title").text == "Tue 10 Nov: 78.8 kg"
     [series] = of_class(root, "polyline", "series")
     last = series.get("points").split()[-1].split(",")
@@ -561,6 +569,92 @@ def test_the_goal_charts_first_date_is_the_start_and_its_last_the_target():
     assert bottom == ["Thu 12 Nov", "Tue 5 Jan 2027"]
 
 
+def projection_values(root, goal, units=None):
+    """Read each end as days from today and its value, using the drawn plan's scale."""
+    [plan] = of_class(root, "line", "plan")
+    [today] = of_class(root, "line", "today-line")
+    [line] = of_class(root, "line", "projection")
+    [dot] = of_class(root, "circle", "proj-end")
+    assert at(dot, "cx", "cy") == at(line, "x2", "y2")
+    plan_x1, plan_y1 = at(plan, "x1", "y1")
+    plan_x2, plan_y2 = at(plan, "x2", "y2")
+    plan_days = (date.fromisoformat(goal["target_date"]) - date.fromisoformat(goal["start_date"])).days
+    days_per_x = plan_days / (plan_x2 - plan_x1)
+    quantity = charts.goal_quantity(goal)
+    start = formatting.convert(goal["start_value"], quantity, units)
+    target = formatting.convert(goal["target_value"], quantity, units)
+    value_per_y = (target - start) / (plan_y2 - plan_y1)
+    return [((x - float(today.get("x1"))) * days_per_x, start + (y - plan_y1) * value_per_y)
+            for x, y in (at(line, "x1", "y1"), at(line, "x2", "y2"))]
+
+
+@pytest.mark.parametrize("kind, unit, units, start, target, latest, fitted, per_day", [
+    ("bodyweight", "kg", None, 80, 77, 79.1, 79.45, -0.041),
+    ("lift", "kg", formatting.Units("lb", "mi"), 80, 105, 89, 90.13, 0.25),
+    ("measurement", "cm", None, 92, 84, 89, 89.3, -0.07),
+    ("cardio_best", "min", None, 32, 26, 29.5, 30.13, -0.06),
+])
+def test_the_drawn_projection_keeps_the_fitted_slope(kind, unit, units, start, target, latest, fitted, per_day):
+    goal = goal_like(kind=kind, unit=unit, start_value=start, target_value=target, latest=latest,
+                     projected_date=None, projection={"projected": round(fitted + 56 * per_day, 2)},
+                     fit={"today": fitted, "per_day": per_day})
+    goal["path"] = {"plan": [{"date": goal["start_date"], "value": start},
+                             {"date": goal["target_date"], "value": target}], "actual": []}
+    root = parsed(charts.goal_svg(goal, TODAY, units=units))
+    (d1, v1), (d2, v2) = projection_values(root, goal, units)
+    quantity = charts.goal_quantity(goal)
+    assert (d1, d2) == pytest.approx((0, 56), abs=0.01)
+    assert (v2 - v1) / (d2 - d1) == pytest.approx(formatting.convert(per_day, quantity, units), rel=0.01)
+    assert v1 == pytest.approx(formatting.convert(fitted, quantity, units), abs=0.01)
+    [ring] = of_class(root, "circle", "is-latest")
+    [line] = of_class(root, "line", "projection")
+    assert ring.get("cx") == line.get("x1") and ring.get("cy") != line.get("y1")
+
+
+def test_the_dot_keeps_the_fitted_value_on_the_projected_day():
+    goal = goal_like(target_value=77.05, fit={"today": 78.95, "per_day": -0.04204})
+    goal["path"]["plan"][-1]["value"] = goal["target_value"]
+    root = parsed(charts.goal_svg(goal, TODAY))
+    _, (days, value) = projection_values(root, goal)
+    assert days == pytest.approx(46, abs=0.01)
+    assert value == pytest.approx(78.95 - 46 * 0.04204, abs=0.001)
+    assert value < goal["target_value"]
+
+
+@pytest.mark.parametrize("fitted, per_day, start_day, end_day, start_edge, end_edge", [
+    (80.5, -0.04, 12.5, 56, charts.GOAL_TOP, None),
+    (78, -0.05, 0, 20, None, charts.GOAL_BOTTOM),
+    (76, 0.1, 10, 40, charts.GOAL_BOTTOM, charts.GOAL_TOP),
+])
+def test_the_grid_cuts_the_projection_along_its_slope(fitted, per_day, start_day, end_day, start_edge, end_edge):
+    goal = goal_like(projected_date=None, projection={"projected": fitted + 56 * per_day},
+                     fit={"today": fitted, "per_day": per_day})
+    root = parsed(charts.goal_svg(goal, TODAY))
+    (d1, v1), (d2, v2) = projection_values(root, goal)
+    assert (d1, d2) == pytest.approx((start_day, end_day), abs=0.01)
+    assert (v2 - v1) / (d2 - d1) == pytest.approx(per_day, rel=0.01)
+    [line] = of_class(root, "line", "projection")
+    if start_edge is not None:
+        assert float(line.get("y1")) == start_edge
+    if end_edge is not None:
+        assert float(line.get("y2")) == end_edge
+    bare = parsed(charts.goal_svg({**goal, "fit": None}, TODAY))
+    assert texts(root, "end") == texts(bare, "end") and grid_ys(root) == grid_ys(bare)
+
+
+@pytest.mark.parametrize("over", [
+    {"fit": None},
+    {"target_date": "2026-11-09"},
+    {"projected_date": "2026-11-10"},
+    {"target_date": "2026-11-10", "projected_date": None},
+    {"fit": {"today": 81, "per_day": 0.01}},
+    {"fit": {"today": 81, "per_day": 0}},
+])
+def test_a_goal_with_no_visible_future_projection_draws_no_line_or_dot(over):
+    root = parsed(charts.goal_svg(goal_like(**over), TODAY))
+    assert not of_class(root, "line", "projection") and not of_class(root, "circle", "proj-end")
+
+
 def xs_of(root) -> list[float]:
     out = []
     for el in root.iter():
@@ -570,6 +664,16 @@ def xs_of(root) -> list[float]:
         if el.get("points"):
             out += [float(p.split(",")[0]) for p in el.get("points").split()]
     return out
+
+
+def test_a_projection_wholly_outside_the_grid_leaves_the_chart_as_it_is_with_no_fit():
+    """A far projected date whose line never enters the grid draws nothing, and the dates are not stretched for it:
+    every mark sits where it does with no fit at all."""
+    hidden = goal_like(projected_date="2028-06-01", fit={"today": 82.0, "per_day": -0.01})
+    root = parsed(charts.goal_svg(hidden, TODAY))
+    bare = parsed(charts.goal_svg({**hidden, "fit": None}, TODAY))
+    assert not of_class(root, "line", "projection") and not of_class(root, "circle", "proj-end")
+    assert xs_of(root) == xs_of(bare)
 
 
 @pytest.mark.parametrize("case", ["target passed", "target before start", "today before start", "wild projection",
@@ -591,7 +695,8 @@ def test_the_goal_charts_edge_cases_stay_inside_the_chart(case):
                                         path={"plan": [{"date": "2026-11-11", "value": 79.9},
                                                        {"date": "2027-01-05", "value": 77.0}],
                                               "actual": [{"date": "2026-11-10", "value": 79.8}]}),
-        "wild projection": goal_like(projected_date=None, projection={"projected": 400.0}),
+        "wild projection": goal_like(projected_date=None, projection={"projected": 400.0},
+                                     fit={"today": 79.0, "per_day": (400 - 79) / 56}),
         "a target of 102.5 kg": goal_like(label="Back Squat 102.5 kg", kind="lift", start_value=88.0,
                                           target_value=102.5, latest=96.0, needed_per_week=1.2,
                                           actual_per_week=1.5, projected_date="2026-12-20",

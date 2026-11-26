@@ -658,7 +658,8 @@ def test_every_body_weight_figure_on_today_and_progress_is_the_trends_summarys(p
     if (weight, distance) == ("lb", "mi"):
         assert (now, smoothed, rate) == ("174.2", "174.7", "-0.54")
     tile = f"Weight: {smoothed} {w} trend {rate} {w} a week"
-    sheet = [f"The trend moved {rate} {w} a week from", f"The 7-day average is {now} {w},",
+    sheet = [f"The trend moved {rate} {w} a week from",
+             f"The 7-day average is {now} {w}. 28 weigh-ins in the last 28 days.",
              f"Smoothed trend\n{smoothed} {w}\nEvens out day-to-day swings\n7-day average\n{now} {w}\nLast 7 days\n"
              f"Rate\n{rate} {w} a week\n", f"to {smoothed} {w} on Tue 10 Nov."]
     today = _plain(pinned.get(f"/day/{DAY}").text)

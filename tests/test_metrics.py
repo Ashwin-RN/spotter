@@ -27,7 +27,8 @@ CUT = [(ago(21), 90), (ago(14), 89.8), (ago(7), 89.6), (TODAY, 89.4)]       # -0
 
 def test_epley_value():
     assert epley(100, 5) == pytest.approx(116.67)
-    assert epley(100, 1) == pytest.approx(103.33)
+    assert epley(100, 1) == 100
+    assert epley(100, 2) == 106.67
     assert epley(90, 10) == pytest.approx(120.0)
 
 
@@ -36,6 +37,8 @@ def test_epley_out_of_range():
     assert epley(100, 0) is None
     assert epley(0, 5) is None
     assert epley(-10, 5) is None
+    assert epley(0, 1) is None
+    assert epley(-10, 1) is None
 
 
 def test_session_best_ignores_high_rep_sets():
@@ -60,6 +63,10 @@ def test_prs_estimated_max_only():
 def test_prs_weight_only_from_high_reps():
     # Heavier for 12 reps: a new heaviest weight; Epley ignores 12 reps.
     assert [p["kind"] for p in prs([(100, 5)], [(102, 12)])] == ["weight"]
+
+
+def test_prs_weight_only_when_a_single_ties_the_estimated_max():
+    assert prs([(90, 2)], [(96, 1)]) == [{"kind": "weight", "value": 96, "previous": 90}]
 
 
 def test_prs_equal_is_not_a_new_best():

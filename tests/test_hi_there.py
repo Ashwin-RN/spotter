@@ -141,8 +141,8 @@ ESTIMATE_LINE = ("Your assistant is told to quote them. The numbers it may estim
 M = metrics
 WORKS_PART = (
     "What Spotter works out", "Spotter works out every number in code, from what you logged.", ESTIMATE_LINE,
-    f"Bests. Each weighted set of {count(1)} to {count(M.EPLEY_MAX_REPS)} reps gives an estimated one-rep max, by the "
-    "Epley formula.",  # the review's L1: weighted
+    f"Bests. Each weighted set of {count(1)} to {count(M.EPLEY_MAX_REPS)} reps gives an estimated one-rep max. "
+    "A single rep is its own weight, and more reps go by the Epley formula.",
     "A new best beats every earlier set of that lift, by that estimate or by weight.",
     "A hold counts by time, a carry by load, a band by reps and help by less of it.",  # exercise-list.md (C4e)
     f"Your lift now is your best session of the last {count(M.RECENT_BEST_DAYS)} days, or your latest before that. "
@@ -612,7 +612,7 @@ def test_the_epley_line_holds_at_both_ends():
     review's L1: only a weighted set gives one, so a bodyweight set, sent at 0 kg, gives none at any reps."""
     low, high = web.HI_WORKS["epley_min"], web.HI_WORKS["epley_max"]
     assert M.epley(100, low - 1) is None and M.epley(100, high + 1) is None
-    assert M.epley(100, low) is not None and M.epley(100, high) == 133.33  # Epley: 100 x (1 + 10 / 30)
+    assert M.epley(100, low) == 100 and M.epley(100, high) == 133.33  # Epley: 100 x (1 + 10 / 30)
     assert [M.epley(0, reps) for reps in range(low, high + 1)] == [None] * high
     assert "0 for bodyweight" in SetIn.model_fields["weight_kg"].description
 

@@ -393,3 +393,11 @@ Also not in this work: an MCP prompt. A setup function. A per-person checklist o
 ## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
 
 The Routines line (line 168), as built: "Routines. Your fixed workouts by name, each with what you usually do in it." Its condition on the page is unchanged.
+
+## Note, 2026-11-26: single rep and two page lines (`docs/contracts/single-rep-and-pages.md`)
+
+Lines 46 to 47 and 143. A set of 1 rep above 0 kg gives its weight, rounded to 2 decimals.
+Sets of 2 to 10 reps use Epley.
+
+The page says "Each weighted set of 1 to 10 reps gives an estimated one-rep max.
+A single rep is its own weight, and more reps go by the Epley formula."

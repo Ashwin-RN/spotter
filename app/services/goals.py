@@ -473,7 +473,7 @@ def _so_far(g, p: dict | None, points: list, today: date, charts: bool, units) -
 
 def goal_numbers(goals: list, loaded: dict, today: date, charts: bool = False, units=None) -> list[dict]:
     """Where each open goal stands, one shape for every kind. The stored direction says which way is
-    better. loaded: load_numbers for these goals. charts: add path and now_basis (goal_charts only).
+    better. loaded: load_numbers for these goals. charts: add the path, now_basis, line_ended and fit.
     units: the person's, for label and plan_line; every number stays in kg and km."""
     out = []
     for g in goals:
@@ -521,6 +521,8 @@ def goal_numbers(goals: list, loaded: dict, today: date, charts: bool = False, u
             numbers["path"] = {"plan": path["plan"], "actual": path["actual"]}
             numbers["now_basis"] = now_basis(g.kind, points, today)
             numbers["line_ended"] = path["ended"]
+            fit = metrics.fit_today(points, today)
+            numbers["fit"] = {"today": fit[0], "per_day": fit[1]} if fit is not None else None
         out.append(numbers)
     return out
 

@@ -1713,9 +1713,10 @@ def _faked_goals(state: str) -> list[dict]:
     from .test_web_goals import FOUR, PATH, numbers  # noqa: PLC0415
 
     return {"every kind with charts": [{**g, "path": PATH} for g in FOUR],
-            "far projection": [numbers(1, path=PATH, projected_date="2029-06-01", status="behind")],
+            "far projection": [numbers(1, path=PATH, projected_date="2029-06-01", status="behind",
+                                       fit={"today": 84.5, "per_day": 0.05})],
             "projection to the date": [numbers(1, path=PATH, projected_date=None, projection={"projected": 95.0},
-                                               status="behind")],
+                                               status="behind", fit={"today": 84.5, "per_day": 0.125})],
             "reached": [numbers(1, path=PATH, status="reached", needed_per_week=0.0)]}[state]
 
 

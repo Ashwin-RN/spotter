@@ -9,9 +9,10 @@ after today counts as today (on_or_before). See on_or_before for the one orderin
 
 Strength
   epley(weight_kg, reps) -> float | None
-      Estimated one-rep max: weight x (1 + reps / 30), 2 dp. None for reps outside 1 to 10 or weight <= 0.
+      Estimated one-rep max: the weight for 1 rep, or weight x (1 + reps / 30) for 2 to 10 reps.
+      Rounded to 2 dp. None for reps outside 1 to 10 or weight <= 0.
   session_best(sets: [(weight_kg, reps)]) -> float | None
-      The highest Epley estimate among one session's sets of one lift.
+      The highest estimated max among one session's sets of one lift.
   prs(prior_sets, session_sets, kind="standard") -> [{"kind", "value", "previous"}]
       New bests for one lift against every earlier set of it. [] when there is no earlier set. standard:
       estimated_max and weight; help: least_help or reps; band: reps; hold: time; carry: carry (other_bests).
@@ -116,7 +117,7 @@ def in_order(points: list[tuple[date, float]], today: date) -> list[tuple[date, 
 # ---------------------------------------------------------------- strength
 
 def epley(weight_kg: float, reps: int) -> float | None:
-    """Estimated one-rep max: weight x (1 + reps / 30), rounded to 2 dp.
+    """Estimated one-rep max: the weight for 1 rep, or weight x (1 + reps / 30) for 2 to 10 reps.
 
     None for reps outside 1 to 10 (Epley is unreliable above 10) or weight <= 0.
     Rounded so that comparisons between sessions are exact.
@@ -125,6 +126,8 @@ def epley(weight_kg: float, reps: int) -> float | None:
         return None
     if weight_kg <= 0 or reps < 1 or reps > EPLEY_MAX_REPS:
         return None
+    if reps == 1:
+        return round(weight_kg, 2)
     return round(weight_kg * (1 + reps / 30), 2)
 
 
@@ -376,6 +379,15 @@ def slope_per_week(points: list[tuple[date, float]], today: date) -> float | Non
     unit is converted once, from the unrounded slope. None where projection draws no line."""
     fit = _fit(points, today)
     return None if fit is None else fit[1] * 7
+
+
+def fit_today(points: list[tuple[date, float]], today: date) -> tuple[float, float] | None:
+    """The fitted value at today and the slope per day, both unrounded."""
+    fit = _fit(points, today)
+    if fit is None:
+        return None
+    x0, slope, intercept, _ = fit
+    return intercept + slope * (today - x0).days, slope
 
 
 def projected_date(slope_per_day: float, intercept: float, x0: date, target: float, today: date,

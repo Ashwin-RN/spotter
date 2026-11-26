@@ -2170,3 +2170,21 @@ The Quantity column names the quantity kind `show` takes (section C). "Words" me
 | Your pages (line 1838) | Today, Progress, Goals, Foods, Routines and Settings. Routines reads "Your saved routines." and is always drawn |
 | The chart data | `lift_chart` no longer gives `choices`, and `bodyweight_chart` no longer gives `average`: no page read either. Where this contract names `average` beside the points (lines 341 and 711), only the points are left |
 | Progress Cardio rows (line 2154) | Each row of `activities` also carries `fastest_min_per_km`: the fastest pace as a number, minutes a km, or null (the logic audit's ruling R3) |
+
+## Note, 2026-11-26: single rep and two page lines (`docs/contracts/single-rep-and-pages.md`)
+
+Line 1386. The Weight sheet on Today and Progress says "The {basis} is {now} {unit}.
+{n} weigh-ins in the last 28 days." At 1 it says "1 weigh-in in the last 28 days."
+At 0 it says "No weigh-ins in the last 28 days."
+
+Lines 473 to 497. `goal_charts` adds `fit` with the unrounded value at `today`
+and the slope `per_day`, or null when there is no fit. This is chart-only data.
+
+Lines 1305 to 1317. The Goals projection starts at the fitted value at today.
+The ring still marks `latest`. The line ends at the fit on the projected date, or on the
+target date when there is a projected value and no projected date. To get the cap, add half
+the span from the 1st plotted date to the target date on top of the target date. If that day
+is before tomorrow, use tomorrow.
+The grid keeps its ticks. Its edges cut the projection along its slope, and the dot marks
+the end of the visible line. A passed target date, an end day of today, a missing fit,
+or no visible part of the fit leaves no projection line. The description keeps the real figures.

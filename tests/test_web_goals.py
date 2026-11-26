@@ -24,7 +24,7 @@ from .test_web import (  # noqa: F401 - fixtures
 
 def numbers(goal_id: int, **values) -> dict:
     """One goal-numbers row, the contract's shape, as goal_charts gives it: with the plan line's five fields, path,
-    now_basis and line_ended. get_goals' rows are the same less the last three (fake_goals leaves them in)."""
+    now_basis, line_ended and fit."""
     base = {"goal_id": goal_id, "label": "Back Squat 100 kg", "kind": "lift", "exercise": "Back Squat",
             "measurement_kind": None, "distance_km": None, "unit": "kg", "start_value": 80.0,
             "start_date": "2026-11-01", "direction": "up", "target_value": 100.0, "target_date": "2027-02-02",
@@ -32,18 +32,20 @@ def numbers(goal_id: int, **values) -> dict:
             "projected_date": "2027-01-04", "projection": None, "note": None,
             "should_be_today": 82.0, "ahead_by": 3.0, "days_ahead": 14, "vs_plan": "ahead",
             "plan_line": "85 kg now against 82 kg on the plan line today: 3 kg ahead.",
-            "path": {"plan": [], "actual": []}, "now_basis": "best_28d", "line_ended": False}
+            "path": {"plan": [], "actual": []}, "now_basis": "best_28d", "line_ended": False,
+            "fit": {"today": 84.5, "per_day": 15.5 / 55}}
     return {**base, **values}
 
 
 NOTHING_LOGGED = {"latest": None, "ahead_by": None, "days_ahead": None, "vs_plan": None, "plan_line": None,
-                  "now_basis": None}
+                  "now_basis": None, "fit": None}
 FOUR = [
     numbers(1),
     numbers(2, label="Body weight 75 kg", kind="bodyweight", exercise=None, start_value=80.4, latest=79.6,
             direction="down", target_value=75.0, needed_per_week=-0.42, actual_per_week=-0.3, status="behind",
             projected_date=None, should_be_today=79.0, ahead_by=-0.6, days_ahead=-5, vs_plan="behind",
-            plan_line="79.6 kg now against 79 kg on the plan line today: 0.6 kg behind.", now_basis="average_7d"),
+            plan_line="79.6 kg now against 79 kg on the plan line today: 0.6 kg behind.", now_basis="average_7d",
+            fit={"today": 79.5, "per_day": -0.3 / 7}),
     numbers(3, label="Waist 80 cm", kind="measurement", exercise=None, measurement_kind="waist", unit="cm",
             start_value=88.0, direction="down", target_value=80.0, needed_per_week=None,
             actual_per_week=None, status="not enough data", projected_date=None, should_be_today=87.2,
@@ -52,7 +54,7 @@ FOUR = [
             unit="min", start_value=31.0, latest=29.5, direction="down", target_value=27.0, needed_per_week=-0.5,
             actual_per_week=-0.75, status="reached", projected_date="2026-12-01", should_be_today=30.2,
             ahead_by=0.7, days_ahead=9, plan_line="29:30 now against 30:12 on the plan line today: 42 seconds ahead.",
-            now_basis="latest"),
+            now_basis="latest", fit={"today": 29.25, "per_day": -2.25 / 21}),
 ]
 CLOSED = [{"goal_id": 9, "label": "Bench Press 80 kg", "kind": "lift", "status": "hit",
            "closed_at": "2026-11-05T10:00:00+00:00", "target_value": 80.0, "target_date": "2026-12-01"},
@@ -61,13 +63,13 @@ CLOSED = [{"goal_id": 9, "label": "Bench Press 80 kg", "kind": "lift", "status":
 
 
 def goals_result(goals=(), closed=()) -> dict:
-    return {"today": "2026-11-10", "goals": list(goals), "closed": list(closed),
+    return {"today": "2026-11-10", "goals": [{k: v for k, v in g.items() if k != "fit"} for g in goals],
+            "closed": list(closed),
             "how": "", "summary": "", "links": {"goals": SITE + "/goals"}}
 
 
 def charts_result(goals=(), closed=()) -> dict:
-    """goal_charts' shape: the open goals with their plan line, path, now_basis and line_ended, and the closed goals
-    (hardening D6: the Goals page's one read)."""
+    """The open goals with plan line, path, now_basis, line_ended and fit. The closed goals come in the same read."""
     return {"today": "2026-11-10", "goals": list(goals), "closed": list(closed)}
 
 
@@ -1951,12 +1953,10 @@ def chart_marks(svg: str) -> dict:
             "series": [p.attrs["points"].split() for p in root.find_all("polyline", "series")]}
 
 
-def legend_of(g: dict) -> list[tuple]:
+def legend_of(g: dict, projected: bool) -> list[tuple]:
     """The legend a goal's chart calls for, from the read: the plan line and today always; Actual as a line from two
     points, a ringed dot from one; the projection when the chart has one to draw (contract, the goal path chart)."""
     actual = g["path"]["actual"]
-    projected = g["latest"] is not None and bool(g["projected_date"]
-                                                 or (g["projection"] or {}).get("projected") is not None)
     if len(actual) > 1:
         line = [LEGEND["line"]]
     else:
@@ -1968,7 +1968,7 @@ def legend_of(g: dict) -> list[tuple]:
 def test_each_goal_chart_is_its_read_drawn_on_the_pages_today(signed, monkeypatch, state):
     """Each real goal on the fixed day: the chart is charts.goal_svg of goal_charts' own goal on goal_charts' today.
     Its dots are the read's path.actual, the ring at today holds latest, the plan line ends at the target tick, the
-    projection runs from the ring to its end dot, the desc says plan_line word for word and its other figures
+    projection follows the fit to its end dot, the desc says plan_line word for word and its other figures
     unwidened, and the legend names what the chart draws."""
     uid = goals_page_state(state, monkeypatch)
     charted = services.goal_charts(uid)
@@ -1993,14 +1993,16 @@ def test_each_goal_chart_is_its_read_drawn_on_the_pages_today(signed, monkeypatc
         assert (plan_x2, plan_y2) == (tick_x2, tick_y)
         [(today_x, _, _, _)] = drawn["today-line"]
         if drawn["rings"]:
-            [((ring_x, ring_y), _)] = drawn["rings"]
+            [((ring_x, _), _)] = drawn["rings"]
             assert ring_x == today_x
+        if g["target_date"] < today or g["projected_date"] == today:
+            assert not drawn["projection"]
         if drawn["projection"]:
-            [(x1, y1, x2, y2)] = drawn["projection"]
-            assert (x1, y1) == (ring_x, ring_y) and drawn["ends"] == [(x2, y2)]
+            [(x1, _, x2, y2)] = drawn["projection"]
+            assert g["fit"] is not None and today_x <= x1 < x2 and drawn["ends"] == [(x2, y2)]
         else:
             assert drawn["ends"] == []
-        assert goal_card(page, g["goal_id"])["legend"] == [legend_of(g)]
+        assert goal_card(page, g["goal_id"])["legend"] == [legend_of(g, bool(drawn["projection"]))]
 
 
 def test_the_four_week_charts_on_the_fixed_day(signed, monkeypatch):
@@ -2012,7 +2014,11 @@ def test_the_four_week_charts_on_the_fixed_day(signed, monkeypatch):
         drawn = chart_marks(svg_of(page, goal_id))
         assert len(drawn["series"]) == len(drawn["rings"]) == len(drawn["projection"]) == 1, goal_id
         assert goal_card(page, goal_id)["legend"] == [[LEGEND[k] for k in ("plan", "line", "projection", "today")]]
-    assert chart_marks(svg_of(page, 1))["desc"] == (
+    weight = chart_marks(svg_of(page, 1))
+    [(x1, y1, _, _)] = weight["projection"]
+    [((ring_x, ring_y), _)] = weight["rings"]
+    assert x1 == ring_x and y1 != ring_y
+    assert weight["desc"] == (
         "Started 79.9 kg on Wed 14 Oct. 79.01 kg now against 78.96 kg on the plan line today: 0.05 kg behind. "
         "Target 77 kg by Tue 5 Jan 2027. Needed -0.25 kg a week. So far -0.29 kg a week. "
         "At this pace it is reached on Sat 26 Dec.")
@@ -2048,8 +2054,9 @@ def test_a_chart_draws_no_projection_without_one_and_one_to_the_date_without_a_p
     """No projection and no projected date: no projection line, and the legend has no Projection. A projection
     without a projected date runs to the target date at the projected value (the contract's goal path rules), so
     the legend names it."""
-    fake_goals([numbers(1, path=PATH, projected_date=None, projection=None, status="behind"),
-                numbers(2, path=PATH, projected_date=None, projection={"projected": 95.0}, status="behind")])
+    fake_goals([numbers(1, path=PATH, projected_date=None, projection=None, status="behind", fit=None),
+                numbers(2, path=PATH, projected_date=None, projection={"projected": 95.0}, status="behind",
+                        fit={"today": 84.5, "per_day": 0.125})])
     page = signed.get("/goals").text
     none, to_date = chart_marks(svg_of(page, 1)), chart_marks(svg_of(page, 2))
     assert none["projection"] == none["ends"] == [] and len(to_date["projection"]) == 1
@@ -2065,7 +2072,8 @@ def test_a_chart_draws_no_projection_without_one_and_one_to_the_date_without_a_p
 def test_a_projected_date_far_past_the_target_is_held_on_the_chart_and_said_in_full(signed, fake_goals):
     """A projected date years past the target: the chart holds the line at half the plan's length past the target,
     inside the drawing, and the desc and At this pace keep the real day."""
-    goal = numbers(1, path=PATH, projected_date="2029-06-01", status="behind")
+    goal = numbers(1, path=PATH, projected_date="2029-06-01", status="behind",
+                   fit={"today": 84.5, "per_day": 0.05})
     fake_goals([goal])
     page = signed.get("/goals").text
     assert svg_of(page, 1) == str(charts.goal_svg(goal, "2026-11-10"))

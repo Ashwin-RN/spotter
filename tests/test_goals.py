@@ -1,7 +1,7 @@
 """set_goal: what a new goal stores, how it is edited and closed, and where it stands."""
 
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import event
@@ -332,6 +332,17 @@ def test_a_lift_goal_reached_on_the_28_day_best_after_a_light_session(user):
     assert one["current_estimated_max_kg"] == numbers["latest"]
     row = services.get_progress(user.id)["lifts"][0]
     assert row["current_estimated_max_kg"] == numbers["latest"] and row["goal_status"] == "reached"
+
+
+def test_a_single_below_the_target_leaves_the_goal_short(user, monkeypatch):
+    monkeypatch.setattr(users, "today_for", lambda _: date(2026, 11, 26))
+    result = goal(user, kind="lift", exercise="Back Squat", start_value=90,
+                  target_value=102, target_date=day(user, 30))
+    assert result["goal"]["start_value"] == 90
+    squat(user, 0, 100, reps=1)
+    numbers = services.get_goals(user.id)["goals"][0]
+    assert numbers["latest"] == 100
+    assert numbers["status"] == "not enough data"
 
 
 def test_a_bodyweight_goal_reads_the_7_day_average_not_one_low_weigh_in(user):
@@ -965,7 +976,8 @@ def test_the_series_is_built_only_for_goal_charts(user, monkeypatch):
     assert len(services.goal_charts(user.id)["goals"]) == 2 and len(calls) == 2
 
 
-def test_goal_charts_is_get_goals_unrounded_with_path_and_now_basis(user):
+def test_goal_charts_is_get_goals_unrounded_with_path_and_fit(user, monkeypatch):
+    monkeypatch.setattr(users, "today_for", lambda _: date(2026, 11, 26))
     for days_ago, kg in ((20, 60), (15, 62.5), (10, 65), (5, 67.5)):
         squat(user, days_ago, kg)
     weigh(user, 3, 81.08)
@@ -980,7 +992,7 @@ def test_goal_charts_is_get_goals_unrounded_with_path_and_now_basis(user):
     listed = services.get_goals(user.id)
     assert set(charts) == {"today", "goals", "closed"} and charts["today"] == listed["today"]
     assert charts["closed"] == services.get_goals(user.id, True)["closed"]  # the Goals page's one read (hardening D6)
-    web_only = ("path", "now_basis", "line_ended")
+    web_only = ("path", "now_basis", "line_ended", "fit")
     bare = [{k: v for k, v in n.items() if k not in web_only} for n in charts["goals"]]
     assert goal_service.rounded_numbers(bare) == listed["goals"]
     assert all(set(n) == SHAPE | set(web_only) for n in charts["goals"])
@@ -988,6 +1000,8 @@ def test_goal_charts_is_get_goals_unrounded_with_path_and_now_basis(user):
     assert [n["line_ended"] for n in charts["goals"]] == [False] * 4
     assert [n["now_basis"] for n in charts["goals"]] == ["best_28d", "average_7d", "latest", "best_28d"]
     lift = charts["goals"][0]
+    assert lift["fit"] == pytest.approx({"today": 81.665, "per_day": 0.5832})
+    assert [n["fit"] for n in charts["goals"][1:]] == [None] * 3
     assert lift["path"]["plan"] == [{"date": day(user, 0), "value": 78.75}, {"date": day(user, 60), "value": 100.0}]
     assert services.goal_charts(987654)["error"] == "no_account"
 
