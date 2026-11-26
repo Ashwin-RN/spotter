@@ -1760,3 +1760,57 @@ its contract carries a dated note. The dumbbell stays as `icons/training.svg`.
 | `tests/test_page_rules.py`, `tests/test_pages_text.py` | Plain and with `-W error`, green |
 | The docs tests | Green |
 | `python -m evals.need main` | No run owed: no model-read text changed |
+
+## The logic audit: one home for each rule, and the write paths agree
+
+The owner's ask of 2026-11-24: a review of the logic from the top down, then a build of what it found. The contract
+is `docs/contracts/logic-audit.md`, with its build notes. One commit, `de182c3`, on `4e9c4fb`.
+
+### What changed
+
+| Package | What |
+|---|---|
+| A | Service code nothing read is gone: three functions of `app/metrics.py`, `last_top`, `latest_tops`, `user_exists` and a few names with no reader. `owner_calls`' notes say what the email mode does |
+| B | Log, edit and import key and check an entry alike where they differed: the cardio key after an edit, a portion of invisible characters. `tests/test_paths_agree.py` sends one entry down each path. `get_data`'s day takes its weigh-in by the one order |
+| B, the two saves that lost a value | A kcal sent at the number held keeps a saved or USDA entry's link, servings and grams. A saved food saved again with its grams left out keeps them |
+| C | The pages ask the services: a goal's quantity, the weight's basis words, the fastest pace per mile, the body weight chart's reads. With two open body weight goals the chart draws the one set first. Four page lines say what is built |
+| D1, D2 | The README and `docs/evals.md`; one dated note at the foot of 17 older contracts |
+
+No migration, no new package, no description, schema, instruction or line of `docs/can-and-cant.md` touched.
+
+### Left as it was
+
+- The `too_many_writes` branch of `claude_can_page` stays: a test pins it. It cannot run today.
+- `log`'s inner shapes and gates G2 to G5 of the function list: held, by the contract's decision 1.
+- "On the plan line" stays judged in kg, by decision 4.
+
+### Review
+
+One review on a frozen copy of the joined tree: no must fix, no should fix, 3 minor, 1 question. One fix round of
+five word edits. Then two more reads of the whole change before the commit, one of the code against the contract
+and one of every new doc line against the code: no fault in the code, one contract line corrected
+(`docs/contracts/units.md`), and eight lines of the contract set right in its build notes.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| Each package's test files, after its last edit | Plain and with `-W error`, green |
+| The docs tests after the last doc edit | 1,129 passed |
+| `python -m evals.need main` | "evals needed: no": no eval run owed |
+| The whole suite on a clean export of `de182c3` | 7,977 passed |
+
+### Known limits
+
+In the contract's table and build notes. The ones a person can meet:
+
+- An assistant cannot clear a saved food's grams on purpose. The Foods page can.
+- A log takes a null beside a value in a pair, such as kg 81 with lb null. An edit refuses the pair.
+- A cardio session logged with a stated speed that equals distance over minutes, then edited, is keyed without the
+  speed: one duplicate can be missed.
+
+### Not checked
+
+- The order of two open body weight goals on Postgres. The query asks for it by id; no SQLite test can see it.
+- Any page in a real browser.
+- `README.md`'s line that every write locks the person's row first is wider than the code: the owner's feedback delete takes no row lock. Both late reads named it. Left as a wording point.
