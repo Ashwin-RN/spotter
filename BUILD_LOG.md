@@ -1876,3 +1876,11 @@ No page, template, function description, server instructions or `docs/can-and-ca
 | The three touched test files with `-W error` | 564 passed |
 | Each new behaviour broken once | No root route: 7 red. No static headers: 3 red. No icons or website: 4 red. The icons swapped: 4 red. A fixed website: 1 red |
 | `python -m evals.need main` | Yes: `result text app/mcp_server.py`. The one new string literal of 20 or more characters in that file is `/static/apple-touch-icon.png`, and the check counts such literals as result text. The surface it compares takes `instructions` from `initialize`, not `serverInfo` |
+
+### At the release, 26 November 2026
+
+| Check | Result |
+|---|---|
+| The branch | Rebased onto `main` at `89c4459`. One conflict, in this file: both sides had added an entry, and both are kept |
+| The whole suite on a clean export of the rebased commit | 8,002 passed |
+| The eval run `evals.need` asked for | Six core cases, one run each, on `gpt-6-luna` through Codex: `connected_identity`, `how_am_i_doing`, `gold_weigh_morning`, `gold_squat_month`, `food_lookup`, `exercise_list`. 6 of 6 passed, and all six handshakes carried the server's instructions. The owner chose the small set: the change adds no text an assistant reads beyond one icon address |
