@@ -1814,3 +1814,43 @@ In the contract's table and build notes. The ones a person can meet:
 - The order of two open body weight goals on Postgres. The query asks for it by id; no SQLite test can see it.
 - Any page in a real browser.
 - `README.md`'s line that every write locks the person's row first is wider than the code: the owner's feedback delete takes no row lock. Both late reads named it. Left as a wording point.
+
+## Single rep and two page lines
+
+From the logic audit's second pass, 2026-11-26: every read run over a seeded account, each number set beside a
+known method, the answers read as a person would. The owner's yes the same day. The contract is
+`docs/contracts/single-rep-and-pages.md`, with its build notes. One commit, `57b7113`, on `e23f05c`.
+
+### What changed
+
+| Package | What |
+|---|---|
+| P1 | A set of 1 rep counts as its own weight: 100 kg for 1 rep is 100, not 103.3. 2 to 10 reps go by Epley as before. Every estimated max is worked out on each read, so the figures correct themselves with no migration |
+| P2 | Today and Progress: "The 7-day average is 80.9 kg. 28 weigh-ins in the last 28 days." The old sentence read as an average of 28 weigh-ins |
+| P3 | The Goals chart draws its projection along the fitted line, from its value today, cut at the grid's edge with the slope kept. A goal whose date has passed draws none. `goal_charts` carries the fit; no other answer gains a key |
+| D | A dated note on three older contracts |
+
+No description, schema, instruction or line of `docs/can-and-cant.md` touched. No migration, no new package.
+
+### Review
+
+Built by one builder. One review on a frozen copy, by another model, with probes: no must fix; one should fix (a
+projection hidden outside the grid still stretched the chart's dates), fixed with a test; two minor, one fixed and
+one written into the contract's notes. The page sentence first written for P1 was 28 words against the page rule's
+25, and became two sentences.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| The touched test files, after the last edit | Green |
+| `python -m evals.need main` | "evals needed: no" |
+| The whole suite on a clean export of `57b7113` | 7,994 passed |
+| Today, Progress, Goals and the first-day page in Chrome, from a local render | The weight sentence reads as two sentences. On each goal card the dotted line agrees with the pace the card states. The Bests line reads right. Nothing overflows at 390 px, in a narrow frame, not on a phone |
+
+### Known limits
+
+- Four sentences an assistant reads still say the estimate is Epley from sets of 1 to 10 reps. They wait with the
+  other wording.
+- A lift goal set earlier from a single keeps the start figure it was given.
+- The lift page's own chart draws its projection from its own points and was not changed.
