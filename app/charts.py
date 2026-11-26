@@ -1,4 +1,5 @@
-"""Inline SVG charts for the web pages. Pure functions: a service's figures in, markup out.
+"""Inline SVG charts for the web pages. Pure functions: a service's figures in, markup out, and a goal's quantity
+asked of the service that sets it (goals.goal_quantity).
 
   chart_svg(chart)                    a lift's estimated max over time, its goal line and projection
   bodyweight_svg(chart)               Progress: weigh-ins, the smoothed trend, the goal line
@@ -39,6 +40,7 @@ from datetime import date, timedelta
 from markupsafe import Markup, escape
 
 from app import formatting
+from app.services import goals
 
 SVG_NS = "http://www.w3.org/2000/svg"
 
@@ -54,10 +56,6 @@ WIDE = frozenset("MWmw")
 BOLDER = 1.06
 ROOM = 4  # headroom beyond a label's estimated width
 GAP = 6   # between a label and what it labels, and between two labels
-
-# The quantity each goal unit is shown at (section C).
-GOAL_QUANTITY = {"bodyweight": "bodyweight_derived", "lift": "estimated_max"}
-UNIT_QUANTITY = {"cm": "cm", "bpm": "bpm", "min": "goal_time"}
 
 # Scale steps a grid may use, in each quantity's stored unit, finest first. None finer than the
 # quantity's shown step; a time in whole seconds. Past the end of a list, the steps go on growing.
@@ -562,13 +560,14 @@ GOAL_TOP, GOAL_BOTTOM = 36, 168
 
 
 def goal_quantity(goal: dict) -> str:
-    """The quantity a goal's figures are shown at: its unit's (section C)."""
-    return GOAL_QUANTITY.get(goal.get("kind")) or UNIT_QUANTITY.get(goal.get("unit")) or "bodyweight_derived"
+    """The quantity a goal's figures are shown at (section C): the service's own, goals.goal_quantity of the goal's
+    kind and unit. One the service does not know raises, as get_goals does."""
+    return goals.goal_quantity(goal.get("kind"), goal.get("unit"))
 
 
 def _weighed(goal: dict) -> bool:
     """A goal of a weight: a lift or body weight goal, shown in the person's weight unit (its stored unit is kg)."""
-    return goal.get("kind") in GOAL_QUANTITY
+    return goal.get("kind") in goals.ROUNDED
 
 
 def _goal_unit(goal: dict, units=None) -> str | None:

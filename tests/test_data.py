@@ -475,6 +475,17 @@ def test_an_entry_dated_after_today_counts_as_today_s(person):
     assert data(person, area="food")["rows"][0][0] == (TODAY + timedelta(days=1)).isoformat()  # its own date shown
 
 
+def test_the_day_s_weigh_in_is_the_last_in_the_one_order_as_get_trends_says(person):
+    """logic-audit.md, decision 5. A weigh-in dated after today (as after a change of time zone), with the lower id,
+    and one dated today, with the higher: both are today's, and the one order (effective date, then id) puts today's
+    last. get_data's day and get_trends' series end give the same weight."""
+    weigh(person, TODAY + timedelta(days=1), 81)
+    weigh(person, TODAY, 80)
+    days = table(data(person, area="days", from_date=TODAY.isoformat()))
+    assert [(r["date"], r["weight_kg"]) for r in days] == [(TODAY.isoformat(), 80)]
+    assert services.get_trends(person)["bodyweight"]["series"][-1]["kg"] == 80
+
+
 # ---------------------------------------------------------------- deleted entries and never logged
 
 def test_deleted_entries_are_left_out_of_every_row_total_count_filled_and_entries(person):

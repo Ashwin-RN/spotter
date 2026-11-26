@@ -59,11 +59,12 @@ steps (LOG_STEPS), argument models, result models and words stay, since log runs
 names stay in common.WRITE_FUNCTIONS for the web's own rows. A log call first meets misfit on log's own schema, like
 any call; then log_shape.route, on the arguments as sent,
 gives the kind's function and its arguments in that function's own shape; then Wrapper.call("log", ...), so the
-account, the row, the switch, the write limit and the key come first. Inside the work, kind= and word= are noted, the
-kind's argument model checks the routed arguments (misfit_model) and the kind's own step (LOG_STEPS) runs its
-service. Every refusal names log and each field as sent (log_shape.said_as_sent). log publishes no output schema:
-each answer is still held to its kind's result model here. guide's answer is held to GuideResult, and its row notes
-topic=.
+account, the row, the switch and the key come first. The wrapper runs no write limit: each kind's service runs its
+own, so a log call that the routing or the kind's argument model refuses never meets it. Inside the work, kind= and
+word= are noted, the kind's argument model checks the routed arguments (misfit_model) and the kind's own step
+(LOG_STEPS) runs its service. Every refusal names log and each field as sent (log_shape.said_as_sent). log
+publishes no output schema: each answer is still held to its kind's result model here. guide's answer is held to
+GuideResult, and its row notes topic=.
 """
 
 import difflib
@@ -431,7 +432,6 @@ TYPE_AS = {"number": "a number", "integer": "a whole number", "boolean": "true o
            "array": "a list", "object": "an object of named fields"}
 RANGE_ERRORS = ("greater_than_equal", "less_than_equal", "greater_than", "less_than")
 LENGTH_ERRORS = ("too_short", "too_long")
-_MISSING = object()
 
 
 def _node(schema: dict, node: dict | None) -> dict | None:

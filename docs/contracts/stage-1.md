@@ -102,3 +102,7 @@ Written into `BUILD_LOG.md` when known.
 - Which claims name the person, and what is in `scope`?
 - Does Claude register through its Client ID Metadata Document, on the web and in Claude Code?
 - Does a sign-in from the web and one from Claude Code give the same `user_id`?
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+"Rules for the build" says no scopes are required in this stage. The server as built requires one scope, `openid` (`REQUIRED_SCOPES` in `app/mcp_server.py`): a token without it gets 403 `insufficient_scope`.

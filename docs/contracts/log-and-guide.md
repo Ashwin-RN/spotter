@@ -662,3 +662,8 @@ Built on `81da59f`, after C3 and C5c. The owner's go: 2026-11-23. The call log r
 Found and left, not changed here: an empty `parts` list is taken on kinds bodyweight, measurement and food (`app/log_shape.py`, since deploy 1); a measurement kind holding a control character comes back with it in the refusal; `tests/test_macros.py` leaves call-log notes that fail one test of `tests/test_hand_check.py` when the two run in the other order.
 
 The eval: `python -m evals.need main` says yes for `spotter://can-and-cant` alone. A run cannot read a resource, so no case measures the line that went. Six logging cases, one or two a kind, ran 3 times each on both gate models as a check of the runner and the judge on a tree without the five: `BUILD_LOG.md`.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+- A `log` row's `word=` (line 221) keeps Spotter's open words and its measure words (`log_shape.KIND_WORDS`), folded, with `_` between words. Any other word is `other`. The free text sent is still never written.
+- Step 3 of a `log` call (line 191): the wrapper runs no write limit. Each kind's service runs its own, so a `log` call that the routing or the kind's argument model refuses never meets it. The account, the row, the switch and the key still come first. The module notes of `app/mcp_server.py` say so.

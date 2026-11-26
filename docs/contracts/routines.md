@@ -301,3 +301,8 @@ A plain word is refused in `save_routine` with its lifts; a lift's own name is t
 ## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
 
 `get_routines`' description names `log`: "To log one, send its sets with log, kind lifts, one part a set, the lift as movement, with exact true, with each change the person names, and leave the date out for today." `save_routine`'s refusal of a lift that records no reps, such as a hold or a carry, has the fix "Log its sets instead.", where it named `log_lifts`.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+- Decision 9 (line 70), R8 (line 99) and R9 (line 100): `last_top` is gone from `lifts.history`, by the logic audit's ruling R1. `get_routines` reads `routines.latest_sessions`, the one read of each lift's latest session. The test oracle in `tests/test_hardening.py` is unchanged: it builds the figure itself and still checks that read.
+- Settings, "Read and log" (line 172), as built: "Everything above except deleting. A second weigh-in or measurement on a day still replaces the first, which is kept."

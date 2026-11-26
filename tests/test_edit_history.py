@@ -85,7 +85,8 @@ EDITS = {
 def edit(kind: str, uid: int, entry_id: int, by: str = "claude") -> dict:
     """An edit that changes the entry: every field the kind lets an edit change, or most of them."""
     if kind == "saved_food":  # the same name in another case, another serving and kcal, the grams cleared
-        return services.save_food(uid, {"name": "roti", "serving_label": "2 rotis", "kcal_per_serving": 250}, by)
+        return services.save_food(uid, {"name": "roti", "serving_label": "2 rotis", "kcal_per_serving": 250,
+                                        "grams_per_serving": None}, by)
     return services.edit_entry(uid, kind, entry_id, EDITS[kind](), by)
 
 
@@ -1173,6 +1174,15 @@ def test_undo_from_a_page_for_an_entry_with_nothing_kept_says_so_on_its_own_page
         findings = error_page_findings(Rendered(address, r, True, user_id=uid))
         assert not findings, "\n".join(findings)
     assert post(client, f"/entries/bodyweight/{10 ** 9}/restore", undo_edit="1").status_code == 404
+
+
+def test_the_foods_page_saved_over_a_name_with_the_grams_field_empty_clears_the_grams(client):
+    """save_food keeps grams left out, so the page sends an empty field as "" (web.food_form)."""
+    uid = web_person(client)
+    roti = make("saved_food", uid)
+    saved = post(client, "/foods", name="Roti", serving_label="1 roti", kcal_per_serving="120", grams_per_serving="")
+    assert saved.status_code == 303 and saved.headers["location"] == SITE + f"/foods?saved=saved_food:{roti}#top"
+    assert stored("saved_food", roti)["grams_per_serving"] is None
 
 
 def test_after_a_food_s_edit_foods_offers_undo_and_after_the_undo_a_plain_line(client):

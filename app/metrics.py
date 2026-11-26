@@ -26,11 +26,6 @@ Cardio
   pace(distance_km, minutes) -> str | None         minutes per km as "m:ss"
   speed(distance_km, minutes) -> float | None      km/h, 2 dp
 
-Training days
-  days_since_last(session_dates, today) -> int | None
-  sessions_vs_target(session_dates, per_week, since, today) -> {"logged", "target", "pct", "weeks"} | None
-  weekly_sessions(session_dates, since, today, weeks=8) -> [{"start", "end", "logged"}], oldest first
-
 Trends
   projection(points: [(date, value)], today, goal_target=None, goal_date=None, lower_is_better=False,
              current=None)
@@ -77,10 +72,8 @@ EPLEY_MAX_REPS = 10
 RECENT_BEST_DAYS = 28
 PROJECTION_DAYS = 42
 PROJECTION_MIN_POINTS = 4
-TARGET_MAX_WEEKS = 4
 BODYWEIGHT_AVG_DAYS = 7
 BODYWEIGHT_COMPARE_DAYS = 28
-WEEKLY_CHART_WEEKS = 8
 EWMA_ALPHA = 0.1
 RATE_LATEST_DAYS = 7            # the rate's latest weigh-in: dated in the 7 days ending today
 RATE_REFERENCE_DAYS = (14, 42)  # its reference: the last weigh-in dated 14 to 42 days before today
@@ -290,61 +283,6 @@ def speed(distance_km: float | None, minutes: float) -> float | None:
     if not distance_km or not minutes:
         return None
     return round(distance_km / (minutes / 60), 2)
-
-
-# ---------------------------------------------------------------- training days
-
-def _ages(dates: list[date], today: date) -> list[date]:
-    """The dates, each as on_or_before(today) sees it. Nothing is dropped."""
-    return [on_or_before(d, today) for d in dates if d is not None]
-
-
-def days_since_last(session_dates: list[date], today: date) -> int | None:
-    """Days from the latest session to today. 0 = trained today (or on a date after it). None if none."""
-    past = _ages(session_dates, today)
-    return (today - max(past)).days if past else None
-
-
-def sessions_vs_target(session_dates: list[date], per_week: int | None, since: date | None,
-                       today: date) -> dict | None:
-    """Sessions logged against a weekly target, over the last 4 whole weeks at most.
-
-    weeks  = whole weeks since `since` (when the target started counting), capped at 4.
-    target = per_week x weeks.
-    logged = sessions dated in the same window: the last (weeks x 7) days ending today, and not
-             before `since`. Both numbers cover the same days, so two weeks in is never judged on four.
-    pct    = round(100 x logged / target); not capped, so it can exceed 100.
-    None without a target, without `since`, or before one whole week has passed.
-    """
-    if since is None or not per_week or per_week <= 0:
-        return None
-    weeks = min(TARGET_MAX_WEEKS, max(0, (today - since).days // 7))
-    target = per_week * weeks
-    if target == 0:
-        return None
-    start = max(today - timedelta(days=7 * weeks - 1), since)
-    logged = sum(1 for d in _ages(session_dates, today) if d >= start)
-    return {"logged": logged, "target": target, "pct": round(100 * logged / target), "weeks": weeks}
-
-
-def weekly_sessions(session_dates: list[date], since: date | None, today: date,
-                    weeks: int = WEEKLY_CHART_WEEKS) -> list[dict]:
-    """Sessions logged per week, oldest week first, for a weekly chart.
-
-    Weeks are whole 7-day windows ending today (the windows sessions_vs_target uses), only those
-    wholly on or after `since`, at most `weeks` of them. Each: {"start": date, "end": date, "logged": int}.
-    [] without `since`, or before one whole week has passed.
-    """
-    if since is None:
-        return []
-    count = min(weeks, max(0, (today - since).days // 7))
-    past = _ages(session_dates, today)
-    out = []
-    for n in range(count - 1, -1, -1):
-        end = today - timedelta(days=7 * n)
-        start = end - timedelta(days=6)
-        out.append({"start": start, "end": end, "logged": sum(1 for d in past if start <= d <= end)})
-    return out
 
 
 # ---------------------------------------------------------------- trends

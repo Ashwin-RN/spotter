@@ -40,7 +40,8 @@ get_cardio(user_id, exercise=None)
     A read, for the web only. With an activity: its sessions (newest first, each with its pace as m:ss and
     as minutes per km), its bests (the fastest pace, the longest distance, the best time at 1, 5 and 10 km,
     each when reached) and this week's minutes. Without: one row per activity with a live session ever,
-    by name: sessions and minutes in the last 28 days, the fastest pace ever and the last day.
+    by name: sessions and minutes in the last 28 days, the fastest pace ever (as m:ss and as minutes per km)
+    and the last day.
     A session with no distance has no pace and is in no best. A tie goes to the earlier session in the
     one order. A lift's name, or a name not on the list, is unknown_exercise with the cardio names.
     Paces are compared exactly, as fractions of the minutes and the distance entered (exact_pace), so
@@ -61,7 +62,7 @@ from sqlalchemy.orm import selectinload
 from app import db, formatting, links, metrics, rules, users
 from app.exercises import COMPENDIUM
 from app.models import CardioEntry, User
-from app.services import body
+from app.services import body, trends
 from app.services.common import (
     check_by, check_data, check_write_limit, dedupe_key, duplicate_note, exercises, find_duplicate,
     lock_user, no_account, row_dict, sent, truthy, with_units_note,
@@ -359,7 +360,7 @@ def log_cardio(user_id: int, data: dict | None, by: str) -> dict:
 
 # ---------------------------------------------------------------- reading an activity back
 
-WINDOW_DAYS = 28
+WINDOW_DAYS = trends.WINDOW_DAYS  # the last 28 days, the one window get_trends and Progress' chart read
 BEST_DISTANCES_KM = (1.0, 5.0, 10.0)  # the best times get_cardio gives, each when reached
 
 
@@ -434,7 +435,8 @@ def _with_note(out: dict, note: str | None) -> dict:
 
 
 def _activities(s, user, today: date) -> dict:
-    """Every activity with a live session ever, by name."""
+    """Every activity with a live session ever, by name. fastest_pace is the fastest pace's m:ss a km and
+    fastest_min_per_km its number, minutes a km unrounded, for a page that shows it per mile."""
     rows = sorted(s.scalars(select(CardioEntry).where(CardioEntry.user_id == user.id,
                                                        CardioEntry.deleted_at.is_(None))
                             .options(selectinload(CardioEntry.exercise))),
@@ -451,6 +453,7 @@ def _activities(s, user, today: date) -> dict:
         activities.append({"exercise": name, "sessions_28d": len(recent),
                            "minutes_28d": round(sum((c.minutes for c in recent), 0.0), 1),
                            "fastest_pace": fastest["pace"] if fastest else None,
+                           "fastest_min_per_km": fastest["pace_min_per_km"] if fastest else None,
                            "last_date": mine[-1].date.isoformat()})
     return {"today": today.isoformat(), "activities": activities}
 
@@ -462,7 +465,8 @@ def get_cardio(user_id: int, exercise: str | None = None) -> dict:
     estimate, machine_kcal, notes}] (newest first, in the one order), bests {fastest_pace {pace,
     pace_min_per_km, date, entry_id} | null, longest {distance_km, date, entry_id} | null, times
     [{distance_km, minutes, date, entry_id}]}, week {minutes, target_minutes}[, note]}.
-    Without: {today, activities [{exercise, sessions_28d, minutes_28d, fastest_pace, last_date}]}.
+    Without: {today, activities [{exercise, sessions_28d, minutes_28d, fastest_pace, fastest_min_per_km,
+    last_date}]}.
     Or {error, message, fix}. Web only: no MCP function returns it. A read: no lock, no write limit."""
     with db.new_session() as s:
         user = s.get(User, user_id)

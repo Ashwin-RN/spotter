@@ -172,7 +172,7 @@ WORKS_PART = (
     f"{count(M.BODYWEIGHT_AVG_DAYS)} days and one from {count(M.MAINTENANCE_DAYS)} to "
     f"{count(M.MAINTENANCE_DAYS + M.BODYWEIGHT_AVG_DAYS - 1)} days ago.",
     "It is an estimate, and it never changes your target.")
-ROUTINES = "Routines. Your fixed workouts by name, each with its lifts and usual sets."
+ROUTINES = "Routines. Your fixed workouts by name, each with what you usually do in it."
 KEEPS_PART = (
     "What Spotter keeps", *KEEPS,
     "Targets. Calories, protein, carbs and fat a day, lift sessions a week and cardio minutes a week.",

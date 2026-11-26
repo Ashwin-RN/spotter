@@ -2157,3 +2157,16 @@ The Quantity column names the quantity kind `show` takes (section C). "Words" me
 | G9 | The words for a goal's now | `now_basis`: one of `average_7d`, `latest_weigh_in`, `best_28d`, `latest`, worked out by the rule `goals._source` uses | E1 `goal_charts` |
 | G10 | A closed goal's day | `formatting.day_utc(dt, zone, today)`, pure: the person's date of a UTC time, in the D12 form | `app/formatting.py` |
 | G11 | The 7-day average's window dates in the weight sheet | Cut: the remark says "Last 7 days" | Cut |
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+| Where | As built now |
+|---|---|
+| The Progress card with one weigh-in in the 28 days (line 1517) | It says the Today chart's words: "One weigh-in in the last 28 days. The chart starts from the second one." |
+| The landing's list of assistants (line 1827) | It follows the README's "Your assistant" table, as the line's own rule says. The table now holds nine, in this order: Claude apps, Claude Code, ChatGPT, Gemini app, Grok, Mistral, Perplexity, GitHub Copilot in VS Code, Cursor |
+| A goal's quantity (lines 480 to 482) | `goal_quantity(goal)` in `app/charts.py` and in `app/web.py` both give `goals.goal_quantity(kind, unit)`: their own tables are gone. A unit the service does not know raises, as `get_goals` does |
+| The weight's basis words (line 2060) | `weight_now_label` asks `goals.now_basis` over `get_trends`' series: "7-day average" when a weigh-in falls in the last 7 days, else "latest weigh-in", also when no weigh-in falls in the 28 days |
+| The Foods line (line 1730) | "Saving a name you already have updates it. A saved meal is changed through your assistant." |
+| Your pages (line 1838) | Today, Progress, Goals, Foods, Routines and Settings. Routines reads "Your saved routines." and is always drawn |
+| The chart data | `lift_chart` no longer gives `choices`, and `bodyweight_chart` no longer gives `average`: no page read either. Where this contract names `average` beside the points (lines 341 and 711), only the points are left |
+| Progress Cardio rows (line 2154) | Each row of `activities` also carries `fastest_min_per_km`: the fastest pace as a number, minutes a km, or null (the logic audit's ruling R3) |

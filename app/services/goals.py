@@ -165,11 +165,6 @@ def goal_quantity(kind: str, unit: str) -> str:
     return rules.UNIT_QUANTITIES[unit]
 
 
-def clock(minutes: float) -> str:
-    """Minutes as m:ss: 28 is "28:00", 27.5 is "27:30". formatting.clock."""
-    return formatting.clock(minutes)
-
-
 def said(value: float, unit: str, units=None) -> str:
     """A goal value in a message, as Claude sends it back: "79.01 kg", "29.5 min" (formatting.field). A kg value
     in lb units at lb's shown step: "175 lb"."""

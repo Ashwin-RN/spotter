@@ -364,11 +364,11 @@ def test_the_outdoor_run_bests_of_the_fixed_day(user):
     summary = services.get_cardio(user.id)
     assert summary == {"today": "2026-11-10", "activities": [
         {"exercise": "Outdoor Run", "sessions_28d": 4, "minutes_28d": 121.0, "fastest_pace": "5:54",
-         "last_date": "2026-11-07"},
+         "fastest_min_per_km": 29.5 / 5, "last_date": "2026-11-07"},
         {"exercise": "Stationary Bike", "sessions_28d": 4, "minutes_28d": 100.0, "fastest_pace": None,
-         "last_date": "2026-11-05"},
+         "fastest_min_per_km": None, "last_date": "2026-11-05"},
         {"exercise": "Treadmill Walk", "sessions_28d": 4, "minutes_28d": 120.0, "fastest_pace": None,
-         "last_date": "2026-11-10"}]}
+         "fastest_min_per_km": None, "last_date": "2026-11-10"}]}
 
 
 def test_the_pull_up_is_a_reps_only_lift(user):

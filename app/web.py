@@ -159,7 +159,7 @@ def field_in_context(context, value, quantity: str, *, units=None) -> str:
 # The one place numbers and dates reach a template: every figure on a page goes through these filters.
 # field gives a form input's value at the decimals the store keeps, or at the shown step in lb or mi.
 FILTERS = {"show": show_in_context, "day": formatting.day, "day_heading": formatting.day_heading,
-           "days": formatting.days, "day_utc": formatting.day_utc, "weekday": formatting.weekday,
+           "days": formatting.days, "day_utc": formatting.day_utc,
            "weekday_letter": formatting.weekday_letter, "field": field_in_context}
 
 # The person's units on a form (contract units.md R15, decision 16): a stored field a form shows in lb or mi is
@@ -340,7 +340,8 @@ FIELDS_OF = {**EDIT_FIELDS, "saved_food": FOOD_FIELDS}
 # The switch's words, the person's only (section L, Settings): its label, then what each of the two settings lets the
 # person's assistant do, in one line each, which does not repeat the label drawn right above it. The default comes
 # first (models.CLAUDE_CAN): its line says all that mcp_server.NEEDS lets it call, and the other's says what it takes
-# away, deleting: tests/test_web_account.py holds the two side by side. The stored values never change. No text a
+# away, deleting, and that a second weigh-in or measurement on a day still replaces the first, a log the switch does
+# not stop: tests/test_web_account.py holds the two side by side. The stored values never change. No text a
 # connected model reads comes from these tables.
 CLAUDE_CAN_LINES = {
     "log_delete": "Your assistant can log and import entries, edit and restore them, save foods, routines and "
@@ -348,8 +349,8 @@ CLAUDE_CAN_LINES = {
                   "saved foods, routines and programs. "
                   "Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can be "
                   "restored.",
-    "log": "Everything above except deleting: your assistant cannot delete an entry, a saved food, a routine or a "
-           "program.",
+    "log": "Everything above except deleting. A second weigh-in or measurement on a day still replaces the first, "
+           "which is kept.",
 }
 CLAUDE_CAN_LABELS = {"log_delete": "Read, log and delete", "log": "Read and log"}
 
@@ -1184,10 +1185,6 @@ def parse_day(text: str) -> date | None:
     return on if on > date.min else None
 
 
-def day_path(on: date | str) -> str:
-    return "/day/" + (on.isoformat() if isinstance(on, date) else str(on))
-
-
 # ---------------------------------------------------------------- the time-zone list
 
 @lru_cache(maxsize=1)
@@ -1709,7 +1706,7 @@ async def day_page(request: Request, form_error: dict | None = None, status_code
                 cardio_pace=cardio_pace,
                 prev_day=prev_day, next_day=next_day,
                 strip=day_strip(request.query_params), form_error=form_error or {},
-                kind_names=KIND_NAMES, meals=MEALS,
+                meals=MEALS,
                 source_words=SOURCE_WORDS, measurement_quantity=measurement_quantity,
                 food=food, cardio=cardio,
                 # The side cards: a measurement's name, the fold-outs' choices (each activity, each kind
@@ -2393,9 +2390,11 @@ MEAL_NAME_TAKEN = "That name is a saved meal. Give another name, or change the m
 
 
 def food_form(form) -> dict:
+    """The fields of a food's form as typed. An empty grams field is sent as "", so save_food clears the grams: one
+    left out would be kept."""
     data = {f: str(form.get(f) or "") for f in FOOD_FIELDS}
     if not data["grams_per_serving"].strip():
-        del data["grams_per_serving"]
+        data["grams_per_serving"] = ""
     return data
 
 
@@ -2805,28 +2804,15 @@ async def targets_page(request: Request) -> Response:
 
 # ---------------------------------------------------------------- Progress
 
-BODY_WEIGHT_DAYS = 28  # Progress' Body weight chart: the last 4 weeks
-
-
 def _trend(user_id: int, today: date | None = None) -> dict:
-    """What /progress shows beyond the reads it shares with Today: the body weight chart. bodyweight_chart takes the
-    weigh-in and goal rows themselves, so this reads them. Each lift's best set and most reps come from get_progress'
-    own history (its for_page, hardening D6), so the page works the history out once. Nothing is written, and no
-    figure is worked out here: the card's counts and callouts come from get_trends and get_days.
+    """What /progress shows beyond the reads it shares with Today: the body weight chart, progress.bodyweight_view's
+    {bodyweight: chart or None}. Each lift's best set and most reps come from get_progress' own history (its
+    for_page, hardening D6), so the page works the history out once. Nothing is written, and no figure is worked
+    out here: the card's counts and callouts come from get_trends and get_days.
 
     today: the date the page's other reads name (get_trends' today), so the chart's 28 days are theirs.
     Without it, the person's own date."""
-    with db.new_session() as s:
-        user = s.get(User, user_id)
-        if user is None:
-            return {"bodyweight": None}
-        today = today or users.today_for(user)
-        units = users.units_for(user)
-        weighed = body.weigh_ins(s, user.id, today)
-        goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")))
-        # The last 28 days, today included (section D): the same points as get_trends' series.
-        since = today - timedelta(days=BODY_WEIGHT_DAYS - 1)
-        return {"bodyweight": exact_read(progress_data.bodyweight_chart, units)(weighed, goals, today, since)}
+    return progress_data.bodyweight_view(user_id, today)
 
 
 def _lift_points(lift: dict) -> dict:
@@ -2865,37 +2851,33 @@ async def progress_page(request: Request) -> Response:
                 glance=glance, bodyweight=trend["bodyweight"],
                 chart=charts.bodyweight_svg(trend["bodyweight"], today=today, units=units), slug=links.slug,
                 today=today, trends=None if failed(trends) else trends, activities=activities,
-                fastest=await fastest_in_miles(user.id, activities, units),
+                fastest=fastest_in_miles(activities, units),
                 weight_now_label=weight_now_label, rate_note=rate_note)
 
 
-async def fastest_in_miles(user_id: int, activities: list | None, units) -> dict[str, str]:
+def fastest_in_miles(activities: list | None, units) -> dict[str, str]:
     """{activity: its fastest pace per mile} for the Cardio card, with distances in miles; {} otherwise, and the
-    card says get_cardio's own m:ss per km. The every-activity read gives that pace as words only, so each paced
-    activity's own read gives its number (bests.fastest_pace.pace_min_per_km), shown per mile by formatting.show."""
+    card says get_cardio's own m:ss per km. Each row of the every-activity read carries its fastest pace's number
+    (fastest_min_per_km, minutes a km), shown per mile by formatting.show; no other read is made. A row with no
+    fastest pace leaves its cell empty."""
     if units.distance != "mi" or not activities:
         return {}
-    out = {}
-    for row in activities:
-        if not row.get("fastest_pace"):
-            continue
-        one = await _db(services.get_cardio, user_id, row["exercise"])
-        best = None if failed(one) else (one.get("bests") or {}).get("fastest_pace")
-        if best and best.get("pace_min_per_km") is not None:
-            out[row["exercise"]] = formatting.show(best["pace_min_per_km"], "pace", units=units)
-    return out
+    return {row["exercise"]: formatting.show(row["fastest_min_per_km"], "pace", units=units)
+            for row in activities if row.get("fastest_min_per_km") is not None}
 
 
 def weight_now_label(trends: dict) -> str:
-    """What bodyweight.now is: the 7-day average when a weigh-in falls in the last 7 days, else the
-    latest weigh-in (get_trends' own rule)."""
+    """What bodyweight.now is, by the service's one rule (goals.now_basis over get_trends' series): the 7-day average
+    when a weigh-in falls in the last 7 days, else the latest weigh-in. A series of none (every weigh-in older than
+    the 28 days) is the latest weigh-in too."""
     try:
         today = date.fromisoformat(trends["today"])
-        dates = [date.fromisoformat(p["date"]) for p in (trends.get("bodyweight") or {}).get("series") or []]
+        points = [(date.fromisoformat(p["date"]), p["kg"])
+                  for p in (trends.get("bodyweight") or {}).get("series") or []]
     except (KeyError, TypeError, ValueError):
         return "now"
-    recent = any(d >= today - timedelta(days=6) for d in dates)
-    return "7-day average" if recent else "latest weigh-in"
+    basis = goal_rules.now_basis("bodyweight", points, today)
+    return "7-day average" if basis == "average_7d" else "latest weigh-in"
 
 
 def rate_note(trends: dict) -> str:
@@ -2975,20 +2957,11 @@ def best_widened(best: dict, units=None) -> bool:
 
 # ---------------------------------------------------------------- Goals
 
-def clock(minutes) -> str:
-    """Minutes as m:ss, the way a cardio time is said: 27.5 is 27:30. formatting.clock."""
-    return formatting.clock(minutes)
-
-
-# A goal's figures take the goal unit's quantity (section C of the stage 6 contract).
-GOAL_QUANTITIES = {"bodyweight": "bodyweight_derived", "lift": "estimated_max", "cardio_best": "goal_time"}
-
-
 def goal_quantity(goal: dict) -> str:
-    """The quantity of a goal's start, now and plan figures: kg, cm, bpm or a cardio time."""
-    if goal.get("kind") in GOAL_QUANTITIES:
-        return GOAL_QUANTITIES[goal["kind"]]
-    return "bpm" if goal.get("unit") == "bpm" else "cm"
+    """The quantity of a goal's start, now and plan figures: the service's own, goals.goal_quantity of the goal's
+    kind and unit (section C of the stage 6 contract). Every open goal carries its unit; one the service does not
+    know raises, as get_goals does."""
+    return goal_rules.goal_quantity(goal.get("kind"), goal.get("unit"))
 
 
 # A goal card's words (section L, Goals), each keyed by goal_charts' own fields. What the now figure is, by the

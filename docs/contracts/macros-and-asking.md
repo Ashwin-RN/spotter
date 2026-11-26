@@ -363,3 +363,9 @@ C3 as built (`04c0668`, P1 to P6) was reviewed on a frozen copy: one must fix, t
 | 10 | The Postgres check | On the owner's word of 2026-11-23, `0015` runs once more on a local Postgres at the final commit, up, down, up over a written row; the run of 2026-11-21 was on the same file by the session's record, without a byte copy at the minute of the run |
 
 No merge, deploy or eval run without the owner's word.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+- Grams on a plain save (row 1 of the note above, line 354, said they still clear when left out). By the logic audit's ruling R7 the key's presence decides. Left out, a saved food keeps its grams and a new one has none. Sent as null or `""`, they are cleared. A save with items clears grams left out, and so does a deleted food brought back by a plain save. The Foods page sends `""` for an empty grams field.
+- Its limit: through MCP a null is dropped before the service, so an assistant cannot clear a saved food's grams on purpose. `save_food`'s description is unchanged.
+- A portion of only invisible characters (the logic audit's ruling R6): no portion on a log, as before. On an edit it clears the portion, as an empty one does, where it was refused. `rules.portion` reads it for both. An estimate's portion cleared on an edit is still not refused.

@@ -262,8 +262,11 @@ def dates_of(ids: list[int]) -> list[date]:
 
 
 def histories(user_id: int, today: date) -> tuple[dict, dict]:
+    """lifts.history and the oracle's, as values. The oracle's last_top is left out here: lifts.history no longer
+    has it (logic-audit.md R1), and old_weights still reads it."""
     with db.new_session() as s:
-        return with_bests(lifts.history(s, user_id, today)), with_bests(old_history(s, user_id, today))
+        old = {k: v for k, v in old_history(s, user_id, today).items() if k != "last_top"}
+        return with_bests(lifts.history(s, user_id, today)), with_bests(old)
 
 
 # ---------------------------------------------------------------- D1: the delete switch under the lock
@@ -690,15 +693,24 @@ def test_get_routines_weights_follow_the_one_order_when_a_later_dated_session_ca
             session.sets.append(LiftSet(exercise_id=squat, set_number=1, weight_kg=kg, reps=5))
             s.add(session)
             s.flush()
+
+    def cut(s, today, names):  # latest_sessions cut to each lift's date and weight, as old_weights gives them
+        return {name: {"date": x["date"], "weight_kg": x["weight_kg"]}
+                for name, x in routines.latest_sessions(s, uid, today, names).items()}
+
     with db.new_session() as s:
-        tops = routines.latest_tops(s, uid, TODAY, {"Back Squat"})
+        tops = cut(s, TODAY, {"Back Squat"})
         assert tops == old_weights(s, uid, TODAY, {"Back Squat"}) == {"Back Squat": {"date": TODAY, "weight_kg": 90.0}}
-        later = routines.latest_tops(s, uid, TODAY + timedelta(days=2), {"Back Squat"})  # a later today: real dates
+        later = cut(s, TODAY + timedelta(days=2), {"Back Squat"})  # a later today: real dates
         assert later == old_weights(s, uid, TODAY + timedelta(days=2), {"Back Squat"})
         assert later["Back Squat"]["weight_kg"] == 120.0
 
 
 def test_get_routines_weights_equal_the_oracle(make_user, fixed):
+    def cut(s, uid, today, names):  # latest_sessions cut to each lift's date and weight, as old_weights gives them
+        return {name: {"date": x["date"], "weight_kg": x["weight_kg"]}
+                for name, x in routines.latest_sessions(s, uid, today, names).items()}
+
     for seed, maker in (("sixteen", sixteen_weeks), ("four", four_weeks), (6, None), (8, None)):
         uid = make_user().id
         if maker:
@@ -708,9 +720,9 @@ def test_get_routines_weights_equal_the_oracle(make_user, fixed):
         for shift in (*TODAYS, -1, -2):
             today = TODAY + timedelta(days=shift)
             with db.new_session() as s:
-                assert routines.latest_tops(s, uid, today, NAMES) == old_weights(s, uid, today, NAMES), (seed, shift)
+                assert cut(s, uid, today, NAMES) == old_weights(s, uid, today, NAMES), (seed, shift)
                 some = {"Back Squat", "Dip", "Deadlift"}
-                assert routines.latest_tops(s, uid, today, some) == old_weights(s, uid, today, some)
+                assert cut(s, uid, today, some) == old_weights(s, uid, today, some)
 
 
 # ---------------------------------------------------------------- bounded work, by count

@@ -79,8 +79,6 @@ BEST_LABELS = {"estimated_max": "estimated max", "weight": "heaviest weight", "l
 BEST_QUANTITIES = {"estimated_max": "estimated_max", "reps": "reps", "time": "seconds"}
 # Which bests a lift takes, by what a set of it records (contract exercise-list.md, "Bests"); help comes first.
 KIND_OF_MEASURES = {("reps",): "band", ("weight", "time"): "hold", ("weight", "distance", "time"): "carry"}
-# The kind a record lift's best is first named by: its record's figure (record_figure).
-RECORD_BEST = {"help": "least_help", "band": "reps", "hold": "time", "carry": "carry"}
 # Why a lift of another kind than standard has no estimated max, on the Progress page's Lifts card.
 NO_ESTIMATE = {"help": "Not worked out with help", "band": "Not worked out for a band",
                "hold": "Not worked out for a hold", "carry": "Not worked out for distance"}
@@ -402,8 +400,6 @@ def history(s: Session, user_id: int, today: date, last_day: date | None = None)
     points:    {lift: [(date, session best)]}   one point per session with a set of 1 to 10 reps
     logged:    {lift: sessions that include the lift, at any reps}
     last:      {lift: the real date of the latest session (in the one order) that trained it}
-    last_top:  {lift: {date, weight_kg}}  that latest session's real date and its heaviest set of the lift. For
-               get_routines' weight to log (contract routines.md): get_progress and the pages do not copy it.
     best_set:  {lift: {weight_kg, reps, date, estimated_max_kg}}
     reps_only: {lift: {reps, date}}  a lift with no set above 0 kg: the most reps in one set, and
                the real date of its session. A tie keeps the earlier set in the one order, as best_set
@@ -422,7 +418,6 @@ def history(s: Session, user_id: int, today: date, last_day: date | None = None)
     points: dict[str, list[tuple[date, float]]] = {}
     logged: dict[str, int] = {}
     last: dict[str, date] = {}
-    last_top: dict[str, dict] = {}
     best_set: dict[str, dict] = {}
     bests: dict[str, list[dict]] = {}
     so_far: dict[str, tuple[float | None, float | None]] = {}  # per lift with an earlier set: best estimate, heaviest
@@ -449,7 +444,6 @@ def history(s: Session, user_id: int, today: date, last_day: date | None = None)
         for lift, lift_sets in by_lift.items():
             logged[lift] = logged.get(lift, 0) + 1
             last[lift] = t.date
-            last_top[lift] = {"date": t.date, "weight_kg": max(w for w, _ in lift_sets)}
             best, heaviest = metrics.session_best(lift_sets), metrics.max_weight(lift_sets)
             if best is not None:
                 points.setdefault(lift, []).append((t.date, best))
@@ -473,7 +467,7 @@ def history(s: Session, user_id: int, today: date, last_day: date | None = None)
                 for lift, b in best_set.items()}
     # A lift of another kind than standard has its own record (records), never "needs added weight".
     reps_only = {lift: most for lift, most in most_reps.items() if lift not in weighted and kinds[lift] == "standard"}
-    return {"sessions": sessions, "points": points, "logged": logged, "last": last, "last_top": last_top,
+    return {"sessions": sessions, "points": points, "logged": logged, "last": last,
             "best_set": best_set, "reps_only": reps_only, "bests": bests}
 
 

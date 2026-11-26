@@ -75,3 +75,8 @@ Not in this work: a way back after an undo; a goal's old target (a goal changes 
 ## Note, 2026-11-17: the sweep runs beside the calls
 
 From `docs/contracts/hardening.md` (D8, D11). The versions' retention is unchanged: a version older than 90 days goes, at most once in 24 hours, and is never put back, swept or not. The sweep no longer runs inside the call that finishes: when one is due, it starts on a thread of its own and deletes in batches of 1,000 rows a statement, each its own transaction, at most 50 a table a run. A table that fails or stops at the cap is tried again 10 minutes on. `entry_version.created_at` has an index for it (migration `0012`).
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+- Decision 13: `restore_entry`'s description and its `undo_edit` field name neither the `day_taken` refusal nor editing again. The refusal is built: an undo that would move a weigh-in or a measurement onto a day that holds another live one is refused with `day_taken` (`app/services/entries.py`).
+- Decision 4, "at any age": a second undo changes nothing with `duplicate: true` while the undo's own version is within 90 days. Past them no version is left to read, so it answers `nothing_to_undo`, as decision 6 says.

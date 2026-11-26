@@ -353,15 +353,6 @@ def test_another_person_s_sessions_never_count(make_user, clock):
     assert read(theirs.id)["routines"] == []
 
 
-def test_last_top_is_the_latest_session_s_date_and_heaviest_set_and_get_progress_does_not_copy_it(user):
-    log(user.id, ("Back Squat", 100, 5), ("Back Squat", 110, 3), date=day(-2))
-    log(user.id, ("Back Squat", 90, 5))
-    with db.new_session() as s:
-        history = services.lifts.history(s, user.id, START.date())
-    assert history["last_top"] == {"Back Squat": {"date": START.date(), "weight_kg": 90.0}}
-    assert "last_top" not in json.dumps(services.get_progress(user.id, "Back Squat"))
-
-
 def test_get_routines_answers_in_name_order_with_its_words_and_with_none_says_so(user):
     empty = read(user.id)
     assert empty == {"routines": [], "how": HOW, "summary": "No routines saved yet.",
@@ -1145,8 +1136,8 @@ def test_settings_links_to_the_page_and_says_what_each_setting_lets_the_assistan
             "set goals. It can change your time zone, units and targets, and delete entries, saved foods, routines and "
             "programs. Before a delete it is shown the entry and told to ask you. Nothing is erased: a deleted one can "
             "be restored.") in page  # units.md R16: units joins what it can change; C5c: programs
-    assert ("Everything above except deleting: your assistant cannot delete an entry, a saved food, a routine or a "
-            "program.") in page
+    assert ("Everything above except deleting. A second weigh-in or measurement on a day still replaces the first, "
+            "which is kept.") in page
     assert links.page("routines").endswith("/routines") and ("/routines", web.routines_page, ["GET"]) in web.PAGES
 
 

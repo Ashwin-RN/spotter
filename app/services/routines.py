@@ -43,16 +43,16 @@ get_routines(user_id)
     weight_kg (always kg), weight_from, last_date, last, and log_with, the kind word log takes for it: lifts or
     cardio. A plan's avg_hr and machine_kcal are never a field: they are said in the routine's words and on the page.
     The routine's words: lift_words of its items with the weight to log, in the person's units. A lift's, a hold's or
-    a carry's weight to log is the heaviest set of its latest live session in the one order (latest_sessions, the
-    figures lifts.history's last_top gives), unless the routine holds a weight for it and that session is dated
-    before saved_on, or there is no such session: then the routine's own weight. With neither, null. last is that
-    same session (decision 11, R4): {date, sets [{weight_kg, reps, time_s, distance_m}] in set order, words}, the
-    words as lifts.sets_text says the lift's sets, without its name, in the person's units; null when the lift was
-    never logged. A cardio item's weight_kg, weight_from, last_date, sets and reps are null, and its last is the
-    activity's latest live entry (latest_cardio): {date, minutes, distance_km, incline_pct, speed_kmh, words}, its
-    heart rate and the machine's calories in its words only. The weights and last are one statement, run only when a
-    routine places a lift, and cardio's last one more, run only when a routine places a cardio item (hardening D5),
-    so a read runs a fixed number of statements however many routines and sessions.
+    a carry's weight to log is the heaviest set of its latest live session in the one order (latest_sessions),
+    unless the routine holds a weight for it and that session is dated before saved_on, or there is no such session:
+    then the routine's own weight. With neither, null. last is that same session (decision 11, R4): {date, sets
+    [{weight_kg, reps, time_s, distance_m}] in set order, words}, the words as lifts.sets_text says the lift's sets,
+    without its name, in the person's units; null when the lift was never logged. A cardio item's weight_kg,
+    weight_from, last_date, sets and reps are null, and its last is the activity's latest live entry (latest_cardio):
+    {date, minutes, distance_km, incline_pct, speed_kmh, words}, its heart rate and the machine's calories in its
+    words only. The weights and last are one statement, run only when a routine places a lift, and cardio's last one
+    more, run only when a routine places a cardio item (hardening D5), so a read runs a fixed number of statements
+    however many routines and sessions.
     The program (programs.program_read), present only when one is saved, the summary led by its words: one statement
     more, always, by user_id (the note of 2026-11-23). save_routine never reads the program.
     The read never raises on an item (decision 3, R2). An item is placed (placed) only when its exercise is a kind on
@@ -601,10 +601,10 @@ def save_routine(user_id: int, data: dict | None, by: str) -> dict:
 
 def latest_sessions(s, user_id: int, today, names: set[str]) -> dict[str, dict]:
     """{lift: {date, weight_kg, sets}} for these lifts (hardening D5; routines-and-programs.md R3): each lift's latest
-    live session in the one order (effective date, then id), its real date, its heaviest set of the lift, as
-    lifts.history's last_top gives them, and every set of the lift in it in set order, as (weight_kg, reps, time_s,
-    distance_m). One statement: a window over each lift's sessions, newest first, and that session's sets of the
-    lift, so the weight to log and last time are always the same session."""
+    live session in the one order (effective date, then id), its real date, its heaviest set of the lift, and every
+    set of the lift in it in set order, as (weight_kg, reps, time_s, distance_m). One statement: a window over each
+    lift's sessions, newest first, and that session's sets of the lift, so the weight to log and last time are
+    always the same session."""
     effective = case((LiftSession.date > today, today), else_=LiftSession.date)  # metrics.on_or_before
     per_session = (
         select(Exercise.name.label("lift"), LiftSession.id.label("session_id"), LiftSession.date.label("day"),
@@ -629,12 +629,6 @@ def latest_sessions(s, user_id: int, today, names: set[str]) -> dict[str, dict]:
         one["weight_kg"] = max(one["weight_kg"], weight)
         one["sets"].append((weight, reps, time_s, distance_m))
     return out
-
-
-def latest_tops(s, user_id: int, today, names: set[str]) -> dict[str, dict]:
-    """{lift: {date, weight_kg}}: latest_sessions' weights alone, as lifts.history's last_top gives them."""
-    return {name: {"date": x["date"], "weight_kg": x["weight_kg"]}
-            for name, x in latest_sessions(s, user_id, today, names).items()}
 
 
 def latest_cardio(s, user_id: int, today, names: set[str]) -> dict[str, dict]:

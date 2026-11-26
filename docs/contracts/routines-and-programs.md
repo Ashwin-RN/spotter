@@ -462,3 +462,9 @@ Read again at the pickup, against the code as log-and-guide leaves it; no new te
 | The eval runner | `{{weekday:N}}`, `program` with `week_count` and `day_count` |
 | The page | The card above the routines, outside the routines' block; the page reads which routines are live by the routines' name key from the same read, and names every routine of this week and the next that is not saved now, more than `get_routines`' words name. No CSS rule: seen at 320 and 390 px |
 | Left as they are | A routine resaved under another case shows in the program by its stored spelling; a kept start with fewer weeks can read as ended at once; the `invalid_date` fix still says "or leave it out for today" |
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+- R3 (line 93): `latest_tops` is gone. `routines.latest_sessions` is the one read of each lift's latest session, its date, its heaviest set and every set, and `get_routines` reads it. The test oracle in `tests/test_hardening.py` is unchanged and still checks it.
+- R11 (line 101): the program's label says "the id that save_program returned, or one from get_routines".
+- The page's left-out line (line 207): the page gives a shorter line than `get_routines`, naming no function or field, such as "Rowing Machine is left out." and "Plank is left out: it records time now."

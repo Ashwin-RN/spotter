@@ -63,7 +63,7 @@
     {{ parts.field("food-kcal_per_serving", "kcal_per_serving", "Calories in one serving (kcal)", errors.get("kcal_per_serving"), typed.get("kcal_per_serving"), inputmode="decimal") }}
     {{ parts.field("food-grams_per_serving", "grams_per_serving", "Grams in one serving (g)", errors.get("grams_per_serving"), typed.get("grams_per_serving"), inputmode="decimal", hint="Optional") }}
     <div class="form-actions"><button class="primary">Save food</button></div>
-    <p class="small">Saving a name you already have updates it.</p>
+    <p class="small">Saving a name you already have updates it. A saved meal is changed through your assistant.</p>
     <input type="hidden" name="key" value="{{ form_key() }}">
   </form>
   {% endcall %}

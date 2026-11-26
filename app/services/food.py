@@ -60,9 +60,11 @@ save_food with items (a saved meal, contract macros-and-asking.md): 2 to 30 item
     resolved: description, kcal, the three macros, source and its ids and amounts. kcal_per_serving and the macros a
     serving are the sums, sent by no one: a macro is null when any item lacks it. serving_label defaults to "1 meal".
     A meal is logged by its id as one saved food. A plain save over a saved food keeps a macro a serving left out,
-    and one sent as null clears it (grams_per_serving is cleared when left out, as before). A save of a live meal's
-    name with no items is refused with nothing written: the meal is changed by sending its items. A deleted food
-    brought back by a plain save takes only the macros sent.
+    and one sent as null clears it. grams_per_serving goes the same way: left out of a plain save, a saved food keeps
+    its grams and a new one has none; sent as null or "", they are cleared. A save with items clears grams left out:
+    a meal's numbers come from its items. A save of a live meal's name with no items is refused with nothing
+    written: the meal is changed by sending its items. A deleted food brought back by a plain save takes only the
+    macros and grams sent.
 
 day_numbers(user, food_rows, cardio_rows)
     One day's numbers: total, estimated, estimated share, target, remaining, net. log_food and
@@ -102,7 +104,6 @@ MACRO_WORDS = {"protein_g": "Protein", "carbs_g": "Carbs", "fat_g": "Fat"}
 # A macro's column, and the user's daily goal for it in grams (macros-and-asking.md, decision 2 A).
 MACRO_TARGETS = {"protein_g": "protein_target_g", "carbs_g": "carbs_target_g", "fat_g": "fat_target_g"}
 PER_SERVING = tuple(f"{m}_per_serving" for m in rules.MACROS)  # a saved food's macros a serving
-PER_100G = tuple(f"{m}_per_100g" for m in rules.MACROS)  # a USDA food's macros a 100 g
 ATWATER = "atwater"  # the call log's key for the ratios of the macros' kcal to the kcal sent
 ATWATER_KCAL = {"protein_g": 4, "carbs_g": 4, "fat_g": 9}  # kcal a gram
 SAVE_FIELDS = ("name", "serving_label", "kcal_per_serving", "grams_per_serving", *PER_SERVING, "items")
@@ -262,13 +263,9 @@ def _check_entry(s, user_id: int, raw, where: str, default_meal: str,
         elif present(macro) and macro != "macros_estimated":
             macros[macro], err = rules.bounded(macro, raw[macro], where)
             errors += [err] if err else []
-    portion, refused = None, False
-    if raw.get("portion") is not None and not (isinstance(raw["portion"], str) and not raw["portion"].strip()):
-        portion, err = rules.required_text(raw["portion"], "portion", where)
-        if err and err["error"] == "missing_field":  # only invisible characters: no portion
-            portion, err = None, None
-        refused = err is not None
-        errors += [err] if err else []
+    portion, err = rules.portion(raw.get("portion"), where)  # nothing, a blank or invisible characters: no portion
+    refused = err is not None
+    errors += [err] if err else []
     if estimated and not ids and portion is None and not refused:  # decision 6: ask the person, never guess
         errors.append(rules.portion_missing(where))
     for wrong, right in (("grams", "saved_food_id"), ("servings", "usda_fdc_id")):
@@ -576,10 +573,11 @@ def save_food(user_id: int, data: dict | None, by: str, drawn_at=None) -> dict:
                     values[field], err = rules.bounded(field, data[field])
                     errors += [err] if err else []
             values["items"] = None
-        values["grams_per_serving"] = None
-        if data.get("grams_per_serving") not in (None, ""):
-            values["grams_per_serving"], err = rules.bounded("grams_per_serving", data["grams_per_serving"])
-            errors += [err] if err else []
+        if meal or "grams_per_serving" in data:  # left out of a plain save: a saved one is kept, a new food has none
+            values["grams_per_serving"] = None
+            if data.get("grams_per_serving") not in (None, ""):
+                values["grams_per_serving"], err = rules.bounded("grams_per_serving", data["grams_per_serving"])
+                errors += [err] if err else []
         unknown = [k for k in data if k not in SAVE_FIELDS]
         errors += [rules.error("invalid_field", f"'{rules.quote(k)}' is not a field of a saved food.",
                                f"Use: {', '.join(SAVE_FIELDS)}.") for k in unknown]
@@ -599,7 +597,7 @@ def save_food(user_id: int, data: dict | None, by: str, drawn_at=None) -> dict:
         if not meal and not created and food.items is not None and not was_deleted:
             return meal_name_taken(food.name)  # a plain save would drop the meal's foods
         if not meal and was_deleted:  # one brought back plain starts from what is sent, never a meal's sums
-            values.update({field: None for field in PER_SERVING if field not in values})
+            values.update({field: None for field in (*PER_SERVING, "grams_per_serving") if field not in values})
         differs = created or any(getattr(food, field) != value for field, value in values.items())
         if differs and not created:
             keep_version(s, food, by)  # the food as it stands, before it changes

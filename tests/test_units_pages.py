@@ -798,20 +798,39 @@ def test_an_edit_page_posted_after_a_units_switch_is_read_in_its_own_units(pinne
 
 # ---------------------------------------------------------------- Progress' Cardio card (the U2 review)
 
-def test_a_fastest_pace_that_cannot_be_read_in_miles_leaves_its_cell_empty(lb_mi, monkeypatch):
-    """With distances in miles the Cardio card's pace is read per activity. When that read fails the cell is
-    empty: never get_cardio's per km pace under a per mi header."""
-    client, uid = lb_mi["client"], lb_mi["uid"]
-    [run] = [a for a in services.get_cardio(uid)["activities"] if a["exercise"] == "Outdoor Run"]
-    real = services.get_cardio
+def cardio_row(page: str, activity: str) -> str:
+    return re.search(rf'<tr><td class="lead">{activity}</td>.*?</tr>', page, re.S).group(0)
 
-    def failing(user_id, *a):
-        return {"error": "internal_error", "message": "m", "fix": "f"} if a else real(user_id, *a)
-    monkeypatch.setattr(services, "get_cardio", failing)
+
+def test_a_row_with_no_fastest_pace_leaves_its_cell_empty_and_a_paced_row_shows_its_own_number_per_mile(lb_mi):
+    """With distances in miles each pace is the row's own fastest_min_per_km, shown per mi. A row with no fastest
+    pace (no distance logged) leaves its cell empty, and a paced row never shows get_cardio's per km pace under the
+    per mi header."""
+    client, uid = lb_mi["client"], lb_mi["uid"]
+    rows = {a["exercise"]: a for a in services.get_cardio(uid)["activities"]}
+    run, bike = rows["Outdoor Run"], rows["Stationary Bike"]
+    assert run["fastest_min_per_km"] is not None and bike["fastest_pace"] is None and bike["fastest_min_per_km"] is None
     page = client.get("/progress").text
-    row = re.search(r'<tr><td class="lead">Outdoor Run</td>.*?</tr>', page, re.S).group(0)
-    assert '<td class="num" data-label="Fastest pace (per mi)"></td>' in row
-    assert run["fastest_pace"] and run["fastest_pace"] not in row
+    per_mile = formatting.show(run["fastest_min_per_km"], "pace", units=LB_MI)
+    assert f'<td class="num" data-label="Fastest pace (per mi)">{per_mile}</td>' in cardio_row(page, "Outdoor Run")
+    assert run["fastest_pace"] != per_mile and run["fastest_pace"] not in cardio_row(page, "Outdoor Run")
+    assert '<td class="num" data-label="Fastest pace (per mi)"></td>' in cardio_row(page, "Stationary Bike")
+
+
+def test_the_per_mile_pace_is_drawn_with_no_read_for_each_activity(lb_mi, monkeypatch):
+    """The Cardio card's pace per mi comes from get_cardio's every-activity rows: the page reads get_cardio once,
+    with no activity, and never once for each paced activity."""
+    client, uid = lb_mi["client"], lb_mi["uid"]
+    real, calls = services.get_cardio, []
+
+    def counted(user_id, *args):
+        calls.append(args)
+        return real(user_id, *args)
+    monkeypatch.setattr(services, "get_cardio", counted)
+    page = client.get("/progress").text
+    assert calls == [()]
+    run = next(a for a in real(uid)["activities"] if a["exercise"] == "Outdoor Run")
+    assert formatting.show(run["fastest_min_per_km"], "pace", units=LB_MI) in cardio_row(page, "Outdoor Run")
 
 
 # ---------------------------------------------------------------- goal_charts takes the units (the U2 review)

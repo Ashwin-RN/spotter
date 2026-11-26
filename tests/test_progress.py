@@ -188,8 +188,9 @@ def test_the_body_weight_chart_draws_the_smoothed_line(user):
                                                        services.get_trends(user.id)["bodyweight"]["series"]]
 
 
-def test_the_chart_rounds_its_smoothed_and_average_points_and_keeps_each_weigh_in(user):
-    """D4: the chart's smoothed line and 7-day averages at 1 dp; a weigh-in's own kg as entered."""
+def test_the_chart_rounds_its_smoothed_points_and_keeps_each_weigh_in(user):
+    """D4: the chart's smoothed line at 1 dp; a weigh-in's own kg as entered. The chart carries no 7-day average:
+    no page drew it (metrics.bodyweight_average keeps its own tests)."""
     from app.services import body
     from app.services.progress import bodyweight_chart
     for days_ago, kg in ((2, 80), (1, 81), (0, 79.45)):
@@ -197,9 +198,8 @@ def test_the_chart_rounds_its_smoothed_and_average_points_and_keeps_each_weigh_i
     with db.new_session() as s:
         chart = bodyweight_chart(body.weigh_ins(s, user.id, users.today_for(user)), [], users.today_for(user))
     # Smoothed 80, 80.1, 80.1 + 0.1 x (79.45 - 80.1) = 80.035, kept as 80.03 or 80.04: 80.0 at 1 dp either way.
-    # Averages 80, 80.5, (80 + 81 + 79.45) / 3 = 80.15, kept as 80.15: 80.2 at 1 dp, the half away from zero.
     assert [p["smoothed"] for p in chart["points"]] == [80.0, 80.1, 80.0]
-    assert [p["kg"] for p in chart["average"]] == [80.0, 80.5, 80.2]
+    assert "average" not in chart
     assert [p["kg"] for p in chart["points"]] == [80, 81, 79.45] and chart["latest"]["kg"] == 79.45
 
 
@@ -223,8 +223,6 @@ def test_since_draws_the_window_and_keeps_the_line_over_every_weigh_in(user):
     assert [p["date"] for p in window["points"]] == [day(user, -27), day(user, -10), day(user, 0)]
     # Smoothed over all five: 84, 83.6, 83.44, 83.196, 82.7764: the window's first is 83.44, 83.4 at 1 dp, not 82.
     assert window["points"][0]["smoothed"] == 83.4
-    # The 7-day average on since reads every weigh-in in its 7 days, the one the day before included: (80 + 82) / 2.
-    assert window["average"] == every["average"][-3:] and window["average"][0]["kg"] == 81.0
     assert window["latest"] == every["latest"] == {"date": day(user, 0), "kg": 79}
     assert chart_of(user, users.today_for(user) - timedelta(days=5)) is None        # one weigh-in in the window
     assert chart_of(user, None) == every

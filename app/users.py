@@ -120,11 +120,6 @@ def user_for_identity(subject: str | None, email: str | None, name: str | None,
             return user
 
 
-def user_exists(user_id: int) -> bool:
-    with db.new_session() as session:
-        return session.get(User, user_id) is not None
-
-
 # ---------------------------------------------------------------- time zones and "today"
 
 @lru_cache(maxsize=1)

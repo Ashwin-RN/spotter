@@ -892,8 +892,8 @@ guide cases and `program_saved` below.
 ### The two last time cases
 
 Since deploy 1 of `routines-and-programs.md`, each lift `get_routines` gives carries `last`: every set of its latest
-session, with its date and its words. These two follow the log and guide cases, each `direct` and `core` false: the
-core stays at 103.
+session, with its date and its words. These two follow the log and guide cases, each `direct` and `core` false: they
+add none to the core.
 
 | Case | Says (seed) | Passes when |
 |---|---|---|
@@ -904,7 +904,7 @@ core stays at 103.
 
 Since deploy 2 of `routines-and-programs.md` (C5b), a routine holds holds, carries and cardio beside its lifts, and
 each item's `log_with` names the kind `log` takes for it: `lifts` or `cardio`. These four follow the last time cases,
-each `direct` and `core` false: the core stays at 103. The two logging cases keep the five's names in `must` and
+each `direct` and `core` false: they add none to the core. The two logging cases keep the five's names in `must` and
 `ok_calls` (his ruling of 2026-11-22): the judge routes a `log` call to its kind's function. A cardio item is judged on
 `log_cardio`'s inputs, as a database check cannot name the activity; the lifts and the hold by their `lift_set` rows.
 Their seed: Legs day, Rowing Machine 10 minutes with a heart rate of 140 and 120 machine kcal, Back Squat 4 × 5 at 100,
@@ -919,8 +919,8 @@ Plank 3 × 60 s at 0 kg.
 
 ### The macros and asking cases
 
-**Eleven cases follow the four cardio and timed item cases, each `direct` and `core` false: the core stays at
-103, and with the four lift ask cases and the four program cases below the file holds 285** (contract
+**Eleven cases follow the four cardio and timed item cases, each `direct` and `core` false: they add none to the
+core, and with the four lift ask cases and the four program cases below the file holds 285** (contract
 `macros-and-asking.md`). They keep the five's names, so a `log` call is judged as its kind's
 function. Each is judged on the record: the rows, the calls that succeeded and the calls made. An ask is no write and
 a question, never the reply's words alone. The read cases list every write in `must_not` and `no_call`, `log`
@@ -957,7 +957,7 @@ No case sends a photo: the runner sends no image.
 
 ### The lift ask cases
 
-Four cases follow the macros and asking cases, each `direct` and `core` false: the core stays at 103 (contract
+Four cases follow the macros and asking cases, each `direct` and `core` false: they add none to the core (contract
 `macros-and-asking.md`, decision 14 A). They run on today's refusals: a set sent
 with no weight is refused as "weight_kg or weight_lb is missing" with the fix "Give weight_kg or weight_lb on set 1.",
 and one with no reps as "reps is missing" with "Give reps on set 1." Through `log` each names `parts[0]` in place of

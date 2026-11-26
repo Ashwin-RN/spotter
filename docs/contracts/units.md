@@ -362,3 +362,10 @@ Inches for a body size, stones, a best-mile time, the unit an entry was said in,
 ## Note, 2026-11-20: the exercise list (`docs/contracts/exercise-list.md`)
 
 `distance_m` and `time_s` on a lift set are metres and seconds on every account, a person on miles too (exercise-list.md R16).
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+Decision 10 stays unbuilt for one test, by the owner's pick of 2026-11-25: whether a goal is "on the line" is judged at the kg step. `metrics.goal_path` asks `formatting.is_zero(ahead, quantity)` with no units.
+
+- On a lb account a gap from 0.0227 kg to under 0.05 kg reads "on the line", where the lb figures can differ by 0.1 lb.
+- The `vs_plan` field's own words already say kg: "On the line when the gap rounds to 0 at the unit's step: under 0.05 for kg or cm".

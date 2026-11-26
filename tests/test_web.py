@@ -285,8 +285,8 @@ LANDING_WORDS = (
 )
 YOUR_PAGES = ("Your pages", "Today", "Everything you logged, by day.", "Progress",
               "Your bests, the weight trend, and how you are doing against your targets.", "Goals",
-              "Each goal with the pace it needs and the pace so far.", "Foods", "Your saved foods.", "Settings",
-              "Your targets, what your assistant may do, export and delete.")
+              "Each goal with the pace it needs and the pace so far.", "Foods", "Your saved foods.", "Routines",
+              "Your saved routines.", "Settings", "Your targets, what your assistant may do, export and delete.")
 # The sections in markup order: the opening tag of each at column 0 of main. Your pages, signed in only.
 LANDING_SECTIONS = ['<div class="landing-hero">', '<section class="card showcase" aria-labelledby="looks-title">',
                     '<section class="card before" aria-labelledby="before-title">',
@@ -5569,6 +5569,30 @@ def test_glance_of_hands_back_the_reads_as_they_come(client, monkeypatch):
     assert (glance["basis"], glance["rate_words"]) == (web.weight_now_label(trends), web.rate_note(trends))
     assert glance["weight_chart"] == web.charts.weight_sheet_svg(trends["bodyweight"]["series"], date(2026, 11, 10))
     assert glance["eaten_chart"] == web.charts.eaten_sheet_svg(days["days"], date(2026, 11, 10))
+
+
+def test_the_now_label_is_goals_now_basis_and_with_every_weigh_in_older_than_28_days_the_latest_weigh_in(
+        client, monkeypatch):
+    """weight_now_label asks goals.now_basis over get_trends' series. Every weigh-in older than the 28 days leaves
+    the series empty while bodyweight.now still shows the latest: the label says the latest weigh-in."""
+    sign_in(client)
+    monkeypatch.setattr(db, "utcnow", lambda: FIXED_NOW)
+    uid, fixed = only_user().id, date(2026, 11, 10)
+
+    def weighed(days_ago, kg):
+        assert "error" not in services.log_bodyweight(
+            uid, {"kg": kg, "date": (fixed - timedelta(days=days_ago)).isoformat()}, "claude")
+        return services.get_trends(uid)
+    trends = weighed(40, 82)
+    trends = weighed(30, 81)
+    assert trends["today"] == fixed.isoformat()
+    assert trends["bodyweight"]["series"] == [] and trends["bodyweight"]["now"] == 81
+    assert web.weight_now_label(trends) == "latest weigh-in"
+    trends = weighed(10, 80)                                      # in the 28 days, not the 7
+    assert len(trends["bodyweight"]["series"]) == 1 and web.weight_now_label(trends) == "latest weigh-in"
+    trends = weighed(6, 79)                                       # the 7 days, today included
+    assert web.weight_now_label(trends) == "7-day average"
+    assert web.weight_now_label({"today": "not a date"}) == "now"
 
 
 def test_the_training_sentence_reads_this_week_and_the_four_week_figures_apart(client):

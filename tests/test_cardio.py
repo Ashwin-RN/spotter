@@ -485,15 +485,16 @@ def test_the_summary_form_lists_every_activity_with_a_session_by_name(user, make
     assert set(r) == SUMMARY_KEYS and r["today"] == ago(user, 0)
     assert r["activities"] == [
         {"exercise": "Elliptical", "sessions_28d": 0, "minutes_28d": 0.0, "fastest_pace": None,
-         "last_date": ago(user, 35)},
+         "fastest_min_per_km": None, "last_date": ago(user, 35)},
         {"exercise": "Outdoor Run", "sessions_28d": 1, "minutes_28d": 30.0, "fastest_pace": "4:00",
-         "last_date": ago(user, 3)},
+         "fastest_min_per_km": 4.0, "last_date": ago(user, 3)},
         {"exercise": "Treadmill Walk", "sessions_28d": 2, "minutes_28d": 55.7, "fastest_pace": None,
-         "last_date": ago(user, 1)}]
+         "fastest_min_per_km": None, "last_date": ago(user, 1)}]
     assert all(isinstance(a["minutes_28d"], float) for a in r["activities"])
     for a in r["activities"]:
         best = services.get_cardio(user.id, a["exercise"])["bests"]["fastest_pace"]
         assert a["fastest_pace"] == (best["pace"] if best else None)
+        assert a["fastest_min_per_km"] == (best["pace_min_per_km"] if best else None)
     assert services.get_cardio(user.id, "") == r
     empty = services.get_cardio(make_user().id)
     assert empty == {"today": empty["today"], "activities": []}

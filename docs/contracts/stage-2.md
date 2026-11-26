@@ -191,3 +191,8 @@ restore_entry(user_id, kind, entry_id)
 4. Live: `log_lifts` from Claude, then the same message again, reports a duplicate.
 
 **Note, 2026-11-18: superseded in part.** The local tooling it lists (agents, a command, a commit hook) left the repo on 2026-11-11 (`BUILD_LOG.md`), and there is no commit hook now (`CLAUDE.md`). The account rules stand.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+- The exercise list is not synced at start-up. The app's start runs only the MCP session manager (`app/main.py`). The deploy runs `python -m app.exercises` after the migrations, and running it twice changes nothing (`app/exercises.py`).
+- "One helper does every by-id lookup": `common.owned` is that helper. One read goes by the session instead: when a meal is saved, an item's saved food is read again with `s.get` (`app/services/food.py`), after `owned` has checked the same id in that call. So it never reads another person's row.

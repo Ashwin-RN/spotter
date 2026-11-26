@@ -119,7 +119,8 @@
 {# The Cardio card: get_cardio's row for every activity logged, by name, the name plain words. Sessions and time
    are the last 28 days', the fastest pace the best ever, already m:ss. An activity with no distance leaves its
    pace cell empty, and with no distance on any activity the column is not drawn. A failed read draws no card.
-   With distances in miles each pace is fastest_in_miles' per mi; one it could not read leaves its cell empty. #}
+   With distances in miles each pace is fastest_in_miles' per mi, from the row's own fastest_min_per_km; a row
+   with none leaves its cell empty. #}
 {% if activities is not none %}
 {% if activities %}
 {% set paced = activities|selectattr("fastest_pace")|list %}

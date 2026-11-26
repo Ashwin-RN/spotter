@@ -5,10 +5,12 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from app import db, services, users
+from app import config, db, services, users
 from app.models import Bodyweight, LiftSession, LiftSet, Measurement, entry_models
+from app.services import usda
 from app.services.common import MAX_ID, entry_id
 from app.services.entries import EDITABLE, entry_kinds
+from tests.conftest import settings as make_settings
 
 MISSING = 10 ** 9
 
@@ -248,6 +250,12 @@ def test_an_edit_re_keys_so_a_repeat_of_the_new_content_is_a_duplicate(user):
         row = session.get(LiftSession, s["id"])
         keyed = [(x.exercise_id, x.set_number, x.weight_kg, x.reps) for x in row.sets]
         assert len(keyed) == 1 and row.dedupe_key == session_key(row.date, row.notes, keyed)
+    # A cardio session with a distance: its worked-out speed stays out of the key after an edit, as on a log
+    # (logic-audit.md, R5), so the session as it now stands, sent again, is a duplicate.
+    walk = services.log_cardio(user.id, {"exercise": "Outdoor Walk", "minutes": 30, "distance_km": 3}, "claude")
+    assert edit(user, "cardio_entry", walk["id"], minutes=45)["after"]["speed_kmh"] == 4.0
+    again = services.log_cardio(user.id, {"exercise": "Outdoor Walk", "minutes": 45, "distance_km": 3}, "claude")
+    assert again["duplicate"] is True and again["id"] == walk["id"]
 
 
 def test_a_deleted_or_missing_entry_is_not_found(user):
@@ -310,6 +318,41 @@ def test_editing_a_food_entrys_description_or_meal_keeps_its_tag(user):
     assert stated["changed"] == ["kcal"] and stated["after"]["source"] == "you_said"
     assert "kcal 180 confirmed by the person" in stated["summary"]
     assert edit(user, "food_entry", guess["ids"][0], kcal=180)["changed"] == []    # already the person's
+
+
+def a_saved_and_a_usda_entry(user, monkeypatch) -> list[int]:
+    """A food entry logged from a saved food (2 servings, 240 kcal) and one from a USDA food (120 g, 107 kcal). The
+    USDA food answers through services.usda.food, replaced: no test touches the network."""
+    roti = services.save_food(user.id, {"name": "Roti", "serving_label": "1", "kcal_per_serving": 120,
+                                        "grams_per_serving": 40}, "web")
+    by_id = meal_of(user, saved_food_id=roti["id"], servings=2, meal="lunch")["ids"][0]
+    config.use_settings(make_settings(usda_api_key="test-key"))
+    monkeypatch.setattr(usda, "food", lambda fdc: ({"fdc_id": fdc, "description": "Bananas, raw",
+                                                    "data_type": "SR Legacy", "kcal_per_100g": 89.0}, None))
+    banana = meal_of(user, usda_fdc_id=173944, grams=120, meal="snack")["ids"][0]
+    return [by_id, banana]
+
+
+LINK = ("source", "saved_food_id", "servings", "usda_fdc_id", "grams", "kcal")
+
+
+def test_a_kcal_at_the_number_a_saved_or_usda_entry_holds_changes_nothing(user, monkeypatch):
+    """logic-audit.md, R8: only an estimate is restated by its own number. A saved or USDA entry keeps its link."""
+    for entry in a_saved_and_a_usda_entry(user, monkeypatch):
+        before = services.get_entry(user.id, "food_entry", entry)["entry"]
+        assert before["source"] in ("saved_food", "usda")
+        r = edit(user, "food_entry", entry, kcal=int(before["kcal"]))
+        assert r["changed"] == [] and r["summary"] == "Food entry: nothing changed. Every value given is already stored."
+        assert "note" not in r and services.get_entry(user.id, "food_entry", entry)["entry"] == before
+
+
+def test_a_kcal_at_the_number_held_beside_a_new_meal_changes_the_meal_and_keeps_the_link(user, monkeypatch):
+    for entry in a_saved_and_a_usda_entry(user, monkeypatch):
+        before = services.get_entry(user.id, "food_entry", entry)["entry"]
+        r = edit(user, "food_entry", entry, kcal=int(before["kcal"]), meal="dinner")
+        assert r["changed"] == ["meal"] and r["summary"].startswith("Food entry changed: meal from ")
+        assert "note" not in r and r["after"]["meal"] == "dinner"
+        assert [r["after"][k] for k in LINK] == [before[k] for k in LINK]
 
 
 def test_a_food_edit_passes_the_same_checks_as_a_log(user):

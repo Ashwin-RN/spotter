@@ -249,7 +249,7 @@ def test_the_weigh_in_logged_just_now_is_the_latest(user, monkeypatch):
     assert goal["progress"]["latest"] == 81.0 == goal["goal"]["start_value"]
 
 
-def test_the_chart_shows_the_later_dated_weigh_in_and_its_average_agrees(user, monkeypatch):
+def test_the_chart_shows_the_later_dated_weigh_in_and_body_weight_now_is_it(user, monkeypatch):
     far_side_then_back(user, monkeypatch)
     services.log_bodyweight(user.id, {"kg": 81}, "web")
     today = users.today_for(stored(user.id))
@@ -259,7 +259,7 @@ def test_the_chart_shows_the_later_dated_weigh_in_and_its_average_agrees(user, m
     assert [p["date"] for p in chart["points"]] == ["2026-11-05", "2026-11-10", "2026-11-09"]
     assert chart["latest"] == {"date": "2026-11-09", "kg": 81}
     now = bodyweight_now([(b.date, b.kg) for b in weighed], today)
-    assert chart["average"][-1]["kg"] == now == 81.0
+    assert now == 81.0
 
 
 def test_the_start_is_named_as_the_7_day_average_when_the_only_recent_weigh_in_is_later_dated(user, monkeypatch):

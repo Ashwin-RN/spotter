@@ -1794,6 +1794,14 @@ def test_a_target_sent_as_null_is_cleared_and_one_left_out_is_kept(http, field):
     assert stored_targets() == {**TARGETS, field: None}  # only that one: the others were left out, and kept
 
 
+def test_a_saved_food_saved_again_with_its_grams_left_out_keeps_them(http):
+    token = sign()
+    roti = {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120}
+    assert ok(http, token, "save_food", {**roti, "grams_per_serving": 40})["food"]["grams_per_serving"] == 40
+    again = ok(http, token, "save_food", {**roti, "kcal_per_serving": 125})
+    assert (again["food"]["kcal_per_serving"], again["food"]["grams_per_serving"]) == (125, 40)
+
+
 def test_leaving_every_target_out_changes_nothing(http):
     token = sign()
     ok(http, token, "update_settings", TARGETS)

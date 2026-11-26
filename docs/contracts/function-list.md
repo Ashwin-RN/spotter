@@ -543,3 +543,13 @@ R12: `log_food` and `log_lifts` leave every list, with `log_bodyweight`, `log_me
 R13: the instructions route every entry to `log` ("Record an entry with log. Call guide with its kind before any details."), from character 544.
 
 G5's "hidden and answering `retired`" is not the shape used for the five: they are hidden from every list and answer as before, with no pointer to `log`. They go in a second deploy, once the call log shows no chat calling them.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+Gates G2 to G5 are not built. They are held by the function rework, the work that made `log` and `guide` (`docs/contracts/log-and-guide.md`). So these stand as they are today:
+
+- Every function publishes an output schema but `log`.
+- `get_data` takes one `area`.
+- `what_is_logged` is called first: the instructions and its description say to call it before `get_data`.
+- `spotter://exercises` is still registered.
+- There is no `app/mcp_inputs.py` and no `docs/adding-a-feature.md`.

@@ -4,10 +4,10 @@ the meal comes from the clock, and the day's numbers come from one helper."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app import config, db, services, users
-from app.models import CallLog, FoodEntry, SavedFood, User
+from app.models import CallLog, EntryVersion, FoodEntry, SavedFood, User
 from app.services import food, usda
 from app.services.common import WRITE_LIMIT
 from tests.conftest import lock_sql, settings as make_settings
@@ -238,6 +238,67 @@ def test_a_deleted_saved_food_comes_back_live(user):
     back = roti(user, kcal=125)
     assert back["id"] == first["id"] and back["created"] is False and "Brought back" in back["summary"]
     assert services.find_food(user.id, "roti")["saved"][0]["kcal_per_serving"] == 125
+
+
+def grams_of(user, kcal=125, **sent):
+    """Roti saved with 40 g a serving, then saved again with a new kcal and `sent`: the grams it holds after."""
+    services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                                 "grams_per_serving": 40}, "claude")
+    again = services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": kcal, **sent},
+                               "claude")
+    assert "error" not in again, again
+    return again["food"]["grams_per_serving"]
+
+
+def test_a_plain_save_over_a_saved_food_keeps_its_grams_left_out(user):
+    assert grams_of(user) == 40
+    with db.new_session() as s:
+        food_row = s.scalar(select(SavedFood))
+        assert (food_row.kcal_per_serving, food_row.grams_per_serving) == (125, 40)
+
+
+@pytest.mark.parametrize("cleared", [None, ""])
+def test_grams_sent_as_null_or_empty_are_cleared(user, cleared):
+    assert grams_of(user, grams_per_serving=cleared) is None
+
+
+def test_new_grams_sent_replace_the_saved_ones(user):
+    assert grams_of(user, grams_per_serving=55) == 55
+
+
+def test_a_new_food_with_grams_left_out_has_none(user):
+    assert roti(user)["food"]["grams_per_serving"] is None
+
+
+def test_a_save_with_items_clears_grams_left_out(user):
+    services.save_food(user.id, {"name": "Lunch", "serving_label": "1 plate", "kcal_per_serving": 500,
+                                 "grams_per_serving": 350}, "claude")
+    meal = services.save_food(user.id, {"name": "Lunch", "items": [{"description": "Dal", "kcal": 180},
+                                                                  {"description": "Rice", "kcal": 200}]}, "claude")
+    assert "error" not in meal, meal
+    assert meal["food"]["items"] and meal["food"]["grams_per_serving"] is None
+
+
+def test_a_deleted_food_brought_back_by_a_plain_save_clears_grams_left_out(user):
+    first = services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                                         "grams_per_serving": 40}, "claude")
+    assert services.delete_entry(user.id, "saved_food", first["id"])["deleted"] is True
+    back = roti(user, kcal=125)
+    assert back["id"] == first["id"] and "Brought back" in back["summary"]
+    assert back["food"]["grams_per_serving"] is None
+
+
+def test_a_save_that_leaves_grams_out_and_changes_nothing_else_writes_nothing(user):
+    first = services.save_food(user.id, {"name": "Roti", "serving_label": "1 roti", "kcal_per_serving": 120,
+                                         "grams_per_serving": 40}, "claude")
+    with db.new_session() as s:
+        stamp = s.get(SavedFood, first["id"]).updated_at
+    again = roti(user)
+    assert again["food"]["grams_per_serving"] == 40
+    assert again["summary"] == "Updated Roti: 1 roti is 120 kcal, 40 g a serving."
+    with db.new_session() as s:
+        assert s.get(SavedFood, first["id"]).updated_at == stamp
+        assert s.scalar(select(func.count()).select_from(EntryVersion)) == 0
 
 
 def test_save_food_checks(user):

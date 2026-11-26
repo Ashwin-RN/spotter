@@ -696,8 +696,8 @@ def test_the_settings_lines_name_programs_where_they_list_what_an_assistant_save
     lines = web.CLAUDE_CAN_LINES
     assert "save foods, routines and programs" in lines["log_delete"]
     assert "delete entries, saved foods, routines and programs." in lines["log_delete"]
-    assert lines["log"] == ("Everything above except deleting: your assistant cannot delete an entry, a saved food, a "
-                            "routine or a program.")
+    assert lines["log"] == ("Everything above except deleting. A second weigh-in or measurement on a day still "
+                            "replaces the first, which is kept.")
     assert (Program, "Programs") in web.DELETE_COUNTS
 
 

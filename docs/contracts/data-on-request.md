@@ -890,3 +890,7 @@ The settings, `targets` in `what_is_logged` and in each `get_data` answer, gain 
 The `food` area gains `protein_g`, `carbs_g` and `fat_g` (grams, null when not logged, never 0 g; their totals skip the nulls), `macros_estimated` (true when the grams are an estimate, null with none) and `portion` (how much was eaten, in the person's words, or null). The `saved_foods` area gains `protein_g_per_serving`, `carbs_g_per_serving` and `fat_g_per_serving`. So a week's protein is Spotter's sum (its decision 17); `get_trends` carries no macro yet.
 
 Measured on the built server, compact JSON characters of the published entry: `get_data` 7,495 of its 7,500 cap, `what_is_logged` 5,131 (`tests/test_data.py`, `test_each_new_entry_is_at_most_7500_characters`). `Targets` keeps its new words short for that cap.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+The `days` area's `weight_kg` (line 295), the day's weigh-in, is the last in the one order: effective date, then id, as `get_trends` takes it (the logic audit's decision 5). It went by the real date, then id, so after a change of time zone a weigh-in dated tomorrow could be today's weight in `get_data` and not in `get_trends`. `tests/test_data.py` holds the two equal.

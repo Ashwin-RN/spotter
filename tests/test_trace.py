@@ -558,6 +558,24 @@ def test_the_owner_reads_lines_a_person_s_calls_and_one_request(make_client, mak
     assert last().caller == "claude"
 
 
+def test_an_email_of_two_accounts_keeps_both_lines_with_failed_only(make_client, make_user, monkeypatch):
+    """logic-audit.md decision 6: the email mode lists every account the email is, failed_only too. Each line's
+    failed_calls says how many failed: here one account's call failed and the other's did not."""
+    client = make_client(owner_user_id=OWNER)
+    make_user(subject=OWNER, email="owner@example.com", name="Owner")
+    cara = make_user(subject="user_01CARA", email="cara@example.com", name="Cara")
+    again = make_user(subject="user_01CARA2", email="CARA@example.com", name="Cara again")
+    monkeypatch.setattr(services, "get_trends", crash)
+    tools_call(client, sign_for("user_01CARA"), "get_trends")
+    tools_call(client, sign_for("user_01CARA2"), "whoami")
+    result = tools_call(client, sign_for(OWNER), "owner_calls", {"email": "Cara@Example.com", "failed_only": True})[1]
+    assert result["isError"] is False, result
+    found = result["structuredContent"]
+    assert found["calls"] is None
+    assert {line["account_id"]: (line["calls"], line["failed_calls"]) for line in found["accounts"]} == {
+        cara.id: (1, 1), again.id: (1, 0)}
+
+
 def test_the_owner_s_own_running_call_is_in_neither_the_failed_list_nor_the_failed_count(make_client, make_user):
     client = make_client(owner_user_id=OWNER)
     me = make_user(subject=OWNER, email="owner@example.com", name="Owner")

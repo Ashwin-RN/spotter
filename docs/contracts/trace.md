@@ -72,3 +72,7 @@ From `docs/contracts/hardening.md` (D8, D13). The call log's retention is unchan
 A `log` row notes `kind=` (the resolved kind, or `none`) and `word=` (Spotter's own open word sent, or `other`), first. `pair` takes the room left. A `guide` row notes `topic=` (the topic answered, or `none`). The free text sent is never written.
 
 `parts`, `details` and `movement` join the known names, with `LogPartIn`'s fields. `owner_calls` takes `function`, `caller` (`claude` or `web`) and `all_accounts`, each for the owner alone, and `function` and `caller` narrow every mode.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+Decision 16 says `owner_calls` with `email` gives that person's calls. So it does when the email is one account's. When it is none or several (matched ignoring case), `calls` is null and `accounts` has a line for each matched account: none for none. `failed_only` drops none of those lines, and each line's `failed_calls` says how many of its calls failed. The notes of `app/services/owner.py` say so, and `tests/test_trace.py` holds it with two accounts of one email, one with a failed call and one without. The note of 2026-11-22 above says `word=` is Spotter's own open word sent, or `other`; the code also keeps the measure words (`app/log_shape.py`, `KIND_WORDS`), as the logic audit's note on `docs/contracts/log-and-guide.md` says.

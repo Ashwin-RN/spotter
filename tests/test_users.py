@@ -13,7 +13,7 @@ from app import config, db, services
 from app.models import User
 from app import users
 from app.users import (canonical_zone, closest_zones, current_zone_names,
-                       today_for, now_for, user_exists, user_for_identity)
+                       today_for, now_for, user_for_identity)
 
 
 def _count() -> int:
@@ -135,11 +135,6 @@ def test_two_first_sign_ins_at_once_give_one_row(monkeypatch):
     assert isinstance(result, User) and _count() == 1
     stored = _reload(result.id)
     assert stored.email == "first@example.com" and stored.name == "Asha"
-
-
-def test_user_exists(make_user):
-    user = make_user()
-    assert user_exists(user.id) and not user_exists(user.id + 1000)
 
 
 # ---------------------------------------------------------------- time zones

@@ -7,9 +7,9 @@ from app import metrics
 import pytest
 
 from app.metrics import (
-    bodyweight_average, bodyweight_now, bodyweight_trend, days_since_last, epley, ewma, in_order, maintenance,
+    bodyweight_average, bodyweight_now, bodyweight_trend, epley, ewma, in_order, maintenance,
     maintenance_gap, order_key, prs, projection, projection_gap, recent_best,
-    session_best, sessions_vs_target, trend_rate, trend_rate_gap, weekly_sessions,
+    session_best, trend_rate, trend_rate_gap,
 )
 
 TODAY = date(2026, 11, 6)
@@ -96,59 +96,6 @@ def test_recent_best_for_a_time_is_the_lowest():
     assert recent_best([(ago(21), 30.0), (ago(3), 31.5), (TODAY, 32.0)], TODAY, lower_is_better=True) == 30.0
     assert recent_best([(ago(28), 29.0), (TODAY, 32.0)], TODAY, lower_is_better=True) == 32.0
     assert recent_best([(ago(40), 29.0), (ago(35), 33.0)], TODAY, lower_is_better=True) == 33.0
-
-
-# ---------------------------------------------------------------- training days
-
-def test_days_since_last():
-    assert days_since_last([ago(9), ago(12)], TODAY) == 9
-    assert days_since_last([TODAY], TODAY) == 0
-    assert days_since_last([], TODAY) is None
-    assert days_since_last([TODAY + timedelta(days=2)], TODAY) == 0      # after today counts as today, never negative
-    assert days_since_last([ago(5), TODAY + timedelta(days=1)], TODAY) == 0
-
-
-def test_sessions_vs_target_full_four_weeks():
-    dates = [ago(i) for i in range(0, 28, 7)] + [ago(i) for i in range(2, 28, 7)] + [ago(i) for i in range(4, 28, 7)]
-    assert sessions_vs_target(dates, 3, ago(60), TODAY) == {"logged": 12, "target": 12, "pct": 100, "weeks": 4}
-
-
-def test_sessions_vs_target_caps_at_four_weeks_and_ignores_older_sessions():
-    dates = [ago(i) for i in range(0, 70, 3)]   # every 3rd day for 10 weeks
-    a = sessions_vs_target(dates, 3, ago(70), TODAY)
-    assert a["target"] == 12 and a["weeks"] == 4
-    assert a["logged"] == 10       # days 0, 3, ..., 27
-
-
-def test_sessions_vs_target_partial_weeks():
-    # Counting for 15 days: 2 whole weeks, so the window is the last 14 days.
-    a = sessions_vs_target([ago(1), ago(5), ago(10), ago(14)], 3, ago(15), TODAY)
-    assert a["target"] == 6 and a["weeks"] == 2
-    assert a["logged"] == 3        # ago(14) is outside the 14-day window
-    assert a["pct"] == 50
-
-
-def test_sessions_vs_target_none_cases():
-    assert sessions_vs_target([TODAY], 3, None, TODAY) is None         # nothing to count from
-    assert sessions_vs_target([TODAY], 3, ago(3), TODAY) is None       # under one whole week
-    assert sessions_vs_target([TODAY], 0, ago(30), TODAY) is None
-    assert sessions_vs_target([TODAY], None, ago(30), TODAY) is None
-
-
-def test_sessions_vs_target_counts_a_date_after_today_as_today():
-    a = sessions_vs_target([TODAY + timedelta(days=1), ago(1)], 2, ago(7), TODAY)
-    assert a["logged"] == 2 and a["target"] == 2 and a["pct"] == 100
-
-
-def test_weekly_sessions_whole_weeks_since():
-    dates = [TODAY, ago(6), ago(7), ago(20), TODAY + timedelta(days=1)]
-    weeks = weekly_sessions(dates, ago(22), TODAY)
-    assert [w["logged"] for w in weeks] == [1, 1, 3]           # oldest first; the date after today is this week's
-    assert weeks[-1]["end"] == TODAY and weeks[-1]["start"] == ago(6)
-    assert weeks[0]["start"] >= ago(22)
-    assert len(weekly_sessions(dates, ago(200), TODAY)) == 8
-    assert weekly_sessions(dates, ago(6), TODAY) == []
-    assert weekly_sessions(dates, None, TODAY) == []
 
 
 # ---------------------------------------------------------------- projection

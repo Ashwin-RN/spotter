@@ -459,10 +459,10 @@ def _checked(field: str, value, row, s, today, kind: str) -> tuple[object, dict 
         return rules.bounded("kcal", value)
     if field == "exercise":
         return cardio.match_cardio(s, value)
+    if field == "portion":  # as a log reads it (logic-audit.md, R6): no portion, invisible characters too, clears it
+        return rules.portion(value)
     if field in CLEARABLE and (value is None or (isinstance(value, str) and not value.strip())):
-        return None, None  # an optional cardio number, a macro or a portion can be cleared
-    if field == "portion":
-        return rules.required_text(value, "portion")
+        return None, None  # an optional cardio number or a macro can be cleared
     return rules.bounded(field, value)
 
 
@@ -560,13 +560,12 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
             current["sets"] = _set_rows(row)
         if kind == "cardio_entry":
             current["exercise"] = row.exercise
-            if "kcal" in current:
-                del current["kcal"]
         if kind == "food_entry" and "kcal" in new:
             current["kcal"] = int(row.kcal)
-        # A stated number makes a food entry the person's, even when it is the number already there
-        # (decision 1: "yes, that's right" is the same number, stated).
-        restated = kind == "food_entry" and "kcal" in new and row.source != "you_said"
+        # A stated number makes an estimate the person's, even when it is the number already there (stage-4.md,
+        # decision 1: "yes, that's right" is the same number, stated). On a saved or USDA entry the same number is no
+        # change, so its link, servings and grams stay (logic-audit.md, R8).
+        restated = kind == "food_entry" and "kcal" in new and row.source == "claude_estimate"
         # One mark covers the three macros, so they become the person's own only when the edit sends every macro the
         # entry holds after it, as the page's Confirm does; one sent at the value an estimate holds is then the
         # person's confirmation, as a restated kcal is. An edit of fewer leaves the mark as it is.
@@ -687,7 +686,12 @@ def edit_entry(user_id: int, kind: str, entry_id, changes: dict | None, by: str,
         elif isinstance(row, FoodEntry):
             row.dedupe_key = food.entry_key(row.date, [food.entry_tuple(row)])
         elif isinstance(row, CardioEntry):
-            row.dedupe_key = cardio.cardio_key(row.date, row.exercise_id, {f: getattr(row, f) for f in CARDIO_NUMBERS})
+            # The numbers as a log keys them (logic-audit.md, R5): a speed that equals distance over minutes, on the
+            # row as it now stands, is taken as worked out and left out of the key.
+            numbers = {f: getattr(row, f) for f in CARDIO_NUMBERS}
+            if row.speed_kmh is not None and row.speed_kmh == metrics.speed(row.distance_km, row.minutes):
+                numbers["speed_kmh"] = None
+            row.dedupe_key = cardio.cardio_key(row.date, row.exercise_id, numbers)
         else:
             row.dedupe_key = measurements.measurement_key(row.date, row.kind, row.value)
         row.updated_at = db.utcnow()

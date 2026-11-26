@@ -368,7 +368,8 @@ def test_the_save_a_food_form_holds_its_fields_in_order(signed):
     assert control(page, "grams_per_serving").attrs["aria-describedby"] == "food-grams_per_serving-hint"
     [button] = form.find_all("button")
     assert (button.classes, button.text()) == (["primary"], "Save food")
-    assert [p.text() for p in form.find_all("p", "small")] == ["Saving a name you already have updates it."]
+    assert [p.text() for p in form.find_all("p", "small")] == [
+        "Saving a name you already have updates it. A saved meal is changed through your assistant."]
     assert [n.tag for n in form.elements()][-3:] == ["div", "p", "input"]  # the button, the grey line, the hidden key
 
 
@@ -1487,8 +1488,8 @@ SWITCH_ALLOWS = {
                    "saved foods, routines and programs. Before a delete it is shown the entry and told to ask you. "
                    "Nothing is erased: a deleted one can be restored."),  # units.md R16; routines-and-programs.md
     "log": (SWITCH_EVERYTHING,
-            "Everything above except deleting: your assistant cannot delete an entry, a saved food, a routine or a "
-            "program."),
+            "Everything above except deleting. A second weigh-in or measurement on a day still replaces the first, "
+            "which is kept."),
 }
 
 

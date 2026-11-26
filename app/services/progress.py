@@ -25,18 +25,21 @@ get_progress(user_id, exercise=None)
 
 lift_chart(lift_history, goal_numbers, lift=None) and bodyweight_chart(weigh_ins, goals, today, since=None)
     The data app.charts draws, from the same numbers. Each body weight point carries its smoothed
-    value (metrics.ewma over every weigh-in), the line the chart draws, and the 7-day average there,
-    both at 1 dp. since: draw only the weigh-ins from that date on; the smoothed line is unchanged.
+    value (metrics.ewma over every weigh-in), the line the chart draws, at 1 dp. since: draw only the
+    weigh-ins from that date on; the smoothed line is unchanged.
+bodyweight_view(user_id, today=None)
+    Progress' body weight chart: the weigh-ins and the open goals by id read here, the last
+    trends.WINDOW_DAYS days drawn by bodyweight_chart. The web asks this and reads nothing itself.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app import db, formatting, links, metrics, rules, users
 from app.models import Exercise, Goal, User
-from app.services import cardio, lifts
+from app.services import body, cardio, lifts, trends
 from app.services.common import exercises, no_account
 from app.services.goals import goal_numbers, load_numbers, rounded_numbers
 
@@ -277,7 +280,7 @@ def lift_chart(lift_history: dict, numbers: list[dict], lift: str | None = None)
     goal = next((g for g in numbers if g.get("exercise") == lift), None)
     pts = points[lift]
     return {
-        "lift": lift, "choices": choices,
+        "lift": lift,
         "points": [{"date": d.isoformat(), "value": v} for d, v in pts],
         "latest": {"date": pts[-1][0].isoformat(), "value": pts[-1][1]},
         "goal": None if goal is None else {
@@ -293,16 +296,13 @@ def _derived(value: float | None) -> float | None:
 
 def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date, since: date | None = None,
                      exact: bool = False) -> dict | None:
-    """Data for bodyweight_svg: weigh-ins with their smoothed value, the 7-day average at each, the
-    open bodyweight goal. Every weigh-in is drawn, whatever its date, in the one order and labelled
-    with its real date; with since, only those whose effective date is on or after it. smoothed is
-    metrics.ewma over every weigh-in, the window's or not (the line get_trends reports). Each average
-    is the 7 days ending on that weigh-in's effective date, over every weigh-in's effective date, so
-    the last one is bodyweight_now. None with fewer than 2 weigh-ins drawn. exact: smoothed and each average
-    unrounded, as get_trends' exact gives them, for a page in lb."""
+    """Data for bodyweight_svg: weigh-ins with their smoothed value, and the open bodyweight goal, the first
+    of goals as given (bodyweight_view gives them by id). Every weigh-in is drawn, whatever its date, in the
+    one order and labelled with its real date; with since, only those whose effective date is on or after it.
+    smoothed is metrics.ewma over every weigh-in, the window's or not (the line get_trends reports). None with
+    fewer than 2 weigh-ins drawn. exact: smoothed unrounded, as get_trends' exact gives it, for a page in lb."""
     shown = (lambda v: v) if exact else _derived  # noqa: E731
     every = metrics.in_order([(b.date, b.kg) for b in weigh_ins], today)
-    aged = [(metrics.on_or_before(d, today), kg) for d, kg in every]
     smoothed = [v for _, v in metrics.ewma(every, today)]
     drawn = [(p, sm) for p, sm in zip(every, smoothed)
              if since is None or metrics.on_or_before(p[0], today) >= since]
@@ -313,10 +313,28 @@ def bodyweight_chart(weigh_ins: list, goals: list[Goal], today: date, since: dat
                 None)
     return {
         "points": [{"date": d.isoformat(), "kg": kg, "smoothed": shown(sm)} for (d, kg), sm in drawn],
-        "average": [{"date": d.isoformat(),
-                     "kg": shown(metrics.bodyweight_average(aged, metrics.on_or_before(d, today)))}
-                    for d, _ in pts],
         "latest": {"date": pts[-1][0].isoformat(), "kg": pts[-1][1]},
         "goal": None if goal is None else {
             "target_kg": goal.target_value, "target_date": goal.target_date.isoformat() if goal.target_date else None},
     }
+
+
+def bodyweight_view(user_id: int, today: date | None = None) -> dict:
+    """Progress' body weight chart, read and drawn: {bodyweight: bodyweight_chart or None}. It reads the
+    person's weigh-ins (body.weigh_ins, in the one order) and open goals by id, so of two open body weight
+    goals the one set first is drawn, and draws the last trends.WINDOW_DAYS days, today included: the same
+    points as get_trends' series. exact for a person who keeps weights in lb. No account: {bodyweight: None}.
+
+    today: the date the page's other reads name (get_trends' today); without it, the person's own date.
+    A read: no lock, no write limit."""
+    with db.new_session() as s:
+        user = s.get(User, user_id)
+        if user is None:
+            return {"bodyweight": None}
+        today = today or users.today_for(user)
+        exact = users.units_for(user).weight == "lb"
+        weighed = body.weigh_ins(s, user.id, today)
+        goals = list(s.scalars(select(Goal).where(Goal.user_id == user.id, Goal.status == "open")
+                               .order_by(Goal.id)))
+        since = today - timedelta(days=trends.WINDOW_DAYS - 1)
+        return {"bodyweight": bodyweight_chart(weighed, goals, today, since, exact)}

@@ -169,3 +169,9 @@ Every form behind CSRF; every write through `logged_write`; no new script; CSP u
 2. Live, with Today open: save roti (120 kcal a roti) by talking; then "Two rotis and dal, then 30 minutes on the treadmill" in one message → one `log_food` with two entries (roti by id, servings 2, tag saved; dal with a number, tag estimate) and one `log_cardio` → Today shows the meal with both tags and the cardio with its estimate (or the no-weigh-in note) → the day's total equals 240 plus the dal estimate.
 3. "Dal was 150" → the tag flips to you said; the total follows.
 4. The evals: every first case passes at least 2 of 3 runs, the rate reported as it is.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+- Decisions 1 and 11, a kcal sent at the number an entry already holds (the logic audit's ruling R8): on an estimate it still makes the entry the person's number, as decision 1 says. On an entry logged from a saved or USDA food it is no change: the link, the servings and the grams stay, and with nothing else sent the answer is "Food entry: nothing changed. Every value given is already stored." A changed kcal still makes the entry `you_said` and clears its link, as decision 11 says.
+- A cardio edit keys the entry as a log does (the logic audit's ruling R5): a speed that equals `metrics.speed(distance_km, minutes)` of the row as it now stands is left out of the key. So the same session sent again, as it now stands, is a duplicate within the 10 minutes the guard counts from when the entry was logged. An imported row keeps the key it was imported under.
+- Known limit: a speed the person stated that equals distance over minutes keys with the speed on a log and without it after an edit. No column says whether a speed was given, and a logged row's key is read only by the 10-minute guard. `tests/test_paths_agree.py` pins it.

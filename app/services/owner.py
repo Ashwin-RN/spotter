@@ -12,8 +12,10 @@ owner_calls(data) -> {hours, accounts, calls}, in this order of precedence:
     none of them             one line per account with a call in the window, and one line with no account
                              for the calls that had none, the latest call first
 hours (1 to 2,160, 24 when left out) is the window, limit (1 to 200, 50 when left out) the most lines or calls,
-failed_only keeps the failed calls (and the lines with one). A failed call is not ok and has finished: a call
-still running (calllog.IN_PROGRESS) is not failed. The MCP schema holds the ranges.
+failed_only keeps the failed calls; in the last mode (none of them) it keeps only the lines with one. With an email
+that is not one account's, every matched account keeps its line, with failed_only too: the mode lists every account
+the email is, and each line's failed_calls says how many of its calls failed. A failed call is not ok and has
+finished: a call still running (calllog.IN_PROGRESS) is not failed. The MCP schema holds the ranges.
 function and caller narrow every mode, the lines' counts too (log-and-guide.md L4): function is a function's name,
 matched exactly, and a name no row holds gives nothing, never a refusal (the web keeps writing four of the five log
 functions' names after they leave the list); caller is web or claude, so a row older than the trace, with no

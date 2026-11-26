@@ -624,6 +624,16 @@ def required_text(value, field: str, where: str = "", limit: int | None = None) 
     return kept, None
 
 
+def portion(value, where: str = "") -> tuple[str | None, dict | None]:
+    """A food entry's portion, as a log and an edit both read it (logic-audit.md, R6): nothing, a blank or only
+    invisible characters is no portion, (None, None); anything else is required_text's own answer, a refusal such
+    as too long included. On an edit no portion clears it."""
+    kept, err = required_text(value, "portion", where)
+    if err and err["error"] == "missing_field":
+        return None, None
+    return kept, err
+
+
 def portion_missing(where: str) -> dict:
     """An estimate sent with no portion (macros-and-asking.md, decision 6): nothing is written, and the fix asks the
     person once. where names the entry, such as "Entry 2"."""

@@ -19,7 +19,7 @@ Live: https://spottermcp.com
 ## Set up
 
 1. **Add Spotter in your assistant** as a remote MCP server. Some call it a custom connector. The address is `https://spottermcp.com/mcp`. The steps for each app are under Your assistant below.
-2. **Sign in through the assistant.** There is no key to paste: the assistant opens Spotter's sign-in page, and you sign in with Google. The first sign-in creates your account and saves your time zone.
+2. **Sign in through the assistant.** There is no key to paste: the assistant opens Spotter's sign-in page, and you sign in with Google. The first sign-in creates your account. Your time zone is saved when you first open a Spotter page, or your assistant sets it.
 3. **Paste the starter prompt** below into a new chat.
 
 Sign-in is open only to invited Google accounts for now.
@@ -147,12 +147,12 @@ Spotter never receives a photo. The assistant reads a photo of a meal and sends 
 
 - The MCP functions listed in `docs/can-and-cant.md`, and two resources, over streamable HTTP.
 - Python 3.12, Starlette, SQLAlchemy, Alembic, the `mcp` library and Postgres. Sign-in goes through an outside provider (WorkOS AuthKit) for the web and the assistant, so both reach one account.
-- Every write locks the person's row first, counts against a write limit, and passes the same checks whether it came from the assistant or a form.
+- Every write locks the person's row first and passes the same checks whether it came from the assistant or a form. Every write a person makes but the Settings switch and deleting the account counts against a write limit.
 - Every write is safe to send twice. A call may carry a key of its own: the same key and call again writes nothing and gets the first answer back. Every form that writes carries a hidden key, so a double click saves once. Answers are kept for a day.
 - An edit keeps what it replaces. The values from before each edit are kept, the newest 10 an entry for 90 days, and one call or one click undoes the last edit. An edit form older than the entry's last change is refused.
 - Feedback goes through the assistant. A note is sent only when the person asks or says yes to an offer, with a cap a person and the same note saved once. The owner alone reads the notes, each with the names of the functions that account called around then, never what was logged. A note is in the person's export and goes with the account.
-- Safety limits: a sized connection pool, a time limit on every query, lock wait and idle transaction, a read limit and a page limit per person, a 1 MiB cap on every request, and an export limit of one at a time and 5 an hour per person. The database checks its own rules too: a sign and a ceiling on every number a person's row holds, and the closed value lists. A database that is too busy answers that it is busy, not with a crash.
-- A call log with a trace: one row per call, with a request id that is also on the log lines and the response, the names of the fields sent and never a value, whether it wrote, and where a failed call stopped. Rows are deleted after 90 days.
+- Safety limits: a sized connection pool, a time limit on every query, lock wait and idle transaction, a read limit and a page limit per person (300 each in 10 minutes), a 1 MiB cap on every request, and an export limit of one at a time and 5 an hour per person. The database checks its own rules too: a sign and a ceiling on every number a person's row holds, and the closed value lists. A database that is too busy answers that it is busy, not with a crash.
+- A call log with a trace: one row per function call, with a request id that is also on the log lines and the response, the names of the fields sent and never a value, whether it wrote, and where a failed call stopped. Rows are deleted after 90 days.
 - The tests run by hand before each push: the tests of the files touched, then the whole suite once.
 - Evals: Claude, Codex or a Gemini host against a local copy with a throwaway person; the server records every call it received, and the eval judges that, not the model's own account of what it did. The cases are in `evals/cases.json`, 3 runs each. The runner pins each model and its reasoning effort. Each run's result is recorded in `BUILD_LOG.md`, and how the evals run is in `docs/evals.md`.
 

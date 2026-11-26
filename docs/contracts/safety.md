@@ -50,3 +50,7 @@ What exists before this work, read in the code on `d72602f`:
 | S1 | `app/config.py`, `app/db.py`, `app/main.py`, `app/mcp_server.py`, `app/services/common.py`, `app/web.py`, the template for the new message page if the message pages need one, `tools/load.py`, `tests/test_safety.py` (new). Existing test files only where an existing assertion now fails because of a decision above, each such change named in the report | Every decision above has a test, except 2's Postgres settings (a test checks the engine is built with the options string and the pool numbers on a Postgres URL, without connecting) and 8 (one SQLite run of `tools/load.py --people 5 --seconds 10`, its printed table in the report). The 200-row import's body size and the export's time on the sample account, in the report. The tests for the files touched pass, plain and with `-W error` |
 
 Not in this work: the docs (`README.md`, `docs/can-and-cant.md`, `BUILD_LOG.md`), done after the review; the Postgres load run, done by the lead; anything on the host (its plan, its backups, its start command), which is the owner's.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+Decision 5 says the page limit counts GET requests. It counts GET and HEAD: a HEAD is a GET without its body (`PAGE_METHODS` in `app/web.py`).

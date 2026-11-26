@@ -151,7 +151,7 @@ def _renamed(err: dict, old: str, new: str, fix: bool = True) -> dict:
 
 
 # rules' converted, inward and call_unit, under the names this module has always used.
-_converted, _inward, _call_unit, UNIT_OF = rules.converted, rules.inward, rules.call_unit, rules.UNIT_OF
+_converted, _inward, _call_unit = rules.converted, rules.inward, rules.call_unit
 
 
 _SPEED_SENT = re.compile(r"^(speed_kmh \S+) does not match ")

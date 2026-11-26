@@ -10,7 +10,6 @@ from sqlalchemy.orm import selectinload
 
 from app import charts, db, formatting, metrics, services, users
 from app.charts import bodyweight_svg, chart_svg
-from app.metrics import bodyweight_average
 from app.models import Goal
 from app.services import body, lifts
 from app.services.goals import goal_numbers, load_numbers
@@ -162,7 +161,7 @@ def test_the_lift_chart_follows_the_goal_lift_and_draws(make_user):
                                 "target_date": day(user, 56)}, "claude")
     history, _, _, numbers, _ = numbers_for(user)
     chart = lift_chart(history, numbers)
-    assert chart["lift"] == "Back Squat" and chart["choices"] == ["Bench Press", "Back Squat"]
+    assert chart["lift"] == "Back Squat" and "choices" not in chart
     assert chart["goal"]["target_kg"] == 100 and chart["goal"]["projected"] is not None
     assert lift_chart(history, numbers, "Bench Press")["goal"] is None
     root = ET.fromstring(str(chart_svg(chart)))
@@ -177,10 +176,8 @@ def test_the_bodyweight_chart_for_a_weight_loss_goal(make_user):
     services.set_goal(user.id, {"kind": "bodyweight", "target_value": 82, "target_date": day(user, 60)}, "claude")
     _, weighed, goals, _, today = numbers_for(user)
     chart = bodyweight_chart(weighed, goals, today)
-    assert len(chart["points"]) == 6 and len(chart["average"]) == 6
+    assert len(chart["points"]) == 6 and "average" not in chart
     assert chart["goal"]["target_kg"] == 82 and chart["latest"]["kg"] == 85.5
-    assert chart["average"][-1]["kg"] == bodyweight_average(
-        [(b.date, b.kg) for b in weighed], weighed[-1].date)
     svg = str(bodyweight_svg(chart))
     root = ET.fromstring(svg)
     assert root.get("id") == "bodyweight-chart" and root.find(f"{SVG}title").text == "Body weight over time"
@@ -972,6 +969,27 @@ def test_the_body_weight_chart_as_progress_calls_it(seeded):
         f"{formatting.show(goal['target_kg'], 'goal_target')} kg by {formatting.day(goal['target_date'], FIXED)}.")
     assert len(list(root.iter(f"{SVG}circle"))) == 28
     page_text_is_clean(root)
+
+
+def test_of_two_open_body_weight_goals_the_progress_chart_draws_the_one_set_first(make_user, fixed_clock):
+    """Both goals are kept open (set_goal warns of the first); Progress' chart reads the open goals by id, so it
+    draws the lower id's target, whichever the database gives first. web._trend is progress.bodyweight_view."""
+    from app import web
+    from app.services import progress
+
+    user = make_user()
+    for days_ago, kg in ((3, 86), (0, 85)):
+        assert "error" not in services.log_bodyweight(user.id, {"kg": kg, "date": day(user, -days_ago)}, "claude")
+    first = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 80, "target_date": day(user, 60)},
+                              "claude")
+    second = services.set_goal(user.id, {"kind": "bodyweight", "target_value": 75, "target_date": day(user, 90)},
+                               "claude")
+    assert first["id"] < second["id"] and any(f"(id {first['id']})" in w for w in second["warnings"])
+    assert [g["goal_id"] for g in services.get_goals(user.id)["goals"]] == [first["id"], second["id"]]
+    chart = web._trend(user.id)["bodyweight"]
+    assert chart["goal"] == {"target_kg": 80, "target_date": day(user, 60)}
+    assert progress.bodyweight_view(user.id) == {"bodyweight": chart}
+    assert progress.bodyweight_view(987654) == {"bodyweight": None}
 
 
 def test_each_goal_chart_from_goal_charts(seeded):

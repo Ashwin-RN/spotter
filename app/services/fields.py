@@ -441,9 +441,9 @@ def load_days(s: Session, user: User, start, end) -> list[Row]:
         if (d := day(row)) is not None:
             d["food_entries"] += 1
             d["kcal"] = (d["kcal"] or 0) + int(row["kcal"])
-    for row in sorted(load_weigh_ins(s, user, start, end), key=lambda r: (r["date"], r["id"])):
+    for row in sorted(load_weigh_ins(s, user, start, end), key=lambda r: metrics.order_key(r["date"], r["id"], today)):
         if (d := day(row)) is not None:
-            d["weigh_in"] = row["kg"]  # the day's live weigh-in; the latest when a later-dated one meets today's
+            d["weigh_in"] = row["kg"]  # the day's live weigh-in; the last in the one order (effective date, then id)
     for row in load_measurements(s, user, start, end):
         if (d := day(row)) is not None:
             d["measurements"] += 1

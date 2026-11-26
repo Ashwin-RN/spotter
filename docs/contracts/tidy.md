@@ -456,3 +456,7 @@ So the repo's rule, that a change to a text a model reads gets an eval run, hold
 ## Not in this work
 
 A route for the privacy page. A contact form. A reply to feedback. A check of each assistant's limits against its docs. A change to the instructions, a tool or `whoami`. The units work, built after this one. The earlier contracts, which are records of their day: `docs/contracts/routines.md:80` says 22 functions, and stays.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+The landing's notes (lines 235 to 245) follow the README's Status cells word for word, as decision 4 says, so the code shown there is a record of its day. The README's table now holds nine assistants, in this order: Claude apps, Claude Code, ChatGPT, Gemini app, Grok, Mistral, Perplexity, GitHub Copilot in VS Code, Cursor. `ASSISTANTS` and `ASSISTANT_NOTES` in `app/web.py` hold the same nine, and `tests/test_web.py` holds them equal to the README.

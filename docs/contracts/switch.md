@@ -181,3 +181,9 @@ This work starts from a tree that holds the edit-history work as trimmed, the fe
 ## Note, 2026-11-22: log and guide (`docs/contracts/log-and-guide.md`)
 
 Both settings allow `log` and `guide`. `log` is at `log` in `NEEDS`, as the five are; `guide` is a read. The five keep their level and answer by name at both settings.
+
+## Note, 2026-11-25: the logic audit (`docs/contracts/logic-audit.md`)
+
+Settings, "Read and log" (line 103), as built: "Everything above except deleting. A second weigh-in or measurement on a day still replaces the first, which is kept."
+
+Why: at this setting a plain log, or a restore, of a second weigh-in or measurement on a day still sets the first aside, and nothing is erased (the logic audit's decision 3). No refusal was added.
