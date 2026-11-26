@@ -158,4 +158,6 @@ Built by one builder, then one review on a frozen copy with probes, then one fix
 | P3, a projected date before today | Treated as an end day of today: no line |
 | D, `data-on-request.md` | The note says the figure is shown at the estimated max's own step (1 decimal in `get_data`), not at 2 decimals |
 
+The exit check's last line, "Not checked in this work: the Goals page in a browser", was overtaken: after the commit the pages were seen in a browser from a local render, as the build log says. The two-sentence page line and the fix for the hidden projection were made after the review and were read by no reviewer; the tests and the whole suite hold them.
+
 The review's other point stands as it is: on the Goals page test, the legend is checked against the line the chart drew, so a chart that left out a line it should draw would pass that one test. `test_the_four_week_charts_on_the_fixed_day` pins the three lines that must be there.

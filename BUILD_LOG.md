@@ -1843,10 +1843,10 @@ one written into the contract's notes. The page sentence first written for P1 wa
 
 | Check | Result |
 |---|---|
-| The touched test files, after the last edit | Green |
+| The touched test files, after the last edit | Green, plain and with `-W error` |
 | `python -m evals.need main` | "evals needed: no" |
 | The whole suite on a clean export of `57b7113` | 7,994 passed |
-| Today, Progress, Goals and the first-day page in Chrome, from a local render | The weight sentence reads as two sentences. On each goal card the dotted line agrees with the pace the card states. The Bests line reads right. Nothing overflows at 390 px, in a narrow frame, not on a phone |
+| Today, Progress, Goals and the first-day page in Chrome, from a local render | Seen: the weight sentence on Today reads as two sentences; on the body weight, squat and bench goal cards the dotted line agrees with the pace the card states. Reported by a second look, not seen first hand: the fourth goal card (it draws no line), the Bests line, and no overflow at 390 px in a narrow frame. Not on a phone. No page showed a set of 1 rep: the seeded account has none |
 
 ### Known limits
 
