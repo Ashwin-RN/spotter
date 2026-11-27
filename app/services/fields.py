@@ -897,5 +897,6 @@ OTHER_TABLES: dict[str, str] = {
     "write_key": "Internal: a write's own key.",
     "entry_version": "Internal: an entry as it stood before an edit.",
     "feedback": "Internal: the notes people send Spotter's maker.",
+    "owner_action": "Internal: the owner's record of each suspend and lift.",  # owner-accounts.md decision 19
     "usda_search": "Internal: the USDA lookup's cache.",
 }

@@ -1133,14 +1133,15 @@ def test_a_weigh_in_between_the_two_sends_moves_the_start_so_the_second_is_anoth
 
 TEMPLATES = Path(web.HERE) / "templates"
 FORM = re.compile(r"<form\b[^>]*>.*?</form>", re.S)
-UNKEYED = ('action="/sign-out"', 'action="/settings/export"')  # they write nothing through a service
+UNKEYED = ('action="/sign-out"', 'action="/settings/export"',  # they write nothing through a service
+           'action="/owner/accounts/status"')  # owner-accounts.md decision 22: no write key
 
 
 def test_every_form_that_writes_carries_one_hidden_key_as_its_last_field_and_the_three_others_carry_none():
     forms = [form for path in sorted(TEMPLATES.glob("*.html")) for form in FORM.findall(path.read_text("utf-8"))]
     keyed = [form for form in forms if not any(action in form for action in UNKEYED)]
-    assert (len(forms), len(keyed)) == (24, 21)  # routines.md: a routine's Delete; units.md R16: the Units card; C5c:
-    # the program's Delete
+    assert (len(forms), len(keyed)) == (28, 21)  # routines.md: a routine's Delete; units.md R16: the Units card; C5c:
+    # the program's Delete; owner-accounts.md: the owner's Suspend and Lift, and the suspended page's Export and Sign out
     field = '<input type="hidden" name="key" value="{{ form_key() }}">'
     for form in forms:
         assert form.count(field) == (form in keyed) and form.count('name="key"') == form.count(field), form[:80]

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Accounts · Spotter{% endblock %}
+{% block main %}
+{% import "_parts.html" as parts %}
+{# The owner's accounts (contract owner-accounts.md): the page head with the totals, the one line after a suspend or
+   lift (web.OWNER_DONE, by the redirect's mark), then two cards, each one row table (table.rows), which stacks below
+   720 px and scrolls sideways in its own box on a laptop. The accounts table is table.rows.many-cols: from 720 px its
+   short cells keep to one line and the status and form cells (td.wrap-cell) wrap at a set width. Every figure is services.owner_accounts' own field through
+   the count filter, an account with nothing logged at 0. The dates are the owner's own (day_utc, in the owner's
+   zone). Entry counts are live rows; the calls and feedback columns name their windows, read from calllog's
+   constants. Each account but the owner's own carries one form: Suspend, with a reason, when active; Lift, with an
+   optional reason, when suspended. The forms post to /owner/accounts/status and carry no key: they do not go
+   through a service's write (decision 22). The record is the last 20 suspends and lifts. #}
+<div class="page-head">
+  <h1>Accounts</h1>
+  <p class="lede">{{ total|show("count") }} account{{ "" if total == 1 else "s" }}, {{ seen|show("count") }} seen in the last {{ seen_days|show("count") }} days.</p>
+  <p class="lede">Entries leave out deleted ones. Calls cover the last {{ call_days|show("count") }} days and feedback the last {{ feedback_days|show("count") }}: Spotter keeps them that long.</p>
+</div>
+
+{% if done and done_ok %}
+{{ parts.saved_line(done) }}
+{% elif done %}
+<div class="error"><p>{{ done }}</p></div>
+{% endif %}
+
+<section class="card" aria-labelledby="accounts-title">
+  <h2 id="accounts-title">Every account</h2>
+  <div class="table-wrap">
+    <table class="rows many-cols" aria-labelledby="accounts-title">
+      <thead><tr><th scope="col">Account</th><th scope="col">Name</th><th scope="col">Time zone</th><th scope="col">Joined</th><th scope="col">Last seen</th>{% for field, label in count_columns %}<th scope="col" class="num">{{ label }}</th>{% endfor %}<th scope="col" class="num">Calls, {{ call_days|show("count") }} days</th><th scope="col" class="num">Feedback, {{ feedback_days|show("count") }} days</th><th scope="col">Status</th><th scope="col"><span class="sr">Suspend or lift</span></th></tr></thead>
+      <tbody>
+        {% for a in accounts %}
+        <tr><td class="lead">{{ a.email or "No email" }} <span class="small">Account {{ a.account_id }}</span></td><td data-label="Name">{{ a.name or "" }}</td><td data-label="Time zone">{{ a.time_zone or "Not set" }}</td><td data-label="Joined">{{ a.joined|day_utc(zone, today) }}</td><td data-label="Last seen">{% if a.last_seen %}{{ a.last_seen|day_utc(zone, today) }}{% endif %}</td>{% for field, label in count_columns %}<td class="num" data-label="{{ label }}">{{ a[field]|show("count") }}</td>{% endfor %}<td class="num" data-label="Calls, {{ call_days|show("count") }} days">{{ a.calls|show("count") }}</td><td class="num" data-label="Feedback, {{ feedback_days|show("count") }} days">{{ a.feedback|show("count") }}</td><td class="wrap-cell" data-label="Status">{% if a.status == "suspended" %}Suspended{% if a.status_at %} since {{ a.status_at|day_utc(zone, today) }}{% endif %}{% if a.status_reason %}<span class="small"> {{ a.status_reason }}</span>{% endif %}{% else %}Active{% endif %}</td><td class="wide-cell wrap-cell">{% if a.account_id != owner_id %}{% if a.status == "suspended" %}<form method="post" action="/owner/accounts/status">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="account_id" value="{{ a.account_id }}">
+          <input type="hidden" name="action" value="lift">
+          {{ parts.field("lift-" ~ a.account_id, "reason", "Reason for the record", maxlength=reason_max, hint="Optional") }}
+          <div class="form-actions"><button class="secondary">Lift suspension</button></div>
+        </form>{% else %}<form method="post" action="/owner/accounts/status">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="account_id" value="{{ a.account_id }}">
+          <input type="hidden" name="action" value="suspend">
+          {{ parts.field("suspend-" ~ a.account_id, "reason", "Reason", maxlength=reason_max, hint="Yours alone: the person never sees it.") }}
+          <div class="form-actions"><button class="danger">Suspend</button></div>
+        </form>{% endif %}{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card" aria-labelledby="record-title">
+  <h2 id="record-title">Record</h2>
+  {% if record %}
+  <div class="table-wrap">
+    <table class="rows" aria-labelledby="record-title">
+      <thead><tr><th scope="col">When</th><th scope="col">Action</th><th scope="col">Account</th><th scope="col">By</th><th scope="col">Reason</th></tr></thead>
+      <tbody>
+        {% for r in record %}
+        <tr><td class="lead">{{ r.at|day_utc(zone, today) }}</td><td data-label="Action">{{ actions[r.action] }}</td><td data-label="Account">Account {{ r.account_id }}</td><td data-label="By">Account {{ r.by_account_id }}</td><td class="wide-cell" data-label="Reason">{{ r.reason or "" }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="small">The last {{ record|length|show("count") }} suspends and lifts, newest first.</p>
+  {% else %}
+  <p class="empty-line">Nothing suspended or lifted yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

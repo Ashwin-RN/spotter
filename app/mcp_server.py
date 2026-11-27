@@ -11,7 +11,8 @@ Scopes: the metadata advertises SCOPES, and a client asks the provider for what 
 One wrapper runs every function (Wrapper.call below). In order: it notes the start time, reads the
 verified token, finds or creates the person's account (users.user_for_identity), asks the provider's
 userinfo for a missing email or name (at most once per LOOKUP_EVERY seconds per person), starts the
-call's call-log row (calllog.start), checks the person's permission switch against NEEDS, checks the
+call's call-log row (calllog.start), refuses a suspended account (ACCOUNT_SUSPENDED, every function and whoami too:
+contract owner-accounts.md, decisions 13 and 14), checks the person's permission switch against NEEDS, checks the
 read limit for a read-level function (services.common.check_reads: every read together), checks the
 shape of a write's key when one was sent (invalid_key), runs the service with the account id (a keyed
 write through services.common.keyed: one look for the key with no lock, then the work), turns a crash
@@ -108,7 +109,7 @@ from app.mcp_schemas import (
     SetGoalResult, SetIn, UpdateSettingsResult,
     WhatIsLoggedResult, Whole, WhoamiResult, whole_in,
 )
-from app.models import CLAUDE_CAN, User
+from app.models import CLAUDE_CAN, STATUSES, User
 from app.services import common, feedback, food, routines
 from app.services.common import check_reads
 from app.services.owner import HOURS, LIMIT
@@ -284,6 +285,13 @@ NOT_ALLOWED_MESSAGES = {"log": "This account lets Claude read and log, not delet
 # The one text in Spotter that sends a person to a page: only they can change what Claude may do.
 NOT_ALLOWED_FIX = "The person can change what Claude may do on the Settings page."
 OWNER_ONLY = {"error": "not_allowed", "message": "This function is for Spotter's owner.", "fix": "Nothing to retry."}
+# A suspended account's answer to every call (owner-accounts.md, decision 14): its own code, so the owner can find these
+# calls, and a fix that says there is nothing to retry, since the instructions say nothing of it. The owner's reason is
+# never in it (decision 18).
+SUSPENDED = STATUSES[1]
+ACCOUNT_SUSPENDED = {"error": "account_suspended", "message": "This account is suspended.",
+                     "fix": "Nothing to retry. Tell the person their account is suspended, and that they can still "
+                            "export or delete their data on Spotter's Settings page."}
 # The arguments of the call running, as the client sent them (SpotterServer.call_tool): what tried describes.
 _SENT: ContextVar[dict | None] = ContextVar("spotter_sent_arguments", default=None)
 
@@ -714,7 +722,8 @@ class Wrapper:
             if isinstance(user, dict):
                 result = user
             else:
-                refused = not_allowed(function, user.claude_can)  # before the service: nothing is written
+                # A suspended account first, then the switch: before the service, so nothing is written.
+                refused = {**ACCOUNT_SUSPENDED} if user.status == SUSPENDED else not_allowed(function, user.claude_can)
                 if refused is None and function in OWNER_FUNCTIONS and not is_owner(token):
                     refused = {**OWNER_ONLY}
                 if refused is None and function in READ_FUNCTIONS:  # the read limit, before the read's work

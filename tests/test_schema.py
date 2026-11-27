@@ -30,7 +30,8 @@ from .conftest import TEST_DATABASE_URL, TEST_DIR, alembic_config
 ALL_TABLES = {"user", "exercise", "lift_session", "lift_set", "bodyweight", "goal", "call_log", "measurement",
               "saved_food", "food_entry", "cardio_entry", "usda_food", "usda_search", "write_key",
               "entry_version", "feedback", "routine",  # routine: routines.md, migration 0010
-              "program"}  # program: routines-and-programs.md, migration 0016
+              "program",  # program: routines-and-programs.md, migration 0016
+              "owner_action"}  # owner_action: owner-accounts.md, migration 0017
 # The seven tables 0001 gave an is_sample column and 0004 took it from.
 MARKED_TABLES = ("food_entry", "cardio_entry", "lift_session", "bodyweight", "measurement", "goal", "saved_food")
 
@@ -238,6 +239,7 @@ def test_the_postgres_sql_carries_the_server_defaults():
     sql = out.getvalue()
     assert "claude_can VARCHAR(16) DEFAULT 'log' NOT NULL" in sql
     assert "add_back_exercise_kcal BOOLEAN DEFAULT false NOT NULL" in sql
+    assert "ADD COLUMN status VARCHAR(16) DEFAULT 'active' NOT NULL" in sql  # owner-accounts.md, 0017
     # 0001 built the sample mark on seven tables and 0004 drops it from each: no model carries it now.
     assert [t.name for t in Base.metadata.sorted_tables if "is_sample" in t.c] == []
     assert sql.count("is_sample BOOLEAN DEFAULT false NOT NULL") == len(MARKED_TABLES)
@@ -596,7 +598,7 @@ def test_0004_applies_on_an_empty_database_and_follows_0003():
         engine.dispose()
     from alembic.script import ScriptDirectory
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0016"  # programs
+    assert script.get_revision("0004").down_revision == "0003" and script.get_current_head() == "0017"  # account status
 
 
 def test_the_postgres_sql_deletes_the_marked_rows_and_drops_the_columns():

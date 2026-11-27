@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Account suspended · Spotter{% endblock %}
+{% block main %}
+{# A suspended account (contract owner-accounts.md, decisions 15, 16 and 18): one card, at most 480 px wide and centred
+   on a laptop (main.notice-page). What the person can still do: Export my data (the Settings form, unchanged), Delete
+   my account (its own page) and Sign out. The owner's reason is never shown. #}
+<div class="card">
+  <h1 class="title">Account suspended</h1>
+  <p>This account is suspended, so its pages and your assistant cannot use it.</p>
+  <p class="muted">You can still export your data and delete your account.</p>
+  <form method="post" action="/settings/export">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary">Export my data</button>
+  </form>
+  <p class="small">A zip of CSV files: everything you have logged, deleted entries included.</p>
+  <p><a class="action is-danger" href="/settings/delete">Delete my account</a></p>
+  <form class="sign-out" method="post" action="/sign-out">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary">Sign out</button>
+  </form>
+</div>
+{% endblock %}

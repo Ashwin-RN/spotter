@@ -19,7 +19,8 @@ One module per area, so each later stage adds its own:
   export        export_data (the Settings page's download)
   imports       import_entries (history from another app, many dated rows a call)
   owner         owner_calls (the call log, for Spotter's owner alone: it reads every account, so it takes no
-                user_id)
+                user_id), owner_accounts (every account and what each has logged) and set_account_status (the
+                owner's suspend and lift): the owner's page alone, no user_id either
   feedback      send_feedback (a note to Spotter's maker), owner_feedback (the notes, for Spotter's owner alone:
                 no user_id either, and it only reads), owner_delete_feedback (the owner's delete of notes by id,
                 no user_id either)
@@ -57,7 +58,7 @@ from app.services.imports import import_entries
 from app.services.lifts import log_lifts
 from app.services.log import get_log
 from app.services.measurements import log_measurement
-from app.services.owner import owner_calls
+from app.services.owner import owner_accounts, owner_calls, set_account_status
 from app.services.programs import save_program
 from app.services.progress import get_progress
 from app.services.routines import get_routines, save_routine
@@ -69,9 +70,9 @@ __all__ = [
     "find_food",
     "get_cardio", "get_data", "get_days", "get_entry", "get_goals", "get_log", "goal_charts", "get_progress",
     "get_routines", "get_trends", "import_entries", "list_exercises", "list_saved_foods",
-    "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "owner_calls",
+    "log_bodyweight", "log_cardio", "log_food", "log_lifts", "log_measurement", "owner_accounts", "owner_calls",
     "owner_delete_feedback", "owner_feedback", "restore_entry", "save_food", "save_program", "save_routine",
     "send_feedback",
-    "set_claude_can",
+    "set_account_status", "set_claude_can",
     "set_goal", "update_settings", "what_is_logged", "whoami",
 ]

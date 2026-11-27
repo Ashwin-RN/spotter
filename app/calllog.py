@@ -110,6 +110,7 @@ KNOWN_NAMES = frozenset({
        for name in model.model_fields}
 # The step a failed call stopped at, by its error code. Any other code a service returns is the check.
 STEPS = {"no_subject": "account", "signups_closed": "account", "no_account": "account",
+         "account_suspended": "account",  # owner-accounts.md decision 14
          "not_allowed": "permission",
          "invalid_key": "key", "key_reused": "key", "already_done": "key",
          "too_many_reads": "limit", "too_many_writes": "limit", "too_many_imported": "limit",

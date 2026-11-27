@@ -213,7 +213,7 @@ def test_0008_adds_the_feedback_table_the_models_match_and_it_comes_down_again()
     finally:
         engine.dispose()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0016"  # programs
+    assert script.get_revision("0008").down_revision == "0007" and script.get_current_head() == "0017"  # account status
 
 
 def test_the_topics_are_a_tuple_in_the_models_and_no_status_is():

@@ -116,7 +116,7 @@ def test_0015_follows_0014_and_is_the_head():
     migration = _migration()
     assert migration.revision == UP and migration.down_revision == DOWN
     script = ScriptDirectory.from_config(alembic_config("sqlite://"))
-    assert script.get_current_head() == "0016" and script.get_revision(UP).down_revision == DOWN  # 0016 follows it
+    assert script.get_current_head() == "0017" and script.get_revision(UP).down_revision == DOWN  # 0016, 0017 follow it
 
 
 def test_the_migration_s_lists_are_the_contract_s():
@@ -132,10 +132,14 @@ def test_the_migration_s_lists_are_the_contract_s():
 def test_0015_up_down_and_up_over_rows_of_every_kind_with_each_new_column_set(monkeypatch):
     address = _sqlite_at("macros.db")
     cfg = alembic_config(address)
-    command.upgrade(cfg, UP)
+    # The rows are written by the head's models, which name columns later migrations add (0017's user.status), so they
+    # are written at the head and the database is then brought down to 0015.
+    command.upgrade(cfg, "head")
     write_everything(address, monkeypatch)
+    command.downgrade(cfg, UP)
     engine = make_engine(address)
     try:
+        assert _version(engine) == UP
         _set_every_new_column(engine)
         at_head, master_head = _named(engine), _master(engine)
         assert {t: len(rows) > 0 for t, rows in at_head.items()} == {t: True for t in at_head}  # every table

@@ -35,7 +35,7 @@ from .test_web import client, seam, sign_in, web_client  # noqa: F401 - fixtures
 
 NOW = datetime(2026, 11, 10, 8, 30, tzinfo=timezone.utc)
 HARDENING = "0012"  # the revision this file's migration tests run to
-HEAD = "0016"  # the code's head, which /ready reads (routines-and-programs.md: 0016, the program)
+HEAD = "0017"  # the code's head, which /ready reads (owner-accounts.md: 0017, the account status)
 
 # ---------------------------------------------------------------- the rules of D12, as the contract lists them
 
@@ -101,14 +101,16 @@ CHECKS_IN_0015 = {"ck_food_entry_protein_g", "ck_food_entry_carbs_g", "ck_food_e
                   "ck_saved_food_protein_g_per_serving", "ck_saved_food_carbs_g_per_serving",
                   "ck_saved_food_fat_g_per_serving", "ck_user_protein_target_g", "ck_user_carbs_target_g",
                   "ck_user_fat_target_g"}
+# Migration 0017 (owner-accounts.md) adds two list rules: user's status and owner_action's action, on a new table.
+CHECKS_IN_0017 = {"ck_user_status", "ck_owner_action_action"}
 CHECKS_AT_HEAD = sorted({*CHECKS, "ck_lift_set_time_s", "ck_lift_set_distance_m", "ck_lift_set_measure",
-                         *CHECKS_IN_0015})
+                         *CHECKS_IN_0015, *CHECKS_IN_0017})
 
 
 def test_the_lists_are_the_contract_s():
     assert len(NUMBER_RULES) == 24 and len(LIST_RULES) == 12 and len(CHECKS) == 39
     assert sorted({t for t, *_ in NUMBER_RULES} | {t for t, *_ in LIST_RULES}) == sorted(REBUILT)
-    assert len(NUMBER_RULES_AT_HEAD) == 26 and len(CHECKS_AT_HEAD) == 51
+    assert len(NUMBER_RULES_AT_HEAD) == 26 and len(CHECKS_AT_HEAD) == 53
 
 
 def _checks(connection) -> dict[str, set[str]]:
@@ -127,7 +129,7 @@ def test_every_rule_is_in_the_built_database():
         indexes = {t: {i["name"]: i["column_names"] for i in found.get_indexes(t)} for t in SWEEP_INDEXES}
         key_width = {col["name"]: col for col in found.get_columns("saved_food")}["name_key"]["type"].length
     assert sorted(name for names in checks.values() for name in names) == CHECKS_AT_HEAD
-    assert set(checks) == set(REBUILT)
+    assert set(checks) == set(REBUILT) | NEW_TABLES_IN_0017  # 0017's table holds a rule
     for name in CHECKS_AT_HEAD:
         assert any(name.startswith(f"ck_{t}_") and name in checks[t] for t in checks), name
     assert uniques["lift_set"][UQ_SET_NUMBER] == ["session_id", "exercise_id", "set_number"]
@@ -730,8 +732,8 @@ def test_inside_a_migration_on_sqlite_foreign_keys_are_off_and_the_run_still_com
     try:
         assert _version(engine) == HARDENING
         with engine.connect() as c:
-            assert set(inspect(c).get_table_names()) == (set(Base.metadata.tables) - NEW_TABLES_IN_0016
-                                                         | {"alembic_version"})  # at 0012: less what 0016 adds
+            assert set(inspect(c).get_table_names()) == (set(Base.metadata.tables) - NEW_TABLES_IN_0016 - NEW_TABLES_IN_0017
+                                                         | {"alembic_version"})  # at 0012: less 0016's and 0017's
             assert c.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1  # a new connection: on again
     finally:
         engine.dispose()
@@ -930,6 +932,27 @@ NEW_TABLES_IN_0016 = {"program"}
 
 
 def before_0016(diffs: list) -> list:
-    """compare_metadata's list at a revision before 0016, less 0016's own entry: its add_table line only."""
-    return [d for d in diffs
+    """compare_metadata's list at a revision before 0016, less 0016's own entry, its add_table line only, and 0017's
+    (before_0017)."""
+    return [d for d in before_0017(diffs)
             if isinstance(d, list) or not (d[0] == "add_table" and d[1].name in NEW_TABLES_IN_0016)]
+
+
+# What compare_metadata shows at a revision before 0017 that 0017 adds (owner-accounts.md): one table with its index,
+# and three columns on user. The rules are not in the models.
+NEW_TABLES_IN_0017 = {"owner_action"}
+NEW_COLUMNS_IN_0017 = {("user", "status"), ("user", "status_reason"), ("user", "status_at")}
+
+
+def before_0017(diffs: list) -> list:
+    """compare_metadata's list at a revision before 0017, less 0017's own entries: its add_table, add_index and
+    add_column lines only."""
+    def is_0017(d) -> bool:
+        if isinstance(d, list):
+            return False
+        if d[0] == "add_table":
+            return d[1].name in NEW_TABLES_IN_0017
+        if d[0] == "add_index":
+            return d[1].table.name in NEW_TABLES_IN_0017
+        return d[0] == "add_column" and (d[2], d[3].name) in NEW_COLUMNS_IN_0017
+    return [d for d in diffs if not is_0017(d)]

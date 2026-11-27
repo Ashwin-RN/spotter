@@ -25,6 +25,19 @@ utc its time: owner_feedback's around gives calls the same way (app/services/fee
 The filters are checked first (filters, contract inputs.md decisions 9 and 10): account_id through
 common.entry_id, email, request_id and function through rules.text with their column's length as the limit, caller
 against models.CALLERS. owner_feedback checks its account_id and email the same way.
+
+owner_accounts() -> {accounts, total, seen, seen_days, call_days, feedback_days}: the owner's page /owner/accounts
+reads it (contract owner-accounts.md, decisions 1 and 5). One line per account, newest first by created_at: its id,
+email, name, time zone, joined and last_seen, the live rows (deleted_at null, decision 6) of each of the five entry
+kinds (ENTRY_COUNTS), its calls in the last CALL_LOG_DAYS and its feedback in the last FEEDBACK_DAYS (decision 7: how
+long calllog keeps those rows, read from its constants). One GROUP BY user_id query a table. total is every account,
+seen the accounts seen in the last SEEN_DAYS (decision 23). Each line also carries the account's status, status_reason
+and status_at, and record the owner's last RECORD_ROWS actions, newest first (decision 21).
+
+set_account_status(by_user, data) -> {changed, account_id, status}, or {error, message, fix}: the owner's suspend or
+lift of one account (decisions 9 to 12), from the owner's form on that page. It is not a function and does not go
+through the web's write(): no call-log row, no write key, no write limit; its one trace is the owner_action row
+(decision 22). The caller has checked that by_user is the owner.
 """
 
 from datetime import timedelta
@@ -32,8 +45,12 @@ from datetime import timedelta
 from sqlalchemy import and_, case, func, null, select
 
 from app import calllog, db, rules
-from app.models import CALLERS, CallLog, User
-from app.services.common import entry_id
+from app.config import get_settings
+from app.models import (
+    CALLERS, OWNER_ACTIONS, STATUSES, Bodyweight, CallLog, CardioEntry, Feedback, FoodEntry, LiftSession, Measurement,
+    OwnerAction, User,
+)
+from app.services.common import entry_id, lock_user
 
 HOURS = (1, 2160, 24)  # lowest, highest, when left out
 LIMIT = (1, 200, 50)
@@ -42,6 +59,14 @@ FAILED = CallLog.ok.is_(False) & CallLog.error_code.is_distinct_from(calllog.IN_
 # The longest each text filter can be: its column's own length.
 TEXT_FILTERS = {"email": User.__table__.c.email.type.length, "request_id": CallLog.__table__.c.request_id.type.length,
                 "function": CallLog.__table__.c.function.type.length}
+# owner_accounts' entry counts: (a line's field, the entry model). The five models of models.entry_models().
+ENTRY_COUNTS = (("lift_sessions", LiftSession), ("bodyweights", Bodyweight), ("measurements", Measurement),
+                ("food_entries", FoodEntry), ("cardio_entries", CardioEntry))
+SEEN_DAYS = 7  # "seen in the last 7 days": a pick, a week (decision 23), not a number from data
+RECORD_ROWS = 20  # the record rows the page shows: a page size (decision 21), not a number from data
+REASON_MAX = OwnerAction.__table__.c.reason.type.length  # 200 (decision 9), the column's own length
+ACTIVE, SUSPENDED = STATUSES
+SUSPEND, LIFT = OWNER_ACTIONS
 
 
 def filters(data: dict, names: tuple) -> tuple[dict, dict | None]:
@@ -141,3 +166,70 @@ def call_row(c: CallLog) -> dict:
 
 def utc(at) -> str | None:
     return None if at is None else at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def owner_accounts() -> dict:
+    now = db.utcnow()
+    call_since = now - timedelta(days=calllog.CALL_LOG_DAYS)
+    feedback_since = now - timedelta(days=calllog.FEEDBACK_DAYS)
+    with db.new_session() as s:
+        people = list(s.scalars(select(User).order_by(User.created_at.desc(), User.id.desc())))
+        counts = {field: _per_account(s, model.user_id, model.deleted_at.is_(None)) for field, model in ENTRY_COUNTS}
+        counts["calls"] = _per_account(s, CallLog.user_id, CallLog.started_at >= call_since)
+        counts["feedback"] = _per_account(s, Feedback.user_id, Feedback.created_at >= feedback_since)
+        record = [{"at": utc(a.created_at), "action": a.action, "account_id": a.account_id,
+                   "by_account_id": a.by_account_id, "reason": a.reason}
+                  for a in s.scalars(select(OwnerAction).order_by(OwnerAction.created_at.desc(), OwnerAction.id.desc())
+                                     .limit(RECORD_ROWS))]
+    seen_since = now - timedelta(days=SEEN_DAYS)
+    lines = [{"account_id": u.id, "email": u.email, "name": u.name, "time_zone": u.time_zone,
+              "joined": utc(u.created_at), "last_seen": utc(u.last_seen_at),
+              **{field: by_account.get(u.id, 0) for field, by_account in counts.items()},
+              "status": u.status, "status_reason": u.status_reason, "status_at": utc(u.status_at)} for u in people]
+    return {"accounts": lines, "total": len(people), "record": record,
+            "seen": sum(1 for u in people if u.last_seen_at is not None and u.last_seen_at >= seen_since),
+            "seen_days": SEEN_DAYS, "call_days": calllog.CALL_LOG_DAYS, "feedback_days": calllog.FEEDBACK_DAYS}
+
+
+def _per_account(s, user_id, *where) -> dict[int, int]:
+    """{account id: rows} of one table, in one GROUP BY user_id query. A row with no account is left out."""
+    rows = select(user_id, func.count()).where(user_id.is_not(None), *where).group_by(user_id)
+    return dict(s.execute(rows).all())
+
+
+def set_account_status(by_user: User, data: dict) -> dict:
+    """The owner's suspend or lift of one account (decisions 9 to 12): data holds account_id, action (suspend or lift)
+    and reason. A suspend needs a reason of 1 to REASON_MAX characters after trimming; a lift takes one or none, for
+    the record. The owner's own account is refused. Suspending a suspended account or lifting an active one changes
+    nothing and writes no record row: changed is false. Otherwise the user row (locked first, as every write locks it)
+    and one owner_action row change in one transaction."""
+    errors = []
+    account_id = entry_id(data.get("account_id"))
+    if account_id is None:
+        errors.append(rules.error("invalid_field", f"account_id {rules.as_sent(data.get('account_id'))} is not an "
+                                  "account id.", "Give an account's id as a line gives it: a whole number from 1."))
+    action = data.get("action")
+    if action not in OWNER_ACTIONS:
+        errors.append(rules.error("invalid_field", f"action '{rules.quote(action)}' is not one of "
+                                  f"{', '.join(OWNER_ACTIONS)}.", f"Use one of: {', '.join(OWNER_ACTIONS)}."))
+    reason, err = rules.text(data.get("reason"), "reason", REASON_MAX)
+    errors += [{**err, "field": "reason"}] if err else []  # field: the page names the reason's own refusal
+    if err is None and action == SUSPEND and not reason:
+        errors.append(rules.error("missing_field", "A suspend needs a reason.", "Give the reason, in one line.",
+                                  field="reason"))
+    if errors:
+        return rules.combine(errors)
+    now = db.utcnow()
+    with db.session_scope() as s:
+        target = lock_user(s, account_id)
+        if target is None:
+            return rules.error("not_found", f"No account has the id {account_id}.", "Give an id the page lists.")
+        if target.subject == get_settings().owner_user_id:
+            return rules.error("owner_account", "The owner's own account cannot be suspended.", "Nothing to change.")
+        status = SUSPENDED if action == SUSPEND else ACTIVE
+        if target.status == status:
+            return {"changed": False, "account_id": account_id, "status": status}
+        target.status, target.status_reason, target.status_at = status, reason if action == SUSPEND else None, now
+        s.add(OwnerAction(by_account_id=by_user.id, action=action, account_id=account_id, reason=reason or None,
+                          created_at=now))
+    return {"changed": True, "account_id": account_id, "status": status}

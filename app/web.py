@@ -45,6 +45,15 @@ and Settings.
     /settings/delete               GET: what goes; POST: the sign-in at the provider, then every row here,
                                    then the session, then a plain "deleted" page
     PLACEHOLDERS                   every other page links.py names, until its real page is built
+    /owner/accounts                every account, with what each has logged, its status, a Suspend or Lift form
+                                   (POST to /owner/accounts/status), and the record of the last 20 of those: the
+                                   owner's alone, anyone else gets the 404 (contract owner-accounts.md). Not in
+                                   PAGES and named by no link
+
+A suspended account (owner-accounts.md, decisions 15 to 17) can still sign in, and every row of PAGES and every
+placeholder answers it with the one suspended page (403), whose handler is never run, but Export (/settings/export)
+and Delete my account (/settings/delete): the page carries both, and Sign out. /, /hi, sign-in and sign-out are never
+gated. The status is read from the row current_user loads on every request, so a suspension holds at once.
 
 Every page but /, /hi and /sign-in needs sign-in. Every web write calls the service Claude's function calls,
 then writes a call-log row under the same function name (rule 9 of stage 3), so the write limit counts
@@ -126,7 +135,7 @@ from app.models import (
     Routine, SavedFood, User,
 )
 from app.services import account as account_checks, body, common, lifts, measurements, progress as progress_data
-from app.services import goals as goal_rules, programs, trends as trend_rules
+from app.services import goals as goal_rules, owner as owner_service, programs, trends as trend_rules
 from app.services.routines import page_read as routine_page_read
 
 log = logging.getLogger("spotter")
@@ -723,6 +732,7 @@ FRAMES = {
     "settings.html": ("settings-page", None, "settings"),
     "delete_account.html": (None, "notice-page", "settings"),
     "message.html": (None, "notice-page", None),
+    "suspended.html": (None, "notice-page", None),
 }
 # The address marks of a page after a write (section L, The calm page): any of these, whatever its value,
 # makes the page calm, and so does a form sent back with its error.
@@ -764,8 +774,9 @@ def page(request: Request, name: str, status_code: int = 200, **context) -> Resp
         "mcp_url": settings.mcp_resource_url if settings.configured else None,
         "csrf_token": csrf.token(request) if user is not None else "",
         # Signed in with no zone yet: the page carries the hidden form and the script that saves the
-        # browser's own zone, once.
-        "time_zone_missing": user is not None and not user.time_zone,
+        # browser's own zone, once. Never for a suspended account: Settings, where it posts, is closed to it
+        # (owner-accounts.md decision 15), and the form would take the person off an open page such as Delete.
+        "time_zone_missing": user is not None and not user.time_zone and user.status != owner_service.SUSPENDED,
         # Where the automatic zone save brings the person back to. Never set on an error page, so a
         # 404 never repeats the address it was given.
         "next_path": request.url.path if status_code < 400 else None,
@@ -3328,6 +3339,98 @@ async def placeholder(request: Request) -> Response:
                    "Meanwhile, ask your assistant to read your numbers back.")
 
 
+# ---------------------------------------------------------------- the owner's accounts (contract owner-accounts.md)
+
+# The page's entry columns: (owner_accounts' field, its heading). The words Delete my account uses for the same rows.
+OWNER_COUNTS = (("lift_sessions", "Lift sessions"), ("bodyweights", "Weigh-ins"), ("measurements", "Measurements"),
+                ("food_entries", "Food entries"), ("cardio_entries", "Cardio sessions"))
+
+
+def owner_signed_in(user: User | None) -> bool:
+    """True when the signed-in row's subject is OWNER_USER_ID (decision 3): mcp_server.is_owner's rule, on the row.
+    Unset, nobody is."""
+    owner = get_settings().owner_user_id
+    return bool(owner) and user is not None and user.subject == owner
+
+
+# The one line the page shows after its form: the redirect's mark -> the words. Never the address's own text.
+OWNER_DONE = {
+    "suspended": "Account suspended.",
+    "lifted": "Suspension lifted.",
+    "already_suspended": "That account is already suspended, so nothing changed.",
+    "already_active": "That account is not suspended, so nothing changed.",
+    "no_reason": f"Nothing changed. A reason is at most {owner_service.REASON_MAX} characters, and a suspend needs "
+                 "one.",
+    "owner_account": "Nothing changed. Your own account cannot be suspended.",
+    "not_found": "Nothing changed. No account has that id.",
+    "invalid": "Nothing changed. Check the form and try again.",
+}
+OWNER_DONE_OK = ("suspended", "lifted")  # the two that changed something; the rest are drawn as a refusal
+OWNER_FORM_FIELDS = ("account_id", "action", "reason")
+
+
+async def owner_accounts_page(request: Request) -> Response:
+    """GET: every account, with what each has logged and its status (decisions 1 and 5), its dates in the owner's own
+    time zone, and the record. Anyone but the owner, signed in or not, gets the one 404, which never says the page is
+    here (decision 3)."""
+    user = await current_user(request)
+    if not owner_signed_in(user):
+        return not_found_page(request)
+    found, mark = await _db(services.owner_accounts), request.query_params.get("saved", "")
+    return page(request, "owner_accounts.html", **found, zone=user.time_zone, count_columns=OWNER_COUNTS,
+                owner_id=user.id, done=OWNER_DONE.get(mark), done_ok=mark in OWNER_DONE_OK,
+                reason_max=owner_service.REASON_MAX, actions=OWNER_ACTION_WORDS)
+
+
+# A record row's action, in the page's words.
+OWNER_ACTION_WORDS = {owner_service.SUSPEND: "Suspended", owner_service.LIFT: "Lifted"}
+
+
+def owner_outcome(result: dict) -> str:
+    """The mark of a suspend or lift's answer: a key of OWNER_DONE."""
+    if not failed(result):
+        if result["changed"]:
+            return "suspended" if result["status"] == owner_service.SUSPENDED else "lifted"
+        return "already_suspended" if result["status"] == owner_service.SUSPENDED else "already_active"
+    found = codes(result)
+    if "reason" in {e.get("field") for e in result.get("errors") or [result]}:
+        return "no_reason"
+    return next((code for code in ("owner_account", "not_found") if code in found), "invalid")
+
+
+async def owner_status_page(request: Request) -> Response:
+    """POST: the owner's suspend or lift of one account (decisions 2, 9 to 12 and 22), then back to the page with a
+    one-line outcome. CSRF-checked as every form is, and owner only by decision 3: anyone else gets the 404 and
+    nothing changes. It does not go through write(): its one trace is the owner_action row."""
+    user = await current_user(request)
+    if not owner_signed_in(user):
+        return not_found_page(request)
+    form = await request.form()
+    result = await _db(services.set_account_status, user, {name: form.get(name) for name in OWNER_FORM_FIELDS})
+    return redirect(marked(OWNER_PAGES[0][0], "saved", owner_outcome(result)))
+
+
+# ---------------------------------------------------------------- a suspended account (owner-accounts.md)
+
+def suspended_page(request: Request) -> Response:
+    """The one page a suspended person gets for every gated page (decision 15): 403, with Export, a link to Delete
+    my account, and Sign out. The owner's reason is never shown (decision 18). No time zone form (page())."""
+    return page(request, "suspended.html", status_code=403)
+
+
+def status_gated(endpoint):
+    """The endpoint behind the status: a signed-in person whose row is suspended gets the suspended page, and the
+    endpoint never runs. Anyone else goes straight through (decision 17: read from the row on every request)."""
+    async def run(request: Request) -> Response:
+        user = await current_user(request)
+        if user is not None and user.status == owner_service.SUSPENDED:
+            return suspended_page(request)
+        return await endpoint(request)
+
+    run.__name__ = endpoint.__name__
+    return run
+
+
 # ---------------------------------------------------------------- routes
 
 def _off(reason: str):
@@ -3381,6 +3484,20 @@ PAGES = [
     ("/settings/delete", delete_account_page, ["GET", "POST"]),
 ]
 
+# The owner's page (owner-accounts.md decision 4): not in PAGES, which is every person's page, and named by no link.
+# routes() puts its rows straight after PAGES', behind the page limit, and off when web sign-in is not set up.
+OWNER_PAGES = [
+    ("/owner/accounts", owner_accounts_page, ["GET"]),
+    ("/owner/accounts/status", owner_status_page, ["POST"]),
+]
+# The two rows of PAGES a suspended person keeps (decision 16): what Settings promises everyone.
+OPEN_WHEN_SUSPENDED = (export_page, delete_account_page)
+
+
+def gated(endpoint):
+    """A row of PAGES behind the status gate, unless it is one of OPEN_WHEN_SUSPENDED."""
+    return endpoint if endpoint in OPEN_WHEN_SUSPENDED else status_gated(endpoint)
+
 
 def routes(settings: Settings) -> list[BaseRoute]:
     """The web routes. Each carries its own middleware, so /mcp and /.well-known never see the cookie."""
@@ -3397,11 +3514,12 @@ def routes(settings: Settings) -> list[BaseRoute]:
                  ("/sign-in", sign_in, ["GET"]),
                  ("/auth/callback", callback, ["GET"]),
                  ("/sign-out", sign_out, ["POST"])]
-        # The signed-in pages, behind the page limit; the export behind its gate too.
-        table += [(path, page_limited(export_gated(endpoint, exports) if endpoint is export_page else endpoint, loads),
-                   methods) for path, endpoint, methods in PAGES]
+        # The signed-in pages, behind the page limit and the status gate; the export behind its own gate instead.
+        table += [(path, page_limited(export_gated(endpoint, exports) if endpoint is export_page else gated(endpoint),
+                                      loads), methods) for path, endpoint, methods in PAGES]
+        table += [(path, page_limited(endpoint, loads), methods) for path, endpoint, methods in OWNER_PAGES]
         table += [(path, to_card(kind), ["GET"]) for path, kind in CARD_ADDRESSES]
-        table += [(path, page_limited(placeholder, loads), ["GET"]) for path in PLACEHOLDERS.values()]
+        table += [(path, page_limited(status_gated(placeholder), loads), ["GET"]) for path in PLACEHOLDERS.values()]
     else:
         off = _off(reason)
         table = [("/", home, ["GET"]),
@@ -3410,6 +3528,7 @@ def routes(settings: Settings) -> list[BaseRoute]:
                  ("/auth/callback", off, ["GET"]),
                  ("/sign-out", off, ["POST"])]
         table += [(path, off, methods) for path, _, methods in PAGES]
+        table += [(path, off, methods) for path, _, methods in OWNER_PAGES]
         table += [(path, off, ["GET"]) for path, _ in CARD_ADDRESSES]
         table += [(path, off, ["GET"]) for path in PLACEHOLDERS.values()]
 

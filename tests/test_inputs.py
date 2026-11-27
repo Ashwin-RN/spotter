@@ -579,7 +579,8 @@ FORM_TAKEN = [
     (lambda address, field, v: field == "add_back_exercise_kcal",
      "A checkbox sends its value when ticked and nothing when not: any other value reads as not ticked."),
 ]
-UNPOSTED = {"/sign-out", "/settings/export"}  # they write nothing through a service, as test_idempotency names them
+UNPOSTED = {"/sign-out", "/settings/export",  # they write nothing through a service, as test_idempotency names them
+            "/owner/accounts/status"}  # the owner's alone, swept in tests/test_account_status.py (owner-accounts.md)
 
 
 def drawn_forms(page: str) -> list[tuple[str, list[dict]]]:

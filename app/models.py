@@ -10,7 +10,8 @@ stable key and a retired mark, and a set its time_s and distance_m, with reps no
 macros-and-asking.md) adds protein, carbs and fat in grams to a food entry, a saved food and the USDA cache, a food
 entry's macros_estimated mark and portion, a saved meal's items, the cache's macros_read mark, and the person's three
 daily amounts in grams. 0016 (contract routines-and-programs.md) adds the person's training program (program), one a
-person.
+person. 0017 (contract owner-accounts.md) adds an account's status (user.status, status_reason, status_at) and the
+owner's record of each suspend and lift (owner_action).
 
 - Every table has an integer id, except the two shared caches, which are keyed on the provider's own id.
 - Times are timezone-aware UTC (UtcDateTime). Dates are the person's local date.
@@ -18,9 +19,9 @@ person.
 - Deleting a user deletes everything they own, in the database (ON DELETE CASCADE).
 - Allowed values for the string columns are listed here as tuples, and the services check them. Since 0012 the
   database also checks these closed lists: LOGGED_BY on the five entry tables, CLAUDE_CAN, the two units, GOAL_DIRECTIONS,
-  GOAL_STATUSES, and entry_version's by (CALLERS) and why. A new value in one of those needs a one-line migration. The
-  lists meant to grow stay unchecked: goal and measurement kinds, a measurement's unit, meals, food sources, feedback
-  topics, an exercise's kind and category.
+  GOAL_STATUSES, and entry_version's by (CALLERS) and why; since 0017 STATUSES and OWNER_ACTIONS too. A new value in
+  one of those needs a one-line migration. The lists meant to grow stay unchecked: goal and measurement kinds, a
+  measurement's unit, meals, food sources, feedback topics, an exercise's kind and category.
 - Since 0012 the database also holds a sign rule and a wide ceiling on every number a person's row holds, and three
   goal shape rules. The rules' text lives only in migrations/versions/0012_hardening.py and, for the rules 0013 changes
   and adds on lift_set, in migrations/versions/0013_exercise_list.py, and for 0015's new numbers in
@@ -48,6 +49,8 @@ IMPORTED = "import"  # logged_by of every row import_entries writes, whoever cal
 LOGGED_BY = ("web", "claude", IMPORTED)
 CALLERS = ("web", "claude")  # who a write's `by` may name: the import's mark is never a caller
 CLAUDE_CAN = ("log_delete", "log")  # the two settings, the default first (contract switch: read only is gone)
+STATUSES = ("active", "suspended")  # an account's status, the default first (owner-accounts.md decision 8)
+OWNER_ACTIONS = ("suspend", "lift")  # what an owner_action row records (decision 19)
 EXERCISE_KINDS = ("lift", "cardio")
 GOAL_KINDS = ("bodyweight", "lift", "measurement", "cardio_best", "cardio_weekly", "calories", "sessions")
 GOAL_DIRECTIONS = ("up", "down")
@@ -153,6 +156,28 @@ class User(Base):
     protein_target_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
     carbs_target_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fat_target_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # One of STATUSES (0017, owner-accounts.md decisions 8 and 10). status_reason is the owner's note while suspended,
+    # null once lifted; status_at is when the status last changed, null until it first does.
+    # The database's default alone, so an insert written against an older revision names no status. An insert reads
+    # it back (RETURNING, the ORM's eager_defaults "auto"), so a row just made carries it.
+    status: Mapped[str] = mapped_column(String(16), server_default=text("'active'"))
+    status_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class OwnerAction(Base):
+    """The owner's record (0017, owner-accounts.md decisions 19 and 20): one row a suspend or a lift. The two account
+    columns are plain integers with no foreign key, and neither is user_id: the row outlives a deleted account, is not
+    the person's own table, is not exported and is not wiped on a delete. No email, no name."""
+
+    __tablename__ = "owner_action"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    by_account_id: Mapped[int] = mapped_column(Integer)  # the owner's account
+    action: Mapped[str] = mapped_column(String(8))  # one of OWNER_ACTIONS
+    account_id: Mapped[int] = mapped_column(Integer, index=True)  # the account suspended or lifted
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)  # null: a lift with none given
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_now)
 
 
 class Exercise(Base):

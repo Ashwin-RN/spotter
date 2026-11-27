@@ -859,7 +859,8 @@ def test_every_non_get_web_route_checks_the_token(client):
         "/foods/{food_id}/restore", "/settings/targets", "/entries/food_entry/{entry_id}/confirm",
         "/goals", "/goals/{goal_id}/status", "/settings/export",
         "/settings/delete", "/routines/{routine_id}/delete", "/routines/{routine_id}/restore",  # routines.md R15
-        "/routines/program/{program_id}/delete", "/routines/program/{program_id}/restore"}  # C5c, decision 19
+        "/routines/program/{program_id}/delete", "/routines/program/{program_id}/restore",  # C5c, decision 19
+        "/owner/accounts/status"}  # owner-accounts.md, decision 2
     filled = {"{date}": "2026-11-09", "{kind}": "bodyweight", "{entry_id}": "1", "{food_id}": "1", "{goal_id}": "1",
               "{routine_id}": "1", "{program_id}": "1"}
     for route in posting:

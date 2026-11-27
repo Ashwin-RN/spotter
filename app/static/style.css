@@ -862,7 +862,9 @@ fieldset.choices label.choice:has(input:checked) { border-color: var(--text); }
 
 /* ---------------------------------------------------------------- tables */
 
-div.table-wrap { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+/* position: a hidden label (.sr, absolute) inside a table wider than the box is held by the box, so it scrolls with
+   the table and never widens the page. */
+div.table-wrap { position: relative; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
 table { width: 100%; border-collapse: collapse; font-size: 15px; }
 th { padding: 0 10px 8px 0; color: var(--text-3); font-size: 13px; font-weight: 600; text-align: left; vertical-align: bottom; }
 td { padding: 11px 10px 11px 0; border-top: 1px solid var(--line); vertical-align: top; }
@@ -873,6 +875,11 @@ td.name, th.name { font-weight: 500; }
 td a { text-underline-offset: 3px; }
 table.rows td a { display: inline-flex; align-items: center; min-height: 44px; margin: -12px 0; }
 table.rows td.lead, table.rows td[data-label] { overflow-wrap: anywhere; }
+/* A row table with many columns (the owner's accounts): from 720 px its short cells keep to one line, so the table
+   runs wider than its card and scrolls sideways in div.table-wrap; a note or a form cell (td.wrap-cell) wraps at a
+   set width. The stacked block below puts both back as every row table has them. */
+table.rows.many-cols td { white-space: nowrap; }
+table.rows.many-cols td.wrap-cell { width: 16em; min-width: 16em; white-space: normal; }
 /* A saved meal's foods, under its name in the Food cell: one a line, in the entry lines' grey. */
 ul.meal-foods { flex-basis: 100%; margin-top: 4px; color: var(--text-2); font-size: 14px; font-weight: 400; }
 table.trends td:first-child { color: var(--text-2); }
@@ -904,6 +911,8 @@ tr.group td { border-top-color: var(--line-strong); }
   /* Routines (routines-and-programs.md C5a): a wide cell spans the row there too, over the rule above. */
   .saved-foods table.rows td.wide-cell { grid-column: 1 / -1; }
   table.rows td a.action { margin: 0; }
+  table.rows.many-cols td:not(.num) { white-space: normal; }
+  table.rows.many-cols td.wrap-cell { width: auto; min-width: auto; }
 }
 
 /* ---------------------------------------------------------------- goals */
