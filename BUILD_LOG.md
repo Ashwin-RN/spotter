@@ -1884,3 +1884,63 @@ No page, template, function description, server instructions or `docs/can-and-ca
 | The branch | Rebased onto `main` at `89c4459`. One conflict, in this file: both sides had added an entry, and both are kept |
 | The whole suite on a clean export of the rebased commit | 8,002 passed |
 | The eval run `evals.need` asked for | Six core cases, one run each, on `gpt-6-luna` through Codex: `connected_identity`, `how_am_i_doing`, `gold_weigh_morning`, `gold_squat_month`, `food_lookup`, `exercise_list`. 6 of 6 passed, and all six handshakes carried the server's instructions. The owner chose the small set: the change adds no text an assistant reads beyond one icon address |
+
+## Owner accounts: every account on one page, and suspend
+
+The owner had no list of accounts and no way to stop one. Built as `docs/contracts/owner-accounts.md` says, the
+first part of the account foundations.
+
+| Change | Where |
+|---|---|
+| `/owner/accounts`, for the owner alone: one line an account with joined, last seen, live entries of each kind, calls in 90 days, feedback in 365 days, its status, and the last 20 suspends and lifts. Anyone else gets the 404 | `app/services/owner.py` `owner_accounts`, `app/web.py`, `app/templates/owner_accounts.html` |
+| An account is `active` or `suspended`, with a reason and a date. The owner's forms suspend and lift; a suspend needs a reason; the owner's own account is refused | `app/services/owner.py` `set_account_status`, migration `0017` |
+| A suspended account gets `account_suspended` from every function, `whoami` too, before the permission switch is read | `app/mcp_server.py`, `app/calllog.py` |
+| A suspended person can sign in and gets one suspended page (403) for every page and form, and keeps Export and Delete my account | `app/web.py` `status_gated`, `app/templates/suspended.html` |
+| Each suspend and lift is one `owner_action` row: two account ids, the action, the reason, the time. No email, no name, no foreign key, so it outlives a deleted account | `app/models.py`, migration `0017` |
+| A wide row table keeps its short cells on one line from 720 px and scrolls in its own box; the box holds a hidden label inside it | `app/static/style.css` |
+
+No function is added or changed, and the server's instructions and `docs/can-and-cant.md` are untouched. The
+export and `whoami` carry no status.
+
+### The flow
+
+| Step | Result |
+|---|---|
+| Scope | A read-only pass over the code: the seams, the pinned tests, what `evals.need` reads. It chose a page over a function: fewer pinned files |
+| Build | One builder, the view then the status |
+| Review | On a frozen copy, with probes: no must fix, 1 should fix, 6 minor. The should fix: no test held the order of the suspension check and the permission switch |
+| Fix round | That test, a test that markup in an account's fields is escaped, one reworded line, the wide table |
+| After the fix round, by the lead | `div.table-wrap` is `position: relative` (the page scrolled sideways on a laptop); the 0015 migration test writes its rows at the head and comes down; `owner_action` named in `fields.OTHER_TABLES`. No reviewer read these three |
+
+### Checks
+
+| Check | Result |
+|---|---|
+| The builder's 37 files, plain and with `-W error` | 4,031 passed and 1 failed each way: the 0015 migration test, fixed after |
+| The reviewer's runs on the frozen copy | 1,902 passed plain and with `-W error` over the new and pinned files; 1,865 over 15 related files |
+| The fix round's 13 files, plain and with `-W error` | 2,666 passed each way |
+| Behaviours broken once, each put back | 21 by the builder, each turning 1 to 5 tests red; the review and the fix round broke more in scratch copies |
+| Postgres 17, a throwaway container | Rows written at 0016 by the code before this item; 0017 up, a suspend and its record row, down (columns and table gone, every account and entry kept), up again; an account made at 0017 reads `active` straight after its insert. The first run of the check script stopped on a missing setting; the database was wiped and the run repeated clean |
+| The whole suite on a clean export | First run, on `990c99f`: 8,077 passed, 1 failed, the tie test in `tests/test_data.py` (the new table was not named). After the one row, on `cafe9fd`: 8,078 passed |
+| Seen in a browser, from a local render on a seeded test database | The accounts page at 390 px and 1,100 px, the suspended page at 390 px |
+| `python -m evals.need main` | Yes: `result text app/mcp_server.py` (the two refusal sentences) and `result text app/services/owner.py` |
+
+### The eval run, 27 November 2026
+
+Six core cases, one run each, on `gpt-6-luna` through Codex, on the export of `cafe9fd`: `connected_identity`,
+`how_am_i_doing`, `gold_weigh_morning`, `gold_squat_month`, `food_lookup`, `exercise_list`. No case reaches a
+suspended account; the run checks that an active account's answers are as before. Plan usage, no cost given.
+
+| Run | Result |
+|---|---|
+| The six cases | 5 of 6. All six handshakes carried the server's instructions |
+| The miss, `food_lookup` | The model called `whoami` and `what_is_logged`, never `find_food` or `get_data`, and gave a kcal figure of its own (450) where the saved food holds 300 |
+| The same case, 3 runs on this commit and 3 on `main` at `06cf974` | 2 of 3 on each. The same miss on both: 350 on this commit, 520 on `main` |
+
+The miss is older than this item and is tracked as a gap. No text was changed for it.
+
+### Not checked
+
+- The owner's page on the live site: it rests on the web sign-in giving the owner's subject.
+- The forms posted from a real browser.
+- How fast the count queries are at the live row count.
